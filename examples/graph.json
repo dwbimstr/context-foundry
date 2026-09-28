@@ -1,0 +1,22 @@
+{
+  "provider": "manual-demo",
+  "revision": "1",
+  "edges": [
+    {
+      "from": {
+        "path": "src/main.rs",
+        "line": 4,
+        "symbol": "main",
+        "hash": "be9b5bf001b74fcdd1f9adcd275ff42dc630df2849e9537af749fe160a2ae073"
+      },
+      "to": {
+        "path": "src/parser.rs",
+        "line": 1,
+        "symbol": "parse_record",
+        "hash": "837f0205d383c5110424042cec6a748ec29cee5422ad78fd46ec5ca3d5c94cb3"
+      },
+      "kind": "calls",
+      "evidence": "manual"
+    }
+  ]
+}

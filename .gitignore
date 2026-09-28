@@ -1,0 +1,16 @@
+/target/
+/.context-foundry/
+/data/
+/models/
+/runs/
+.env
+.env.*
+!.env.example
+*.redb
+*.safetensors
+*.gguf
+*.pt
+*.onnx
+.DS_Store
+/.claude/
+/.review/

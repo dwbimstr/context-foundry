@@ -1,0 +1,27 @@
+[package]
+name = "context-foundry"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "Local source retrieval and bounded graph context for coding agents"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+ignore = "0.4"
+redb = "4.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tantivy = { version = "0.26.2", default-features = false, features = ["mmap", "lz4-compression"] }
+tiktoken-rs = "0.12.1"
+ureq = { version = "3.4", default-features = false, features = ["json"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "foundry"
+path = "src/main.rs"
