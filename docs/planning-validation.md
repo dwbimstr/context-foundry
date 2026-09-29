@@ -1,5 +1,30 @@
 # Spec and task audit
 
+## Team handoff simulation — current review
+
+2026-09-29. After pushing `f51e6c6`, traced the fifteen current spec dispositions,
+six active workflows and adjacent source owners as a paper implementation handoff.
+The [report](review/handoff-simulation.md) distinguishes contract conflicts, missing
+decisions and unexecuted integration proofs. It is an in-session review, not code
+execution, independent approval or an exhaustive predecessor/source audit.
+
+Corrected remaining Nemotron-vector assumptions in 001/009, architecture, deployment
+and the dependency inventory. ModernBERT policy availability follows its own inputs;
+009 failure alone does not disable it. Moved combined-policy deadline acceptance to
+013's later integration so semantic-only release does not wait for learning. Added
+combined model-residency planning to the existing deployment owner. 013's replacement
+contract/tasks, real Rust/runtime bridges and packaged profiles remain incomplete.
+
+Inspected the selected publisher's MLX loader at
+`d0408b94c50fc327b6ea37dce7409c51e020a4d8` without executing it or obtaining weights.
+Its Python load/encode API is not a verified Rust service. No application code, tests,
+dependencies, models, corpora, services or host configuration were modified. Only
+documentation and Git publication were performed; runtime claims remain untested.
+Structural/documentation checks passed: 15 spec files, 276 relative links, nine
+heading links and unchanged hashes for 13 source/build/license files. The checker
+counts retained superseded task entries and does not prove semantic task readiness;
+the handoff report supplies that assessment. `git diff --check` also passed.
+
 ## ModernBERT review — current scope correction
 
 2026-09-29. Read Laya's actual joint-input/typed-head implementation, checkpoint

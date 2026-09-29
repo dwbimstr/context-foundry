@@ -23,8 +23,9 @@ This inventory records Cargo metadata for the locked dependency graph. It is not
 The current prototype can contact a separately installed Laya server; it is not a
 Cargo dependency. The owned-learning plan replaces this path instead of distributing
 Laya or editing its repository. Laya remains a separately licensed research reference.
-Planned Rust ML/sandbox dependencies are not installed or locked yet. Burn is a
-candidate for the small CPU head; libkrun is conditional deployment infrastructure.
+Planned Rust ML/sandbox dependencies are not installed or locked yet. The earlier small
+CPU head is superseded by ModernBERT with a decision head; 013 D001 owns its backend
+and native-library packaging decision. Libkrun is conditional deployment infrastructure.
 The selected third-party MLX embedding loader remains a distinct runtime integration
 decision. Record exact transitive libraries, notices and any VM image/kernel license
 inventory when those packages are actually selected. No weights or private data are

@@ -147,10 +147,14 @@ call and report graph stale/unavailable; do not query a router to choose an unav
 branch. Current partial graph coverage permits bounded expansion, with its limitation
 retained. Explicit graph still reports the same limitation and never invents relations.
 This rule does not add graph storage to 001; before 005, compiler graph is unavailable.
-When 009 is enabled, the order is query embedding → bounded lexical/dense merge →
-optional head prediction using that same query vector → bounded graph expansion →
-packing/final freshness validation. If the query vector is unavailable, skip the head
-and use the deterministic rule. Never make an additional embedding call just to route.
+Candidate construction is lexical plus available 009 semantic candidates, followed by
+the bounded merge. The optional 013 ModernBERT decision head receives its own bounded
+state/question/option input after that merge; it does not consume Nemotron's query
+vector. Then perform bounded graph expansion and packing/final freshness validation.
+Unavailable semantics alone does not make policy inference unavailable. Missing valid
+013 configuration/input, explicit strategy or unavailable graph skips that inference.
+Until 013 replaces its superseded model contract, only deterministic routing is specified
+for implementation here. 001 and 009 do not wait for 013 to ship.
 All model work shares the read deadline; none occurs in the final read transaction.
 003 adds a delivery `context_id` to context/retrieve envelopes under its
 [adapter contract](../../003-agent-retrieval-context/contracts/adapter-economics.md).

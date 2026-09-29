@@ -309,8 +309,9 @@ behavior remains. The bounded lexical/dense merge is pinned in D001 and checked 
 candidate starvation before graph expansion/packing. The owned policy's search/graph choice controls
 graph expansion, not whether semantic candidates are allowed. Query embeddings remain
 per-request model work under the selected deadline; document reuse is not zero calls
-per query. The policy head can reuse this vector after candidate construction; it
-never requests another encoding to route. No feature vector means deterministic routing.
+per query. The 013 ModernBERT decision model has its own joint input and encoding;
+it cannot reuse a Nemotron vector as that input. Semantic failure alone does not
+disable a separately available policy. Its exact input/cost contract remains 013 D001.
 Preparation does not await policy training, generated summaries or graph completion.
 
 ### Ordering without another required model
@@ -398,8 +399,11 @@ preparation has its own explicit budget and is never started to answer the query
   delivered tokens on this same bounded fixture; no additional measurement campaign.
   Separately cover absent candidate, candidate demoted by merge, oversized unlocalized
   unit and correctly ranked evidence omitted by packing; attribute each to its owner.
-  The normal path makes no reranker call. Exercise the shared deadline with owned policy and
-  semantic queries enabled so independent provider ceilings cannot accumulate.
+  The normal path makes no reranker call. Exercise the semantic request deadline and
+  deterministic fallback without requiring 013. When owned policy is implemented,
+  013's inference integration adds the combined-model deadline case to these same
+  fixtures; independent provider ceilings cannot accumulate. That later case does
+  not gate the earlier semantic-only release.
 - **Review/cutover:** advertise only the observed corpus/model/hardware scope. No
   task/token uplift from one fixture. Disable semantics without losing source/cache.
 

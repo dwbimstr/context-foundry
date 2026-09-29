@@ -191,9 +191,11 @@ rather than generating another long sequence of tool calls.
 
 An embedding model supplies similarity candidates. The owned head chooses a retrieval strategy
 from permitted task feedback. Neither owns source admission or watchers; changing
-one model does not automatically retrain the other. A changed query feature function
-invalidates head compatibility; a change only to document partitioning/ranking need
-not. Prior quality results do not prove benefit for either changed workflow.
+one model does not automatically retrain the other. ModernBERT policy identity binds
+its own tokenizer, weights, head and complete ordered decision input. Changing only
+Nemotron's query function does not invalidate that model artifact, although changed
+retrieval evidence may change the policy input and workflow benefit. Prior quality
+results do not prove benefit for a changed workflow.
 
 The planned normal path is lexical plus available semantic candidates → deterministic
 merge/order → bounded graph expansion when selected → verbatim evidence and exact
@@ -206,8 +208,9 @@ budget packing. The source owner validates freshness throughout. Keep the roles 
 | Compiler graph | Current supported definition/reference relationships | No vector per occurrence or autonomous producer execution |
 | Optional policy head | Learn whether graph expansion benefits a task | No passage reranking, chunk selection, embedder fine-tuning or source admission |
 
-Owned training remains a repeated isolated batch workflow. It uses 009 features;
-semantic preparation and the baseline release do not depend on training. Normal learned routing stays off until an actual workflow
+Owned training remains a repeated isolated batch workflow with ModernBERT decision
+inputs, independent of 009 query vectors. Semantic preparation and the baseline
+release do not depend on training. Normal learned routing stays off until an actual workflow
 comparison justifies it; classifier-label eligibility alone is not that evidence.
 Explicit strategy requests and unavailable/stale graph skip the router entirely.
 A future reranker belongs inside 009 only if a bounded candidate set already contains

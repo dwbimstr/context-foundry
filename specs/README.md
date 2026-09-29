@@ -6,9 +6,13 @@ system. Planning changes are authorized; these documents do not claim new runtim
 features, implementation approval, or an independent review.
 
 The [working CLI](../docs/validation.md) is the baseline. Six user outcomes retain
-the product goals. Every active task now specifies behavior and acceptance. The next
+the product goals. 013's four task entries are superseded pending its model contract;
+the remaining active tasks specify behavior and acceptance. The next
 step is 001 T001: D001 now retains the existing redb/Tantivy pair for bounded recovery;
 implementation and external execution prerequisites remain explicit.
+The [team handoff simulation](../docs/review/handoff-simulation.md) traces startable
+work, unresolved integration inputs and corrected cross-spec dependencies. It is a
+source-backed paper walkthrough, not runtime acceptance or another required stage.
 
 KISS applies to the machinery, not the ambition. These specs are an organizational
 choice, not proof of simplicity. Preserve the [capability commitments](../docs/architecture.md#sophisticated-behavior-through-simple-ownership)

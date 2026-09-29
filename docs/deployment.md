@@ -135,9 +135,10 @@ Do not ship deprecated ad-hoc profiles or assume a raw CLI child has these prote
 
 For every platform declare `resource_enforcement` as `hard` or `supervised`, by resource.
 OS-enforced memory/process bounds differ from supervisor RSS polling, which can overshoot.
-A job requiring hard limits refuses a merely supervised profile. CPU head inference
-needs no GPU; this intentionally reduces the first isolation surface. No GPU memory
-quota is claimed from a host process-memory limit.
+A job requiring hard limits refuses a merely supervised profile. ModernBERT's CPU/GPU
+choice is unresolved; the earlier small-head CPU assumption is superseded. No GPU
+memory quota is claimed from a host process-memory limit. 009/013 must declare their
+combined resident memory and supported overlap, not only per-request allocation limits.
 
 ## When libkrun belongs
 
@@ -162,8 +163,9 @@ The release owns guest patching, license inventory, image verification and clean
 Virtualized GPU support does not establish MLX compatibility. The selected MLX artifact
 requires its actual supported runtime/loader; never assume it runs in a Linux guest.
 009 D001 must demonstrate its chosen native/VM access and execution profile separately.
-An unavailable embedding profile leaves lexical retrieval working and learned routing
-off; it does not cause a silent switch to another model or unrestricted helper.
+An unavailable embedding profile leaves lexical retrieval working; availability of
+the separate ModernBERT policy follows its own inputs/configuration/profile. Neither
+failure causes a silent switch to another model or unrestricted helper.
 
 ## Lifecycle and installation
 

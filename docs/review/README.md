@@ -1,5 +1,8 @@
 # Design lessons
 
+The current [team handoff simulation](handoff-simulation.md) records concrete stops
+before implementation, their owners and the scope that can proceed independently.
+
 The design was informed by a private predecessor architecture review and direct
 inspection of Laya. Private specifications and detailed operational evidence are
 not part of this source distribution. These are design choices, not claims that
