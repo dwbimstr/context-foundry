@@ -22,7 +22,7 @@ work. A narrower first release does not redefine the intended product as basic s
 | [005](005-graph-evidence-lifecycle/spec.md) | Follow real code relationships in a large workspace | 001; 003 for agent demonstration | One language and real semantic producer, bounded ingest and delivery |
 | [008](008-scoped-durable-memory/spec.md) | Remember, correct and forget explicit project knowledge | 001 | Independent extension; no transcript harvesting |
 | [009](009-optional-semantic-retrieval/spec.md) | Prepare neural context progressively and retain expensive work | 001; 003 for foreground coexistence | Nemotron 3 Embed 1B, local MLX 4-bit profile; useful partial coverage, warm restart and delta updates |
-| [013](013-owned-learning/spec.md) | Improve retrieval choices through repeated owned Rust fine-tuning | 001/003 for data; 009 for features; 005 for useful graph selection | Optional isolated head training/inference, explicit selection and packaged lifecycle |
+| [013](013-owned-learning/spec.md) | Improve decisions through repeated owned Rust fine-tuning of ModernBERT with a decision head | 001/003 for data; 005 for useful graph selection; separate from 009 retrieval vectors | Optional isolated learning/inference, explicit selection and packaged lifecycle; model contract requires correction |
 
 Do not wait for all six to release. The first CLI release requires 001 and the
 ordinary [release checklist](../docs/release.md). The agent release adds 003. A
@@ -48,9 +48,10 @@ remains active while normal inference can stay disabled without proven task bene
 | 005 | T001 real SCIP; T002 scoped publication; T003 large-workspace workflow | Real producer/snapshot; predeclared corpus, hardware and numeric run limits |
 | 008 | T001 record lifecycle; T002 export/forget | Accepted 001 owner/schema contract; 003 only for advertised MCP surface |
 | 009 | D001 runtime/index disposition; T001 durable preparation; T002 retrieval; T003 progressive preparation | Model selected; pinned artifact/runtime, Rust bridge, verified isolation and numeric execution bounds |
-| 013 | D001 Rust library/jail proof; T001 data/features; T002 owned training; T003 private inference; T004 repeat/deploy | Permitted data and 009 features; compatible Rust library and one packaged platform profile |
+| 013 | D001 ModernBERT/head contract and library/jail proof; T001–T004 vector-head details superseded pending replacement | Preserve ModernBERT plus decision-head target; pin adaptation scope, model/input contract, correct gradients and one packaged profile |
 
-Nineteen implementation tasks and three decision tasks are specified; 001 D001 is
+Nineteen implementation task entries and three decision tasks are recorded; 013's four
+task entries are superseded and require replacement before implementation. 001 D001 is
 resolved. 009 D001 and 013 D001 need actual library/runtime and isolation evidence. A missing runtime
 input causes the named prerequisite failure in its spec; it is not an implementer's
 invitation to guess or a passed acceptance criterion. [Current review/evidence](../docs/planning-validation.md)

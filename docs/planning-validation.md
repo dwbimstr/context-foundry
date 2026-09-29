@@ -1,5 +1,39 @@
 # Spec and task audit
 
+## ModernBERT review — current scope correction
+
+2026-09-29. Read Laya's actual joint-input/typed-head implementation, checkpoint
+loader and source cells of the fine-tuning notebook at local revision
+`4066d5d5fbf08b66c6757ddeedbd797bd7655bc0`. The notebook assigns nonzero learning
+rates to encoder and head and backpropagates through both; the earlier small fixed
+query-vector head is not an equivalent capability. Details and primary links are
+in [learning](learning.md#modernbert-and-the-cost-of-matching-laya--2026-09-29).
+
+Inspected Candle ModernBERT→RoPE→custom-op code at
+`5ba5d5b468b5b1df40e82dd3d556987bedeea041`: the Q/K rotary path drops the backward
+graph. Inspected Burn's official model catalog and tch's LibTorch/autograd/import
+surface. These establish integration options and a concrete training-path gap,
+not local gradient correctness, speed, backend/MSRV compatibility or model quality.
+
+The owner clarified ModernBERT **with a decision head** as the target. 013 D001 now
+pins trainable parameters and the model/head contract before library selection;
+v3 and its four implementation task entries are superseded, retained for review only.
+D001 must replace affected clauses before implementation; this is not a build-ready
+ModernBERT plan or permission to substitute the earlier query-vector classifier.
+Preserved Rust ownership, Nemotron retrieval, consent, deterministic hard budgets,
+independent source/gateway releases and the existing task slots without new stages.
+
+This was source/documentation review only: no Laya/notebook execution, model download,
+dependency installation, training, service operation or provider request. Production
+code and Cargo dependencies are unchanged. Eight preceding planning files were
+archived locally with hashes; no archive is public. The following older entries
+retain their original scope and do not establish ModernBERT support.
+
+Documentation checks pass for 15 specs and 265 relative links plus seven anchor links;
+`git diff --check` passes. The 19 counted task entries include four superseded 013
+entries, so this count does not establish implementation readiness. All 13 checked
+source/build/license files remain unchanged. No Rust build or model test was run.
+
 ## Current amendment — owned Rust learning, bootstrap and economics
 
 2026-09-29. The owner's latest answers select all first-party implementation in Rust

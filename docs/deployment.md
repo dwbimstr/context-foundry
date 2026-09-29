@@ -87,10 +87,19 @@ cannot be advertised as an isolated production worker.
 
 | Worker | Granted inputs | Writes / denied access |
 | --- | --- | --- |
-| Policy inference | Exact checkpoint read-only, one query feature vector via private IPC | Bounded reply; no repository, home, live store, credentials, network or child execution |
-| Policy training | Frozen feature/label/group files and exact base checkpoint read-only | New private output/scratch; no source bodies, live store, home or network |
+| Policy inference | Pinned ModernBERT/tokenizer/head assets read-only, bounded admitted state/question/options via private IPC | Bounded reply; no repository traversal, home, live store, credentials, network or child execution |
+| Policy training | Frozen permitted input/label/group files and exact base assets read-only | New private output/scratch; no ambient source access, live store, home or network |
 | Embedding | Pinned model/tokenizer/loader assets and explicit input batch | Private scratch and bounded vectors; no ambient root discovery, store writes or downloads |
 | Explicit compiler production | Immutable admitted source/config snapshot and pinned toolchain/dependencies | Private build/artifact scratch; no live workspace mutation or network; build scripts/proc macros execute only within this separately authorized profile |
+
+The policy rows describe the clarified ModernBERT plus decision-head target, not a
+verified packaged profile. Exact tokenized joint inputs, checkpoint sizes, native ML
+dependencies and numerical resource limits remain 013 D001 work. The superseded
+vector-only protocol and CPU limits cannot be reused as acceptance for this model.
+013 D001 must specify and verify those grants/bounds before advertising the capability.
+GPU access requires its own actual profile; libkrun does not establish GPU training
+compatibility. The source and gateway owners still grant no credentials or live-store
+access to model workers.
 
 The optional gateway has a different, narrow trusted boundary: explicitly granted
 provider credentials and HTTPS to its single configured origin, private run files,

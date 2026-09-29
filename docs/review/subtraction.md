@@ -1,5 +1,37 @@
 # Subtraction review
 
+## ModernBERT follow-up — capability is not library support
+
+Owner clarification: the target is ModernBERT with a decision head. The earlier
+vector-only head and its v3 contract/task details are superseded, not a smaller
+implementation of the same behavior. D001 must replace those clauses before code.
+The options below assess implementation/adaptation modes within the clarified target.
+
+2026-09-29. Scope: current 013/v3 design against Laya revision
+`4066d5d5fbf08b66c6757ddeedbd797bd7655bc0`, its typed-decision training notebook,
+and primary Candle/Burn/tch source. This is a focused in-session review, not a new
+whole-portfolio audit, model benchmark or independently validated backend selection.
+The [learning assessment](../learning.md#modernbert-and-the-cost-of-matching-laya--2026-09-29)
+records pinned source links and the alternatives.
+
+| Strength | Concrete suffering and evidence | Disposition / correction | Proof limit |
+| --- | --- | --- | --- |
+| Strong | A maintainer implements the precise 131k-parameter head and considers the owned Laya-like capability delivered. Laya `build_sequence`/`DecisionModel` instead jointly encode state, question and variable candidate descriptions | Supersede the vector-head contract; D001 pins the clarified ModernBERT plus decision-head recipe and trainable parameters before backend choice | A simple head might suffice for fixed search/graph labels but does not meet the clarified architecture |
+| Strong | A developer loads Candle ModernBERT, sees changing weights/lower loss, and calls encoder fine-tuning correct. The inspected Q/K RoPE path uses `apply_op3_no_bwd`, whose result has no backprop operation | Require reference-gradient checks on intended encoder paths; do not treat a forward implementation or one changed tensor as training support | Static code proof of a graph break, not an executed training failure; a differentiable alternative exists but the full training path is unverified |
+| Strong | A platform plan inherits CPU-head startup/time limits and query-feature cache reuse for a full typed transformer | Scope the old limits/IPC to v3. A selected transformer requires joint-input identity, explicit encoder cost, tensor bounds and a verified package/jail profile | No added model, download, runtime, feature cache or gateway coupling is selected by this review |
+| Worth exploring | A pure Rust framework port becomes a new ML-maintenance project before the product needs it | Investigate Rust over maintained LibTorch if encoder updates are required; test a frozen encoder/typed head first when that satisfies the task | Third-party native packaging remains real work; `tch` does not automatically instantiate ModernBERT or supply Laya's head |
+
+The notebook updates encoder and head, so describing the actual reference recipe as
+head-only would be wrong. Preserving the useful outcome does not require copying its
+DDP, noisy-gradient objective, multilingual router or every integration. Nor does a
+generic model loader recreate the checkpoint's pretrained decision capability.
+The all-first-party-Rust requirement remains; third-party native libraries are a
+separate dependency choice. No backend is installed or selected solely from this review.
+
+Updated the existing 013 D001, v3 scope, architecture/deployment, roadmap and portfolio.
+No new spec number or implementation task was added. Source, weights and external
+repositories remain unchanged; planned gradient/parity checks have not run.
+
 ## Current amendment — ownership through deployment, 2026-09-29
 
 The owner explicitly selected all first-party code in Rust, a Foundry-owned learning

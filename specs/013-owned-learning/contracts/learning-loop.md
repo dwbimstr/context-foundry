@@ -1,9 +1,14 @@
 # Owned learning contract v3
 
-Status: Proposed, 2026-09-29; owned by [013](../spec.md). This replaces the Laya v2
+Status: Superseded proposal, 2026-09-29; owned by [013](../spec.md). This replaced the Laya v2
 handoff. The legacy `eval.public.jsonl` is retained only as a historical Laya format
 fixture, not an input or acceptance fixture for this model. No Laya module, tokenizer,
 server, model or training notebook is required by the new contract.
+Scope: this was the fixed search/graph head contract only. The owner clarified
+ModernBERT with a decision head; this vector-only design does not satisfy that target.
+Retained for review only. 013 D001 must replace the affected contract before
+implementation, not pad transformer inputs into 2048 dimensions or graft hidden
+tokenizer/raw-input fields into this vector-only protocol.
 
 ## Roles and exact first model
 

@@ -355,24 +355,29 @@ changes which other features' durable records survive.
 ## Owned learning and isolation
 
 The 2026-09-29 owner correction replaces the external Laya plan with a Foundry-owned
-Rust policy model/trainer/worker. Laya remains a research reference. The proposed
-head consumes the 2048-dimensional query vector already available from semantic
-retrieval, applies a 2048→64→2 network and returns a calibrated graph/search choice.
-The encoder stays frozen; repeated fitting updates owned head parameters. This avoids
-another foundation-model runtime and query-encoding step. Quality remains unproven.
+Rust policy model/trainer/worker. Laya remains a research reference. The owner further
+clarified ModernBERT with a decision head over joint state/question/candidate inputs.
+The earlier 2048→64→2 classifier on Nemotron vectors is superseded. Nemotron remains
+the retrieval encoder; ModernBERT adds separate model preparation and inference cost.
+The [ModernBERT review](learning.md#modernbert-and-the-cost-of-matching-laya--2026-09-29)
+records the integration gap. D001 must pin the exact model/head and whether adaptation
+updates only the head or also ModernBERT. Rust forward support does not prove correct
+training gradients; neither mode has been run here.
 
 Grouped permitted examples and reusable features feed an isolated offline training
 worker. Calibration/evaluation are held out. New rows in existing training groups are
 new work; invalidated base contributions refuse before a no-op decision. Immutable
 artifacts support explicit selection/restart and rollback. Normal inference stays off
 until checked tasks justify the extra work. Hard token/permission rules stay outside
-the learned model. The [owned contract](../specs/013-owned-learning/contracts/learning-loop.md)
-defines the exact initial head, data, fitting, limits and private pipe protocol.
+the learned model. The [prior v3 contract](../specs/013-owned-learning/contracts/learning-loop.md)
+is retained as a superseded proposal. D001 must replace its vector-only input, cache,
+model, fitting, limits and pipe protocol before implementation.
 
 Core and worker are separate processes with one store owner; only the core writes
 source state. One crate can build a default core and feature-gated worker executable.
-A small Rust CPU model makes the initial jail independent of GPU access. Burn is the
-candidate library to pin/verify under 013 D001; no custom tensor/autodiff engine.
+ModernBERT runtime/library and CPU/GPU access require a verified profile under 013
+D001; the former small-head CPU assumptions do not apply. Investigate maintained
+Rust ML bindings before writing model integration; no custom tensor/autodiff engine.
 No Laya/Python first-party trainer or public inference server is selected.
 
 [Deployment](deployment.md) owns enforced filesystem/network/process grants, resource

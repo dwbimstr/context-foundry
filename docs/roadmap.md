@@ -25,8 +25,12 @@ does not depend on policy training or generated summaries. Baseline release rema
 independent, but semantic-enabled adoption requires cold/partial/warm/edit/restart proof.
 Use one embedding profile and deterministic candidate ordering first. A learned
 reranker is not selected; 009 names the ordering failure needed to revisit it.
-The owned policy reuses 009 query features; its small CPU head keeps the encoder frozen.
-013 D001 pins one Rust training library and proves one packaged jail profile. Learning
+The owned policy target is ModernBERT with a decision head, separate from 009 retrieval.
+013 D001 pins head-only versus head-plus-encoder adaptation and replaces the superseded
+vector-head contract/tasks, then verifies one Rust backend's gradients and packaged jail profile. The
+[ModernBERT review](learning.md#modernbert-and-the-cost-of-matching-laya--2026-09-29)
+records the capability gap; the small head cannot silently stand in for all of Laya.
+Learning
 can remain disabled in normal retrieval without demonstrated workflow benefit. Laya
 is a research reference only. The [deployment contract](deployment.md) follows each
 advertised feature through installation, shutdown, upgrade, rollback and uninstall;
