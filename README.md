@@ -2,8 +2,9 @@
 
 A local context engine for coding agents, written in Rust. It combines source
 search, imported code relationships, and cited context under an explicit token
-budget. [Laya](https://github.com/NandhaKishorM/laya) is an optional local decision
-and fine-tuning runtime; ordinary retrieval requires no model or GPU.
+budget. The revised plan includes Foundry-owned Rust learning in isolated workers,
+explicit repository bootstrap, adapter budgets and optional request forwarding/metering. Ordinary retrieval
+requires no model or GPU. Laya is a research reference, not the target runtime.
 
 **Status: working first slice, not a production replacement.** Large-codebase
 performance, agent task improvement, and dollar savings have not been established.
@@ -38,15 +39,14 @@ To install the executable locally: `cargo install --path . --locked`.
   declared `o200k_base` tokenizer. The budget covers **context stdout**, including
   its metadata. It does not cover a host's added envelope, stderr or another model's
   tokenizer, and is not a dollar-savings measurement.
-- Optional Laya HTTP strategy selection, bounded to two seconds, with a named
-  deterministic fallback. Explicitly labeled, opted-in feedback exports for training.
+- Legacy prototype Laya HTTP strategy selection, bounded to two seconds, with a named
+  deterministic fallback. This remains implemented but is superseded by the owned
+  learning plan; current feedback exports do not constitute a working trainer.
 
 ```sh
 foundry --store /tmp/foundry-demo import-graph examples/graph.json
 foundry --store /tmp/foundry-demo graph src/main.rs --depth 1
 foundry --store /tmp/foundry-demo context 'who calls parse_record' --tokens 1024
-# With a separately managed local Laya server:
-foundry --store /tmp/foundry-demo context 'who calls parse_record' --laya-port 8000
 ```
 
 ## Current limits
@@ -70,8 +70,14 @@ first-slice limits, not evidence of million-file scale.
 
 ## Design and development
 
+- [Product direction and workflow specs](specs/README.md)
+- [Modified Spec Kit workflow and commands](.specify/README.md)
+- [Subtraction review and removed complexity](docs/review/subtraction.md)
+- [Extraction strategy](docs/extraction-plan.md) and [all 71 predecessor dispositions](docs/extraction-map.md)
 - [Architecture and alternatives](docs/architecture.md)
-- [Laya integration and continuous-learning contract](docs/laya.md)
+- [Owned learning and continuous fine-tuning](docs/learning.md)
+- [Bootstrap, isolation and deployment](docs/deployment.md)
+- [Adapter token economics](specs/003-agent-retrieval-context/contracts/adapter-economics.md)
 - [Graph bundle format](docs/graph.md)
 - [Release scope and next steps](docs/roadmap.md)
 - [Design lessons](docs/review/README.md)
@@ -88,5 +94,5 @@ cargo test --locked
 
 The software is [MIT licensed](LICENSE). Dependencies retain their own licenses.
 No predecessor runtime, private specifications, session transcripts, datasets or
-model weights are included. Laya's code license and each model/dataset's terms
+model weights are included. Third-party library/runtime and each model/dataset's terms
 are independent of this repository's license.

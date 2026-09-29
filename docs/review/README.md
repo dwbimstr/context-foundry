@@ -17,7 +17,8 @@ the new implementation has already proved superior outcomes.
 
 Two storage shapes were considered: a single SQLite database with FTS and adjacency,
 and a Rust transactional store plus a derived Rust search index. The latter was
-selected for the Rust direction with its consistency cost stated explicitly in
+implemented for the Rust direction and retained by 001 D001 after comparison,
+with bounded recovery and the tradeoff stated in
 the [architecture](../architecture.md). No microservice or database-framework
 abstraction was added to make either alternative appear interchangeable.
 
@@ -32,3 +33,9 @@ session. This is therefore a single-session review, not independent approval.
 All source-level conclusions remain separate from runtime measurements. The
 first-slice tests do not establish large-codebase performance, graph precision,
 live Laya behavior, trained-model improvement, or provider-cost savings.
+
+The [subtraction review](subtraction.md) supersedes the fifteen-bundle portfolio and
+its readiness framing. The all-spec crosswalk remains historical, not a feature mandate.
+The 2026-09-29 amendment supersedes external Laya integration with owned Rust learning,
+verified worker isolation, explicit bootstrap and both delivery/gateway economics.
+Those are proposed contracts; the legacy prototype remains unchanged.

@@ -1,28 +1,37 @@
-# Working on Context Foundry
+# AGENTS.md — Context Foundry
 
-Build a local context engine for coding agents. Keep the implementation in Rust.
-Laya is an optional external local decision/training runtime, not a dependency of
-basic indexing or retrieval. Do not copy either predecessor repository's runtime.
+Build useful context for coding agents in Rust: source, graph, explicit memory and
+bounded delivery. Learning is an owned Rust subsystem in isolated workers; Laya is a
+read-only research reference, not a runtime dependency. The repo is MIT.
 
-- Start with the user story and the current code. One owner for each durable fact.
-- Use maintained libraries for storage and search. Do not build a WAL, allocator,
-  database engine, query language, or orchestration framework here.
-- Keep the common flow easy to follow. Introduce a boundary for a real external
-  protocol or responsibility, not a hypothetical replacement.
-- Cite source paths, spans, hashes, and semantic producer identity. Inferred edges
-  must never masquerade as compiler-resolved relationships.
-- Bound work and output. Report omissions, stale evidence, and partial results.
-- Indexing and retrieval must remain useful without a model or GPU.
-- Training data and weights stay local and out of Git. Explicitly authorized data
-  collection does not authorize publication. Never run a repository's own scripts
-  merely because it is being indexed.
-- Run focused tests for changes; run the complete Rust checks for a release.
-  Reuse results when their inputs have not changed. A performance experiment must
-  name the decision it will change and have a time limit.
-- A release can have documented limits. Research, a new model, or an optional
-  optimization cannot silently become a prerequisite for an existing feature.
-- Distinguish compiled, tested, exercised with a real provider, and proven at scale.
-  Token counts alone do not establish savings or task success.
-- Preserve unrelated work. One writer per working tree.
+Read the [constitution](.specify/memory/constitution.md), [current portfolio](specs/README.md)
+and selected spec. User instructions take precedence. Respect implemented/proposed
+boundaries and existing authorization; do not ask again for already selected work.
 
-See `docs/architecture.md` for the design and `docs/review/` for evidence and coverage.
+- Apply the constitution's KISS principle: preserve sophisticated outcomes while
+  reducing what maintainers and operators must coordinate. Do not weaken acceptance
+  or quietly abandon a product goal to make the implementation look simpler.
+- Keep one crate and ordinary modules. Challenge each new worker, protocol, table or
+  required document against the actual user need and a simpler alternative. No custom
+  database, generic orchestration platform or inherited C++ obligations.
+- Use the [modified Spec Kit tools](.specify/README.md) as needed. One spec is sufficient;
+  plan/tasks files and command stages are optional. No benchmark per feature by default.
+- Preserve source identity, freshness, provenance, bounded output and user data. Never
+  run workspace code merely to index it. Training is outside source transactions and
+  baseline release dependencies. Training consent differs from retrieval consent.
+- Keep private corpora, transcripts, datasets, credentials and weights out of Git.
+  Neither regex filtering nor an MIT code license establishes data/model rights.
+- Preserve unrelated work. One writer per tree. Do not touch predecessor/Laya services,
+  stores, host configuration or repositories without task-specific authority.
+- Verify at the claimed boundary: focused tests for behavior, real consumers for
+  integration, provider usage for cost. No source or histogram inference presented as
+  runtime causal proof. Do not label an in-session review independent.
+- Release working selected scope using [the checklist](docs/release.md). Deferred
+  specs and optional learning cannot become new release gates. Publication is separate.
+- Bootstrap, worker isolation and upgrades follow [deployment](docs/deployment.md).
+  Distinguish MCP delivery budgets from host-request control; do not claim full token
+  economics without actual adapter visibility. Never label an ordinary subprocess a jail.
+
+See [architecture](docs/architecture.md), [subtraction review](docs/review/subtraction.md)
+and [current validation](docs/validation.md). Repairs update the existing contract;
+they do not automatically create another numbered spec.
