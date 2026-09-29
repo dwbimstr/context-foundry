@@ -1,6 +1,24 @@
 # Spec and task audit
 
-## Executed feasibility — current disposition
+## Decision-ecosystem traceability — current documentation pass
+
+2026-09-29. Added [the source-to-contract map](references/laya-decision-ecosystem.md):
+Laya source commit, checkpoint revision, numerical-library versions/commits, functions,
+regression tests, notebook cell/hash references, retained/adapted/deferred behavior,
+existing proof and proposed Rust owners. All mapped Laya source was inspected at its
+clean pinned checkout; notebook JSON was read, not executed. Checked the published
+`common.py` bytes against that checkout and resolved the reference Transformers tag.
+
+Made v4 answer-probability/abstention/tie semantics explicit, removed ambiguous private
+reply confidence, specified calibration-override rejection and per-case evaluation
+diagnostics, and attached source rows to T001–T004. Retained broader typed decisions
+as explicit extension targets without claiming that the first choice family implements
+them. Corrected stale roadmap/architecture statements about the completed scratch probes.
+These are documentation/contracts/reference changes; no product/probe code, model runs,
+upstream tests or services changed. Structural/link checks are recorded with the commit;
+they do not establish learning or deployment acceptance.
+
+## Executed feasibility — preceding runtime pass
 
 2026-09-29. Owner authorized bounded sandboxed probes and direct main publication.
 [The feasibility report](review/feasibility.md) records real Rust/MLX execution,

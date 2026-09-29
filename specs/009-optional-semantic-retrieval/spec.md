@@ -98,7 +98,7 @@ cannot be confined as required, semantic execution remains unavailable pending a
 specific supported profile. Baseline source retrieval remains usable. This does not
 authorize switching the selected model, downloading weights or installing a runtime.
 
-The inspected [loader](https://huggingface.co/mlx-community/Nemotron-3-Embed-1B-BF16-4bit/blob/main/nemotron3_embed_mlx.py)
+The inspected [loader](https://huggingface.co/mlx-community/Nemotron-3-Embed-1B-BF16-4bit/blob/d0408b94c50fc327b6ea37dce7409c51e020a4d8/nemotron3_embed_mlx.py)
 defaults to 4096 input tokens and silently truncates. The adapter must tokenize with
 the exact prefix/special-token recipe and split documents or refuse oversized queries
 before encoding. Treat 4096 as the loader's bootstrap setting, not Foundry's permanent

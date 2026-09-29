@@ -5,6 +5,9 @@ Git history retains it. Owned by [013](../spec.md). This is ModernBERT with a de
 head. Nemotron embeddings, Laya services and the historical `eval.public.jsonl` are
 not inputs. [Feasibility evidence](../../../docs/review/feasibility.md) distinguishes
 working probes from outstanding implementation and package acceptance.
+The [source-to-contract map](../../../docs/references/laya-decision-ecosystem.md)
+pins upstream modules/tests and intentional differences. This contract is the first
+search/graph consumer of the decision ecosystem, not a claim of full Laya parity.
 
 ## One model and one decision
 
@@ -157,9 +160,25 @@ unavailable until the complete installed profile passes its acceptance.
 These are requested resource ceilings, not proven hardware capacity.
 
 Fit one scalar temperature on calibration rows only by deterministic grid search over
-0.5..3.0 inclusive in 0.05 steps, selecting lowest mean negative log likelihood;
+`T = k/20` for integer k=10..60 (0.5..3.0 inclusive), selecting lowest mean negative
+log likelihood calculated from stable log-softmax, not rounded/underflowed probabilities;
 ties select lower temperature. Nonfinite/empty calibration refuses. Evaluate raw logits
 and calibrated probabilities, never alter model weights on held-out data.
+Use the fitted scalar from the candidate manifest; reject any identity mismatch.
+It is the only calibration authority for this family; no upstream type/bucket/language overrides.
+Publish it with the candidate and verify the same probabilities after export/reload.
+Changing the fitted scalar invalidates the evaluation report/config identity.
+
+For finite logits `z_i` and fitted positive temperature `T`, compute stable softmax:
+`p_i = exp((z_i - max(z))/T) / sum_j exp((z_j - max(z))/T)`. Select the maximum-probability
+stable option ID; exact ties select lexicographically smallest UTF-8 option ID.
+`answer_confidence = max(p)`; accept exactly when unrounded `answer_confidence >= threshold`.
+Below threshold, the core uses deterministic routing with reason `policy_abstained`.
+No normalized-entropy value, `act_head` probability, rounded display value or model
+suggestion substitutes for this rule. At `[0.8,0.2]` and threshold 0.8, accept; at
+`[0.79999,0.20001]`, abstain. Temperature fitting does not itself prove calibration
+on a new task distribution; evaluation establishes its measured behavior.
+
 Selection policy predeclares threshold, coverage floor, accepted-accuracy floor,
 maximum macro-accuracy drop and critical group slices; fractions finite [0,1]. Defaults
 for the initial trial: 0.8, 0.5, 0.9 and 0 respectively. Compare deterministic routing,
@@ -171,6 +190,15 @@ accuracy is correct/accepted (zero accepted fails). Fallback-inclusive accuracy 
 deterministic routing on abstention/failure. Eligibility requires declared floors,
 critical slices and no excess macro drop against either comparator. Report counts and
 paired group differences. Eligibility permits a trial, not an improvement claim.
+The evaluation report retains per-case example/group ID, expected option, both logits
+and calibrated probabilities, selected option, answer confidence and accepted/fallback
+outcome, without duplicating raw state. Abstention/error rows never vanish from counts;
+ordinary unavailable-model rows use deterministic routing in fallback-inclusive
+accuracy and count as uncovered. Nonfinite/malformed model output or artifact failure
+invalidates candidate eligibility. Report mean negative log likelihood and 15-bin ECE
+as diagnostics on valid predictions (first bin [0,1/15], then (lo,hi]); give denominators
+and error counts. These diagnostics do not add a separate slow release gate.
+
 Normal policy stays off until checked agent tasks justify added latency and total cost;
 count preparation/training, context bytes/tokens and actual provider usage separately.
 Do not claim money savings when usage/pricing is unknown.
@@ -199,9 +227,15 @@ or disables learning. Preserve source, memory, graph, feedback and semantic cach
 Private inherited pipes; little-endian u32 length followed by strict JSON, maximum
 64 KiB checked before allocation. Request `{v:2,request_id,candidate_sha256,
 model_function_sha256,family,state,option_ids}`; reply `{v:2,request_id,
-candidate_sha256,model_function_sha256,input_sha256,choice,confidence}`. Choice is a
-stable option ID; confidence finite [0,1]. IDs <=128 bytes, digests lowercase 64 hex;
-reject unknown/null/duplicate fields. No arbitrary commands, paths or token-budget grants.
+candidate_sha256,model_function_sha256,input_sha256,choice,probabilities,answer_confidence}`.
+`probabilities` has exactly `search` and `graph` keys, both finite in [0,1], sum within
+1e-6 of 1. Choice must match the maximum/tie rule above; answer confidence must match
+that probability within 1e-6. The core validates the reply and compares the unrounded
+maximum of the supplied probability vector to its threshold (not the separately
+reported confidence field); the worker cannot declare an action authorized.
+IDs <=128 bytes, digests lowercase 64 hex; reject unknown/null/duplicate fields, including the ambiguous legacy
+`confidence` field. No arbitrary commands, paths or token-budget grants. This refines
+the still-unimplemented v4/IPC-v2 proposal; no deployed reader migration is implied.
 
 One active prediction, zero waiting. Load ceiling 30 seconds outside requests;
 prediction ceiling min(2000 ms, remaining 003 deadline). These are supervised failure

@@ -26,12 +26,13 @@ independent, but semantic-enabled adoption requires cold/partial/warm/edit/resta
 Use one embedding profile and deterministic candidate ordering first. A learned
 reranker is not selected; 009 names the ordering failure needed to revisit it.
 The owned policy target is ModernBERT with a decision head, separate from 009 retrieval.
-013 D001 pins head-only versus head-plus-encoder adaptation and replaces the superseded
-vector-head contract/tasks, then verifies one Rust backend's gradients and packaged jail profile. The
-[ModernBERT review](learning.md#modernbert-and-the-cost-of-matching-laya--2026-09-29)
-records the capability gap; the small head cannot silently stand in for all of Laya.
-Learning
-can remain disabled in normal retrieval without demonstrated workflow benefit. Laya
+013 v4 now pins initial frozen-encoder/head adaptation and the Rust tch/LibTorch path;
+broader encoder adaptation and typed decisions retain their explicit acceptance.
+The [source-to-contract map](references/laya-decision-ecosystem.md) preserves the
+decision ecosystem beyond the first search/graph consumer. [Feasibility](review/feasibility.md)
+proves selected model/gradient boundaries; complete recipe and installed-profile
+acceptance remain open. Learning can remain disabled in normal retrieval without
+demonstrated workflow benefit. Laya
 is a research reference only. The [deployment contract](deployment.md) follows each
 advertised feature through installation, shutdown, upgrade, rollback and uninstall;
 libkrun is conditional infrastructure, not a baseline release dependency.

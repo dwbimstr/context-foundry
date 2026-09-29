@@ -4,6 +4,12 @@ Status: Proposed, 2026-09-29. [013](../specs/013-owned-learning/spec.md) owns th
 design and acceptance. The implementation is still the original Rust prototype;
 it does not yet train or launch isolated model workers.
 
+The [decision-ecosystem source map](references/laya-decision-ecosystem.md) is the
+review entry point: immutable repository/model revisions, upstream functions/tests,
+notebook cells, retained/adapted/deferred behavior, planned Rust owners and existing
+probe evidence. Search/graph is the first consumer of this ecosystem. It does not
+claim complete Laya feature/training parity or discard broader typed-decision targets.
+
 Foundry owns its policy model, Rust trainer, feature/data contract, worker protocol,
 calibration, checkpoint loading, deployment and rollback. Laya supplied a useful
 reference for small typed decisions with abstention. It is not the product runtime,
@@ -83,7 +89,7 @@ No notebook, repository code, weights or training job was executed.
   fixed output indices. [Reference model code](https://github.com/NandhaKishorM/laya/blob/4066d5d5fbf08b66c6757ddeedbd797bd7655bc0/laya/common.py#L94-L216)
 - Its published typed-decisions configuration identifies ModernBERT-large and a
   1024-token sequence. That is a different workload from a pooled Nemotron vector.
-  [Checkpoint configuration](https://huggingface.co/convaiinnovations/laya-typed-decisions/blob/main/rl_agent_config.json)
+  [Checkpoint configuration](https://huggingface.co/convaiinnovations/laya-typed-decisions/blob/1a793eb568e6718f15941d08f85432581df534e3/rl_agent_config.json)
 - Notebook source cell 8 puts encoder and head parameters in separate AdamW groups,
   with nonzero learning rates for both, and backpropagates through the model. It uses
   noisy-logit policy-gradient plus soft cross-entropy, accumulation, mixed precision

@@ -26,6 +26,11 @@ boundaries and existing authorization; do not ask again for already selected wor
 - Verify at the claimed boundary: focused tests for behavior, real consumers for
   integration, provider usage for cost. No source or histogram inference presented as
   runtime causal proof. Do not label an in-session review independent.
+- When upstream code informs a design or review, retain its commit/release, module/
+  symbol and relevant test, the owning Foundry requirement/task and intentional
+  differences. Link actual landed Rust code when available; mark proposed paths and
+  unexecuted evidence. Use the [decision-ecosystem map](docs/references/laya-decision-ecosystem.md)
+  for learning reviews. Keep references with their existing owner, without a new stage.
 - Release working selected scope using [the checklist](docs/release.md). Deferred
   specs and optional learning cannot become new release gates. Publication is separate.
 - Bootstrap, worker isolation and upgrades follow [deployment](docs/deployment.md).

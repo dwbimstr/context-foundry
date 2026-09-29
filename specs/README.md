@@ -44,6 +44,9 @@ The normal retrieval plan uses deterministic candidate ordering. A learned reran
 is not selected; 009 names the concrete ordering failure needed to revisit it. The owned
 policy learns optional graph expansion, not passage relevance. Its repeated-training workflow
 remains active while normal inference can stay disabled without proven task benefit.
+The [decision-ecosystem map](../docs/references/laya-decision-ecosystem.md) preserves
+the broader typed-input/learning/calibration/deployment scope and review references;
+the first search/graph family is not a claim of full Laya parity.
 
 ## Task detail and remaining execution inputs
 

@@ -33,6 +33,27 @@ Dependencies: 001 for source/schema ownership; 003 for MCP feedback and bounded 
 005 for graph usefulness. Neither tokenized learning inputs nor policy inference depend
 on 009 query vectors. Explicit strategies and unavailable graph bypass policy.
 
+## Decision ecosystem and review traceability
+
+The required ecosystem includes typed joint inputs, pretrained decision behavior,
+answer probabilities/abstention, externally checked feedback, repeatable adaptation,
+calibration/evaluation, immutable artifacts, explicit selection and rollback. Passing
+one tensor-head fixture does not complete this workflow. Search/graph is its first
+bounded consumer; it does not redefine all typed decisions as a fixed binary classifier.
+Variable-choice, boolean (`noul`) and ordinal-score decisions remain extension targets.
+Before enabling another family, name its actual Foundry consumer, exact input/output
+semantics, external gold labels, calibration identity and focused acceptance here.
+Use the same data/model/worker lifecycle; no extra service or generic model framework.
+
+The [source-to-contract map](../../docs/references/laya-decision-ecosystem.md) links
+immutable upstream modules, functions, regression tests and notebook cells to the
+following tasks and existing/proposed Foundry modules. L04/L08 explicitly distinguish
+our first fitting recipe from Laya's encoder-plus-head/noisy-logit objective; L05
+defines the answer-probability semantics to preserve; L09–L12 state deliberate limits.
+Review a touched behavior against its source row, contract and actual Rust acceptance.
+When production code lands, attach its real symbol/test to that row; do not present
+planned paths, upstream tests or scratch probes as implemented product behavior.
+
 ## D001 — Concrete path and remaining feasibility
 
 Select `tch` 0.24.0 / LibTorch 2.11.0, CPU float32 and the pinned pretrained
@@ -65,7 +86,9 @@ core. No new numbered spec, job platform, model registry or whole-product releas
 ### T001 — Prepare exact permitted ModernBERT examples
 
 - **Depends:** 001 schema/feedback ownership and v4 input contract. **Scope:**
-  `src/learning.rs`, operator feedback/prepare/check commands, `tests/learning_data.rs`.
+  `src/learning.rs`, operator feedback/prepare/check commands, `tests/learning_data.rs`;
+  shared rendering/tokenization in proposed `src/decision_model.rs` (no weight load).
+  Review references: L01/L03/L08 and the module map linked above.
 - **Outcome (FR-001/FR-002, SC-001):** immutable schema-4 grouped/tokenized dataset;
   same renderer at train and predict; no model load merely to freeze/tokenize data.
 - **Verification:** exact IDs/markers against pinned reference; 1024 and 1025 tokens;
@@ -82,6 +105,8 @@ core. No new numbered spec, job platform, model registry or whole-product releas
 - **Depends:** T001; D001 model mapping and demonstrated package rights/resources.
   **Scope:** feature-gated Rust worker, ordinary model/supervisor modules and
   `tests/learning_worker.rs`; no Laya service, training notebook or first-party Python.
+  `src/decision_model.rs` owns numerical model/parameter operations; `src/learning.rs`
+  owns fitting/calibration/evaluation/artifact workflow. Review references: L02–L08/L12.
 - **Outcome (FR-002/FR-003/FR-004, SC-002):** real AdamW head adaptation, separate
   calibration/evaluation, immutable readable candidate and complete contribution lineage.
 - **Verification:** float32 reference logits and gradients (atol 1e-5, rtol 1e-4),
@@ -90,6 +115,10 @@ core. No new numbered spec, job platform, model registry or whole-product releas
   all intended trainable groups receive gradients/change. Compare training-eval and
   loaded logits. Test 1/limit/limit+1, nonfinite loss, malformed/missing tensors,
   calibration failure, timeout, crash, disk full and owner death; no eligible partial.
+  Compare calibrated probability vectors before/after export, including conflicting
+  upstream bucket temperatures; no inherited override of the fitted scalar. Test
+  per-case/group/error denominators and 15-bin ECE against known inputs; diagnostics
+  do not create a new benchmark campaign.
   Deny outside/symlink reads/writes, network, inherited secrets/FDs and child execution.
 - **Review/cutover:** a rejected candidate is valid lifecycle evidence, not quality success.
   Head mode cannot certify encoder adaptation; selected package limitations are explicit.
@@ -99,6 +128,7 @@ core. No new numbered spec, job platform, model registry or whole-product releas
 - **Depends:** T002 and 003; current 005 graph. **Scope:** `src/policy.rs`, worker IPC,
   config/status and real MCP tests. Remove `src/laya.rs`/`--laya-port` after owned path
   acceptance; preserve feedback/export. No dual provider router.
+  Review references: L03/L05/L07/L11/L12; core grants remain outside model output.
 - **Outcome (FR-004/FR-005, SC-003):** joint input predicts a stable option with exact
   candidate/input identity; config/restart selection and rollback preserve all user state.
 - **Verification:** two candidate identities, malformed/oversized/late reply, wrong
@@ -106,6 +136,9 @@ core. No new numbered spec, job platform, model registry or whole-product releas
   Explicit strategy/missing graph bypasses policy. Missing Nemotron does not disable a
   usable policy; neither model extends 003 deadline. Combined aggregate resource test
   belongs here only when both features are enabled. Count extra encoder work honestly.
+  Verify exact-threshold acceptance, below-threshold abstention before rounding,
+  entropy/answer-probability distinction, option-probability consistency and stable
+  tie handling. Malformed distribution/legacy ambiguous confidence cannot grant a route.
   A real adapter comparison checks task correctness, latency and complete observable
   economics; no demonstrated benefit leaves default policy off.
 - **Review/cutover:** reject removed option with migration guidance, no host config rewrite.
@@ -115,6 +148,7 @@ core. No new numbered spec, job platform, model registry or whole-product releas
 
 - **Depends:** T002/T003, new permitted rows meeting grouped floors and the selected
   target package. **Scope:** same commands, second round, release/install/stop/rollback.
+  Review references: L03/L07/L08/L11; Foundry owns consent and lineage beyond the notebook.
 - **Outcome (FR-006 and FR-001–FR-005, SC-004):** second real round uses permitted new
   rows/replay; can be accepted/rejected without changing historical splits. Installed
   artifact survives restart, fallback and rollback; uninstall preserves user data.

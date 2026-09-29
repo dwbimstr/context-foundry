@@ -3,6 +3,8 @@
 The current [feasibility disposition](feasibility.md) records real bounded probes,
 decisions and remaining owner-specific checks. The earlier
 [team handoff simulation](handoff-simulation.md) records the paper-review baseline.
+For decision/learning reviews, the [source-to-contract map](../references/laya-decision-ecosystem.md)
+links pinned upstream code and tests to Foundry tasks, modules and explicit differences.
 
 The design was informed by a private predecessor architecture review and direct
 inspection of Laya. Private specifications and detailed operational evidence are

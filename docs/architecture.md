@@ -229,8 +229,9 @@ output dimensions and float32 vector caching; the MLX weights use 4-bit quantiza
 Its 32768-token input ceiling does not prescribe chunk size or override a lower
 runtime limit. Follow its query/document prompting, pooling and normalization recipe
 ([official model card](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16), checked
-2026-09-28). The model uses OpenMDW-1.1; Foundry code remains MIT. Artifact revision
-and runtime are still unpinned; no model was downloaded or run. The earlier Llama
+2026-09-28). The model uses OpenMDW-1.1; Foundry code remains MIT. The subsequent
+[feasibility pass](review/feasibility.md) pins the MLX artifact/bridge and records a
+real bounded query run; complete recipe and package acceptance remain open. The earlier Llama
 Nemotron recommendation is superseded, and no cross-model comparison is required.
 
 The [MLX conversion](https://huggingface.co/mlx-community/Nemotron-3-Embed-1B-BF16-4bit)
