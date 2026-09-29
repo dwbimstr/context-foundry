@@ -1,0 +1,1 @@
+{"elapsed_ms":1456,"hidden_max_abs_error":0.0,"logits_max_abs_error":8.940696716308594e-8,"qk_nonzero":[true,true],"qkv_gradient_max_abs_errors":[1.9744038581848145e-6,7.599592208862305e-7],"scope":"global layer0 and local layer1 QKV gradients through Rust ModernBERT; no optimizer step"}

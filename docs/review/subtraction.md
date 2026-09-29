@@ -1,5 +1,9 @@
 # Subtraction review
 
+Current disposition: [executed feasibility](feasibility.md) replaces the obsolete
+013 contract with v4 and selects a concrete Rust model path. The entries below are
+historical source reviews; their unexecuted/undecided statements describe those passes.
+
 ## ModernBERT follow-up — capability is not library support
 
 Owner clarification: the target is ModernBERT with a decision head. The earlier

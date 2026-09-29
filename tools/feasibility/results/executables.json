@@ -1,0 +1,8 @@
+{
+  "note": "Local tested binaries, not distributable artifacts. Rust source was subsequently formatted without behavior changes.",
+  "decision_macos_signed": "b79cddda65eaeea4b27ebe3f43423d0a8ee873113ddb16f78e52a0aaefb58a80",
+  "mlx_macos_signed": "e0becde4d55e024a45d33052628d5f9de5823ec8ea5d1ca692d3a50af1b856ec",
+  "index_macos_signed": "b3403ab42775f76406fa8fe2a5735212ce525a02af343c8b8a2e4295704dee27",
+  "protocol_linux_rust_1_90": "265098b4264210610980886ab0d2c8fc1bd0655dfa138373cebd31c8b4192cf8",
+  "nproc_launcher_macos": "80df0e9b41013049e5f6141ecaf0b01c280e9acb935d3ea60deb2817635dc1fa"
+}

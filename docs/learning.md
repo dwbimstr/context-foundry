@@ -11,15 +11,16 @@ an API to emulate or a repository contributors must install/edit.
 
 The owner clarified the target: **ModernBERT with a decision head**, using joint
 state/question/candidate inputs. Nemotron remains the separate retrieval encoder.
-Training the decision head with ModernBERT frozen and training the head plus encoder
-are two adaptation modes within that architecture; D001 must establish which is
-needed and supported. Head-only fitting does not establish full encoder fine-tuning.
+Contract v4 selects frozen-encoder/head adaptation first, using Rust tch/LibTorch.
+Encoder adaptation is retained behind its own complete acceptance; head fitting
+does not establish full encoder fine-tuning.
 
 The earlier 2048→64→2 classifier on Nemotron query vectors is a superseded proposal,
 not an equivalent implementation of this target. Its v3 data/IPC contract and task
-details are retained for review only, pending replacement in 013 D001. Its reuse of
-query vectors, CPU-only profile and latency limits cannot define the ModernBERT path.
-No model implementation or training result is established by this correction.
+details are replaced by v4 and retained only in Git history. Its query-vector reuse
+and small-head latency limits do not define the ModernBERT path. The subsequent
+[feasibility pass](review/feasibility.md) ran real scratch model/gradient probes;
+production learning and complete deployment acceptance remain unimplemented.
 
 The continuous loop is explicit and repeatable:
 
@@ -36,12 +37,12 @@ The continuous loop is explicit and repeatable:
 5. Explicitly select an eligible artifact and restart the store-owning process. Keep
    the prior config/checkpoint for rollback, then repeat on new examples and bounded replay.
 
-[The superseded v3 contract](../specs/013-owned-learning/contracts/learning-loop.md)
-records the earlier fixed-head fields; it is not an implementable ModernBERT contract.
+[Contract v4](../specs/013-owned-learning/contracts/learning-loop.md) defines joint
+inputs, exact pretrained architecture, rights, grouping, fitting, IPC and artifacts.
 [Deployment](deployment.md) defines jails, conditional libkrun use, packaging, startup,
-upgrade and removal. The review below recommends a Rust library route to investigate;
-no backend has been installed or selected. Exact model/head, library/MSRV, training
-scope and packaged platform isolation remain D001 inputs.
+upgrade and removal. The historical review below explains the integration cost;
+the later feasibility pass selected tch 0.24.0/LibTorch 2.11.0 and a concrete first
+recipe. Full model/MSRV and distributed-package acceptance remain D001 inputs.
 
 The model never authorizes repository enrollment, tool execution, provider spend or
 larger budgets. [Adapter economics](../specs/003-agent-retrieval-context/contracts/adapter-economics.md)
@@ -52,11 +53,15 @@ costs are reported separately and amortized only over observed use.
 The existing `src/laya.rs`/`--laya-port` path is a legacy prototype interface scheduled
 for removal in 013 T003. [Legacy notes](laya.md) describe what currently exists; they
 do not override the owned design. No automatic Laya checkpoint conversion or
-dual-provider router is planned. D001 must pin permitted starting weights and exact
-head/checkpoint mapping; base ModernBERT weights alone do not supply trained decisions.
+dual-provider router is planned. V4 pins permitted starting weights and exact
+head/checkpoint mapping; base ModernBERT alone does not supply trained decisions.
 Preserve old feedback without silently granting new permissions.
 
 ## ModernBERT and the cost of matching Laya — 2026-09-29
+
+Historical source review, preceding [the executed feasibility pass](review/feasibility.md).
+Its recommendations and unexecuted statements below describe that review's boundary;
+v4 and the later evidence own the current disposition.
 
 **Rust can train models; ready-made ModernBERT fine-tuning and Laya-equivalent behavior
 are separate questions.** The preceding design understated the capability gap by

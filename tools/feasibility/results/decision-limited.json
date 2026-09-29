@@ -1,0 +1,1 @@
+{"elapsed_ms":2514,"encoder_gradients":false,"hidden_max_abs_error":0.0,"logits_max_abs_error":8.940696716308594e-8,"reload_max_abs_error":0.0,"scope":"one unpadded fixture, frozen Rust ModernBERT encoder plus choice head, one SGD step","scorer_gradient_max_abs_error":2.1457672119140625e-6,"scorer_weight_change":0.0003306977450847626,"sequence_tokens":123}

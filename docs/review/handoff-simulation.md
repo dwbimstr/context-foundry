@@ -1,5 +1,9 @@
 # Team handoff simulation — 2026-09-29
 
+Historical paper-review baseline. The subsequent [executed feasibility pass](feasibility.md)
+replaces H1's superseded contract and narrows H3/H4/H5/H7 with actual probe evidence.
+Read that disposition for current readiness; this report preserves what was known before execution.
+
 **Verdict: hand off the source/CLI work in stages; do not hand off the complete
 neural/learning ecosystem as implementation-ready.** The ModernBERT decision-head
 target is preserved, but its implementable contract is missing. Several runtime and
@@ -57,7 +61,7 @@ or accepted. Team role names below are proposed responsibility assignments.
 
 **Strong; unresolved decisions; blocks 013 data/trainer/inference implementation.**
 [013](../../specs/013-owned-learning/spec.md) explicitly marks T001–T004 and
-[v3](../../specs/013-owned-learning/contracts/learning-loop.md) superseded. D001 has
+v3 superseded (the linked contract is now replaced by v4). D001 had
 not selected the exact ModernBERT checkpoint/head, trainable parameter set, joint
 input schema, pretrained initialization, artifact layout or runtime bounds.
 

@@ -1,261 +1,218 @@
-# Owned learning contract v3
+# Owned learning contract v4
 
-Status: Superseded proposal, 2026-09-29; owned by [013](../spec.md). This replaced the Laya v2
-handoff. The legacy `eval.public.jsonl` is retained only as a historical Laya format
-fixture, not an input or acceptance fixture for this model. No Laya module, tokenizer,
-server, model or training notebook is required by the new contract.
-Scope: this was the fixed search/graph head contract only. The owner clarified
-ModernBERT with a decision head; this vector-only design does not satisfy that target.
-Retained for review only. 013 D001 must replace the affected contract before
-implementation, not pad transformer inputs into 2048 dimensions or graft hidden
-tokenizer/raw-input fields into this vector-only protocol.
+Proposed implementation contract, 2026-09-29. Replaces the vector-only v3 contract;
+Git history retains it. Owned by [013](../spec.md). This is ModernBERT with a decision
+head. Nemotron embeddings, Laya services and the historical `eval.public.jsonl` are
+not inputs. [Feasibility evidence](../../../docs/review/feasibility.md) distinguishes
+working probes from outstanding implementation and package acceptance.
 
-## Roles and exact first model
+## One model and one decision
 
-`foundry-policy-head-v1` consumes a 2048-element float32 normalized query embedding
-from the selected 009 query feature function. The head is Linear(2048,64) → ReLU →
-Linear(64,2), with bias in both layers and no dropout. Logit/label order is graph=0,
-search=1. Output is softmax(logits / calibrated temperature). This is a trainable
-131,266-parameter decision model; its weights occupy 525,064 float32 bytes before
-artifact metadata. The encoder remains frozen. Trainable head weights are real
-model parameters; head fine-tuning is not advertised as encoder fine-tuning.
+Recipe `foundry-modernbert-choice-v1`: ModernBERT-large plus the pretrained two-layer
+choice head, type embedding and scorer from `convaiinnovations/laya-typed-decisions`
+revision `1a793eb568e6718f15941d08f85432581df534e3`. Download/rights approval is explicit;
+weights and upstream code are not distributed under Foundry's MIT license. This is a
+specific weight mapping, not a generic Laya artifact import or runtime dependency.
+Base encoder weights alone are not an equivalent pretrained decision model.
 
-Use one maintained Rust ML library under 013 D001. Record initialization algorithm,
-library/version, seed and serialized initial tensor hash in the effective recipe;
-do not handwrite autodiff, copy GRPO or train a replacement foundation model. CPU
-float32 is the first backend. A later architecture/backend changes recipe identity
-and requires its own compatibility evidence, not a runtime backend-selection framework.
+First implementation: Rust `tch` 0.24.0 with LibTorch 2.11.0, CPU float32, one example
+per batch. Do not introduce a tensor engine or additional ML backend. The probe used
+a separate Python reference for numerical comparison; production model/training code
+is Rust and does not import Laya or Transformers. Dependency/MSRV/package acceptance
+still applies. No claim of turnkey AutoModel compatibility or full Laya training parity.
 
-Serving reuses the exact query vector already computed for semantic retrieval.
-It never embeds a query merely to consult the policy. Missing query features, explicit
-strategy or no current supported graph skips the worker. The deterministic 001 rule
-remains the fallback. A query-function change (weights, tokenizer, prefix, normalization,
-dimension) requires compatible newly prepared features/head; equal dimensions are not
-compatibility. Document chunking/ranking changes alone need workflow re-evaluation,
-not invented feature incompatibility when query vectors are unchanged.
+Encoder: hidden 1024, 28 layers, 16 heads of 64, gated GELU intermediate 2624;
+layer 0 has no attention pre-normalization; full attention every third layer, local
+attention inclusive distance <=64 otherwise; global/local RoPE theta 160000/10000;
+normalization epsilon 1e-5. Head: two pre-normalized transformer encoder layers,
+16 heads, feedforward 4096 with ReLU, type embedding row `choice=0`, marker pooling,
+then LayerNorm→Linear(1024,1024)→GELU→Linear(1024,1). Preserve biases and checkpoint
+names/shapes exactly. Reject missing/extra/shape-invalid tensors except the explicitly
+unused `act_head.*` and reference `temperature` tensors. Do not execute checkpoint code.
 
-## Feedback and consent
+Initial supported adaptation freezes ModernBERT and updates the two head layers,
+choice type embedding and scorer. Keep encoder in eval mode. Head dropout is 0.1 in
+training and disabled in evaluation; seed initialization, ordering and dropout. Other
+type rows are frozen; expose only row 0 to the optimizer so weight decay cannot alter
+unused rows. `act_head` is unused and never trained. This is **head adaptation
+on joint ModernBERT inputs**, not encoder fine-tuning. Encoder adaptation remains a
+retained capability: enable only after its own full gradient/update/resource fixture
+passes and task evidence requires it. The small Q/K gradient probe is not that release.
+No runtime menu of training backends or hidden change of trainable parameters.
 
-Required object: `{task_id,task_group_id,query,correct_strategy,label_source,
-label_evidence,allow_training,rights_ref}`. IDs nonblank UTF-8 <=256 bytes; query
-nonblank <=4096 bytes; strategy graph/search; label_source operator/task_checker;
-evidence/rights nonblank <=1024 bytes; whole object <=16 KiB. Reject unknown/null/
-duplicate fields, invalid types and oversized input before mutation. References are
-opaque assertions; never open their paths/URLs or infer labels from clicks/model output.
+## Exact input and identity
 
-Example ID is SHA-256 of compact UTF-8 JSON `[task_id,query]`. Correcting that pair
-replaces label/consent in one transaction. Identical input is idempotent. Once used,
-moving its group is `group_changed`; repair lineage explicitly rather than moving
-held-out examples into train. Feedback uses 001's store/schema owner.
+Supported family `retrieval-route-v1` has question `Choose a retrieval strategy.` and
+two options, stable IDs `search`, `graph`, with descriptions `find source text` and
+`follow symbol relationships`. The caller supplies a UTF-8 `state` containing the exact
+admitted task/query context, <=16 KiB, and the ordered two option IDs. Neither option
+may be omitted/duplicated. State is data, never a path to open. Explicit user strategy,
+no current graph, busy/unavailable policy or insufficient time uses deterministic
+routing without a model call. Graph availability is checked by the core, not inferred
+from the state. No automatic transcript or source-document inclusion.
 
-MCP feedback may record `allow_training:false`; true is `training_approval_required`.
-The operator/trusted-checker CLI under exclusive ownership supplies actual permission
-and rights for the exact row. Tool availability is not proof of human approval.
-No automatic transcripts, 008 memories, retrieved source bodies or other store's
-feedback. Quoted outside content requires permission for that content too. Training
-permission, retrieval admission and adapter usage reporting are separate choices.
+Render with pinned tokenizer: `[CLS] choice question: Choose a retrieval strategy.
+[SEP] [MASK] <option0>: <description0> [MASK] <option1>: <description1> [SEP] <state>
+[SEP]`. Spaces above describe components: tokenize instruction and each space-prefixed
+option separately with `add_special_tokens=false`; insert special IDs explicitly.
+Replace literal mask-token strings in state with one space before tokenization.
+Retain original state and rendered-input digest. Record both marker positions.
+Maximum 1024 tokens including specials, header <=256, each rendered option <=48;
+**refuse**, never truncate, on any limit. No padding for batch size one. Future batched
+implementation needs padding/mask parity before using it. Option permutation changes
+input identity; labels map by stable option ID, never by an assumed fixed index.
 
-Withdrawal excludes future preparation/selection, not old exports or fitted weights.
-Check permission at preparation, immediately before training and at selection. A
-withdrawal during a job needs an explicit stop; an already selected inference worker
-needs disable/restart. There is no live revocation monitor or claim of untraining.
+Pin tokenizer JSON/config hashes, all special IDs, render version, architecture,
+starting weights and trainable parameter set in `model_function_sha256`. Prepared
+rows store exact IDs and markers, plus `input_sha256 = SHA256(compact JSON
+[family,state,ordered_option_ids])`. Tokenized arrays are checked against the exact
+renderer on preparation/read-back. No 2048-dimensional feature matrix, query-vector
+reuse or persistent hidden-state cache. Recompute frozen encoder output per example
+initially; add caching only if measured repeated preparation warrants its storage.
 
-## Commands and publication
+## Feedback and permission
 
-- `foundry learning prepare --out DIR --policy FILE [--parent MANIFEST]`: freeze
-  approved rows under sole store ownership, then prepare missing query features using
-  the explicitly configured 009 worker. A live MCP owner is `store_busy`; no second
-  writer or hidden service stop. No read transaction is held during model work.
-- `foundry learning check --manifest FILE`: verify current permission/labels, hashes,
-  group history and selected base contributions. Returns a validated manifest digest;
-  no fitting. Repeat before training/selection; the operator must prevent a competing
-  feedback writer during the check/handoff. Manual handoff is not atomic revocation.
-- `foundry learning train --input MANIFEST --policy FILE --out DIR`: supervise the
-  owned isolated Rust worker, report completion/rejection and exit. No network/download.
-- `foundry learning select --candidate DIR --out CONFIG`: validate eligibility,
-  lineage and artifact identity; create a config file, never start a service or replace
-  a live model. The operator installs this file and restarts the existing owner.
+Row: `{task_id,task_group_id,family,state,option_ids,correct_option_id,label_source,
+label_evidence,allow_training,rights_ref}`. Family/inputs follow the preceding section.
+IDs nonblank <=256 UTF-8 bytes; label_source `operator` or `task_checker`; evidence and
+rights nonblank <=1024 bytes; whole row <=24 KiB. Reject unknown/null/duplicate fields,
+invalid types and oversized data before mutation. Evidence/rights references are opaque
+assertions, not instructions to open paths or URLs. Clicks/model predictions do not
+supply correctness labels. All state content needs the asserted training rights.
 
-Existing output is `output_exists`. Write only a newly owned partial sibling, fsync
-its files, write completion manifest last, rename on the same filesystem and fsync
-the parent before success. Lost response means inspect/verify that output; do not
-overwrite or automatically rerun fitting. No valid final manifest means incomplete.
-Cleanup removes only verified owned partial files. Artifacts go outside admitted
-source roots or in the store's excluded private area; preparation rejects a proposed
-output under an admitted source path as `output_in_source_root`.
+Example ID is SHA256(compact JSON `[task_id,input_sha256]`). Correction of that ID
+replaces label/consent transactionally; same input is idempotent. Used groups never
+move between splits. Changing state/options creates a new example, not a mislabeled
+correction. MCP may record `allow_training:false`; true requires the trusted operator
+CLI and is refused as `training_approval_required` over MCP. Legacy feedback lacks
+these exact inputs/rights and stays exportable but ineligible; no automatic upgrading.
 
-## Dataset, feature reuse and grouping
+Check current consent/labels at preparation, immediately before fitting and at
+selection. Withdrawal excludes future use; it does not erase existing exports or
+untrain weights. A running job requires explicit stop; a selected model requires
+disable/restart. No hidden revocation watcher. Feedback uses 001's sole schema owner.
 
-Manifest v3 fields: `schema:3`, `recipe:"foundry-policy-data-v1"`, `dataset_id`,
-`workspace_id`, `parent_manifest_sha256` (null initially), `policy_sha256`,
-`base_candidate_sha256` (null for seeded initialization), `feature_function_sha256`,
-`dimension:2048`, file entries `{name,sha256,bytes,rows}` and group counts by split.
-Files: `train.jsonl`, `calibration.jsonl`, `evaluation.jsonl`, `groups.jsonl`,
-`features.safetensors`. Use a maintained Rust SafeTensors reader/writer, not executable
-pickle or provider-supplied code. Tensor `query_features` is row-major float32 [N,2048].
-Each dataset row has feedback fields, `id`, `allow_training:true`, `feature_row` and
-`feature_input_sha256`; replace query with `state` containing its exact query text.
+## Dataset and repeat rounds
 
-Rows sort by ID with one LF after compact JSON. One feature row per current example,
-including duplicate query text across permitted identities; preparation may compute
-identical rendered queries once. Reuse a parent's exact query-function/input feature
-only if the current row is still permitted. No persistent automatic query-history
-cache; feature files belong to explicit learning artifacts. Corrected labels can reuse
-unchanged features but invalidate a base containing the old label. Missing/invalid
-features stop preparation by name, never become zero vectors or silently dropped rows.
-Query inputs follow 009's exact prefix/token-limit rules; no inherited 512-token limit.
+Commands: `learning prepare --out DIR --policy FILE [--parent MANIFEST]`,
+`learning check --manifest FILE`, `learning train --input MANIFEST --policy FILE
+--out DIR`, and `learning select --candidate DIR --out CONFIG`. All operator commands
+require exclusive store ownership where they read feedback/permission. No competing
+writer or long read transaction during model work; no implicit shutdown of MCP.
+Manual permission handoff is not an atomic live revocation mechanism.
 
-Manifest <=1 MiB; all files combined <=256 MiB; <=100,000 examples and historical
-groups; JSONL row <=16 KiB. The combined byte cap also bounds the feature matrix;
-100,000 is not a promise that 100,000 vectors fit. Page metadata in batches of 128;
-spill sorting into owned scratch. Validate sizes, finite floats, dimensions, indices,
-unique IDs, duplicate JSON keys, hashes and relative basenames before fitting. Paths
-have no symlinks, absolute components or `..`. Feature identities are checked against
-the profile, not inferred from a filename or endpoint.
+Manifest: schema=4, recipe, workspace_id, dataset_id, parent_manifest_sha256 (nullable),
+model_function_sha256, policy_sha256, base_candidate_sha256 (nullable), files and
+split group counts. Each file entry is `{name,sha256,bytes,rows}`. Files are
+`train.jsonl`, `calibration.jsonl`, `evaluation.jsonl`, `groups.jsonl`; rows include
+feedback, example ID, input digest, token IDs and markers. Names are fixed basenames;
+no symlinks, absolute components or `..`. Manifest <=1 MiB, combined files <=256 MiB,
+<=100000 rows/groups, JSONL rows <=48 KiB. Refuse on bounds; never drop excess data.
+Sort by example ID, compact JSON and trailing LF. Page feedback by 128, spill sorting
+to owned scratch. Artifact hashing uses exact bytes, not reserialized JSON.
 
-dataset_id = SHA-256 of compact JSON `[workspace_id,parent_manifest_sha256,
-policy_sha256,feature_function_sha256,train_sha256,calibration_sha256,evaluation_sha256,
-features_sha256]`. Group history can then name this ID; no self-referential hashes.
-groups.jsonl stores group ID, split, first dataset ID, example IDs and normalized-query
-fingerprints, including historical withdrawn groups without retaining their text.
-Missing ancestor/group metadata is `lineage_missing`; growth beyond bounds refuses.
+dataset_id = SHA256(compact JSON `[workspace_id,parent_manifest_sha256,
+model_function_sha256,policy_sha256,train_sha256,calibration_sha256,evaluation_sha256]`).
+Group history names this ID after computing it, avoiding a self-referential digest.
+Split by first eight SHA256(group-ID) bytes interpreted big-endian modulo 10:
+0 evaluation, 1 calibration, 2..9 train. Ancestor assignments never move.
+Require >=20 train, >=10 calibration and >=20 evaluation groups, both correct-option
+labels in each; these are lifecycle floors, not statistical significance.
 
-Split: first eight SHA-256(group-ID UTF-8) bytes as big-endian u64 modulo 10:
-0=evaluation, 1=calibration, 2..9=train. Parent assignments never move. Normalize
-duplicate fingerprints by CRLF→LF and collapsed/trimmed ASCII whitespace, without
-case folding. Same normalized query across groups or contradictory current labels
-is `duplicate_conflict`, including held-out parent fingerprints. Different queries in
-one group can have different labels. This is not semantic duplicate detection.
+Duplicate fingerprint is SHA256 of the family, whitespace-normalized state and
+options sorted by stable ID. Normalize CRLF→LF and collapse/trim ASCII whitespace,
+without case folding. Same fingerprint across groups or conflicting current labels
+is `duplicate_conflict`, including historical held-out fingerprints. This only finds
+exact normalized duplicates; related tasks must share a group. Persist group/split,
+example IDs and fingerprints for withdrawn groups without retaining withdrawn text.
+Missing ancestor metadata is `lineage_missing`; no implicit split reset.
 
-Require >=20 train, >=10 calibration and >=20 evaluation groups, both labels in each.
-These are lifecycle floors, not statistical proof. Insufficient data refuses; never
-move groups to fill splits. Novelty means an eligible training row's exact content/
-label/permission identity is absent from the valid base's contributing set, including
-new queries in an old group. Check base permission first: corrected/withdrawn inherited
-contributors are `base_permission_changed`, not `no_new_data`.
+Valid base contributions must still have identical permission, inputs and labels;
+otherwise `base_permission_changed` before checking novelty. New eligible training
+rows include new inputs in old groups. Select all new rows plus up to one unchanged
+permitted base replay row per new row in increasing SHA256(compact JSON `[seed,id]`)
+order; no held-out rows. Zero new rows with a valid base is `no_new_data`, no fitting.
+A clean base may relearn allowed rows while preserving historical split assignments.
+Record inherited/new fitting and calibration contributions. No seed hunting on the
+same input/base/recipe, implicit rejected base or claim of fresh improvement from
+reused held-out groups.
 
-Select all new training rows and unchanged permitted base-contributing replay rows
-in increasing SHA-256(compact JSON `[seed,id]`) order, at most one replay row per new
-row. Exclude held-out groups and duplicate selections. Zero new rows under a valid
-base is `no_new_data` with no checkpoint. A permitted clean base can relearn current
-rows while preserving historical group splits. Every result records inherited and
-new fitting/calibration identities. Never choose a partial/rejected base implicitly or
-repeat the same input/base/recipe to hunt for a favorable seed.
+## Fitting, artifacts and evaluation
 
-## Fitting, calibration and completion
+Run policy v2 pins recipe/model/base/seed, AdamW learning rate 1e-4, betas 0.9/0.999,
+epsilon 1e-8, weight decay 0.01, global gradient norm clip 1.0 and cross-entropy over
+the two marker logits. Batch one; no accumulation. Base is the pinned initial artifact
+or an exact permitted accepted candidate. Each epoch visits the selected training rows
+in seeded order; `max_steps` bounds updates (1..1000000), record actual completed steps.
+Reject nonfinite input/logits/loss/gradients/weights immediately. No exact optimizer
+resume promise; repeated rounds start a new optimizer from the permitted base weights.
 
-Run policy fields: `v:1`, `recipe:"foundry-policy-head-v1"`, `feature_function_sha256`,
-`base` (`{kind:"seeded"}` or `{kind:"candidate",path,sha256}`), `rights_ref`, `seed`, `max_steps`,
-`wall_seconds`, `memory_bytes`, `output_bytes`, `cpu_threads`, `isolation_profile`,
-`resource_enforcement`, `selection`, `incumbent` (`{kind:"disabled"}` or
-`{kind:"candidate",path,sha256}`). Candidate paths are explicit local directories,
-not URLs, <=4096 UTF-8 bytes; digests lowercase 64-hex. Profile names <=128 bytes.
-Resource enforcement maps memory, cpu, output and process_count to `hard` or
-`supervised`, with no omitted entries; a profile cannot silently weaken a requested
-hard bound. Wall-time cancellation/owned-tree cleanup is always supervised and tested.
-The job permits one worker process and zero descendants; library threads stay within
-the declared CPU-thread setting. A hard CPU profile limits aggregate CPU time to that
-many cores as well; thread configuration alone does not prove a CPU quota. Memory/output
-bounds mean resident bytes and private output/scratch bytes, respectively. The platform
-profile records how each is enforced, including whether filesystem quotas are available.
-All required; reject unknown/null fields. Explicit bounds: wall 1..7200 seconds,
-steps 1..1,000,000, memory 256 MiB..8 GiB, output 1 MiB..1 GiB, CPU threads 1..4,
-seed u64, rights_ref nonblank <=1024 bytes. Selected OS limits must be enforceable;
-`isolation_unavailable`/`resource_limit_unavailable` refuses the job before fitting.
+Policy also pins wall_seconds (1..7200), memory_bytes (4..8 GiB), output_bytes
+(128 MiB..2 GiB), cpu_threads (1..4), isolation_profile and hard/supervised enforcement
+for memory, CPU, output and process count. Requested enforcement cannot be downgraded.
+One worker, zero descendants. Training runs offline with online model workers stopped;
+no training/retrieval overlap scheduler. App Sandbox alone did not enforce zero
+descendants; the pre-exec hard-process-limit probe did. Production training remains
+unavailable until the complete installed profile passes its acceptance.
+These are requested resource ceilings, not proven hardware capacity.
 
-Recipe: CPU float32, cross-entropy, AdamW lr=0.001, betas=(0.9,0.999), epsilon=1e-8,
-weight decay=0.01, gradient norm clip=1, batch=32, four epochs, no scheduler/dropout.
-Cap updates at min(max_steps,4*ceil(train_rows/32)); use actual final batch length.
-Shuffle each epoch with the pinned seeded Rust RNG recorded by D001. Initial weights
-use the pinned library initialization; subsequent rounds load the exact valid base.
-No encoder gradients, distributed training, reinforcement-learning loop or optimizer
-resume. Library numerical determinism is measured, not assumed across machines.
+Fit one scalar temperature on calibration rows only by deterministic grid search over
+0.5..3.0 inclusive in 0.05 steps, selecting lowest mean negative log likelihood;
+ties select lower temperature. Nonfinite/empty calibration refuses. Evaluate raw logits
+and calibrated probabilities, never alter model weights on held-out data.
+Selection policy predeclares threshold, coverage floor, accepted-accuracy floor,
+maximum macro-accuracy drop and critical group slices; fractions finite [0,1]. Defaults
+for the initial trial: 0.8, 0.5, 0.9 and 0 respectively. Compare deterministic routing,
+candidate and explicitly requested compatible incumbent on identical rows. Missing
+requested incumbent or empty critical slice refuses; never drop a comparator.
 
-Calibration uses only calibration rows. Test temperatures
-exp(ln(0.1)+i*ln(100)/80), i=0..80; choose minimum mean negative log likelihood,
-lower temperature on exact ties. Compute log-softmax stably; nonfinite output or
-empty data is `calibration_failed`, never default temperature. This bounded scalar
-fit replaces the inherited notebook/LBFGS machinery. Report calibrated and raw scores.
+Macro accuracy averages per-group accuracy. Coverage is accepted/all rows; accepted
+accuracy is correct/accepted (zero accepted fails). Fallback-inclusive accuracy uses
+deterministic routing on abstention/failure. Eligibility requires declared floors,
+critical slices and no excess macro drop against either comparator. Report counts and
+paired group differences. Eligibility permits a trial, not an improvement claim.
+Normal policy stays off until checked agent tasks justify added latency and total cost;
+count preparation/training, context bytes/tokens and actual provider usage separately.
+Do not claim money savings when usage/pricing is unknown.
 
-One output-root OS lock rejects overlap as `learning_busy` before allocation. Worker
-inputs are read-only features/labels/base; outputs are bounded tensors/reports in its
-private directory. The supervisor validates the full approved dataset, then supplies
-only feature-row indices, numeric labels and split membership in bounded private job
-scratch. Query text, rights references and label-evidence prose are not granted to the
-training worker. Feature vectors remain private data; they are not anonymization.
-Supervisor enforces the [deployment contract](../../../docs/deployment.md), owns its
-process tree, retains at most 64 KiB of scrubbed stderr and kills only its own workers
-on deadline/EOF. Diagnostics cannot include dataset text, credentials or vector contents.
-No auto-retry. Output full, crash, failed validation or jail failure cannot publish a
-successful manifest or alter selected configuration.
+Candidate contains schema-4 manifest, head.safetensors, exact base encoder/tokenizer
+identities, recipe, calibration, contribution IDs and evaluation report. Head is float32;
+no pickle, executable code or ambient loader lookup. Final manifest binds all files and
+base identity. Validate shapes, finite values and save/load logits before publication.
+No full encoder duplicate in every head round. Explicit matching encoder assets are
+required at inference; a missing asset is a named failure, never a network download.
 
-Checkpoint entries are sorted `[relative_path,sha256]` pairs for head tensors and
-effective recipe/config including fitted temperature and feature identity. Candidate
-digest hashes compact JSON `[input_manifest_sha256,policy_sha256,checkpoint_entries]`.
-Reports refer to that digest and remain outside its hash to avoid a cycle. Final
-manifest names version, complete status, digests, byte sizes, reports and eligibility.
-Parent verifies safe tensor shapes/hash and requests actual isolated worker load→predict
-before final publication; checkpoint loading must not escape the worker's grant set.
+Create a new owned partial sibling; fsync files, manifest last, rename same filesystem,
+fsync parent. Existing destination is `output_exists`; partial/failed output is not
+eligible. Reject output under an admitted source root (`output_in_source_root`). Remove
+only owned partial files. Lost response means verify output before repeating work.
 
-## Evaluation and activation
+## Serving, selection and rollback
 
-Freeze threshold (proposed 0.8), minimum coverage (0.5), minimum accepted accuracy
-(0.9), maximum macro accuracy drop (0) and critical slices before fitting; fractions
-finite [0,1]. Selection policy supplies these numbers explicitly. Critical slices
-name group IDs and minimum macro accuracy; absent/empty referenced groups refuse.
-Compare candidate, compatible eligible incumbent when supplied, and the exact 001
-deterministic rule on identical evaluation rows. An incompatible/missing requested
-incumbent refuses preflight rather than silently removing the comparator.
+Config v2 is disabled or pins candidate_path/hash, model_function_sha256, report hash,
+threshold and isolation_profile. Validate at owner startup. No ambient latest directory,
+live auto-promotion or threshold edit to reuse eligibility. Invalid config names
+`policy_config_invalid`; baseline retrieval still starts. Explicit select writes a new
+config; operator installs/restarts. Rollback restores prior immutable config/artifacts
+or disables learning. Preserve source, memory, graph, feedback and semantic cache.
 
-Per-group accuracy is correct rows / group rows; macro accuracy weights groups equally.
-Coverage = accepted rows / all rows; accepted accuracy = correct accepted / accepted;
-zero accepted fails. Fallback-inclusive accuracy applies the deterministic route on
-abstention/errors. Eligibility requires no allowed macro drop against either comparator,
-coverage/accepted floors, all critical slices and all identity/permission/runtime checks.
-Eligibility permits an isolated trial; it is not evidence of workflow improvement.
+Private inherited pipes; little-endian u32 length followed by strict JSON, maximum
+64 KiB checked before allocation. Request `{v:2,request_id,candidate_sha256,
+model_function_sha256,family,state,option_ids}`; reply `{v:2,request_id,
+candidate_sha256,model_function_sha256,input_sha256,choice,confidence}`. Choice is a
+stable option ID; confidence finite [0,1]. IDs <=128 bytes, digests lowercase 64 hex;
+reject unknown/null/duplicate fields. No arbitrary commands, paths or token-budget grants.
 
-Report counts and paired group differences. A numerical improvement claim requires a
-predeclared uncertainty method, fresh confirmation groups and its actual result; it
-is not an additional requirement for a functional learning lifecycle. Reused held-out
-groups are regression evidence. Never change policy after viewing evaluation results.
+One active prediction, zero waiting. Load ceiling 30 seconds outside requests;
+prediction ceiling min(2000 ms, remaining 003 deadline). These are supervised failure
+bounds, not latency promises. Busy returns deterministic fallback before dispatch.
+Timeout/malformed/wrong-identity/dead worker triggers owned-tree termination and marks
+policy unavailable until explicit restart; never release capacity while work survives.
+Owner EOF terminates worker. Late replies cannot cross identities. Exact tokenizer
+preflight runs before encoder; oversized state/token input uses named baseline fallback.
+Combined model residency must pass deployment's aggregate budget before enabling both
+009 and 013; separate process limits do not prove this. No automatic unload/reload loop.
 
-Normal policy remains off until 013 T003's actual checked agent tasks justify its
-latency/cost under the same corpus, graph, retrieval profile and budget. Count feature
-preparation and training separately from per-query work; report amortization with the
-actual number of uses, not an invented lifetime. Full request/provider costs follow
-003's adapter boundary. Label-score gains do not prove task success or savings.
-
-## Private inference and selection
-
-Config v1: `{v:1,enabled:false}` or `{v:1,enabled:true,candidate_path,candidate_sha256,
-feature_function_sha256,recipe_sha256,threshold,evaluation_report_sha256,isolation_profile}`.
-Read once at owner startup; validate all fields/artifacts/eligibility before loading.
-Threshold, feature/recipe identities and report digest must match the evaluated
-candidate; editing the threshold is not a way to reuse eligibility. The selected
-isolation profile must be supported and pass its startup enforcement check.
-Invalid config is `policy_config_invalid`: deterministic retrieval still starts.
-No ambient model lookup, latest-directory selection or network download.
-
-Owner launches one sandboxed worker, loads the immutable checkpoint through an exact
-read-only grant, and exchanges private length-prefixed JSON frames over inherited
-pipes. Prefix is little-endian u32; maximum frame 64 KiB, checked before allocation.
-Request: `{v:1,request_id,candidate_sha256,feature_function_sha256,features}`; features
-is exactly 2048 finite float32 values. Reply: `{v:1,request_id,candidate_sha256,
-feature_function_sha256,choice,confidence}`. IDs nonblank <=128 bytes, digests lowercase
-64-hex, confidence finite [0,1]; reject unknown/null/duplicate fields. No source paths,
-queries, credentials, arbitrary commands or output locations in prediction requests.
-
-Only one request active, zero waiting. Prediction ceiling is min(100 ms, remaining
-003 read time); startup/load has a separate 5-second cap and is outside requests.
-These are failure bounds, not measured latency promises. On timeout, malformed output,
-wrong identity or death, terminate the owned worker, mark policy unavailable and use
-deterministic routing while the request deadline allows. Do not auto-restart on every
-query; explicit owner restart can retry. Late replies cannot cross request identities.
-The head never changes a hard budget or grants an operation; core policy remains final.
-
-Selection explicitly checks current lineage and writes a new config. The user/operator
-installs it and restarts the existing owner; rollback restores the retained prior
-artifact/config, or disables learning if none existed. No live model switch or registry.
-CLI exits: 0 completed/no_new_data (named in result), 2 invalid/preflight input,
-3 busy, 1 runtime/training/artifact failure, 130 cooperative cancellation. Bounded
-errors follow 001; no raw dataset/query text in diagnostics.
+CLI exits: 0 completed/no_new_data (named), 2 invalid/preflight, 3 busy,
+1 execution/artifact failure, 130 cooperative cancellation. Diagnostics are bounded and
+exclude state/dataset contents. Source and hard budget decisions always stay in the core.

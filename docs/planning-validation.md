@@ -1,6 +1,26 @@
 # Spec and task audit
 
-## Team handoff simulation — current review
+## Executed feasibility — current disposition
+
+2026-09-29. Owner authorized bounded sandboxed probes and direct main publication.
+[The feasibility report](review/feasibility.md) records real Rust/MLX execution,
+ModernBERT/head/selected-QKV reference parity, a head update/read-back, native process
+limit checks, Rust 1.90 MCP exchange and a vector-index smoke. Product source and root
+dependencies are unchanged. Probe sources/locks and public synthetic results are in
+`tools/feasibility`; weights, private data and third-party source remain outside Git.
+
+Replaced 013's obsolete vector-head contract/tasks with ModernBERT v4 and propagated
+the current disposition through architecture, deployment and portfolio. Complete
+model recipe, distributed package, actual host/provider and scale/quality evidence
+remain explicit, scoped prerequisites. No full-product readiness or savings claim.
+
+Checks: probe Rust formatting and documentation links/task structure; unchanged
+protected product/source/build/license files. The legacy checker has a hardcoded old
+013→009 dependency and therefore cannot validate the new semantic dependency graph;
+that boundary was reviewed directly. Structural counts are not readiness evidence.
+The historical entries below retain their original time and scope.
+
+## Team handoff simulation — preceding paper review
 
 2026-09-29. After pushing `f51e6c6`, traced the fifteen current spec dispositions,
 six active workflows and adjacent source owners as a paper implementation handoff.

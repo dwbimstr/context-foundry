@@ -133,12 +133,26 @@ and [helper entitlements](https://developer.apple.com/library/archive/documentat
 describe the relevant boundaries; they do not validate this proposed launcher.
 Do not ship deprecated ad-hoc profiles or assume a raw CLI child has these protections.
 
+The [2026-09-29 native probe](review/feasibility.md) found App Sandbox alone allowed
+child creation. A macOS launcher setting soft/hard `RLIMIT_NPROC=0` before exec denied
+tested spawn/fork and limit restoration while permitting threads. The selected MLX
+and Rust ModernBERT/head probes still ran under that limit. This is the native profile
+candidate to finish before introducing libkrun, not proof of the complete package.
+Ad-hoc signatures, development Homebrew read grants and a loopback-listener denial
+do not satisfy distribution, all network variants, descriptor hygiene or owner-death
+cleanup. Missing required enforcement still disables the affected feature.
+
 For every platform declare `resource_enforcement` as `hard` or `supervised`, by resource.
 OS-enforced memory/process bounds differ from supervisor RSS polling, which can overshoot.
 A job requiring hard limits refuses a merely supervised profile. ModernBERT's CPU/GPU
 choice is unresolved; the earlier small-head CPU assumption is superseded. No GPU
 memory quota is claimed from a host process-memory limit. 009/013 must declare their
 combined resident memory and supported overlap, not only per-request allocation limits.
+The first combined-inference acceptance ceiling is 8 GiB aggregate supervised resident
+memory for the two model workers, separately reporting core and GPU/backend allocations;
+it is a proposed ceiling, not a passing result or an OS/GPU quota. Training is offline
+with online model workers stopped. Refuse jobs requiring a hard bound until the actual
+package demonstrates it. No eviction/reload scheduler is implied by these limits.
 
 ## When libkrun belongs
 

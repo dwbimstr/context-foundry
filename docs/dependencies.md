@@ -23,11 +23,13 @@ This inventory records Cargo metadata for the locked dependency graph. It is not
 The current prototype can contact a separately installed Laya server; it is not a
 Cargo dependency. The owned-learning plan replaces this path instead of distributing
 Laya or editing its repository. Laya remains a separately licensed research reference.
-Planned Rust ML/sandbox dependencies are not installed or locked yet. The earlier small
-CPU head is superseded by ModernBERT with a decision head; 013 D001 owns its backend
-and native-library packaging decision. Libkrun is conditional deployment infrastructure.
-The selected third-party MLX embedding loader remains a distinct runtime integration
-decision. Record exact transitive libraries, notices and any VM image/kernel license
+The product Cargo graph still excludes ML/sandbox dependencies. A separate
+[probe crate](../tools/feasibility/README.md) pins tch 0.24.0, PyO3 0.29.2, rmcp 3.5.0
+and USearch 2.26.2; its lock is not the product lock. Contract 013 v4 selects
+LibTorch 2.11.0 for ModernBERT/head work. USearch has a third-party native C++ core;
+this does not introduce first-party C++ code. Libkrun remains conditional.
+The selected third-party MLX loader was exercised through Rust PyO3, but private
+runtime distribution remains unaccepted. Record transitive libraries, notices and any VM image/kernel license
 inventory when those packages are actually selected. No weights or private data are
 redistributed by this plan; no dependency has been added merely by documenting it.
 The proposed optional gateway also needs locked Rust HTTP/TLS/SSE libraries and a

@@ -1,0 +1,68 @@
+[
+  {
+    "artifact": "convaiinnovations/laya-typed-decisions/model.safetensors",
+    "revision": "1a793eb568e6718f15941d08f85432581df534e3",
+    "bytes": 842609220,
+    "sha256": "4fa56de72383a9d3efa9cfa78955733c81b9fc8067a587ca4beb82c78107a24e"
+  },
+  {
+    "artifact": "convaiinnovations/laya-typed-decisions/tokenizer/tokenizer.json",
+    "revision": "1a793eb568e6718f15941d08f85432581df534e3",
+    "bytes": 3583228,
+    "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
+  },
+  {
+    "artifact": "convaiinnovations/laya-typed-decisions/tokenizer/tokenizer_config.json",
+    "revision": "1a793eb568e6718f15941d08f85432581df534e3",
+    "bytes": 337,
+    "sha256": "08d4cf3ac4dca381759441b85b91a6d40e688471dcd33d15d6649eb0a9a854d1"
+  },
+  {
+    "artifact": "mlx-community/Nemotron-3-Embed-1B-BF16-4bit/model.safetensors",
+    "revision": "d0408b94c50fc327b6ea37dce7409c51e020a4d8",
+    "bytes": 641902892,
+    "sha256": "73b06890e9d44ac792c98d38cd1d624ad4c45b5e0a4106bae6bef1ae356dd62f"
+  },
+  {
+    "artifact": "mlx-community/Nemotron-3-Embed-1B-BF16-4bit/tokenizer.json",
+    "revision": "d0408b94c50fc327b6ea37dce7409c51e020a4d8",
+    "bytes": 17077678,
+    "sha256": "797410dfb649a5b9ba92bc4fef7dbf4022d00e73de6867c4ac199a8846439421"
+  },
+  {
+    "artifact": "mlx-community/Nemotron-3-Embed-1B-BF16-4bit/tokenizer_config.json",
+    "revision": "d0408b94c50fc327b6ea37dce7409c51e020a4d8",
+    "bytes": 21139,
+    "sha256": "7bbb77c55282bc679b86d21a1b3953ed8d5d63aaf75f10800c20596eab30b980"
+  },
+  {
+    "scratch_relative_path": "Nemotron-3-Embed-1B-BF16-4bit/config.json",
+    "revision": "d0408b94c50fc327b6ea37dce7409c51e020a4d8",
+    "bytes": 1200,
+    "sha256": "b23e43e3b2097f28991a01f9ece734025d42eb7af986c795845a714ea2bfcbab"
+  },
+  {
+    "scratch_relative_path": "Nemotron-3-Embed-1B-BF16-4bit/nemotron3_embed_mlx.py",
+    "revision": "d0408b94c50fc327b6ea37dce7409c51e020a4d8",
+    "bytes": 3118,
+    "sha256": "a30a86d8967593736ab9a04999529646bb26d9ef8027b2e4070b77a4c5fcc80c"
+  },
+  {
+    "scratch_relative_path": "laya-typed-decisions/encoder_config.json",
+    "revision": "1a793eb568e6718f15941d08f85432581df534e3",
+    "bytes": 2084,
+    "sha256": "5268d24ad3b77c8151de5dcb0762ba4391619aad9ab0bda33e36fb083cfeae6d"
+  },
+  {
+    "scratch_relative_path": "laya-typed-decisions/rl_agent_config.json",
+    "revision": "1a793eb568e6718f15941d08f85432581df534e3",
+    "bytes": 847,
+    "sha256": "ebf0cd524d92342a6be5e48e9fca3d7c2babfb5a56ccd79d2171ef5d8c7f7be8"
+  },
+  {
+    "scratch_relative_path": "reference/common.py",
+    "revision": "4066d5d5fbf08b66c6757ddeedbd797bd7655bc0",
+    "bytes": 20557,
+    "sha256": "4ab41be6a4d9fdbad74eccf4f64c43e2c7404d227988d97ed8233ded8b182cb1"
+  }
+]

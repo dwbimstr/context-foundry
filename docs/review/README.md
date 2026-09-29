@@ -1,7 +1,8 @@
 # Design lessons
 
-The current [team handoff simulation](handoff-simulation.md) records concrete stops
-before implementation, their owners and the scope that can proceed independently.
+The current [feasibility disposition](feasibility.md) records real bounded probes,
+decisions and remaining owner-specific checks. The earlier
+[team handoff simulation](handoff-simulation.md) records the paper-review baseline.
 
 The design was informed by a private predecessor architecture review and direct
 inspection of Laya. Private specifications and detailed operational evidence are

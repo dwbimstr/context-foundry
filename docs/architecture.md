@@ -363,24 +363,25 @@ clarified ModernBERT with a decision head over joint state/question/candidate in
 The earlier 2048→64→2 classifier on Nemotron vectors is superseded. Nemotron remains
 the retrieval encoder; ModernBERT adds separate model preparation and inference cost.
 The [ModernBERT review](learning.md#modernbert-and-the-cost-of-matching-laya--2026-09-29)
-records the integration gap. D001 must pin the exact model/head and whether adaptation
-updates only the head or also ModernBERT. Rust forward support does not prove correct
-training gradients; neither mode has been run here.
+records the integration gap. [The feasibility pass](review/feasibility.md) establishes
+one real Rust model/head/gradient boundary. Contract v4 pins tch/LibTorch and frozen
+ModernBERT with head adaptation first; full encoder fitting remains separately gated.
+Scratch parity does not establish complete training or package acceptance.
 
 Grouped permitted examples and reusable features feed an isolated offline training
 worker. Calibration/evaluation are held out. New rows in existing training groups are
 new work; invalidated base contributions refuse before a no-op decision. Immutable
 artifacts support explicit selection/restart and rollback. Normal inference stays off
 until checked tasks justify the extra work. Hard token/permission rules stay outside
-the learned model. The [prior v3 contract](../specs/013-owned-learning/contracts/learning-loop.md)
-is retained as a superseded proposal. D001 must replace its vector-only input, cache,
-model, fitting, limits and pipe protocol before implementation.
+the learned model. [Contract v4](../specs/013-owned-learning/contracts/learning-loop.md)
+replaces the vector-only design with exact joint inputs, tokenization, head fitting,
+limits and private IPC; old proposals remain in Git history.
 
 Core and worker are separate processes with one store owner; only the core writes
 source state. One crate can build a default core and feature-gated worker executable.
-ModernBERT runtime/library and CPU/GPU access require a verified profile under 013
-D001; the former small-head CPU assumptions do not apply. Investigate maintained
-Rust ML bindings before writing model integration; no custom tensor/autodiff engine.
+ModernBERT's selected CPU runtime still requires a verified distributed profile under
+013 D001; scratch macOS enforcement is not package acceptance. Use maintained
+Rust ML bindings; no custom tensor/autodiff engine.
 No Laya/Python first-party trainer or public inference server is selected.
 
 [Deployment](deployment.md) owns enforced filesystem/network/process grants, resource

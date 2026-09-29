@@ -93,6 +93,13 @@ the preparation tools, lifecycle and coexistence proof belong to 009 T003.
 
 ### T001 — Serve bounded engine operations over real stdio MCP
 
+Feasibility input: rmcp 3.5.0 built with Rust 1.90 and passed real stdio
+initialize/list/call/close in a jailed Linux fixture. Use its explicitly capped codec
+through the sink/stream adapter; default AsyncRwTransport has unbounded line buffering.
+The 64-KiB decoder refusal is demonstrated, but the production 16-handler admission,
+cancellation and engine-ownership cases below remain acceptance. See
+[probe evidence](../../docs/review/feasibility.md); do not infer them from the smoke.
+
 - **Depends:** 001 T001–T003. **Scope:** new `src/mcp.rs`, registration in `src/lib.rs`,
   CLI bootstrap/connect commands, pinned Cargo dependency and new `tests/mcp.rs`. No socket,
   host hooks, model setup or user-global configuration.

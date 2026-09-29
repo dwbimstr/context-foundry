@@ -45,6 +45,15 @@ long attribution campaign to establish whether semantic retrieval is useful at a
 
 ## Selection decision — D001
 
+2026-09-29 [feasibility evidence](../../docs/review/feasibility.md): pinned MLX revision
+`d0408b94c50fc327b6ea37dce7409c51e020a4d8` ran through Rust PyO3 0.29.2 with publisher
+loader/MLX 0.32.3/mlx-lm 0.31.3 in a macOS App Sandbox bundle. A pre-exec hard process
+limit retained model execution while denying tested process creation. USearch 2.26.2
+passed a synthetic persistence/update smoke and is the initial index integration
+candidate (third-party C++ core). Full recipe, max input, quality, MSRV, cancellation,
+aggregate resources and distributed package acceptance remain open. The 512-token
+probe cap is not a selected chunk size; do not prepare the corpus from this smoke.
+
 The model family/checkpoint choice is resolved by the owner. After 001 D001, pin
 the selected model's immutable artifact revision and compatible local runtime; its
 tokenizer/chunk recipe; and one maintained Rust vector-search library with verified
@@ -78,7 +87,8 @@ the publisher's Python/MLX implementation remains an external dependency, not a
 Foundry Python service to write or maintain. D001 must establish a supported callable
 boundary for the pinned loader, or report `runtime_bridge_unavailable`. Do not assume
 a CLI/API exists merely because the model repository includes a loader.
-Runtime integration remains unimplemented.
+Production runtime integration remains unimplemented; the scratch bridge is proven
+only at the boundary described above.
 
 Apply the [deployment isolation contract](../../docs/deployment.md) to actual model
 execution, including asset grants, no downloads/network, process cleanup and declared

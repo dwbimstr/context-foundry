@@ -6,13 +6,15 @@ system. Planning changes are authorized; these documents do not claim new runtim
 features, implementation approval, or an independent review.
 
 The [working CLI](../docs/validation.md) is the baseline. Six user outcomes retain
-the product goals. 013's four task entries are superseded pending its model contract;
-the remaining active tasks specify behavior and acceptance. The next
+the product goals. All active tasks now specify behavior and acceptance, including
+013's replacement ModernBERT/head contract. The next
 step is 001 T001: D001 now retains the existing redb/Tantivy pair for bounded recovery;
 implementation and external execution prerequisites remain explicit.
 The [team handoff simulation](../docs/review/handoff-simulation.md) traces startable
 work, unresolved integration inputs and corrected cross-spec dependencies. It is a
 source-backed paper walkthrough, not runtime acceptance or another required stage.
+[Executed feasibility](../docs/review/feasibility.md) now provides bounded model,
+isolation and protocol evidence, with unresolved checks assigned to their owning tasks.
 
 KISS applies to the machinery, not the ambition. These specs are an organizational
 choice, not proof of simplicity. Preserve the [capability commitments](../docs/architecture.md#sophisticated-behavior-through-simple-ownership)
@@ -26,7 +28,7 @@ work. A narrower first release does not redefine the intended product as basic s
 | [005](005-graph-evidence-lifecycle/spec.md) | Follow real code relationships in a large workspace | 001; 003 for agent demonstration | One language and real semantic producer, bounded ingest and delivery |
 | [008](008-scoped-durable-memory/spec.md) | Remember, correct and forget explicit project knowledge | 001 | Independent extension; no transcript harvesting |
 | [009](009-optional-semantic-retrieval/spec.md) | Prepare neural context progressively and retain expensive work | 001; 003 for foreground coexistence | Nemotron 3 Embed 1B, local MLX 4-bit profile; useful partial coverage, warm restart and delta updates |
-| [013](013-owned-learning/spec.md) | Improve decisions through repeated owned Rust fine-tuning of ModernBERT with a decision head | 001/003 for data; 005 for useful graph selection; separate from 009 retrieval vectors | Optional isolated learning/inference, explicit selection and packaged lifecycle; model contract requires correction |
+| [013](013-owned-learning/spec.md) | Improve decisions through repeated owned Rust fine-tuning of ModernBERT with a decision head | 001/003 for data; 005 for useful graph selection; separate from 009 retrieval vectors | Contract v4; initial head adaptation, explicit selection and independently accepted package lifecycle |
 
 Do not wait for all six to release. The first CLI release requires 001 and the
 ordinary [release checklist](../docs/release.md). The agent release adds 003. A
@@ -52,11 +54,11 @@ remains active while normal inference can stay disabled without proven task bene
 | 005 | T001 real SCIP; T002 scoped publication; T003 large-workspace workflow | Real producer/snapshot; predeclared corpus, hardware and numeric run limits |
 | 008 | T001 record lifecycle; T002 export/forget | Accepted 001 owner/schema contract; 003 only for advertised MCP surface |
 | 009 | D001 runtime/index disposition; T001 durable preparation; T002 retrieval; T003 progressive preparation | Model selected; pinned artifact/runtime, Rust bridge, verified isolation and numeric execution bounds |
-| 013 | D001 ModernBERT/head contract and library/jail proof; T001–T004 vector-head details superseded pending replacement | Preserve ModernBERT plus decision-head target; pin adaptation scope, model/input contract, correct gradients and one packaged profile |
+| 013 | D001 actual recipe/package acceptance; T001 joint-input data; T002 real fitting; T003 inference/rollback; T004 repeat/deploy | v4 pins model/input/backend; scratch gradients pass, complete recipe and actual package still need acceptance |
 
-Nineteen implementation task entries and three decision tasks are recorded; 013's four
-task entries are superseded and require replacement before implementation. 001 D001 is
-resolved. 009 D001 and 013 D001 need actual library/runtime and isolation evidence. A missing runtime
+Nineteen implementation task entries and three decision tasks are recorded. 001 D001 is
+resolved. 009 D001 and 013 D001 have partial executed feasibility evidence; their remaining
+recipe/runtime/package checks are explicit in the disposition above. A missing runtime
 input causes the named prerequisite failure in its spec; it is not an implementer's
 invitation to guess or a passed acceptance criterion. [Current review/evidence](../docs/planning-validation.md)
 records what was inspected and checked. No implementation acceptance has run merely
