@@ -3,7 +3,9 @@
 The [portfolio](../specs/README.md) owns order and status. Release useful workflows:
 
 1. Reliable cited CLI context, including source update and interrupted-index recovery (001).
-2. Explicit repo bootstrap, direct stdio MCP and honest adapter budget/usage boundaries (003).
+2. Explicit repo bootstrap, direct stdio MCP, native source discovery before eligible
+   grep/ripgrep, and honest adapter budget/usage boundaries (003). The actual agent
+   workflow verifies default tool order and named fallback, not just MCP availability.
    Its optional T004 adds a Rust forwarding/metering gateway for a verified host/API;
    gateway work does not gate the independently useful MCP release.
 3. One real code-relationship workflow on a declared large workspace (005).

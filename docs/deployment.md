@@ -13,7 +13,11 @@ model run or publication has been performed. Existing CLI validation is unchange
    the canonical root, private store, admitted/excluded scope, requested components,
    existing resources and next action. Applying it creates/updates that store and
    indexes baseline source. It does not discover/enroll roots from session text.
-3. Connect the chosen host using a printed per-project MCP configuration. One host
+3. Connect the chosen host using printed per-project MCP configuration and the
+   [native-discovery guidance](../specs/003-agent-retrieval-context/spec.md#native-source-discovery-and-fallback).
+   The configured agent uses Foundry before grep/ripgrep for eligible discovery;
+   exact-pattern/current-file and unavailable-retrieval fallbacks remain explicit.
+   Setup alone is not real-host adoption proof. One host
    session owns one store. An existing session uses `index` to refresh, not another
    CLI writer. A second repository gets a separate store/configuration.
 4. Request semantic preparation under an explicit profile/budget when useful. Baseline
@@ -230,6 +234,8 @@ Data purge is a distinct explicit action with the existing ownership checks.
 
 - 003: inspect→apply baseline→connect→budgeted task→edit/reindex, plus interrupted
   bootstrap, wrong root, busy owner, missing optional resources and config preservation.
+  T003 verifies an ordinary task selects Foundry before eligible grep/ripgrep and
+  exercises named fallbacks; record instruction-based versus hook-enforced routing.
   T004 separately verifies real forwarded streaming/tool calls, provider counts/usage,
   private gateway credentials, admission refusal, unknown outcomes and clean opt-out.
 - 009: actual selected model under its advertised isolation/resource profile; cold,

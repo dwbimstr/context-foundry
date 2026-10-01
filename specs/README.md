@@ -24,7 +24,7 @@ work. A narrower first release does not redefine the intended product as basic s
 | Spec | User outcome | Needs | Shipping boundary |
 | --- | --- | --- | --- |
 | [001](001-source-state-recovery/spec.md) | Find trustworthy, cited context after source updates or restart | None | Useful CLI release; no agent or model required |
-| [003](003-agent-retrieval-context/spec.md) | Bootstrap a repository, use budgeted context and optionally forward/meter model requests | 001 for MCP; gateway owns no store | Real MCP client; separately verified host/gateway protocol and accounting boundary |
+| [003](003-agent-retrieval-context/spec.md) | Bootstrap a repository, use Foundry before eligible grep/ripgrep, deliver budgeted context and optionally forward/meter model requests | 001 for MCP; gateway owns no store | Real agent tool-order/fallback acceptance; separately verified host/gateway protocol and accounting boundary |
 | [005](005-graph-evidence-lifecycle/spec.md) | Follow real code relationships in a large workspace | 001; 003 for agent demonstration | One language and real semantic producer, bounded ingest and delivery |
 | [008](008-scoped-durable-memory/spec.md) | Remember, correct and forget explicit project knowledge | 001 | Independent extension; no transcript harvesting |
 | [009](009-optional-semantic-retrieval/spec.md) | Prepare neural context progressively and retain expensive work | 001; 003 for foreground coexistence | Nemotron 3 Embed 1B, local MLX 4-bit profile; useful partial coverage, warm restart and delta updates |

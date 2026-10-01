@@ -12,6 +12,10 @@ through the same owners. The owner's subsequent answer also selects optional req
 forwarding/metering: one Rust gateway for explicitly configured host traffic, with
 separate acceptance from MCP. This is not transparent interception of all providers.
 
+The 2026-10-01 amendment
+makes Foundry the default source-discovery route before grep/ripgrep in an explicitly
+configured agent session, with named exceptions and real-host acceptance below.
+
 - **FR-001:** Direct stdio MCP uses one store owner and ordinary engine operations:
   `search`, `context`, `retrieve`, `index`, `status`. No custom socket/shim or shell tool.
 - **FR-002:** Use 001's [shared source/response contract](../001-source-state-recovery/contracts/context-v1.md)
@@ -31,6 +35,70 @@ separate acceptance from MCP. This is not transparent interception of all provid
   preserves streaming/tool semantics, enforces configured admission/output bounds and
   meters actual provider usage. Credentials, retries, unknown outcomes and deployment
   follow the same contract. Gateway failure never silently bypasses policy upstream.
+
+- **FR-008:** The configured agent uses Foundry first for eligible source discovery,
+  without requiring the user to name a Foundry tool in each prompt. Bootstrap exposes
+  the tools and project guidance; T003 verifies actual ordering. Available MCP tools
+  alone do not establish native adoption or enforcement. Fallback follows the rules
+  below; no shell interception, command shadowing or new routing service.
+
+## Native source discovery and fallback
+
+Owner: the existing 003 host adapter/setup; core source and budget rules stay in 001.
+"Native" means the supported host exposes the existing tools as ordinary agent tools
+and selects them by default for this workflow. It does not mean Foundry replaces the
+host's filesystem, shell or all search semantics. Install no second discovery router.
+
+Bootstrap prints the supported host's root/store configuration plus a small, stable
+project instruction block defining this preference and its exceptions. Printed setup
+does not edit host files. Applying host instructions/configuration requires existing
+authorization, preserves unrelated operator bytes and changes only a positively owned
+block; an edited/conflicting block is displayed for manual integration, not overwritten.
+Use the selected host's existing project/session instruction facility. No generic
+configuration manager, global prompt injection or extra instruction file format.
+
+| User intent | Default agent operation |
+| --- | --- |
+| Locate an identifier or relevant source in an admitted indexed root | `search` before repository grep/ripgrep |
+| Understand a subsystem, behavior or available relationships | One budgeted `context` request; no mandatory search/context/graph sequence |
+| Follow an existing source handle | `retrieve`, validating its workspace/hash/range |
+| Inspect a known current file, unsaved editor buffer, exact byte/regex pattern, or perform an exhaustive current-filesystem scan | Existing host read/search facility; Foundry has no implied parity or live-disk guarantee |
+
+An exception follows the actual task's required semantics. Rewriting an ordinary
+identifier lookup as a regex does not exempt it from using Foundry first.
+
+An eligible discovery request attempts Foundry once before shell search. If useful
+evidence is returned, follow its citations and do not automatically repeat the same
+discovery with grep. A later distinct question or explicitly requested exhaustive
+check remains permitted. Optional models are not required for this ordering: use
+ready baseline retrieval when graph/semantic/policy components are unavailable.
+
+Fallback is permitted when the required search semantics are unsupported, the source
+is outside indexed coverage, or the attempt is empty, limited/incomplete, busy, expired
+or unavailable. Name that reason in the host transcript using existing tool results;
+do not add a durable fallback ledger, health-poll loop or telemetry to a warm prefix.
+An empty/limited result never proves absence. Use the existing shared read deadline;
+no hidden retry, automatic index/repair/preparation, extra model router or waiting for
+the corpus to finish. Explicit refresh still goes through the existing store owner.
+
+Host fallback is independently authorized, scoped to the selected roots and labeled
+host/current-file evidence, not Foundry-validated evidence. A permission refusal,
+unsafe path or foreign-workspace handle cannot widen that scope or be bypassed by
+another tool. Authoritative corruption remains visible and cannot be reported as a
+healthy Foundry result. Mentioned external paths still do not enroll a root. The same
+preference applies to each explicitly admitted repository; combined root selection
+and joins remain 007's separate scope, not implemented by this adapter amendment.
+
+Record whether the selected host supports project instructions only or an actual
+native tool-selection hook. Instructions establish a preference; claim enforced
+routing only when the real hook controls eligible calls and its bypass cases pass.
+T003's transcript is acceptance for the named host/version/workflow, not proof that
+all hosts or every future model response obey the preference. A host without that
+evidence is advertised as tool availability, not verified native source discovery.
+
+Fallback payloads and calls enter existing complete-request accounting when the host
+exposes them. MCP-only Foundry delivery counters cannot establish their cost or savings;
+reuse the [adapter economics contract](contracts/adapter-economics.md), not new receipts.
 
 ## Interface and lifecycle
 
@@ -111,7 +179,10 @@ cancellation and engine-ownership cases below remain acceptance. See
   between index batches; EOF and forced process exit; second store owner refused.
   Bootstrap inspect writes nothing; apply indexes one explicit root; interrupted apply
   reuses committed state; unavailable optional components leave baseline ready with
-  named setup work. Printed host config preserves unrelated bytes and pins root/store.
+  named setup work. Printed host config preserves unrelated bytes and pins root/store;
+  it includes the native-discovery instruction block and supported host capability.
+  Exercise print-only setup, authorized owned-block insertion, identical reapplication
+  and edited-block conflict without overwriting operator changes.
   Reopen and compare all acknowledged source changes and partial counters to disk.
   Start with damaged derived search: status and direct retrieve work, search names
   repair_required, and the tool catalog remains unchanged across readiness changes.
@@ -149,17 +220,28 @@ cancellation and engine-ownership cases below remain acceptance. See
   harness in `tests/fixtures/agent-task` (new) with no third-party dependencies. Agent
   tools/configuration touch this fixture only; restore exact prior host settings if
   a temporary session configuration was not supported.
-- **Outcome/acceptance (FR-001–FR-006 / SC-003):** ask the agent to make `parse_record` trim
+- **Outcome/acceptance (FR-001–FR-006, FR-008 / SC-003):** with the printed project
+  guidance active, use an ordinary task prompt that does not name Foundry tools.
+  Ask the agent to make `parse_record` trim
   whitespace on both sides of `=` and reject an empty key, preserving the Option tuple
   interface. The checker asserts `" mode = local "→Some(("mode","local"))`,
   `" = x"→None`, `"mode"→None`, and `"mode=a=b"→Some(("mode","a=b"))`.
-  It must use context/retrieve citations, make the edit, pass the checker, re-index
+  Its first eligible source-discovery call must be Foundry search/context, before
+  repository grep/ripgrep. Availability alone, or an eligible grep first, fails this
+  adoption check even if the edit is correct. It must use context/retrieve citations,
+  make the edit, pass the checker, re-index
   through MCP, and return the new hash/bytes; the pre-edit handle must then fail.
   Start from bootstrap inspection/application and printed host setup. Record actual
   adapter capabilities; exercise user-driven/delivery mode and host-request mode only
   if the selected host supplies the required hook. Show an exhausted allowance refusing
   additional work within its declared boundary. No full-host control claim from MCP alone.
-- **Verification/Review:** record tool transcript with public fixture data and actual
+- **Verification/Review:** in the same bounded fixture workflow, exercise one
+  unsupported exact-pattern request and one unavailable/busy Foundry attempt. Record
+  the permitted host fallback and reason; no repeated identical discovery, hidden
+  indexing/model setup or outside-root expansion. Missing optional models must leave
+  baseline discovery usable. If enforced routing is claimed, exercise its real host
+  hook and bypass/refusal cases; instruction-only setup cannot pass that claim.
+  Record tool transcript with public fixture data and actual
   checker exit code; remove only positively owned temporary files/configuration.
   One successful task proves this integration, not task-success uplift or savings.
   A cost claim additionally needs actual whole-provider usage/caching and a correctness-

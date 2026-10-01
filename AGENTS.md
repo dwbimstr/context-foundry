@@ -16,6 +16,11 @@ boundaries and existing authorization; do not ask again for already selected wor
   database, generic orchestration platform or inherited C++ obligations.
 - Use the [modified Spec Kit tools](.specify/README.md) as needed. One spec is sufficient;
   plan/tasks files and command stages are optional. No benchmark per feature by default.
+- When compatible Foundry tools are mounted for an admitted indexed repository, use
+  `search`/`context`/`retrieve` before eligible repository grep/ripgrep. Follow
+  [003's fallback rules](specs/003-agent-retrieval-context/spec.md#native-source-discovery-and-fallback)
+  for unsupported patterns, current-file checks and unavailable coverage. This
+  instruction does not claim the proposed MCP adapter is already implemented.
 - Preserve source identity, freshness, provenance, bounded output and user data. Never
   run workspace code merely to index it. Training is outside source transactions and
   baseline release dependencies. Training consent differs from retrieval consent.

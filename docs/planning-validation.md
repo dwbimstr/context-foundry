@@ -1,6 +1,20 @@
 # Spec and task audit
 
-## Decision-ecosystem traceability — current documentation pass
+## Native discovery requirement — current documentation pass
+
+2026-10-01. The owner requires Foundry to precede grep/ripgrep in ordinary agent
+source discovery. Added 003 FR-008 and its canonical selection/fallback rules,
+bootstrap project guidance and actual tool-order acceptance inside existing T001/T003.
+Updated architecture, deployment, roadmap, portfolio and contributor guidance.
+MCP availability, instruction preference and enforced host routing are distinguished;
+the amendment does not implement MCP or imply a supported multi-repository join.
+
+Checked documentation paths/anchors, requirement/task mapping and whitespace.
+No product/probe code, dependencies, models, stores, host configuration or upstream
+repositories changed. No runtime host task, performance or token-savings acceptance
+was executed. Existing graph/neural/learning/gateway readiness boundaries remain.
+
+## Decision-ecosystem traceability — preceding documentation pass
 
 2026-09-29. Added [the source-to-contract map](references/laya-decision-ecosystem.md):
 Laya source commit, checkpoint revision, numerical-library versions/commits, functions,

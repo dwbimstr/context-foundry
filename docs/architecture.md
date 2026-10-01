@@ -20,6 +20,14 @@ Feedback exists in the first slice; a separate user-memory service does not. Lea
 improves a bounded decision such as retrieval strategy; it does not create a new
 general agent or require training before the engine is useful.
 
+The planned agent integration makes Foundry the first source-discovery route for
+explicitly admitted repositories, before grep/ripgrep. The existing adapter owns
+[tool selection and fallback](../specs/003-agent-retrieval-context/spec.md#native-source-discovery-and-fallback):
+small project guidance, ordinary tools and real-host acceptance. MCP availability
+alone proves neither adoption nor enforced routing. Exact-pattern/live-file checks
+retain their host tools; no shell interception, discovery daemon or model dependency
+is introduced. Combined multi-repository joins remain deferred in 007.
+
 ## Sophisticated behavior through simple ownership
 
 KISS governs the implementation, including the prototype. Each operation should hide
