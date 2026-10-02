@@ -23,6 +23,9 @@ fn server(body: &'static str, status: &'static str) -> (u16, thread::JoinHandle<
                 Err(e) => panic!("fixture accept failed: {e}"),
             }
         };
+        // The listener is non-blocking for the accept poll; the accepted
+        // stream inherits that mode and would fail reads with WouldBlock.
+        socket.set_nonblocking(false).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();

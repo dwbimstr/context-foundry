@@ -1,16 +1,31 @@
 //! The existing Laya /v1/systemone protocol. No model weights live in the core.
+//! Deterministic fallback routing shares the one keyword policy in
+//! `response::strategy_for_query`; the core never duplicates that rule.
+use crate::error::{FResult, FoundryError};
 use crate::store::{Engine, FEEDBACK};
-use anyhow::{Result, ensure};
-use redb::ReadableTable;
+use anyhow::Result;
+use redb::{ReadableDatabase, ReadableTable};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::fmt;
 use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Strategy {
+    Auto,
     Search,
     Graph,
+}
+
+impl fmt::Display for Strategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Strategy::Auto => "auto",
+            Strategy::Search => "search",
+            Strategy::Graph => "graph",
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -22,15 +37,7 @@ pub struct Decision {
 }
 
 pub fn decide(query: &str, port: Option<u16>, threshold: f64) -> Decision {
-    let lower = query.to_lowercase();
-    let fallback = if ["calls", "caller", "depends", "impact", "dependency"]
-        .iter()
-        .any(|s| lower.contains(s))
-    {
-        Strategy::Graph
-    } else {
-        Strategy::Search
-    };
+    let fallback = crate::response::strategy_for_query(query);
     let mut result = Decision {
         strategy: fallback,
         source: "deterministic",
@@ -51,11 +58,11 @@ pub fn decide(query: &str, port: Option<u16>, threshold: f64) -> Decision {
 }
 
 pub fn predict(query: &str, port: u16, threshold: f64) -> Result<(Strategy, f64)> {
-    ensure!(
+    anyhow::ensure!(
         query.len() <= 4096 && !query.trim().is_empty(),
         "invalid query"
     );
-    ensure!(
+    anyhow::ensure!(
         threshold.is_finite() && (0.0..=1.0).contains(&threshold),
         "invalid confidence threshold"
     );
@@ -78,14 +85,14 @@ pub fn predict(query: &str, port: u16, threshold: f64) -> Result<(Strategy, f64)
         .limit(64 * 1024)
         .read_json()?;
     let decision = &answer["answers"]["strategy"];
-    ensure!(
+    anyhow::ensure!(
         decision["type"] == "choice",
         "Laya returned a non-choice decision"
     );
     let confidence = decision["answer_confidence"]
         .as_f64()
         .ok_or_else(|| anyhow::anyhow!("Laya omitted answer_confidence"))?;
-    ensure!(
+    anyhow::ensure!(
         confidence.is_finite() && (threshold..=1.0).contains(&confidence),
         "Laya confidence below policy threshold or invalid"
     );
@@ -107,20 +114,21 @@ pub struct Feedback {
     pub allow_training: bool,
 }
 
+fn invalid(message: &'static str) -> FoundryError {
+    FoundryError::InvalidArgument(message.into())
+}
+
 impl Engine {
-    pub fn record_feedback(&self, feedback: &Feedback) -> Result<String> {
-        ensure!(
-            !feedback.task_id.trim().is_empty() && feedback.task_id.len() <= 256,
-            "invalid task id"
-        );
-        ensure!(
-            !feedback.query.trim().is_empty() && feedback.query.len() <= 4096,
-            "invalid feedback query"
-        );
-        ensure!(
-            ["operator", "task_checker"].contains(&feedback.label_source.as_str()),
-            "label must come from operator or task_checker"
-        );
+    pub fn record_feedback(&self, feedback: &Feedback) -> FResult<String> {
+        if feedback.task_id.trim().is_empty() || feedback.task_id.len() > 256 {
+            return Err(invalid("invalid task id"));
+        }
+        if feedback.query.trim().is_empty() || feedback.query.len() > 4096 {
+            return Err(invalid("invalid feedback query"));
+        }
+        if !["operator", "task_checker"].contains(&feedback.label_source.as_str()) {
+            return Err(invalid("label must come from operator or task_checker"));
+        }
         let encoded = serde_json::to_string(feedback)?;
         // A correction or consent withdrawal replaces the same task/query example.
         let id =
@@ -135,18 +143,18 @@ impl Engine {
     }
 
     /// A stable task split prevents different interactions from one task leaking across sets.
-    pub fn training_examples(&self) -> Result<Vec<serde_json::Value>> {
-        use redb::ReadableDatabase;
+    pub fn training_examples(&self) -> FResult<Vec<serde_json::Value>> {
         let tx = self.db.begin_read()?;
         let mut rows = Vec::new();
         for row in tx.open_table(FEEDBACK)?.iter()? {
             let (id, encoded) = row?;
-            let feedback: Feedback = serde_json::from_str(encoded.value())?;
+            let feedback: Feedback = serde_json::from_str(encoded.value())
+                .map_err(|e| FoundryError::CorruptStore(format!("feedback record: {e}")))?;
             if !feedback.allow_training {
                 continue;
             }
             let hash = crate::digest(feedback.task_id.as_bytes());
-            let bucket = u8::from_str_radix(&hash[..2], 16)? % 10;
+            let bucket = u8::from_str_radix(&hash[..2], 16)?;
             let split = if bucket == 0 {
                 "evaluation"
             } else if bucket == 1 {

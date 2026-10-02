@@ -36,6 +36,11 @@ counting recipe. An unknown provider tokenizer is not replaced with chars/4.
 
 Effective context allowance is the minimum of caller request, configured context
 ceiling and remaining connection/session allowance, all in the core's named tokenizer.
+MCP context/retrieve envelopes report that effective value as `requested_budget` and
+name the bound that produced it in `budget_limited_by` (`request`, `context_ceiling`
+or `session_allowance`; ties report `request`), counted inside the envelope. A refusal
+names the limiting bound, and its hint is sufficient under any label (added 2026-10-01
+after a real host misread an allowance-limited budget as a defect).
 Host-request mode adds a separate provider-token fit constraint, not a minimum of
 incomparable token counts. Host residual = model input window minus exact fixed/history/tool envelope
 and reserved maximum output tokens. Zero/negative residual refuses before retrieval

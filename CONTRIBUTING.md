@@ -14,6 +14,14 @@ Include a focused regression test for a correctness bug. Apply the
 the commands above are the full Rust check set, not a requirement for documentation
 edits. Do not add a long benchmark to validate a change that an acceptance test can decide.
 
+Crash, interruption and stall tests use named fault points (`src/fault.rs`) compiled
+only under the non-default `test-faults` feature, which `cargo test` enables through a
+self dev-dependency; environment arming lives in the test-only `foundry-faults`
+binary. Never arm faults from the shipped `foundry` binary or a release build: check
+with `cargo build --locked --release` and `strings target/release/foundry` (no
+`ctxfoundry-fault` or `FOUNDRY_TEST_FAULT`). Target boundaries by name and assert the
+durable state that identifies them, not by counting checkpoints.
+
 Keep datasets, transcripts, private repositories, model weights and real credentials
 out of patches. Use small original/public fixtures with clear rights. Contributions
 to this project are under its MIT license; dependencies keep their own licenses.

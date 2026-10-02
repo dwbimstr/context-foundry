@@ -1,7 +1,9 @@
-# 003 — Context inside one coding agent
+# 003 — Context inside coding agents
 
-Status: Proposed; no MCP implementation. Depends: 001 accepted source/response
-contract. Authorization: planning; no host configuration changed.
+Status: T001–T003 and the optional shared owner implemented and verified locally,
+2026-10-01, including concurrent OMP 18.4.9 and Codex 0.159.2 service on one store
+([validation](../../docs/validation.md)). Not released. T004 gateway remains proposed,
+outside this tranche. No production stores, services or global host configuration changed.
 
 ## Outcome and requirements
 
@@ -16,7 +18,8 @@ The 2026-10-01 amendment
 makes Foundry the default source-discovery route before grep/ripgrep in an explicitly
 configured agent session, with named exceptions and real-host acceptance below.
 
-- **FR-001:** Direct stdio MCP uses one store owner and ordinary engine operations:
+- **FR-001:** A maintained SDK exposes one store owner through default stdio MCP or
+  explicitly selected loopback Streamable HTTP MCP, using ordinary engine operations:
   `search`, `context`, `retrieve`, `index`, `status`. No custom socket/shim or shell tool.
 - **FR-002:** Use 001's [shared source/response contract](../001-source-state-recovery/contracts/context-v1.md)
   for handles, errors, scope, source identity, defaults, bounds and snapshot freshness.
@@ -75,8 +78,10 @@ ready baseline retrieval when graph/semantic/policy components are unavailable.
 
 Fallback is permitted when the required search semantics are unsupported, the source
 is outside indexed coverage, or the attempt is empty, limited/incomplete, busy, expired
-or unavailable. Name that reason in the host transcript using existing tool results;
-do not add a durable fallback ledger, health-poll loop or telemetry to a warm prefix.
+or unavailable. Name that reason in the host transcript from the tool result or, when
+startup/connection failure leaves no tools, the host's MCP status or bounded server
+diagnostic. If the host exposes no cause, report unavailability without inventing one.
+Do not add a durable fallback ledger, health-poll loop or telemetry to a warm prefix.
 An empty/limited result never proves absence. Use the existing shared read deadline;
 no hidden retry, automatic index/repair/preparation, extra model router or waiting for
 the corpus to finish. Explicit refresh still goes through the existing store owner.
@@ -102,12 +107,12 @@ reuse the [adapter economics contract](contracts/adapter-economics.md), not new 
 
 ## Interface and lifecycle
 
-Proposed command: `foundry --store DIR mcp --root ROOT`. Root is canonicalized and
+Command: `foundry --store DIR mcp --root ROOT`. Root is canonicalized and
 bound once; requests cannot switch it. Startup fails before serving on store busy,
 wrong workspace or unsupported schema. The [official Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk)
-provides stdio/lifecycle/framing. T001 selects and locks the latest stable published
-SDK compatible with Rust 1.90, without changing that MSRV implicitly. No compatible
-release is a named `sdk_incompatible` prerequisite failure; do not handwrite MCP.
+provides stdio/lifecycle/framing; T001 locked rmcp 3.5.0, which builds and passes
+`cargo check` on Rust 1.90. No compatible release would be a named `sdk_incompatible`
+prerequisite failure; do not handwrite MCP.
 Use 001's explicit initialization only for a new store; an existing store is never
 upgraded by serving. A broken lexical index permits authoritative-only startup and
 the shared failure-scope behavior. Register the implemented tool set once per process;
@@ -117,9 +122,10 @@ Listing tools and health/status never loads a model or initiates maintenance.
 Use one serialized engine worker with **one active operation and zero waiting engine
 operations**. A valid concurrent engine request returns `busy`, retryable true, without
 mutation; it is never silently queued. SDK initialization/cancellation messages remain
-serviceable while the worker runs. Limit framed incoming JSON to 64 KiB before full
-allocation/decoding; close the session on an oversized/malformed transport frame with
-a bounded stderr diagnostic. Normal malformed tool arguments return contract errors.
+serviceable while the worker runs. Limit incoming stdio JSON frames to 64 KiB before
+full allocation/decoding; close that stdio session on oversized/malformed frames with
+a bounded stderr diagnostic. HTTP rejects the offending request only. Normal
+malformed tool arguments return contract errors.
 Cap SDK in-flight handlers at 16; overload closes/refuses through SDK-supported behavior,
 not an application protocol. T001 must prove these limits with the chosen SDK.
 
@@ -134,32 +140,105 @@ Optional 009/013 provider calls consume this same deadline, starting at admissio
 their individual ceilings cannot extend it. A model failure may produce the complete
 baseline result with an explicit fallback before expiry, not a success after expiry.
 
-A cancelled/expired index stops future work and returns a partial report with committed
-counts and pending work. `scan_complete` means enumeration and sweep both finished;
+A cancelled/expired index stops future work. Where a reply can be delivered, return
+the shared counts-only partial error with committed counts and pending work; after
+lost/cancelled delivery the client inspects status. `scan_complete` means enumeration
+and sweep both finished;
 `deletions_deferred` is true only when sweep was withheld or incomplete. An index-drain
 timeout after a completed sweep does not falsely mark source enumeration incomplete.
 Already committed source batches are not rolled back. Once sweep begins after
-complete enumeration, completed deletions remain durable. On EOF/disconnect stop
+complete enumeration, completed deletions remain durable. On stdio EOF/disconnect stop
 admission, request cancellation, finish the current transaction and exit. A forced
-termination is recovered under 001. If a response is lost, outcome is unknown to the
-client: reconnect after exit, inspect status, and repeat idempotent `index`. No operation
-receipt journal. Status while another engine operation runs returns `busy` too.
+termination is recovered under 001. A lost reply is an unknown client outcome:
+inspect status after reconnect and repeat idempotent `index`; no receipt journal.
+HTTP DELETE, SDK session expiry, MCP cancellation or owner shutdown cancels that
+session's work at the next control check. A dropped response stream alone does not:
+work continues to its own deadline and retains the engine slot. Status while another
+engine operation runs returns `busy` too.
 
 No memory/graph/feedback tools are silently added by this spec. Their owning specs
 may extend this exact worker. CLI/store opens cannot run alongside the MCP owner;
-there is no lock retry or hidden second process. Simultaneous clients are deferred.
-005's artifact import and 008/013's selected writes use this worker too; an agent
-workflow must not depend on starting a competing CLI writer. Offline-only maintenance
-and learning preparation explicitly require ending the owner session.
+there is no lock retry or hidden second writer. Independent clients may share the
+explicit HTTP owner below; a stdio session still excludes competing store owners.
+005's artifact import and 008/013's selected writes use this worker too. Offline-only
+maintenance and learning preparation require stopping the store owner, not just one
+of its HTTP clients.
 
 009 explicitly extends this topology for neural preparation: one bounded external-
 inference worker returns results to this same store owner. It does not become another
 store writer or occupy the engine slot while waiting on a model. Keep 003 alone small;
 the preparation tools, lifecycle and coexistence proof belong to 009 T003.
 
+### Optional shared owner — approved amendment, 2026-10-01
+
+The owner requires simultaneous OMP and Codex service against one repository store.
+Default stdio remains useful for one host and borrowed subagents. An explicit foreground
+`foundry --store DIR mcp --root ROOT --transport streamable-http --bind 127.0.0.1:PORT
+--auth-token-env NAME` adds a standard SDK listener at `/mcp`; port 0 selects a free
+local port. It never starts automatically, discovers repositories, installs a launch
+agent or adds a registry/federation coordinator. One persistent engine owns one root;
+all clients share the same one-active/zero-queued admission. No per-host duplicate
+authoritative stores or operation-scoped rotating writers.
+
+Both transports advertise session-bearing MCP versions through `2025-11-25` only:
+SDK `known_up_to(V_2025_11_25)` and HTTP `legacy_session_mode=true`. An `initialize`
+naming a newer version receives standard MCP version negotiation to `2025-11-25`
+with a session; any request that would use the `2026-07-28` initialize-less stateless
+path is refused, never served. T001 tests both; T003 records each host's negotiated
+version. A host unable to negotiate a supported session-bearing version is
+`host_unsupported`. No stateless allowance/cancellation scope is implied.
+
+Pin SDK session `keep_alive` to 300 seconds and completed-reply cache to 60 seconds.
+An abandoned session occupies one of the 16 slots until expiry; idle clients must
+re-initialize when the SDK expires their session. T001 verifies refusal while full
+and admission after expiry; T003 records each host's post-idle recovery or named
+limitation. Stream loss can resume only inside the SDK cache window; otherwise
+the client inspects status, without automatic index or a durable receipt journal.
+
+
+Require a nonempty secret bearer token from the named environment variable before
+opening the store; never print it or put it in source, logs or generated configuration.
+Bind IPv4 loopback only. Authentication applies to every MCP HTTP method before
+protocol/session allocation. Reject mismatched Host and any Origin header: browser
+clients are not selected. Enforce the 64-KiB incoming body bound before full buffering
+or JSON decoding, including chunked input. Reject oversized/malformed HTTP requests
+without killing other clients. Cap live SDK sessions at 16 and in-flight handlers at
+16 globally; refuse overload without a waiting engine queue or unbounded spawn.
+Use SDK session IDs/DELETE/cancellation semantics, not an application protocol.
+
+Neither stream loss nor cancellation releases executing work or its admission
+permit early. Shared-owner shutdown stops admission and cancels/closes SDK sessions;
+process exit waits for the current engine transaction, and in-flight replies can be
+lost. Another stdio/HTTP owner or CLI writer gets `store_busy`, with no takeover.
+Missing listener/auth/unsupported native transport is named host unavailability;
+no stdio-to-HTTP shim, secret query parameter or silent bypass.
+
+Connection-local delivery caps/IDs follow the same economics contract on either
+transport. HTTP clients do not share allowance counters. The listener introduces no
+source writes, model loads or maintenance from initialize/list/status. Printed
+OMP/Codex configuration is project/session-scoped and references the exact URL and
+token environment name, not the token. Default configuration remains stdio.
+
+The SDK's legacy-peer result rewriting must be a no-op on already-counted bytes:
+clear `CallToolResult.result_type` before serialization/counting. T002 captures and
+compares the actual emitted result value. Generated host request timeouts exceed the
+largest advertised index timeout, so an ordinary default index does not routinely
+lose its reply at the same client deadline. Session allowances remain connection-local,
+not cross-reconnect quotas.
+
+
+T001/T002 cover real SDK clients on both transports: authentication, Host/Origin,
+body/session/handler limits, disconnect/cancel/owner shutdown, concurrent callers,
+scope and exact emitted result bytes. T003 additionally records actual installed
+OMP and Codex versions and native HTTP attachment to the same fixture store at once.
+No simultaneous-service claim without both native-client proofs. If the maintained
+SDK or a named host cannot satisfy this boundary, stop at that named prerequisite;
+do not substitute fixtures or revive 002's relay.
+
+
 ## Tasks
 
-### T001 — Serve bounded engine operations over real stdio MCP
+### T001 — Serve bounded operations over real SDK MCP
 
 Feasibility input: rmcp 3.5.0 built with Rust 1.90 and passed real stdio
 initialize/list/call/close in a jailed Linux fixture. Use its explicitly capped codec
@@ -168,9 +247,9 @@ The 64-KiB decoder refusal is demonstrated, but the production 16-handler admiss
 cancellation and engine-ownership cases below remain acceptance. See
 [probe evidence](../../docs/review/feasibility.md); do not infer them from the smoke.
 
-- **Depends:** 001 T001–T003. **Scope:** new `src/mcp.rs`, registration in `src/lib.rs`,
-  CLI bootstrap/connect commands, pinned Cargo dependency and new `tests/mcp.rs`. No socket,
-  host hooks, model setup or user-global configuration.
+- **Depends:** 001 T001–T003. **Scope:** MCP/bootstrap/adapter modules, registration in
+  `src/lib.rs`, CLI commands, pinned Cargo dependencies and `tests/mcp.rs`. Standard
+  loopback HTTP is included; custom sockets, host hooks, model setup and global config are not.
 - **Outcome/acceptance (FR-001, FR-004, FR-005 / SC-001):** a real SDK client initializes,
   lists exactly five tools, indexes the configured fixture root, searches and shuts
   down. Worker admission and frame/handler bounds match the contract above.
@@ -246,6 +325,19 @@ cancellation and engine-ownership cases below remain acceptance. See
   One successful task proves this integration, not task-success uplift or savings.
   A cost claim additionally needs actual whole-provider usage/caching and a correctness-
   matched comparison; it is not required for functional acceptance.
+
+**Implementation record (2026-10-01).** T001/T002: `cargo test --locked` mcp suite 65
+tests over real rmcp clients on stdio and HTTP (admission, frames/bodies, sessions,
+protocol pin, cancellation/deadline/EOF/kill, exact emitted-byte accounting, bootstrap,
+owned config blocks, receipts). T003: the [real-host record](../../docs/review/real-host-t003-2026-10-01.json)
+shows OMP using Foundry `search` before any grep, editing, passing the checker,
+re-indexing through MCP and getting `stale_handle` for the pre-edit citation, while
+Codex concurrently answered a discovery task through Foundry alone. Host facts: OMP
+exposes MCP tools as `xd://` devices and honors the project instruction block as a
+preference; Codex needs the printed approval configuration (`writes`, `approve` for
+`index`) because it otherwise requires per-call MCP approval. Neither host offers an
+enforced routing hook, so no enforcement is claimed. Delivery allowances were exercised on a real host;
+host-request mode remains `budget_scope_unsupported` without hooks.
 
 ### T004 — Forward and meter an actual supported model workflow
 

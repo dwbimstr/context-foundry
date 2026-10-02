@@ -1,9 +1,10 @@
 # Data and security boundaries
 
-The first slice is a local tool for an operator-controlled workspace. It does not
-execute indexed source, load repository plugins, start a listener or collect
-telemetry. An explicit Laya port permits a request containing the query to a local
-HTTP server. Training feedback is retained locally; export is an explicit command.
+The current implementation is a local tool for an operator-controlled workspace. It
+does not execute indexed source, load repository plugins or collect telemetry. It
+starts a network listener only when explicitly run as a shared MCP owner
+(`mcp --transport streamable-http`). The legacy Laya HTTP client is no longer
+reachable from the CLI. Training feedback is retained locally; export is explicit.
 
 Indexed source and imported graph text are untrusted data. Their presence in a
 cited bundle does not turn them into instructions. This tool cannot guarantee that
@@ -13,9 +14,18 @@ Choose the indexed workspace and ignore rules accordingly.
 
 Use an owner-private location for stores and exported datasets. Filesystem
 permissions and disk encryption remain the operator's responsibility. There is
-no encryption-at-rest layer, user authentication system, multi-tenant isolation or
-protection against a hostile process concurrently replacing workspace path components.
-Do not expose an unauthenticated Laya server beyond loopback.
+no encryption-at-rest layer, user authentication system or multi-tenant isolation.
+Candidate bytes are read relative to a held root with no-follow opens, but a
+same-user process that swaps and restores workspace directories during a scan can
+make that scan retire source records of files that still exist (see 001).
+
+The shared MCP owner binds IPv4 loopback only and requires a bearer token read from
+a named environment variable on every request before any session is allocated; it
+rejects a mismatched `Host`, any `Origin`, oversized bodies and newer stateless
+protocol requests. Printed host configuration carries the variable name, never the
+token. This is a same-machine boundary, not multi-user isolation: a process that can
+read the token can use the store's five tools. Opt-in usage receipt logs are created
+`0600` and refused if readable by others; they carry identities and counts, not bodies.
 
 Ignore rules prevent ordinary Git additions of stores, models, runs and local
 review material; they do not prevent `git add --force` or deliberate export. Training

@@ -1,0 +1,13 @@
+[package]
+name = "agent-task-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# T003 fixture harness: no third-party dependencies. The coding agent must
+# edit src/records.rs so that `check` passes; the checker and the task
+# statement are the only contract.
+
+[[bin]]
+name = "agent-task-fixture"
+path = "src/main.rs"

@@ -1,9 +1,8 @@
 # 001 — Reliable local context
 
-Status: Proposed; detailed contract, not new implementation. Dependencies: none.
-Authorization: specification/task refinement. D001 is resolved read-only below; production
-work requires selection of implementation scope. Existing CLI evidence is in
-[validation](../../docs/validation.md).
+Status: T001–T003 implemented and verified locally, 2026-10-01 (owner-approved scope:
+001 + 003 first implementation). Not released. D001 remains resolved below. Evidence,
+review provenance and accepted limitations: [validation](../../docs/validation.md).
 
 ## Outcome and baseline
 
@@ -175,6 +174,17 @@ scope guarantee. This belongs in ingestion, not a new filesystem service. The so
 hash still identifies the bytes actually read; concurrent in-place edits do not turn
 an observed scan into an atomic filesystem snapshot.
 
+Accepted limitation (captain decision after the final cross-lab gate, 2026-10-01):
+names are enumerated by the pathname `ignore` walker so ignore policy stays exact;
+bytes are always read relative to the held root. The root's identity is checked
+before and after enumeration, so a persistent substitution defers the sweep. A
+same-user process that substitutes the root or a subdirectory and restores it within
+one enumeration can still make that scan miss names and retire their source records.
+No outside bytes, memory or feedback are affected; the next complete scan restores
+the records. Re-entry: descriptor-anchored enumeration with equivalent ignore policy,
+when a supported workflow renames workspace directories during indexing or a racing
+same-user process enters the threat model. Do not describe the scan as rename-proof.
+
 `index` reports changed/unchanged/deleted/excluded/failure counts, bounded samples,
 scan completion and remaining index work. Success requires complete enumeration,
 sweep and drained indexing. Partial work remains committed and is reported as partial;
@@ -251,5 +261,10 @@ cooperative cancellation, not a hard deadline on an OS/library call.
   document new errors. No provider-cost claim. Run the fresh-store CLI flow and relevant
   Rust checks, then [release checks](../../docs/release.md) for the advertised CLI scope.
 
-SC-001/002/003 are the task acceptance above. No new implementation checks have run.
-Record commands, exit codes and remaining failures when each task is implemented.
+SC-001/002/003: passed locally on 2026-10-01 (`cargo test --locked --no-fail-fast`:
+cli 13, core 20, integrity 15, repair 8, response 8, scan_faults 15 plus 12 child-process
+recovery scenarios; the same safety suites pass on Rust 1.90.0 Linux aarch64). Faults use
+named points behind the non-default `test-faults` feature. Owners: `src/store.rs`,
+`src/ingest.rs`, `src/response.rs`, `src/control.rs`, `src/error.rs`, `src/cli.rs`.
+Two cross-lab review rounds plus a final OpenAI pass closed every finding except the
+accepted enumeration residual above. Hardware power-loss behavior is not claimed.

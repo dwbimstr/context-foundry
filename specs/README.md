@@ -1,15 +1,16 @@
 # Workflows worth building
 
-Status: revised proposals, 2026-09-29. This portfolio replaces the fifteen-bundle
-plan. The owner requested thoughtful subtraction, not a Rust translation of the old
-system. Planning changes are authorized; these documents do not claim new runtime
-features, implementation approval, or an independent review.
+Status: revised portfolio. 001 and 003 T001–T003, including the optional shared MCP
+owner for concurrent OMP/Codex sessions, were implemented and verified locally on
+2026-10-01 ([validation](../docs/validation.md)); they are not yet released. The owner
+requested thoughtful subtraction, not a Rust translation of the old system. The other
+active goals remain.
 
-The [working CLI](../docs/validation.md) is the baseline. Six user outcomes retain
-the product goals. All active tasks now specify behavior and acceptance, including
-013's replacement ModernBERT/head contract. The next
-step is 001 T001: D001 now retains the existing redb/Tantivy pair for bounded recovery;
-implementation and external execution prerequisites remain explicit.
+The [validated implementation](../docs/validation.md) is the baseline. Six user
+outcomes retain the product goals. All active tasks specify behavior and acceptance,
+including 013's replacement ModernBERT/head contract. The next step for 001/003 is the
+ordinary [release checklist](../docs/release.md) for their advertised scope;
+003 T004, 005, 008, 009 and 013 remain proposed with explicit prerequisites.
 The [team handoff simulation](../docs/review/handoff-simulation.md) traces startable
 work, unresolved integration inputs and corrected cross-spec dependencies. It is a
 source-backed paper walkthrough, not runtime acceptance or another required stage.
@@ -52,25 +53,27 @@ the first search/graph family is not a claim of full Laya parity.
 
 | Spec | Detailed work | Prerequisite that cannot be silently waived |
 | --- | --- | --- |
-| 001 | D001 resolved: retain redb/Tantivy; T001 recovery; T002 reconciliation; T003 exact retrieval | Implement and verify the selected recovery contract |
-| 003 | T001 bootstrap/MCP; T002 budgets/receipts; T003 actual agent task; T004 owned request gateway | Locked SDK and actual host; gateway additionally needs pinned Responses schema/counting and permitted API access |
+| 001 | D001 resolved: retain redb/Tantivy; T001 recovery; T002 reconciliation; T003 exact retrieval | Implemented and verified 2026-10-01; release checklist remains |
+| 003 | T001 bootstrap/MCP; T002 budgets/receipts; T003 actual agent task; T004 owned request gateway | T001–T003 implemented and verified with OMP and Codex 2026-10-01; T004 needs pinned Responses schema/counting and permitted API access |
 | 005 | T001 real SCIP; T002 scoped publication; T003 large-workspace workflow | Real producer/snapshot; predeclared corpus, hardware and numeric run limits |
 | 008 | T001 record lifecycle; T002 export/forget | Accepted 001 owner/schema contract; 003 only for advertised MCP surface |
 | 009 | D001 runtime/index disposition; T001 durable preparation; T002 retrieval; T003 progressive preparation | Model selected; pinned artifact/runtime, Rust bridge, verified isolation and numeric execution bounds |
 | 013 | D001 actual recipe/package acceptance; T001 joint-input data; T002 real fitting; T003 inference/rollback; T004 repeat/deploy | v4 pins model/input/backend; scratch gradients pass, complete recipe and actual package still need acceptance |
 
-Nineteen implementation task entries and three decision tasks are recorded. 001 D001 is
-resolved. 009 D001 and 013 D001 have partial executed feasibility evidence; their remaining
-recipe/runtime/package checks are explicit in the disposition above. A missing runtime
-input causes the named prerequisite failure in its spec; it is not an implementer's
-invitation to guess or a passed acceptance criterion. [Current review/evidence](../docs/planning-validation.md)
-records what was inspected and checked. No implementation acceptance has run merely
-because task detail is now present.
+Nineteen implementation task entries and three D001 entries are recorded. 001 D001 is
+resolved. 009 D001 retains numerical/operator choices and runtime/package acceptance;
+the model/artifact and initial bridge/index candidates are already selected. 013 D001
+is recipe/MSRV/package acceptance, not a new model/backend selection. Their partial
+executed feasibility does not close these checks. A missing runtime input causes the
+named prerequisite failure in its spec; it is not an invitation to guess or a passed
+criterion. [Current review/evidence](../docs/planning-validation.md) records what was
+inspected and checked. Task detail alone is not implementation acceptance.
 
 ## What was subtracted
 
-- **002**: removed the custom socket carrier and MCP forwarding process. Use direct
-  stdio MCP; multi-client serving is an unproven future need.
+- **002**: removed the custom socket carrier and forwarding shim. Default direct
+  stdio remains; the 2026-10-01 owner-approved shared SDK MCP mode lives in 003.
+  It adds no protocol dialect, federation coordinator or automatic daemon fleet.
 - **004 + 006**: merged source bounds into 001 and the actual scale/producer workflow
   into 005. A watcher and general producer framework are not prerequisites.
 - **011**: moved deterministic delivery budgets and adapter usage receipts into 003,

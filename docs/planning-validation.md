@@ -1,6 +1,59 @@
 # Spec and task audit
 
-## Native discovery requirement — current documentation pass
+## 001 + 003 implementation and contract repairs — current pass
+
+2026-10-01. Implemented the owner-approved tranche and recorded evidence in
+[validation](validation.md). Contract repairs made during implementation, each from
+executed evidence: shared owner pins session-bearing MCP versions, refuses stateless
+2026-07-28 requests and treats stream loss as non-cancelling (rmcp 3.5.0 source);
+the counts-only partial index error and `resultType` clearing (context-v1); inverted
+intervals fail at the field stage; Codex needs printed MCP approval configuration and
+tools carry `readOnlyHint` annotations (real host); the enumeration swap-and-restore
+residual is an accepted, named limitation with a re-entry condition (001).
+
+Authors: Z.ai GLM-5.3 with Anthropic Sonnet 5.5 fallback (two isolated worktrees).
+Reviews: OpenAI `gpt-6.1-sol` source and adapter rounds, a same-lab Sonnet source
+round 2, and a final OpenAI `codex exec` pass; providers taken from recorded session
+events. Decisions after the two-round limit were the captain's and are recorded in
+the owning specs. No predecessor store/service, global host configuration, model
+download/training or paid gateway request was used.
+
+## Ecosystem decision reconciliation — preceding pass
+
+2026-10-01. The owner's reported coverage, argument failures and stale busy health
+are accepted observations, not remeasured. The
+[deployment disposition](deployment.md#ecosystem-readiness-disposition--2026-10-01)
+maps them to existing 001/003/009/release owners without adopting predecessor stores,
+reintroducing a custom WAL or activating federation/migration.
+
+The unchanged release prototype, SHA-256
+`5589bc3018c4149e9bd62804a0eab13e27a5d91ba966fefea54ed69efc16da78`,
+was exercised in a removed temporary fixture: `--help` exposes no MCP/bootstrap/retrieve;
+`--store <missing-path> status` returned schema-1 success and created the store;
+explicit fixture indexing/search from a different cwd returned the fixture source.
+This proves the existing open-path defect and explicit-path prototype behavior,
+not the proposed recovery, MCP, health or ecosystem acceptance.
+
+Two bounded read-only in-session decision reviews used Anthropic Opus 5.5 without
+observed fallback; they are not independent or cross-lab approval. They separate
+selected model/backend contracts from missing execution/rights/package inputs and
+identify the persistent single-host conflict with the actual OMP+Codex workflow.
+Rotating operation-scoped owners are rejected. The owner subsequently selected
+optional shared SDK MCP and the full 001/003 T001–T003 implementation tranche.
+The owning contracts now record that approval, without implying acceptance.
+
+Corrected stale artifact-execution, ModernBERT CPU and vector-head wording, classified
+009/013 D001 accurately, and made startup-unavailability fallback name the available
+host diagnostic rather than require a nonexistent tool result. Two isolated GLM
+worktrees now implement the approved source/adapter slices; root integration waits
+for their settlement and review. No predecessor/global configuration, model
+download/training or paid gateway request is authorized by that scope.
+
+Documentation verification: seven affected files, 56 relative links and five heading
+links checked; zero missing targets/anchors or trailing-whitespace errors. No Rust
+build, new model run or live Foundry acceptance is claimed for these document changes.
+
+## Native discovery requirement — preceding documentation pass
 
 2026-10-01. The owner requires Foundry to precede grep/ripgrep in ordinary agent
 source discovery. Added 003 FR-008 and its canonical selection/fallback rules,

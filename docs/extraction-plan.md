@@ -14,7 +14,7 @@ asked for a KISS redesign; rewritten prose and Rust syntax are insufficient.
 | Durable project knowledge | Explicit remember/correct/forget with export | No transcript harvesting, reflection, temporal memory or automatic consolidation |
 | Honest token economics | Adapter budgets plus the requested optional Rust forwarding/metering gateway | One verified protocol, no fleet governor or universal campaign; MCP delivery is not whole-request control |
 | Neural context that stays useful | Progressive preparation, current coverage and reusable document vectors | Ordinary cache table, rebuildable search index and one bounded model worker; no custom ledger or repeated full warm-up |
-| Owned continuous learning inspired by Laya | Opted-in grouped data, actual Rust training, checkpoint identity, isolated deployment and rollback | Small head reusing existing query features; no second encoder, Laya runtime, HTTP server or automatic promotion |
+| Owned continuous learning inspired by Laya | Opted-in grouped joint inputs, ModernBERT with a decision head, actual Rust head adaptation, checkpoint identity, isolated deployment and rollback | Freeze the encoder initially; no Nemotron-vector substitute, Laya runtime, HTTP server or automatic promotion. Encoder adaptation retains its separate acceptance |
 | Open-source adoption | MIT, license hygiene, public fixtures and install/recovery instructions | Ordinary release checklist; source re-index first, no speculative migration platform |
 
 The [workflow specs](../specs/README.md) are the active direction. The [71-entry

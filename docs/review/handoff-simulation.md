@@ -3,6 +3,12 @@
 Historical paper-review baseline. The subsequent [executed feasibility pass](feasibility.md)
 replaces H1's superseded contract and narrows H3/H4/H5/H7 with actual probe evidence.
 Read that disposition for current readiness; this report preserves what was known before execution.
+The 2026-10-01 owner approval selects all 001/003 T001–T003 and optional standard
+shared-owner MCP for concurrent OMP/Codex clients. The
+[003 amendment](../../specs/003-agent-retrieval-context/spec.md#optional-shared-owner--approved-amendment-2026-10-01)
+supersedes this walkthrough's earlier simultaneous-client limitation; it is not
+permission to revive a custom socket/shim or treat unexecuted host proof as a pass.
+
 
 **Verdict: hand off the source/CLI work in stages; do not hand off the complete
 neural/learning ecosystem as implementation-ready.** The ModernBERT decision-head

@@ -11,6 +11,7 @@ publish = false
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 ignore = "0.4"
+libc = "0.2"
 redb = "4.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -19,9 +20,63 @@ tantivy = { version = "0.26.2", default-features = false, features = ["mmap", "l
 tiktoken-rs = "0.12.1"
 ureq = { version = "3.4", default-features = false, features = ["json"] }
 
+# 003 adapter: real MCP SDK (rmcp 3.5.0, feasibility-proven on Rust 1.90) and
+# the async/HTTP runtime it mounts on. The bounded codec rides tokio-util;
+# axum hosts the SDK's tower service at /mcp.
+rmcp = { version = "=3.5.0", features = [
+    "server",
+    "transport-io",
+    "transport-streamable-http-server",
+] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "io-std",
+    "sync",
+    "time",
+    "signal",
+] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures-util = { version = "0.3", features = ["sink"] }
+axum = { version = "0.8", features = ["http1", "tokio"] }
+http = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+# Named deterministic fault points for recovery tests. Never enabled by
+# default; release builds contain no hook code or fault-name strings.
+test-faults = []
+
 [dev-dependencies]
+# Self dev-dependency: `cargo test` builds the crate with its fault points.
+context-foundry = { path = ".", features = ["test-faults"] }
+libc = "0.2"
 tempfile = "3"
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream"] }
+# Parses the printed Codex configuration for real.
+toml = "0.8"
+# Raw emitted-bytes capture for exact-accounting tests.
+serde_json = { version = "1", features = ["raw_value"] }
+# Real SDK client + child-process transport are test-only: production code
+# serves, it never connects.
+rmcp = { version = "=3.5.0", features = [
+    "client",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+] }
+tokio = { version = "1", features = ["process"] }
 
 [[bin]]
 name = "foundry"
 path = "src/main.rs"
+
+[[bin]]
+name = "foundry-faults"
+path = "src/bin/foundry_faults.rs"
+required-features = ["test-faults"]
+
+[[test]]
+name = "recovery"
+harness = false

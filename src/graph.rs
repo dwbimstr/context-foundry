@@ -1,5 +1,5 @@
+use crate::error::{FResult, FoundryError};
 use crate::store::{Engine, SOURCES, SourceMeta, validate_path};
-use anyhow::{Result, ensure};
 use redb::{
     MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction,
 };
@@ -57,9 +57,40 @@ pub struct GraphEvidence {
     pub provider: String,
     pub revision: String,
     pub edge: Edge,
+    /// The exact stored row; identity for final-read revalidation.
+    #[serde(skip)]
+    pub(crate) raw: String,
 }
 
-pub(crate) fn init(tx: &WriteTransaction) -> Result<()> {
+fn invalid(message: impl Into<String>) -> FoundryError {
+    FoundryError::InvalidArgument(message.into())
+}
+
+/// A graph row that cannot be decoded is a component-local failure
+/// (`graph_invalid`); database errors keep their own codes.
+fn decode_stored(raw: &str) -> FResult<StoredEdge> {
+    serde_json::from_str(raw)
+        .map_err(|e| FoundryError::GraphInvalid(format!("edge row cannot be decoded: {e}")))
+}
+
+/// True when the exact stored edge row is still present under `from_path` in
+/// the transaction. Used by the final context read to revalidate selected
+/// graph rows, not only their endpoint hashes.
+pub(crate) fn edge_row_present(
+    tx: &redb::ReadTransaction,
+    from_path: &str,
+    raw: &str,
+) -> FResult<bool> {
+    let edges = tx.open_multimap_table(OUT)?;
+    for row in edges.get(from_path)? {
+        if row?.value() == raw {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(crate) fn init(tx: &WriteTransaction) -> FResult<()> {
     tx.open_multimap_table(OUT)?;
     tx.open_multimap_table(IN)?;
     tx.open_table(PROVIDERS)?;
@@ -68,51 +99,50 @@ pub(crate) fn init(tx: &WriteTransaction) -> Result<()> {
 
 impl Engine {
     /// Replace one producer's entire bundle atomically; other producers remain intact.
-    pub fn import_graph(&self, bundle: &GraphBundle) -> Result<usize> {
-        ensure!(
-            !bundle.provider.trim().is_empty() && bundle.provider.len() <= 128,
-            "invalid provider"
-        );
-        ensure!(
-            !bundle.revision.trim().is_empty() && bundle.revision.len() <= 128,
-            "invalid provider revision"
-        );
-        ensure!(bundle.edges.len() <= 100_000, "bundle exceeds 100000 edges");
+    pub fn import_graph(&self, bundle: &GraphBundle) -> FResult<usize> {
+        if bundle.provider.trim().is_empty() || bundle.provider.len() > 128 {
+            return Err(invalid("invalid provider"));
+        }
+        if bundle.revision.trim().is_empty() || bundle.revision.len() > 128 {
+            return Err(invalid("invalid provider revision"));
+        }
+        if bundle.edges.len() > 100_000 {
+            return Err(invalid("bundle exceeds 100000 edges"));
+        }
         let tx = self.db.begin_write()?;
         let mut encoded = BTreeSet::new();
         {
             let sources = tx.open_table(SOURCES)?;
             for edge in &bundle.edges {
-                ensure!(
-                    ["calls", "references", "imports", "contains", "depends_on"]
-                        .contains(&edge.kind.as_str()),
-                    "unknown edge kind"
-                );
-                ensure!(
-                    ["resolved", "syntactic", "inferred", "manual"]
-                        .contains(&edge.evidence.as_str()),
-                    "unknown evidence class"
-                );
+                if !["calls", "references", "imports", "contains", "depends_on"]
+                    .contains(&edge.kind.as_str())
+                {
+                    return Err(invalid("unknown edge kind"));
+                }
+                if !["resolved", "syntactic", "inferred", "manual"]
+                    .contains(&edge.evidence.as_str())
+                {
+                    return Err(invalid("unknown evidence class"));
+                }
                 for endpoint in [&edge.from, &edge.to] {
                     validate_path(&endpoint.path)?;
-                    ensure!(
-                        endpoint.line > 0 && endpoint.symbol.len() <= 1024,
-                        "invalid endpoint"
-                    );
-                    let meta = sources
-                        .get(endpoint.path.as_str())?
-                        .ok_or_else(|| anyhow::anyhow!("graph source absent: {}", endpoint.path))?;
-                    let meta: SourceMeta = serde_json::from_str(meta.value())?;
-                    ensure!(
-                        meta.hash == endpoint.hash,
-                        "stale graph source: {}",
-                        endpoint.path
-                    );
-                    ensure!(
-                        endpoint.line <= meta.lines,
-                        "graph line outside source: {}",
-                        endpoint.path
-                    );
+                    if endpoint.line == 0 || endpoint.symbol.len() > 1024 {
+                        return Err(invalid("invalid endpoint"));
+                    }
+                    let meta = sources.get(endpoint.path.as_str())?.ok_or_else(|| {
+                        invalid(format!("graph source absent: {}", endpoint.path))
+                    })?;
+                    let meta: SourceMeta = serde_json::from_str(meta.value())
+                        .map_err(|e| FoundryError::CorruptStore(format!("source record: {e}")))?;
+                    if meta.hash != endpoint.hash {
+                        return Err(invalid(format!("stale graph source: {}", endpoint.path)));
+                    }
+                    if endpoint.line > meta.lines {
+                        return Err(invalid(format!(
+                            "graph line outside source: {}",
+                            endpoint.path
+                        )));
+                    }
                 }
                 encoded.insert(serde_json::to_string(&StoredEdge {
                     provider: bundle.provider.clone(),
@@ -123,18 +153,17 @@ impl Engine {
             let mut providers = tx.open_table(PROVIDERS)?;
             let previous = providers
                 .get(bundle.provider.as_str())?
-                .map(|v| serde_json::from_str::<Vec<String>>(v.value()))
-                .transpose()?
+                .and_then(|v| serde_json::from_str::<Vec<String>>(v.value()).ok())
                 .unwrap_or_default();
             let mut out = tx.open_multimap_table(OUT)?;
             let mut incoming = tx.open_multimap_table(IN)?;
             for raw in previous {
-                let stored: StoredEdge = serde_json::from_str(&raw)?;
+                let stored = decode_stored(&raw)?;
                 out.remove(stored.edge.from.path.as_str(), raw.as_str())?;
                 incoming.remove(stored.edge.to.path.as_str(), raw.as_str())?;
             }
             for raw in &encoded {
-                let stored: StoredEdge = serde_json::from_str(raw)?;
+                let stored = decode_stored(raw)?;
                 out.insert(stored.edge.from.path.as_str(), raw.as_str())?;
                 incoming.insert(stored.edge.to.path.as_str(), raw.as_str())?;
             }
@@ -154,12 +183,11 @@ impl Engine {
         reverse: bool,
         depth: usize,
         max_edges: usize,
-    ) -> Result<GraphResult> {
+    ) -> FResult<GraphResult> {
         validate_path(seed)?;
-        ensure!(
-            depth <= 4 && (1..=256).contains(&max_edges),
-            "graph bounds: depth 0..4, edges 1..256"
-        );
+        if depth > 4 || !(1..=256).contains(&max_edges) {
+            return Err(invalid("graph bounds: depth 0..4, edges 1..256"));
+        }
         let tx = self.db.begin_read()?;
         let sources = tx.open_table(SOURCES)?;
         let edges = tx.open_multimap_table(if reverse { IN } else { OUT })?;
@@ -184,14 +212,14 @@ impl Engine {
                 }
                 result.examined_edges += 1;
                 let raw = row?;
-                let stored: StoredEdge = serde_json::from_str(raw.value())?;
+                let stored = decode_stored(raw.value())?;
                 let mut fresh = true;
                 for endpoint in [&stored.edge.from, &stored.edge.to] {
-                    let current = sources
-                        .get(endpoint.path.as_str())?
-                        .map(|v| serde_json::from_str::<SourceMeta>(v.value()))
-                        .transpose()?;
-                    fresh &= current.is_some_and(|m| m.hash == endpoint.hash);
+                    let current = sources.get(endpoint.path.as_str())?;
+                    fresh &= current.is_some_and(|m| {
+                        serde_json::from_str::<SourceMeta>(m.value())
+                            .is_ok_and(|meta| meta.hash == endpoint.hash)
+                    });
                 }
                 if !fresh {
                     result.stale_edges += 1;
@@ -215,6 +243,7 @@ impl Engine {
                         provider: stored.provider,
                         revision: stored.revision,
                         edge: stored.edge,
+                        raw: raw.value().to_owned(),
                     });
                 }
             }

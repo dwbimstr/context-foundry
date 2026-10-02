@@ -156,13 +156,21 @@ flowchart LR
 
 ## Module boundaries
 
-Keep one crate and one command-line binary until separate packages have real users.
-The proposed first agent adapter is direct stdio MCP through a maintained SDK, with
-one engine/store owner. There is no custom MCP socket carrier or forwarding shim. This
-first topology cannot serve multiple hosts against the same store simultaneously.
-Use ordinary modules for store, source ingestion, retrieval, graph, context packing,
-and the private policy-worker protocol. The CLI is a thin caller of the same library API used by an
-agent adapter. Do not introduce a plugin framework or a generic execution planner.
+Keep one crate and one shipped command-line binary until separate packages have real
+users. The default agent adapter is direct stdio MCP through a maintained SDK (rmcp
+3.5.0), with one engine/store owner. Optional per-root Streamable HTTP MCP (owner-
+approved 2026-10-01) lets independent OMP/Codex clients share that same persistent
+owner. No custom MCP socket carrier, forwarding shim, rotating writer or global fleet.
+Both transports keep one-active/zero-queued engine admission and immutable scope.
+
+Implemented modules (2026-10-01): `store` (authoritative redb state, derived Tantivy,
+repair/upgrade), `ingest` (held-root paged reconciliation), `response` (handles,
+packing and exact counting against a caller-supplied final renderer), `control`
+(cooperative cancellation/deadlines), `error` (contract codes), `graph`, `cli` (core
+commands), and the 003 adapter: `mcp`, `bootstrap`, `config`, `receipts`,
+`adapter_cli`, `adapter_error`. `fault`/`testkit` compile only under the test feature;
+fault arming lives in a separate test binary. CLI and MCP call the same library API;
+no plugin framework or generic execution planner.
 
 Source ownership is keyed by workspace and canonical relative path. Every source
 version has a content hash. Derived facts additionally name their producer and its

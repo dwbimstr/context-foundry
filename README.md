@@ -6,10 +6,11 @@ budget. The revised plan includes Foundry-owned Rust learning in isolated worker
 explicit repository bootstrap, adapter budgets and optional request forwarding/metering. Ordinary retrieval
 requires no model or GPU. Laya is a research reference, not the target runtime.
 
-**Status: working first slice, not a production replacement.** Large-codebase
-performance, agent task improvement, and dollar savings have not been established.
-The architecture targets those goals without making research a prerequisite for
-using the implemented CLI. There is no published release or remote repository yet.
+**Status: 001 + 003 first implementation verified locally, not released.** Reliable
+cited CLI context, explicit bootstrap and agent access over MCP (stdio, plus an opt-in
+shared owner for concurrent hosts) work on macOS arm64; see [validation](docs/validation.md).
+Large-codebase performance, agent task improvement, and dollar savings have not been
+established. There is no published release yet.
 
 ## Try it
 
@@ -23,25 +24,41 @@ cargo run --locked -- --store /tmp/foundry-demo context parse_record --tokens 10
 cargo run --locked -- --store /tmp/foundry-demo status
 ```
 
-Use a fresh store path for the demo. A store binds to one canonical workspace path.
-After editing, adding or deleting files, run `index` again. There is no watcher yet.
-To install the executable locally: `cargo install --path . --locked`.
+`index` is the only command that creates a store; reads on a missing store fail with
+`store_not_found`. A store binds to one canonical workspace path. After editing,
+adding or deleting files, run `index` again. There is no watcher. To install the
+executable locally: `cargo install --path . --locked`.
+
+Agent setup for a repository (prints configuration; edits nothing unless asked):
+
+```sh
+foundry bootstrap --root ~/src/repo            # inspect: writes nothing
+foundry bootstrap --root ~/src/repo --apply    # create the store, index baseline source
+foundry connect --host omp --root ~/src/repo --print-config     # or --host codex
+foundry --store ~/src/repo/.context-foundry mcp --root ~/src/repo   # stdio MCP server
+```
+
+For concurrent hosts on one repository, run one explicit shared owner and print
+matching host configuration with `--http-port PORT --token-env NAME`:
+`foundry --store DIR mcp --root ROOT --transport streamable-http --bind 127.0.0.1:PORT --auth-token-env NAME`.
 
 ## What works
 
-- Incremental source replacement and deletion, with atomic content/hash/index-work
-  commits in redb. Interrupted search indexing resumes with `refresh`.
-- Tantivy lexical search and exact-path boosting. Stale index candidates are checked
-  against the committed source version before delivery.
-- Hash-checked graph bundle imports, isolated by producer, with forward and reverse
-  file-neighborhood traversal. Traversal limits do not delete accepted relationships.
-- Verbatim source spans, citations, hashes and omission notices packed using the
-  declared `o200k_base` tokenizer. The budget covers **context stdout**, including
-  its metadata. It does not cover a host's added envelope, stderr or another model's
-  tokenizer, and is not a dollar-savings measurement.
-- Legacy prototype Laya HTTP strategy selection, bounded to two seconds, with a named
-  deterministic fallback. This remains implemented but is superseded by the owned
-  learning plan; current feedback exports do not constitute a working trainer.
+- Explicit store creation, schema-2 upgrade (`upgrade-store --to 2`), bounded
+  refresh and explicit `repair-index` with one retained quarantine. Reads never create,
+  upgrade or repair a store; a broken lexical index leaves status and retrieve usable.
+- Paged, held-root reconciliation: symlink/FIFO/root replacement is refused, failures
+  defer absence deletion, and source revision/scan IDs are checked counters.
+- Tantivy lexical search with exact-path boosting; every emitted span is verified
+  against the committed source in one final read transaction.
+- Source handles, `retrieve` with continuation, and context packing whose exact
+  emitted bytes are counted with `o200k_base` (CLI stdout, or the serialized MCP
+  result). Not a host-envelope or dollar-savings measurement.
+- Five MCP tools (`search`, `context`, `retrieve`, `index`, `status`) through the rmcp
+  SDK: one active engine operation and zero queued, bounded frames/bodies/handlers,
+  named `busy`/deadline/cancellation errors, delivery budgets and usage receipts.
+- Hash-checked graph bundle imports with bounded file-neighborhood traversal; graph
+  failures degrade context to source evidence with a named reason.
 
 ```sh
 foundry --store /tmp/foundry-demo import-graph examples/graph.json
@@ -51,22 +68,25 @@ foundry --store /tmp/foundry-demo context 'who calls parse_record' --tokens 1024
 
 ## Current limits
 
-This is a single-process CLI: each command owns its store exclusively. It is not
-yet a multi-client daemon, MCP server, compiler indexer, vector engine, or memory
-service. Graph symbol labels and evidence classes are supplied by the importer;
-the implementation traverses files, not a resolved symbol graph.
+One store has one owner: a CLI command, a stdio MCP session or the explicit shared
+HTTP owner. Others get `store_busy`. It is not a daemon fleet, compiler indexer,
+vector engine or memory service. Graph symbol labels and evidence classes are supplied
+by the importer; the implementation traverses files, not a resolved symbol graph.
+Routing is deterministic (`auto`/`search`/`graph`); the legacy Laya client is no
+longer reachable from the CLI.
 
 Results describe an **indexed snapshot**, not verified current filesystem bytes.
 Index again after edits. Hidden files, ignored paths, `target`, `node_modules`,
 symlinks, non-UTF-8 files and files over 2 MiB are excluded. Read errors are reported
-and defer missing-file deletion. This is not a sandbox for a hostile workspace
-that changes paths concurrently, and the narrow sensitive-file deny rules are not
-a general secret/PII scrubber.
+and defer missing-file deletion. Bytes are read relative to the held root, but names
+are enumerated by path: a process that swaps and restores a directory during one
+scan can make that scan retire records of files that still exist (the next scan
+restores them). The narrow sensitive-file deny rules are not a secret/PII scrubber.
 
 Search examines at most 256 candidates; graph traversal examines at most 256
 edges and visits at most 64 files. Whole-producer graph replacement is capped at
-100,000 edges. Ingestion maintains an in-memory path set. These are explicit
-first-slice limits, not evidence of million-file scale.
+100,000 edges. Reconciliation pages source keys (128) and bounds diagnostic samples;
+these are explicit limits, not evidence of million-file scale.
 
 ## Design and development
 

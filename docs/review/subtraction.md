@@ -36,13 +36,16 @@ Updated the existing 013 D001, v3 scope, architecture/deployment, roadmap and po
 No new spec number or implementation task was added. Source, weights and external
 repositories remain unchanged; planned gradient/parity checks have not run.
 
-## Current amendment — ownership through deployment, 2026-09-29
+## Historical owner amendment — ownership through deployment, 2026-09-29
 
 The owner explicitly selected all first-party code in Rust, a Foundry-owned learning
 system inspired by Laya, process isolation (libkrun only if needed), and both context
 budgeting and forwarding/metering of model requests. These decisions supersede the
 external Laya/no-gateway assumptions in the historical passes below. Review and plan
 correction stayed in this session; no independent model review or live acceptance ran.
+The vector-reuse hypothesis in this table was later superseded by the owner's
+ModernBERT clarification and [contract v4](../../specs/013-owned-learning/contracts/learning-loop.md).
+It is retained as review history, not an alternative implementation of the selected model.
 
 | Strength / affected story | Evidence and mechanism | Disposition and simpler direction | Tradeoff / proof limit |
 | --- | --- | --- | --- |

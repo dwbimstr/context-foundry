@@ -49,7 +49,10 @@ remain historical observations; later `retrieve` revalidates their handles.
 
 Validate in order: field/type/version/bounds → workspace match → source existence →
 source hash → range. Errors: `invalid_argument`, `wrong_workspace`, `not_found`,
-`stale_handle`, `invalid_range`, respectively. No partial evidence on these failures.
+`stale_handle`, `invalid_range`, respectively. An inverted interval (`start > end`)
+is malformed independent of any source and fails the first stage; only checks that
+need the source (`end` beyond its length, UTF-8 boundaries, `[0,0)` on a nonempty
+source) are `invalid_range`. No partial evidence on these failures.
 Reconstruct source in stored chunk ordinal order (at most 2 MiB) and verify full
 length/hash before slicing. Missing/mismatched chunks are `corrupt_source`, never
 an empty successful result. No new offset table is required for this bound.
@@ -129,6 +132,9 @@ MCP success is one text content block containing compact application JSON, with
 including escaping the inner JSON string. One serializer produces both counted and
 emitted bytes. Do not attach fields after counting. Exact measured token count is
 out of band; putting the count in its own counted message is unnecessary.
+For 003's pinned session-bearing SDK protocol, omit `resultType` before counting;
+the SDK must not change an already-counted success or error for legacy peers.
+
 
 Build candidates deterministically: up to 32 source search hits, highest-ranked
 source first, then bounded graph evidence and remaining source spans. For `auto`,
@@ -185,8 +191,19 @@ envelope fits. The sufficient hint is not advertised as a mathematical token min
 
 MCP errors are a bounded `isError:true` tool result with one text block containing
 `{code,message,retryable}`; total serialized value <=1024 bytes. Such errors are
-outside successful context budgets. Protocol errors use SDK error semantics. Escape
-untrusted paths/text as data; no source text becomes an instruction or tool request.
+outside successful context budgets. An admitted `index` interrupted by
+`deadline_exceeded`, `cancelled` or `index_incomplete` additionally includes
+`partial:{changed,unchanged,deleted,excluded,failed,pending_sources,scan_complete,deletions_deferred}`.
+Counters are checked u64s; the final two fields are booleans. Changed/deleted count
+committed source transactions only. This counts-only error has a fixed ASCII message
+of at most 256 bytes, no source/path/samples, and still fits the same 1024-byte cap.
+Deadline/cancel are retryable; incomplete scan is not automatically retryable.
+Only deliverable replies expose this report: after explicit client cancellation,
+session deletion or owner shutdown, status names durable scan/pending/revision state.
+CLI keeps its full bounded partial report on stdout with nonzero exit. MCP-only
+failure samples may be written once to bounded stderr, never placed in tool errors.
+Protocol errors use SDK semantics. Escape untrusted paths/text as data; no source
+text becomes an instruction or tool request.
 
 ## Contract checks
 

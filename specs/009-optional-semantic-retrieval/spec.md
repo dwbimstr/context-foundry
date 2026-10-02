@@ -7,8 +7,9 @@ downloads, long experiments, predecessor migration or external-repo changes are 
 Selected model: **`nvidia/Nemotron-3-Embed-1B-BF16`**, explicitly chosen by the owner.
 Selected local artifact: **`mlx-community/Nemotron-3-Embed-1B-BF16-4bit`**, subsequently
 supplied by the owner. Initial planned output: 2048 dimensions, float32 cached vectors.
-The earlier Llama Nemotron suggestion is superseded. Artifact revisions and runtime
-versions remain to be pinned; no weights were downloaded or executed.
+The earlier Llama Nemotron suggestion is superseded. D001 records pinned artifact/runtime
+identities and a bounded executed scratch bridge. Production integration, the complete
+recipe and installed-package acceptance remain open; that probe is not dense retrieval.
 
 ## Outcome and evidence
 

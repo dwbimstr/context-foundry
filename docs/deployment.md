@@ -1,9 +1,12 @@
 # Bootstrap, isolated workers and deployment
 
-Status: Proposed, 2026-09-29. This is the shared deployment boundary for 003 adapter
-onboarding, 005 explicit producer execution, 009 embeddings and 013 owned learning.
-It is not another product, daemon or spec stage. No installation, sandbox, signing,
-model run or publication has been performed. Existing CLI validation is unchanged.
+Status: bootstrap/connect and both MCP transports (003 T001–T003) implemented and
+verified locally, 2026-10-01 ([validation](validation.md)); worker isolation, 005, 009,
+013 and the gateway remain proposed. This is the shared deployment boundary for 003
+adapter onboarding, 005 explicit producer execution, 009 embeddings and 013 owned
+learning — not another product, daemon or spec stage. No production installation,
+worker package or publication is claimed. [Bounded scratch feasibility](review/feasibility.md)
+is recorded separately.
 
 ## User flow and ownership
 
@@ -17,9 +20,10 @@ model run or publication has been performed. Existing CLI validation is unchange
    [native-discovery guidance](../specs/003-agent-retrieval-context/spec.md#native-source-discovery-and-fallback).
    The configured agent uses Foundry before grep/ripgrep for eligible discovery;
    exact-pattern/current-file and unavailable-retrieval fallbacks remain explicit.
-   Setup alone is not real-host adoption proof. One host
-   session owns one store. An existing session uses `index` to refresh, not another
-   CLI writer. A second repository gets a separate store/configuration.
+   Setup alone is not real-host adoption proof. Default stdio lets one host session
+   own the store; explicit shared-owner HTTP lets independent clients use that same
+   owner. Refresh through `index`, not another CLI writer. Each repository gets a
+   separate store/configuration; shared mode is not a federation service.
 4. Request semantic preparation under an explicit profile/budget when useful. Baseline
    context stays available while coverage arrives; missing runtime/weights/jail are
    named setup requirements. Compiler artifacts follow the explicit 005 import route.
@@ -74,11 +78,55 @@ context policy. Unknown host/version is `host_unsupported`. It does not edit glo
 files, expose arbitrary shell commands or start a daemon. User/agent installation uses
 only session-authorized config changes and preserves unrelated prior bytes. 003 T003
 must test one actual host; generic MCP is not proof of provider interception.
+Implemented hosts (2026-10-01): `omp` (verified with OMP 18.4.9) and `codex` (verified
+with Codex CLI 0.159.2); output is JSON with the host config text, project instruction
+block, exact launch argv and capability note. Printed tool timeouts exceed the maximum
+1,200,000 ms index timeout (OMP `timeout`, Codex `tool_timeout_sec`). Codex requires
+per-call approval for MCP tools by default, which blocks non-interactive runs; tools
+therefore declare MCP `readOnlyHint` annotations, and the printed Codex config sets
+`default_tools_approval_mode = "writes"` with `approve` for `index` (it writes only
+Foundry's own store for the bound root); an operator may tighten this. Applying a
+config edits only a positively owned block, atomically; JSON-native host files
+require manual integration (`manual_integration_required`).
 Gateway connection additionally takes `--gateway-run DIR` to print the implemented
 host's provider endpoint/auth-environment settings for that owned run. Never print a
 bearer/API key, transplant subscription credentials or silently change existing
 provider/model settings. Refer to the gateway's exact
 [protocol and accounting contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md).
+
+## Ecosystem readiness disposition — 2026-10-01
+
+The reported predecessor availability and call failures were accepted observations,
+not remeasured. The decisions below were planned on 2026-10-01; the 001/003 owners
+were then implemented and verified locally the same day ([validation](validation.md)).
+No predecessor store, service or host-global configuration was migrated or changed.
+
+| Reported concern | Existing owner and decision | Required proof |
+| --- | --- | --- |
+| Prakarana serves one store; Warp has a store without a live daemon; team-kit and Proxima are unindexed | 001/003: explicitly bootstrap each named repository into its own Foundry store. Existing predecessor stores are not Foundry stores and are neither adopted nor replaced implicitly. Direct stdio needs no always-on daemon | Inspect/apply/connect on admitted fixtures; baseline context survives missing optional resources |
+| Collection-root teams cannot reach repository stores | 003: the worker brief supplies its actual canonical repository, absolute store configuration and available transport. A collection cwd or outside-path mention is not admission. Explicit separate-root queries are allowed; 007's joins/registry remain deferred | Start a client from another cwd; immutable binding and foreign-handle refusal; separate-root reconciliation cannot delete another root |
+| Wrong arguments and failing history queries | 001 validates types, unknown fields, bounds and error precedence; 003 exposes the same schemas. The selected baseline has five tools, not a generative `ask` loop. Do not require that predecessor tool or add it to fix adoption statistics | Invalid-argument cases before mutation; real SDK catalog/calls; actual host reports unavailable capability rather than retrying another store |
+| A busy status returns an old healthy snapshot | 003 returns `busy` when its engine slot is occupied. Completed status identifies the observed store/snapshot, not current-disk or model health. Read deadlines return `deadline_exceeded`, not a partial successful read or cached health certificate | Concurrent status/index, cancellation and delayed-library cases; no successful read after expiry |
+| Oversized lexical terms, rewrite/reclaim failures and neural transport churn | 001 owns bounded byte-preserving source/recovery; redb/Tantivy own physical persistence. 009 owns exact-input cache identity, visible partial coverage, disk-cap refusal and explicit offline purge. Do not port custom WAL/slot/checkpoint machinery or predecessor cache bytes | Long unbroken source text under the admitted file bound still retrieves byte-exactly; 001 restart/repair; 009 recipe/cache/index/worker acceptance before advertising semantics |
+| Workers use the wrong store or an unavailable route | 003 per-project configuration and transcript-visible fallback; only the task's independently authorized roots. No user-global entry pinning one repository across every session; borrowed subagents use their parent's configured connection | Real host/version tool ordering and fallback; root/hash/range rejection cannot widen permissions |
+| Release or optional-resource blockers | Release the actually accepted scope under release.md. 009 and 013 remain active goals with selected models; their incomplete recipe, rights, isolation and package checks block those claims, not a useful baseline. Gateway account/model/spend inputs block forwarding, not MCP | Matching real consumer, installed package or provider evidence for each advertised feature; no scratch-probe promotion |
+
+The owner selected optional shared-owner MCP and the complete 001/003 T001–T003
+implementation tranche on 2026-10-01. Default stdio remains; explicit per-root
+Streamable HTTP MCP serves independent OMP/Codex clients through one authority.
+The [owning 003 amendment](../specs/003-agent-retrieval-context/spec.md#optional-shared-owner--approved-amendment-2026-10-01)
+defines loopback authentication, bounds and lifecycle. OMP 18.4.9 and Codex 0.159.2
+were verified attached to one shared owner at once, with interleaved Foundry calls
+([real-host record](review/real-host-t003-2026-10-01.json)). Adopting it for real
+repositories (bootstrap, a started owner, project-scoped host config) is an operator
+step per repository; nothing was cut over automatically.
+
+Operation-scoped rotating owners are not the recommended alternative: repeated
+library opens include locking/recovery work and conflict with 009's persistent
+owner/worker lifecycle. Duplicating authoritative stores per host is also rejected.
+The selected scope adds no graph/semantic/learning/gateway implementation in this
+tranche; those goals remain active with their owning execution and package gates.
+
 
 ## Isolation is an enforced profile
 
@@ -148,8 +196,9 @@ cleanup. Missing required enforcement still disables the affected feature.
 
 For every platform declare `resource_enforcement` as `hard` or `supervised`, by resource.
 OS-enforced memory/process bounds differ from supervisor RSS polling, which can overshoot.
-A job requiring hard limits refuses a merely supervised profile. ModernBERT's CPU/GPU
-choice is unresolved; the earlier small-head CPU assumption is superseded. No GPU
+A job requiring hard limits refuses a merely supervised profile. 013's
+[contract v4](../specs/013-owned-learning/contracts/learning-loop.md) selects CPU float32
+for ModernBERT/head adaptation; the earlier vector-only head is superseded. No GPU
 memory quota is claimed from a host process-memory limit. 009/013 must declare their
 combined resident memory and supported overlap, not only per-request allocation limits.
 The first combined-inference acceptance ceiling is 8 GiB aggregate supervised resident

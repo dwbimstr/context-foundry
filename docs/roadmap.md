@@ -13,11 +13,12 @@ The [portfolio](../specs/README.md) owns order and status. Release useful workfl
 5. Explicit project memory as an independent feature (008).
 6. Repeated owned Rust policy fine-tuning with isolated execution, selection and rollback (013).
 
-These are feature opportunities, not six gates before the first release. Release
-001 as soon as its contract and [release checks](release.md) pass. The existing Rust
-CLI is a tested prototype; the new recovery/agent/scale/learning work remains proposed.
-001 D001 is resolved: retain the current redb/Tantivy pair and implement its bounded
-repair contract next. Optional model choices do not reopen that decision by default.
+These are feature opportunities, not six gates before the first release. As of
+2026-10-01, 001 T001–T003 and 003 T001–T003 (including the optional shared owner) are
+implemented and verified locally ([validation](validation.md)); the next step for them
+is the ordinary [release checklist](release.md) for the advertised scope, not more
+feature work. 003 T004 (gateway), 005, 008, 009 and 013 remain proposed. 001 D001 stays
+resolved: redb/Tantivy. Optional model choices do not reopen that decision by default.
 
 Plan 009's cache/profile/chunk lifecycle alongside 001. Nemotron 3 Embed 1B with the
 owner-supplied MLX 4-bit artifact is selected; pin/validate its loader/runtime and
