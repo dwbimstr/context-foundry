@@ -85,9 +85,10 @@ use tokio_util::{
 
 use crate::{
     Control, Engine, FResult, FoundryError, Strategy,
-    adapter_error::AResult,
+    adapter_error::{AResult, AdapterError},
     config::BudgetConfig,
-    response::{self, BudgetLimiter},
+    response::{self, BudgetLimiter, RootHeader},
+    roots::{self, AdmittedRoot, Coverage},
     store::{HandleRef, LineSelection},
 };
 
@@ -119,17 +120,25 @@ fn schema(json: &'static str) -> JsonObject {
     serde_json::from_str(json).expect("static tool schema must be valid JSON")
 }
 
-/// The workspace identity rule (lowercase SHA-256 of the canonical absolute
-/// root's UTF-8 bytes) is owned by 001 and published as
-/// `context_foundry::workspace_id_for_root`; MCP startup uses it to verify
-/// the bound root once.
-fn expected_workspace_id(root: &Path) -> FResult<String> {
-    crate::workspace_id_for_root(root)
-}
-
 // ---------------------------------------------------------------------------
 // Shared server state
 // ---------------------------------------------------------------------------
+
+/// Immutable per-root facts of a multi-root owner (007), decided once at
+/// launch: aliases, labels, canonical roots, workspace identities and each
+/// root's session-long coverage. `meta[i]` describes `engines[i]`.
+#[derive(Clone, Debug)]
+pub(crate) struct RootMeta {
+    alias: String,
+    label: String,
+    root: PathBuf,
+    workspace_id: String,
+    coverage: Coverage,
+}
+
+/// One per-root header fact set: `(meta index, revision, scan state, pending
+/// sources)` of a root's own final read.
+type RootFacts = Vec<(usize, u64, String, u64)>;
 
 /// A refused reservation: no session allowance remains. It changed no counter.
 #[derive(Debug)]
@@ -138,8 +147,12 @@ struct Refusal {
 }
 
 pub(crate) struct Shared {
-    engine: Arc<Mutex<Engine>>,
-    root: PathBuf,
+    /// One engine per admitted root behind ONE mutex: the single engine slot
+    /// spans every root, so admission stays one-active/zero-queued across
+    /// the whole owner. `None` where a reference could not be opened.
+    engines: Arc<Mutex<Vec<Option<Engine>>>>,
+    /// Per-root facts in admission order (007), immutable after launch.
+    meta: Arc<Vec<RootMeta>>,
     budget: BudgetConfig,
     /// Remaining connection-local allowance per session; populated only when
     /// `session_context_tokens` is configured.
@@ -148,6 +161,13 @@ pub(crate) struct Shared {
     /// Owner-level shutdown: set on EOF/owner shutdown; active operations
     /// stop at their next cooperative checkpoint.
     shutdown: CancellationToken,
+}
+
+/// A multi-root engine outcome: the merged result plus each serving root's
+/// own final-read facts `(meta index, revision, scan state, pending)`.
+struct MultiOutcome<T> {
+    served: T,
+    root_facts: RootFacts,
 }
 
 /// HTTP admission guard. The semaphore permit is released only when the last
@@ -233,9 +253,129 @@ impl Shared {
     pub(crate) fn drop_session(&self, session: &str) {
         self.sessions.lock().expect("session lock").remove(session);
     }
+    /// The meta index of an admitted alias.
+    fn alias_index(&self, alias: &str) -> Option<usize> {
+        self.meta.iter().position(|meta| meta.alias == alias)
+    }
+
+    /// Validate requested `roots` aliases against the admitted roots, in
+    /// BOTH owner modes (007): an unknown alias is `invalid_argument` before
+    /// dispatch — including on an owner launched without references, where
+    /// only `primary` exists.
+    fn validate_aliases(&self, requested: Option<&[String]>) -> FResult<()> {
+        let Some(aliases) = requested else {
+            return Ok(());
+        };
+        if aliases.is_empty() || aliases.len() > roots::MAX_ROOTS {
+            return Err(FoundryError::InvalidArgument(
+                "argument `roots` must list 1..9 aliases".into(),
+            ));
+        }
+        for alias in aliases {
+            if self.alias_index(alias).is_none() {
+                return Err(FoundryError::InvalidArgument(format!(
+                    "unknown root alias `{alias}`; roots are admitted only at launch"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve a `roots` selection to meta indices, validated before
+    /// dispatch: a nonempty list of unique known aliases, at most 9.
+    /// Without `roots`, every root whose coverage is `ok` is selected.
+    /// Indices come back in ADMISSION order regardless of the request's
+    /// order: execution, RRF tie-breaks and header segments all follow
+    /// primary-then-command-line order (007 § Combined search and context).
+    fn resolve_roots(&self, requested: Option<&[String]>) -> FResult<Vec<usize>> {
+        let Some(aliases) = requested else {
+            return Ok(self
+                .meta
+                .iter()
+                .enumerate()
+                .filter(|(_, meta)| meta.coverage.serves_search())
+                .map(|(index, _)| index)
+                .collect());
+        };
+        self.validate_aliases(Some(aliases))?;
+        let mut indices = Vec::with_capacity(aliases.len());
+        for alias in aliases {
+            let index = self.alias_index(alias).expect("validated above");
+            if indices.contains(&index) {
+                return Err(FoundryError::InvalidArgument(format!(
+                    "duplicate root alias `{alias}` in `roots`"
+                )));
+            }
+            indices.push(index);
+        }
+        indices.sort_unstable();
+        Ok(indices)
+    }
+
+    /// The `roots_unavailable` refusal for a selection with no serving root:
+    /// it lists every root the response would name (all admitted roots when
+    /// `roots` was omitted, the selected ones otherwise) with each root's
+    /// coverage, inside the 1024-byte serialized error bound (007). Labels
+    /// are included only when the complete bounded error still fits; the
+    /// compact `alias:coverage` pairs are always complete, so generic
+    /// truncation never drops a pair.
+    fn unavailable_error(&self, listed: &[usize]) -> CallToolResult {
+        let pairs = |labels: bool| {
+            listed
+                .iter()
+                .map(|&index| {
+                    let meta = &self.meta[index];
+                    if labels {
+                        format!("{}({}) {}", meta.alias, meta.label, meta.coverage.as_str())
+                    } else {
+                        format!("{}:{}", meta.alias, meta.coverage.as_str())
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let message = |pairs: String| {
+            format!("no selected root can serve: {pairs}; restart the owner to retry")
+        };
+        let serialized_len = |message: &str| {
+            let value = serde_json::json!({
+                "code": "roots_unavailable",
+                "message": message,
+                "retryable": false,
+            });
+            serialize_result(&error_shape_text(response::compact_json(&value))).len()
+        };
+        let labeled = message(pairs(true));
+        let text = if serialized_len(&labeled) <= 1024 {
+            labeled
+        } else {
+            message(pairs(false))
+        };
+        error_result("roots_unavailable", &text, false)
+    }
 
     fn cancel_active(&self) {
         self.shutdown.cancel();
+    }
+
+    /// A single-root owner (no references admitted), for in-crate tests.
+    #[cfg(test)]
+    fn single_root(engine: Engine, root: PathBuf, budget: BudgetConfig) -> Self {
+        let workspace_id = engine.workspace_id().unwrap_or_default();
+        Self {
+            engines: Arc::new(Mutex::new(vec![Some(engine)])),
+            meta: Arc::new(vec![RootMeta {
+                alias: "primary".to_owned(),
+                label: roots::label_for(&root),
+                workspace_id,
+                root,
+                coverage: Coverage::Ok,
+            }]),
+            budget,
+            sessions: Mutex::new(HashMap::new()),
+            in_flight_engine: AtomicUsize::new(0),
+            shutdown: CancellationToken::new(),
+        }
     }
 
     async fn wait_engine_idle(&self, bound: Duration) {
@@ -311,7 +451,7 @@ fn run_engine_op<T, F>(
     f: F,
 ) -> impl Future<Output = Result<T, OpError>>
 where
-    F: FnOnce(&mut Engine, &Control) -> FResult<T> + Send + 'static,
+    F: FnOnce(&mut Vec<Option<Engine>>, &Control) -> FResult<T> + Send + 'static,
     T: Send + 'static,
 {
     run_op(shared, deadline, peer_ct, guard, true, f)
@@ -336,7 +476,7 @@ fn run_op<T, F>(
     f: F,
 ) -> impl Future<Output = Result<T, OpError>>
 where
-    F: FnOnce(&mut Engine, &Control) -> FResult<T> + Send + 'static,
+    F: FnOnce(&mut Vec<Option<Engine>>, &Control) -> FResult<T> + Send + 'static,
     T: Send + 'static,
 {
     let shared = Arc::clone(shared);
@@ -350,20 +490,20 @@ where
         let control = Control::with_deadline(deadline);
         register_hub.register(control.cancel_flag());
         shared.in_flight_engine.fetch_add(1, Ordering::SeqCst);
-        let engine = Arc::clone(&shared.engine);
+        let engines = Arc::clone(&shared.engines);
         let joined = tokio::task::spawn_blocking(move || {
             // Admission is a try-lock: a concurrent operation returns busy,
-            // it never waits. The engine guard (the operation slot) is held
-            // until this closure returns.
-            match engine.try_lock() {
-                Ok(mut engine_guard) => {
-                    let out = f(&mut engine_guard, &control);
+            // it never waits. The guard (the one engine slot, spanning every
+            // root of this owner) is held until this closure returns.
+            match engines.try_lock() {
+                Ok(mut engines_guard) => {
+                    let out = f(&mut engines_guard, &control);
                     let out = match out {
                         Ok(value) if check_after => control.check().map(|()| value),
                         other => other,
                     }
                     .map_err(OpError::Core);
-                    drop(engine_guard);
+                    drop(engines_guard);
                     out
                 }
                 Err(std::sync::TryLockError::WouldBlock) => Err(OpError::Busy),
@@ -568,6 +708,123 @@ fn optional_str<'a>(args: &'a JsonObject, key: &str) -> FResult<Option<&'a str>>
     }
 }
 
+/// The optional `roots` selector (007): a nonempty list of at most 9 unique
+/// alias strings. Unknown or duplicate aliases are refused here; whether an
+/// alias is admitted is resolved against the owner's roots before dispatch.
+fn roots_argument(args: &JsonObject) -> FResult<Option<Vec<String>>> {
+    let Some(value) = args.get("roots") else {
+        return Ok(None);
+    };
+    let invalid =
+        |detail: &str| FoundryError::InvalidArgument(format!("argument `roots` {detail}"));
+    let serde_json::Value::Array(items) = value else {
+        return Err(match value {
+            serde_json::Value::Null => invalid("must be omitted, not null"),
+            _ => invalid("must be an array of alias strings"),
+        });
+    };
+    if items.is_empty() || items.len() > roots::MAX_ROOTS {
+        return Err(invalid("must list 1..9 aliases"));
+    }
+    let mut aliases = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(alias) = item.as_str() else {
+            return Err(invalid("must be an array of alias strings"));
+        };
+        if aliases.iter().any(|known| known == alias) {
+            return Err(invalid("must list unique aliases"));
+        }
+        aliases.push(alias.to_owned());
+    }
+    Ok(Some(aliases))
+}
+
+/// Build the header segments for the roots a response lists (007): facts for
+/// the roots that served, coverage for the others.
+fn root_headers(meta: &[RootMeta], listed: &[usize], facts: &RootFacts) -> Vec<RootHeader> {
+    listed
+        .iter()
+        .map(|&index| {
+            let root = &meta[index];
+            match facts.iter().find(|(served, ..)| *served == index) {
+                Some((_, revision, scan_state, pending)) => RootHeader {
+                    alias: root.alias.clone(),
+                    label: root.label.clone(),
+                    serving: Some((*revision, scan_state.clone(), *pending)),
+                    coverage: None,
+                },
+                None => RootHeader {
+                    alias: root.alias.clone(),
+                    label: root.label.clone(),
+                    serving: None,
+                    coverage: Some(root.coverage.as_str().to_owned()),
+                },
+            }
+        })
+        .collect()
+}
+
+/// `(meta index, revision, scan state, pending)` of every root that has an
+/// open engine, read live for a retrieve response's header.
+fn root_facts(engines: &[Option<Engine>]) -> FResult<RootFacts> {
+    let mut facts = Vec::new();
+    for (index, engine) in engines.iter().enumerate() {
+        let Some(engine) = engine else { continue };
+        let status = engine.status()?;
+        facts.push((
+            index,
+            status.source_revision,
+            status.scan_state,
+            status.pending_count,
+        ));
+    }
+    Ok(facts)
+}
+
+/// Run one candidate selection per selected serving root, sequentially inside
+/// the shared read deadline (007 § Combined search and context): a
+/// cooperative deadline/cancellation check and the `roots.before_root`
+/// test-faults point precede each root's call, so a stall in one root holds
+/// the single engine slot until it returns and the deadline fails the whole
+/// request. Returns each root's batch with its own final-read facts.
+fn collect_root_batches<F>(
+    engines: &[Option<Engine>],
+    control: &Control,
+    meta: &[RootMeta],
+    serving: &[usize],
+    select: F,
+) -> FResult<(Vec<roots::RootBatch>, RootFacts)>
+where
+    F: Fn(&Engine, &Control) -> FResult<crate::store::CandidateBatch>,
+{
+    let mut batches = Vec::new();
+    let mut facts = Vec::new();
+    for &index in serving {
+        let engine = engines[index]
+            .as_ref()
+            .expect("a serving root holds an engine");
+        control.check()?;
+        fault!(
+            ROOTS_BEFORE_ROOT,
+            Some(engine),
+            Some(control),
+            &meta[index].alias
+        )?;
+        let batch = select(engine, control)?;
+        facts.push((
+            index,
+            batch.freshness.source_revision,
+            batch.freshness.scan_state.clone(),
+            batch.freshness.pending_sources,
+        ));
+        batches.push(roots::RootBatch {
+            alias: meta[index].alias.clone(),
+            batch,
+        });
+    }
+    Ok((batches, facts))
+}
+
 // ---------------------------------------------------------------------------
 // The server: exactly five tools
 // ---------------------------------------------------------------------------
@@ -611,7 +868,7 @@ impl FoundryMcp {
     #[tool(
         name = "search",
         description = "Use BEFORE grep/rg to find code in the indexed repo(s): one line per hit with a handle, line, symbol and matching text. Follow handles with retrieve. Indexed snapshot, not live disk.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4096},"limit":{"type":"integer","minimum":1,"maximum":64,"default":10},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":1024},"path":{"type":"string","minLength":1}}}"#),
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4096},"limit":{"type":"integer","minimum":1,"maximum":64,"default":10},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":1024},"path":{"type":"string","minLength":1},"roots":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":9,"uniqueItems":true}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn search(
@@ -619,7 +876,7 @@ impl FoundryMcp {
         ctx: RequestContext<RoleServer>,
         arguments: JsonObject,
     ) -> Result<CallToolResult, ErrorData> {
-        if let Err(e) = unknown_fields(&arguments, &["query", "limit", "tokens", "path"]) {
+        if let Err(e) = unknown_fields(&arguments, &["query", "limit", "tokens", "path", "roots"]) {
             return Ok(foundry_error_result(&e));
         }
         let query = match required_str(&arguments, "query") {
@@ -649,14 +906,34 @@ impl FoundryMcp {
             },
             Err(e) => return Ok(foundry_error_result(&e)),
         };
+        // `roots` selects already admitted aliases, validated before dispatch.
+        let roots = match roots_argument(&arguments) {
+            Ok(roots) => roots,
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        // Validated in BOTH owner modes: an unknown alias never silently
+        // falls back to the primary on a no-reference owner.
+        if let Err(e) = self.state.validate_aliases(roots.as_deref()) {
+            return Ok(foundry_error_result(&e));
+        }
         let query = query.to_owned();
+        if self.state.meta.len() > 1 {
+            return Ok(self
+                .search_roots(&ctx, tokens, query, path, limit, roots)
+                .await);
+        }
         Ok(self
             .deliver(
                 &ctx,
                 tokens,
                 "search",
                 || response::refusal_floor("search", None),
-                move |engine, _control, _budget| engine.search_in(&query, path.as_deref(), limit),
+                move |engines, _control, _budget| {
+                    engines[0]
+                        .as_ref()
+                        .expect("the primary engine is open")
+                        .search_in(&query, path.as_deref(), limit)
+                },
                 response::pack_search,
             )
             .await)
@@ -665,7 +942,7 @@ impl FoundryMcp {
     #[tool(
         name = "context",
         description = "Use INSTEAD of exploratory file reads: one budgeted, cited bundle of the most relevant symbols (verbatim, or signatures when large), graph edges and file outlines.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4096},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":2048},"strategy":{"type":"string","enum":["auto","search","graph"],"default":"auto"}}}"#),
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4096},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":2048},"strategy":{"type":"string","enum":["auto","search","graph"],"default":"auto"},"roots":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":9,"uniqueItems":true}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn context(
@@ -673,7 +950,7 @@ impl FoundryMcp {
         ctx: RequestContext<RoleServer>,
         arguments: JsonObject,
     ) -> Result<CallToolResult, ErrorData> {
-        if let Err(e) = unknown_fields(&arguments, &["query", "tokens", "strategy"]) {
+        if let Err(e) = unknown_fields(&arguments, &["query", "tokens", "strategy", "roots"]) {
             return Ok(foundry_error_result(&e));
         }
         let query = match required_str(&arguments, "query") {
@@ -711,15 +988,33 @@ impl FoundryMcp {
                 ));
             }
         };
+        // `roots` selects already admitted aliases, validated before dispatch.
+        let roots = match roots_argument(&arguments) {
+            Ok(roots) => roots,
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        // Validated in BOTH owner modes: an unknown alias never silently
+        // falls back to the primary on a no-reference owner.
+        if let Err(e) = self.state.validate_aliases(roots.as_deref()) {
+            return Ok(foundry_error_result(&e));
+        }
         let query = query.to_owned();
+        if self.state.meta.len() > 1 {
+            return Ok(self
+                .context_roots(&ctx, tokens, query, strategy, roots)
+                .await);
+        }
         Ok(self
             .deliver(
                 &ctx,
                 tokens,
                 "context",
                 || response::refusal_floor("context", None),
-                move |engine, control, _budget| {
-                    engine.context_candidates(&query, strategy, control)
+                move |engines, control, _budget| {
+                    engines[0]
+                        .as_ref()
+                        .expect("the primary engine is open")
+                        .context_candidates(&query, strategy, control)
                 },
                 response::pack_context,
             )
@@ -789,18 +1084,42 @@ impl FoundryMcp {
             Err(e) => return Ok(foundry_error_result(&e)),
         };
         let (handle, lines) = (handle.to_owned(), lines.map(str::to_owned));
+        // A multi-root owner resolves the root by the handle's `ws16` before
+        // dispatch (007 § Multi-root identity): unknown is `wrong_workspace`,
+        // a known root without an open engine is `root_unavailable`.
+        let root = if self.state.meta.len() > 1 {
+            match self.root_of_handle(&parsed.ws16) {
+                Ok(root) => Some(root),
+                Err(result) => return Ok(result),
+            }
+        } else {
+            None
+        };
         if outline {
+            if let Some(root) = root {
+                return Ok(self
+                    .retrieve_outline_roots(&ctx, tokens, handle, lines, root)
+                    .await);
+            }
             return Ok(self
                 .deliver(
                     &ctx,
                     tokens,
                     "retrieve",
                     response::outline_refusal_floor,
-                    move |engine, _control, budget| {
-                        engine.retrieve_outline(&handle, lines.as_deref(), budget)
+                    move |engines, _control, budget| {
+                        engines[0]
+                            .as_ref()
+                            .expect("the primary engine is open")
+                            .retrieve_outline(&handle, lines.as_deref(), budget)
                     },
                     response::pack_retrieve_outline,
                 )
+                .await);
+        }
+        if let Some(root) = root {
+            return Ok(self
+                .retrieve_roots(&ctx, tokens, handle, lines, parsed, root)
                 .await);
         }
         Ok(self
@@ -809,7 +1128,12 @@ impl FoundryMcp {
                 tokens,
                 "retrieve",
                 move || response::refusal_floor("retrieve", Some(&parsed)),
-                move |engine, _control, budget| engine.retrieve(&handle, lines.as_deref(), budget),
+                move |engines, _control, budget| {
+                    engines[0]
+                        .as_ref()
+                        .expect("the primary engine is open")
+                        .retrieve(&handle, lines.as_deref(), budget)
+                },
                 response::pack_retrieve,
             )
             .await)
@@ -818,7 +1142,7 @@ impl FoundryMcp {
     #[tool(
         name = "index",
         description = "Re-index after edits: the bound repo, or an admitted reference root via `root`.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000}}}"#),
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"}}}"#),
         // `index` writes only Foundry's own store for the bound root; it
         // never modifies workspace files, and re-indexing converges.
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
@@ -828,15 +1152,37 @@ impl FoundryMcp {
         ctx: RequestContext<RoleServer>,
         arguments: JsonObject,
     ) -> Result<CallToolResult, ErrorData> {
-        if arguments.contains_key("root") {
+        if let Err(e) = unknown_fields(&arguments, &["timeout_ms", "root"]) {
+            return Ok(foundry_error_result(&e));
+        }
+        // `root` re-indexes one admitted alias through its own store
+        // (default `primary`), validated before dispatch: a root whose
+        // coverage is not `ok` is `root_unavailable`.
+        let root = match optional_str(&arguments, "root") {
+            Ok(None) => "primary".to_owned(),
+            Ok(Some(alias)) => alias.to_owned(),
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        let index = match self.state.alias_index(&root) {
+            Some(index) => index,
+            None => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    &format!("unknown root alias `{root}`; roots are admitted only at launch"),
+                    false,
+                ));
+            }
+        };
+        if !self.state.meta[index].coverage.serves_search() {
             return Ok(error_result(
-                "invalid_argument",
-                "index takes no root argument; the root is bound at startup",
+                "root_unavailable",
+                &format!(
+                    "root `{}` cannot serve: {}",
+                    root,
+                    self.state.meta[index].coverage.as_str()
+                ),
                 false,
             ));
-        }
-        if let Err(e) = unknown_fields(&arguments, &["timeout_ms"]) {
-            return Ok(foundry_error_result(&e));
         }
         let timeout_ms = match optional_u64(
             &arguments,
@@ -849,14 +1195,19 @@ impl FoundryMcp {
             Err(e) => return Ok(foundry_error_result(&e)),
         };
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-        let root = self.state.root.clone();
+        let meta = Arc::clone(&self.state.meta);
         let attempt = run_op(
             &self.state,
             deadline,
             Some(ctx.ct.clone()),
             Self::admission_guard(&ctx),
             false,
-            move |engine, control| engine.index(&root, control),
+            move |engines, control| {
+                engines[index]
+                    .as_mut()
+                    .expect("a serving root holds an engine")
+                    .index(&meta[index].root, control)
+            },
         )
         .await;
         let report = match attempt {
@@ -904,20 +1255,56 @@ impl FoundryMcp {
                 false,
             ));
         }
+        let meta = Arc::clone(&self.state.meta);
+        let multi = meta.len() > 1;
         let outcome = match run_engine_op(
             &self.state,
             Instant::now() + READ_DEADLINE,
             Some(ctx.ct.clone()),
             Self::admission_guard(&ctx),
-            |engine, _| engine.status(),
+            move |engines, _| {
+                let status = engines[0]
+                    .as_ref()
+                    .expect("the primary engine is open")
+                    .status()?;
+                let mut value = serde_json::to_value(&status).unwrap_or(serde_json::Value::Null);
+                if multi {
+                    // 007: every admitted root, with nulls where a store
+                    // could not be opened.
+                    let mut roots = Vec::with_capacity(meta.len());
+                    for (index, root) in meta.iter().enumerate() {
+                        let mut entry = serde_json::json!({
+                            "alias": root.alias,
+                            "label": root.label,
+                            "root": root.root.display().to_string(),
+                            "workspace_id": serde_json::Value::Null,
+                            "coverage": root.coverage.as_str(),
+                            "source_revision": serde_json::Value::Null,
+                            "pending_sources": serde_json::Value::Null,
+                            "scan_state": serde_json::Value::Null,
+                            "index_state": serde_json::Value::Null,
+                        });
+                        if let Some(engine) = engines[index].as_ref() {
+                            let status = engine.status()?;
+                            entry["workspace_id"] = serde_json::json!(engine.workspace_id());
+                            entry["source_revision"] = serde_json::json!(status.source_revision);
+                            entry["pending_sources"] = serde_json::json!(status.pending_count);
+                            entry["scan_state"] = serde_json::json!(status.scan_state);
+                            entry["index_state"] = serde_json::json!(status.index_state);
+                        }
+                        roots.push(entry);
+                    }
+                    value["roots"] = serde_json::Value::Array(roots);
+                }
+                Ok(value)
+            },
         )
         .await
         {
             Ok(outcome) => outcome,
             Err(e) => return Ok(foundry_error_result(&e)),
         };
-        let value = serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null);
-        Ok(text_result(response::compact_json(&value)))
+        Ok(text_result(response::compact_json(&outcome)))
     }
 }
 
@@ -950,7 +1337,7 @@ impl FoundryMcp {
         pack: P,
     ) -> CallToolResult
     where
-        F: FnOnce(&mut Engine, &Control, usize) -> FResult<T> + Send + 'static,
+        F: FnOnce(&mut Vec<Option<Engine>>, &Control, usize) -> FResult<T> + Send + 'static,
         T: Send + 'static,
         P: Fn(&T, response::Budget, response::ByteMeasure) -> FResult<response::PackedText>,
         R: FnOnce() -> usize,
@@ -1031,6 +1418,264 @@ impl FoundryMcp {
             }
         }
     }
+
+    /// The meta index of the root a handle's `ws16` names, or the bounded
+    /// refusal: unknown `ws16` is `wrong_workspace`; a known root without an
+    /// open engine (busy, missing, corrupt, wrong workspace) cannot serve
+    /// reads and is `root_unavailable`.
+    fn root_of_handle(&self, ws16: &str) -> Result<usize, CallToolResult> {
+        match self
+            .state
+            .meta
+            .iter()
+            .position(|meta| meta.workspace_id.starts_with(ws16))
+        {
+            Some(index) if self.state.meta[index].coverage.serves_reads() => Ok(index),
+            Some(index) => Err(error_result(
+                "root_unavailable",
+                &format!(
+                    "root `{}` cannot serve reads: {}",
+                    self.state.meta[index].alias,
+                    self.state.meta[index].coverage.as_str()
+                ),
+                false,
+            )),
+            None => Err(error_result(
+                "wrong_workspace",
+                "handle names no admitted root",
+                false,
+            )),
+        }
+    }
+
+    /// The root indices a response's header lists (007): every admitted root
+    /// without a `roots` selection — so unavailable references stay visible —
+    /// or the selected roots with one.
+    fn listed_roots(&self, selected: Option<&[String]>, selection: &[usize]) -> Vec<usize> {
+        match selected {
+            None => (0..self.state.meta.len()).collect(),
+            Some(_) => selection.to_vec(),
+        }
+    }
+
+    /// The aliases and labels of every admitted root, for the multi-root
+    /// refusal floor.
+    fn root_labels(&self) -> Vec<(String, String)> {
+        Self::meta_labels(&self.state.meta)
+    }
+
+    fn meta_labels(meta: &[RootMeta]) -> Vec<(String, String)> {
+        meta.iter()
+            .map(|meta| (meta.alias.clone(), meta.label.clone()))
+            .collect()
+    }
+
+    /// 007 combined search: the selected serving roots run sequentially
+    /// inside the one read deadline, their batches merge on the candidate
+    async fn search_roots(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        tokens: u64,
+        query: String,
+        path: Option<String>,
+        limit: usize,
+        selected: Option<Vec<String>>,
+    ) -> CallToolResult {
+        let selection = match self.state.resolve_roots(selected.as_deref()) {
+            Ok(selection) => selection,
+            Err(e) => return foundry_error_result(&e),
+        };
+        let serving: Vec<usize> = selection
+            .iter()
+            .copied()
+            .filter(|&index| self.state.meta[index].coverage.serves_search())
+            .collect();
+        if serving.is_empty() {
+            // The refusal names every root the response would have listed:
+            // all admitted roots when `roots` was omitted, the selected ones
+            // otherwise (007 § Combined search and context).
+            return self
+                .state
+                .unavailable_error(&self.listed_roots(selected.as_deref(), &selection));
+        }
+        let listed = self.listed_roots(selected.as_deref(), &selection);
+        let meta = Arc::clone(&self.state.meta);
+        let floor_labels = self.root_labels();
+        let run_meta = Arc::clone(&meta);
+        let pack_meta = Arc::clone(&meta);
+        self.deliver(
+            ctx,
+            tokens,
+            "search",
+            move || response::refusal_floor_roots("search", None, &floor_labels),
+            move |engines, control, _budget| {
+                let (batches, facts) = collect_root_batches(
+                    engines,
+                    control,
+                    &run_meta,
+                    &serving,
+                    |engine, control| {
+                        engine.search_candidates(&query, path.as_deref(), limit, control)
+                    },
+                )?;
+                Ok(MultiOutcome {
+                    served: roots::merge_search(&batches, limit),
+                    root_facts: facts,
+                })
+            },
+            move |outcome: &MultiOutcome<crate::store::SearchOutcome>,
+                  budget: response::Budget,
+                  boundary: response::ByteMeasure| {
+                let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
+                response::pack_search_roots(&outcome.served, &headers, budget, boundary)
+            },
+        )
+        .await
+    }
+
+    /// 007 combined context: same flow as [`Self::search_roots`] over
+    /// `context_candidates`; graph items keep their seed root's alias and
+    /// identity, freshness and graph evidence stay inside each root.
+    async fn context_roots(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        tokens: u64,
+        query: String,
+        strategy: Strategy,
+        selected: Option<Vec<String>>,
+    ) -> CallToolResult {
+        let selection = match self.state.resolve_roots(selected.as_deref()) {
+            Ok(selection) => selection,
+            Err(e) => return foundry_error_result(&e),
+        };
+        let serving: Vec<usize> = selection
+            .iter()
+            .copied()
+            .filter(|&index| self.state.meta[index].coverage.serves_search())
+            .collect();
+        if serving.is_empty() {
+            // The refusal names every root the response would have listed:
+            // all admitted roots when `roots` was omitted, the selected ones
+            // otherwise (007 § Combined search and context).
+            return self
+                .state
+                .unavailable_error(&self.listed_roots(selected.as_deref(), &selection));
+        }
+        let listed = self.listed_roots(selected.as_deref(), &selection);
+        let meta = Arc::clone(&self.state.meta);
+        let floor_labels = self.root_labels();
+        let run_meta = Arc::clone(&meta);
+        let pack_meta = Arc::clone(&meta);
+        self.deliver(
+            ctx,
+            tokens,
+            "context",
+            move || response::refusal_floor_roots("context", None, &floor_labels),
+            move |engines, control, _budget| {
+                let (batches, facts) = collect_root_batches(
+                    engines,
+                    control,
+                    &run_meta,
+                    &serving,
+                    |engine, control| engine.context_candidates(&query, strategy, control),
+                )?;
+                Ok(MultiOutcome {
+                    served: roots::merge_context(&batches),
+                    root_facts: facts,
+                })
+            },
+            move |outcome: &MultiOutcome<crate::store::CandidateBatch>,
+                  budget: response::Budget,
+                  boundary: response::ByteMeasure| {
+                let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
+                response::pack_context_roots(&outcome.served, &headers, budget, boundary)
+            },
+        )
+        .await
+    }
+
+    /// 007 retrieve routed by the handle's root; the header lists every
+    /// admitted root's live revision or coverage.
+    async fn retrieve_roots(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        tokens: u64,
+        handle: String,
+        lines: Option<String>,
+        parsed: HandleRef,
+        root: usize,
+    ) -> CallToolResult {
+        let meta = Arc::clone(&self.state.meta);
+        let floor_meta = Arc::clone(&meta);
+        let pack_meta = Arc::clone(&meta);
+        self.deliver(
+            ctx,
+            tokens,
+            "retrieve",
+            move || {
+                response::refusal_floor_roots(
+                    "retrieve",
+                    Some(&parsed),
+                    &Self::meta_labels(&floor_meta),
+                )
+            },
+            move |engines, _control, budget| {
+                let outcome = engines[root]
+                    .as_ref()
+                    .expect("a read-serving root holds an engine")
+                    .retrieve(&handle, lines.as_deref(), budget)?;
+                Ok(MultiOutcome {
+                    served: outcome,
+                    root_facts: root_facts(engines)?,
+                })
+            },
+            move |outcome: &MultiOutcome<crate::store::RetrieveOutcome>,
+                  budget: response::Budget,
+                  boundary: response::ByteMeasure| {
+                let listed: Vec<usize> = (0..pack_meta.len()).collect();
+                let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
+                response::pack_retrieve_roots(&outcome.served, &headers, budget, boundary)
+            },
+        )
+        .await
+    }
+
+    /// 007 `view:"outline"` retrieve routed by the handle's root.
+    async fn retrieve_outline_roots(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        tokens: u64,
+        handle: String,
+        lines: Option<String>,
+        root: usize,
+    ) -> CallToolResult {
+        let meta = Arc::clone(&self.state.meta);
+        let pack_meta = Arc::clone(&meta);
+        self.deliver(
+            ctx,
+            tokens,
+            "retrieve",
+            response::outline_refusal_floor,
+            move |engines, _control, budget| {
+                let outcome = engines[root]
+                    .as_ref()
+                    .expect("a read-serving root holds an engine")
+                    .retrieve_outline(&handle, lines.as_deref(), budget)?;
+                Ok(MultiOutcome {
+                    served: outcome,
+                    root_facts: root_facts(engines)?,
+                })
+            },
+            move |outcome: &MultiOutcome<crate::store::OutlineOutcome>,
+                  budget: response::Budget,
+                  boundary: response::ByteMeasure| {
+                let listed: Vec<usize> = (0..pack_meta.len()).collect();
+                let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
+                response::pack_retrieve_outline_roots(&outcome.served, &headers, budget, boundary)
+            },
+        )
+        .await
+    }
 }
 
 #[tool_handler]
@@ -1065,25 +1710,9 @@ impl ServerHandler for FoundryMcp {
 pub async fn serve_stdio(options: ServerOptions) -> AResult<()> {
     // The delivery-only capability is validated before any store is opened.
     options.budget.require_delivery()?;
-    let root = options
-        .root
-        .canonicalize()
-        .map_err(|e| FoundryError::InvalidArgument(format!("root: {e}")))?;
-    let engine = Engine::open_existing(&options.store)?;
-    let bound = engine
-        .workspace_id()
-        .ok_or(FoundryError::WorkspaceUnbound)?;
-    if bound != expected_workspace_id(&root)? {
-        return Err(FoundryError::WrongWorkspace.into());
-    }
-    let state = Arc::new(Shared {
-        engine: Arc::new(Mutex::new(engine)),
-        root,
-        budget: options.budget,
-        sessions: Mutex::new(HashMap::new()),
-        in_flight_engine: AtomicUsize::new(0),
-        shutdown: CancellationToken::new(),
-    });
+    // 007 launch-time admission (refused before serving) and the one-time
+    // open of every root.
+    let state = open_owner(options, CancellationToken::new())?;
     let server = FoundryMcp::new(Arc::clone(&state));
 
     let permits = Arc::new(tokio::sync::Semaphore::new(MAX_HANDLER_ADMISSION));
@@ -1257,7 +1886,88 @@ impl SessionManager for CappedSessionManager {
 pub struct ServerOptions {
     pub store: PathBuf,
     pub root: PathBuf,
+    /// `--reference ROOT=STORE` admissions (007), at most 8, validated and
+    /// opened once before serving.
+    pub references: Vec<roots::ReferenceSpec>,
     pub budget: BudgetConfig,
+}
+
+/// Launch-time admission and the one-time open of every root (007 §
+/// Admission at launch). Admission is refused — invalid-argument exit 2 —
+/// before anything is opened: `too_many_roots`, `duplicate_root`,
+/// `nested_root` (path-component boundary) and `root_id_collision` (equal
+/// `ws16`). The primary keeps today's fail-fast open (busy, wrong workspace
+/// or unsupported schema stops startup; a broken lexical index permits
+/// authoritative-only startup with coverage `repair_required`). Each
+/// reference is opened exactly once; the outcome is its coverage for the
+/// whole session, with no retries, and another live owner is never stopped.
+fn open_owner(options: ServerOptions, shutdown: CancellationToken) -> AResult<Arc<Shared>> {
+    let admitted = roots::validate_admission(&options.root, &options.references)
+        .map_err(|error| AdapterError::named(error.code(), error.message()))?;
+    let primary = &admitted[0];
+    let engine = Engine::open_existing(&options.store)?;
+    let bound = engine
+        .workspace_id()
+        .ok_or(FoundryError::WorkspaceUnbound)?;
+    if bound != primary.workspace_id {
+        return Err(FoundryError::WrongWorkspace.into());
+    }
+    let primary_coverage = match engine.status() {
+        Ok(status) if status.index_state == "repair_required" => Coverage::RepairRequired,
+        Ok(_) => Coverage::Ok,
+        // The store opened and bound; a status read failing here is a named
+        // startup failure, not a coverage.
+        Err(error) => return Err(error.into()),
+    };
+    let meta_of = |root: &AdmittedRoot, coverage: Coverage| RootMeta {
+        alias: root.alias.clone(),
+        label: root.label.clone(),
+        root: root.root.clone(),
+        workspace_id: root.workspace_id.clone(),
+        coverage,
+    };
+    let mut meta = vec![meta_of(primary, primary_coverage)];
+    let mut engines = vec![Some(engine)];
+    for (root, reference) in admitted[1..].iter().zip(&options.references) {
+        let (coverage, engine) = open_reference(root, &reference.store);
+        meta.push(meta_of(root, coverage));
+        engines.push(engine);
+    }
+    Ok(Arc::new(Shared {
+        engines: Arc::new(Mutex::new(engines)),
+        meta: Arc::new(meta),
+        budget: options.budget,
+        sessions: Mutex::new(HashMap::new()),
+        in_flight_engine: AtomicUsize::new(0),
+        shutdown,
+    }))
+}
+
+/// Open one reference store once; the outcome is that root's coverage for
+/// the whole session. A store bound to another (or no) root never serves
+/// this one and is dropped unread.
+fn open_reference(root: &AdmittedRoot, store: &Path) -> (Coverage, Option<Engine>) {
+    let coverage = match Engine::open_existing(store) {
+        Err(FoundryError::StoreNotFound) => Coverage::MissingStore,
+        Err(FoundryError::StoreBusy) => Coverage::Busy,
+        Err(FoundryError::UnsupportedSchema { .. } | FoundryError::UpgradeRequired { .. }) => {
+            Coverage::UnsupportedSchema
+        }
+        // An unreadable authoritative database and every other open failure
+        // read as corruption; a coverage never invents state.
+        Err(_) => Coverage::Corrupt,
+        Ok(engine) => match engine.workspace_id() {
+            Some(bound) if bound == root.workspace_id => match engine.status() {
+                Ok(status) if status.index_state == "repair_required" => {
+                    return (Coverage::RepairRequired, Some(engine));
+                }
+                Ok(_) => return (Coverage::Ok, Some(engine)),
+                Err(_) => Coverage::Corrupt,
+            },
+            _ => Coverage::WrongWorkspace,
+        },
+    };
+    (coverage, None)
 }
 
 pub struct HttpOptions {
@@ -1460,32 +2170,15 @@ pub async fn serve_http(options: ServerOptions, http: HttpOptions) -> AResult<Ht
                 Ok(value)
             }
         })?;
-    let root = options
-        .root
-        .canonicalize()
-        .map_err(|e| FoundryError::InvalidArgument(format!("root: {e}")))?;
-    let engine = Engine::open_existing(&options.store)?;
-    let bound = engine
-        .workspace_id()
-        .ok_or(FoundryError::WorkspaceUnbound)?;
-    if bound != expected_workspace_id(&root)? {
-        return Err(FoundryError::WrongWorkspace.into());
-    }
+    // 007 launch-time admission (refused before serving) and the one-time
+    // open of every root; the owner-level shutdown token is the HTTP one.
+    let state = open_owner(options, http.shutdown.clone())?;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", http.port))
         .await
         .map_err(|e| FoundryError::InvalidArgument(format!("bind 127.0.0.1:{}: {e}", http.port)))?;
     let address = listener
         .local_addr()
         .map_err(|e| FoundryError::Internal(e.into()))?;
-
-    let state = Arc::new(Shared {
-        engine: Arc::new(Mutex::new(engine)),
-        root,
-        budget: options.budget,
-        sessions: Mutex::new(HashMap::new()),
-        in_flight_engine: AtomicUsize::new(0),
-        shutdown: http.shutdown.clone(),
-    });
     let mut inner_manager = LocalSessionManager::default();
     // `SessionConfig` is #[non_exhaustive]: start from the SDK default and
     // pin only the documented fields.
@@ -1924,14 +2617,7 @@ mod tests {
             "v": 1, "max_context_tokens": 32768, "session_context_tokens": 1000
         }))
         .unwrap();
-        let shared = Arc::new(Shared {
-            engine: Arc::new(Mutex::new(engine)),
-            root,
-            budget,
-            sessions: Mutex::new(HashMap::new()),
-            in_flight_engine: AtomicUsize::new(0),
-            shutdown: CancellationToken::new(),
-        });
+        let shared = Arc::new(Shared::single_root(engine, root, budget));
         let barrier = Arc::new(std::sync::Barrier::new(8));
         let outcomes: Vec<_> = (0..8)
             .map(|_| {

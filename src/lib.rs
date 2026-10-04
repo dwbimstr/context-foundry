@@ -39,12 +39,13 @@ pub mod laya;
 pub mod mcp;
 pub mod receipts;
 pub mod response;
+pub mod roots;
 pub mod store;
 pub mod syntax;
 #[cfg(feature = "test-faults")]
 pub mod testkit;
-
 pub mod usage;
+
 pub use control::Control;
 pub use error::{FResult, FoundryError, PartialIndexCounts};
 pub use ingest::IndexReport;

@@ -447,6 +447,10 @@ pub struct ConnectInfo {
     pub budget_file: Option<PathBuf>,
     pub http_port: Option<u16>,
     pub token_env: Option<String>,
+    /// `--reference ROOT=STORE` admissions (007) exactly as given; the
+    /// printed launch argv carries them verbatim, and the launched owner
+    /// validates admission before serving.
+    pub references: Vec<String>,
 }
 
 pub struct PrintedConfig {
@@ -523,6 +527,9 @@ fn launch_args(info: &ConnectInfo, store: &Path, root: &Path) -> AResult<Vec<Str
     }
     if let Some(file) = &info.budget_file {
         args.extend(["--budget".to_owned(), file.display().to_string()]);
+    }
+    for reference in &info.references {
+        args.extend(["--reference".to_owned(), reference.clone()]);
     }
     Ok(args)
 }

@@ -195,10 +195,54 @@ impl Budget {
         }
     }
 }
+/// One admitted root's header segment (007 § Response header and status):
+/// `alias(label) r<rev>` plus ` scan:<state>`/` pending:<n>` when not at
+/// their default, or `alias(label) <coverage>` for a root that cannot serve.
+#[derive(Clone, Debug)]
+pub struct RootHeader {
+    pub alias: String,
+    pub label: String,
+    /// `(source revision, scan state, pending sources)` of that root's own
+    /// final read; `None` when the root cannot serve.
+    pub serving: Option<(u64, String, u64)>,
+    /// The coverage word of a root that cannot serve.
+    pub coverage: Option<String>,
+}
+
+impl RootHeader {
+    fn render(&self) -> String {
+        match &self.serving {
+            Some((revision, scan_state, pending)) => {
+                let mut segment = format!(
+                    "{}({}) r{revision}",
+                    single_line(&self.alias),
+                    single_line(&self.label)
+                );
+                if scan_state != "complete" {
+                    segment.push_str(&format!(" scan:{}", single_line(scan_state)));
+                }
+                if *pending > 0 {
+                    segment.push_str(&format!(" pending:{pending}"));
+                }
+                segment
+            }
+            None => format!(
+                "{}({}) {}",
+                single_line(&self.alias),
+                single_line(&self.label),
+                self.coverage.as_deref().unwrap_or("unavailable")
+            ),
+        }
+    }
+}
 
 /// Header facts that do not depend on packing; `line` adds the budget and counts.
 struct HeaderV2<'a> {
     op: &'static str,
+    /// The per-root segments of a multi-root owner (007). When present they
+    /// replace the single-root `r<rev>`/`scan:`/`pending:` segments; each
+    /// root carries its own.
+    roots: Option<&'a [RootHeader]>,
     revision: u64,
     scan_state: &'a str,
     pending: u64,
@@ -221,15 +265,22 @@ impl HeaderV2<'_> {
         shown: usize,
         omitted: usize,
     ) -> String {
-        let mut segments = vec![
-            format!("foundry {}", self.op),
-            format!("r{}", self.revision),
-        ];
-        if self.scan_state != "complete" {
-            segments.push(format!("scan:{}", single_line(self.scan_state)));
-        }
-        if self.pending > 0 {
-            segments.push(format!("pending:{}", self.pending));
+        let mut segments = vec![format!("foundry {}", self.op)];
+        match self.roots {
+            None => {
+                segments.push(format!("r{}", self.revision));
+                if self.scan_state != "complete" {
+                    segments.push(format!("scan:{}", single_line(self.scan_state)));
+                }
+                if self.pending > 0 {
+                    segments.push(format!("pending:{}", self.pending));
+                }
+            }
+            Some(roots) => {
+                for root in roots {
+                    segments.push(root.render());
+                }
+            }
         }
         segments.push(match limited_by {
             BudgetLimiter::Request => format!("budget:{budget}"),
@@ -408,9 +459,38 @@ fn too_small(requested: usize, render: &dyn Fn(usize, BudgetLimiter) -> String) 
 /// identities with maximal offsets and lines, plus its `next:` line.
 /// Sufficient, not minimal.
 pub fn refusal_floor(op: &'static str, handle: Option<&HandleRef>) -> usize {
+    refusal_floor_impl(op, handle, None)
+}
+
+/// The multi-root form of [`refusal_floor`]: every admitted root renders its
+/// worst-case segment (`alias(label) r<max digits> scan:incomplete
+/// pending:<max>`), so the hint stays sufficient for this owner's header.
+pub fn refusal_floor_roots(
+    op: &'static str,
+    handle: Option<&HandleRef>,
+    roots: &[(String, String)],
+) -> usize {
+    let worst: Vec<RootHeader> = roots
+        .iter()
+        .map(|(alias, label)| RootHeader {
+            alias: alias.clone(),
+            label: label.clone(),
+            serving: Some((u64::MAX, "incomplete".to_owned(), u64::MAX)),
+            coverage: None,
+        })
+        .collect();
+    refusal_floor_impl(op, handle, Some(&worst))
+}
+
+fn refusal_floor_impl(
+    op: &'static str,
+    handle: Option<&HandleRef>,
+    roots: Option<&[RootHeader]>,
+) -> usize {
     let longest = u64::MAX;
     let header = HeaderV2 {
         op,
+        roots,
         revision: longest,
         scan_state: "incomplete",
         pending: longest,
@@ -512,12 +592,32 @@ pub fn pack_retrieve(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    // Spans are validated on UTF-8 boundaries, so the bytes are valid UTF-8.
+    pack_retrieve_impl(out, None, budget, boundary)
+}
+
+/// The multi-root form of [`pack_retrieve`]: segment 2 lists every admitted
+/// root's revision or coverage (007), so unavailable references stay visible.
+pub fn pack_retrieve_roots(
+    out: &RetrieveOutcome,
+    roots: &[RootHeader],
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    pack_retrieve_impl(out, Some(roots), budget, boundary)
+}
+
+fn pack_retrieve_impl(
+    out: &RetrieveOutcome,
+    roots: Option<&[RootHeader]>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
     let span = std::str::from_utf8(&out.span)
         .map_err(|e| FoundryError::Internal(anyhow::anyhow!("span is not UTF-8: {e}")))?;
     let f = &out.freshness;
     let header = HeaderV2 {
         op: "retrieve",
+        roots,
         revision: f.source_revision,
         scan_state: &f.scan_state,
         pending: f.pending_sources,
@@ -580,9 +680,29 @@ pub fn pack_retrieve_outline(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    pack_retrieve_outline_impl(out, None, budget, boundary)
+}
+
+/// The multi-root form of [`pack_retrieve_outline`] (007 per-root segments).
+pub fn pack_retrieve_outline_roots(
+    out: &OutlineOutcome,
+    roots: &[RootHeader],
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    pack_retrieve_outline_impl(out, Some(roots), budget, boundary)
+}
+
+fn pack_retrieve_outline_impl(
+    out: &OutlineOutcome,
+    roots: Option<&[RootHeader]>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
     let f = &out.freshness;
     let header = HeaderV2 {
         op: "retrieve",
+        roots,
         revision: f.source_revision,
         scan_state: &f.scan_state,
         pending: f.pending_sources,
@@ -658,10 +778,32 @@ pub fn pack_context(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    pack_context_impl(batch, None, budget, boundary)
+}
+
+/// The multi-root form of [`pack_context`]: the batch is the 007 merge of
+/// several roots' batches (never a merge of packed responses), and segment 2
+/// names every listed root's revision or coverage.
+pub fn pack_context_roots(
+    batch: &CandidateBatch,
+    roots: &[RootHeader],
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    pack_context_impl(batch, Some(roots), budget, boundary)
+}
+
+fn pack_context_impl(
+    batch: &CandidateBatch,
+    roots: Option<&[RootHeader]>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
     let items: Vec<Vec<String>> = batch.items.iter().map(ranked_forms).collect();
     let f = &batch.freshness;
     let header = HeaderV2 {
         op: "context",
+        roots,
         revision: f.source_revision,
         scan_state: &f.scan_state,
         pending: f.pending_sources,
@@ -682,6 +824,25 @@ pub fn pack_search(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    pack_search_impl(outcome, None, budget, boundary)
+}
+
+/// The multi-root form of [`pack_search`] (007 per-root segments).
+pub fn pack_search_roots(
+    outcome: &SearchOutcome,
+    roots: &[RootHeader],
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    pack_search_impl(outcome, Some(roots), budget, boundary)
+}
+
+fn pack_search_impl(
+    outcome: &SearchOutcome,
+    roots: Option<&[RootHeader]>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
     let items: Vec<Vec<String>> = outcome
         .hits
         .iter()
@@ -697,6 +858,7 @@ pub fn pack_search(
         .collect();
     let header = HeaderV2 {
         op: "search",
+        roots,
         revision: outcome.source_revision,
         scan_state: &outcome.scan_state,
         pending: outcome.pending_sources,

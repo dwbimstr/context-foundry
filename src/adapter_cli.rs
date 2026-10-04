@@ -26,6 +26,10 @@ pub enum AdapterCommand {
         /// Budget policy file: {"foundry_budget": {"v":1, ...}} (config v1).
         #[arg(long)]
         budget: Option<PathBuf>,
+        /// Admit an outside repository as `ROOT=STORE` (repeat for up to 8
+        /// references); validated and opened once before serving.
+        #[arg(long = "reference", value_name = "ROOT=STORE")]
+        reference: Vec<String>,
     },
     /// Inspect repository bootstrap; `--apply` creates/opens the store and indexes baseline source.
     Bootstrap {
@@ -60,8 +64,13 @@ pub enum AdapterCommand {
         /// Environment variable NAME the host reads the bearer token from.
         #[arg(long = "token-env")]
         token_env: Option<String>,
+        /// Budget policy file: {"foundry_budget": {"v":1, ...}} (config v1).
         #[arg(long)]
         budget: Option<PathBuf>,
+        /// Admit an outside repository as `ROOT=STORE` on the launched owner
+        /// (repeat for up to 8 references); recorded in the printed argv.
+        #[arg(long = "reference", value_name = "ROOT=STORE")]
+        reference: Vec<String>,
     },
     /// Offline usage-receipt tools; open no store and no provider connection.
     Usage {
@@ -77,15 +86,6 @@ pub enum UsageAction {
         #[arg(long)]
         input: PathBuf,
     },
-}
-
-fn read_budget(path: Option<&std::path::Path>) -> FResult<crate::config::BudgetConfig> {
-    let Some(path) = path else {
-        return Ok(crate::config::BudgetConfig::default());
-    };
-    let mut bytes = Vec::new();
-    std::fs::File::open(path)?
-        .take(crate::config::CONFIG_MAX_BYTES as u64 + 1)
     /// Import one host session record (offline counters only; no store).
     Import {
         /// Host session format: `omp` or `codex`.
@@ -95,6 +95,15 @@ fn read_budget(path: Option<&std::path::Path>) -> FResult<crate::config::BudgetC
         #[arg(long)]
         session: PathBuf,
     },
+}
+
+fn read_budget(path: Option<&std::path::Path>) -> FResult<crate::config::BudgetConfig> {
+    let Some(path) = path else {
+        return Ok(crate::config::BudgetConfig::default());
+    };
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(crate::config::CONFIG_MAX_BYTES as u64 + 1)
         .read_to_end(&mut bytes)?;
     crate::config::BudgetConfig::parse(&bytes)
 }
@@ -121,11 +130,18 @@ fn serve_mcp(
     bind: Option<String>,
     auth_token_env: Option<String>,
     budget: Option<PathBuf>,
+    references: Vec<String>,
 ) -> AResult<()> {
     let budget = read_budget(budget.as_deref())?;
+    let mut parsed = Vec::with_capacity(references.len());
+    for raw in &references {
+        parsed.push(crate::roots::parse_reference(raw)?);
+    }
+    let references = parsed;
     let options = crate::mcp::ServerOptions {
         store,
         root,
+        references,
         budget,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -216,7 +232,16 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             bind,
             auth_token_env,
             budget,
-        } => serve_mcp(store, root, &transport, bind, auth_token_env, budget)?,
+            reference,
+        } => serve_mcp(
+            store,
+            root,
+            &transport,
+            bind,
+            auth_token_env,
+            budget,
+            reference,
+        )?,
         AdapterCommand::Bootstrap {
             root,
             apply,
@@ -264,12 +289,19 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             http_port,
             token_env,
             budget,
+            reference,
         } => {
             if !print_config && apply_config.is_none() {
                 return Err(FoundryError::InvalidArgument(
                     "connect requires --print-config or --apply-config FILE".into(),
                 )
                 .into());
+            }
+            // The printed argv carries the references exactly as given; only
+            // the ROOT=STORE shape is checked here. Admission (duplicates,
+            // nesting, `ws16` collisions, count) is the launched owner's.
+            for raw in &reference {
+                crate::roots::parse_reference(raw)?;
             }
             let canonical_root = root.canonicalize()?;
             let store = if store_explicit {
@@ -287,6 +319,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                 budget_file,
                 http_port,
                 token_env,
+                references: reference,
             })?;
             if let Some(file) = apply_config {
                 crate::bootstrap::apply_owned_block(
@@ -312,11 +345,11 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                 "{}",
                 serde_json::to_string_pretty(&crate::receipts::summarize(&input)?)?
             ),
-        },
-    }
-    Ok(())
-}
             UsageAction::Import { host, session } => {
                 let summary = crate::usage::import_session(host, &session)?;
                 println!("{}", summary.to_json());
             }
+        },
+    }
+    Ok(())
+}

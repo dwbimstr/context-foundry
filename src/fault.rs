@@ -61,6 +61,7 @@ pub mod names {
         "context.before_final_validation"
     );
     point!(RETRIEVE_BEFORE_FINAL_READ, "retrieve.before_final_read");
+    point!(ROOTS_BEFORE_ROOT, "roots.before_root");
 }
 
 /// What a point sees when it is reached.
@@ -241,4 +242,44 @@ fn hit_global(name: &str, ctx: &Ctx<'_>) -> FResult<()> {
             Ok(())
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// ws16 collision seam (007 T001)
+// ---------------------------------------------------------------------------
+
+/// Test-only override of a canonical root's workspace identity, keyed by the
+/// canonical root path. `workspace_id_for_root` consults this table so a test
+/// can force two distinct roots to share `ws16` (a natural collision needs
+/// ~2^32 hash evaluations). Nothing is expressed through the environment:
+/// the collision refusal is checked before serving, so an in-process test
+/// arms the table directly and clears it immediately after.
+static WORKSPACE_OVERRIDES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn workspace_overrides() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    &WORKSPACE_OVERRIDES
+}
+
+/// Make `workspace_id_for_root(canonical_root)` return `id` in this process.
+pub fn override_workspace_id(canonical_root: &str, id: &str) {
+    workspace_overrides()
+        .lock()
+        .unwrap()
+        .insert(canonical_root.to_owned(), id.to_owned());
+}
+
+/// The overridden identity of `canonical_root`, if any.
+pub fn workspace_id_override(canonical_root: &str) -> Option<String> {
+    workspace_overrides()
+        .lock()
+        .unwrap()
+        .get(canonical_root)
+        .cloned()
+}
+
+/// Drop every workspace override (tests must not leak them into later opens).
+pub fn clear_workspace_overrides() {
+    workspace_overrides().lock().unwrap().clear();
 }

@@ -1013,6 +1013,7 @@ async fn start_http(store: &Path, root: &Path) -> HttpServer {
         context_foundry::mcp::ServerOptions {
             store: store.to_path_buf(),
             root: root.to_path_buf(),
+            references: Vec::new(),
             budget: context_foundry::config::BudgetConfig::default(),
         },
         context_foundry::mcp::HttpOptions {
@@ -1256,6 +1257,7 @@ async fn session_allowance_exhaustion_refuses_before_dispatch() {
         context_foundry::mcp::ServerOptions {
             store: store.to_path_buf(),
             root: root.to_path_buf(),
+            references: Vec::new(),
             budget,
         },
         context_foundry::mcp::HttpOptions {
@@ -1630,6 +1632,7 @@ fn connect_info(
         budget_file: None,
         http_port: None,
         token_env: None,
+        references: Vec::new(),
     }
 }
 
@@ -2310,6 +2313,7 @@ async fn assert_http_refused(token_env: &str, store: &Path, root: &Path) {
         context_foundry::mcp::ServerOptions {
             store: store.to_path_buf(),
             root: root.to_path_buf(),
+            references: Vec::new(),
             budget: context_foundry::config::BudgetConfig::default(),
         },
         context_foundry::mcp::HttpOptions {
@@ -2525,6 +2529,7 @@ async fn http_sessions_expire_and_admit_again_after_keep_alive() {
         context_foundry::mcp::ServerOptions {
             store: store.clone(),
             root: root.clone(),
+            references: Vec::new(),
             budget: context_foundry::config::BudgetConfig::default(),
         },
         context_foundry::mcp::HttpOptions {
@@ -4360,6 +4365,7 @@ async fn http_sessions_have_independent_allowances_and_a_lost_delivery_stays_cha
         context_foundry::mcp::ServerOptions {
             store: store.clone(),
             root: root.clone(),
+            references: Vec::new(),
             budget: context_foundry::config::BudgetConfig::from_object(&serde_json::json!({
                 "v": 1, "max_context_tokens": 512, "session_context_tokens": 700
             }))

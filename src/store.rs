@@ -2651,6 +2651,15 @@ pub fn workspace_id_for_root(root: &Path) -> FResult<String> {
     let canonical = root
         .canonicalize()
         .map_err(|e| FoundryError::InvalidArgument(format!("workspace root: {e}")))?;
+    // Test-faults-only ws16 collision seam (007 T001): a test may force a
+    // root's identity so `root_id_collision` is reachable without ~2^32 hash
+    // evaluations. Absent from every default and release build.
+    #[cfg(feature = "test-faults")]
+    if let Some(path) = canonical.to_str()
+        && let Some(id) = crate::fault::workspace_id_override(path)
+    {
+        return Ok(id);
+    }
     canonical
         .to_str()
         .map(|s| crate::digest(s.as_bytes()))
