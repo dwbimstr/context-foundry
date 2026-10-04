@@ -4,7 +4,8 @@
   "authorization_used": [
     "pip install mlx==0.32.3 mlx-lm==0.31.3 (+ their dependencies) into a private venv",
     "local build and run",
-    "read of the already-downloaded pinned artifact"
+    "read of the already-downloaded pinned artifact",
+    "pip install torch + sentence-transformers (+ dependency closure) and torch-side runs against the LOCAL upstream BF16 checkpoint (owner authorization relayed by the captain, 2026-10-04; no model download)"
   ],
   "identities": {
     "macos": {
@@ -912,7 +913,320 @@
     "sum_of_wall_clock_seconds_of_model_touching_processes_all_retained_runs": 288.2,
     "process_count": 36,
     "limit_s": 600,
-    "note": "wall clock of /usr/bin/time -l for every retained model-loading process (final suite + previous suite + preliminary pass); includes model load; excludes pip, build, tokenizer-only text generation and the non-model deny/token checks"
+    "note": "wall clock of /usr/bin/time -l for every retained model-loading process of the first task (final suite + previous suite + preliminary pass); includes model load; excludes pip, build, tokenizer-only text generation, the non-model deny/token checks and the reference-comparison task"
+  },
+  "reference_comparison": {
+    "authorization": "owner authorized 2026-10-04 (captain relay): install torch + sentence-transformers (+ dependency closure) into the venv; use the LOCAL upstream BF16 checkpoint; no model download; pip network only",
+    "runtime": {
+      "torch": "2.14.1",
+      "sentence_transformers": "6.1.0",
+      "transformers": "5.18.0",
+      "freeze_file": "freeze_ref.txt",
+      "freeze_sha256": "72a3fa71d4382f9656f35a88ec1725e529cefe4d1bd0d47149138b4b343b14dd",
+      "freeze_package_count": 46,
+      "device_used": "mps:0",
+      "mps_available": true,
+      "sentence_transformers_max_seq_length_set": 2048
+    },
+    "upstream_checkpoint": {
+      "path": "/Users/satishlomte/VSC_DEV/models/Nemotron-3-Embed-1B-BF16",
+      "revision": "a5e0f804b9e90a1ca6784ecbf6e41595774fc834",
+      "model_safetensors_sha256": "f959c3b04e66b42de280bfb97c140cb7e0bfe25e3ecb0b4464c68a8436b2d04f",
+      "matches_hf_etag_in_download_metadata": true,
+      "hf_etag": "f959c3b04e66b42de280bfb97c140cb7e0bfe25e3ecb0b4464c68a8436b2d04f",
+      "tokenizer_json_sha256": "797410dfb649a5b9ba92bc4fef7dbf4022d00e73de6867c4ac199a8846439421",
+      "tokenizer_identical_to_4bit_artifact": true,
+      "config_json_sha256": "56964141409866da7ce7d2d88b5b20c44558f5e916b318ad3abd2c694b2cb5f7",
+      "rope_parameters": {
+        "apply_yarn_scaling": false,
+        "beta_fast": 32.0,
+        "beta_slow": 1.0,
+        "factor": 16.0,
+        "llama_4_scaling_beta": 0.1,
+        "mscale": 1.0,
+        "mscale_all_dim": 1.0,
+        "original_max_position_embeddings": 16384,
+        "rope_theta": 1000000.0,
+        "rope_type": "yarn",
+        "type": "yarn"
+      }
+    },
+    "provenance": {
+      "mlx_side": "App Sandbox bundle + RLIMIT_NPROC=0 via ./run_sandboxed.sh ref_mlx pyrun <4bit artifact> texts/ref_compare_mlx.py (unchanged loader, input_type prefixes, max_length 2048)",
+      "torch_side": "OUTSIDE the App Sandbox, development evidence (captain-authorized): /usr/bin/time -l ./run_env.sh ./venv/bin/python texts/ref_compare_torch.py <upstream dir> texts (SentenceTransformer like compare_backends' torch-mps row, mean pooling + normalize_embeddings)",
+      "rendered_inputs": "identical strings from texts/ref_inputs.py; query:/passage: prefix applied once per side; token streams verified identical per input (summary.token_streams_identical)"
+    },
+    "results": {
+      "command_provenance": {
+        "mlx": "./run_sandboxed.sh ref_mlx pyrun $M4BIT texts/ref_compare_mlx.py $M4BIT texts  (App Sandbox + RLIMIT_NPROC=0)",
+        "torch": "/usr/bin/time -l ./run_env.sh ./venv/bin/python texts/ref_compare_torch.py $UPSTREAM texts  (OUTSIDE the App Sandbox, development evidence per captain authorization 2026-10-04)"
+      },
+      "token_streams_identical": true,
+      "inputs": [
+        "d1",
+        "d2",
+        "d3",
+        "p1",
+        "p2",
+        "p3",
+        "q1",
+        "q2",
+        "q3",
+        "t10",
+        "t1024",
+        "t2048",
+        "t330"
+      ],
+      "cos_mlx4bit_vs_bf16_reference": {
+        "per_input": {
+          "d1": {
+            "tokens": 19,
+            "cos_mlx4bit_vs_ref": 0.9813281101239547
+          },
+          "d2": {
+            "tokens": 18,
+            "cos_mlx4bit_vs_ref": 0.9842354120678314
+          },
+          "d3": {
+            "tokens": 17,
+            "cos_mlx4bit_vs_ref": 0.978574422879108
+          },
+          "p1": {
+            "tokens": 17,
+            "cos_mlx4bit_vs_ref": 0.9840431694586813
+          },
+          "p2": {
+            "tokens": 23,
+            "cos_mlx4bit_vs_ref": 0.9801995441936118
+          },
+          "p3": {
+            "tokens": 18,
+            "cos_mlx4bit_vs_ref": 0.9799453869850043
+          },
+          "q1": {
+            "tokens": 12,
+            "cos_mlx4bit_vs_ref": 0.9812312581274341
+          },
+          "q2": {
+            "tokens": 11,
+            "cos_mlx4bit_vs_ref": 0.9777921406094537
+          },
+          "q3": {
+            "tokens": 13,
+            "cos_mlx4bit_vs_ref": 0.9819365098678929
+          },
+          "t10": {
+            "tokens": 10,
+            "cos_mlx4bit_vs_ref": 0.9808880596677639
+          },
+          "t1024": {
+            "tokens": 1024,
+            "cos_mlx4bit_vs_ref": 0.9836036090558954
+          },
+          "t2048": {
+            "tokens": 2048,
+            "cos_mlx4bit_vs_ref": 0.9827574102948363
+          },
+          "t330": {
+            "tokens": 330,
+            "cos_mlx4bit_vs_ref": 0.9785732803775169
+          }
+        },
+        "pairs_q1_q2_q3_p1_p2_p3": {
+          "min": 0.9777921406094537,
+          "median": 0.9807154011605229,
+          "max": 0.9840431694586813,
+          "n": 6
+        },
+        "length_cases_t10_t330_t1024_t2048": {
+          "min": 0.9785732803775169,
+          "median": 0.9818227349813001,
+          "max": 0.9836036090558954,
+          "n": 4
+        },
+        "all_13": {
+          "min": 0.9777921406094537,
+          "median": 0.9812312581274341,
+          "max": 0.9842354120678314,
+          "n": 13
+        }
+      },
+      "ranking_agreement_3_pairs": [
+        {
+          "query": "q1",
+          "own": "p1",
+          "own_rank_mlx": 1,
+          "own_rank_ref": 1,
+          "cos_own_query_passage_mlx": 0.6972269667293179,
+          "cos_own_query_passage_ref": 0.688799499931702,
+          "kendall_tau_orderings": 1.0,
+          "mlx_top1": "p1",
+          "ref_top1": "p1"
+        },
+        {
+          "query": "q2",
+          "own": "p2",
+          "own_rank_mlx": 1,
+          "own_rank_ref": 1,
+          "cos_own_query_passage_mlx": 0.5966381175723812,
+          "cos_own_query_passage_ref": 0.5774833614778428,
+          "kendall_tau_orderings": 1.0,
+          "mlx_top1": "p2",
+          "ref_top1": "p2"
+        },
+        {
+          "query": "q3",
+          "own": "p3",
+          "own_rank_mlx": 1,
+          "own_rank_ref": 1,
+          "cos_own_query_passage_mlx": 0.697824580503695,
+          "cos_own_query_passage_ref": 0.677774757450782,
+          "kendall_tau_orderings": 0.9333333333333333,
+          "mlx_top1": "p3",
+          "ref_top1": "p3"
+        }
+      ],
+      "yarn_question_ref_vs_mlx_variants": {
+        "d1": {
+          "cos_ref_vs_mlx_yarn": 0.9813281101239547,
+          "cos_ref_vs_mlx_plain_rope": 0.9812652940766742,
+          "winner": "yarn",
+          "delta_yarn_minus_plain": 6.281604728053392e-05
+        },
+        "d2": {
+          "cos_ref_vs_mlx_yarn": 0.9842354120678314,
+          "cos_ref_vs_mlx_plain_rope": 0.9842326023044005,
+          "winner": "yarn",
+          "delta_yarn_minus_plain": 2.8097634309220965e-06
+        },
+        "d3": {
+          "cos_ref_vs_mlx_yarn": 0.978574422879108,
+          "cos_ref_vs_mlx_plain_rope": 0.9785984427137394,
+          "winner": "plain_rope",
+          "delta_yarn_minus_plain": -2.401983463140578e-05
+        },
+        "p1": {
+          "cos_ref_vs_mlx_yarn": 0.9840431694586813,
+          "cos_ref_vs_mlx_plain_rope": 0.9838479127469941,
+          "winner": "yarn",
+          "delta_yarn_minus_plain": 0.00019525671168718617
+        },
+        "p2": {
+          "cos_ref_vs_mlx_yarn": 0.9801995441936118,
+          "cos_ref_vs_mlx_plain_rope": 0.9801600436151439,
+          "winner": "yarn",
+          "delta_yarn_minus_plain": 3.950057846791033e-05
+        },
+        "p3": {
+          "cos_ref_vs_mlx_yarn": 0.9799453869850043,
+          "cos_ref_vs_mlx_plain_rope": 0.9799207814034128,
+          "winner": "yarn",
+          "delta_yarn_minus_plain": 2.4605581591563563e-05
+        },
+        "q1": {
+          "cos_ref_vs_mlx_yarn": 0.9812312581274341,
+          "cos_ref_vs_mlx_plain_rope": 0.9812529486532033,
+          "winner": "plain_rope",
+          "delta_yarn_minus_plain": -2.16905257692801e-05
+        },
+        "q2": {
+          "cos_ref_vs_mlx_yarn": 0.9777921406094537,
+          "cos_ref_vs_mlx_plain_rope": 0.9779573952012894,
+          "winner": "plain_rope",
+          "delta_yarn_minus_plain": -0.00016525459183569513
+        },
+        "q3": {
+          "cos_ref_vs_mlx_yarn": 0.9819365098678929,
+          "cos_ref_vs_mlx_plain_rope": 0.9819570014747045,
+          "winner": "plain_rope",
+          "delta_yarn_minus_plain": -2.049160681161233e-05
+        },
+        "t10": {
+          "cos_ref_vs_mlx_yarn": 0.9808880596677639,
+          "cos_ref_vs_mlx_plain_rope": 0.9807919530747825,
+          "winner": "yarn",
+          "delta_yarn_minus_plain": 9.610659298142643e-05
+        },
+        "t1024": {
+          "cos_ref_vs_mlx_yarn": 0.9836036090558954,
+          "cos_ref_vs_mlx_plain_rope": 0.9819148496035993,
+          "winner": "yarn",
+          "delta_yarn_minus_plain": 0.0016887594522960736
+        },
+        "t2048": {
+          "cos_ref_vs_mlx_yarn": 0.9827574102948363,
+          "cos_ref_vs_mlx_plain_rope": 0.9787947122322831,
+          "winner": "yarn",
+          "delta_yarn_minus_plain": 0.003962698062553227
+        },
+        "t330": {
+          "cos_ref_vs_mlx_yarn": 0.9785732803775169,
+          "cos_ref_vs_mlx_plain_rope": 0.9784786758574188,
+          "winner": "yarn",
+          "delta_yarn_minus_plain": 9.460452009812936e-05
+        }
+      },
+      "verdict_yarn": "mixed: d1->yarn, d2->yarn, d3->plain_rope, p1->yarn, p2->yarn, p3->yarn, q1->plain_rope, q2->plain_rope, q3->plain_rope, t10->yarn, t1024->yarn, t2048->yarn, t330->yarn"
+    },
+    "publisher_script_all_rows": {
+      "command": "cd <4bit artifact> && env -i ... HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HOME=/private/tmp/cf-009-d001/hf_cache venv/bin/python compare_backends.py 200 all  (script UNCHANGED; ran outside the App Sandbox; MODEL_ID resolved offline to the local checkpoint through a scratch HF-cache alias, no network)",
+      "rows": {
+        "torch-mps": {
+          "elapsed_s": 25.3,
+          "docs_per_s": 7.91,
+          "script_peak_rss_mb": 654,
+          "cos_vs_torch_min": null
+        },
+        "mlx-upstream-bf16": {
+          "elapsed_s": 287.2,
+          "docs_per_s": 0.7,
+          "script_peak_rss_mb": 654,
+          "cos_vs_torch_min": 0.99803
+        },
+        "mlx-this-repo": {
+          "elapsed_s": 19.8,
+          "docs_per_s": 10.1,
+          "script_peak_rss_mb": 654,
+          "cos_vs_torch_min": 0.98615
+        }
+      },
+      "log": [
+        "logs/compare_backends_all.json",
+        "logs/compare_backends_all.err"
+      ],
+      "process": {
+        "max_rss_bytes": 653885440,
+        "peak_memory_footprint_bytes": 6500486816,
+        "wall_s": 381.37
+      },
+      "note": "the script's peak_rss (ru_maxrss) misses MPS/MLX unified memory; /usr/bin/time -l peak footprint was 6.05 GiB"
+    },
+    "summary_numbers": {
+      "cos_mlx4bit_vs_bf16_ref_pairs_min_median": [
+        0.977792,
+        0.980715
+      ],
+      "cos_mlx4bit_vs_bf16_ref_length_cases_min_median": [
+        0.978573,
+        0.981823
+      ],
+      "ranking_own_rank1_both_sides": true,
+      "kendall_tau": [
+        1.0,
+        1.0,
+        0.9333
+      ],
+      "yarn_verdict_at_1024_2048": "reference matches MLX-with-YaRN better (delta +1.69e-03 at 1024, +3.96e-03 at 2048)"
+    },
+    "scope_note": "numeric-agreement evidence only; no retrieval-quality claim"
+  },
+  "reference_task_budget": {
+    "ref_mlx_s": 12.01,
+    "ref_torch_s": 41.3,
+    "compare_backends_all_s": 381.37,
+    "total_s": 434.7,
+    "limit_s": 600,
+    "note": "second task (reference comparison): one sandboxed MLX dump process, one unsandboxed torch process, one unsandboxed publisher-script process over all three backends"
   },
   "pass_fail": {
     "a_2048_encodes": true,
@@ -921,11 +1235,11 @@
     "peak_memory_recorded": true,
     "identities_recorded": true,
     "isolation_negative_checks_pass": true,
-    "sandboxed_for_all_measurements": true
+    "sandboxed_for_all_measurements": true,
+    "reference_comparison_executed": true
   },
   "not_executed": [
-    "Reference-vector comparison against upstream (torch-mps / sentence-transformers) - needs authorization (see needs_authorization).",
-    "Retrieval quality of any kind (self-consistency checks are not quality evidence).",
+    "Retrieval quality of any kind (self-consistency checks and the reference cosine agreement are not quality evidence).",
     "Inputs above 2049 tokens in any way other than the 2049 loader evidence; no 32768-token or memory-ceiling probing.",
     "Process-kill / owner-death cleanup and timeout enforcement (only the abandoned-call behaviour was observed).",
     "Aggregate resource ceiling with a second resident model; no GPU/Metal quota claim from RSS.",
@@ -934,17 +1248,12 @@
     "Pure-Rust tokenization: token counts come from the artifact tokenizer.json through the transformers tokenizer inside the PyO3 interpreter, not a Rust `tokenizers` crate path.",
     "Release/optimized (--release) bridge build; the bridge is a cargo dev build."
   ],
-  "needs_authorization": [
+  "needs_authorization": [],
+  "authorization_granted_and_used": [
     {
       "item": "reference comparison",
-      "packages": [
-        "torch",
-        "sentence-transformers (+ transitive deps)"
-      ],
-      "downloads": [
-        "nvidia/Nemotron-3-Embed-1B-BF16 upstream weights (README: 2.28 GB) at a pinned revision"
-      ],
-      "why": "compare_backends.py prints cos_vs_torch only after its torch-mps row; also settles whether apply_yarn_scaling=false means YaRN should be disabled"
+      "granted": "2026-10-04 by owner via captain",
+      "used_for": "torch + sentence-transformers installed; LOCAL upstream BF16 checkpoint used; no weights downloaded"
     }
   ],
   "deviations_and_caveats": [
@@ -956,7 +1265,10 @@
     "macOS created a sandbox container ~/Library/Containers/org.context-foundry.feasibility.d001scratch when the bundle first ran (outside scratch). Its symlinks and empty directories were deleted at the end, but macOS refused to remove the system-protected `.com.apple.containermanagerd.metadata.plist` (Operation not permitted), so an empty OS-managed stub for that bundle id remains, like the five older org.context-foundry.feasibility.* containers from the earlier feasibility probes. It holds no data.",
     "Incidental tool-cache writes outside scratch, not cleaned: pip's default HTTP cache (~/Library/Caches/pip, from the authorized pip install) and cargo's last-use tracking (~/.cargo/.global-cache). Cargo ran --offline from the existing registry; no crate was downloaded or newly unpacked (pyo3-0.29.2 and parking_lot sources predate this run).",
     "Two read-only git status invocations were run by mistake against the repo and its models parent (the latter is not a repository); no git write operation, no repository edit.",
-    "Texts are natural prose from spec 009 itself fitted to exact token counts; content affects vectors but not the memory/latency measurements materially."
+    "Texts are natural prose from spec 009 itself fitted to exact token counts; content affects vectors but not the memory/latency measurements materially.",
+    "Reference-comparison task: the torch reference (ref_compare_torch.py, logs/ref_torch.*) and the full publisher script run (logs/compare_backends_all.*) executed OUTSIDE the App Sandbox as captain-authorized development evidence; only the MLX 4-bit dump stayed inside the sandbox profile. The MLX measurements of the first task are unchanged.",
+    "compare_backends.py was run unchanged by aliasing MODEL_ID to the local checkpoint through a scratch HF cache (hf_cache/hub/models--nvidia--Nemotron-3-Embed-1B-BF16 -> symlinks to the upstream files, revision a5e0f804b9e90a1ca6784ecbf6e41595774fc834) with HF_HUB_OFFLINE=1; no network access occurred.",
+    "The upstream checkpoint directory also gained no new files; hf_cache symlinks live in scratch only."
   ],
   "reproduce": "cd /private/tmp/cf-009-d001 && ./make_app.sh && ./run_all.sh && ./venv/bin/python build_report.py   (builds offline; texts/*.txt come from the `fit` commands in logs/fit.log)"
 }

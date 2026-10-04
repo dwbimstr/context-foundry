@@ -192,14 +192,25 @@ listen and outside reads/writes were denied.
 - **Token overhead.** The tokenizer adds no special tokens, so overhead is the prefix
   only: 2 tokens for `query: `, 3 for `passage: `.
 - **YaRN.** MLX applies YaRN whatever the `apply_yarn_scaling: false` config key says.
-  Against plain RoPE, cosine is 0.99714 at 2048 tokens.
+  Against plain RoPE, cosine is 0.99714 at 2048 tokens. The upstream torch path
+  dispatches on `rope_type` and ignores that key too, so YaRN is the intended behavior.
+  The MLX port stays as shipped.
 - **Admission.** An abandoned call keeps executing and concurrent calls are not
   serialized. Only a worker-held slot, released when the work truly ends, bounds it.
+- **Reference comparison.** Owner-authorized: torch 2.14.1 and sentence-transformers
+  6.1.0 in the scratch venv. The reference is the local upstream BF16 checkpoint
+  `a5e0f804…`, hash-verified, with byte-identical tokenizer and token streams; the
+  torch side ran outside the sandbox as development evidence.
+  - MLX 4-bit against BF16: cosine median 0.981, minimum 0.978, over 13 inputs of up to
+    2048 tokens.
+  - The own passage ranks first on both sides for all three pairs.
+  - The publisher's unchanged `compare_backends.py` gives this artifact cosine 0.986
+    against torch.
+  - The owner-selected 4-bit artifact stands. This is a fidelity record, not a quality
+    benchmark.
 
 Still open:
-- the upstream reference-vector comparison, which needs torch and sentence-transformers
-  installs (the BF16 checkpoint is already local at revision `a5e0f804…`);
-- process-kill and owner-death cleanup;
+- process-kill and owner-death cleanup, part of the T001/T003 supervisor;
 - package acceptance, which needs signing/notarization.
 
 ## Identity and reusable work
