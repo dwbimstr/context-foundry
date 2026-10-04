@@ -2,7 +2,11 @@
 
 Status: bootstrap/connect and both MCP transports (003 T001–T003) implemented and
 verified locally, 2026-10-01 ([validation](validation.md)); worker isolation, 005, 009,
-013 and the gateway remain proposed. This is the shared deployment boundary for 003
+013 and the gateway remain proposed. The token-economics tranche (001 T004–T006, 003
+T005, 007 T001) was approved on 2026-10-03. 001 T004 is now locally implemented and
+verified on final4, unreleased. T005 slice 1 is in progress, without search integration
+or whole-task acceptance; T006, remaining 003 T005 work and 007 T001 are unimplemented.
+This is the shared deployment boundary for 003
 adapter onboarding, 005 explicit producer execution, 009 embeddings and 013 owned
 learning — not another product, daemon or spec stage. No production installation,
 worker package or publication is claimed. [Bounded scratch feasibility](review/feasibility.md)
@@ -23,7 +27,10 @@ is recorded separately.
    Setup alone is not real-host adoption proof. Default stdio lets one host session
    own the store; explicit shared-owner HTTP lets independent clients use that same
    owner. Refresh through `index`, not another CLI writer. Each repository gets a
-   separate store/configuration; shared mode is not a federation service.
+   separate store/configuration; shared mode is not a federation service. One owner
+   may also admit outside repositories as references at launch for one budgeted
+   multi-root response ([007](../specs/007-multi-workspace-context/spec.md), approved
+   2026-10-03, not implemented); each reference keeps its own store.
 4. Request semantic preparation under an explicit profile/budget when useful. Baseline
    context stays available while coverage arrives; missing runtime/weights/jail are
    named setup requirements. Compiler artifacts follow the explicit 005 import route.
@@ -88,6 +95,10 @@ therefore declare MCP `readOnlyHint` annotations, and the printed Codex config s
 Foundry's own store for the bound root); an operator may tighten this. Applying a
 config edits only a positively owned block, atomically; JSON-native host files
 require manual integration (`manual_integration_required`).
+Approved 2026-10-03, not implemented: 007 adds `--reference ROOT=STORE` (at most 8) to
+`connect` and `mcp`, so the printed launch argv admits those references; 003 T005
+replaces the instruction block with its token-economics text and appends the optional
+OMP routing-hook note to the OMP capability note.
 Gateway connection additionally takes `--gateway-run DIR` to print the implemented
 host's provider endpoint/auth-environment settings for that owned run. Never print a
 bearer/API key, transplant subscription credentials or silently change existing
@@ -104,7 +115,7 @@ No predecessor store, service or host-global configuration was migrated or chang
 | Reported concern | Existing owner and decision | Required proof |
 | --- | --- | --- |
 | Prakarana serves one store; Warp has a store without a live daemon; team-kit and Proxima are unindexed | 001/003: explicitly bootstrap each named repository into its own Foundry store. Existing predecessor stores are not Foundry stores and are neither adopted nor replaced implicitly. Direct stdio needs no always-on daemon | Inspect/apply/connect on admitted fixtures; baseline context survives missing optional resources |
-| Collection-root teams cannot reach repository stores | 003: the worker brief supplies its actual canonical repository, absolute store configuration and available transport. A collection cwd or outside-path mention is not admission. Explicit separate-root queries are allowed; 007's joins/registry remain deferred | Start a client from another cwd; immutable binding and foreign-handle refusal; separate-root reconciliation cannot delete another root |
+| Collection-root teams cannot reach repository stores | 003: the worker brief supplies its actual canonical repository, absolute store configuration and available transport. A collection cwd or outside-path mention is not admission. Explicit separate-root queries are allowed; 007's joins/registry remain deferred (2026-10-03: 007 reactivated for launch-time references with one budgeted multi-root response; still no registry or cross-root joins) | Start a client from another cwd; immutable binding and foreign-handle refusal; separate-root reconciliation cannot delete another root |
 | Wrong arguments and failing history queries | 001 validates types, unknown fields, bounds and error precedence; 003 exposes the same schemas. The selected baseline has five tools, not a generative `ask` loop. Do not require that predecessor tool or add it to fix adoption statistics | Invalid-argument cases before mutation; real SDK catalog/calls; actual host reports unavailable capability rather than retrying another store |
 | A busy status returns an old healthy snapshot | 003 returns `busy` when its engine slot is occupied. Completed status identifies the observed store/snapshot, not current-disk or model health. Read deadlines return `deadline_exceeded`, not a partial successful read or cached health certificate | Concurrent status/index, cancellation and delayed-library cases; no successful read after expiry |
 | Oversized lexical terms, rewrite/reclaim failures and neural transport churn | 001 owns bounded byte-preserving source/recovery; redb/Tantivy own physical persistence. 009 owns exact-input cache identity, visible partial coverage, disk-cap refusal and explicit offline purge. Do not port custom WAL/slot/checkpoint machinery or predecessor cache bytes | Long unbroken source text under the admitted file bound still retrieves byte-exactly; 001 restart/repair; 009 recipe/cache/index/worker acceptance before advertising semantics |
@@ -287,6 +298,7 @@ Data purge is a distinct explicit action with the existing ownership checks.
   exercises named fallbacks; record instruction-based versus hook-enforced routing.
   T004 separately verifies real forwarded streaming/tool calls, provider counts/usage,
   private gateway credentials, admission refusal, unknown outcomes and clean opt-out.
+  T005 adds the OMP hook probe and the bundled-adoption host runs.
 - 009: actual selected model under its advertised isolation/resource profile; cold,
   partial, warm, edited and restarted preparation without repeated completed calls.
 - 013: real jailed train/save/load/predict, second round, selection/refusal/rollback;

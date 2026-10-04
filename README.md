@@ -6,7 +6,7 @@ budget. The revised plan includes Foundry-owned Rust learning in isolated worker
 explicit repository bootstrap, adapter budgets and optional request forwarding/metering. Ordinary retrieval
 requires no model or GPU. Laya is a research reference, not the target runtime.
 
-**Status: 001 + 003 first implementation verified locally, not released.** Reliable
+**Status: 001 + 003 first implementation and 001 T004 verified locally, not released.** Reliable
 cited CLI context, explicit bootstrap and agent access over MCP (stdio, plus an opt-in
 shared owner for concurrent hosts) work on macOS arm64; see [validation](docs/validation.md).
 Large-codebase performance, agent task improvement, and dollar savings have not been
@@ -52,8 +52,9 @@ matching host configuration with `--http-port PORT --token-env NAME`:
 - Tantivy lexical search with exact-path boosting; every emitted span is verified
   against the committed source in one final read transaction.
 - Source handles, `retrieve` with continuation, and context packing whose exact
-  emitted bytes are counted with `o200k_base` (CLI stdout, or the serialized MCP
-  result). Not a host-envelope or dollar-savings measurement.
+  emitted bytes are counted with `o200k_base` (complete CLI stdout including its
+  trailing LF, or the final MCP text block). The serialized MCP result is separately
+  byte-capped. Not a host-envelope or dollar-savings measurement.
 - Five MCP tools (`search`, `context`, `retrieve`, `index`, `status`) through the rmcp
   SDK: one active engine operation and zero queued, bounded frames/bodies/handlers,
   named `busy`/deadline/cancellation errors, delivery budgets and usage receipts.

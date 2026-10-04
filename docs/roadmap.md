@@ -8,21 +8,35 @@ The [portfolio](../specs/README.md) owns order and status. Release useful workfl
    workflow verifies default tool order and named fallback, not just MCP availability.
    Its optional T004 adds a Rust forwarding/metering gateway for a verified host/API;
    gateway work does not gate the independently useful MCP release.
-3. One real code-relationship workflow on a declared large workspace (005).
-4. Progressive neural preparation, semantic retrieval and retained work across restart/edit (009).
-5. Explicit project memory as an independent feature (008).
-6. Repeated owned Rust policy fine-tuning with isolated execution, selection and rollback (013).
+3. Fewest delivered tokens for the same cited evidence, so agents use Foundry instead
+   of grep/ripgrep and exploratory reads: compact v2 text, syntax-unit search with
+   exact definitions first and deterministic outlines (001 T004–T006); trigger-first
+   tool text, the opt-in OMP first-call hook, usage import and measured economics
+   (003 T005); one budgeted response across explicitly admitted repositories (007 T001).
+4. One real code-relationship workflow on a declared large workspace (005).
+5. Progressive neural preparation, semantic retrieval and retained work across restart/edit (009).
+6. Explicit project memory as an independent feature (008).
+7. Repeated owned Rust policy fine-tuning with isolated execution, selection and rollback (013).
 
-These are feature opportunities, not six gates before the first release. As of
+These are feature opportunities, not gates before the first release. As of
 2026-10-01, 001 T001–T003 and 003 T001–T003 (including the optional shared owner) are
-implemented and verified locally ([validation](validation.md)); the next step for them
-is the ordinary [release checklist](release.md) for the advertised scope, not more
-feature work. 003 T004 (gateway), 005, 008, 009 and 013 remain proposed. 001 D001 stays
+implemented and verified locally ([validation](validation.md)). The owner selected
+item 3 on 2026-10-03 as the current core work, ahead of the optional features; it is
+partially implemented: 001 T004 is locally verified on final4 and unreleased;
+T005 slice 1 is in progress without search integration or whole-task acceptance;
+T006, remaining 003 T005 work and 007 T001 are unimplemented. The 001/003 scope ships
+through the ordinary
+[release checklist](release.md) once the owner names a release destination. 003 T004
+(gateway), 005, 008, 009 and 013 remain proposed; the 2026-10-03 spec pass classified
+their remaining unknowns as settled decisions, named open owned decisions (005 T002's
+`references` header segments, 009 T002's semantic-item line form) or external
+prerequisites, all listed in the portfolio. 001 D001 stays
 resolved: redb/Tantivy. Optional model choices do not reopen that decision by default.
 
 Plan 009's cache/profile/chunk lifecycle alongside 001. Nemotron 3 Embed 1B with the
-owner-supplied MLX 4-bit artifact is selected; pin/validate its loader/runtime and
-chunk recipe and isolated runtime bridge before full-corpus preparation.
+owner-supplied MLX 4-bit artifact is selected and its D001 recipe values are chosen;
+run the serving-limit check and validate the isolated runtime bridge before
+full-corpus preparation.
 Neural retrieval can precede graph; it
 does not depend on policy training or generated summaries. Baseline release remains
 independent, but semantic-enabled adoption requires cold/partial/warm/edit/restart proof.
@@ -34,12 +48,13 @@ broader encoder adaptation and typed decisions retain their explicit acceptance.
 The [source-to-contract map](references/laya-decision-ecosystem.md) preserves the
 decision ecosystem beyond the first search/graph consumer. [Feasibility](review/feasibility.md)
 proves selected model/gradient boundaries; complete recipe and installed-profile
-acceptance remain open. Learning can remain disabled in normal retrieval without
-demonstrated workflow benefit. Laya
+acceptance remain open. Learning stays disabled in normal retrieval until a
+usage-import comparison shows equal correctness and lower total provider tokens. Laya
 is a research reference only. The [deployment contract](deployment.md) follows each
 advertised feature through installation, shutdown, upgrade, rollback and uninstall;
 libkrun is conditional infrastructure, not a baseline release dependency.
 
 Federation, generated knowledge, automatic watchers and legacy migration
-need specific user failures before implementation. The [subtraction review](review/subtraction.md)
+need specific user failures before implementation; launch-time multi-root context
+(007) is not federation. The [subtraction review](review/subtraction.md)
 explains the smaller design; do not resurrect old plans because an ID still exists.

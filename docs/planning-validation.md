@@ -1,6 +1,166 @@
 # Spec and task audit
 
-## 001 + 003 implementation and contract repairs — current pass
+## 001 T004 documentation closure — final4
+
+001 T004 is locally implemented and verified, unreleased. The owner reports all six
+final4 gates exited 0 on an unchanged source manifest and the same existing
+`T004CutoverReview` (OpenAI `gpt-6.1-sol:xhigh`) returned SHIP. This is the existing
+in-session cross-lab review of the Anthropic author, not a fresh independent review.
+See [validation](validation.md) for scope, commands, smoke and measurement boundaries.
+This documentation closure did not rerun any source/build/test or runtime check.
+
+The measured `examples/workspace` handle is 33 o200k tokens (68 bytes) versus
+94 (207 bytes) for v1, superseding the 29/85 estimate; the serialized five-tool
+catalog is 568 tokens versus the historical v1 711. Historical v1 results below and
+in validation remain evidence for their original versions, not current wire output.
+The ambiguity refusal is reviewed: the test parser refuses two complete item-line
+readings without attributing either; no universal round trip is claimed. `invalid_range`
+remains invalid input with CLI exit 2 under the existing contract; no rule changed.
+T005 slice 1 is in progress without search integration or whole-task acceptance;
+T006 and the remaining tranche are unimplemented.
+
+## Spec pass 2026-10-03 — current pass
+
+2026-10-03 to 2026-10-04. The owner asked for one pass over every Context Foundry spec
+so that no unknown stays implicit, with token economics as the top priority. This pass
+is documentation only: it transcribes the approved decisions into their owning specs,
+corrects stale text and names what remains open. No product source, test, build or
+host configuration changed for it, and no runtime check ran. The token-economics
+tranche (001 T004–T006, 003 T005, 007 T001) was approved and not implemented at that
+spec pass; subsequent T004 final4 closure is recorded above.
+
+Sources: two in-session spec audits, consolidated into one 69-row map. The original
+audit reports are no longer reachable, so the rows below reproduce that map's
+dispositions against the current repository text. A separate in-session citation
+audit found drifted claims, corrected in this pass: the counting-boundary and
+host-forwarding wording in
+[context-v2](../specs/001-source-state-recovery/contracts/context-v2.md#counting-boundary)
+and the [economics contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#evidence-behind-the-rules),
+and that contract's ADR-0052 summary. The handle-cap arithmetic is stated as a chosen
+bound (AT3). Claims that audit could not verify keep their existing labels and are not
+presented as verified. Author: Anthropic Opus 5.5; no independent or cross-lab
+approval of this pass is implied.
+
+Dispositions: **resolved decision** (an approved decision is now written in its owner),
+**text fix** (stale wording corrected), **external prerequisite** (supplied or
+authorized by the owner; listed in the portfolio's
+[external prerequisites](../specs/README.md#external-prerequisites)), **open owned
+decision** (explicitly unsettled, with the task that closes it) and **unchanged** (with
+the reason). Two decisions remain open and owned: 005 T002 fixes the `references`
+coverage and count header segments, and 009 T002 fixes the semantic-item line form,
+each before implementation and reviewed against 001's v2 contract.
+
+| ID | Finding | Disposition | Owner |
+| --- | --- | --- | --- |
+| A1 | `context-v1.md` still read "Proposed" | Resolved decision and text fix: v1 is a three-line superseded disposition; v2 carries every valid rule plus the compact wire, ranking, outlines and multi-root identity; links point to v2 | [context-v2](../specs/001-source-state-recovery/contracts/context-v2.md) |
+| A2 | Economics contract status still "Proposed, 2026-09-29" | Text fix: delivery budgets and receipts implemented 2026-10-01 (003 T002); host-request mode and gateway proposed | [adapter economics](../specs/003-agent-retrieval-context/contracts/adapter-economics.md) |
+| A3 | 001 heading said "Proposed persistence and recovery contract" for implemented behavior | Text fix: "Persistence and recovery contract" | [001](../specs/001-source-state-recovery/spec.md#persistence-and-recovery-contract) |
+| A4 | 001 said "Proposed fixed limits" for implemented limits | Text fix: "Fixed limits" | [001](../specs/001-source-state-recovery/spec.md#reconciliation-rules-and-limits) |
+| A5 | 007 was a deferral stub with re-entry criteria | Resolved decision: 007 reactivated with launch-time admission, aliases, one owner, merged search/context and T001; scope paragraphs in context-v2, deployment and architecture updated | [007](../specs/007-multi-workspace-context/spec.md) |
+| A6 | 003 left combined root selection to "007's separate scope" | Text fix: 003 points to 007 for admission, aliases and merged responses | [003](../specs/003-agent-retrieval-context/spec.md#native-source-discovery-and-fallback) |
+| A7 | v1 forbade fusing rankings across roots | Resolved decision: superseded by 007's merge (tier-1 first, then reciprocal-rank fusion) | [007](../specs/007-multi-workspace-context/spec.md#combined-search-and-context) |
+| A8 | `verify_current` looked like stale text | Unchanged: it is a tested refused strategy (`unsupported_mode`), kept in v2 | [context-v2](../specs/001-source-state-recovery/contracts/context-v2.md#inputs-defaults-and-outputs) |
+| A9 | 003 T004 credentials undefined | External prerequisite: an API key, a spend cap and the Codex custom-endpoint configuration; usage import measures provider usage without the gateway | [003 T004](../specs/003-agent-retrieval-context/spec.md#t004--forward-and-meter-an-actual-supported-model-workflow) |
+| A10 | 009 pinned artifact/runtime unresolved | Resolved decision (D001 chosen values) plus external prerequisites: weights authorization, a USearch build on Rust 1.90, isolation and package acceptance | [009 D001](../specs/009-optional-semantic-retrieval/spec.md#d001-chosen-values-2026-10-03) |
+| A11 | 013 package acceptance unresolved | External prerequisite: approved labeled rows, the LibTorch package, signing/notarization, an aggregate residency run; the spec decisions are recorded | [013 D001](../specs/013-owned-learning/spec.md#d001--concrete-path-and-remaining-feasibility) |
+| A12 | Deployment isolation profiles never run | External prerequisite: isolation and package acceptance for 009 and 013; no code in this pass | [deployment](deployment.md#isolation-is-an-enforced-profile) |
+| A13 | 001 accepts a scan race | Unchanged: the accepted enumeration swap-and-restore limitation keeps its re-entry condition | [001](../specs/001-source-state-recovery/spec.md#reconciliation-rules-and-limits) |
+| A14 | No published release | External prerequisite: a release destination | [release](release.md) |
+| AT1 | Search returned a whole 2 KiB block per hit | Resolved decision: locator lines with delivery-unit handles and excerpts of at most 160 bytes, over syntax-unit search documents | [v2 search locator lines](../specs/001-source-state-recovery/contracts/context-v2.md#search-locator-lines) |
+| AT2 | About 17 metadata fields per envelope | Resolved decision: one header line, default segments omitted, v1 JSON success paths deleted | [v2 header line](../specs/001-source-state-recovery/contracts/context-v2.md#header-line) |
+| AT3 | 64-hex JSON handles were verbose | Resolved decision: `path#start-end@sha32.ws16`. The 4200-byte cap allows 4188 bytes (4096-byte path plus 92-byte suffix), with 12 bytes headroom. The initial 29/85 o200k estimate is superseded by T004's fixture measurement: 33 tokens/68 bytes versus v1's 94/207; not a universal per-handle cost | [v2 source handles](../specs/001-source-state-recovery/contracts/context-v2.md#source-handles) |
+| AT4 | Source was JSON-escaped twice | Resolved decision: plain v2 text; count the final text block or complete CLI stdout | [v2 counting boundary](../specs/001-source-state-recovery/contracts/context-v2.md#counting-boundary) |
+| AT5 | Chunking rationale absent | Resolved decision: syntax-unit regions and blocks; 009 embedding units reuse delivery units up to 1024 model tokens | [v2 search documents](../specs/001-source-state-recovery/contracts/context-v2.md#search-documents) |
+| AT6 | Compression policy unstated | Resolved decision: deterministic elision only (signature and outline forms); no compression model | [v2 ladder packing](../specs/001-source-state-recovery/contracts/context-v2.md#ladder-packing) |
+| AT7 | Cross-call deduplication unstated | Resolved decision: none across calls; deduplication within one response | [v2 deduplication](../specs/001-source-state-recovery/contracts/context-v2.md#deduplication-no-cross-call-suppression) |
+| AT8 | Tool catalog cost unbudgeted | Resolved decision: exact trigger-first descriptions; serialized `tools/list` at most 800 tokens (a test) | [003 catalog](../specs/003-agent-retrieval-context/spec.md#catalog-and-instruction-text) |
+| AT9 | Multi-root budget unclear | Resolved decision: one effective budget, one reservation, one charge | [007](../specs/007-multi-workspace-context/spec.md#combined-search-and-context) |
+| AT10 | A 2048-token default left little room after the envelope | Resolved decision: a v2 header target of at most 40 tokens and the effective-budget rule; a target, not a measurement | [v2 budgets](../specs/001-source-state-recovery/contracts/context-v2.md#budgets) |
+| AT11 | Continuations and omissions were verbose | Resolved decision: a `next: <handle>` line, omitted/capped/stale header counts, prefix fit kept for the retrieve text view | [v2 retrieve views](../specs/001-source-state-recovery/contracts/context-v2.md#retrieve-views) |
+| B1 | rust-analyzer run needs a jail | External prerequisite: a permitted jailed rust-analyzer run | [005 T001](../specs/005-graph-evidence-lifecycle/spec.md#t001--import-one-actual-rust-reference-relationship) |
+| B2 | rust-analyzer release unpinned | Resolved decision: pin the weekly tag current at T001 start; record tag, binary SHA-256 and `--version` | [005](../specs/005-graph-evidence-lifecycle/spec.md#artifact-and-freshness-contract) |
+| B3 | SCIP position encodings open | Resolved decision: UTF-8 code-unit offsets only; others are `unsupported_encoding`; UTF-16/32 conversion cut | [005](../specs/005-graph-evidence-lifecycle/spec.md#artifact-and-freshness-contract) |
+| B4 | `typed_range` versus `range` precedence open | Resolved decision: typed ranges when present, else the deprecated fields | [005](../specs/005-graph-evidence-lifecycle/spec.md#artifact-and-freshness-contract) |
+| B5 | Absent-document coverage open | Resolved decision: for the pinned profile a manifest-listed `.rs` absent from the artifact is `accepted_empty`; non-`.rs` paths are outside producer scope | [005](../specs/005-graph-evidence-lifecycle/spec.md#publication-queries-and-limits) |
+| B6 | Build scripts and proc macros unaddressed | Resolved decision: recorded that `rust-analyzer scip` runs them, so each run needs deployment's compiler grants (part of B1's prerequisite) | [005 T001](../specs/005-graph-evidence-lifecycle/spec.md#t001--import-one-actual-rust-reference-relationship) |
+| B7 | 1 GiB/8 MiB/4 GiB limits unmeasured | External prerequisite: the scale corpus and numeric profile | [005 T003](../specs/005-graph-evidence-lifecycle/spec.md#t003--complete-the-declared-large-workspace-task) |
+| B8 | Scale-profile thresholds open | External prerequisite: same as B7 | [005 T003](../specs/005-graph-evidence-lifecycle/spec.md#t003--complete-the-declared-large-workspace-task) |
+| B9 | No provider token-savings comparison | Resolved decision for measurement: usage import plus the authorized real-host runs under the bundled-adoption label; gateway measurement stays 003 T004's prerequisite | [003 T005](../specs/003-agent-retrieval-context/spec.md#t005--displace-grep-and-exploratory-reads-at-the-fewest-delivered-tokens) |
+| B10 | Graph failure reasons mismatched | Resolved decision: header `graph:<ok\|graph_unavailable\|graph_stale\|graph_invalid>`; 005 adds `graph_invalid` | [v2 header line](../specs/001-source-state-recovery/contracts/context-v2.md#header-line) |
+| B11 | "Source chunks" wording | Text fix: enclosing delivery units | [005](../specs/005-graph-evidence-lifecycle/spec.md#publication-queries-and-limits) |
+| B12 | SC-00N undefined | Text fix: "SC-00N is the acceptance of T00N" in 005, 009 and 013 | [005](../specs/005-graph-evidence-lifecycle/spec.md#tasks-and-acceptance) |
+| B13 | Graph doc named no producer | Text fix: names 005's rust-analyzer import and `references` | [graph](graph.md) |
+| B14 | 009 status date stale | Text fix: dated D001 and this amendment | [009](../specs/009-optional-semantic-retrieval/spec.md) |
+| B15 | 009 recipe and MSRV open | Resolved decision (D001 chosen values); the remaining hardware and Rust 1.90 checks are external prerequisites | [009 D001](../specs/009-optional-semantic-retrieval/spec.md#d001-chosen-values-2026-10-03) |
+| B16 | Serving limit unselected | Resolved decision: 2048 tokens, checked at 2048 and 2049; the audit's loader-warning note (`apply_yarn_scaling`) belongs to that check, which runs under the weights-authorization prerequisite and has not run | [009 D001](../specs/009-optional-semantic-retrieval/spec.md#d001-chosen-values-2026-10-03) |
+| B17 | Cache, batch and deadline caps open | Resolved decision: batches of 8 and 1, f32 cache with an F16 index, 2 GiB default cap, query ceiling min(1500 ms, remaining deadline) | [009 D001](../specs/009-optional-semantic-retrieval/spec.md#d001-chosen-values-2026-10-03) |
+| B18 | Embedding-unit token limit open | Resolved decision: at most 1024 model tokens, greedy source order, derived deliberately from 001's unit forest so each byte is encoded once | [009 units](../specs/009-optional-semantic-retrieval/spec.md#documents-embedding-units-and-returned-evidence) |
+| B19 | Parsers unselected | Resolved decision: `pulldown-cmark` 0.13 sections; other files by paragraph and line | [009 units](../specs/009-optional-semantic-retrieval/spec.md#documents-embedding-units-and-returned-evidence) |
+| B20 | PyO3/MLX cancellation unproven | External prerequisite: isolation and supervisor acceptance in 009 D001 | [009 D001](../specs/009-optional-semantic-retrieval/spec.md#selection-decision--d001) |
+| B21 | USearch C++ core on Rust 1.90 unproven | External prerequisite: a USearch build on the Rust 1.90 floor | [009 D001](../specs/009-optional-semantic-retrieval/spec.md#selection-decision--d001) |
+| B22 | Lexical/dense merge unpinned | Resolved decision: exact definitions first, then reciprocal-rank fusion with k = 60 over the lexical top 256 and the dense top 64 | [009 ordering](../specs/009-optional-semantic-retrieval/spec.md#ordering-without-another-required-model) |
+| B23 | Running the weights not authorized | External prerequisite: authorization to run the pinned local weights | [009](../specs/009-optional-semantic-retrieval/spec.md) |
+| B24 | 013 packaging open | External prerequisite: signing/notarization and the LibTorch package | [013 D001](../specs/013-owned-learning/spec.md#d001--concrete-path-and-remaining-feasibility) |
+| B25 | tch 0.24/LibTorch 2.11 on Rust 1.90 unproven | External prerequisite: the LibTorch package; 013 D001's MSRV check stays open | [013 D001](../specs/013-owned-learning/spec.md#d001--concrete-path-and-remaining-feasibility) |
+| B26 | Float16 checkpoint handling unstated | Resolved decision: upcast to float32 at load; dtype in the model-function identity | [learning contract](../specs/013-owned-learning/contracts/learning-loop.md#one-model-and-one-decision) |
+| B27 | Policy `state` content unstated | Resolved decision: query, graph coverage and top-3 lexical locator lines within the 1024-token total | [learning contract](../specs/013-owned-learning/contracts/learning-loop.md#exact-input-and-identity) |
+| B28 | 16 KiB versus 1024-token limits conflicted | Resolved decision: the byte cap is a pre-tokenization guard; the token cap binds | [learning contract](../specs/013-owned-learning/contracts/learning-loop.md#exact-input-and-identity) |
+| B29 | Prediction timeout policy unstated | Resolved decision: per-request fallback; three consecutive prediction timeouts disable the policy until restart; capacity stays held while work survives | [learning contract](../specs/013-owned-learning/contracts/learning-loop.md#serving-selection-and-rollback) |
+| B30 | Group floors need data | External prerequisite: approved labeled rows | [learning contract](../specs/013-owned-learning/contracts/learning-loop.md#dataset-and-repeat-rounds) |
+| B31 | Further decision families unspecified | Unchanged: variable-choice, boolean and ordinal families stay extension targets that need a named consumer; the related calibration guard (Laya #394) is resolved in 013 T002 | [013](../specs/013-owned-learning/spec.md#decision-ecosystem-and-review-traceability) |
+| B32 | 8 GiB combined residency unproven | External prerequisite: an aggregate residency run | [deployment](deployment.md#isolation-is-an-enforced-profile) |
+| B33 | Ledger still planned external Laya changes | Text fix: superseded by 013 contract v4; no external Laya change is selected | [this ledger](#remaining-prerequisites-explicitly-owned) |
+| B34 | Architecture called the MCP envelope future | Text fix: the implemented 2026-10-01 boundary plus the approved v2 wire | [architecture](architecture.md#preparation-is-part-of-the-neural-feature) |
+| B35 | Architecture said store upgrade was not implemented | Text fix: schema 2 with `upgrade-store --to 2` is implemented | [architecture](architecture.md#commit-and-failure-ordering) |
+| BT1 | `references` payload unbudgeted | Resolved decision: v2 lines, a `tokens` budget, a `next: after=` cursor, 16-hex IDs (`ambiguous_symbol` with at most 8), import through `index {scip}`. Open owned decision: the coverage and count header segment names, fixed by 005 T002 before implementation | [005](../specs/005-graph-evidence-lifecycle/spec.md#publication-queries-and-limits) |
+| BT2 | Graph evidence rendering open | Resolved decision: `edge [<alias> ]<text>` lines after the first unit; the alias only in multi-root responses | [v2 evidence items](../specs/001-source-state-recovery/contracts/context-v2.md#evidence-items) |
+| BT3 | Identity overhead per item | Resolved decision: 16-hex workspace prefixes in handles; per-root identity | [v2 multi-root identity](../specs/001-source-state-recovery/contracts/context-v2.md#multi-root-identity) |
+| BT4 | Embedding unit versus delivered excerpt | Resolved decision on content: whole unit, lexical span or labeled preview, under the same budget. Open owned decision: the semantic item's v2 line form, fixed by 009 T002 before implementation | [009 units](../specs/009-optional-semantic-retrieval/spec.md#documents-embedding-units-and-returned-evidence) |
+| BT5 | Code partitioning rationale | Resolved decision: tree-sitter units (001 T005); 009 reuses the delivery units | [v2 dependencies](../specs/001-source-state-recovery/contracts/context-v2.md#dependencies-and-languages) |
+| BT6 | Query-time model cost unbounded | Resolved decision: min(1500 ms, remaining deadline); provider usage through usage import | [009 D001](../specs/009-optional-semantic-retrieval/spec.md#d001-chosen-values-2026-10-03) |
+| BT7 | Preparation cost unaccounted | Resolved decision on method: usage import plus 009 T002's record list; no measurement yet | [009 T002](../specs/009-optional-semantic-retrieval/spec.md#t002--deliver-useful-semantic-context-within-the-existing-budget) |
+| BT8 | Policy cost unaccounted | Resolved decision: enable only after a usage-import comparison shows equal correctness and lower total provider tokens | [013 T003](../specs/013-owned-learning/spec.md#t003--serve-select-roll-back-and-retire-the-old-http-path) |
+| BT9 | Import and scratch cost unestimated | Unchanged: recorded with 005's import timings when T001/T003 run under their prerequisites; no estimate is made now | [005 T003](../specs/005-graph-evidence-lifecycle/spec.md#t003--complete-the-declared-large-workspace-task) |
+
+Portfolio inventory, all 15 specs:
+
+| Spec | State after this pass |
+| --- | --- |
+| [001](../specs/001-source-state-recovery/spec.md) | T001–T003 verified 2026-10-01; T004 now locally implemented/verified on final4, unreleased; T005 slice 1 in progress, search integration/whole-task acceptance pending; T006 unimplemented |
+| [002](../specs/002-single-owner-serving/spec.md) | Superseded (owner: 003) |
+| [003](../specs/003-agent-retrieval-context/spec.md) | T001–T003 implemented 2026-10-01; T004 proposed with external prerequisites; T005 approved, not implemented |
+| [004](../specs/004-workspace-freshness-scale/spec.md) | Superseded (001 and 005) |
+| [005](../specs/005-graph-evidence-lifecycle/spec.md) | Proposed; decisions recorded; one open owned decision (T002 header segments); external prerequisites |
+| [006](../specs/006-semantic-producer-adapters/spec.md) | Superseded (005) |
+| [007](../specs/007-multi-workspace-context/spec.md) | Reactivated 2026-10-03; T001 approved, not implemented |
+| [008](../specs/008-scoped-durable-memory/spec.md) | Proposed; decisions recorded; no external prerequisite |
+| [009](../specs/009-optional-semantic-retrieval/spec.md) | Proposed; D001 chosen values recorded; one open owned decision (T002 line form); external prerequisites |
+| [010](../specs/010-source-bound-derived-knowledge/spec.md) | Deferred, re-entry criteria unchanged |
+| [011](../specs/011-outcome-token-economics/spec.md) | Superseded (001 and 003) |
+| [012](../specs/012-learning-data-contract/spec.md) | Superseded (013) |
+| [013](../specs/013-owned-learning/spec.md) | Proposed; decisions recorded; external prerequisites |
+| [014](../specs/014-migration-coexistence/spec.md) | Deferred, re-entry criteria unchanged |
+| [015](../specs/015-open-source-release-lifecycle/spec.md) | Superseded (release checklist); release destination is an external prerequisite |
+
+Also carried by this pass: the [token-economics flow](architecture.md#token-economics-flow)
+with measured v1 payload ranges beside labeled v2 targets; the portfolio and roadmap
+order; and the [Laya upstream drift note](references/laya-decision-ecosystem.md#upstream-drift-recorded-2026-10-03).
+The historical [subtraction review](review/subtraction.md) row that names a separate
+`import_scip` tool predates this pass and is left as history; 005 now imports through
+`index`.
+
+After these edits settled, the coordinating session ran a temporary read-only checker
+over `README.md`, `docs/**/*.md` and `specs/**/*.md`: 40 Markdown files, 453 relative
+links and 85 heading links, with zero missing targets or anchors; all 69 expected
+ledger IDs, with none missing, duplicated or unexpected. `git diff --check -- docs
+specs README.md` exited 0 with no output. These are documentation consistency checks
+only: no Rust build or test, live store, host or model check ran. The coordinating
+review was an in-session OpenAI Sol review, not the required fresh-context GPT-6 Astra
+acceptance of this spec pass; that acceptance and the commit remain deferred. The
+documents stay uncommitted in the shared working tree, whose source and tests belong
+to the concurrent S2 bootstrap work.
+
+## 001 + 003 implementation and contract repairs — preceding pass
 
 2026-10-01. Implemented the owner-approved tranche and recorded evidence in
 [validation](validation.md). Contract repairs made during implementation, each from
@@ -307,8 +467,10 @@ one-pending-table/one-rebuild-marker bound; recovery acceptance is still unexecu
 pins an MSRV-compatible SDK, and T003 needs an installed authorized host. 005 T001 needs
 an actual permitted producer; T003 needs a declared corpus/hardware profile with numeric
 limits before running. 013 needs permitted local model/tokenizer/data, hardware and
-separately selected external Laya changes. These are execution/selection prerequisites,
-not vague success criteria or evidence that every task can run immediately.
+separately selected external Laya changes (superseded by 013 contract v4, 2026-09-29:
+Laya is a read-only reference and no external Laya change is selected). These are
+execution/selection prerequisites, not vague success criteria or evidence that every
+task can run immediately.
 
 ## Follow-up: external references and neural ownership
 

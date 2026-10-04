@@ -28,7 +28,9 @@ visited files are capped at 64. Stale edges count against examination work and a
 omitted. The result reports staleness and truncation; an empty result does not
 certify the absence of callers or a producer's complete coverage.
 
-The planned compiler adapter will add producer capabilities, source census,
-coordinate validation and stable symbol identity. It must not automatically run
-an indexed repository's build scripts or pretend syntactic candidates are resolved
-cross-file calls. Provider execution is explicit and outside retrieval.
+The compiler adapter is owned by [005](../specs/005-graph-evidence-lifecycle/spec.md)
+(proposed, unimplemented): its rust-analyzer SCIP import and `references` operation
+add producer capabilities, source census, coordinate validation and stable symbol
+identity. It must not automatically run an indexed repository's build scripts or
+pretend syntactic candidates are resolved cross-file calls. Provider execution is
+explicit and outside retrieval.

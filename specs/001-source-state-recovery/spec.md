@@ -1,14 +1,20 @@
 # 001 — Reliable local context
 
 Status: T001–T003 implemented and verified locally, 2026-10-01 (owner-approved scope:
-001 + 003 first implementation). Not released. D001 remains resolved below. Evidence,
+001 + 003 first implementation). T004 is now implemented and verified locally
+(final4); not released. T005 has slice-1 work in progress, with search integration
+and whole-task acceptance still pending. T006 remains approved, not implemented.
+D001 remains resolved below. Evidence,
 review provenance and accepted limitations: [validation](../../docs/validation.md).
 
 ## Outcome and baseline
 
 Index a workspace, retrieve verbatim cited context, edit/delete source, re-index and
 restart without stale evidence or lost feedback. A CLI release of this behavior is
-independent of MCP, graph producers and models.
+independent of MCP, graph producers and models. The 2026-10-03 amendment delivers the
+same cited evidence in fewer tokens — compact v2 text, syntax-unit search with exact
+definitions first and deterministic outlines (T004–T006) — so agents can use Foundry
+instead of grep/ripgrep and exploratory file reads.
 
 Current owners: `src/store.rs::Engine::{open,replace_source,delete_source,refresh_index}`,
 `src/ingest.rs::sync`, `src/main.rs` and `tests/{core,cli}.rs`. Source/chunks/pending
@@ -24,12 +30,12 @@ vectors collect the whole workspace. New contracts below correct these limits.
 - **FR-002:** Reconciliation has bounded application buffers and explicit completion.
   A failed/interrupted scan never retires unseen paths. A completed scan retires
   absent/excluded source records only, never memory or feedback.
-- **FR-003:** Search/context/retrieve obey the shared [context contract](contracts/context-v1.md):
+- **FR-003:** Search/context/retrieve obey the shared [context contract](contracts/context-v2.md):
   exact bytes, coordinates, source/workspace identity, stale-handle rejection and
   visible snapshot/index/scan limitations. Queries never read live disk implicitly
   or expand workspace ownership from paths mentioned in text.
-- **FR-004:** Count actual CLI context/retrieve stdout with `o200k_base`; reject
-  over-budget success. Provider usage and dollar savings are separate claims.
+- **FR-004:** Count complete CLI search/context/retrieve stdout with `o200k_base`;
+  reject over-budget success. Provider usage and dollar savings are separate claims.
 - **FR-005:** One owner per store. Busy, unknown schema, corrupt authoritative data
   and derived-index repair needs have distinct errors. No lock stealing or silent
   recreation of authoritative state.
@@ -66,9 +72,10 @@ additional mutation-specific durability classes, a second authoritative journal 
 cross-store atomicity claims require stopping and revising the design. SQLite can
 remove index coordination, but dependency/query/migration differences must be explicit.
 Do not implement both or hide the choice in a storage abstraction. T001 now has its
-storage direction; its implementation and restart/fault acceptance remain unexecuted.
+storage direction (2026-09-28); its implementation and restart/fault acceptance passed
+on 2026-10-01 (SC-001 below).
 
-## Proposed persistence and recovery contract
+## Persistence and recovery contract
 
 Store creation is explicit: CLI `index`, or 003 startup with an explicit root, validates
 arguments/root before initializing a new store. Store operations otherwise open existing state;
@@ -142,7 +149,7 @@ graph freshness basis in 005, not a new persistence plane.
 
 ## Reconciliation rules and limits
 
-Proposed fixed limits: file 2 MiB; relative path 4096 UTF-8 bytes; source-key page 128;
+Fixed limits: file 2 MiB; relative path 4096 UTF-8 bytes; source-key page 128;
 20 failure samples and 20 exclusion samples, each at most 512 UTF-8 bytes; exact
 64-bit counts beyond samples. Bound application buffers, not the database's disk size
 or library cache. Do not collect all source keys, paths or reports in a Vec/set.
@@ -268,3 +275,127 @@ named points behind the non-default `test-faults` feature. Owners: `src/store.rs
 `src/ingest.rs`, `src/response.rs`, `src/control.rs`, `src/error.rs`, `src/cli.rs`.
 Two cross-lab review rounds plus a final OpenAI pass closed every finding except the
 accepted enumeration residual above. Hardware power-loss behavior is not claimed.
+
+### T004 — Deliver compact v2 text with exact accounting
+
+**Status:** locally implemented and verified on the final4 manifest; unreleased.
+All six gates exited 0 and the same existing OpenAI T004 reviewer returned SHIP.
+See [validation](../../docs/validation.md). The reviewed ambiguous-item-line refusal
+is an accepted test-parser limitation, not a universal item-line round-trip claim.
+
+- **Depends:** T001–T003 and 003 T001–T002. **Scope:** `src/store.rs` (handle
+  parse/format/validation and `retrieve` with `lines`; not search internals),
+  `src/response.rs`, `src/mcp.rs`, `src/cli.rs`, `src/bootstrap.rs`, `src/testkit.rs`
+  (adds `parse_v2(&str) -> V2Response { header: Vec<String>, items: Vec<V2Item { handle,
+  lines, label, form, body }> }`) and the affected cases in
+  `tests/{mcp,response,cli,core,integrity,recovery,repair,scan_faults}.rs`. Schemas gain
+  `tokens` on search and `lines` on retrieve; `path`, `view`, `roots` and `root` arrive
+  with T005, T006 and 007. The adapter's atomic allowance (owned by 003's
+  [economics contract](../003-agent-retrieval-context/contracts/adapter-economics.md))
+  and 003 T005's catalog and instruction text land here because they share
+  `src/mcp.rs` and `src/bootstrap.rs`. Until T005, search documents remain today's
+  storage blocks, each its own delivery unit rendered as kind `block`, with the lexical
+  best-line rule.
+- **Outcome/acceptance (FR-003, FR-004 / SC-004):** search, context and retrieve emit
+  the [v2 wire](contracts/context-v2.md) at both boundaries with v2 handles, exact
+  counting, budgeted search, `lines` and one atomic reservation per response. Delete
+  the v1 JSON renderers (`format_version`, `search_json`, `application_item`,
+  `pack_*_application`), `take_context_id`/`return_context_id`, `remaining_allowance`,
+  `effective_with_session` and `reserve`.
+- **Verification:** at budgets 1/32/64/256/1024/32768, the exact o200k count of the MCP
+  text block and of CLI stdout (including its newline); serialized result at most
+  256 KiB; every fenced body byte-equal to its handle's range for no-final-LF, CRLF,
+  empty-content, embedded-fence and JSON-escape-heavy sources; forward-progress `next`.
+  Handle round trip including a 4096-byte path containing `#`, `@`, `.` and JSON-special
+  characters; a v1 object and uppercase hex → `invalid_argument`; synthetic full IDs
+  sharing no 16-hex prefix → `wrong_workspace`; edited source → `stale_handle`;
+  deleted → `not_found`. `lines`: mid-line unit boundaries, continuation handles, CRLF,
+  an unterminated last line, a trailing LF, and an empty file → `invalid_range`.
+  Headers carry none of the removed fields and stay within 40 tokens on the fixture;
+  no delivery ID anywhere; `host_request` still refused on both transports. Search
+  charges the session allowance. Synchronized same-session concurrency
+  (barrier-released HTTP calls): one refused and one successful delivery leave the
+  exact expected remaining balance. Instruction-like source stays inside a fence.
+  `tools/list` at most 800 tokens. CLI smoke: `foundry --store /tmp/cf-smoke index
+  examples/workspace`, `foundry --store /tmp/cf-smoke search parse_record`, then
+  `foundry --store /tmp/cf-smoke retrieve --handle '<handle from that output>'
+  --lines 1-3` prints a v2 header and exactly those lines
+  (`examples/workspace/src/parser.rs` has three lines and `parse_record` spans 1–3, so
+  `--lines 4-6` there is necessarily `invalid_range`). Clipping: in
+  `tests/fixtures/agent-task/src/records.rs`, where `parse_record` occupies lines 5–7
+  after a three-line `//!` comment and a blank line, a handle covering exactly lines
+  5–7 with `--lines 4-6` returns lines 5–6, never widened.
+- **Review/cutover:** one renderer per boundary and nothing appended after counting;
+  clean cutover with no v1 compatibility mode (the v1 wire was never released). Move
+  the `src/mcp.rs` comments that cite context-v1 to v2. Record the measured handle
+  cost for 003 T005's payload report.
+
+### T005 — Rank syntax units with exact definitions first
+
+- **Depends:** T004. **Scope:** `Cargo.toml` and `Cargo.lock` (the contract's
+  dependency list), new `src/syntax.rs` with `pub mod syntax;` in `src/lib.rs`,
+  `src/store.rs` (schema v2, tokenizers, refresh document building, two-tier search,
+  META `search_schema`, `Engine::search_candidates`), `src/response.rs` (locator
+  rendering with delivery-unit handles and labels), `src/mcp.rs`/`src/cli.rs` (`path` /
+  `--path`), new `tests/syntax.rs` and search cases in `tests/{core,mcp,repair}.rs`.
+  Gate: `rustup run 1.90.0 cargo check --all-targets --locked` passes with every
+  selected grammar.
+- **Outcome/acceptance (FR-003 / SC-005):** the v2 contract's syntax units and search
+  documents: unit forest, delivery-unit documents, schema v2 with its tokenizers,
+  two-tier ranking with deterministic cutoffs, hit materialization and the
+  `search_schema` repair gate.
+- **Verification:** `tests/syntax.rs` per mapped language: a nested container, a
+  function of at least 5 lines and a wrapper (decorator/export/template) yield the
+  expected units (kind, qualified name, byte ranges); partition invariant and
+  delivery-unit containment; a malformed parse still tiles; oversize parts are at most
+  4096 bytes; an unmapped extension yields blocks; Markdown sections stop at
+  equal-or-higher-rank headings and ignore fenced headings. `tests/core.rs`:
+  `parseRecord` and `parse_record` are both found by `parse record`; the definition is
+  hit #1 over more than 3 call sites and repeated identifiers; `path` filter; per-file
+  cap 4 with `capped`; more than 256 equal-score documents select identical handles
+  across two index builds with shuffled insertion order. `tests/repair.rs`: a store
+  indexed before T005 (no `search_schema = "2"`) reports `repair_required` while
+  retrieve/status work; `repair-index` makes it ready with zero source changes; a crash
+  injected before/after replacement creation, index commit and schema publication
+  converges on rerun with one original quarantine and no stale documents.
+- **Review/cutover:** record the new dependencies and their licenses in
+  [dependencies](../../docs/dependencies.md). A grammar that cannot meet Rust 1.90
+  stops the task for an owner decision. Existing stores need an explicit
+  `repair-index`; ordinary opens never rebuild.
+
+### T006 — Fit more evidence with outlines and forms
+
+- **Depends:** T005. **Scope:** `src/syntax.rs` (outline), `src/store.rs`
+  (`context_candidates`, `CandidateBatch`, removal of `following_chunks`),
+  `src/response.rs` (`pack` and the forms ladder), `src/mcp.rs`/`src/cli.rs` (`view` /
+  `--view`) and tests in `tests/{syntax,core,mcp,response}.rs`.
+- **Outcome/acceptance (FR-003, FR-004 / SC-006):** the v2 contract's outlines and
+  forms, candidate seam, context candidates, ladder packing and retrieve views.
+- **Verification:** outlines of a 300-line Rust file and of a many-member class keep
+  every signature, including multi-line and same-line-brace signatures; each `⋯ a-b`
+  matches `retrieve --lines a-b` bytes exactly; `[signature]` is used for a unit larger
+  than the budget; a fitting first unit precedes graph items; at most 3 outlines;
+  `view:"outline"` never returns `next`, falls back to `outline-min`, then
+  `budget_too_small`; an unmapped language is `unsupported_mode`.
+- **Design reference (recorded per AGENTS.md):** oh-my-pi at commit
+  [`5b8d5b8a15ab1711597584aadbdc112c55befed1`](https://github.com/can1357/oh-my-pi/blob/5b8d5b8a15ab1711597584aadbdc112c55befed1/crates/pi-ast/src/summary.rs),
+  `crates/pi-ast/src/summary.rs`: `summarize_code` and `select_folded_spans`
+  (breadth-first unfold between `unfold_until_lines` and `unfold_limit_lines`), with
+  tests `bfs_unfold_stops_when_visible_already_exceeds_target`,
+  `bfs_unfold_reverts_when_next_step_overflows_limit` and
+  `bfs_unfold_skips_unfoldable_leaf_and_continues_to_siblings`; MIT licensed.
+  `src/syntax.rs::outline` is an independent Rust implementation and copies no code.
+  Intentional differences: elidable spans come from Foundry's own unit forest, kinds
+  and thresholds; visible lines count each marker as a line (the reference counts
+  unfolded source lines only); segments are byte ranges plus line-numbered markers, so
+  every `⋯ a-b` is retrievable exactly; signatures and closing lines are mandatory;
+  forms are whole-or-nothing with fixed parameters (60/120 and 0).
+- **Review/cutover:** remove `following_chunks` and any second packer; retrieve's text
+  view keeps the bounded prefix fit.
+
+SC-004/005/006 are the acceptance of T004/T005/T006 respectively: approved 2026-10-03,
+not executed. Each task runs `cargo fmt --check`, `cargo clippy --locked --all-targets
+-- -D warnings`, `cargo test --locked --no-fail-fast`, `rustup run 1.90.0 cargo check
+--all-targets --locked` and `rustup run 1.90.0 cargo clippy --locked --all-targets --
+-D warnings`. `cargo +1.90.0` needs the rustup proxy; where `cargo` comes from another
+package manager, call the 1.90 toolchain through `rustup run`.

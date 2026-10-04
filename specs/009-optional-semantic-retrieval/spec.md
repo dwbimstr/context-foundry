@@ -1,12 +1,19 @@
 # 009 — Neural context that becomes useful and stays prepared
 
-Status: Proposed, 2026-09-28. Reactivated for planning by the owner's preparation-cost
-concern. No dense retrieval or preparation worker exists in the prototype. Dependencies:
+Status: Proposed, 2026-09-28; D001 recorded 2026-09-29; D001 chosen values recorded
+2026-10-03 (below). Reactivated for planning by the
+owner's preparation-cost concern. No dense retrieval or preparation worker exists in
+the prototype. Dependencies:
 001; 003 for preparation during agent use. Implementation requires D001 below. No model
 downloads, long experiments, predecessor migration or external-repo changes are authorized.
+External prerequisites (owner): authorization to run the pinned local weights, a
+USearch C++ build on the Rust 1.90 floor, and isolation/package acceptance. One owned
+decision is open: the v2 line form of a semantic evidence item (§ Documents, embedding
+units and returned evidence), fixed in T002 before implementation.
 Selected model: **`nvidia/Nemotron-3-Embed-1B-BF16`**, explicitly chosen by the owner.
 Selected local artifact: **`mlx-community/Nemotron-3-Embed-1B-BF16-4bit`**, subsequently
-supplied by the owner. Initial planned output: 2048 dimensions, float32 cached vectors.
+supplied by the owner. Output: 2048 dimensions, cached as float32 vectors; the search
+index stores float16 (D001 chosen values).
 The earlier Llama Nemotron suggestion is superseded. D001 records pinned artifact/runtime
 identities and a bounded executed scratch bridge. Production integration, the complete
 recipe and installed-package acceptance remain open; that probe is not dense retrieval.
@@ -50,10 +57,26 @@ long attribution campaign to establish whether semantic retrieval is useful at a
 `d0408b94c50fc327b6ea37dce7409c51e020a4d8` ran through Rust PyO3 0.29.2 with publisher
 loader/MLX 0.32.3/mlx-lm 0.31.3 in a macOS App Sandbox bundle. A pre-exec hard process
 limit retained model execution while denying tested process creation. USearch 2.26.2
-passed a synthetic persistence/update smoke and is the initial index integration
-candidate (third-party C++ core). Full recipe, max input, quality, MSRV, cancellation,
-aggregate resources and distributed package acceptance remain open. The 512-token
-probe cap is not a selected chunk size; do not prepare the corpus from this smoke.
+passed a synthetic persistence/update smoke and is the selected index library
+(third-party C++ core); its build on the Rust 1.90 floor is an external prerequisite.
+These pins stand. The chosen values below settle the recipe parameters; executing their
+limit checks, quality, cancellation, aggregate resources and distributed package
+acceptance remain open. The 512-token probe cap is not a selected chunk size; do not
+prepare the corpus from this smoke.
+
+### D001 chosen values (2026-10-03)
+
+| Parameter | Chosen value |
+| --- | --- |
+| Code and Markdown embedding units | 001 delivery units (001 T005; Markdown sections from `pulldown-cmark` 0.13) combined greedily in source order up to 1024 model tokens, the rendered prefix and special tokens included |
+| Other files | blank-line paragraphs, then lines, combined the same way up to 1024 model tokens |
+| Serving limit to test | 2048 model tokens including overhead, checked at 2048 (at limit) and 2049 (limit + 1) |
+| Batches | document batch of 8 inputs; query batch of 1 |
+| Query-embedding ceiling | min(1500 ms, remaining read deadline) |
+| Candidate merge | 001 tier-1 exact definitions first, then reciprocal-rank fusion with k = 60 over the lexical top 256 and the dense top 64 |
+| Vector encoding | cache stays float32 (settled); USearch index `ScalarKind::F16` |
+| Cache cap | 2 GiB per workspace by default |
+| Matryoshka (MRL) prefix slicing | a later explicit profile change, not in this tranche |
 
 The model family/checkpoint choice is resolved by the owner. After 001 D001, pin
 the selected model's immutable artifact revision and compatible local runtime; its
@@ -70,9 +93,10 @@ must not be duplicated. The input ceiling is not a target chunk size or a guaran
 that a serving endpoint accepts that length. D001 records the actual runtime limit.
 
 Start with the full 2048-dimensional representation; no dimension sweep is required.
-Documented prefix slicing and re-normalization remain a later storage tradeoff, not
-an initial task. In the selected MLX artifact, BF16 identifies the source checkpoint;
-the deployed weights are 4-bit. Weight precision and cached vector encoding differ.
+Documented prefix slicing and re-normalization remain a later explicit profile change
+(a new embedding profile and index rebuild), not an initial task. In the selected MLX
+artifact, BF16 identifies the source checkpoint; the deployed weights are 4-bit. Weight
+precision and cached vector encoding differ.
 The checkpoint's OpenMDW-1.1 license is separate from Foundry's MIT code license;
 weights remain separately obtained. Neither NVFP4 nor the older Llama Nemotron
 checkpoint is an interchangeable default. No runtime/platform support is assumed
@@ -103,10 +127,10 @@ The inspected [loader](https://huggingface.co/mlx-community/Nemotron-3-Embed-1B-
 defaults to 4096 input tokens and silently truncates. The adapter must tokenize with
 the exact prefix/special-token recipe and split documents or refuse oversized queries
 before encoding. Treat 4096 as the loader's bootstrap setting, not Foundry's permanent
-document size. D001 selects and passes an explicit tested serving limit, at most 32768,
-including that overhead; do not inherit the loader default. Check the proposed limit
-with a bounded local run, including at-limit/cap+1 behavior, peak memory and deadlines,
-before corpus preparation. Parameter count does not establish a usable sequence limit.
+document size. The serving limit to test is 2048 tokens including that overhead (at
+most 32768); do not inherit the loader default. Check it with a bounded local run at
+2048 and 2049 tokens, recording peak memory and deadlines, before corpus preparation.
+Parameter count does not establish a usable sequence limit.
 Load an existing pinned local directory; a missing artifact fails by
 name rather than taking the loader's implicit Hub-download branch. Quantization and
 loader identity participate in the document function digest. BF16/4-bit/8-bit outputs
@@ -120,16 +144,19 @@ justify a faster-preparation claim.
 
 Validate this chosen model on a small fixed permitted source/query set with expected
 spans: correct prompt handling, candidate coverage, delivered evidence, query latency,
-preparation throughput and storage. Include the document/section cases below; compare
-a finer split only when the whole-document policy misses required evidence or exceeds
-the declared resource bound. Fewer vectors do not establish faster preparation: longer
-inputs change inference cost, and batching pads to the longest item. A cross-model
-bakeoff or full-corpus chunk-size sweep is not a prerequisite.
+preparation throughput and storage. Include the document/section cases below. If the
+1024-token unit misses required evidence or exceeds the declared resource bound, report
+it; changing the unit limit is an explicit recipe change, not a tuning step. Fewer
+vectors do not establish faster preparation: longer inputs change inference cost, and
+batching pads to the longest item. A cross-model bakeoff or full-corpus chunk-size
+sweep is not a prerequisite.
 Freeze artifact hashes and the serving/chunk recipe before full-corpus preparation.
 
-Completion: record exact versions, artifact hashes, input/chunk limits, provider
-identity verification, cache disk cap, batch and deadline limits, query merge policy,
-wire/schema additions and compatibility with 001. T001 cannot guess these in code.
+Completion: the chosen values above fix the unit and serving limits, batch sizes,
+query deadline, merge policy, vector encoding and default cache cap. D001 still records
+exact versions and artifact hashes as pinned, provider identity verification, the
+executed serving-limit check, wire/schema additions and compatibility with 001. T001
+cannot guess these in code.
 The runtime admission proof includes one active embedding request and no waiting
 inference queue shared by document and query calls, including work still executing
 after a client timeout. A busy provider names the refusal before enqueueing work.
@@ -161,12 +188,15 @@ document reuse. Identical body bytes alone cannot establish reuse. Endpoints are
 function identity. No operator "assume equivalent" restamp path is required.
 
 Keep a vector-cache table in the existing transactional library and a rebuildable
-search index. Repair preserves source, feedback and cached vectors; rebuilding an
-index replays vectors without document inference. Never define rebuild as deleting
-the whole workspace state. Explicitly deleting all workspace state also loses its
-cache. Cache corruption disables affected semantic data by name and requires explicit
-repair/preparation; it never silently starts a full re-embedding campaign. Source
-access remains available where authoritative storage is healthy.
+search index. The cache holds float32 vectors; the USearch index stores
+`ScalarKind::F16` copies derived from them. The index scalar kind belongs to the
+derived index, not the document function digest, so changing it rebuilds the index
+from cache with zero document calls. Repair preserves source, feedback and cached
+vectors; rebuilding an index replays vectors without document inference. Never define
+rebuild as deleting the whole workspace state. Explicitly deleting all workspace state
+also loses its cache. Cache corruption disables affected semantic data by name and
+requires explicit repair/preparation; it never silently starts a full re-embedding
+campaign. Source access remains available where authoritative storage is healthy.
 
 ### Documents, embedding units and returned evidence
 
@@ -176,19 +206,30 @@ an internal representation; neither their 2048-byte size nor symbol-occurrence c
 dictate model calls. A vector hit identifies its entire input span, not an inferred
 answer location within it. No generated summary is needed to bridge these units.
 
-Use whole-document-first preparation. D001 pins a document-unit token limit no greater
-than the tested serving limit, including rendered prefix/special tokens. These are two
-different limits: serving capacity is a ceiling; useful evidence delivery and edit cost
-determine the unit limit. Do not choose 32768-token units merely because inference fits,
-then require a second model to find passages inside them. If a complete
-admitted UTF-8 file fits, encode it once. If it does not, partition it in source order:
-prefer Markdown heading sections, then blank-line paragraphs, then line boundaries,
-then token-bounded UTF-8 spans for an oversized paragraph/line. Markdown headings come
-from a maintained CommonMark parser, excluding heading-like text inside code fences;
-other source types use the paragraph/line fallback. Greedily combine adjacent complete
-sections/paragraphs that fit, rather than emitting one vector per short heading or
-function. Pin parser/tokenizer versions and tie-breaking in D001's recipe. This is a
-retrieval partition, not an assertion of compiler scope or semantic completeness.
+The document-unit limit is 1024 model tokens, including the rendered `passage: ` prefix
+and special tokens. It differs from the 2048-token serving limit: serving capacity is a
+ceiling; useful evidence delivery and edit cost determine the unit limit. Do not choose
+large units merely because inference fits, then require a second model to find
+passages inside them. Partition each admitted UTF-8 file in source order and greedily
+combine adjacent pieces while the rendered input fits; a file that fits in one unit is
+encoded once. A file in a language 001 maps (001 T005) starts from its outermost
+delivery units: top-level units and the blocks between them. Markdown is such a
+language; its units are `pulldown-cmark` 0.13 heading sections, which exclude
+heading-like text inside code fences. A delivery unit that alone exceeds the limit is
+replaced by its child delivery units and its residual regions (its bytes minus its
+direct children's ranges) in source order, recursively; children and residuals cover
+the parent's bytes exactly once, so no byte is encoded twice. Whitespace between
+pieces joins the following piece; a trailing tail joins the last. Other files use
+blank-line paragraphs, then lines. A piece that is still oversized splits at line
+boundaries, then into token-bounded UTF-8 spans. Combining rather than emitting one
+vector per short heading or function is the point of the greedy step. Pin tokenizer
+and 001 grammar versions and tie-breaking in D001's recipe. This is a retrieval
+partition, not an assertion of compiler scope or semantic completeness.
+
+This partition is derived from 001's unit forest deliberately, so a semantic hit names
+the same units lexical search and context deliver. It is not 001's search-document
+partition: 001's byte-based part split of regions over 8192 bytes is a search-index
+rule and does not apply here; oversized pieces follow the token rule above.
 
 Every nonempty source byte belongs to exactly one embedding unit: contiguous ranges,
 zero overlap, no omitted whitespace or tail, and no duplicate whole-file vector beside
@@ -221,23 +262,34 @@ No separate corpus-count job, automatic tokenizer load or new truth ledger is ne
 For context delivery, try the matched unit in full under 001's exact output budget.
 If it cannot fit, use the highest-ranked already-retrieved lexical span intersecting
 that unit, clipped to its bounds; ties use source byte start. If there is no such span,
-return a budget-fitting prefix explicitly labeled `selection:preview`. Reuse 001's
+return a budget-fitting prefix explicitly labeled as a preview. Reuse 001's
 bounded prefix trials; do not add query-time document inference, summaries or another
-retrieval service. Neural evidence carries `match_handle` for the whole matched unit,
-the normal `handle` for bytes actually returned, and `selection` equal to `whole_unit`,
-`lexical_span` or `preview`. A preview also carries `next` for its remaining range.
-Here the remaining range means the selected lexical span when one exists, otherwise
-the whole matched unit; `next` is null when exhausted. An oversized lexical span uses
-the same bounded prefix rule and is labeled `preview`.
+retrieval service. A neural evidence item carries the matched handle for the whole
+matched unit, the ordinary handle for bytes actually returned, and a selection equal to
+`whole_unit`, `lexical_span` or `preview`. A preview also carries a continuation for
+its remaining range. Here the remaining range means the selected lexical span when one
+exists, otherwise the whole matched unit; no continuation appears when exhausted. An
+oversized lexical span uses the same bounded prefix rule and is labeled `preview`.
 All these fields count toward the existing budget; if none fits, report an omission.
-Direct search retains its byte cap and cannot label a shortened hit `whole_unit`.
+Search returns v2 locator lines without bodies, so a semantic search hit names its
+matched unit's handle and never claims `whole_unit`.
+
+**Open owned decision — semantic item line form.** The content above is settled; how
+it renders is not. [context-v2](../001-source-state-recovery/contracts/context-v2.md)
+requires each owning spec to state its line form, and no approved decision fixes this
+one: the item-line tag carrying the selection and matched handle, and the continuation
+line a preview uses inside a context response, where v2 currently defines `next:` only
+for retrieve. It is left open rather than invented because it extends the shared v2
+grammar and adds per-item tokens, so it needs review against 001's contract. T002 fixes
+it before implementation within v2's evidence-item and single-line-field rules, and
+records it in this section and in context-v2; until then no semantic item is emitted.
 
 Preview text is a navigation aid, not proof that the answer was localized. Graph
 expansion may use whole-unit or lexical-span evidence under its existing bounds, but
 not a preview as a localized seed. A relevant filename or prefix alone fails a test
 whose required evidence is later in the document. If that happens on the fixed target
-questions, revise the unit limit/partition before freezing the recipe and preparing
-the corpus; do not declare a quality pass from document recall alone.
+questions, report it and decide an explicit recipe change before preparing the corpus;
+do not declare a quality pass from document recall alone.
 
 Use one configured profile and one searchable vector index. Changing the profile is
 an explicit stop/configure/restart operation, not concurrent candidate preparation or
@@ -246,8 +298,9 @@ preparation rebuilds it for that profile; baseline retrieval continues. Keep com
 cache entries under their original function/input keys. Rollback restores the prior
 configuration and rebuilds that profile's derived index from retained cache; no instant
 rollback or zero calls for inputs never cached is promised. Old cached inputs
-may support branch reversions until explicit cleanup. At the declared disk cap,
-preparation stops with `cache_full`, without a silent eviction/recompute cycle.
+may support branch reversions until explicit cleanup. At the disk cap (2 GiB of cache
+per workspace by default), preparation stops with `cache_full`, without a silent
+eviction/recompute cycle.
 Deletion immediately removes search eligibility; retained orphan vectors are disclosed
 as cache retention, with explicit workspace-cache purge, not secure-erasure claims.
 Purge is offline maintenance under sole store ownership, with no in-flight worker
@@ -268,7 +321,8 @@ length and current source eligibility, commits cache results, then publishes the
 Publication failure leaves reusable cache entries. A late result after edit/deletion
 can populate the cache but never restore stale source eligibility.
 
-Only one batch is outstanding. Compute remaining work from current source inputs
+Only one batch is outstanding: a document batch holds at most 8 inputs, and a query
+embeds one input. Compute remaining work from current source inputs
 minus valid cached results in bounded pages; no job journal, leases or retry queue.
 Publish at most one bounded batch between foreground operations. Admit no document
 batch while a foreground model request is being dispatched; do not queue model work.
@@ -316,10 +370,11 @@ and profile, not a live health guarantee. A cold model and missing corpus vector
 different conditions. No additional persistent telemetry ledger is required.
 
 Context may use current partial coverage and reports it. Baseline exact path/identifier
-behavior remains. The bounded lexical/dense merge is pinned in D001 and checked for
+behavior remains. The bounded lexical/dense merge chosen in D001 is checked for
 candidate starvation before graph expansion/packing. The owned policy's search/graph choice controls
 graph expansion, not whether semantic candidates are allowed. Query embeddings remain
-per-request model work under the selected deadline; document reuse is not zero calls
+per-request model work with a ceiling of min(1500 ms, remaining read deadline);
+document reuse is not zero calls
 per query. The 013 ModernBERT decision model has its own joint input and encoding;
 it cannot reuse a Nemotron vector as that input. Semantic failure alone does not
 disable a separately available policy. Its exact input/cost contract remains 013 D001.
@@ -328,8 +383,10 @@ Preparation does not await policy training, generated summaries or graph complet
 ### Ordering without another required model
 
 Candidate generation, ordering, graph expansion and packing have one retrieval owner.
-009 D001 pins one deterministic lexical/dense merge and its bounded candidate window;
-this is ordinary ranking, not a learned reranker. Exact locator behavior and candidate
+The D001 merge is deterministic: 001's tier-1 exact-definition candidates first, then
+reciprocal-rank fusion with k = 60, score 1/(60 + rank), over the lexical top 256 and
+the dense top 64, ties ordered by path then start as in 001's tier-2 order. This is
+ordinary ranking, not a learned reranker. Exact locator behavior and candidate
 retention are checked in T002. Do not add a model-selection router, query-rewriting loop,
 reranker endpoint, second candidate journal or reranker configuration in this scope.
 The owned policy under 013 can choose graph expansion; its confidence is not a passage
@@ -351,9 +408,13 @@ preparation has its own explicit budget and is never started to answer the query
 
 ## Tasks and acceptance
 
+SC-00N is the acceptance of T00N: SC-001 is T001's outcome, SC-002 T002's and SC-003
+T003's, each passing only with that task's verification.
+
 ### T001 — Prepare once and preserve expensive work
 
-- **Depends:** 001 T001–T003 and 009 D001's recorded concrete decisions.
+- **Depends:** 001 T001–T003, 001 T005 (delivery units for the code partition) and
+  009 D001's recorded concrete decisions.
 - **Scope:** new `src/neural.rs`, cache/input mappings in the selected store library,
   CLI preparation/status/purge and `tests/neural.rs`; no MCP background worker.
 - **Outcome/acceptance (FR-001, FR-002, FR-003, FR-004 / SC-001):** bounded preparation commits exact-
@@ -371,11 +432,15 @@ preparation has its own explicit budget and is never started to answer the query
   versus the selected MLX 4-bit function. Loader/dependency changes cannot hide behind
   the unchanged upstream model name.
   Cover a small file (one unit), many tiny headings/functions (combined units), a
-  fenced heading, oversized section/line, Unicode, CRLF, empty source and at-limit/
-  cap+1 input. Assert complete nonoverlapping byte coverage, exact model input length
-  including prefixes, and no unit identity inherited from storage ordinals. Editing
+  fenced heading, a delivery unit over 1024 tokens that descends to its children and
+  residual regions without encoding any byte twice, oversized section/line, Unicode,
+  CRLF, empty source, 1024/1025-token unit inputs and 2048/2049-token serving inputs.
+  Assert complete nonoverlapping byte coverage, exact model input length including
+  prefixes, document batches of at most 8 inputs, and no unit identity inherited from
+  storage ordinals. Editing
   one section reuses every unchanged rendered input; whole-file edits recompute that
   file's unit. Graph arrival and storage-block changes make zero new document calls.
+  Rebuilding the F16 index from the f32 cache makes zero document calls.
   Change profile only across restart: refuse the old derived index, preserve its
   cache, and rebuild the selected one; restore the prior profile from retained cache.
   At no point may mismatched vectors serve or two profile preparation loops run.
@@ -394,6 +459,8 @@ preparation has its own explicit budget and is never started to answer the query
 - **Depends:** T001; 003 for MCP delivery, 005 for graph-backed claims.
 - **Scope:** provider adapter, bounded candidate merge and existing packer;
   `tests/neural.rs` plus relevant CLI/MCP cases. No reranker or owned policy trainer.
+- **Decision first:** close the open semantic-item line form above, recording it here
+  and in context-v2, before implementation; it is reviewed with 001's contract.
 - **Outcome/acceptance (FR-003, FR-005, FR-006 / SC-002):** actual model retrieves the
   frozen expected source spans for a stated vocabulary-gap fixture through the final
   response, with source freshness and exact output budget. Keep exact locator fixtures.
@@ -410,6 +477,9 @@ preparation has its own explicit budget and is never started to answer the query
   delivered tokens on this same bounded fixture; no additional measurement campaign.
   Separately cover absent candidate, candidate demoted by merge, oversized unlocalized
   unit and correctly ranked evidence omitted by packing; attribute each to its owner.
+  Assert the merge order (exact definitions first, then k = 60 fusion over the lexical
+  256 and dense 64 windows, deterministic ties) and a query embedding cut off at
+  min(1500 ms, remaining read deadline) with baseline fallback.
   The normal path makes no reranker call. Exercise the semantic request deadline and
   deterministic fallback without requiring 013. When owned policy is implemented,
   013's inference integration adds the combined-model deadline case to these same
@@ -440,7 +510,8 @@ preparation has its own explicit budget and is never started to answer the query
   wedge the source worker. Remove any blocking preparation path from the MCP engine
   slot. Explicit index events are sufficient; watchers are not required by this task.
 
-D001's model choice is settled; runtime/library/schema/bounds and isolated Rust-bridge
-integration remain incomplete. The owned learning head cannot substitute for this proof.
-All tasks are proposed; no model/runtime performance or
-implementation acceptance above has been measured in Foundry.
+D001's model choice and chosen values are settled; executing their checks, the cache
+schema, the open semantic-item line form and isolated Rust-bridge integration remain
+incomplete, and the external prerequisites above are the owner's. The owned learning
+head cannot substitute for this proof. All tasks are proposed; no model/runtime
+performance or implementation acceptance above has been measured in Foundry.

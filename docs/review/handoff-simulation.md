@@ -91,8 +91,9 @@ classifier just because its contract is more detailed.
 ### H2 — Independent teams would implement incompatible policy interfaces
 
 **Strong; verified conflict; corrected in documentation during this review.**
-At the review base, [001's shared contract](../../specs/001-source-state-recovery/contracts/context-v1.md)
-lines 150–153 and [009](../../specs/009-optional-semantic-retrieval/spec.md) lines
+At the review base, 001's shared contract (then `context-v1.md` lines 150–153, now
+superseded by [context v2](../../specs/001-source-state-recovery/contracts/context-v2.md))
+and [009](../../specs/009-optional-semantic-retrieval/spec.md) lines
 312–313 required reusing Nemotron's query vector and forbade another encoding. The
 architecture and deployment prose also inherited that assumption. ModernBERT's
 joint-input model cannot satisfy it.

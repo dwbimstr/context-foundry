@@ -1,12 +1,18 @@
 # Architecture
 
-Status: first slice implemented. Each planned capability is identified below.
-This is a design and ownership contract, not a performance claim.
+Status: 001 and 003 T001–T003 implemented and verified locally, 2026-10-01
+([validation](validation.md)); not released. The token-economics tranche (001
+T004–T006, 003 T005, 007 T001) was approved on 2026-10-03. T004 is now locally
+implemented and verified on final4, unreleased. T005 slice 1 is in progress, without
+search integration or whole-task acceptance; T006, remaining 003 T005 work and
+007 T001 are not implemented.
+Other capabilities are proposed as marked below. This is a design and ownership
+contract, not a performance claim.
 
 The [spec portfolio](../specs/README.md) now owns planned capability sequencing;
-the [constitution](../.specify/memory/constitution.md) owns evidence policy. The
-explicitly marked first-slice descriptions below remain the current implementation boundary. Future
-specs do not retroactively make planned features implemented or approved.
+the [constitution](../.specify/memory/constitution.md) owns evidence policy. Sections
+marked implemented describe the current boundary. Future specs do not retroactively
+make planned features implemented or approved.
 
 ## Product contract
 
@@ -20,13 +26,16 @@ Feedback exists in the first slice; a separate user-memory service does not. Lea
 improves a bounded decision such as retrieval strategy; it does not create a new
 general agent or require training before the engine is useful.
 
-The planned agent integration makes Foundry the first source-discovery route for
-explicitly admitted repositories, before grep/ripgrep. The existing adapter owns
+The agent integration (003, implemented and verified 2026-10-01) makes Foundry the
+first source-discovery route for explicitly admitted repositories, before grep/ripgrep.
+The existing adapter owns
 [tool selection and fallback](../specs/003-agent-retrieval-context/spec.md#native-source-discovery-and-fallback):
 small project guidance, ordinary tools and real-host acceptance. MCP availability
 alone proves neither adoption nor enforced routing. Exact-pattern/live-file checks
 retain their host tools; no shell interception, discovery daemon or model dependency
-is introduced. Combined multi-repository joins remain deferred in 007.
+is introduced. Launch-time multi-root context is approved in
+[007](../specs/007-multi-workspace-context/spec.md) (2026-10-03, not implemented);
+cross-repository graph joins are still not planned.
 
 ## Sophisticated behavior through simple ownership
 
@@ -53,7 +62,9 @@ same quality and safety contract. KISS does not freeze the first release forever
 
 ### Rules across feature boundaries
 
-The active specs share these proposed rules; they are not claims about the prototype:
+The specs share these rules. 001 and 003 implement those that concern source state,
+repair and delivery (2026-10-01); rules about graph, neural, memory and policy features
+are proposed with those features:
 
 - Explicit initialization and writes own durable changes. A query never creates a
   missing store, records access heat, enrolls a root, repairs an index or starts training.
@@ -71,9 +82,93 @@ The active specs share these proposed rules; they are not claims about the proto
   ownership before cleanup. Vector-cache purge requires the serving owner to stop;
   no late worker can silently repopulate a successfully purged store.
 
-The [shared contract](../specs/001-source-state-recovery/contracts/context-v1.md)
+The [shared contract](../specs/001-source-state-recovery/contracts/context-v2.md)
 defines failure scope and response validation. These checks belong in the existing
 owning tasks, not a separate whole-portfolio acceptance stage.
+
+## Token-economics flow
+
+Approved 2026-10-03 (001 T004–T006, 003 T005, 007 T001). T004's wire/accounting is
+locally implemented and verified on final4, unreleased; the syntax ranking, outlines,
+multi-root merge, hook and full economics evidence shown below remain unimplemented.
+The goal is that an agent reaches for Foundry instead of grep/ripgrep and exploratory
+file reads, and receives the same cited evidence in the fewest delivered tokens. The normative
+owners are the [v2 contract](../specs/001-source-state-recovery/contracts/context-v2.md)
+(wire, two-tier ranking, outlines and ladder), 003's
+[catalog, instructions and hook](../specs/003-agent-retrieval-context/spec.md#optional-omp-first-call-hook)
+and [delivered-token economics](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#delivered-token-economics),
+and [007](../specs/007-multi-workspace-context/spec.md) for several admitted roots.
+
+```mermaid
+flowchart TD
+    Intent["Agent intent in a configured host"] --> Need{"What is needed?"}
+    Need -- "locate a symbol or text" --> Search["search"]
+    Need -- "understand a subsystem" --> Context["context"]
+    Need -- "read cited source" --> Retrieve["retrieve: v2 handle, lines or outline view"]
+    Need -- "refresh after edits" --> Index["index: bound root or admitted root"]
+    Grep["Host grep or rg call"] --> Hook{"OMP team-kit hook enabled and call eligible?"}
+    Hook -- "first identifier search in an admitted root" --> Refused["Refused once: call Foundry search first"]
+    Refused --> Search
+    Hook -- "identical repeat, regex, outside root, compound shell, other host" --> HostTool["Host tool runs"]
+    Index --> Store[("redb sources and Tantivy schema v2")]
+    Index --> Report["index JSON counts and report (unchanged)"]
+    Store -. "indexed snapshot read by later search and context queries" .-> Rank
+    Search --> Rank["Two-tier ranking per root: exact definitions, then lexical; 007 merges roots"]
+    Context --> Rank
+    Rank -- "search" --> Locators["Locator lines: handle, best line, symbol, excerpt"]
+    Rank -- "context" --> Ladder["Ladder: each unit verbatim, else signature; graph edges; up to 3 file outlines"]
+    Retrieve --> Validate["Handle validation: syntax, workspace, existence, digest, range"]
+    Validate --> Views["Text view: prefix fit with next; outline view: outline, else outline-min"]
+    Locators --> Wire["v2 text: one header line, handles, fenced bodies"]
+    Ladder --> Wire
+    Views --> Wire
+    Wire --> Count["Exact o200k count; one session reservation, charge and refund"]
+    Count --> Host["Host receives tool results; forwards them unchanged below its own limits, may spill, truncate or compact"]
+    Report --> Host
+```
+
+- **Routing.** Tool descriptions and project instructions make Foundry the preferred
+  first call. Enforcement exists only in OMP with the opt-in operator team-kit hook,
+  which refuses the first identifier-like grep/rg per signature inside admitted roots.
+  The identical repeat, regex patterns, paths outside admitted roots, compound shell
+  commands, the HTTP heuristic scope and other hosts pass through.
+- **Compression.** Deterministic elision only: a unit's signature form, or a file
+  outline whose elided ranges render as `⋯ a-b` and are recoverable exactly through
+  `retrieve` with `lines`. There is no compression model and no cross-call
+  suppression, because host compaction drops earlier tool results and a forced extra
+  retrieve turn costs more than resending.
+- **Accounting.** The counted boundary is the final MCP text block the server emits
+  (or complete CLI stdout); the serialized result is capped at 256 KiB. That is
+  Foundry's delivered payload, not host or provider cost: hosts forward the block
+  unchanged only below their own size limits and may spill, truncate or compact it
+  ([pinned host citations](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#evidence-behind-the-rules)).
+  One atomic session reservation per response; a refusal changes no counter. Only
+  `search`, `context` and `retrieve` use the v2 text; `index` and `status` keep their
+  bounded JSON reports.
+
+The table retains measured v1 payloads beside the v2 request defaults and full-tranche
+targets, not full-tranche acceptance. T004's separate fixture measurements are
+recorded in [validation](validation.md): handles 33 versus 94 o200k tokens
+(68 versus 207 bytes), and the serialized five-tool catalog 568 versus v1's 711
+(within the 800-token ceiling). Syntax-unit/outline and real-host comparisons await
+the remaining tasks.
+
+| Agent intent | Tool and v2 form | v1 measured 2026-10-03 (text-block o200k tokens) | v2 request default | v2 target (not a measurement) |
+| --- | --- | --- | --- | --- |
+| Locate an identifier | `search`, locator lines | 1337–4640 per 10-hit search (six identifier queries) | `tokens` 1024, `limit` 10 | at most 20% of the v1 search tokens for the same identifier query; the definition is hit #1 |
+| Read the definition found | `search` then `retrieve` of that handle | search plus retrieve of hit #1 (one 2048-byte v1 block): 2123–5434 for those six queries | `retrieve` `tokens` 2048 | search plus unit retrieve at most 35% of the v1 pair; the whole unit verbatim within 2048 |
+| Understand a subsystem | `context` | 1439–1853 at `tokens` 2048 (all twelve queries) | `tokens` 2048 | v2 header at most 40 tokens; each expected unit present, verbatim or as a signature |
+| Every request | `tools/list` catalog | 711 for five tools | — | at most 800 |
+
+The 40-token header target was set against v1's minimum context envelope of 199
+tokens, measured in the 2026-10-01 allowance run at v1's own boundary — the whole
+serialized tool result — not at the text-block boundary of this table, so the two
+numbers are not a like-for-like comparison. Meeting the targets would show smaller
+delivered payloads, not net savings for a whole host session.
+
+Real-host results will carry the label "bundled Foundry adoption (v2 + instructions +
+hook), n=1 per task/arm, these tasks only; not an isolated v2 causal or general
+savings result".
 
 ## Workspace scope and outside references
 
@@ -83,9 +178,12 @@ discover roots and create indexing/watch/training work. It would also require ru
 for inferred ownership, root overlap, cleanup and consent across unrelated repos.
 The selected interface reuses explicit `index` and query operations against one
 bound store. The caller chooses B's separate store when B needs durable retrieval;
-query text never changes A's ownership. This is less automatic and currently has
-no fused cross-repo search or resolved cross-repo graph. A demonstrated need for
-those joins belongs to deferred [007](../specs/007-multi-workspace-context/spec.md).
+query text never changes A's ownership. On 2026-10-03 the owner reactivated
+[007](../specs/007-multi-workspace-context/spec.md) (approved, not implemented): the
+operator may admit B as a reference when launching A's owner, and one search/context
+call then merges A's and B's rankings into one cited, budgeted response, each root
+keeping its own store, revision and handles. Admission stays explicit and launch-only;
+there is still no resolved cross-repo graph, global snapshot or registry.
 
 | Event | Source state / graph | Watcher / embeddings | Owned learning |
 | --- | --- | --- | --- |
@@ -93,14 +191,20 @@ those joins belongs to deferred [007](../specs/007-multi-workspace-context/spec.
 | Query mentions an outside path | Ordinary query text; no source enrollment or graph target resolution | No new watch root or embedding job for that file | If explicitly enabled, inference sees the query text only; no automatic feedback/training |
 | Host reads an outside file | Host context only; Foundry cannot claim its freshness | No automatic indexing, watching or embedding | Quoted content is not automatically training-approved |
 | Operator explicitly indexes B in a separate store | B owns its source versions; A remains unchanged | Current prototype scans explicitly; future neural work is confined to admitted B sources | Feedback stays in its own store; training permission is per exact row |
+| Operator admits B as a reference at owner launch (007, approved) | B keeps its own store, revision and handles; one response can cite A and B under one budget; no cross-root edges | Nothing new is watched; re-indexing B touches only B | Feedback and training stay per store; no cross-root consent change |
 | B is re-indexed after an edit/deletion | Only B's reconciliation updates/deletes B's indexed sources | Old derived B facts become ineligible under their freshness rules | Existing weights do not update or forget automatically |
 
-The [shared scope contract](../specs/001-source-state-recovery/contracts/context-v1.md)
-owns root/handle errors and acceptance. One canonical root is already bound by the
-prototype, which skips symlinks during enumeration. The strengthened CLI/MCP cases
-are proposed tests, not newly executed isolation proof. Enumeration alone leaves a
-replacement race: 001 also requires root-relative, no-follow opening of each file
-and its ancestors, with a named refusal on unsafe replacement. A shell `cd` or session
+The [shared scope contract](../specs/001-source-state-recovery/contracts/context-v2.md)
+owns root/handle errors and acceptance. Implemented and verified 2026-10-01 (001 T002):
+one canonical root is bound per store; names are enumerated by the pathname walker,
+which skips symlinks, and bytes are read root-relative with no-follow opening of each
+file and its ancestors, so a file or ancestor replaced after enumeration is refused by
+name (`source_changed` or `unsafe_source_path`) and the prior accepted record is kept.
+Accepted limitation: a same-user process that substitutes a directory and restores it
+within one enumeration can make that scan miss names and retire their records until the
+next complete scan; no outside bytes are read. 001 records the
+[limitation and its re-entry condition](../specs/001-source-state-recovery/spec.md#reconciliation-rules-and-limits),
+and the scan is not described as rename-proof. A shell `cd` or session
 mention cannot rebind a store. There is no watcher in the prototype; if later needed,
 it supplies change hints to the same ingestion owner for that root. It does not own
 a second truth ledger or discover roots. Source bookkeeping, rebuildable derived
@@ -142,7 +246,7 @@ flowchart LR
     DB --> Indexer[Idempotent index refresh]
     Indexer --> Search[Tantivy: derived search index]
     Providers[Explicit semantic producer bundles] --> DB
-    Agent[CLI or future agent adapter] --> Retrieval[Search and bounded graph traversal]
+    Agent[CLI or MCP agent adapter] --> Retrieval[Search and bounded graph traversal]
     Search --> Retrieval
     DB --> Retrieval
     Retrieval --> Pack[Cited context under a declared token budget]
@@ -193,9 +297,11 @@ resolution and traversal share an examination budget and disclose unknown result
 One selected artifact/configuration identity per compiler producer also prevents
 partial imports from mixing builds at the same source revision. The importer freezes
 its input copies once for hashing and both parsing passes, with bounded scratch work.
-The proposed `import_scip` MCP tool uses the existing serving writer and explicitly
-staged artifacts; agents can refresh graph facts without stopping that owner or trying
-a competing CLI writer. Foundry does not run the compiler or infer new source roots.
+005's proposed import runs through the existing MCP `index` tool
+(`index {scip: {index_file, snapshot_file}}`, with no separate import tool) on the
+serving writer, from explicitly staged artifacts; agents can refresh graph facts
+without stopping that owner or trying a competing CLI writer. Foundry does not run the
+compiler or infer new source roots.
 
 Exact paths and identifiers take precedence on locator queries. Lexical retrieval
 is always available. Neural preparation/reuse is now an active proposed workflow
@@ -214,8 +320,10 @@ retrieval evidence may change the policy input and workflow benefit. Prior quali
 results do not prove benefit for a changed workflow.
 
 The planned normal path is lexical plus available semantic candidates → deterministic
-merge/order → bounded graph expansion when selected → verbatim evidence and exact
-budget packing. The source owner validates freshness throughout. Keep the roles narrow:
+merge/order (009 D001: exact definitions first, then reciprocal-rank fusion) → bounded
+graph expansion when selected → verbatim or deterministically outlined evidence and
+exact budget packing. The source owner validates freshness throughout. Keep the roles
+narrow:
 
 | Component | Responsibility | What does not follow from enabling it |
 | --- | --- | --- |
@@ -226,8 +334,9 @@ budget packing. The source owner validates freshness throughout. Keep the roles 
 
 Owned training remains a repeated isolated batch workflow with ModernBERT decision
 inputs, independent of 009 query vectors. Semantic preparation and the baseline
-release do not depend on training. Normal learned routing stays off until an actual workflow
-comparison justifies it; classifier-label eligibility alone is not that evidence.
+release do not depend on training. Normal learned routing stays off until a usage-import
+comparison on checked tasks shows equal correctness and lower total provider tokens
+(013); classifier-label eligibility alone is not that evidence.
 Explicit strategy requests and unavailable/stale graph skip the router entirely.
 A future reranker belongs inside 009 only if a bounded candidate set already contains
 the required passages but ordering loses them after ordinary defects are corrected.
@@ -241,7 +350,8 @@ vectors. Do not make the authoritative store's format or source ledger depend on
 global "2048 or higher" choice. Same dimensions do not imply compatible vector spaces.
 The owner selected **`nvidia/Nemotron-3-Embed-1B-BF16`**, with
 **`mlx-community/Nemotron-3-Embed-1B-BF16-4bit`** for local serving. Keep native 2048
-output dimensions and float32 vector caching; the MLX weights use 4-bit quantization.
+output dimensions and float32 vector caching, with a float16 USearch index derived from
+that cache; the MLX weights use 4-bit quantization.
 Its 32768-token input ceiling does not prescribe chunk size or override a lower
 runtime limit. Follow its query/document prompting, pooling and normalization recipe
 ([official model card](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16), checked
@@ -254,22 +364,24 @@ The [MLX conversion](https://huggingface.co/mlx-community/Nemotron-3-Embed-1B-BF
 uses a bundled embedding loader; it is an external model runtime, not a change of the
 Rust application language. 009 owns its pinned integration and explicit local-only
 loading. The loader defaults to 4096 tokens with truncation; preflight length checks
-and an explicitly tested serving limit replace that implicit default. The publisher reports
+and a serving limit of 2048 tokens, tested at the limit and one past it, replace that
+implicit default. The publisher reports
 lower weight memory but slower quantized throughput in its tests; no local speed claim.
 Separate variant/loader identities prevent BF16 and quantized vectors from mixing.
 
 Keep complete source identity, embedding units and delivered evidence separate. 009
-starts with one vector for a whole file that fits its selected token limit; oversized
-files become grouped sections/paragraphs with bounded fallback splits. Storage blocks
-and compiler occurrences do not each get vectors. Use no overlapping copies or second
-whole-file embedding alongside section vectors. Byte coordinates retain exact citation
-and retrieval even when a document's embedding covers more than the response can hold.
-An unlocalized excerpt is labeled a preview; retrieving a filename does not prove the
-useful lines were delivered. Long-document tail cases decide whether the chosen unit
-size works before corpus preparation, without a separate benchmark program.
+D001 fixes embedding units at 1024 model tokens: 001 delivery units (or, for other
+files, paragraphs and lines) combined greedily in source order, so a small file is one
+vector and a large one becomes grouped units with bounded fallback splits. Storage
+blocks and compiler occurrences do not each get vectors. Use no overlapping copies or
+second whole-file embedding alongside unit vectors. Byte coordinates retain exact
+citation and retrieval even when a document's embedding covers more than the response
+can hold. An unlocalized excerpt is labeled a preview; retrieving a filename does not
+prove the useful lines were delivered. Long-document tail cases check the chosen unit
+size before corpus preparation, without a separate benchmark program.
 
-Whole-file units reduce vector count but an edit requires encoding that whole unit.
-Unchanged section inputs reuse the existing cache across offset shifts. Longer inputs
+A unit covering a whole small file means an edit re-encodes that unit; unchanged unit
+inputs in larger files reuse the existing cache across offset shifts. Longer inputs
 can cost more inference despite fewer vectors; input tokens, actual calls, preparation
 and edit costs are distinct from the agent's delivered-token budget. Policy outcome
 records include the retrieval recipe; storage chunks do not create training examples.
@@ -283,8 +395,9 @@ economics still concerns complete consumed context and actual provider usage.
 
 ### Preparation is part of the neural feature
 
-Design the lifecycle now; pin the selected model's artifacts/runtime/library and numeric bounds in
-009 D001 before implementation or full-corpus preparation. Current profile metadata
+Design the lifecycle now; 009 D001 records the selected model's pins and chosen
+recipe values, and its remaining limit checks run before implementation or
+full-corpus preparation. Current profile metadata
 alone is insufficient. The concrete interface stories are explicit preparation,
 visible partial coverage, continued baseline queries, pause/resume, unchanged warm
 restart, indexed edit catch-up and derived-index repair without document inference.
@@ -333,44 +446,54 @@ export/import and must not block a working Foundry release.
 
 Context packing follows 001's exact accounting: fully rendered output, including
 citations and omission notices, counted with the locked `o200k_base` tokenizer.
-Do not estimate a model's tokens by dividing characters by a constant. Keep source
-text verbatim in the first cut; whole-span selection and deduplication come before
-new compression algorithms. Expose further retrieval for omitted spans.
+Do not estimate a model's tokens by dividing characters by a constant. Evidence is
+verbatim source or, under v2, a deterministic signature/outline rendering whose elided
+ranges are explicit and recoverable; selection and deduplication come before any
+other compression, and no compression model is used. Expose further retrieval for
+omitted spans.
 
-The current CLI does not add a protocol envelope to context stdout. A future MCP
-adapter must reserve its own envelope overhead; it cannot claim the existing text
-token count covers a larger serialized response. Direct search JSON has a hit cap,
-not a token budget. File paths and line spans are the current follow-up locators.
+Implemented 2026-10-01 (001 T003, 003 T002): CLI context/retrieve count complete
+stdout, and the MCP adapter counts its whole serialized tool result, envelope and JSON
+escaping included. Direct search has hit and byte caps but no token budget. Source
+handles, not bare paths and line spans, are the follow-up locators. The approved
+[v2 wire](../specs/001-source-state-recovery/contracts/context-v2.md) (001 T004, not
+yet implemented) replaces these JSON envelopes with compact text, counts the final MCP
+text block and budgets search too.
 
 ## Commit and failure ordering
 
-This table describes the implemented first slice. In particular, 001 will replace
-automatic missing-index recovery with explicit repair; 005's compiler importer will
-publish bounded document scopes with the snapshot eligibility rules above.
+This table describes the implementation verified on 2026-10-01 (001 T001–T003).
+005's proposed compiler importer will publish bounded document scopes with the
+snapshot eligibility rules above.
 
 | Operation | Durable owner and failure behavior |
 | --- | --- |
 | Replace/delete source | One redb transaction changes metadata, owned chunks and the pending index row. Failure before commit preserves the prior version. |
 | Refresh search | Read at most 128 pending sources; delete and insert their search documents; commit Tantivy; reload its reader; then clear only matching pending hashes in redb. An interruption repeats the same replacement. |
 | Search during index lag | Check each candidate against the redb source hash; reject stale candidates and report pending work. New versions can be temporarily absent from search. |
-| Missing whole search index | Durably mark all stored sources pending before recreating the index metadata; `refresh` fills it. An existing corrupt index is a named error, not silently repaired. |
+| Missing or corrupt search index | Ordinary opens never repair: search/context return `repair_required`, while status and direct retrieve use an authoritative-only open. Explicit `repair-index` sets the durable `search_rebuild_required` marker, queues sources in pages of 128, moves the old index to one retained quarantine, rebuilds and clears the marker only after commit/reload with no pending work; an interrupted repair keeps the marker and a rerun converges. |
 | Graph import | Validate all endpoints and bounds before replacing a producer's old bundle in one transaction. A rejected bundle leaves the prior bundle intact. |
 | Incomplete workspace scan | Keep unseen sources because absence was not established; report failures. Known unsupported inputs are explicit exclusions and retire their previous indexed content. |
 | Legacy prototype Laya failure | Timeout, invalid response, unknown action or confidence below threshold selects a deterministic strategy and reports the reason. Retrieval remains available. |
 
-The library tests exercise interruption between source and search commits by
-reopening with pending work. They do not simulate power loss inside either database
-library. The prototype has one process owning a store; even reads open the database
-and index writer, so concurrent CLI processes are not a supported serving topology.
-Do not add process retries and lock stealing as a substitute for one serving owner.
+Child-process recovery tests (001 T001) exit at named fault points around source
+commit, search commit, repair enqueue, quarantine and marker clear, then reopen and
+compare state. They do not simulate power loss inside either database library. One
+process owns a store and a competing owner gets `store_busy`, so concurrent CLI
+processes are not a supported serving topology; the optional shared HTTP owner (003)
+serves several MCP clients through that one owner. Do not add process retries and
+lock stealing as a substitute for one serving owner.
 
-The implemented schema version 1 rejects other versions. Spec 001 proposes an explicit
-v1→v2 upgrade for revision/scan/repair metadata; that upgrade is not implemented. There is no predecessor-store reader or
+The implemented store schema is version 2 (001 T001, 2026-10-01): `upgrade-store --to 2`
+is the explicit v1→v2 transaction adding revision/scan/repair metadata, and other
+versions are refused. There is no predecessor-store reader or
 automatic migration. The first compatibility promise is source rebuildability;
 feedback must be exported before replacing an incompatible store. A future schema
 change must either migrate preserved user data explicitly or refuse with instructions.
 Planned feature schemas all use this one upgrade owner; toggling a feature never
-changes which other features' durable records survive.
+changes which other features' durable records survive. The approved search index v2
+(001 T005) is derived state: the store schema stays 2, and a store whose search index
+predates v2 reports `repair_required` until an explicit `repair-index`.
 
 ## Owned learning and isolation
 
@@ -389,7 +512,8 @@ Grouped permitted examples and reusable features feed an isolated offline traini
 worker. Calibration/evaluation are held out. New rows in existing training groups are
 new work; invalidated base contributions refuse before a no-op decision. Immutable
 artifacts support explicit selection/restart and rollback. Normal inference stays off
-until checked tasks justify the extra work. Hard token/permission rules stay outside
+until a usage-import comparison on checked tasks shows equal correctness and lower
+total provider tokens. Hard token/permission rules stay outside
 the learned model. [Contract v4](../specs/013-owned-learning/contracts/learning-loop.md)
 replaces the vector-only design with exact joint inputs, tokenization, head fitting,
 limits and private IPC; old proposals remain in Git history.
@@ -423,6 +547,8 @@ The owner requested both delivery control and an owned gateway. The latter is an
 optional Rust command with no source-store access, one supported Responses HTTP/SSE
 protocol and private loopback authentication. It forwards completed host requests;
 it does not inject context or rewrite warm prefixes. MCP alone cannot redirect them.
+Measuring provider usage needs no gateway: the approved `foundry usage import` reads
+the host's own session records (003 T005).
 
 Meter mode records actual usage. Enforce mode additionally verifies the complete
 input using the provider count endpoint and reserves input plus bounded output before
@@ -456,8 +582,9 @@ Those changes stay above library transactions. The selected 009 dense index addr
 conceptual retrieval with its own preparation/lifecycle checks; it does not gate the
 earlier lexical release or require another general model comparison.
 
-No custom scheduler, immutable publication tree, temporal graph history, vector
-quantizer, fleet cost governor, or learned compression engine is part of this cut.
+No custom scheduler, immutable publication tree, temporal graph history, custom vector
+quantizer, fleet cost governor, or learned compression engine is part of this cut
+(009's float16 index storage is a USearch library setting).
 This is a scope decision; it does not discard the goals of useful memory, freshness,
 large-repository support, quality or economics. The [roadmap](roadmap.md) assigns
 those goals to independently usable releases.

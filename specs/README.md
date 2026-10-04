@@ -2,15 +2,23 @@
 
 Status: revised portfolio. 001 and 003 T001–T003, including the optional shared MCP
 owner for concurrent OMP/Codex sessions, were implemented and verified locally on
-2026-10-01 ([validation](../docs/validation.md)); they are not yet released. The owner
-requested thoughtful subtraction, not a Rust translation of the old system. The other
-active goals remain.
+2026-10-01 ([validation](../docs/validation.md)); they are not yet released. On
+2026-10-03 the owner selected the token-economics tranche — 001 T004–T006, 003 T005
+and 007 T001 — and reactivated 007. T004 is now locally implemented and verified on
+final4, unreleased. T005 has slice-1 work in progress without search integration or
+whole-task acceptance; T006, remaining 003 T005 work and 007 T001 are unimplemented.
+The same spec pass classified the remaining specified unknowns
+of 003 T004, 005, 008, 009 and 013 as settled decisions, named open owned decisions
+(005 T002's `references` header segments; 009 T002's semantic-item line form) or
+external prerequisites (below); those specs stay proposed. The owner requested
+thoughtful subtraction, not a Rust translation of the old system. The other active
+goals remain.
 
-The [validated implementation](../docs/validation.md) is the baseline. Six user
-outcomes retain the product goals. All active tasks specify behavior and acceptance,
-including 013's replacement ModernBERT/head contract. The next step for 001/003 is the
-ordinary [release checklist](../docs/release.md) for their advertised scope;
-003 T004, 005, 008, 009 and 013 remain proposed with explicit prerequisites.
+The [validated implementation](../docs/validation.md) is the baseline. The user
+outcomes below retain the product goals. All active tasks specify behavior and
+acceptance, including 013's replacement ModernBERT/head contract. The selected next
+work is the token-economics tranche; the 001/003 scope ships through the ordinary
+[release checklist](../docs/release.md) once the owner names a release destination.
 The [team handoff simulation](../docs/review/handoff-simulation.md) traces startable
 work, unresolved integration inputs and corrected cross-spec dependencies. It is a
 source-backed paper walkthrough, not runtime acceptance or another required stage.
@@ -24,17 +32,18 @@ work. A narrower first release does not redefine the intended product as basic s
 
 | Spec | User outcome | Needs | Shipping boundary |
 | --- | --- | --- | --- |
-| [001](001-source-state-recovery/spec.md) | Find trustworthy, cited context after source updates or restart | None | Useful CLI release; no agent or model required |
-| [003](003-agent-retrieval-context/spec.md) | Bootstrap a repository, use Foundry before eligible grep/ripgrep, deliver budgeted context and optionally forward/meter model requests | 001 for MCP; gateway owns no store | Real agent tool-order/fallback acceptance; separately verified host/gateway protocol and accounting boundary |
+| [001](001-source-state-recovery/spec.md) | Find trustworthy, cited context after source updates or restart, in compact text with exact definitions first and deterministic outlines | None | Useful CLI release; no agent or model required |
+| [003](003-agent-retrieval-context/spec.md) | Bootstrap a repository, use Foundry before eligible grep/ripgrep and exploratory reads, deliver budgeted context at the fewest delivered tokens and optionally forward/meter model requests | 001 for MCP; gateway owns no store | Real agent tool-order/fallback acceptance; separately verified host/gateway protocol and accounting boundary |
 | [005](005-graph-evidence-lifecycle/spec.md) | Follow real code relationships in a large workspace | 001; 003 for agent demonstration | One language and real semantic producer, bounded ingest and delivery |
+| [007](007-multi-workspace-context/spec.md) | Ask one question across explicitly admitted repositories and receive one cited, budgeted response | 001 T004–T006; 003 T001–T002 | Admission at owner launch only; no cross-root edges, global snapshot or registry |
 | [008](008-scoped-durable-memory/spec.md) | Remember, correct and forget explicit project knowledge | 001 | Independent extension; no transcript harvesting |
 | [009](009-optional-semantic-retrieval/spec.md) | Prepare neural context progressively and retain expensive work | 001; 003 for foreground coexistence | Nemotron 3 Embed 1B, local MLX 4-bit profile; useful partial coverage, warm restart and delta updates |
 | [013](013-owned-learning/spec.md) | Improve decisions through repeated owned Rust fine-tuning of ModernBERT with a decision head | 001/003 for data; 005 for useful graph selection; separate from 009 retrieval vectors | Contract v4; initial head adaptation, explicit selection and independently accepted package lifecycle |
 
-Do not wait for all six to release. The first CLI release requires 001 and the
+Do not wait for all of them to release. The first CLI release requires 001 and the
 ordinary [release checklist](../docs/release.md). The agent release adds 003. A
-compiler-backed graph claim adds 005. Memory and learning ship when useful in their
-own right; they cannot hold the first usable releases.
+compiler-backed graph claim adds 005. Multi-root context, memory and learning ship
+when useful in their own right; they cannot hold the first usable releases.
 
 009 is now planned alongside source ownership, before full-corpus model preparation.
 Its earlier blanket deferral missed first-use and repeated preparation costs. The
@@ -51,23 +60,38 @@ the first search/graph family is not a claim of full Laya parity.
 
 ## Task detail and remaining execution inputs
 
-| Spec | Detailed work | Prerequisite that cannot be silently waived |
+| Spec | Detailed work | State and prerequisite that cannot be silently waived |
 | --- | --- | --- |
-| 001 | D001 resolved: retain redb/Tantivy; T001 recovery; T002 reconciliation; T003 exact retrieval | Implemented and verified 2026-10-01; release checklist remains |
-| 003 | T001 bootstrap/MCP; T002 budgets/receipts; T003 actual agent task; T004 owned request gateway | T001–T003 implemented and verified with OMP and Codex 2026-10-01; T004 needs pinned Responses schema/counting and permitted API access |
-| 005 | T001 real SCIP; T002 scoped publication; T003 large-workspace workflow | Real producer/snapshot; predeclared corpus, hardware and numeric run limits |
-| 008 | T001 record lifecycle; T002 export/forget | Accepted 001 owner/schema contract; 003 only for advertised MCP surface |
-| 009 | D001 runtime/index disposition; T001 durable preparation; T002 retrieval; T003 progressive preparation | Model selected; pinned artifact/runtime, Rust bridge, verified isolation and numeric execution bounds |
-| 013 | D001 actual recipe/package acceptance; T001 joint-input data; T002 real fitting; T003 inference/rollback; T004 repeat/deploy | v4 pins model/input/backend; scratch gradients pass, complete recipe and actual package still need acceptance |
+| 001 | D001 resolved: retain redb/Tantivy; T001 recovery; T002 reconciliation; T003 exact retrieval; T004 compact v2 wire and atomic allowance; T005 syntax-unit search with exact definitions first; T006 outlines, context ladder and retrieve views | T001–T003 verified 2026-10-01; T004 locally implemented and verified on final4, unreleased. T005 slice 1 in progress, search integration/whole-task acceptance pending; T006 unimplemented; a grammar that cannot meet Rust 1.90 stops T005 for an owner decision |
+| 003 | T001 bootstrap/MCP; T002 budgets/receipts; T003 actual agent task; T004 owned request gateway; T005 catalog/instructions, opt-in OMP hook, usage import and economics evidence | T001–T003 verified with OMP and Codex 2026-10-01. T004 needs pinned Responses schema/counting and the external prerequisites below. T005 approved 2026-10-03; catalog/instruction text landed with 001 T004, but hook, usage import and full economics evidence remain unimplemented; real-host runs are authorized up to eight runs and 40 minutes |
+| 005 | T001 real SCIP; T002 scoped publication; T003 large-workspace workflow | Spec-pass decisions recorded 2026-10-03; T002 first fixes the `references` coverage and count header segments within the v2 header grammar (open owned decision); external prerequisites below |
+| 007 | T001 admit, query and cite several roots in one budgeted response | Approved 2026-10-03, not implemented; needs 001 T004–T006 |
+| 008 | T001 record lifecycle; T002 export/forget | Spec-pass decisions recorded 2026-10-03 (one `memory` tool); accepted 001 owner/schema contract; 003 only for the advertised MCP surface |
+| 009 | D001 runtime/index disposition; T001 durable preparation; T002 retrieval; T003 progressive preparation | D001 chosen values recorded 2026-10-03; pinned artifact/runtime stand; T002 first closes the open semantic-item line form (open owned decision); external prerequisites below |
+| 013 | D001 actual recipe/package acceptance; T001 joint-input data; T002 real fitting; T003 inference/rollback; T004 repeat/deploy | v4 pins model/input/backend; spec-pass decisions recorded 2026-10-03; scratch gradients pass; external prerequisites below |
 
-Nineteen implementation task entries and three D001 entries are recorded. 001 D001 is
-resolved. 009 D001 retains numerical/operator choices and runtime/package acceptance;
-the model/artifact and initial bridge/index candidates are already selected. 013 D001
-is recipe/MSRV/package acceptance, not a new model/backend selection. Their partial
-executed feasibility does not close these checks. A missing runtime input causes the
-named prerequisite failure in its spec; it is not an invitation to guess or a passed
-criterion. [Current review/evidence](../docs/planning-validation.md) records what was
-inspected and checked. Task detail alone is not implementation acceptance.
+001 D001 is resolved. 009 D001's chosen values are recorded; its limit checks and
+runtime/package acceptance remain. 013 D001 is recipe/MSRV/package acceptance, not a
+new model/backend selection. Their partial executed feasibility does not close these
+checks. A missing runtime input causes the named prerequisite failure in its spec; it
+is not an invitation to guess or a passed criterion. The two open owned decisions are
+closed by their tasks before implementation and reviewed against 001's v2 contract.
+[Current review/evidence](../docs/planning-validation.md) records what was inspected
+and checked, including the 2026-10-03 spec-pass ledger. Task detail alone is not
+implementation acceptance.
+
+## External prerequisites
+
+Recorded in the 2026-10-03 spec pass. Each is supplied or authorized by the owner; none
+is implied by writing a task, and a missing one fails by name in its spec.
+
+| Owning task | Prerequisite | Status |
+| --- | --- | --- |
+| [003 T004](003-agent-retrieval-context/spec.md#t004--forward-and-meter-an-actual-supported-model-workflow) | An API key, a spend cap and the Codex custom-endpoint configuration; provider usage can be measured without the gateway through 003 T005's `usage import` | Open |
+| [005 T001/T003](005-graph-evidence-lifecycle/spec.md) | A permitted jailed rust-analyzer run (it executes build scripts and proc macros); the scale corpus and numeric profile for T003 | Open |
+| [009 D001/T001](009-optional-semantic-retrieval/spec.md) | Authorization to run the pinned local weights; a USearch C++ build on the Rust 1.90 floor; isolation and package acceptance | Open |
+| [013 D001/T002–T004](013-owned-learning/spec.md) | Approved labeled rows; the LibTorch package; signing/notarization; an aggregate residency run with 009 | Open |
+| [Release](../docs/release.md) | A release destination | Open |
 
 ## What was subtracted
 
@@ -83,8 +107,10 @@ inspected and checked. Task detail alone is not implementation acceptance.
 - **012**: merged consent, grouping and dataset handoff into 013. Learning owns its
   input contract; no separate learning-data platform.
 - **015**: replaced a packaging capability with the release checklist.
-- **007, 010, 014**: parked federation, generated knowledge and
-  migration until a concrete task justifies each. Their stubs state re-entry criteria.
+- **010, 014**: deferred generated knowledge and migration until a concrete task
+  justifies each. Their stubs state re-entry criteria.
+- **007**: reactivated on 2026-10-03 as launch-time multi-root context; federation,
+  registries and cross-root edges stay out of scope.
 - **009**: reactivated after the owner's preparation-cost correction; retain a narrow
   cache/preparation lifecycle without a custom ledger, generic scheduler or model fleet.
 

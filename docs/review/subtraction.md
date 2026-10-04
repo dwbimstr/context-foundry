@@ -266,7 +266,7 @@ such; it is not presented as an observed production failure.
 These corrections extend focused acceptance in existing tasks. The portfolio still
 has six active specs and eighteen implementation tasks; no new service, queue,
 watcher, durability plane, spec number or acceptance stage is introduced. The shared
-failure/snapshot rules live in [001's contract](../../specs/001-source-state-recovery/contracts/context-v1.md),
+failure/snapshot rules live in [001's contract](../../specs/001-source-state-recovery/contracts/context-v2.md),
 not separate feature-specific variants. Workflow prompts now ask for adjacent failure
 patterns only where the changed boundary makes them relevant.
 
@@ -300,7 +300,7 @@ are **Strong**; code evidence and proposed-contract failures are distinguished.
 | Medium — individually bounded inputs multiply downstream | Proposed 005 bounded occurrence counts but left multiple-definition expansion ambiguous; duplicate document paths could replace the same scope twice | 005 T001/T002 store each symbol occurrence once, reject duplicate document/manifest paths before selection, bound definition lookup and preserve ambiguity. Stable public symbol/occurrence IDs avoid inventing resolved edges or private caller state |
 | Medium — status conceals expensive preparation | Proposed 009 demanded exact unit totals even before the selected tokenizer/partition recipe had processed sources | 009 T001 records partition completeness with existing mappings and reports unknown totals. Status reads metadata only; context does not perform a full census. Metadata scans still obey deadlines rather than claiming constant-time counts |
 | Medium — client cancellation is mistaken for completed remote work | 009 acknowledged that provider work can outlive a timeout, but a resumed client could submit more while the server remained occupied | 009 D001/T003 require runtime-side one-active/no-waiting admission, including abandoned work. Query busy falls back; preparation busy pauses. The chosen runtime must prove this; no retry/job controller is added |
-| Medium — field bounds do not compose through serialization | The shared contract allowed 4096-byte paths but only 8192-byte CLI handle JSON. A valid escaped path produces a larger handle | 001 T003 accepts up to 32768 serialized handle bytes and tests search→retrieve round-trip. The ordinary path bound remains; this does not increase source size or response budget |
+| Medium — field bounds do not compose through serialization | The v1-era shared contract allowed 4096-byte paths but only 8192-byte CLI handle JSON. A valid escaped path produces a larger handle | Historical 001 T003 fix: accept up to 32768 serialized v1 handle bytes and test search→retrieve round-trip. T004 now uses the [v2 string handle](../../specs/001-source-state-recovery/contracts/context-v2.md#source-handles), capped at 4200 bytes. The ordinary path bound and historical counterexample remain |
 
 The serialization counterexample was checked with standard JSON only: a valid
 4096-byte path containing escaped form-feed characters produces an 8353-byte handle.

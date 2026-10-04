@@ -5,6 +5,14 @@ feasibility probes. Production learning remains unimplemented. The owner selecte
 ModernBERT with a decision head and all first-party code in Rust. Laya is a reference,
 not a deployed service. [Evidence and remaining blockers](../../docs/review/feasibility.md)
 are scoped by probe; this document does not declare a model package ready to release.
+Spec-pass decisions recorded 2026-10-03 in [contract v4](contracts/learning-loop.md):
+the core-composed `state` (query, graph coverage and top-3 lexical locator lines)
+within the 1024-token total, float16 checkpoint tensors upcast to float32 at load, a
+per-request timeout fallback with the policy disabled after three consecutive
+prediction timeouts, refusal of inherited per-option temperatures or a fitted
+temperature below 0.5, and enablement only after a usage-import comparison. External
+prerequisites (owner): approved labeled rows, the LibTorch package,
+signing/notarization and an aggregate residency run.
 
 ## Outcome and requirements
 
@@ -29,9 +37,10 @@ or larger token budgets. Nemotron remains the independent retrieval model.
 
 [Contract v4](contracts/learning-loop.md) owns exact schemas, rendering, tensors,
 training, bounds and errors. It replaces v3 entirely; history retains superseded details.
-Dependencies: 001 for source/schema ownership; 003 for MCP feedback and bounded serving;
-005 for graph usefulness. Neither tokenized learning inputs nor policy inference depend
-on 009 query vectors. Explicit strategies and unavailable graph bypass policy.
+Dependencies: 001 for source/schema ownership; 003 for MCP feedback, bounded serving
+and the usage import that gates enablement; 005 for graph usefulness. Neither
+tokenized learning inputs nor policy inference depend on 009 query vectors. Explicit
+strategies and unavailable graph bypass policy.
 
 ## Decision ecosystem and review traceability
 
@@ -83,6 +92,9 @@ core. No new numbered spec, job platform, model registry or whole-product releas
 
 ## Tasks and acceptance
 
+SC-00N is the acceptance of T00N: SC-001 is T001's outcome, SC-002 T002's, SC-003
+T003's and SC-004 T004's, each passing only with that task's verification.
+
 ### T001 — Prepare exact permitted ModernBERT examples
 
 - **Depends:** 001 schema/feedback ownership and v4 input contract. **Scope:**
@@ -92,11 +104,14 @@ core. No new numbered spec, job platform, model registry or whole-product releas
 - **Outcome (FR-001/FR-002, SC-001):** immutable schema-4 grouped/tokenized dataset;
   same renderer at train and predict; no model load merely to freeze/tokenize data.
 - **Verification:** exact IDs/markers against pinned reference; 1024 and 1025 tokens;
-  mask-token literal, Unicode, reversed options, state change with same query, wrong
-  label/duplicate option; all byte limits and unknown/null/duplicate keys. Corrections,
-  rights denial/withdrawal, historical split conflicts, ancestor missing, invalid base
-  before no-op, new input in old group, interruption and output ownership/read-back.
-  No outside path traversal, transcript/memory admission or 009 feature call.
+  a state over 16 KiB refused before tokenization and a state under 16 KiB refused at
+  the 1024-token total; state composition with zero to three locator lines and both
+  coverage values; mask-token literal, Unicode, reversed options, state change with same
+  query, wrong label/duplicate option; all byte limits and unknown/null/duplicate keys.
+  Corrections, rights denial/withdrawal, historical split conflicts, ancestor missing,
+  invalid base before no-op, new input in old group, interruption and output
+  ownership/read-back. No outside path traversal, transcript/memory admission or 009
+  feature call.
 - **Review/cutover:** preserve/export legacy feedback, do not invent missing state or consent.
   One schema integrator reviews durable changes; no separate learning database.
 
@@ -111,14 +126,18 @@ core. No new numbered spec, job platform, model registry or whole-product releas
   calibration/evaluation, immutable readable candidate and complete contribution lineage.
 - **Verification:** float32 reference logits and gradients (atol 1e-5, rtol 1e-4),
   full/local attention boundaries, padding if introduced, option permutation/marker
-  masking, deterministic eval and seeded train dropout. Hash frozen encoder before/after;
+  masking, deterministic eval and seeded train dropout. Float16 checkpoint tensors load
+  as float32, and changing the source dtype changes `model_function_sha256`. Hash frozen
+  encoder before/after;
   all intended trainable groups receive gradients/change. Compare training-eval and
   loaded logits. Test 1/limit/limit+1, nonfinite loss, malformed/missing tensors,
   calibration failure, timeout, crash, disk full and owner death; no eligible partial.
   Compare calibrated probability vectors before/after export, including conflicting
-  upstream bucket temperatures; no inherited override of the fitted scalar. Test
-  per-case/group/error denominators and 15-bin ECE against known inputs; diagnostics
-  do not create a new benchmark campaign.
+  upstream bucket temperatures; no inherited override of the fitted scalar. Refuse a
+  candidate carrying an inherited `temperature_by_options` and one whose fitted scalar
+  is below 0.5, using Laya's `choice:11+` temperature 0.1006 (issue #394) as the
+  fixture. Test per-case/group/error denominators and 15-bin ECE against known inputs;
+  diagnostics do not create a new benchmark campaign.
   Deny outside/symlink reads/writes, network, inherited secrets/FDs and child execution.
 - **Review/cutover:** a rejected candidate is valid lifecycle evidence, not quality success.
   Head mode cannot certify encoder adaptation; selected package limitations are explicit.
@@ -133,14 +152,21 @@ core. No new numbered spec, job platform, model registry or whole-product releas
   candidate/input identity; config/restart selection and rollback preserve all user state.
 - **Verification:** two candidate identities, malformed/oversized/late reply, wrong
   tokenizer/weights, invalid config, startup failure, timeout/death/EOF and busy slot.
+  One prediction timeout falls back for that request only; later requests see busy
+  while the timed-out work runs, and its late reply is never delivered. Only a valid
+  reply within the ceiling resets the count (busy fallback neither counts nor resets);
+  three consecutive prediction timeouts terminate the worker and disable the policy
+  until restart. Malformed, wrong-identity and dead-worker cases stay terminal.
   Explicit strategy/missing graph bypasses policy. Missing Nemotron does not disable a
   usable policy; neither model extends 003 deadline. Combined aggregate resource test
   belongs here only when both features are enabled. Count extra encoder work honestly.
   Verify exact-threshold acceptance, below-threshold abstention before rounding,
   entropy/answer-probability distinction, option-probability consistency and stable
   tie handling. Malformed distribution/legacy ambiguous confidence cannot grant a route.
-  A real adapter comparison checks task correctness, latency and complete observable
-  economics; no demonstrated benefit leaves default policy off.
+  A real adapter comparison on the same checked tasks, with provider usage read by
+  003's `foundry usage import`, checks task correctness, latency and total provider
+  tokens. The policy may be enabled only when correctness is equal and total provider
+  tokens are lower; otherwise default policy stays off.
 - **Review/cutover:** reject removed option with migration guidance, no host config rewrite.
   Rollback restores prior supported binary/config, not two simultaneous model paths.
 

@@ -4,7 +4,11 @@ This inventory records Cargo metadata for the locked dependency graph. It is not
 
 ## Direct dependencies
 
-Generated from `cargo metadata --locked` on 2026-10-01 (001 + 003 implementation).
+The existing rows retain the `cargo metadata --locked` inventory from 2026-10-01
+(001 + 003 implementation). T005 additions were checked against `Cargo.toml`,
+`Cargo.lock` and the locally cached crate manifests/license files on 2026-10-04.
+The handed-off metadata inventory reports 13 added packages; no Cargo command,
+fetch or build was run for this documentation update.
 "dev" packages build tests only and are not linked into the shipped binary; rmcp and
 tokio add client/process features only for tests.
 
@@ -17,6 +21,7 @@ tokio add client/process features only for tests.
 | http | 1.5.0 | MIT OR Apache-2.0 | normal |
 | ignore | 0.4.33 | Unlicense OR MIT | normal |
 | libc | 0.2.189 | MIT OR Apache-2.0 | normal (held-root opens) |
+| pulldown-cmark | 0.13.4 | MIT | normal (Markdown sections; default features off) |
 | redb | 4.3.0 | MIT OR Apache-2.0 | normal |
 | rmcp | 3.5.0 | Apache-2.0 | normal (server, stdio, streamable HTTP server); dev adds client |
 | serde | 1.0.229 | MIT OR Apache-2.0 | normal |
@@ -26,17 +31,51 @@ tokio add client/process features only for tests.
 | tiktoken-rs | 0.12.1 | MIT | normal |
 | tokio | 1.53.1 | MIT | normal; dev adds process |
 | tokio-util | 0.7.19 | MIT | normal |
+| tree-sitter | 0.25.10 | MIT | normal (syntax runtime; third-party C) |
+| tree-sitter-c | 0.24.2 | MIT | normal (C grammar) |
+| tree-sitter-cpp | 0.23.4 | MIT | normal (C/C++ grammar) |
+| tree-sitter-go | 0.25.0 | MIT | normal (Go grammar) |
+| tree-sitter-java | 0.23.5 | MIT | normal (Java grammar) |
+| tree-sitter-javascript | 0.25.0 | MIT | normal (JavaScript/JSX grammar) |
+| tree-sitter-python | 0.25.0 | MIT | normal (Python grammar) |
+| tree-sitter-rust | 0.24.2 | MIT | normal (Rust grammar) |
+| tree-sitter-typescript | 0.23.2 | MIT | normal (TypeScript/TSX grammars) |
 | ureq | 3.4.2 | MIT OR Apache-2.0 | normal (legacy Laya protocol module) |
 | uuid | 1.26.1 | Apache-2.0 OR MIT | normal |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | dev |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | dev |
 | toml | 0.8.23 | MIT OR Apache-2.0 | dev |
 
-The locked graph has 286 third-party packages. Declared expressions are permissive
+## Transitive additions for T005
+
+| Package | Locked version | Declared license | Use |
+| --- | --- | --- | --- |
+| tree-sitter-language | 0.1.8 | MIT | transitive (grammar/runtime language binding; declares Rust 1.90) |
+| streaming-iterator | 0.1.9 | MIT OR Apache-2.0 | transitive (tree-sitter iterator interface) |
+| unicase | 2.9.0 | MIT OR Apache-2.0 | transitive (pulldown-cmark) |
+
+The tree-sitter runtime and grammars compile bundled C parsers/scanners through
+`cc`, already in the held graph. This is third-party C, not first-party C/C++.
+
+The current lock contains 300 packages including Foundry: **299 third-party**
+packages, up from the historical 286 by these 13 additions. Declared expressions are permissive
 (MIT/Apache-2.0 variants, Unlicense, Unicode-3.0, Zlib, BSD-3-Clause, BSL-1.0) or offer
 a permissive choice (one `MIT OR Apache-2.0 OR LGPL-2.1-or-later`, one
 `Apache-2.0 / MIT / MPL-2.0`). rmcp is Apache-2.0 only: a binary distribution must
 carry its license text and any NOTICE. This is metadata, not a legal audit.
+
+### Local license-text availability
+
+MIT text was present in the cached C, Go, JavaScript, Python, Rust, language-binding
+and pulldown-cmark packages. `streaming-iterator` and `unicase` each contain both
+`LICENSE-MIT` and `LICENSE-APACHE`, matching their declared alternatives.
+The cached `tree-sitter`, `tree-sitter-cpp`, `tree-sitter-java` and
+`tree-sitter-typescript` packages contain no standalone main MIT `LICENSE` file;
+their MIT rows are verified manifest declarations, not verification of absent text.
+The runtime also contains `src/unicode/LICENSE` with ICU/Unicode notices; that file
+is present and is not the missing main MIT notice. These are inventory observations,
+not a legal audit or a distribution-readiness claim. No license text was fetched.
+
 
 ## Legacy prototype and planned optional components
 

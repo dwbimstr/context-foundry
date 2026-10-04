@@ -1,6 +1,8 @@
 # Owned learning contract v4
 
-Proposed implementation contract, 2026-09-29. Replaces the vector-only v3 contract;
+Proposed implementation contract, 2026-09-29; spec-pass decisions recorded 2026-10-03
+(state composition, float16 loading, timeout handling, calibration refusal and the
+enablement rule). Replaces the vector-only v3 contract;
 Git history retains it. Owned by [013](../spec.md). This is ModernBERT with a decision
 head. Nemotron embeddings, Laya services and the historical `eval.public.jsonl` are
 not inputs. [Feasibility evidence](../../../docs/review/feasibility.md) distinguishes
@@ -32,6 +34,8 @@ normalization epsilon 1e-5. Head: two pre-normalized transformer encoder layers,
 then LayerNorm→Linear(1024,1024)→GELU→Linear(1024,1). Preserve biases and checkpoint
 names/shapes exactly. Reject missing/extra/shape-invalid tensors except the explicitly
 unused `act_head.*` and reference `temperature` tensors. Do not execute checkpoint code.
+The checkpoint's float16 tensors are upcast to float32 at load; computation stays
+float32, and the source dtype plus that upcast belong to `model_function_sha256`.
 
 Initial supported adaptation freezes ModernBERT and updates the two head layers,
 choice type embedding and scorer. Keep encoder in eval mode. Head dropout is 0.1 in
@@ -47,12 +51,18 @@ No runtime menu of training backends or hidden change of trainable parameters.
 
 Supported family `retrieval-route-v1` has question `Choose a retrieval strategy.` and
 two options, stable IDs `search`, `graph`, with descriptions `find source text` and
-`follow symbol relationships`. The caller supplies a UTF-8 `state` containing the exact
-admitted task/query context, <=16 KiB, and the ordered two option IDs. Neither option
-may be omitted/duplicated. State is data, never a path to open. Explicit user strategy,
+`follow symbol relationships`. The input is a UTF-8 `state` and the ordered two option
+IDs. Neither option may be omitted/duplicated. The core composes `state` from three
+parts, LF-separated in this order: the admitted query text; `graph: <coverage>`, the
+current graph coverage status (005's `complete` or `partial`); and up to three lexical
+locator lines `<path> <kind> <qualified name>` naming the top three delivery units of
+001's two-tier lexical ranking, without handles or source text (a block or unnamed
+unit renders its kind alone, as in 001's v2 labels). A feedback row stores the exact
+state the policy saw. State is data, never a path to open. Explicit user strategy,
 no current graph, busy/unavailable policy or insufficient time uses deterministic
-routing without a model call. Graph availability is checked by the core, not inferred
-from the state. No automatic transcript or source-document inclusion.
+routing without a model call. Graph availability is checked by the core before state
+is built; the coverage line is model input, not the availability gate. No automatic
+transcript or source-document inclusion.
 
 Render with pinned tokenizer: `[CLS] choice question: Choose a retrieval strategy.
 [SEP] [MASK] <option0>: <description0> [MASK] <option1>: <description1> [SEP] <state>
@@ -61,12 +71,15 @@ option separately with `add_special_tokens=false`; insert special IDs explicitly
 Replace literal mask-token strings in state with one space before tokenization.
 Retain original state and rendered-input digest. Record both marker positions.
 Maximum 1024 tokens including specials, header <=256, each rendered option <=48;
-**refuse**, never truncate, on any limit. No padding for batch size one. Future batched
+**refuse**, never truncate, on any limit. State is also capped at 16 KiB, but only as a
+guard checked before tokenization; the 1024-token total is the binding limit, so a
+state under 16 KiB can still be refused. No padding for batch size one. Future batched
 implementation needs padding/mask parity before using it. Option permutation changes
 input identity; labels map by stable option ID, never by an assumed fixed index.
 
-Pin tokenizer JSON/config hashes, all special IDs, render version, architecture,
-starting weights and trainable parameter set in `model_function_sha256`. Prepared
+Pin tokenizer JSON/config hashes, all special IDs, render version (including the state
+composition above), architecture, starting weights, checkpoint dtype and its float32
+upcast, and trainable parameter set in `model_function_sha256`. Prepared
 rows store exact IDs and markers, plus `input_sha256 = SHA256(compact JSON
 [family,state,ordered_option_ids])`. Tokenized arrays are checked against the exact
 renderer on preparation/read-back. No 2048-dimensional feature matrix, query-vector
@@ -166,6 +179,11 @@ ties select lower temperature. Nonfinite/empty calibration refuses. Evaluate raw
 and calibrated probabilities, never alter model weights on held-out data.
 Use the fitted scalar from the candidate manifest; reject any identity mismatch.
 It is the only calibration authority for this family; no upstream type/bucket/language overrides.
+Candidate validation refuses a candidate that carries an inherited
+`temperature_by_options` (or any other per-option or bucket temperature) or whose
+fitted scalar is below 0.5. Laya's shipped `choice:11+` temperature of 0.1006, an
+over-confidence defect (Laya issue #394, recorded in the source map), is the fixture
+for this refusal.
 Publish it with the candidate and verify the same probabilities after export/reload.
 Changing the fitted scalar invalidates the evaluation report/config identity.
 
@@ -199,9 +217,11 @@ invalidates candidate eligibility. Report mean negative log likelihood and 15-bi
 as diagnostics on valid predictions (first bin [0,1/15], then (lo,hi]); give denominators
 and error counts. These diagnostics do not add a separate slow release gate.
 
-Normal policy stays off until checked agent tasks justify added latency and total cost;
-count preparation/training, context bytes/tokens and actual provider usage separately.
-Do not claim money savings when usage/pricing is unknown.
+Normal policy stays off. It may be enabled only after a comparison on the same checked
+agent tasks, with provider usage from 003's `foundry usage import`, shows equal task
+correctness and lower total provider tokens with the policy than without it. Count
+preparation/training, context bytes/tokens and actual provider usage separately, and
+report added latency. Do not claim money savings when usage/pricing is unknown.
 
 Candidate contains schema-4 manifest, head.safetensors, exact base encoder/tokenizer
 identities, recipe, calibration, contribution IDs and evaluation report. Head is float32;
@@ -240,12 +260,21 @@ the still-unimplemented v4/IPC-v2 proposal; no deployed reader migration is impl
 One active prediction, zero waiting. Load ceiling 30 seconds outside requests;
 prediction ceiling min(2000 ms, remaining 003 deadline). These are supervised failure
 bounds, not latency promises. Busy returns deterministic fallback before dispatch.
-Timeout/malformed/wrong-identity/dead worker triggers owned-tree termination and marks
-policy unavailable until explicit restart; never release capacity while work survives.
+A prediction timeout returns the deterministic fallback with reason `policy_timeout`
+for that request only; the policy stays enabled. The slot stays occupied until the
+timed-out work actually completes or the worker is terminated, so later requests
+receive busy fallback; capacity is never released while work survives. A late reply to
+a timed-out request is discarded, never delivered. Only a valid reply within the
+ceiling resets the consecutive-timeout count; busy fallback and other fallbacks are
+not predictions and neither count nor reset it. Three consecutive prediction timeouts
+terminate the owned worker tree and mark the policy unavailable until explicit
+restart. A malformed or wrong-identity reply or a dead worker remains a terminal
+failure: owned-tree termination and policy unavailable until explicit restart.
 Owner EOF terminates worker. Late replies cannot cross identities. Exact tokenizer
 preflight runs before encoder; oversized state/token input uses named baseline fallback.
 Combined model residency must pass deployment's aggregate budget before enabling both
-009 and 013; separate process limits do not prove this. No automatic unload/reload loop.
+009 and 013; separate process limits do not prove this. No automatic unload/reload or
+restart loop.
 
 CLI exits: 0 completed/no_new_data (named), 2 invalid/preflight, 3 busy,
 1 execution/artifact failure, 130 cooperative cancellation. Diagnostics are bounded and
