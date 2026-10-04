@@ -47,8 +47,10 @@ const CONTEXT_OUTLINES: usize = 3;
 /// Context graph expansion examines at most this many rows per seed and
 /// direction.
 const CONTEXT_GRAPH_EDGES: usize = 32;
-/// The META value naming the current search index format.
-const SEARCH_SCHEMA: &str = "2";
+/// The META value naming the current search index format. `"3"` adds the
+/// unit's own start (its head) and the leading-run unit ranges (context-v2
+/// § Unit forest).
+const SEARCH_SCHEMA: &str = "3";
 const SEARCH_SCHEMA_REASON: &str =
     "search_schema: search index format changed; run `foundry repair-index`";
 
@@ -441,6 +443,7 @@ struct Fields {
     start: Field,
     end: Field,
     unit_start: Field,
+    unit_head: Field,
     unit_end: Field,
     kind: Field,
     lang: Field,
@@ -642,7 +645,7 @@ fn search_schema() -> Schema {
     schema.add_text_field("path", STRING | STORED);
     schema.add_text_field("dir", STRING);
     schema.add_text_field("hash", STRING | STORED);
-    for field in ["start", "end", "unit_start", "unit_end"] {
+    for field in ["start", "end", "unit_start", "unit_head", "unit_end"] {
         schema.add_u64_field(field, STORED);
     }
     schema.add_text_field("kind", STRING | STORED);
@@ -668,6 +671,7 @@ fn fields_of(schema: &Schema) -> Fields {
         start: field("start"),
         end: field("end"),
         unit_start: field("unit_start"),
+        unit_head: field("unit_head"),
         unit_end: field("unit_end"),
         kind: field("kind"),
         lang: field("lang"),
@@ -810,6 +814,7 @@ fn search_documents(fields: &Fields, path: &str, hash: &str, body: &str) -> Vec<
             out.add_u64(fields.start, document.start as u64);
             out.add_u64(fields.end, document.end as u64);
             out.add_u64(fields.unit_start, unit.start as u64);
+            out.add_u64(fields.unit_head, unit.head as u64);
             out.add_u64(fields.unit_end, unit.end as u64);
             out.add_text(fields.kind, unit.kind.as_str());
             if let Some(lang) = lang {
@@ -874,6 +879,9 @@ struct Candidate {
     hash: String,
     start: u64,
     unit_start: u64,
+    /// The delivery unit's own start, after its leading run: a tier-1 hit's
+    /// best line.
+    unit_head: u64,
     unit_end: u64,
     kind: String,
     lang: Option<String>,
@@ -1754,6 +1762,7 @@ impl Engine {
                 hash: text(fields.hash).ok_or_else(invalid)?,
                 start: number(fields.start)?,
                 unit_start: number(fields.unit_start)?,
+                unit_head: number(fields.unit_head)?,
                 unit_end: number(fields.unit_end)?,
                 kind: text(fields.kind).ok_or_else(invalid)?,
                 lang: text(fields.lang),
@@ -1854,13 +1863,23 @@ impl Engine {
                 )));
             }
             let text = &body[from..to];
-            let start_line = body.as_bytes()[..from]
-                .iter()
-                .filter(|&&b| b == b'\n')
-                .count() as u64
-                + 1;
+            let line_of = |at: usize| {
+                body.as_bytes()[..at]
+                    .iter()
+                    .filter(|&&b| b == b'\n')
+                    .count() as u64
+                    + 1
+            };
+            let start_line = line_of(from);
+            let head = candidate.unit_head as usize;
+            if !(from <= head && head < to) {
+                return Err(FoundryError::CorruptStore(format!(
+                    "search document head outside its unit in {}",
+                    candidate.path
+                )));
+            }
             let line = if candidate.tier == 1 {
-                start_line
+                line_of(head)
             } else {
                 start_line + best_line_index(text, &wanted)
             };

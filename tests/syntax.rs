@@ -1146,3 +1146,272 @@ fn a_python_unit_range_ending_before_its_terminator_folds_its_interior() {
         }
     }
 }
+
+/// The declaration start of the unit whose range text begins at `text`.
+fn decl_of(source: &str, lang: Lang, text: &str) -> usize {
+    let start = source.find(text).unwrap();
+    syntax::units(source, lang)
+        .into_iter()
+        .find(|unit| unit.start == start)
+        .unwrap_or_else(|| panic!("no unit starts at {text:?}"))
+        .decl
+}
+
+/// Leading run (context-v2 § Unit forest, 2026-10-04 amendment): Rust outer
+/// doc comments and attributes join the unit; inner docs, plain comments, a
+/// blank line and a comment that does not start its line stop the run.
+#[test]
+fn rust_outer_docs_and_attributes_join_their_unit() {
+    let source = "\
+//! Module docs stay outside.
+use std::fmt;
+
+/// The point.
+/// Two lines.
+#[derive(Debug)]
+pub struct Point {
+    x: u8,
+}
+
+/// Detached by a blank line.
+
+fn detached() {}
+fn trailing() {} /// A same-line comment.
+fn after_trailing() {}
+// A plain comment.
+fn plain() {}
+#[inline]
+/// Docs after the attribute.
+fn attribute_first() {}
+";
+    assert_eq!(
+        units(source, Lang::Rust),
+        [
+            named("struct", "Point", span(source, "/// The point.", "\n}")),
+            named("fn", "detached", "fn detached() {}"),
+            named("fn", "trailing", "fn trailing() {}"),
+            named("fn", "after_trailing", "fn after_trailing() {}"),
+            named("fn", "plain", "fn plain() {}"),
+            named(
+                "fn",
+                "attribute_first",
+                span(source, "#[inline]", "fn attribute_first() {}")
+            ),
+        ]
+    );
+    assert_eq!(
+        decl_of(source, Lang::Rust, "/// The point."),
+        source.find("#[derive(Debug)]").unwrap(),
+        "the first attribute starts the declaration"
+    );
+    assert_eq!(
+        decl_of(source, Lang::Rust, "#[inline]"),
+        source.find("#[inline]").unwrap()
+    );
+    assert_eq!(
+        decl_of(source, Lang::Rust, "fn plain()"),
+        source.find("fn plain()").unwrap(),
+        "without a run the declaration starts at the node"
+    );
+    assert_tiles(source, Some(Lang::Rust));
+}
+
+/// Javadoc, JSDoc and Go doc comments join their unit; other comments, a
+/// non-doc block comment and Python/C comments do not.
+#[test]
+fn javadoc_jsdoc_and_go_comments_join_their_unit_but_c_and_python_do_not() {
+    let java = "\
+/** Javadoc for A. */
+public class A {
+    // Plain.
+    void plain() {}
+    /**
+     * Javadoc for m.
+     */
+    @Override
+    public String m() { return \"\"; }
+}
+";
+    assert_eq!(
+        units(java, Lang::Java),
+        [
+            named("class", "A", java.trim_end()),
+            named("method", "A.plain", "void plain() {}"),
+            named(
+                "method",
+                "A.m",
+                span(java, "/**\n     * Javadoc for m.", "return \"\"; }")
+            ),
+        ]
+    );
+    assert_eq!(
+        decl_of(java, Lang::Java, "/**\n     * Javadoc for m."),
+        java.find("@Override").unwrap()
+    );
+
+    let ts = "\
+/** Adds. */
+export function add(a: number, b: number) {
+  return a + b;
+}
+// Not a doc.
+function sub() {}
+/* Not JSDoc. */
+function mul() {}
+";
+    for lang in [Lang::TypeScript, Lang::JavaScript] {
+        let source = if lang == Lang::JavaScript {
+            ts.replace("a: number, b: number", "a, b")
+        } else {
+            ts.to_owned()
+        };
+        assert_eq!(
+            units(&source, lang),
+            [
+                named("fn", "add", span(&source, "/** Adds. */", "\n}")),
+                named("fn", "sub", "function sub() {}"),
+                named("fn", "mul", "function mul() {}"),
+            ],
+            "{lang:?}"
+        );
+    }
+
+    let go = "\
+package p
+
+// Add adds.
+// Second line.
+func Add(a, b int) int {
+\treturn a + b
+}
+
+// Detached.
+
+func Sub() {}
+";
+    assert_eq!(
+        units(go, Lang::Go),
+        [
+            named("fn", "Add", span(go, "// Add adds.", "\n}")),
+            named("fn", "Sub", "func Sub() {}"),
+        ]
+    );
+
+    let python = "# A comment.\ndef f():\n    pass\n";
+    assert_eq!(
+        units(python, Lang::Python),
+        [named("fn", "f", "def f():\n    pass")]
+    );
+    let c = "/** Doc. */\nint f(void) { return 0; }\n";
+    assert_eq!(
+        units(c, Lang::C),
+        [named("fn", "f", "int f(void) { return 0; }")]
+    );
+}
+
+/// A leading documentation run of at least 2 lines folds in the signature
+/// form; the attribute that starts the declaration stays visible; a single
+/// doc line is kept as text.
+#[test]
+fn leading_documentation_of_two_lines_folds_in_the_signature_form() {
+    let source = "\
+/// First.
+/// Second.
+/// Third.
+#[inline]
+pub fn documented() {
+    let a = 1;
+    let b = 2;
+    let c = 3;
+    let d = 4;
+}
+/// Only.
+fn one() {
+    let a = 1;
+    let b = 2;
+    let c = 3;
+    let d = 4;
+}
+";
+    let unit = |text: &str| {
+        syntax::units(source, Lang::Rust)
+            .into_iter()
+            .find(|unit| source[unit.start..].starts_with(text))
+            .unwrap()
+    };
+    let documented = unit("/// First.");
+    let segments = syntax::outline(source, Lang::Rust, documented.start..documented.end, 0, 0);
+    assert_eq!(
+        syntax::render_outline(source, &segments),
+        "⋯ 1-3\n#[inline]\npub fn documented() {\n    ⋯ 6-9\n}"
+    );
+    let one = unit("/// Only.");
+    let segments = syntax::outline(source, Lang::Rust, one.start..one.end, 0, 0);
+    assert_eq!(
+        syntax::render_outline(source, &segments),
+        "/// Only.\nfn one() {\n    ⋯ 13-16\n}"
+    );
+}
+
+/// Leading-run boundaries: any Unicode whitespace may indent a run node or
+/// fill a gap (NBSP and form feed are JavaScript whitespace), an empty `/**/`
+/// still begins `/**`, and Rust inner docs or inner attributes directly above
+/// an item never attach. `start`, `decl` and `head` are the run's start, the
+/// first attribute and the item's own start.
+#[test]
+fn leading_run_boundaries_whitespace_empty_jsdoc_and_inner_rust_items() {
+    for source in [
+        "/** Quasar routing. */\u{a0}\nexport function route() {}\n",
+        "\u{c}/** Quasar routing. */\nexport function route() {}\n",
+    ] {
+        assert_eq!(
+            units(source, Lang::JavaScript),
+            [named(
+                "fn",
+                "route",
+                span(source, "/** Quasar", "route() {}")
+            )],
+            "{source:?}"
+        );
+        assert_tiles(source, Some(Lang::JavaScript));
+    }
+
+    let js = "/** Quasar routing. */\n/**/\nexport function route() {}\n";
+    for lang in [Lang::JavaScript, Lang::TypeScript, Lang::Tsx] {
+        assert_eq!(
+            units(js, lang),
+            [named("fn", "route", span(js, "/** Quasar", "route() {}"))],
+            "{lang:?}"
+        );
+    }
+    let java = "/** Doc for A. */\n/**/\nclass A {}\n";
+    assert_eq!(
+        units(java, Lang::Java),
+        [named("class", "A", java.trim_end())]
+    );
+
+    for source in [
+        "//! Inner docs.\nfn f() {}\n",
+        "#![allow(dead_code)]\nfn f() {}\n",
+    ] {
+        let unit = syntax::units(source, Lang::Rust).remove(0);
+        let at = source.find("fn f").unwrap();
+        assert_eq!(
+            (unit.start, unit.decl, unit.head),
+            (at, at, at),
+            "{source:?}"
+        );
+        assert_tiles(source, Some(Lang::Rust));
+    }
+
+    let source = "/// Doc.\n#[inline]\nfn g() {}\n";
+    let unit = syntax::units(source, Lang::Rust).remove(0);
+    assert_eq!(
+        (unit.start, unit.decl, unit.head),
+        (
+            0,
+            source.find("#[inline]").unwrap(),
+            source.find("fn g").unwrap()
+        )
+    );
+}

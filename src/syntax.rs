@@ -174,15 +174,21 @@ impl UnitKind {
 }
 
 /// One unit of the forest. `start..end` is its byte range (a wrapper such as a
-/// decorator, `export` or `template` supplies it); `body` is the `body` field
-/// (else the block/declaration_list child), `None` when the unit has no
-/// elidable interior. Units are stored in source (pre-)order.
+/// decorator, `export` or `template` supplies it, extended backward over its
+/// leading run of documentation comments and attributes); `decl` is its
+/// declaration start, where an outline's signature lines begin: the first
+/// attribute of that run, else `head`. `head` is the node's (or wrapper's)
+/// own start, after the leading run. `body` is the `body` field (else the
+/// block/declaration_list child), `None` when the unit has no elidable
+/// interior. Units are stored in source (pre-)order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unit {
     pub kind: UnitKind,
     pub name: Option<String>,
     pub qname: Option<String>,
     pub start: usize,
+    pub decl: usize,
+    pub head: usize,
     pub end: usize,
     pub body: Option<(usize, usize)>,
     pub parent: Option<usize>,
@@ -194,6 +200,9 @@ pub struct Unit {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeliveryUnit {
     pub start: usize,
+    /// The unit's own start (see [`Unit::head`]): a tier-1 hit's best line;
+    /// `start` for a block.
+    pub head: usize,
     pub end: usize,
     pub kind: UnitKind,
     pub name: Option<String>,
@@ -210,6 +219,8 @@ pub struct Document {
 
 struct Candidate {
     start: usize,
+    decl: usize,
+    head: usize,
     end: usize,
     kind: UnitKind,
     name: Option<String>,
@@ -425,7 +436,7 @@ impl<'a> Outliner<'a> {
                 .filter(|(body_start, body_end)| body_start < body_end)
                 .map(|(body_start, body_end)| {
                     let signature_end = self.signature_end(unit, body_start);
-                    mandatory[self.line_of(unit.start)..=signature_end].fill(true);
+                    mandatory[self.line_of(unit.decl)..=signature_end].fill(true);
                     let closing = self.closing_line(body_end);
                     if let Some(line) = closing {
                         mandatory[line] = true;
@@ -486,6 +497,20 @@ impl<'a> Outliner<'a> {
             }
             push_run(cursor, last, minimum);
         }
+        // A unit's leading documentation before its declaration start is one
+        // elidable span when it has at least 2 lines; it replaces any
+        // block-comment span inside it.
+        let mut docs: Vec<(usize, usize)> = Vec::new();
+        for unit in units.iter().filter(|unit| unit.decl > unit.start) {
+            let first = self.line_of(unit.start);
+            let Some(last) = self.line_of(unit.decl).checked_sub(1) else {
+                continue;
+            };
+            if last > first && !mandatory[first..=last].iter().any(|&m| m) {
+                docs.push((first, last));
+            }
+        }
+        spans.extend_from_slice(&docs);
         spans.sort_unstable();
         let regions = spans.len();
         // Block comments made of whole lines that hide no mandatory line.
@@ -497,6 +522,7 @@ impl<'a> Outliner<'a> {
             if last - first + 1 >= COMMENT_LINES
                 && whole_lines
                 && !mandatory[first..=last].iter().any(|&m| m)
+                && !docs.iter().any(|&(f, l)| f <= first && last <= l)
             {
                 spans.push((first, last));
             }
@@ -662,12 +688,15 @@ fn tree_units(source: &str, lang: Lang, mut extras: Option<&mut Analysis>) -> Ve
     let bytes = source.as_bytes();
     // Iterative pre-order walk: error-recovered trees can be deep. The
     // ancestors of the current node are kept on the heap, because
-    // `Node::parent` re-descends from the root.
+    // `Node::parent` (and so `prev_sibling`) re-descends from the root. Per
+    // depth, `runs` holds the consecutive leading-run nodes (§ Unit forest)
+    // just before the current node at that depth.
     let mut cursor = tree.walk();
     let mut ancestors: Vec<tree_sitter::Node> = Vec::new();
+    let mut runs: Vec<Vec<(tree_sitter::Node, Leading)>> = vec![Vec::new()];
     loop {
         let node = cursor.node();
-        if let Some(candidate) = candidate(lang, node, &ancestors, bytes) {
+        if let Some(candidate) = candidate(lang, node, &ancestors, &runs, bytes) {
             out.push(candidate);
         } else if let Some(extras) = extras.as_deref_mut() {
             if is_member_signature(lang, node) {
@@ -682,9 +711,17 @@ fn tree_units(source: &str, lang: Lang, mut extras: Option<&mut Analysis>) -> Ve
         }
         if cursor.goto_first_child() {
             ancestors.push(node);
+            runs.push(Vec::new());
             continue;
         }
         loop {
+            // The current node's subtree is done: it now precedes its next sibling.
+            let finished = cursor.node();
+            let run = runs.last_mut().expect("one run per depth");
+            match leading_kind(lang, finished, bytes) {
+                Some(kind) => run.push((finished, kind)),
+                None => run.clear(),
+            }
             if cursor.goto_next_sibling() {
                 break;
             }
@@ -692,6 +729,7 @@ fn tree_units(source: &str, lang: Lang, mut extras: Option<&mut Analysis>) -> Ve
                 return out;
             }
             ancestors.pop();
+            runs.pop();
         }
     }
 }
@@ -749,19 +787,100 @@ fn candidate(
     lang: Lang,
     node: tree_sitter::Node,
     ancestors: &[tree_sitter::Node],
+    runs: &[Vec<(tree_sitter::Node, Leading)>],
     source: &[u8],
 ) -> Option<Candidate> {
     let kind = unit_kind(lang, node)?;
     let name = unit_name(lang, node, source);
     let body = body_range(lang, node);
     let outer = outermost_wrapper(lang, node, ancestors);
+    // `outer` sits at the depth of the outermost wrapper (or of `node`).
+    let wrappers = ancestors
+        .iter()
+        .rev()
+        .take_while(|ancestor| is_wrapper(lang, ancestor.kind()))
+        .count();
+    let (start, decl) = leading_run(outer, &runs[ancestors.len() - wrappers], source);
     Some(Candidate {
-        start: outer.start_byte(),
+        start,
+        decl,
+        head: outer.start_byte(),
         end: outer.end_byte(),
         kind,
         name,
         body,
     })
+}
+
+/// What a node can be in a unit's leading run (context-v2 § Unit forest).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Leading {
+    Doc,
+    Attribute,
+}
+
+fn leading_kind(lang: Lang, node: tree_sitter::Node, source: &[u8]) -> Option<Leading> {
+    let doc_block = || {
+        node.utf8_text(source)
+            .is_ok_and(|text| text.starts_with("/**"))
+    };
+    match (lang, node.kind()) {
+        (Lang::Rust, "attribute_item") => Some(Leading::Attribute),
+        (Lang::Rust, "line_comment" | "block_comment") => {
+            node.child_by_field_name("outer").map(|_| Leading::Doc)
+        }
+        (Lang::Java, "block_comment")
+        | (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "comment") => {
+            doc_block().then_some(Leading::Doc)
+        }
+        (Lang::Go, "comment") => Some(Leading::Doc),
+        _ => None,
+    }
+}
+
+/// The start of `outer`'s leading run and its declaration start: the first
+/// attribute of the run, else `outer`'s start. `run` holds the consecutive
+/// leading-run nodes before `outer`; each counted node starts its line and is
+/// separated from the next node only by whitespace without a blank line;
+/// without a run both are `outer`'s start.
+fn leading_run(
+    outer: tree_sitter::Node,
+    run: &[(tree_sitter::Node, Leading)],
+    source: &[u8],
+) -> (usize, usize) {
+    let mut start = outer.start_byte();
+    let mut decl = start;
+    let mut next = outer;
+    for &(previous, kind) in run.iter().rev() {
+        let line_start = source[..previous.start_byte()]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |at| at + 1);
+        // Any Unicode whitespace (NBSP and form feed are legal in these
+        // grammars); node bounds and the byte after an LF are char boundaries.
+        let is_space = |bytes: &[u8]| {
+            std::str::from_utf8(bytes).is_ok_and(|text| text.chars().all(char::is_whitespace))
+        };
+        let starts_line = is_space(&source[line_start..previous.start_byte()]);
+        let gap_is_space = is_space(&source[previous.end_byte()..next.start_byte()]);
+        // A node that ends with its LF ends on the row before its end position.
+        let end = previous.end_position();
+        let last_row = if end.column == 0 && previous.end_byte() > previous.start_byte() {
+            end.row.saturating_sub(1)
+        } else {
+            end.row
+        };
+        let no_blank_line = next.start_position().row <= last_row + 1;
+        if !(starts_line && gap_is_space && no_blank_line) {
+            break;
+        }
+        start = previous.start_byte();
+        if kind == Leading::Attribute {
+            decl = start;
+        }
+        next = previous;
+    }
+    (start, decl)
 }
 
 /// The outermost of the wrappers (decorator, `export`, `template`) directly
@@ -969,6 +1088,8 @@ fn markdown_sections(source: &str) -> Vec<Candidate> {
             let name = cut_utf8(text.trim(), NAME_BYTES);
             Candidate {
                 start: *start,
+                decl: *start,
+                head: *start,
                 end,
                 kind: UnitKind::Section,
                 name: (!name.is_empty()).then(|| name.to_owned()),
@@ -1038,6 +1159,8 @@ fn forest(source: &str, lang: Lang, mut candidates: Vec<Candidate>) -> Vec<Unit>
             name: candidate.name,
             qname,
             start: candidate.start,
+            decl: candidate.decl,
+            head: candidate.head,
             end: candidate.end,
             body: candidate.body,
             parent,
@@ -1077,6 +1200,7 @@ fn qualified(prefix: Option<&str>, separator: &str, name: &str) -> String {
 fn delivery(unit: &Unit) -> DeliveryUnit {
     DeliveryUnit {
         start: unit.start,
+        head: unit.head,
         end: unit.end,
         kind: unit.kind,
         name: unit.name.clone(),
@@ -1146,6 +1270,7 @@ fn blocks(source: &str, start: usize, end: usize, out: &mut Vec<Document>) {
     for (block_start, block_end) in merged {
         let unit = DeliveryUnit {
             start: block_start,
+            head: block_start,
             end: block_end,
             kind: UnitKind::Block,
             name: None,

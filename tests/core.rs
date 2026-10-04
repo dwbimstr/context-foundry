@@ -1889,3 +1889,42 @@ fn an_outline_no_budget_can_deliver_is_unsupported_mode_not_a_false_hint() {
             .is_ok()
     );
 }
+
+/// 001 T005 leading-run amendment: a definition's doc comment and attribute
+/// join its unit (so a question worded like the doc finds it), while a tier-1
+/// hit's best line stays the definition's own line, not a doc or attribute.
+#[test]
+fn a_documented_definition_owns_its_doc_and_tier_one_names_its_definition() {
+    const DOCUMENTED: &str = "use std::fmt;\n\n/// Kestrel ledger merging.\n/// Second line.\n#[derive(Default)]\npub struct LedgerMerge {\n    seen: u8,\n}\n";
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (_store, mut engine) = setup(&root);
+    engine.replace_source("src/ledger.rs", DOCUMENTED).unwrap();
+    drain(&mut engine);
+    let control = Control::unbounded();
+    let start = DOCUMENTED.find("/// Kestrel").unwrap() as u64;
+    let end = DOCUMENTED.rfind('}').unwrap() as u64 + 1;
+
+    let exact = engine
+        .search_candidates("LedgerMerge", None, 10, &control)
+        .unwrap();
+    let hit = &exact.items[0];
+    assert_eq!(hit.tier, 1);
+    assert_eq!((source(hit).start, source(hit).end), (start, end));
+    assert_eq!((hit.start_line, hit.end_line), (3, 8));
+    assert_eq!(
+        hit.line, 6,
+        "the best line is the definition, not its attribute"
+    );
+
+    let worded = engine
+        .search_candidates("kestrel ledger", None, 10, &control)
+        .unwrap();
+    let first = &worded.items[0];
+    assert_eq!(first.tier, 2);
+    assert_eq!(
+        (source(first).start, source(first).end),
+        (start, end),
+        "the doc's words find the documented unit, not the preceding block"
+    );
+}
