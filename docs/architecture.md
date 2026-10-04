@@ -151,9 +151,10 @@ flowchart TD
 The table retains measured v1 payloads beside the v2 request defaults and full-tranche
 targets, not full-tranche acceptance. Separate fixture measurements are recorded in
 [validation](validation.md): handles 33 versus 94 o200k tokens (68 versus 207 bytes,
-T004), and the serialized five-tool catalog 661 tokens after 007 T001 added `root`/
-`roots` (598 after T005/T006 grew the `search` and `retrieve` schemas; 568 at T004; v1
-711; ceiling 800). The twelve-query payload comparison and real-host runs belong to
+T004), and the serialized catalog: 793 tokens for six tools after 008 added `memory`
+and `include_memory`; 661 for five after 007 T001 added `root`/`roots` (598 after
+T005/T006 grew the `search` and `retrieve` schemas; 568 at T004; v1 711; ceiling 800).
+The twelve-query payload comparison and real-host runs belong to
 003 T005.
 
 | Agent intent | Tool and v2 form | v1 measured 2026-10-03 (text-block o200k tokens) | v2 request default | v2 target (not a measurement) |
@@ -487,15 +488,17 @@ processes are not a supported serving topology; the optional shared HTTP owner (
 serves several MCP clients through that one owner. Do not add process retries and
 lock stealing as a substitute for one serving owner.
 
-The implemented store schema is version 2 (001 T001, 2026-10-01): `upgrade-store --to 2`
-is the explicit v1→v2 transaction adding revision/scan/repair metadata, and other
-versions are refused. There is no predecessor-store reader or
+The implemented store schema is version 3 (008, 2026-10-04). `upgrade-store --to 3` is
+the one explicit transaction from v1 or v2. It applies the v1→v2 revision/scan/repair
+metadata (001 T001), then adds the memory table and its revision counter, and types
+every pending-index key (`source:`/`memory:`). Other targets are refused, and so are
+older readers. There is no predecessor-store reader or
 automatic migration. The first compatibility promise is source rebuildability;
 feedback must be exported before replacing an incompatible store. A future schema
 change must either migrate preserved user data explicitly or refuse with instructions.
 Planned feature schemas all use this one upgrade owner; toggling a feature never
 changes which other features' durable records survive. The approved search index v2
-(001 T005) is derived state: the store schema stays 2, and a store whose search index
+(001 T005) is derived state: the store schema is unaffected, and a store whose search index
 predates v2 reports `repair_required` until an explicit `repair-index`.
 
 ## Owned learning and isolation

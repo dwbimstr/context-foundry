@@ -40,6 +40,60 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 008 explicit memory — T001 and T002, 2026-10-04
+
+Locally implemented and verified, **unpushed and unreleased**.
+- **Authors:** Z.ai GLM-5.3 (implementer), plus captain integration fixes.
+- **Review:** cross-lab by OpenAI GPT-6.1 Sol in three rounds:
+  - REVISE: 8 Majors, including pending-key migration loss and enabled context reading
+    two snapshots;
+  - REVISE: 5 Majors (full link validation, memory-ID check in the combined read, a
+    swallowed multi-root error, remaining source/memory count consumers, public search
+    bounds), and an export byte-cut test that had to actually cut;
+  - SHIP.
+
+- **Gates on the integrated main tree.**
+  - Source manifest `f6151644…5cdf`, the SHA-256 of sorted file hashes over `src`,
+    `tests` (minus the frozen economics corpus), `Cargo.toml` and `Cargo.lock`.
+  - `cargo fmt --check` and `cargo clippy --all-targets -D warnings` pass.
+  - The full suite: **287 passed, 0 failed, 1 ignored** (the existing payload report),
+    and all recovery scenarios passed.
+  - Rust 1.90.0 `check` and `clippy -D warnings` pass.
+- **`tests/memory.rs` (29 tests).** It covers every T001/T002 Verification bullet and
+  the review regressions:
+  - put/update/conflict/idempotent revisions; refusals consume no revision;
+  - wrong workspace on every op;
+  - stale/missing links, with retrieve-grade validation inside the write transaction;
+  - source-only search/context exclusion; compact `mem:` lines cut at a UTF-8 boundary
+    within the budget;
+  - `--no-memory`;
+  - a broken lexical index with get/export still working;
+  - `corrupt_memory` isolation, including an ID mismatch in the combined read;
+  - the v2→v3 upgrade, including a `a`/`source:a`/`source:source:a` prefix chain and
+    populated graph/scan rows, interrupted before and after commit;
+  - a `memory:x` path versus record `x`;
+  - re-index and repair;
+  - export paging, including a 4 MiB byte cut with cursor resume;
+  - forget/recreate without revision reuse; `revision_exhausted`;
+  - content-free reports; training exclusion;
+  - multi-root selection and corruption propagation;
+  - namespace-specific pending counts; CLI/MCP parity.
+- **Catalog.** Measured on the integrated debug binary with `tiktoken-rs` 0.12.1
+  `o200k_base`: `tools/list` is **793** tokens for six tools and **669** with
+  `--no-memory`. The ceiling is 800.
+- **Compatibility.**
+  - Store schema 3: `upgrade-store --to 3` from v1 or v2 in one transaction; `--to 2`
+    and older readers refuse.
+  - Rollback means restoring a pre-upgrade store copy and the previous binary.
+  - The search schema is unchanged, so no forced repair.
+- **Integration notes.** The implementer repeatedly replaced existing lines instead of
+  inserting. The captain restored `pub mod laya`, `use crate::graph`, the
+  `RETRIEVE_BEFORE_FINAL_READ` fault point, `scan_status` initialization,
+  `open_table(PENDING)` and a displaced doc comment. The captain also routed
+  `#[tool_handler]` through the instance router, so `--no-memory` really removes the
+  tool. Every removed line in the final diff was audited by the captain and the
+  reviewer.
+
 ## Token-economics remainder — 003 T005 and 007 T001, 2026-10-04
 
 Locally implemented and verified; committed on main as `bd1d890` (001 T005 amendment),

@@ -28,7 +28,7 @@ implementing MCP. Limits are selected engineering bounds, not measured capacity 
 bytes. It scopes references to a logical local workspace, not a global registration
 service. A moved root requires a new store; no implicit rebind. A copied store retains
 its binding. `source_revision` is a checked u64 incremented atomically for each source
-add/change/delete, beginning at 0 on schema-2 initialization. Search refresh, graph
+add/change/delete, beginning at 0 when the store is initialized. Search refresh, graph
 import, memory and feedback do not increment it. Results identify the revision they
 read; it is not a claim about unsaved/unindexed filesystem changes.
 
@@ -187,7 +187,8 @@ errors keep `{code,message,retryable}` of at most 1024 bytes; `connect`, `usage`
 Line 1 joins these segments with ` · ` (space, U+00B7, space), in this order; optional
 segments appear only when not at their default:
 
-1. `foundry search`, `foundry context`, `foundry retrieve` or `foundry references` (005);
+1. `foundry search`, `foundry context`, `foundry retrieve`, `foundry references` (005)
+   or `foundry memory` (008 memory search);
 2. `r<source_revision>` for a single-root owner, or the per-root segments of a
    multi-root owner defined by [007](../../007-multi-workspace-context/spec.md);
 3. `scan:<state>` when the scan state is not `complete`;
@@ -520,8 +521,10 @@ new stores and, for rebuilds, in the same authoritative transaction that clears
 Open also checks the actual Tantivy field set. A missing or other value, or a field
 mismatch, makes status report `repair_required` with reason `search_schema` and makes
 search/context fail with `repair_required` ("search index format changed; run
-`foundry repair-index`"). Ordinary opens never repair or write. The store schema stays
-2; retrieve, status and exports keep working through the authoritative-only open.
+`foundry repair-index`"). Ordinary opens never repair or write. The search format is
+independent of the store schema. That schema has been 3 since 008, whose upgrade adds
+the memory table and types the pending keys; retrieve, status and exports keep working
+through the authoritative-only open.
 
 ## Outlines and forms
 

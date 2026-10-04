@@ -129,16 +129,17 @@ pub fn quarantine_dirs(store: &Path) -> Vec<std::path::PathBuf> {
 pub type Snapshot = BTreeMap<&'static str, Vec<(String, String)>>;
 
 /// Tables whose rows are authoritative knowledge (not scan/pending/meta bookkeeping).
-pub const KNOWLEDGE_TABLES: [&str; 6] = [
+pub const KNOWLEDGE_TABLES: [&str; 7] = [
     "sources",
     "chunks",
     "feedback",
     "provider_bundles",
     "edges_out",
     "edges_in",
+    "memory",
 ];
 
-const TABLES: [&str; 8] = [
+const TABLES: [&str; 9] = [
     "sources",
     "chunks",
     "pending_index",
@@ -147,6 +148,7 @@ const TABLES: [&str; 8] = [
     "scan_seen",
     "provider_bundles",
     "edges_out",
+    "memory",
 ];
 
 pub fn snapshot(dir: &Path) -> Snapshot {
@@ -354,6 +356,74 @@ pub fn mcp_success(application: &str) -> String {
 pub fn mcp_error(application: &str) -> String {
     serde_json::json!({"content": [{"type": "text", "text": application}], "isError": true})
         .to_string()
+}
+
+/// Build a schema-2 store as the previous binary wrote it: one source
+/// (`kept.rs`) whose pending index work is under the UNTYPED raw-path key, one
+/// opted-in feedback record and no memory state — the exact input of the
+/// v2 -> v3 upgrade. `root` binds the workspace (with its `workspace_id`).
+pub fn craft_v2_store(dir: &Path, root: Option<&Path>) {
+    craft_v1_store(dir, root);
+    // A populated graph row: preservation assertions must not be vacuous.
+    insert_raw_edge(
+        dir,
+        "kept.rs",
+        r#"{"provider":"fixture","revision":"r1","edge":"kept -> kept"}"#,
+    );
+    write_store(dir, |tx| {
+        let mut meta = tx.open_table(META).unwrap();
+        meta.insert("schema", "2").unwrap();
+        meta.insert("source_revision", "3").unwrap();
+        meta.insert("scan_id", "1").unwrap();
+        meta.insert("scan_status", "complete").unwrap();
+        let bound = meta.get("workspace").unwrap().map(|v| v.value().to_owned());
+        if let Some(bound) = bound {
+            meta.insert("workspace_id", crate::digest(bound.as_bytes()).as_str())
+                .unwrap();
+        }
+        tx.open_table(TableDefinition::<&str, &str>::new("scan_seen"))
+            .unwrap();
+    });
+    // Graph, scan_seen and a prefix chain of pending keys: the upgrade must
+    // preserve every row and migrate every key, including a raw `source:a`
+    // whose typed destination another raw key also maps onto.
+    insert_raw_edge(
+        dir,
+        "kept.rs",
+        r#"{"provider":"fixture","revision":"r1","from":{"path":"kept.rs","line":1,"symbol":"kept","hash":"h"},"to":{"path":"kept.rs","line":1,"symbol":"kept","hash":"h"},"kind":"calls","evidence":"manual"}"#,
+    );
+    write_store(dir, |tx| {
+        tx.open_table(TableDefinition::<&str, &str>::new("scan_seen"))
+            .unwrap()
+            .insert("kept.rs", "1")
+            .unwrap();
+        tx.open_table(TableDefinition::<&str, &str>::new("provider_bundles"))
+            .unwrap()
+            .insert("fixture", r#"{"provider":"fixture","revision":"r1"}"#)
+            .unwrap();
+        let mut pending = tx
+            .open_table(TableDefinition::<&str, &str>::new("pending_index"))
+            .unwrap();
+        pending.insert("a", "A").unwrap();
+        pending.insert("source:a", "B").unwrap();
+        pending.insert("source:source:a", "C").unwrap();
+    });
+}
+
+/// Insert an arbitrary (possibly undecodable) row into the `memory` table of a
+/// closed store.
+pub fn write_raw_memory_row(dir: &Path, id: &str, raw: &str) {
+    write_store(dir, |tx| {
+        tx.open_table(TableDefinition::<&str, &str>::new("memory"))
+            .unwrap()
+            .insert(id, raw)
+            .unwrap();
+    });
+}
+
+/// Every `memory` row of a closed store, ordered by id.
+pub fn memory_rows(dir: &Path) -> Vec<(String, String)> {
+    snapshot(dir).remove("memory").unwrap_or_default()
 }
 
 /// Record a different source hash on one stored chunk (a chunk that claims to

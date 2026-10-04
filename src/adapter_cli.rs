@@ -8,8 +8,9 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum AdapterCommand {
-    /// Serve the five MCP tools (search/context/retrieve/index/status): stdio
-    /// by default, or one shared owner at /mcp with --transport streamable-http.
+    /// Serve the six MCP tools (search/context/retrieve/index/status/memory):
+    /// stdio by default, or one shared owner at /mcp with --transport
+    /// streamable-http.
     Mcp {
         /// Repository root; canonicalized and bound once.
         #[arg(long)]
@@ -30,6 +31,10 @@ pub enum AdapterCommand {
         /// references); validated and opened once before serving.
         #[arg(long = "reference", value_name = "ROOT=STORE")]
         reference: Vec<String>,
+        /// Omit the `memory` tool and refuse `include_memory`; records are
+        /// never touched by disabling.
+        #[arg(long = "no-memory")]
+        no_memory: bool,
     },
     /// Inspect repository bootstrap; `--apply` creates/opens the store and indexes baseline source.
     Bootstrap {
@@ -123,6 +128,7 @@ fn parse_loopback_bind(raw: &str) -> FResult<u16> {
     port.parse::<u16>().map_err(|_| invalid())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn serve_mcp(
     store: PathBuf,
     root: PathBuf,
@@ -131,6 +137,7 @@ fn serve_mcp(
     auth_token_env: Option<String>,
     budget: Option<PathBuf>,
     references: Vec<String>,
+    no_memory: bool,
 ) -> AResult<()> {
     let budget = read_budget(budget.as_deref())?;
     let mut parsed = Vec::with_capacity(references.len());
@@ -143,6 +150,7 @@ fn serve_mcp(
         root,
         references,
         budget,
+        no_memory,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -233,6 +241,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             auth_token_env,
             budget,
             reference,
+            no_memory,
         } => serve_mcp(
             store,
             root,
@@ -241,6 +250,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             auth_token_env,
             budget,
             reference,
+            no_memory,
         )?,
         AdapterCommand::Bootstrap {
             root,

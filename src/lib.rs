@@ -37,6 +37,7 @@ pub mod graph;
 pub mod ingest;
 pub mod laya;
 pub mod mcp;
+pub mod memory;
 pub mod receipts;
 pub mod response;
 pub mod roots;

@@ -234,7 +234,7 @@ fn hit_handle(search_text: &str, path: Option<&str>) -> String {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn stdio_lists_exactly_five_tools_and_serves_them() {
+async fn stdio_lists_the_six_tool_catalog_and_serves_it() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path().join("workspace");
     let store = fixture.path().join("store");
@@ -247,8 +247,8 @@ async fn stdio_lists_exactly_five_tools_and_serves_them() {
     names.sort();
     assert_eq!(
         names,
-        vec!["context", "index", "retrieve", "search", "status"],
-        "exactly five tools, stable catalog"
+        vec!["context", "index", "memory", "retrieve", "search", "status"],
+        "the five source tools plus the single memory tool; stable catalog"
     );
 
     let status = client
@@ -257,7 +257,7 @@ async fn stdio_lists_exactly_five_tools_and_serves_them() {
         .unwrap();
     let status_json: serde_json::Value =
         serde_json::from_str(&assert_single_text_success(&status)).unwrap();
-    assert_eq!(status_json["schema"], 2);
+    assert_eq!(status_json["schema"], 3);
 
     let indexed = client
         .call_tool(CallToolRequestParams::new("index"))
@@ -1014,6 +1014,7 @@ async fn start_http(store: &Path, root: &Path) -> HttpServer {
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
+            no_memory: false,
             budget: context_foundry::config::BudgetConfig::default(),
         },
         context_foundry::mcp::HttpOptions {
@@ -1134,7 +1135,7 @@ async fn http_requires_bearer_on_every_method() {
     assert_eq!(oversized.status(), 413, "64 KiB body bound, request-only");
     let after = server.sdk_client().await;
     let tools = after.list_tools(None).await.unwrap();
-    assert_eq!(tools.tools.len(), 5, "other clients unaffected");
+    assert_eq!(tools.tools.len(), 6, "other clients unaffected");
     after.cancel().await.unwrap();
 }
 
@@ -1258,6 +1259,7 @@ async fn session_allowance_exhaustion_refuses_before_dispatch() {
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
+            no_memory: false,
             budget,
         },
         context_foundry::mcp::HttpOptions {
@@ -2314,6 +2316,7 @@ async fn assert_http_refused(token_env: &str, store: &Path, root: &Path) {
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
+            no_memory: false,
             budget: context_foundry::config::BudgetConfig::default(),
         },
         context_foundry::mcp::HttpOptions {
@@ -2530,6 +2533,7 @@ async fn http_sessions_expire_and_admit_again_after_keep_alive() {
             store: store.clone(),
             root: root.clone(),
             references: Vec::new(),
+            no_memory: false,
             budget: context_foundry::config::BudgetConfig::default(),
         },
         context_foundry::mcp::HttpOptions {
@@ -4092,7 +4096,7 @@ async fn chunked_http_bodies_are_accepted_at_exactly_64_kib_and_refused_one_byte
         "the existing session is intact: {status}"
     );
     let other = server.sdk_client().await;
-    assert_eq!(other.list_tools(None).await.unwrap().tools.len(), 5);
+    assert_eq!(other.list_tools(None).await.unwrap().tools.len(), 6);
     other.cancel().await.unwrap();
 }
 
@@ -4366,6 +4370,7 @@ async fn http_sessions_have_independent_allowances_and_a_lost_delivery_stays_cha
             store: store.clone(),
             root: root.clone(),
             references: Vec::new(),
+            no_memory: false,
             budget: context_foundry::config::BudgetConfig::from_object(&serde_json::json!({
                 "v": 1, "max_context_tokens": 512, "session_context_tokens": 700
             }))
@@ -5285,6 +5290,10 @@ async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_800_
         (
             "index",
             "Re-index after edits: the bound repo, or an admitted reference root via `root`.",
+        ),
+        (
+            "memory",
+            "Explicit project memory records.",
         ),
         (
             "retrieve",

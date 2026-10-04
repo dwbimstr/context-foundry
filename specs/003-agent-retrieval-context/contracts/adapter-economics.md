@@ -285,7 +285,8 @@ Measured: payload tokens at the counting boundary, and provider usage only from
 `usage import` of real host records. T004 measured the `examples/workspace` handle
 at 33 versus 94 o200k tokens; the earlier 29/85 handle estimate is superseded. The
 serialized five-tool catalog measured 568 at T004, 598 after T005/T006 and 661 after
-007 T001 (v1 711). Estimated:
+007 T001 (v1 711). The six-tool catalog with 008's `memory` measures 793, under the
+800 ceiling. Estimated:
 `result_o200k_estimate`. Unknown: provider cache behavior when usage categories
 are missing; such runs support payload claims only. Real-host results of the
 token-economics tranche are labeled "bundled Foundry adoption (v2 + instructions +

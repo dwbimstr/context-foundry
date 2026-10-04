@@ -679,7 +679,7 @@ fn a_mutation_at_the_search_commit_keeps_pending_at_the_new_version() {
     // clear it as if it had indexed the new bytes.
     let (_dir, store, _root) = fx.close();
     assert_eq!(
-        testkit::pending_value(&store, "a.rs").as_deref(),
+        testkit::pending_value(&store, "source:a.rs").as_deref(),
         Some(digest("fn version_two() {}\n".as_bytes()).as_str())
     );
     let mut engine = Engine::open_existing(&store).unwrap();

@@ -138,7 +138,7 @@ fn child_fault(stage: &str) -> ! {
                 names::UPGRADE_AFTER_COMMIT
             };
             fault::arm(point, 0, Action::Abort);
-            let _ = Engine::upgrade_store(&store, 2, &Control::unbounded());
+            let _ = Engine::upgrade_store(&store, 3, &Control::unbounded());
         }
         repair if repair.starts_with("repair_") => {
             seed(&work, 300);
@@ -474,8 +474,8 @@ fn exit_during_upgrade_transaction_leaves_wholly_v1() {
         Engine::open_existing(&store).unwrap_err().code(),
         "upgrade_required"
     );
-    Engine::upgrade_store(&store, 2, &Control::unbounded()).unwrap();
-    assert_eq!(schema_marker(&store), "2");
+    Engine::upgrade_store(&store, 3, &Control::unbounded()).unwrap();
+    assert_eq!(schema_marker(&store), "3");
     let engine = Engine::open_existing(&store).unwrap();
     assert_eq!(engine.status().unwrap().source_count, 1);
     assert_eq!(
@@ -493,12 +493,12 @@ fn exit_during_upgrade_transaction_leaves_wholly_v1() {
 fn exit_after_upgrade_commit_is_wholly_v2() {
     let work = crash_at("upgrade_after_commit");
     let store = work.path().join("store");
-    assert_eq!(schema_marker(&store), "2");
+    assert_eq!(schema_marker(&store), "3");
     let engine = Engine::open_existing(&store).unwrap();
     let status = engine.status().unwrap();
     assert_eq!(
         (status.schema, status.source_revision, status.source_count),
-        (2, 0, 1)
+        (3, 0, 1)
     );
     assert_eq!(engine.training_examples().unwrap().len(), 1);
     drop(engine);

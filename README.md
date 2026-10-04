@@ -45,7 +45,7 @@ matching host configuration with `--http-port PORT --token-env NAME`:
 
 ## What works
 
-- Explicit store creation, schema-2 upgrade (`upgrade-store --to 2`), bounded
+- Explicit store creation, schema-3 upgrade (`upgrade-store --to 3`, from v1 or v2), bounded
   refresh and explicit `repair-index` with one retained quarantine. Reads never create,
   upgrade or repair a store; a broken lexical index leaves status and retrieve usable.
   An upgraded store, or one indexed before search schema 3 (leading-run units),
@@ -61,9 +61,14 @@ matching host configuration with `--http-port PORT --token-env NAME`:
   emitted bytes are counted with `o200k_base` (complete CLI stdout including its
   trailing LF, or the final MCP text block). The serialized MCP result is separately
   byte-capped. Not a host-envelope or dollar-savings measurement.
-- Five MCP tools (`search`, `context`, `retrieve`, `index`, `status`) through the rmcp
+- Six MCP tools (`search`, `context`, `retrieve`, `index`, `status`, `memory`) through the rmcp
   SDK: one active engine operation and zero queued, bounded frames/bodies/handlers,
   named `busy`/deadline/cancellation errors, delivery budgets and usage receipts.
+- Explicit project memory (008): `foundry memory put|update|get|forget|search|export`
+  and the MCP `memory` tool. Records are attributed and revisioned, and conflicting
+  writes are refused. Source links report fresh, stale or missing. `context
+  include_memory` adds compact `mem:` lines; forget is logical; memory never feeds
+  training export. `mcp --no-memory` hides the tool.
 - Hash-checked graph bundle imports with bounded file-neighborhood traversal; graph
   failures degrade context to source evidence with a named reason.
 - Multi-root context (007): `--reference ROOT=STORE` (up to 8) admits outside

@@ -526,21 +526,38 @@ fn refusal_floor_impl(
 /// inclusion) fits the token budget and the byte cap, else omit and count
 /// the candidate; then drop last-added items until the final header fits.
 /// If even the header cannot fit, refuse with a sufficient budget.
+///
+/// `tail` holds already-rendered lines that are NOT ladder candidates (008
+/// memory lines): after the ladder, each tail line that fits the remaining
+/// budget is appended and one that does not is skipped — source spans keep
+/// priority — counted in `shown` but never in `omitted`.
 fn pack(
     items: &[Vec<String>],
+    tail: &[String],
     header: &HeaderV2,
     budget: Budget,
     byte_cap: usize,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    let render =
-        |included: &[(usize, usize)], omitted: usize, shown: usize, limited_by: BudgetLimiter| {
-            let mut text = header.line(shown, limited_by, included.len(), omitted);
-            for &(index, form) in included {
-                text.push_str(&items[index][form]);
-            }
-            text
-        };
+    let render = |included: &[(usize, usize)],
+                  tail_kept: &[usize],
+                  omitted: usize,
+                  at_budget: usize,
+                  limited_by: BudgetLimiter| {
+        let mut text = header.line(
+            at_budget,
+            limited_by,
+            included.len() + tail_kept.len(),
+            omitted,
+        );
+        for &(index, form) in included {
+            text.push_str(&items[index][form]);
+        }
+        for &index in tail_kept {
+            text.push_str(&tail[index]);
+        }
+        text
+    };
     let fits = |text: &str| boundary(text) <= byte_cap && count_tokens(text) <= budget.tokens;
     let mut included: Vec<(usize, usize)> = Vec::new();
     let mut omitted = 0usize;
@@ -550,6 +567,7 @@ fn pack(
             included.push((index, form));
             if fits(&render(
                 &included,
+                &[],
                 omitted,
                 budget.tokens,
                 budget.limited_by,
@@ -563,25 +581,62 @@ fn pack(
             omitted += 1;
         }
     }
-    loop {
-        let text = render(&included, omitted, budget.tokens, budget.limited_by);
+    let mut tail_kept: Vec<usize> = Vec::new();
+    let base_fits = loop {
+        let text = render(
+            &included,
+            &tail_kept,
+            omitted,
+            budget.tokens,
+            budget.limited_by,
+        );
         if fits(&text) {
-            let tokens = count_tokens(&text);
-            return Ok(PackedText {
-                text,
-                tokens,
-                omitted,
-                truncated: omitted > 0,
-            });
+            break true;
         }
         if included.pop().is_none() {
-            break;
+            break false;
         }
         omitted += 1;
+    };
+    if !base_fits {
+        // Not even the header fits; memory lines cannot rescue it.
+        return Err(too_small(budget.tokens, &|shown, limited_by| {
+            render(&[], &[], items.len(), shown, limited_by)
+        }));
     }
-    Err(too_small(budget.tokens, &|shown, limited_by| {
-        render(&[], items.len(), shown, limited_by)
-    }))
+    // 008: fill the remaining budget with memory lines, one fitting line at
+    // a time; a line that does not fit is skipped, never traded for a source
+    // item and never counted as omitted.
+    for index in 0..tail.len() {
+        if !tail_kept.contains(&index) {
+            let mut trial = tail_kept.clone();
+            trial.push(index);
+            trial.sort_unstable();
+            if fits(&render(
+                &included,
+                &trial,
+                omitted,
+                budget.tokens,
+                budget.limited_by,
+            )) {
+                tail_kept = trial;
+            }
+        }
+    }
+    let text = render(
+        &included,
+        &tail_kept,
+        omitted,
+        budget.tokens,
+        budget.limited_by,
+    );
+    let tokens = count_tokens(&text);
+    Ok(PackedText {
+        text,
+        tokens,
+        omitted,
+        truncated: omitted > 0,
+    })
 }
 
 /// v2 retrieve text view: header, one item naming the delivered prefix, and
@@ -773,29 +828,58 @@ pub fn outline_refusal_floor() -> usize {
 
 /// v2 context: the batch's candidates in order (the first unit, graph items,
 /// the remaining units, file outlines), ladder-packed over their forms.
+/// Without memory this is byte-identical to the pre-008 rendering.
 pub fn pack_context(
     batch: &CandidateBatch,
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_impl(batch, None, budget, boundary)
+    pack_context_impl(batch, None, &[], budget, boundary)
+}
+
+/// [`pack_context`] with 008 memory included: after the ladder places the
+/// first fitting source item, validated memory hits fill the remaining
+/// budget as compact `mem:` lines. Source spans keep priority; a line that
+/// does not fit is skipped.
+pub fn pack_context_with_memory(
+    batch: &CandidateBatch,
+    hits: &[crate::memory::MemoryHit],
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let tail: Vec<String> = hits.iter().map(memory_line).collect();
+    pack_context_impl(batch, None, &tail, budget, boundary)
 }
 
 /// The multi-root form of [`pack_context`]: the batch is the 007 merge of
 /// several roots' batches (never a merge of packed responses), and segment 2
-/// names every listed root's revision or coverage.
+/// names every listed root's revision or coverage. Memory lines come from
+/// the primary root only (008).
 pub fn pack_context_roots(
     batch: &CandidateBatch,
     roots: &[RootHeader],
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_impl(batch, Some(roots), budget, boundary)
+    pack_context_impl(batch, Some(roots), &[], budget, boundary)
+}
+
+/// [`pack_context_roots`] with 008 memory from the primary root.
+pub fn pack_context_roots_with_memory(
+    batch: &CandidateBatch,
+    roots: &[RootHeader],
+    hits: &[crate::memory::MemoryHit],
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let tail: Vec<String> = hits.iter().map(memory_line).collect();
+    pack_context_impl(batch, Some(roots), &tail, budget, boundary)
 }
 
 fn pack_context_impl(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
+    tail: &[String],
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
@@ -813,7 +897,7 @@ fn pack_context_impl(
         candidates_full: batch.counters.candidates_full,
         graph: batch.counters.graph,
     };
-    pack(&items, &header, budget, BYTE_CAP, boundary)
+    pack(&items, tail, &header, budget, BYTE_CAP, boundary)
 }
 
 /// v2 search: one locator line per hit, `<handle> L<line> <label>:
@@ -868,7 +952,57 @@ fn pack_search_impl(
         candidates_full: outcome.candidate_limit_reached,
         graph: None,
     };
-    pack(&items, &header, budget, BYTE_CAP, boundary)
+    pack(&items, &[], &header, budget, BYTE_CAP, boundary)
+}
+
+/// 008 memory search: the v2 header exactly as `search` builds it (from the
+/// same final read) except segment 1 names `foundry memory`, then one
+/// compact `mem:` line per validated hit, ladder-packed like search's
+/// locator lines. No hits → header only.
+pub fn pack_memory_search(
+    outcome: &crate::memory::MemorySearchOutcome,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let items: Vec<Vec<String>> = outcome
+        .hits
+        .iter()
+        .map(|hit| vec![memory_line(hit)])
+        .collect();
+    let f = &outcome.freshness;
+    let header = HeaderV2 {
+        op: "memory",
+        roots: None,
+        revision: f.source_revision,
+        scan_state: &f.scan_state,
+        pending: f.pending_sources,
+        lists: true,
+        capped: 0,
+        stale: outcome.stale_candidates,
+        candidates_full: outcome.candidates_full,
+        graph: None,
+    };
+    pack(&items, &[], &header, budget, BYTE_CAP, boundary)
+}
+
+/// One compact memory line (008): `mem:<id>@r<revision> <author>:
+/// <first line>`. The first line is the record text's first line cut at a
+/// UTF-8 boundary to at most 120 bytes; author and first line are
+/// single-line fields, so stored text cannot forge headers, items or fences.
+pub fn memory_line(hit: &crate::memory::MemoryHit) -> String {
+    let first = hit.text.split('\n').next().unwrap_or("");
+    let first = first.strip_suffix('\r').unwrap_or(first);
+    let mut cut = first.len().min(crate::memory::MEM_FIRST_LINE_BYTES);
+    while !first.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!(
+        "mem:{}@r{} {}: {}\n",
+        hit.id,
+        hit.revision,
+        single_line(&hit.author),
+        single_line(&first[..cut])
+    )
 }
 
 const EXCERPT_BYTES: usize = 160;

@@ -136,10 +136,12 @@ reuse the [adapter economics contract](contracts/adapter-economics.md), not new 
 
 Approved 2026-10-03 for T005; it landed with 001 T004 (committed in `5edf32c`) because
 both change `src/mcp.rs` and `src/bootstrap.rs`, and an MCP test pins these strings
-exactly. `lines`, `view` and outlines are live since 001 T004/T006 and `root`/`roots`
-since 007 T001 (2026-10-04, `cc402e0`). The serialized `tools/list` is 661 o200k
-tokens after 007 T001 (598 after T006; ceiling 800). Tool
-descriptions, exactly:
+exactly. `lines`, `view` and outlines are live since 001 T004/T006, `root`/`roots`
+since 007 T001 (2026-10-04, `cc402e0`), and the sixth tool `memory` with `context`'s
+`include_memory` since 008 (2026-10-04). The serialized `tools/list` is 793 o200k
+tokens with 008 (661 after 007 T001; 598 after T006; ceiling 800).
+`mcp --no-memory` serves the five-tool catalog: 669 tokens, where `context`'s static
+schema still lists `include_memory`. Tool descriptions, exactly:
 
 ~~~text
 search: Use BEFORE grep/rg to find code in the indexed repo(s): one line per hit with a handle, line, symbol and matching text. Follow handles with retrieve. Indexed snapshot, not live disk.
@@ -147,6 +149,7 @@ context: Use INSTEAD of exploratory file reads: one budgeted, cited bundle of th
 retrieve: Read exact indexed source for a handle. `lines` narrows to a line range; `view:"outline"` returns a skeleton with elided line ranges. Stale handles are rejected.
 index: Re-index after edits: the bound repo, or an admitted reference root via `root`.
 status: Revision, pending work, index/scan state and coverage for each admitted root.
+memory: Explicit project memory records.
 ~~~
 
 The serialized `tools/list` result stays within 800 o200k tokens (a test; v1's
@@ -365,7 +368,8 @@ cancellation and engine-ownership cases below remain acceptance. See
   `src/lib.rs`, CLI commands, pinned Cargo dependencies and `tests/mcp.rs`. Standard
   loopback HTTP is included; custom sockets, host hooks, model setup and global config are not.
 - **Outcome/acceptance (FR-001, FR-004, FR-005 / SC-001):** a real SDK client initializes,
-  lists exactly five tools, indexes the configured fixture root, searches and shuts
+  lists exactly five tools (six since 008 added `memory`), indexes the configured
+  fixture root, searches and shuts
   down. Worker admission and frame/handler bounds match the contract above.
 - **Verification:** missing/wrong typed/unknown tool args; frame size limit and limit+1;
   two concurrent engine calls (one executes, one busy); cancellation during scan and

@@ -49,9 +49,17 @@ pub enum FoundryError {
     /// An optional graph record cannot be decoded. Component-local: context
     /// degrades to source evidence; a direct graph request names this code.
     GraphInvalid(String),
+    /// A memory mutation collides with the live record's revision or fields
+    /// (008): nothing was written and no revision was consumed.
+    Conflict(String),
+    /// A memory forget names an ID this store does not hold (008). No write
+    /// happened; the surface renders it as a content-free outcome report.
+    AlreadyAbsent(String),
+    /// A memory record cannot be decoded (008). Names the record; source
+    /// operations remain available.
+    CorruptMemory(String),
     Internal(anyhow::Error),
 }
-
 /// Counts-only partial index state for bounded MCP/CLI cancellation errors.
 /// No samples: large diagnostics belong to full CLI reports.
 #[derive(Clone, Debug, Default, Serialize)]
@@ -95,6 +103,9 @@ impl FoundryError {
             Self::UnsafeSourcePath(_) => "unsafe_source_path",
             Self::PermissionDenied(_) => "permission_denied",
             Self::GraphInvalid(_) => "graph_invalid",
+            Self::Conflict(_) => "conflict",
+            Self::AlreadyAbsent(_) => "already_absent",
+            Self::CorruptMemory(_) => "corrupt_memory",
             Self::Internal(_) => "internal",
         }
     }
@@ -146,7 +157,7 @@ impl FoundryError {
                 format!("unsupported store schema {found}; no automatic upgrade")
             }
             Self::UpgradeRequired { found } => {
-                format!("store schema {found} requires an explicit upgrade-store --to 2")
+                format!("store schema {found} requires an explicit upgrade-store --to 3")
             }
             Self::CorruptStore(m) => format!("authoritative store data is corrupt: {m}"),
             Self::RepairRequired(m) => format!("derived search index needs explicit repair: {m}"),
@@ -162,6 +173,11 @@ impl FoundryError {
             Self::UnsafeSourcePath(m) => format!("unsafe source path: {m}"),
             Self::PermissionDenied(m) => format!("path access denied: {m}"),
             Self::GraphInvalid(m) => format!("graph record is invalid: {m}"),
+            Self::Conflict(m) => {
+                format!("memory record conflicts with the live revision or fields: {m}")
+            }
+            Self::AlreadyAbsent(m) => format!("memory record {m} is absent"),
+            Self::CorruptMemory(m) => format!("memory record cannot be decoded: {m}"),
             Self::Internal(e) => format!("{e:#}"),
         }
     }

@@ -132,6 +132,9 @@ There is no general migration framework. Interrupted upgrade is wholly v1 or v2;
 old binaries refuse v2. Unknown versions and authoritative corruption do not migrate.
 Rollback before upgrade uses v1; after upgrade use v2 or a pre-upgrade backup, never
 write v2 with the old binary. D001 must amend this if storage selection changes.
+Since 008 (2026-10-04), the current store schema is **3**. `upgrade-store --to 3`
+performs these v1→v2 steps and the memory/typed-pending-key steps in one transaction
+from v1 or v2, and `--to 2` is refused ([008](../008-scoped-durable-memory/spec.md)).
 Search index schema v2 (T005) is derived state, not a store-schema change: an upgrade
 stays metadata-only, so an upgraded store, or any store indexed before T005, reports
 `repair_required` with reason `search_schema` until an explicit `repair-index`.

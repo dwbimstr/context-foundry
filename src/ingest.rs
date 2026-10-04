@@ -555,7 +555,8 @@ pub fn index(engine: &mut Engine, root: &Path, control: &Control) -> FResult<Ind
     let scan_complete = enumeration_ok && !sweep_interrupted;
     engine.finish_scan(scan_complete)?;
     report.scan_complete = scan_complete;
-    report.pending_sources = engine.pending()?;
+    // 008: the scan report counts source work only; readiness uses totals.
+    report.pending_sources = engine.pending_source_work()?;
     report.source_revision = engine.source_revision()?;
     report.partial = !scan_complete
         || report.failures > 0

@@ -61,6 +61,8 @@ pub mod names {
         "context.before_final_validation"
     );
     point!(RETRIEVE_BEFORE_FINAL_READ, "retrieve.before_final_read");
+    point!(MEMORY_FORGET_BEFORE_COMMIT, "memory.forget_before_commit");
+    point!(MEMORY_FORGET_AFTER_COMMIT, "memory.forget_after_commit");
     point!(ROOTS_BEFORE_ROOT, "roots.before_root");
 }
 

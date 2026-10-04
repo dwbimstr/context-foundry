@@ -1,12 +1,60 @@
 # 008 — Explicit project memory
 
-Status: Proposed; no memory implementation. Depends: 001 authoritative ownership,
-repair and context contract; MCP extension only if 003 is available.
+Status: T001 and T002 implemented locally 2026-10-04 and unreleased (see
+[validation](../../docs/validation.md)). Depends: 001 authoritative ownership, repair and
+context contract; MCP extension only if 003 is available.
 Authorization: specification/task refinement. Ordinary indexed Markdown notes remain
 supported; this feature adds explicit record lifecycle rather than replacing them.
 Spec-pass decisions recorded 2026-10-03: one MCP `memory` tool, compact memory lines in
 context and search, content-free forget/export reports and refusal of contradictory
 input before commit. No external prerequisite.
+
+Implementation decisions (2026-10-04, captain, after cross-lab review):
+
+- **Store schema 3.**
+  - `upgrade-store --to 3` upgrades a v1 or v2 store in one write transaction, and
+    `--to 2` is refused.
+  - It adds the `memory` table and the never-reset `memory_revision` counter.
+  - Every pending-index key becomes typed, `source:<path>` or `memory:<id>`. A raw path
+    such as `memory:x` therefore cannot collide with a record; migration removes every
+    raw key before inserting typed ones.
+- **Search documents.** Memory search documents reuse the existing Tantivy fields with
+  `kind:"memory"`, so there is no search-schema change. Source tiers exclude that kind,
+  and source deletes and repair never touch memory documents.
+- **Inputs.**
+  - `workspace_id` is required on every operation.
+  - Field bounds are enforced at the engine mutation boundary, not only by the request
+    parser.
+  - Put/update decide idempotence, CAS and `not_found` against the live row first.
+    Only an actual create or replace validates source links, inside the same write
+    transaction.
+- **Index drain.** After a committed mutation, its own `memory:<id>` key is drained
+  best-effort. A failure leaves the key pending and never alters the result.
+- **Pending counts.** Pending memory work counts in status `pending_count` and in the
+  `lagging` state. Source headers and `drained_sources` count only `source:` work;
+  repair reports `drained_memory` separately.
+- **Memory search output.** v2 text with header segment 1 `foundry memory` and
+  search's other segments, including `stale:` and `candidates:full` (256-document
+  window), followed by compact `mem:` lines.
+- **Context.** `include_memory` validates memory rows inside the context's one final
+  read, so memory stale drops count in `stale:`.
+  - In a multi-root owner, memory lines come only from the primary root, and only when
+    it is selected and serving. Memory trouble never fails a multi-root response.
+- **MCP `memory` tool.**
+  - Description: `Explicit project memory records.`
+  - Schema: `required ["op","workspace_id"]`, `additionalProperties:false`, with no
+    `limit`/`tokens`. Search uses 10 hits and search's effective budget.
+  - The six-tool `tools/list` measures 793 o200k tokens against the 800 ceiling.
+  - `mcp --no-memory` removes the tool and refuses `include_memory:true` with
+    `unsupported_mode`. The static `context` schema still lists that optional
+    property.
+- **Reports and export.**
+  - Forget reports are content-free: `{id, outcome, removed_revision?, memory_revision,
+    live_records}`.
+  - Export pages stop at 128 rows or 4 MiB, whichever comes first, with a cursor. Rows
+    carrying eight long source links reach the byte cap before the row cap.
+  - An undecodable row stays `corrupt_memory` for get, forget, export and search
+    validation.
 
 ## Outcome and requirements
 
@@ -166,5 +214,6 @@ writing with export instructions. No predecessor knowledge migration is included
   through CLI and, if advertised, the same MCP owner. Remove owned temporary exports
   only; user backups remain. These functional tests close the spec without a benchmark.
 
-No SC has been implemented/executed. Proposed limits are input contracts, not memory
-throughput or outcome-improvement measurements.
+SC-001–SC-004 were verified on 2026-10-04 by the T001/T002 functional tests in
+`tests/memory.rs` and the cutover tests ([validation](../../docs/validation.md)). The
+limits are input contracts, not memory throughput or outcome-improvement measurements.

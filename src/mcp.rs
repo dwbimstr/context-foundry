@@ -87,6 +87,7 @@ use crate::{
     Control, Engine, FResult, FoundryError, Strategy,
     adapter_error::{AResult, AdapterError},
     config::BudgetConfig,
+    memory::{self, MemoryRequest},
     response::{self, BudgetLimiter, RootHeader},
     roots::{self, AdmittedRoot, Coverage},
     store::{HandleRef, LineSelection},
@@ -161,6 +162,9 @@ pub(crate) struct Shared {
     /// Owner-level shutdown: set on EOF/owner shutdown; active operations
     /// stop at their next cooperative checkpoint.
     shutdown: CancellationToken,
+    /// `--no-memory`: the `memory` tool is absent from the catalog and
+    /// `include_memory:true` is refused. Disabling never touches records.
+    no_memory: bool,
 }
 
 /// A multi-root engine outcome: the merged result plus each serving root's
@@ -375,6 +379,7 @@ impl Shared {
             sessions: Mutex::new(HashMap::new()),
             in_flight_engine: AtomicUsize::new(0),
             shutdown: CancellationToken::new(),
+            no_memory: false,
         }
     }
 
@@ -775,7 +780,8 @@ fn root_facts(engines: &[Option<Engine>]) -> FResult<RootFacts> {
             index,
             status.source_revision,
             status.scan_state,
-            status.pending_count,
+            // 008: the per-root header segment counts source work only.
+            engine.pending_source_work()?,
         ));
     }
     Ok(facts)
@@ -792,10 +798,12 @@ fn collect_root_batches<F>(
     control: &Control,
     meta: &[RootMeta],
     serving: &[usize],
-    select: F,
+    mut select: F,
 ) -> FResult<(Vec<roots::RootBatch>, RootFacts)>
 where
-    F: Fn(&Engine, &Control) -> FResult<crate::store::CandidateBatch>,
+    // FnMut: the 008 multi-root path lets the primary's call stash its
+    // validated memory hits beside the batch it returns.
+    F: FnMut(&Engine, &Control) -> FResult<crate::store::CandidateBatch>,
 {
     let mut batches = Vec::new();
     let mut facts = Vec::new();
@@ -846,10 +854,11 @@ impl Clone for FoundryMcp {
 #[tool_router]
 impl FoundryMcp {
     pub(crate) fn new(state: Arc<Shared>) -> Self {
-        Self {
-            tool_router: Self::tool_router(),
-            state,
+        let mut tool_router = Self::tool_router();
+        if state.no_memory {
+            tool_router.remove_route("memory");
         }
+        Self { tool_router, state }
     }
 
     /// stdio carries the guard directly in the request extensions; HTTP
@@ -942,7 +951,7 @@ impl FoundryMcp {
     #[tool(
         name = "context",
         description = "Use INSTEAD of exploratory file reads: one budgeted, cited bundle of the most relevant symbols (verbatim, or signatures when large), graph edges and file outlines.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4096},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":2048},"strategy":{"type":"string","enum":["auto","search","graph"],"default":"auto"},"roots":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":9,"uniqueItems":true}}}"#),
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4096},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":2048},"strategy":{"type":"string","enum":["auto","search","graph"],"default":"auto"},"roots":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":9,"uniqueItems":true},"include_memory":{"type":"boolean"}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn context(
@@ -950,7 +959,10 @@ impl FoundryMcp {
         ctx: RequestContext<RoleServer>,
         arguments: JsonObject,
     ) -> Result<CallToolResult, ErrorData> {
-        if let Err(e) = unknown_fields(&arguments, &["query", "tokens", "strategy", "roots"]) {
+        if let Err(e) = unknown_fields(
+            &arguments,
+            &["query", "tokens", "strategy", "roots", "include_memory"],
+        ) {
             return Ok(foundry_error_result(&e));
         }
         let query = match required_str(&arguments, "query") {
@@ -988,6 +1000,24 @@ impl FoundryMcp {
                 ));
             }
         };
+        let include_memory = match arguments.get("include_memory") {
+            None => false,
+            Some(serde_json::Value::Bool(include)) => *include,
+            Some(_) => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "optional argument `include_memory` must be a boolean, omitted or not null",
+                    false,
+                ));
+            }
+        };
+        if include_memory && self.state.no_memory {
+            return Ok(error_result(
+                "unsupported_mode",
+                "memory is disabled on this owner (--no-memory)",
+                false,
+            ));
+        }
         // `roots` selects already admitted aliases, validated before dispatch.
         let roots = match roots_argument(&arguments) {
             Ok(roots) => roots,
@@ -1001,7 +1031,7 @@ impl FoundryMcp {
         let query = query.to_owned();
         if self.state.meta.len() > 1 {
             return Ok(self
-                .context_roots(&ctx, tokens, query, strategy, roots)
+                .context_roots(&ctx, tokens, query, strategy, roots, include_memory)
                 .await);
         }
         Ok(self
@@ -1011,12 +1041,28 @@ impl FoundryMcp {
                 "context",
                 || response::refusal_floor("context", None),
                 move |engines, control, _budget| {
-                    engines[0]
-                        .as_ref()
-                        .expect("the primary engine is open")
-                        .context_candidates(&query, strategy, control)
+                    let engine = engines[0].as_ref().expect("the primary engine is open");
+                    let (batch, hits) = if include_memory {
+                        let combined =
+                            engine.context_candidates_memory(&query, strategy, control)?;
+                        (combined.batch, combined.hits)
+                    } else {
+                        (
+                            engine.context_candidates(&query, strategy, control)?,
+                            Vec::new(),
+                        )
+                    };
+                    Ok((batch, hits))
                 },
-                response::pack_context,
+                |outcome: &(crate::store::CandidateBatch, Vec<memory::MemoryHit>),
+                 budget: response::Budget,
+                 boundary: response::ByteMeasure| {
+                    if outcome.1.is_empty() {
+                        response::pack_context(&outcome.0, budget, boundary)
+                    } else {
+                        response::pack_context_with_memory(&outcome.0, &outcome.1, budget, boundary)
+                    }
+                },
             )
             .await)
     }
@@ -1288,7 +1334,8 @@ impl FoundryMcp {
                             let status = engine.status()?;
                             entry["workspace_id"] = serde_json::json!(engine.workspace_id());
                             entry["source_revision"] = serde_json::json!(status.source_revision);
-                            entry["pending_sources"] = serde_json::json!(status.pending_count);
+                            entry["pending_sources"] =
+                                serde_json::json!(engine.pending_source_work()?);
                             entry["scan_state"] = serde_json::json!(status.scan_state);
                             entry["index_state"] = serde_json::json!(status.index_state);
                         }
@@ -1305,6 +1352,140 @@ impl FoundryMcp {
             Err(e) => return Ok(foundry_error_result(&e)),
         };
         Ok(text_result(response::compact_json(&outcome)))
+    }
+
+    #[tool(
+        name = "memory",
+        description = "Explicit project memory records.",
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["op","workspace_id"],"properties":{"op":{"type":"string"},"id":{"type":"string"},"text":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"source_links":{"type":"array","items":{"type":"string"}},"workspace_id":{"type":"string"},"expected_revision":{"type":"integer"},"query":{"type":"string"}}}"#),
+        annotations(read_only_hint = false, open_world_hint = false)
+    )]
+    async fn memory(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        arguments: JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
+        // `limit` and `tokens` are deliberately not part of this tool: search
+        // uses the default hit limit and the same effective budget as `search`.
+        if let Err(e) = unknown_fields(
+            &arguments,
+            &[
+                "op",
+                "id",
+                "text",
+                "author",
+                "provenance",
+                "source_links",
+                "workspace_id",
+                "expected_revision",
+                "query",
+            ],
+        ) {
+            return Ok(foundry_error_result(&e));
+        }
+        let request = match memory::parse_request(&arguments) {
+            Ok(request) => request,
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        // Memory lives only in the primary (writable) store (007): every
+        // operation runs on engine 0, and a reference root's workspace ID is
+        // `wrong_workspace` at the engine's scope check.
+        Ok(match request {
+            MemoryRequest::Put(input) => {
+                self.memory_op(&ctx, false, move |engine, _| {
+                    let report = engine.memory_put(&input)?;
+                    engine.drain_memory_key(&report.id);
+                    Ok(serde_json::to_value(&report)?)
+                })
+                .await
+            }
+            MemoryRequest::Update(input) => {
+                self.memory_op(&ctx, false, move |engine, _| {
+                    let report = engine.memory_update(&input)?;
+                    engine.drain_memory_key(&report.id);
+                    Ok(serde_json::to_value(&report)?)
+                })
+                .await
+            }
+            MemoryRequest::Forget(input) => {
+                self.memory_op(&ctx, false, move |engine, control| {
+                    let report = engine.memory_forget(&input, control)?;
+                    engine.drain_memory_key(&report.id);
+                    Ok(serde_json::to_value(&report)?)
+                })
+                .await
+            }
+            MemoryRequest::Get { id, workspace_id } => {
+                self.memory_op(&ctx, true, move |engine, _| {
+                    Ok(serde_json::to_value(
+                        engine.memory_get(&id, &workspace_id)?,
+                    )?)
+                })
+                .await
+            }
+            MemoryRequest::Search(input) => {
+                let tokens = input.tokens as u64;
+                self.deliver(
+                    &ctx,
+                    tokens,
+                    "memory",
+                    || response::refusal_floor("search", None),
+                    move |engines, _control, _budget| {
+                        engines[0]
+                            .as_ref()
+                            .expect("the primary engine is open")
+                            .memory_search(&input)
+                    },
+                    response::pack_memory_search,
+                )
+                .await
+            }
+        })
+    }
+}
+
+impl FoundryMcp {
+    /// One `memory` operation on the primary engine under the single engine
+    /// slot. A write opts out of the post-call deadline check (`check_after`
+    /// false): a committed mutation is never turned into an error. The result
+    /// is the content-free JSON report or the exact record of `get`.
+    async fn memory_op<F>(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        read: bool,
+        f: F,
+    ) -> CallToolResult
+    where
+        F: FnOnce(&mut Engine, &Control) -> FResult<serde_json::Value> + Send + 'static,
+    {
+        let outcome = run_op(
+            &self.state,
+            Instant::now() + READ_DEADLINE,
+            Some(ctx.ct.clone()),
+            Self::admission_guard(ctx),
+            read,
+            move |engines, control| {
+                f(
+                    engines[0].as_mut().expect("the primary engine is open"),
+                    control,
+                )
+            },
+        )
+        .await;
+        match outcome {
+            Ok(value) => {
+                let result = text_result(response::compact_json(&value));
+                if serialize_result(&result).len() > OUTPUT_BYTE_CAP {
+                    return error_result(
+                        "budget_too_small",
+                        "serialized memory result exceeds the 256 KiB output cap",
+                        false,
+                    );
+                }
+                result
+            }
+            Err(e) => foundry_error_result(&e),
+        }
     }
 }
 
@@ -1543,6 +1724,7 @@ impl FoundryMcp {
         query: String,
         strategy: Strategy,
         selected: Option<Vec<String>>,
+        include_memory: bool,
     ) -> CallToolResult {
         let selection = match self.state.resolve_roots(selected.as_deref()) {
             Ok(selection) => selection,
@@ -1572,23 +1754,60 @@ impl FoundryMcp {
             "context",
             move || response::refusal_floor_roots("context", None, &floor_labels),
             move |engines, control, _budget| {
+                // 008: memory lives only in the primary store, and only when
+                // the primary is selected AND serving. The primary's memory
+                // validates inside its own final read (context_candidates_
+                // memory); any memory trouble degrades to no lines — a
+                // multi-root response never fails because of memory.
+                let primary_memory = include_memory && serving.contains(&0);
+                let mut hits: Vec<memory::MemoryHit> = Vec::new();
+                let hits_ref = &mut hits;
+                let engines = &*engines;
                 let (batches, facts) = collect_root_batches(
                     engines,
                     control,
                     &run_meta,
                     &serving,
-                    |engine, control| engine.context_candidates(&query, strategy, control),
+                    |engine, control| {
+                        if primary_memory
+                            && std::ptr::eq(
+                                engine,
+                                engines[0].as_ref().expect("the primary engine is open"),
+                            )
+                        {
+                            // No catch-all: corruption fails the request
+                            // (context-v2 § Failure scope); an unavailable
+                            // primary is excluded by `serving` above and its
+                            // coverage stays in the header.
+                            let combined =
+                                engine.context_candidates_memory(&query, strategy, control)?;
+                            *hits_ref = combined.hits;
+                            Ok(combined.batch)
+                        } else {
+                            engine.context_candidates(&query, strategy, control)
+                        }
+                    },
                 )?;
                 Ok(MultiOutcome {
-                    served: roots::merge_context(&batches),
+                    served: (roots::merge_context(&batches), hits),
                     root_facts: facts,
                 })
             },
-            move |outcome: &MultiOutcome<crate::store::CandidateBatch>,
+            move |outcome: &MultiOutcome<(
+                crate::store::CandidateBatch,
+                Vec<memory::MemoryHit>,
+            )>,
                   budget: response::Budget,
                   boundary: response::ByteMeasure| {
                 let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
-                response::pack_context_roots(&outcome.served, &headers, budget, boundary)
+                let (batch, hits) = &outcome.served;
+                if hits.is_empty() {
+                    response::pack_context_roots(batch, &headers, budget, boundary)
+                } else {
+                    response::pack_context_roots_with_memory(
+                        batch, &headers, hits, budget, boundary,
+                    )
+                }
             },
         )
         .await
@@ -1678,7 +1897,7 @@ impl FoundryMcp {
     }
 }
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for FoundryMcp {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
@@ -1890,6 +2109,8 @@ pub struct ServerOptions {
     /// opened once before serving.
     pub references: Vec<roots::ReferenceSpec>,
     pub budget: BudgetConfig,
+    /// Omit the `memory` tool and refuse `include_memory` (008); records stay.
+    pub no_memory: bool,
 }
 
 /// Launch-time admission and the one-time open of every root (007 §
@@ -1940,6 +2161,7 @@ fn open_owner(options: ServerOptions, shutdown: CancellationToken) -> AResult<Ar
         sessions: Mutex::new(HashMap::new()),
         in_flight_engine: AtomicUsize::new(0),
         shutdown,
+        no_memory: options.no_memory,
     }))
 }
 
