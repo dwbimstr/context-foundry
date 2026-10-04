@@ -320,21 +320,28 @@ learning or rewrites prompts. The host requests context over MCP and includes it
 the provider request; the gateway admits/forwards that completed request. Source and
 gateway processes have different side effects and credentials, not competing store owners.
 
-Initial protocol target: OpenAI Responses over HTTP JSON/SSE, one configured HTTPS
-origin (`https://api.openai.com/v1`), one allowlisted model and one local host session.
-Codex is the first host to verify because its official
-[provider configuration](https://developers.openai.com/codex/config-reference/)
-supports base_url, Responses and environment-supplied authentication. This is a
-supported configuration surface, not proof of this gateway's compatibility. Pin the
-actual host/version and accepted request schema in T004 before advertising support.
-No claim to proxy ChatGPT subscription/OAuth traffic, Claude Messages, arbitrary
-OpenAI-compatible servers, WebSockets or all installed adapters in this first cut.
-Other hosts can use MCP; add a provider protocol only for an actual consumer.
+Pinned profile v1 (owner decision 2026-10-04, replacing the earlier Codex/OpenAI
+Responses target, which had no consumer): **OMP 18.6.0 on Z.ai `glm-5.3-flash`**
+over OpenAI-compatible chat completions with SSE. Upstream origin
+`https://api.z.ai/api/coding/paas/v4` (Z.ai's documented GLM Coding Plan base), path
+`POST /chat/completions`. OMP's catalog entry `zai.glm-5.3-flash` uses that wire,
+sends `stream: true` with `stream_options.include_usage`, and accepts a per-provider
+`baseUrl`/`apiKey` override in `models.yml`. The host runs in a dedicated OMP profile
+(`omp --profile <name> --model zai/glm-5.3-flash`), whose own
+`~/.omp/profiles/<name>/agent/models.yml` carries
+`providers.zai: {baseUrl: "http://127.0.0.1:<port>/v1", apiKey: <ENV_NAME>}`; OMP
+resolves an `apiKey` naming a set environment variable to its value. A global
+`~/.omp/agent/models.yml` override is out of scope: it would redirect every `zai` model,
+including Anthropic-wire GLM sessions the gateway cannot serve. Other zai models,
+Claude Messages, OpenAI Responses, ChatGPT/Codex subscription traffic, arbitrary
+OpenAI-compatible servers and WebSockets are not claimed; other hosts use MCP. A new
+protocol or host amends this contract for an actual consumer.
 
 Configuration v1 keys: `v:1`, `port` (0..65535, 0 for OS-assigned), `upstream`, `model`,
-`mode` (`meter` or `enforce`), `credential_env`, `run_dir`, `log_bytes` and optional
-`limits`. Enforce requires limits `{max_input_tokens,max_output_tokens,
-session_provider_tokens?}` with positive u64 values; meter rejects limits. Pin the
+`mode`, `credential_env`, `run_dir`, `log_bytes`. The pinned profile accepts only
+`upstream = "https://api.z.ai/api/coding/paas/v4"`, `model = "glm-5.3-flash"` and
+`mode = "meter"`; `enforce` refuses at startup with `gateway_feature_unsupported`
+(below), and `limits` are refused. Pin the
 model's supported input/output windows in the installed protocol profile; an unknown
 model fails startup. Model IDs/env names <=256 bytes, run_dir <=4096 bytes; variable
 names match `[A-Za-z_][A-Za-z0-9_]*`. Config holds names/paths, never secret values.
@@ -343,7 +350,8 @@ log cap 64 KiB..16 MiB. Receipt-file output is opt-in: `log_bytes` is omitted wh
 disabled. Bind only
 127.0.0.1; no public/LAN listener, remote bind or transparent interception. One gateway
 run is one accounting session, even across HTTP reconnects. A fresh run has a fresh
-session ID/token/cap; restart is not durable monthly spending enforcement.
+session ID and token; any receipt-log cap is storage-only. Restart is not durable
+monthly spending enforcement.
 
 Startup generates a 256-bit random local bearer token in a newly owned mode-0600
 file within a mode-0700 run directory. The selected host reads that token through an
@@ -356,85 +364,133 @@ caller-supplied authorization/organization/routing headers cannot choose credent
 Reject browser Origin headers, enforce the exact loopback Host/port and disable CORS.
 This protects the endpoint from accidental/browser use, not a hostile same-user process.
 
-Only `POST /v1/responses` and authenticated `GET /health` are exposed initially.
+The supported launcher owns a fresh, non-default OMP profile and refuses an existing
+profile rather than overwriting it. Before launching OMP it verifies that the
+profile's effective `zai/glm-5.3-flash` endpoint is the generated loopback URL and that
+the local-token environment variable is nonempty and holds this run's token; a
+missing, unreadable or invalid profile, a missing token or a failed authenticated
+`GET /health` aborts the launch. OMP receives no upstream Z.ai credential through its
+environment, profile login storage, auth broker or `--api-key`; the launcher does not
+pass those credential routes on (an OMP registry that silently drops the override
+would otherwise reach Z.ai directly). The profile configuration stays intact for the
+host's lifetime; the host is stopped before cleanup, and a failed routed run is never
+resumed against the bundled upstream endpoint. The supported profile is single-flight:
+automatic title generation is disabled (`PI_NO_TITLE=1`) and no concurrent
+side-model or subagent calls use this gateway; this is a declared compatibility
+restriction.
+
+Only `POST /v1/chat/completions` and authenticated `GET /health` are exposed initially.
 The health reply contains readiness/session/mode, never credentials. Other paths,
 methods and upgrades refuse locally; query strings cannot select an upstream. TLS
 verification stays enabled; disable redirects and ambient proxy variables. Allowlist
 upstream request headers required by the pinned protocol; strip all Foundry-only
-correlation/auth headers. Return supported response headers/status without leaking
-upstream credentials. Use maintained Rust HTTP/TLS/SSE libraries, not a new HTTP parser.
+correlation/auth headers. Forward only allowlisted response headers. For a
+non-success upstream response, return a bounded gateway-owned error code and status
+with the approved provider request ID, not the raw upstream error body or headers;
+for an upstream SSE error, close the stream and record the failure without forwarding
+raw diagnostic payloads, and never synthesize success. Neither the upstream key nor
+the local bearer may appear in an error delivered to OMP; synthetic credential
+canaries exercise these paths. Use maintained Rust HTTP/TLS/SSE libraries, not a new
+HTTP parser.
 
 At most eight HTTP connections with a 5-second header deadline; excess connections
 close before allocating request bodies. One active generation including body reading
-and preflight, zero queued generations; acquire that slot after header authentication,
-before body allocation. Excess is 429 `gateway_busy`. Bound headers to 16 KiB, request JSON to 4 MiB, decoded depth to
+and validation, zero queued generations; acquire that slot after header
+authentication, before body allocation, and hold it through terminal observation and
+receipt finalization, including any transition to admission-closed after a log
+failure. Excess is 429 `gateway_busy` with the response header `rate_limit_type:
+max_parallel_requests`, which OMP 18.6.0 treats as an admission refusal and does not
+retry inside its HTTP transport; a busy refusal sends nothing upstream and is not
+billed usage. Bound headers to 16 KiB, request JSON to 4 MiB, decoded depth to
 64, stream event to 1 MiB, response total to 64 MiB and unread forwarding buffer to
 256 KiB. Slow clients apply backpressure and share a 60-second idle timeout; the
-whole attempt including preflight has a 600-second deadline. JSON duplicate keys,
-unsupported compression and malformed UTF-8 fail before upstream send. Disable
-transparent decompression or apply the same decoded-byte limits. Limits are failure
-bounds, not throughput/latency promises. They are explicit compatibility constraints.
+whole attempt including body reading and validation has a 600-second deadline. JSON
+duplicate keys, unsupported compression and malformed UTF-8 fail before upstream
+send. Disable transparent decompression or apply the same decoded-byte limits. Limits
+are failure bounds, not throughput/latency promises. They are explicit compatibility
+constraints.
 
-The first accepted request subset is stateless text/code, local function/custom-tool
-definitions, call/result and supported reasoning items carried in input. Preserve
-input order, text, tool catalog, cache keys and reasoning items verbatim. Require
-explicit store=false. Truncation must be disabled or absent under the pinned API's
-documented disabled default; reject auto rather than quietly changing behavior.
-Reject conversation/previous_response_id,
-background jobs, hosted tools, media/file/URL input and unsupported endpoint features
-with `gateway_feature_unsupported`. These exclusions prevent hidden state/tool charges
-from being mislabeled fully controlled. T004 must verify the selected host can operate
-inside this subset; a base_url setting alone is insufficient. A later supported
-extension amends this contract instead of adding a speculative backend framework.
+The first accepted request subset is a streaming chat completion for the configured
+model: `stream: true`; `messages` with system/user/assistant/tool roles, text content
+or role-specific text-part arrays, and nullable assistant `content` alongside
+`tool_calls`; function `tools`, `tool_choice` and tool results; replayed
+`reasoning_content`; and an explicit top-level field allowlist (`max_tokens`,
+`stream_options`, sampling, thinking/`reasoning_effort` and conditional `tool_stream`)
+derived in T004 from the effective loopback-configured OMP model's request builder.
+Extensions or extra-body overrides that change that payload are unsupported unless
+included in the pin. After validation the original request bytes are forwarded
+unchanged, preserving message order, text, tool catalog and reasoning content. Each
+request replays the whole conversation; there is no server-side state to reference.
+Refuse another model, `stream` absent or false, image/file/URL content parts and
+top-level fields outside the pinned set with `gateway_feature_unsupported`, so hidden
+charges are not mislabeled as metered. T004 verifies that OMP operates inside this
+subset; a `baseUrl` setting alone is insufficient.
 
 **Meter mode** forwards supported requests and records actual usage; it promises no
-preflight input/session token cap. It is never an automatic fallback from enforce mode.
-**Enforce mode** requires a positive max_output_tokens no greater than policy. Before
-generation, obtain a count for the identical model/input/instructions/tool schema
-through the provider's documented
-[input-token counting API](https://developers.openai.com/api/docs/guides/token-counting).
-Pin/test its request-field projection against the accepted generation schema; every
-input-affecting field must be represented or rejected. Do not treat locally counted
-JSON/BPE tokens as the provider's exact input count. Count failure/unsupported item
-means `budget_unverifiable` with no generation call. The extra provider preflight sees
-the permitted input and adds network time; record it separately, with no unverified
-claim that it is free. No cross-request prompt cache or request-body journal is added.
+preflight input/session token cap. **Enforce mode** is defined but not available for
+the pinned profile: it requires a positive `max_tokens` no greater than policy and,
+before generation, a provider-documented count for the identical model, messages,
+tools and thinking fields, reserved atomically with the maximum output against the
+run's cap. Z.ai's documented tokenizer (`/api/paas/v4/tokenizer`) lists other models,
+sits outside the coding-plan base and omits generation fields, so no contract-grade
+counting endpoint has been verified for this profile; locally counted tokens are not
+the provider's count. Until a
+counting API is verified for the configured model, `mode: enforce` refuses at
+startup. Meter mode is never an automatic fallback from enforce mode. The final
+usage object is authoritative for observation: `prompt_tokens` is input with
+`prompt_tokens_details.cached_tokens` as its cached subset, and `completion_tokens`
+is output including reasoning; reasoning and cache-write categories are not reported
+separately and stay unknown, never zero. A host-side zero for an absent category (OMP
+defaults missing numbers to zero) does not make the gateway's category known.
 
-After count succeeds, reserve input plus max output atomically against this run's cap,
-then forward the original request bytes unchanged. Reject budget overflow before
-generation. Never silently reduce output, remove history, switch models or insert
-context to pass a cap. The response's terminal usage is authoritative for observation;
-include cached input as a subset of input and reasoning as part of output, without
-double counting. A request cap is enforced under the provider's documented counting
-and max-output behavior; it is not an independent guarantee of the provider's bill.
-
-Forward JSON or SSE without collecting a complete stream in memory. Preserve tool-call
-events/order and final provider status. Usage comes from the final JSON/terminal
-[Responses event](https://developers.openai.com/api/docs/guides/streaming-responses),
-never from counting visible text deltas. Failed/incomplete responses can consume tokens.
-Missing usage, truncated stream or client disconnect means unknown usage, not zero;
-cancel/close upstream best-effort, keep the full reservation, never retry automatically.
-After headers are sent, local failure closes the stream and records failure/unknown;
-it cannot forge a provider-completed event. No raw error/prompt body in local diagnostics.
+Forward SSE without collecting a complete stream in memory. Preserve chunk order,
+tool-call deltas and `finish_reason`, and forward `[DONE]` when received and the
+client is still connected; never require the client to consume it as proof of usage.
+Usage comes from the usage-bearing chunk (the final chunk or a trailing usage-only
+chunk before `[DONE]`), never from counting visible deltas. Failed or incomplete
+responses can consume tokens. Missing usage remains unknown, not zero. A disconnect,
+truncated delivery or local failure does not erase a valid terminal usage observation
+already received; the delivery outcome is recorded separately while known counts are
+kept. OMP 18.6.0 stops reading after a trailing usage-only chunk, or after
+`finish_reason` with positive cache information, and waits only 2,500 ms after
+finishing for usage; T004 pins and tests both behaviors. Before terminal usage is
+observed, a disconnect or failure cancels/closes upstream best-effort and records
+unknown usage; the gateway never retries automatically. After response headers are
+sent, local failure closes the stream and records failure; it cannot forge a
+provider-completed event. No raw error/prompt body in local diagnostics.
 
 Every new upstream generation attempt gets a gateway request UUID and is charged
 separately, including host retries of identical JSON. A repeated receipt for that same
 attempt is deduplicated. The gateway does not implement exactly-once generation or
-pretend that closing TCP cancelled billed work. Set the verified host's automatic
-request/stream retries to zero initially; if it still retries, each observed attempt
-counts. Optional `X-Foundry-Context-Ids` (<=4 KiB, <=64 UUIDs) provides attribution only;
+pretend that closing TCP cancelled billed work. OMP 18.6.0 has layered retries: up to
+six HTTP attempts per transport invocation, up to two empty-completion retries and one
+provider-error retry in its stream wrapper, plus host recovery paths. These are not
+configurable and are not a session-wide attempt bound, and the stream wrapper discards
+retried attempts from the session it persists. The gateway records every request that
+reaches it and every actual upstream send; a local admission refusal is not an
+upstream attempt. Each known attempt is recorded in memory before it is sent, so a
+later logging failure keeps its counts. Optional
+`X-Foundry-Context-Ids` (<=4 KiB, <=64 UUIDs) provides attribution only;
 strip it upstream. Missing IDs leave attribution unknown without losing usage counts.
 Such IDs exist only once a host-request integration emits them.
 
 Receipts use the schema above with the gateway's session/request IDs and observation
 object. Keep counters
 in memory; optional bounded private JSONL records counters, timing, mode and provider
-request/response IDs, never bodies. Admission stops before the configured receipt log
-cannot fit another <=16 KiB result. A post-send disk error records an in-memory unknown
+request/response IDs, never bodies. Capacity checks and admission-close decisions
+happen before another upstream send is permitted: admission stops before the
+configured receipt log cannot fit another <=16 KiB result including its newline. A
+post-send disk error keeps the attempt's known counts in memory, records the failure
 and stops further admission; it cannot undo spend. No automatic log rotation or source
-ledger writes. A crash can lose the in-memory attempt; reports disclose incomplete
-coverage and no durable cross-restart cap. This is a deliberate first-cut limitation,
-not a reason to invent another transactional request ledger.
+ledger writes. On shutdown, admission closes immediately, pending connections and
+active upstream work are cancelled, and best-effort receipt handling finishes within
+five seconds of the signal without extending any earlier request deadline. A crash
+can lose an in-memory attempt entirely, so receipt-only reports always state that
+whole-run coverage is unverified and may omit crash-lost attempts, even when every
+surviving receipt is complete; there is no durable cross-restart cap. This is a
+deliberate first-cut limitation, not a reason to invent another transactional request
+ledger. Cleanup removes only this run's token and generated configuration, never
+receipts or OMP session evidence.
 
 In-memory receipt deduplication is bounded to 10,000 attempts per run, consistent
 with offline summary limits. Refuse the next admission as `session_full`; no eviction

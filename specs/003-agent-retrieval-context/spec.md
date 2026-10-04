@@ -2,8 +2,10 @@
 
 Status: T001–T003 and the optional shared owner implemented and verified locally,
 2026-10-01, including concurrent OMP 18.4.9 and Codex 0.159.2 service on one store
-([validation](../../docs/validation.md)). Not released. T004 gateway remains proposed,
-outside this tranche. T005 (token-economics adoption), approved 2026-10-03, is
+([validation](../../docs/validation.md)). Not released. T004 gateway is retargeted
+(2026-10-04) to OMP on Z.ai `glm-5.3-flash`, meter only; its amended contract was
+approved on 2026-10-04 and implementation is in progress. T005
+(token-economics adoption), approved 2026-10-03, is
 implemented and accepted locally as of 2026-10-04: catalog/instruction text (with 001
 T004), usage import and economics tests, and the operator hook (team-kit). The runbook
 ran on 2026-10-04: runs 1–7 met their oracles; run 8 (Codex discovery) missed and,
@@ -458,40 +460,68 @@ adds the opt-in OMP team-kit hook; this record stays instruction-only evidence.)
 
 ### T004 — Forward and meter an actual supported model workflow
 
-- **Depends:** T002 accounting types; explicit permitted provider/model credentials
-  and a host with custom endpoint support. No dependency on 009/013 or source-store
-  ownership. Current first target is Codex over Responses HTTP/SSE; pin the actual
-  versions, request subset, provider limits and token-counting projection before code.
-  Missing access/schema compatibility is `gateway_integration_not_run`; no silent
-  substitution with a mock or a claim of universal adapter support.
-- **Scope:** Rust `src/gateway.rs`, CLI/config printing and focused gateway tests;
+- **Depends:** T002 accounting types; the owner's Z.ai credential and OMP 18.6.0. No
+  dependency on 009/013 or source-store ownership. Owner decision 2026-10-04: the
+  first target is OMP on Z.ai `glm-5.3-flash` over chat completions with SSE (the
+  [economics contract](contracts/adapter-economics.md#owned-model-gateway--explicit-additional-scope)
+  pinned profile), meter mode only, no spend cap. Before code, pin from OMP's installed
+  sources the request fields it sends for this model, the usage chunk placement and
+  the model's input/output windows. Missing access or schema compatibility is
+  `gateway_integration_not_run`; no silent substitution with a mock or a claim of
+  universal adapter support.
+- **Scope:** Rust `src/gateway.rs`, `foundry gateway --config FILE` with its printed
+  OMP profile configuration (names and paths only), and focused gateway tests;
   maintained HTTP/TLS/SSE dependencies. No generic proxy framework, public listener,
-  account credential database, persisted prompt history or per-query source writes.
-- **Outcome (FR-006, FR-007 / SC-004):** a real host streams a response, completes a
-  local tool-call/result turn and reports gateway-observed usage. Exercise meter and
-  enforce modes; an over-cap or unverifiable request makes zero generation calls.
-  Unknown terminal usage remains charged/unknown. Gateway and MCP can coexist without
-  sharing a store lock. No quality/cost improvement follows from forwarding alone.
-- **Verification:** narrow protocol fixtures cover split SSE frames, tool deltas,
-  malformed/oversize input/output, auth/Origin/Host/redirect refusal, slow clients,
-  count failure, cap/exhaustion, retries, disconnect after send, log full, process exit
-  and restart scope. Real-provider evidence checks count projection, terminal cached/
-  reasoning usage and API-key auth; actual host configuration must support the defined
-  stateless subset. Disable host retries and WebSockets where supported and verify
-  behavior; unsupported required host features keep the integration unadvertised.
-  Bound the live check to one declared fixture workflow and explicit token/time caps;
-  no paid call is implied by writing this task. Provider charges require execution
-  authority and configured resources at that later boundary.
-- **Review/cutover:** install the actual local gateway package, create session config,
-  verify listener/token permissions and isolated model-worker credential denial.
-  Stop admission on shutdown, terminate pending connections by the stated deadline,
-  preserve receipt coverage, and remove only this run's token/config artifacts.
-  Restore exact prior host config on opt-out; never fall back to direct upstream
-  requests while a required gateway is unavailable. Release the gateway separately
-  from CLI/MCP; no new measurement-close or fleet-governance stage.
-- **External prerequisites (owner):** an API key, a spend cap and the Codex custom
-  endpoint configuration. Measuring provider usage does not need the gateway: T005's
-  `usage import` reads the host's own session records.
+  account credential database, persisted prompt history, per-query source writes or
+  enforce-mode code without a verified counting API.
+- **Outcome (FR-006, FR-007 / SC-004):** OMP in a dedicated single-flight profile
+  streams a response through the gateway, executes a local tool call and receives the
+  model's continuation, with gateway-observed usage. For that workflow, gateway
+  observations are reconciled with `foundry usage import --host omp` of the same
+  session. Exact input/cached/output equality is required only when the evidence shows
+  a one-to-one correspondence between upstream attempts and persisted assistant
+  messages; otherwise gateway-attempt and host-message totals are reported separately,
+  retried, side-request and unknown coverage is identified, and the difference is
+  explained. Gateway attempts are never discarded to manufacture agreement, and an
+  unexplained difference fails acceptance. `mode: enforce` refuses at startup with
+  `gateway_feature_unsupported`. Unknown terminal usage remains unknown. Gateway and
+  MCP can coexist without sharing a store lock. No quality/cost improvement follows
+  from forwarding alone.
+- **Verification:** narrow protocol fixtures (a local fake upstream) cover split SSE
+  frames, tool-call deltas, usage in the final or a trailing usage-only chunk, missing
+  usage, malformed/oversize input/output, refused subset fields, auth/Origin/Host/
+  redirect refusal, upstream error bodies and SSE errors carrying synthetic credential
+  canaries, slow clients, the busy slot and its `rate_limit_type` marker, disconnect
+  before and after terminal usage, log full, shutdown within five seconds, process
+  exit and restart scope. Then the actual OMP 18.6.0 runs against the local fixture:
+  its request fields match the pinned allowlist; its early stop after usage and its
+  2,500-ms post-finish grace; its HTTP and stream-wrapper retries, with each request
+  reaching the gateway recorded; and the launcher's refusals for an absent or corrupt
+  profile, an unset or empty local token, an existing profile and a gateway that is
+  down. These negative tests use no real credentials. The live check is authorized
+  (2026-10-04): at most 3 runs within one outer 15-minute deadline covering all
+  retries, host processes and shutdown, on one fixture workflow — a metered streamed
+  turn, a tool call with the model's continuation, and a disconnect case that
+  distinguishes before- from after-usage — recording observed upstream-attempt counts
+  and reconciling with the session's usage import. If the window expires, the result is
+  `gateway_integration_not_run` or incomplete evidence: success is not inferred from a
+  zero exit and no further runs are spent.
+- **Review/cutover:** run the actual release binary; the launcher creates only the
+  fresh, dedicated profile's `models.yml`, verifies the effective loopback endpoint,
+  the local token and an authenticated health check before launching OMP, and passes
+  no upstream credential route to OMP. Verify listener/token-file permissions and that
+  no key reaches argv, config, receipts, logs or errors delivered to OMP. On shutdown,
+  close admission, cancel pending work within five seconds and keep known counts;
+  stop the host before cleanup, then remove only this run's token and generated
+  configuration, never receipts or OMP session evidence. The global
+  `~/.omp/agent/models.yml` and other profiles stay untouched; never fall back to
+  direct upstream requests while a required gateway is unavailable. Release the
+  gateway separately from CLI/MCP; no new measurement-close or fleet-governance stage.
+- **External prerequisites (owner, supplied 2026-10-04):** the Z.ai key in a private
+  file the launcher reads into `credential_env` for the gateway process only, and
+  acceptance of the GLM Coding Plan terms for a single-user loopback forwarder in front
+  of OMP (a supported tool). Measuring provider usage alone does not need the gateway:
+  T005's `usage import` reads the host's own session records.
 
 ### T005 — Displace grep and exploratory reads at the fewest delivered tokens
 
