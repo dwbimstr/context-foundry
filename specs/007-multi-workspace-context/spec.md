@@ -1,9 +1,11 @@
 # 007 — One budgeted context across explicitly admitted repositories
 
 Status: Active. Reactivated 2026-10-03 by the owner's selection of the token-economics
-tranche; T001 approved, not implemented. Dependencies: 001 T004–T006 (v2 handles,
-header and candidate seam) and 003 T001–T002 (owner, transports, deadline and
-allowance). The 2026-09-28 deferral stub is superseded; Git history retains it.
+tranche. T001 implemented and verified locally 2026-10-04, accepted at the OpenAI Sol
+reviewer's delta SHIP; committed in `cc402e0`, unreleased ([validation](../../docs/validation.md)).
+Dependencies: 001 T004–T006 (v2 handles, header and candidate seam; committed in
+`5edf32c`) and 003 T001–T002 (owner, transports, deadline and allowance). The
+2026-09-28 deferral stub is superseded; Git history retains it.
 
 ## Outcome
 
@@ -180,4 +182,5 @@ SC-001 is the acceptance of T001.
   stays busy until the stall returns.
 - **Review/cutover:** no registry, federation daemon, watcher or cross-root edge;
   references never change another store's records. Run the checks listed for 001
-  T004–T006, including `rustup run 1.90.0 cargo check --all-targets --locked`.
+  T004–T006, including `cargo check --all-targets --locked` under the actual Rust 1.90
+  toolchain (see 001's SC paragraph).

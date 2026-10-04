@@ -3,9 +3,9 @@
 Status: bootstrap/connect and both MCP transports (003 T001–T003) implemented and
 verified locally, 2026-10-01 ([validation](validation.md)); worker isolation, 005, 009,
 013 and the gateway remain proposed. The token-economics tranche (001 T004–T006, 003
-T005, 007 T001) was approved on 2026-10-03. 001 T004 is now locally implemented and
-verified on final4, unreleased. T005 slice 1 is in progress, without search integration
-or whole-task acceptance; T006, remaining 003 T005 work and 007 T001 are unimplemented.
+T005, 007 T001) was approved on 2026-10-03. 001 T004–T006 are locally implemented,
+accepted and committed (`5edf32c`); 003 T005 and 007 T001 were implemented and accepted
+on 2026-10-04 and committed locally (`5e99ffd`, `cc402e0`). None is released.
 This is the shared deployment boundary for 003
 adapter onboarding, 005 explicit producer execution, 009 embeddings and 013 owned
 learning — not another product, daemon or spec stage. No production installation,

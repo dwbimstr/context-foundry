@@ -4,9 +4,10 @@ Status: revised portfolio. 001 and 003 T001–T003, including the optional share
 owner for concurrent OMP/Codex sessions, were implemented and verified locally on
 2026-10-01 ([validation](../docs/validation.md)); they are not yet released. On
 2026-10-03 the owner selected the token-economics tranche — 001 T004–T006, 003 T005
-and 007 T001 — and reactivated 007. T004 is now locally implemented and verified on
-final4, unreleased. T005 has slice-1 work in progress without search integration or
-whole-task acceptance; T006, remaining 003 T005 work and 007 T001 are unimplemented.
+and 007 T001 — and reactivated 007. 001 T004–T006 are locally implemented, accepted
+at the reviewer's SHIP and committed (`5edf32c`), unreleased. 003 T005 (usage import,
+economics tests, operator hook) and 007 T001 were implemented and accepted locally on
+2026-10-04 and committed locally (unreleased); the real-host runbook is recorded in validation.
 The same spec pass classified the remaining specified unknowns
 of 003 T004, 005, 008, 009 and 013 as settled decisions, named open owned decisions
 (005 T002's `references` header segments; 009 T002's semantic-item line form) or
@@ -62,10 +63,10 @@ the first search/graph family is not a claim of full Laya parity.
 
 | Spec | Detailed work | State and prerequisite that cannot be silently waived |
 | --- | --- | --- |
-| 001 | D001 resolved: retain redb/Tantivy; T001 recovery; T002 reconciliation; T003 exact retrieval; T004 compact v2 wire and atomic allowance; T005 syntax-unit search with exact definitions first; T006 outlines, context ladder and retrieve views | T001–T003 verified 2026-10-01; T004 locally implemented and verified on final4, unreleased. T005 slice 1 in progress, search integration/whole-task acceptance pending; T006 unimplemented; a grammar that cannot meet Rust 1.90 stops T005 for an owner decision |
-| 003 | T001 bootstrap/MCP; T002 budgets/receipts; T003 actual agent task; T004 owned request gateway; T005 catalog/instructions, opt-in OMP hook, usage import and economics evidence | T001–T003 verified with OMP and Codex 2026-10-01. T004 needs pinned Responses schema/counting and the external prerequisites below. T005 approved 2026-10-03; catalog/instruction text landed with 001 T004, but hook, usage import and full economics evidence remain unimplemented; real-host runs are authorized up to eight runs and 40 minutes |
+| 001 | D001 resolved: retain redb/Tantivy; T001 recovery; T002 reconciliation; T003 exact retrieval; T004 compact v2 wire and atomic allowance; T005 syntax-unit search with exact definitions first; T006 outlines, context ladder and retrieve views | T001–T003 verified 2026-10-01; T004–T006 accepted locally at SHIP and committed in `5edf32c`; the T005 leading-run amendment accepted 2026-10-04 and committed in `bd1d890`. Release checklist remains |
+| 003 | T001 bootstrap/MCP; T002 budgets/receipts; T003 actual agent task; T004 owned request gateway; T005 catalog/instructions, opt-in OMP hook, usage import and economics evidence | T001–T003 verified with OMP and Codex 2026-10-01. T004 needs pinned Responses schema/counting and the external prerequisites below. T005 implemented and accepted 2026-10-04, committed in `5e99ffd`; the hook is committed in the team-kit (`e65f8cf`) and installed default-off; real-host runbook recorded in validation |
 | 005 | T001 real SCIP; T002 scoped publication; T003 large-workspace workflow | Spec-pass decisions recorded 2026-10-03; T002 first fixes the `references` coverage and count header segments within the v2 header grammar (open owned decision); external prerequisites below |
-| 007 | T001 admit, query and cite several roots in one budgeted response | Approved 2026-10-03, not implemented; needs 001 T004–T006 |
+| 007 | T001 admit, query and cite several roots in one budgeted response | T001 implemented and accepted 2026-10-04, committed in `cc402e0`; unreleased |
 | 008 | T001 record lifecycle; T002 export/forget | Spec-pass decisions recorded 2026-10-03 (one `memory` tool); accepted 001 owner/schema contract; 003 only for the advertised MCP surface |
 | 009 | D001 runtime/index disposition; T001 durable preparation; T002 retrieval; T003 progressive preparation | D001 chosen values recorded 2026-10-03; pinned artifact/runtime stand; T002 first closes the open semantic-item line form (open owned decision); external prerequisites below |
 | 013 | D001 actual recipe/package acceptance; T001 joint-input data; T002 real fitting; T003 inference/rollback; T004 repeat/deploy | v4 pins model/input/backend; spec-pass decisions recorded 2026-10-03; scratch gradients pass; external prerequisites below |

@@ -22,10 +22,9 @@ These are feature opportunities, not gates before the first release. As of
 2026-10-01, 001 T001–T003 and 003 T001–T003 (including the optional shared owner) are
 implemented and verified locally ([validation](validation.md)). The owner selected
 item 3 on 2026-10-03 as the current core work, ahead of the optional features; it is
-partially implemented: 001 T004 is locally verified on final4 and unreleased;
-T005 slice 1 is in progress without search integration or whole-task acceptance;
-T006, remaining 003 T005 work and 007 T001 are unimplemented. The 001/003 scope ships
-through the ordinary
+implemented locally: 001 T004–T006 are accepted and committed (`5edf32c`); 003 T005 and
+007 T001 were accepted and committed locally on 2026-10-04; none is released. The 001/003 scope
+ships through the ordinary
 [release checklist](release.md) once the owner names a release destination. 003 T004
 (gateway), 005, 008, 009 and 013 remain proposed; the 2026-10-03 spec pass classified
 their remaining unknowns as settled decisions, named open owned decisions (005 T002's

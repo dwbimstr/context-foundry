@@ -2,10 +2,11 @@
 
 Status: Delivery budgets and receipts implemented 2026-10-01 (003 T002); host-request
 mode and gateway proposed (contract proposed 2026-09-29). Delivered-token economics
-(§ below) was approved 2026-10-03: 001 T004's wire, atomic allowance and catalog text
-are locally implemented and verified on final4, unreleased. T005 slice 1 is in progress,
-without search integration or whole-task acceptance; T006 and remaining 003 T005 work
-are unimplemented. Owned by
+(§ below) was approved 2026-10-03: 001 T004–T006 (wire, atomic allowance, catalog text,
+syntax-unit ranking and outlines) are locally implemented, accepted and committed
+(`5edf32c`), unreleased; 003 T005's usage import, economics tests and operator hook and
+007 T001 are implemented and accepted locally on 2026-10-04 (`5e99ffd`, `cc402e0`), with the
+real-host runbook recorded in [validation](../../../docs/validation.md). Owned by
 [003](../spec.md); core packing/identity remains in [001](../../001-source-state-recovery/contracts/context-v2.md).
 This adds practical budget control, usage receipts and the owner's subsequently
 requested optional model gateway. The gateway is a narrow Rust forwarding command, not
@@ -144,9 +145,9 @@ Excess refuses rather than truncates. Receipt logging grants no training consent
 
 ## Delivered-token economics
 
-Approved 2026-10-03 (token-economics spec pass); not implemented. The owner's top
-priority is that Foundry tools displace grep/ripgrep and exploratory file reads at the
-fewest delivered tokens, with deterministic compression only. Implementation: 001
+Approved 2026-10-03 (token-economics spec pass); implemented locally 2026-10-04. The
+owner's top priority is that Foundry tools displace grep/ripgrep and exploratory file
+reads at the fewest delivered tokens, with deterministic compression only. Implementation: 001
 T004–T006 (wire, ranking, outlines), 003 T005 (catalog, hook, usage import, evidence)
 and 007 T001 (multi-root). The wire rules belong to the
 [shared context contract v2](../../001-source-state-recovery/contracts/context-v2.md);
@@ -282,8 +283,9 @@ changes; it is never tuned away.
 
 Measured: payload tokens at the counting boundary, and provider usage only from
 `usage import` of real host records. T004 measured the `examples/workspace` handle
-at 33 versus 94 o200k tokens and the serialized five-tool catalog at 568 versus
-the historical v1 711; the earlier 29/85 handle estimate is superseded. Estimated:
+at 33 versus 94 o200k tokens; the earlier 29/85 handle estimate is superseded. The
+serialized five-tool catalog measured 568 at T004, 598 after T005/T006 and 661 after
+007 T001 (v1 711). Estimated:
 `result_o200k_estimate`. Unknown: provider cache behavior when usage categories
 are missing; such runs support payload claims only. Real-host results of the
 token-economics tranche are labeled "bundled Foundry adoption (v2 + instructions +

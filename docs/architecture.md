@@ -2,10 +2,10 @@
 
 Status: 001 and 003 T001–T003 implemented and verified locally, 2026-10-01
 ([validation](validation.md)); not released. The token-economics tranche (001
-T004–T006, 003 T005, 007 T001) was approved on 2026-10-03. T004 is now locally
-implemented and verified on final4, unreleased. T005 slice 1 is in progress, without
-search integration or whole-task acceptance; T006, remaining 003 T005 work and
-007 T001 are not implemented.
+T004–T006, 003 T005, 007 T001) was approved on 2026-10-03. 001 T004–T006 are locally
+implemented, accepted at the reviewer's SHIP and committed (`5edf32c`), unreleased;
+003 T005 (usage import, economics tests, operator hook) and 007 T001 were implemented
+and accepted on 2026-10-04, committed locally (`5e99ffd`, `cc402e0`) and unreleased.
 Other capabilities are proposed as marked below. This is a design and ownership
 contract, not a performance claim.
 
@@ -88,9 +88,11 @@ owning tasks, not a separate whole-portfolio acceptance stage.
 
 ## Token-economics flow
 
-Approved 2026-10-03 (001 T004–T006, 003 T005, 007 T001). T004's wire/accounting is
-locally implemented and verified on final4, unreleased; the syntax ranking, outlines,
-multi-root merge, hook and full economics evidence shown below remain unimplemented.
+Approved 2026-10-03 (001 T004–T006, 003 T005, 007 T001). The v2 wire and accounting,
+syntax-unit ranking and outlines (001 T004–T006) are committed; the multi-root merge,
+hook, usage import and economics tests below were implemented and accepted locally on
+2026-10-04 and committed locally. All of it is unreleased; real-host results are in
+[validation](validation.md).
 The goal is that an agent reaches for Foundry instead of grep/ripgrep and exploratory
 file reads, and receives the same cited evidence in the fewest delivered tokens. The normative
 owners are the [v2 contract](../specs/001-source-state-recovery/contracts/context-v2.md)
@@ -147,11 +149,12 @@ flowchart TD
   bounded JSON reports.
 
 The table retains measured v1 payloads beside the v2 request defaults and full-tranche
-targets, not full-tranche acceptance. T004's separate fixture measurements are
-recorded in [validation](validation.md): handles 33 versus 94 o200k tokens
-(68 versus 207 bytes), and the serialized five-tool catalog 568 versus v1's 711
-(within the 800-token ceiling). Syntax-unit/outline and real-host comparisons await
-the remaining tasks.
+targets, not full-tranche acceptance. Separate fixture measurements are recorded in
+[validation](validation.md): handles 33 versus 94 o200k tokens (68 versus 207 bytes,
+T004), and the serialized five-tool catalog 661 tokens after 007 T001 added `root`/
+`roots` (598 after T005/T006 grew the `search` and `retrieve` schemas; 568 at T004; v1
+711; ceiling 800). The twelve-query payload comparison and real-host runs belong to
+003 T005.
 
 | Agent intent | Tool and v2 form | v1 measured 2026-10-03 (text-block o200k tokens) | v2 request default | v2 target (not a measurement) |
 | --- | --- | --- | --- | --- |

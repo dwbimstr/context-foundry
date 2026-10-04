@@ -1,5 +1,36 @@
 # Spec and task audit
 
+## 001 T005/T006 documentation closure — 2026-10-04
+
+S1 contract and status pass after T005/T006 acceptance and the owner's commits
+`5edf32c` (code) and `c430997` (specs/docs). Amended the
+[v2 contract](../specs/001-source-state-recovery/contracts/context-v2.md) with the
+owner decisions and implemented details reported by the authoring session and
+checked against source at `c430997`: the 256-byte qualified-name tail (`src/syntax.rs`
+`QNAME_BYTES`, `qualified`); declaration-only member signatures as mandatory outline
+lines; signature and closing-line rules; whole-line block comments; span eligibility at
+a range end (`content_end`); the graph window in `candidates:full`; the outline refusal
+policies (`response::pack_retrieve_outline`, `outline_refusal_floor`); the
+non-verbatim framing-LF limitation; "mapped language" read literally; unit handles
+preserving syntax-node or Markdown-section ranges without appending line terminators;
+and the seam types (`RankedItem.handle: Option`, `end_line`,
+`CandidateCounters.graph`, tiers 3/4, `RenderedForm`). Go type declarations stay
+unnamed under the literal Name rule; that is recorded as an accepted limitation with
+its re-entry condition rather than amended. Status lines across specs and docs now say
+T004–T006 are accepted and committed, unreleased. The 001 and 007 gate text now names
+the actual 1.90 toolchain on `PATH`, because `rustup run 1.90.0` resolved to another
+compiler on this workstation. The catalog was re-measured (598 tokens; see validation),
+and the T006 latency risk was probed (end-to-end CLI wall time only; see validation).
+
+Checks: a throwaway link checker over README, `docs/` and `specs/` (40 files, 463
+relative links, 88 heading links, zero missing) and `git diff --check`, both clean.
+Review: `S1DocsReview`, OpenAI `gpt-6.1-sol:xhigh`, cross-lab to the Anthropic author,
+read the diff against source at `c430997`: REVISE (M1 Markdown section handles can
+include a trailing LF; M2 the latency text attributed wall time to parsing without
+separate timing; m1 003's opening status), all three corrected with its wording, then
+delta SHIP. One reviewer, not an independent quorum. Documentation only: no source,
+test or build change is part of this closure.
+
 ## 001 T004 documentation closure — final4
 
 001 T004 is locally implemented and verified, unreleased. The owner reports all six
@@ -16,10 +47,9 @@ in validation remain evidence for their original versions, not current wire outp
 The ambiguity refusal is reviewed: the test parser refuses two complete item-line
 readings without attributing either; no universal round trip is claimed. `invalid_range`
 remains invalid input with CLI exit 2 under the existing contract; no rule changed.
-T005 slice 1 is in progress without search integration or whole-task acceptance;
-T006 and the remaining tranche are unimplemented.
+T005 and T006 were later accepted and committed; see the closure above.
 
-## Spec pass 2026-10-03 — current pass
+## Spec pass 2026-10-03 — preceding pass
 
 2026-10-03 to 2026-10-04. The owner asked for one pass over every Context Foundry spec
 so that no unknown stays implicit, with token economics as the top priority. This pass
@@ -126,13 +156,13 @@ Portfolio inventory, all 15 specs:
 
 | Spec | State after this pass |
 | --- | --- |
-| [001](../specs/001-source-state-recovery/spec.md) | T001–T003 verified 2026-10-01; T004 now locally implemented/verified on final4, unreleased; T005 slice 1 in progress, search integration/whole-task acceptance pending; T006 unimplemented |
+| [001](../specs/001-source-state-recovery/spec.md) | T001–T003 verified 2026-10-01; T004 locally verified on final4 at the time of this pass; T005/T006 later accepted (see the 2026-10-04 closure above) |
 | [002](../specs/002-single-owner-serving/spec.md) | Superseded (owner: 003) |
-| [003](../specs/003-agent-retrieval-context/spec.md) | T001–T003 implemented 2026-10-01; T004 proposed with external prerequisites; T005 approved, not implemented |
+| [003](../specs/003-agent-retrieval-context/spec.md) | T001–T003 implemented 2026-10-01; T004 proposed with external prerequisites; T005 implemented and accepted locally 2026-10-04, committed (`5e99ffd`) |
 | [004](../specs/004-workspace-freshness-scale/spec.md) | Superseded (001 and 005) |
 | [005](../specs/005-graph-evidence-lifecycle/spec.md) | Proposed; decisions recorded; one open owned decision (T002 header segments); external prerequisites |
 | [006](../specs/006-semantic-producer-adapters/spec.md) | Superseded (005) |
-| [007](../specs/007-multi-workspace-context/spec.md) | Reactivated 2026-10-03; T001 approved, not implemented |
+| [007](../specs/007-multi-workspace-context/spec.md) | Reactivated 2026-10-03; T001 implemented and accepted locally 2026-10-04 (delta SHIP), committed (`cc402e0`) |
 | [008](../specs/008-scoped-durable-memory/spec.md) | Proposed; decisions recorded; no external prerequisite |
 | [009](../specs/009-optional-semantic-retrieval/spec.md) | Proposed; D001 chosen values recorded; one open owned decision (T002 line form); external prerequisites |
 | [010](../specs/010-source-bound-derived-knowledge/spec.md) | Deferred, re-entry criteria unchanged |

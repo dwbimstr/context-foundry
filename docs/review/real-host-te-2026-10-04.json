@@ -1,0 +1,500 @@
+{
+ "schema": "foundry-real-host-te/v1",
+ "utc": "2026-10-04T18:07:20Z",
+ "binary_sha256": "e32204fb44a1bf65d77155d47cfbba051ed916d7c90cb51b9760fce37466cee7",
+ "hosts": {
+  "omp": "omp/18.6.0",
+  "codex": "codex-cli 0.159.2"
+ },
+ "models": {
+  "omp": "zai/glm-5.3",
+  "codex": "gpt-6.1-sol (model_reasoning_effort medium, as recorded 2026-10-01)"
+ },
+ "caps": {
+  "runs": "8 runbook runs + 1 owner-authorized run-8 rerun (2026-10-04)",
+  "aggregate_s": 2400,
+  "per_run_s": 600,
+  "elapsed_s": 398.1
+ },
+ "label": "bundled Foundry adoption (v2 + instructions + optional hook), n=1 per task/arm; not an isolated v2 effect and not a general savings result",
+ "deviations": [
+  "OMP 18.6.0 (runbook names 18.4.10); run 1 hook probe passed with unchanged matchers",
+  "hook loaded with -e from the operator team-kit source, not an installed copy; installation was deferred to avoid syncing unrelated uncommitted kit edits",
+  "release binary built with --offline into a private CARGO_TARGET_DIR (not target/)",
+  "A3 oracle checks used a private CARGO_TARGET_DIR; exit codes are the oracle",
+  "run 8 copy carried no Foundry AGENTS.md (the runbook then named none); the passing 2026-10-01 Codex run shared the OMP F arm's copy, which had it. A post-run local probe of the same owner on the run's store (no model) listed all five tools",
+  "run 9 is the owner-authorized rerun of run 8 after the runbook amendment: same binary and argv, with foundry connect --host codex --print-config instructions written to the copy's AGENTS.md",
+  "a user-level custom context tool remained available under --no-extensions in both arms; A1-H invoked it once and received a no-daemon error",
+  "OMP imports are complete:false because the session usage records omit a reasoning-token category; totals are the reported input-plus-output sums and the reasoning breakdown is unknown"
+ ],
+ "runs": [
+  {
+   "run": 1,
+   "name": "hook-probe-F",
+   "exit": 0,
+   "timed_out": false,
+   "wall_s": 69.2,
+   "oracle": null,
+   "harness_failure": false,
+   "tool_calls_by_name": {
+    "grep": 5,
+    "read": 1,
+    "write": 1
+   },
+   "hook_blocks": 1,
+   "usage": {
+    "assistant_messages": 5,
+    "complete": false,
+    "host": "omp",
+    "host_version": null,
+    "missing": {
+     "reasoning_tokens": 5
+    },
+    "models": [
+     "glm-5.3"
+    ],
+    "provider_usage": {
+     "cache_write_tokens": 0,
+     "cached_input_tokens": 61440,
+     "input_tokens": 76740,
+     "output_tokens": 3273,
+     "reasoning_tokens": 0,
+     "total_tokens": 80013
+    },
+    "recipe": "omp-v1",
+    "tools": {
+     "foundry.search": {
+      "calls": 1,
+      "result_bytes": 1093,
+      "result_o200k_estimate": 368
+     },
+     "grep": {
+      "calls": 5,
+      "result_bytes": 2188,
+      "result_o200k_estimate": 630
+     },
+     "read": {
+      "calls": 1,
+      "result_bytes": 430,
+      "result_o200k_estimate": 108
+     }
+    },
+    "unattributed_results": 0,
+    "unparsed_lines": 0,
+    "usage_records": 5,
+    "v": 1,
+    "import_exit": 0
+   }
+  },
+  {
+   "run": 2,
+   "name": "A1-H",
+   "exit": 0,
+   "timed_out": false,
+   "wall_s": 31.8,
+   "oracle": true,
+   "harness_failure": false,
+   "tool_calls_by_name": {
+    "bash": 1,
+    "context": 1,
+    "grep": 3,
+    "read": 1
+   },
+   "hook_blocks": 0,
+   "usage": {
+    "assistant_messages": 5,
+    "complete": false,
+    "host": "omp",
+    "host_version": null,
+    "missing": {
+     "reasoning_tokens": 5
+    },
+    "models": [
+     "glm-5.3"
+    ],
+    "provider_usage": {
+     "cache_write_tokens": 0,
+     "cached_input_tokens": 83200,
+     "input_tokens": 113129,
+     "output_tokens": 1079,
+     "reasoning_tokens": 0,
+     "total_tokens": 114208
+    },
+    "recipe": "omp-v1",
+    "tools": {
+     "bash": {
+      "calls": 1,
+      "result_bytes": 1035,
+      "result_o200k_estimate": 428
+     },
+     "context": {
+      "calls": 1,
+      "result_bytes": 600,
+      "result_o200k_estimate": 163
+     },
+     "grep": {
+      "calls": 3,
+      "result_bytes": 60796,
+      "result_o200k_estimate": 14630
+     },
+     "read": {
+      "calls": 1,
+      "result_bytes": 3237,
+      "result_o200k_estimate": 854
+     }
+    },
+    "unattributed_results": 0,
+    "unparsed_lines": 0,
+    "usage_records": 5,
+    "v": 1,
+    "import_exit": 0
+   }
+  },
+  {
+   "run": 3,
+   "name": "A1-F",
+   "exit": 0,
+   "timed_out": false,
+   "wall_s": 46.3,
+   "oracle": true,
+   "harness_failure": false,
+   "tool_calls_by_name": {
+    "write": 5
+   },
+   "hook_blocks": 0,
+   "usage": {
+    "assistant_messages": 6,
+    "complete": false,
+    "host": "omp",
+    "host_version": null,
+    "missing": {
+     "reasoning_tokens": 6
+    },
+    "models": [
+     "glm-5.3"
+    ],
+    "provider_usage": {
+     "cache_write_tokens": 0,
+     "cached_input_tokens": 84736,
+     "input_tokens": 89081,
+     "output_tokens": 1383,
+     "reasoning_tokens": 0,
+     "total_tokens": 90464
+    },
+    "recipe": "omp-v1",
+    "tools": {
+     "foundry.retrieve": {
+      "calls": 3,
+      "result_bytes": 5234,
+      "result_o200k_estimate": 1245
+     },
+     "foundry.search": {
+      "calls": 2,
+      "result_bytes": 3907,
+      "result_o200k_estimate": 1423
+     }
+    },
+    "unattributed_results": 0,
+    "unparsed_lines": 0,
+    "usage_records": 6,
+    "v": 1,
+    "import_exit": 0
+   }
+  },
+  {
+   "run": 4,
+   "name": "A2-H",
+   "exit": 0,
+   "timed_out": false,
+   "wall_s": 27.4,
+   "oracle": true,
+   "harness_failure": false,
+   "tool_calls_by_name": {
+    "grep": 2,
+    "read": 2
+   },
+   "hook_blocks": 0,
+   "usage": {
+    "assistant_messages": 5,
+    "complete": false,
+    "host": "omp",
+    "host_version": null,
+    "missing": {
+     "reasoning_tokens": 5
+    },
+    "models": [
+     "glm-5.3"
+    ],
+    "provider_usage": {
+     "cache_write_tokens": 0,
+     "cached_input_tokens": 71936,
+     "input_tokens": 78282,
+     "output_tokens": 1078,
+     "reasoning_tokens": 0,
+     "total_tokens": 79360
+    },
+    "recipe": "omp-v1",
+    "tools": {
+     "grep": {
+      "calls": 2,
+      "result_bytes": 9575,
+      "result_o200k_estimate": 2472
+     },
+     "read": {
+      "calls": 2,
+      "result_bytes": 13389,
+      "result_o200k_estimate": 3280
+     }
+    },
+    "unattributed_results": 0,
+    "unparsed_lines": 0,
+    "usage_records": 5,
+    "v": 1,
+    "import_exit": 0
+   }
+  },
+  {
+   "run": 5,
+   "name": "A2-F",
+   "exit": 0,
+   "timed_out": false,
+   "wall_s": 70.9,
+   "oracle": true,
+   "harness_failure": false,
+   "tool_calls_by_name": {
+    "write": 6
+   },
+   "hook_blocks": 0,
+   "usage": {
+    "assistant_messages": 6,
+    "complete": false,
+    "host": "omp",
+    "host_version": null,
+    "missing": {
+     "reasoning_tokens": 6
+    },
+    "models": [
+     "glm-5.3"
+    ],
+    "provider_usage": {
+     "cache_write_tokens": 0,
+     "cached_input_tokens": 87424,
+     "input_tokens": 94323,
+     "output_tokens": 3300,
+     "reasoning_tokens": 0,
+     "total_tokens": 97623
+    },
+    "recipe": "omp-v1",
+    "tools": {
+     "foundry.retrieve": {
+      "calls": 4,
+      "result_bytes": 12801,
+      "result_o200k_estimate": 2727
+     },
+     "foundry.search": {
+      "calls": 2,
+      "result_bytes": 5438,
+      "result_o200k_estimate": 1959
+     }
+    },
+    "unattributed_results": 0,
+    "unparsed_lines": 0,
+    "usage_records": 6,
+    "v": 1,
+    "import_exit": 0
+   }
+  },
+  {
+   "run": 6,
+   "name": "A3-H",
+   "exit": 0,
+   "timed_out": false,
+   "wall_s": 25.6,
+   "oracle": true,
+   "harness_failure": false,
+   "tool_calls_by_name": {
+    "bash": 2,
+    "edit": 1,
+    "read": 2
+   },
+   "hook_blocks": 0,
+   "usage": {
+    "assistant_messages": 5,
+    "complete": false,
+    "host": "omp",
+    "host_version": null,
+    "missing": {
+     "reasoning_tokens": 5
+    },
+    "models": [
+     "glm-5.3"
+    ],
+    "provider_usage": {
+     "cache_write_tokens": 0,
+     "cached_input_tokens": 53312,
+     "input_tokens": 65655,
+     "output_tokens": 508,
+     "reasoning_tokens": 0,
+     "total_tokens": 66163
+    },
+    "recipe": "omp-v1",
+    "tools": {
+     "bash": {
+      "calls": 2,
+      "result_bytes": 576,
+      "result_o200k_estimate": 218
+     },
+     "edit": {
+      "calls": 1,
+      "result_bytes": 213,
+      "result_o200k_estimate": 75
+     },
+     "read": {
+      "calls": 2,
+      "result_bytes": 1969,
+      "result_o200k_estimate": 590
+     }
+    },
+    "unattributed_results": 0,
+    "unparsed_lines": 0,
+    "usage_records": 5,
+    "v": 1,
+    "import_exit": 0
+   },
+   "check_before": 1,
+   "check_after": 0
+  },
+  {
+   "run": 7,
+   "name": "A3-F",
+   "exit": 0,
+   "timed_out": false,
+   "wall_s": 68.5,
+   "oracle": true,
+   "harness_failure": false,
+   "tool_calls_by_name": {
+    "bash": 1,
+    "edit": 1,
+    "read": 2,
+    "write": 7
+   },
+   "hook_blocks": 0,
+   "usage": {
+    "assistant_messages": 11,
+    "complete": false,
+    "host": "omp",
+    "host_version": null,
+    "missing": {
+     "reasoning_tokens": 11
+    },
+    "models": [
+     "glm-5.3"
+    ],
+    "provider_usage": {
+     "cache_write_tokens": 0,
+     "cached_input_tokens": 158016,
+     "input_tokens": 162335,
+     "output_tokens": 1541,
+     "reasoning_tokens": 0,
+     "total_tokens": 163876
+    },
+    "recipe": "omp-v1",
+    "tools": {
+     "bash": {
+      "calls": 1,
+      "result_bytes": 236,
+      "result_o200k_estimate": 71
+     },
+     "edit": {
+      "calls": 1,
+      "result_bytes": 213,
+      "result_o200k_estimate": 75
+     },
+     "foundry.index": {
+      "calls": 1,
+      "result_bytes": 258,
+      "result_o200k_estimate": 73
+     },
+     "foundry.retrieve": {
+      "calls": 4,
+      "result_bytes": 1543,
+      "result_o200k_estimate": 513
+     },
+     "foundry.search": {
+      "calls": 2,
+      "result_bytes": 1244,
+      "result_o200k_estimate": 496
+     },
+     "read": {
+      "calls": 2,
+      "result_bytes": 1969,
+      "result_o200k_estimate": 590
+     }
+    },
+    "unattributed_results": 0,
+    "unparsed_lines": 0,
+    "usage_records": 11,
+    "v": 1,
+    "import_exit": 0
+   },
+   "check_before": 1,
+   "check_after": 0,
+   "pre_edit_handle_captured": true,
+   "pre_edit_retrieve_exit": 1,
+   "pre_edit_stale_handle": true
+  },
+  {
+   "run": 8,
+   "name": "codex-T003-discovery",
+   "exit": 0,
+   "timed_out": false,
+   "wall_s": 19.0,
+   "oracle": false,
+   "harness_failure": false,
+   "calls_in_order": [
+    "shell:rg",
+    "shell:nl"
+   ],
+   "first_discovery": "shell:rg",
+   "owner_exit": 0,
+   "index_exit": 0,
+   "usage_import": "not imported: --ephemeral leaves no rollout file",
+   "stdout_turn_usage": {
+    "input_tokens": 50493,
+    "cached_input_tokens": 44928,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 236,
+    "reasoning_output_tokens": 0
+   }
+  },
+  {
+   "run": 9,
+   "name": "codex-T003-discovery-rerun-with-instructions",
+   "exit": 0,
+   "timed_out": false,
+   "wall_s": 39.4,
+   "oracle": true,
+   "harness_failure": false,
+   "calls_in_order": [
+    "mcp:context-foundry.search",
+    "mcp:context-foundry.search",
+    "mcp:context-foundry.retrieve",
+    "mcp:context-foundry.retrieve",
+    "mcp:context-foundry.retrieve",
+    "mcp:context-foundry.retrieve",
+    "mcp:context-foundry.retrieve"
+   ],
+   "first_discovery": "mcp:context-foundry.search",
+   "owner_exit": 0,
+   "index_exit": 0,
+   "usage_import": "not imported: --ephemeral leaves no rollout file",
+   "stdout_turn_usage": {
+    "input_tokens": 104919,
+    "cached_input_tokens": 87552,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 592,
+    "reasoning_output_tokens": 0
+   }
+  }
+ ]
+}

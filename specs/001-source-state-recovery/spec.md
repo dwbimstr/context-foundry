@@ -1,11 +1,11 @@
 # 001 — Reliable local context
 
-Status: T001–T003 implemented and verified locally, 2026-10-01 (owner-approved scope:
-001 + 003 first implementation). T004 is now implemented and verified locally
-(final4); not released. T005 has slice-1 work in progress, with search integration
-and whole-task acceptance still pending. T006 remains approved, not implemented.
-D001 remains resolved below. Evidence,
-review provenance and accepted limitations: [validation](../../docs/validation.md).
+Status: T001–T006 implemented and verified locally; not released. T001–T003 were
+verified on 2026-10-01 (owner-approved scope: 001 + 003 first implementation). T004–T006
+(token-economics tranche, approved 2026-10-03) were each accepted locally at the
+cross-lab reviewer's SHIP on 2026-10-04 and committed in `5edf32c`. D001 remains
+resolved below. Evidence, review provenance and accepted limitations:
+[validation](../../docs/validation.md).
 
 ## Outcome and baseline
 
@@ -132,6 +132,9 @@ There is no general migration framework. Interrupted upgrade is wholly v1 or v2;
 old binaries refuse v2. Unknown versions and authoritative corruption do not migrate.
 Rollback before upgrade uses v1; after upgrade use v2 or a pre-upgrade backup, never
 write v2 with the old binary. D001 must amend this if storage selection changes.
+Search index schema v2 (T005) is derived state, not a store-schema change: an upgrade
+stays metadata-only, so an upgraded store, or any store indexed before T005, reports
+`repair_required` with reason `search_schema` until an explicit `repair-index`.
 
 One store-schema version and its explicit upgrades are owned by the store module.
 005/008/009/013 changes use the next supported step when implemented; they do not
@@ -278,8 +281,9 @@ accepted enumeration residual above. Hardware power-loss behavior is not claimed
 
 ### T004 — Deliver compact v2 text with exact accounting
 
-**Status:** locally implemented and verified on the final4 manifest; unreleased.
-All six gates exited 0 and the same existing OpenAI T004 reviewer returned SHIP.
+**Status:** locally implemented and verified on the final4 manifest; committed in
+`5edf32c`, unreleased. All six gates exited 0 and the same existing OpenAI T004
+reviewer returned SHIP.
 See [validation](../../docs/validation.md). The reviewed ambiguous-item-line refusal
 is an accepted test-parser limitation, not a universal item-line round-trip claim.
 
@@ -332,14 +336,33 @@ is an accepted test-parser limitation, not a universal item-line round-trip clai
 
 ### T005 — Rank syntax units with exact definitions first
 
+**Status:** accepted locally at the reviewer's r3 SHIP on 2026-10-04; committed in
+`5edf32c`, unreleased. Owner decisions taken during review: an upgrade stays
+metadata-only (explicit `repair-index`), and qualified names keep their last 256
+bytes (§ Unit kinds of the [v2 contract](contracts/context-v2.md#unit-kinds)). See
+[validation](../../docs/validation.md).
+
+**Amendment (owner decision 2026-10-04), implemented locally, unreleased:** units take
+their leading run of documentation comments and Rust attributes (§ Unit forest of the
+v2 contract), a tier-1 best line stays on the definition's own (head) line, a leading
+documentation span of at least 2 lines is elidable, and `search_schema` becomes `"3"`
+so indexes built before the amendment report `repair_required` until `repair-index`.
+Cause: 003 T005's frozen-corpus check found 10/12 expected units; both misses were
+Rust definitions whose doc comment and attribute sat outside the unit, so the
+question matched the preceding block. Verification adds per-language leading-run
+range tests (attached, blank-line-separated, same-line-trailing, inner-doc, Unicode
+whitespace and empty-`/**/` cases), the best-line rule, the outline doc span and the
+schema gate; the economics check found 12/12. Accepted at the OpenAI Sol reviewer's
+delta SHIP (see [validation](../../docs/validation.md)).
+
 - **Depends:** T004. **Scope:** `Cargo.toml` and `Cargo.lock` (the contract's
   dependency list), new `src/syntax.rs` with `pub mod syntax;` in `src/lib.rs`,
   `src/store.rs` (schema v2, tokenizers, refresh document building, two-tier search,
   META `search_schema`, `Engine::search_candidates`), `src/response.rs` (locator
   rendering with delivery-unit handles and labels), `src/mcp.rs`/`src/cli.rs` (`path` /
   `--path`), new `tests/syntax.rs` and search cases in `tests/{core,mcp,repair}.rs`.
-  Gate: `rustup run 1.90.0 cargo check --all-targets --locked` passes with every
-  selected grammar.
+  Gate: `cargo check --all-targets --locked` under the actual Rust 1.90 toolchain
+  (§ SC paragraph below) passes with every selected grammar.
 - **Outcome/acceptance (FR-003 / SC-005):** the v2 contract's syntax units and search
   documents: unit forest, delivery-unit documents, schema v2 with its tokenizers,
   two-tier ranking with deterministic cutoffs, hit materialization and the
@@ -364,6 +387,10 @@ is an accepted test-parser limitation, not a universal item-line round-trip clai
   `repair-index`; ordinary opens never rebuild.
 
 ### T006 — Fit more evidence with outlines and forms
+
+**Status:** accepted locally at the reviewer's r3 SHIP on 2026-10-04; committed in
+`5edf32c`, unreleased. `following_chunks` is removed. Owner decisions on outline
+refusals are in § Retrieve views of the [v2 contract](contracts/context-v2.md#retrieve-views).
 
 - **Depends:** T005. **Scope:** `src/syntax.rs` (outline), `src/store.rs`
   (`context_candidates`, `CandidateBatch`, removal of `following_chunks`),
@@ -393,9 +420,12 @@ is an accepted test-parser limitation, not a universal item-line round-trip clai
 - **Review/cutover:** remove `following_chunks` and any second packer; retrieve's text
   view keeps the bounded prefix fit.
 
-SC-004/005/006 are the acceptance of T004/T005/T006 respectively: approved 2026-10-03,
-not executed. Each task runs `cargo fmt --check`, `cargo clippy --locked --all-targets
--- -D warnings`, `cargo test --locked --no-fail-fast`, `rustup run 1.90.0 cargo check
---all-targets --locked` and `rustup run 1.90.0 cargo clippy --locked --all-targets --
--D warnings`. `cargo +1.90.0` needs the rustup proxy; where `cargo` comes from another
-package manager, call the 1.90 toolchain through `rustup run`.
+SC-004/005/006 are the acceptance of T004/T005/T006 respectively: each passed locally
+at its reviewer's SHIP (2026-10-04), recorded in [validation](../../docs/validation.md).
+Each task runs `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`,
+`cargo test --locked --no-fail-fast`, then `cargo check --all-targets --locked` and
+`cargo clippy --locked --all-targets -- -D warnings` under the actual Rust 1.90
+toolchain: put `<rustup home>/toolchains/1.90.0-<host>/bin` first on `PATH` and record
+`rustc`, `cargo` and `clippy-driver --version`. Do not rely on `rustup run 1.90.0` or
+`cargo +1.90.0` alone: where another package manager's `cargo` precedes the rustup
+proxies, they can resolve to a different compiler.

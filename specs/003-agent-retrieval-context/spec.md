@@ -3,8 +3,14 @@
 Status: T001–T003 and the optional shared owner implemented and verified locally,
 2026-10-01, including concurrent OMP 18.4.9 and Codex 0.159.2 service on one store
 ([validation](../../docs/validation.md)). Not released. T004 gateway remains proposed,
-outside this tranche. T005 (token-economics adoption) approved 2026-10-03, not
-implemented. No production stores, services or global host configuration changed.
+outside this tranche. T005 (token-economics adoption), approved 2026-10-03, is
+implemented and accepted locally as of 2026-10-04: catalog/instruction text (with 001
+T004), usage import and economics tests, and the operator hook (team-kit). The runbook
+ran on 2026-10-04: runs 1–7 met their oracles; run 8 (Codex discovery) missed and,
+after the owner's amendment writing the printed instructions into the copy, its rerun
+passed. A2-F/A3-F cost more than H; the owner-requested root cause is in
+[validation](../../docs/validation.md). No production stores, services or global host
+configuration changed.
 
 ## Outcome and requirements
 
@@ -126,10 +132,12 @@ reuse the [adapter economics contract](contracts/adapter-economics.md), not new 
 
 ### Catalog and instruction text
 
-Approved 2026-10-03 for T005; it lands with 001 T004 because both change
-`src/mcp.rs` and `src/bootstrap.rs`. The text names `lines`, `view`, outlines and
-`root`, which arrive with 001 T004/T006 and 007 T001; the tranche is neither released
-nor host-tested until all of them land. Tool descriptions, exactly:
+Approved 2026-10-03 for T005; it landed with 001 T004 (committed in `5edf32c`) because
+both change `src/mcp.rs` and `src/bootstrap.rs`, and an MCP test pins these strings
+exactly. `lines`, `view` and outlines are live since 001 T004/T006 and `root`/`roots`
+since 007 T001 (2026-10-04, `cc402e0`). The serialized `tools/list` is 661 o200k
+tokens after 007 T001 (598 after T006; ceiling 800). Tool
+descriptions, exactly:
 
 ~~~text
 search: Use BEFORE grep/rg to find code in the indexed repo(s): one line per hit with a handle, line, symbol and matching text. Follow handles with retrieve. Indexed snapshot, not live disk.
@@ -162,10 +170,12 @@ team-kit hook `team-kit-foundry` (TEAM_KIT_FOUNDRY_ROUTE=1)."
 
 ### Optional OMP first-call hook
 
-Approved 2026-10-03 for T005, not implemented. The hook lives in the operator
-team-kit (`~/.omp/team-kit`), not in this repository, so Foundry stays all-Rust. OMP
-offers tool-call interception only to in-process TypeScript extensions
-(`pi.on("tool_call")` returning `{block, reason}`); there is no external-command hook.
+Approved 2026-10-03 for T005; implemented and reviewed 2026-10-04 in the team-kit
+(team-kit commit `e65f8cf`, installed default-off; see [validation](../../docs/validation.md)).
+The hook lives in the operator team-kit (`~/.omp/team-kit`), not in this repository,
+so Foundry stays all-Rust. OMP offers tool-call interception only to in-process
+TypeScript extensions (`pi.on("tool_call")` returning `{block, reason}`); there is no
+external-command hook.
 `omp/agent/extensions/team-kit-foundry.ts` (TypeScript, at most 150 lines, installed by
 `./install.sh --sync`) exports a pure `decide(event, state, roots, cwd)` used by its
 default export.
@@ -586,7 +596,11 @@ Hosts: OMP 18.4.10 (`omp --version`); Codex CLI version recorded at run time.
     `foundry --store <store> search parse_record` before launch; afterwards
     `foundry --store <store> retrieve --handle '<it>'` returns `stale_handle`.
 - **Run 8, Codex T003 discovery** on a fresh agent-task copy indexed with
-  `foundry --store <store> index <copy>`: start the HTTP owner
+  `foundry --store <store> index <copy>`, with the `.instructions` of
+  `foundry connect --host codex --root <copy> --store <store> --print-config` written
+  to `<copy>/AGENTS.md` (owner amendment 2026-10-04: like the F arms, the copy carries
+  the printed project instructions; the first 2026-10-04 run 8 had none): start the
+  HTTP owner
   `FOUNDRY_MCP_TOKEN=<random> foundry --store <store> mcp --root <copy> --transport
   streamable-http --bind 127.0.0.1:0 --auth-token-env FOUNDRY_MCP_TOKEN`, read its
   `listening` line and stop it with SIGINT afterwards; run the `codex exec --json
@@ -595,8 +609,8 @@ Hosts: OMP 18.4.10 (`omp --version`); Codex CLI version recorded at run time.
   [2026-10-01 real-host record](../../docs/review/real-host-t003-2026-10-01.json) with
   the new port and the prompt "Where is parse_record defined and who calls it? Cite
   file:line." Pass: the first discovery call is Foundry `search` and the answer cites
-  `src/records.rs`. `--ephemeral` leaves no rollout file, so this run reports no
-  provider usage.
+  `src/records.rs`. `--ephemeral` leaves no rollout file, so the run has no usage
+  import; Codex's stdout `turn.completed` usage is recorded instead.
 - **Records:** per OMP run, `foundry usage import --host omp --session <file>`; record
   provider usage, `complete`, turns, tool calls by name, Foundry and host payload
   estimates, hook blocks, the oracle result and wall time. Commit only counter

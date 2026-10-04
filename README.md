@@ -6,7 +6,8 @@ budget. The revised plan includes Foundry-owned Rust learning in isolated worker
 explicit repository bootstrap, adapter budgets and optional request forwarding/metering. Ordinary retrieval
 requires no model or GPU. Laya is a research reference, not the target runtime.
 
-**Status: 001 + 003 first implementation and 001 T004 verified locally, not released.** Reliable
+**Status: 001 (T001–T006) and 003 T001–T003 verified locally; 003 T005 and 007 T001
+accepted and committed locally on 2026-10-04 (unpushed); nothing released.** Reliable
 cited CLI context, explicit bootstrap and agent access over MCP (stdio, plus an opt-in
 shared owner for concurrent hosts) work on macOS arm64; see [validation](docs/validation.md).
 Large-codebase performance, agent task improvement, and dollar savings have not been
@@ -47,11 +48,16 @@ matching host configuration with `--http-port PORT --token-env NAME`:
 - Explicit store creation, schema-2 upgrade (`upgrade-store --to 2`), bounded
   refresh and explicit `repair-index` with one retained quarantine. Reads never create,
   upgrade or repair a store; a broken lexical index leaves status and retrieve usable.
+  An upgraded store, or one indexed before search schema 3 (leading-run units),
+  needs `repair-index` before search and context work.
 - Paged, held-root reconciliation: symlink/FIFO/root replacement is refused, failures
   defer absence deletion, and source revision/scan IDs are checked counters.
-- Tantivy lexical search with exact-path boosting; every emitted span is verified
-  against the committed source in one final read transaction.
-- Source handles, `retrieve` with continuation, and context packing whose exact
+- Syntax-unit search (Rust, Python, TS/TSX/JS, Go, C/C++, Java, Markdown) with exact
+  definitions first, a `path` filter and a per-file cap; a unit includes its leading
+  doc comments and Rust attributes. Every emitted span is verified against the
+  committed source in one final read transaction.
+- v2 source handles, `retrieve` with `lines`, continuation and an outline view, and
+  context packing (verbatim, signature or outline forms) whose exact
   emitted bytes are counted with `o200k_base` (complete CLI stdout including its
   trailing LF, or the final MCP text block). The serialized MCP result is separately
   byte-capped. Not a host-envelope or dollar-savings measurement.
@@ -60,6 +66,11 @@ matching host configuration with `--http-port PORT --token-env NAME`:
   named `busy`/deadline/cancellation errors, delivery budgets and usage receipts.
 - Hash-checked graph bundle imports with bounded file-neighborhood traversal; graph
   failures degrade context to source evidence with a named reason.
+- Multi-root context (007): `--reference ROOT=STORE` (up to 8) admits outside
+  repositories at launch; `search`/`context` merge them with per-root coverage and
+  handles, and an unavailable root is named rather than silently skipped.
+- `foundry usage import --host omp|codex --session FILE`: offline counter summary of a
+  host session (provider usage, tool calls and Foundry payloads); opens no store.
 
 ```sh
 foundry --store /tmp/foundry-demo import-graph examples/graph.json

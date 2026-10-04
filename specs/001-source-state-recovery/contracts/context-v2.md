@@ -1,8 +1,10 @@
 # Shared context contract v2
 
-Status: approved 2026-10-03 (token-economics spec pass). **001 T004 is locally
-implemented and verified on final4; unreleased.** T005 has slice-1 work in progress,
-not whole-task acceptance; T006 and 007 remain approved, not implemented.
+Status: approved 2026-10-03 (token-economics spec pass). **001 T004–T006 are locally
+implemented, accepted at the reviewer's SHIP and committed in `5edf32c`; unreleased.**
+007 T001 (multi-root) and the T005 leading-run amendment are implemented and accepted
+locally on 2026-10-04 and committed (`cc402e0`, `bd1d890`). The 2026-10-04 amendments below record owner
+decisions and implemented details from T005/T006 review.
 It replaces [v1](context-v1.md), whose JSON wire is historical at
 `6bb81e6`, and carries forward every still-valid v1 rule. Source/CLI owner:
 [001](../spec.md); MCP adapter owner:
@@ -16,9 +18,9 @@ implementing MCP. Limits are selected engineering bounds, not measured capacity 
 | --- | --- | --- |
 | Identity and scope, final-read validation, failure scope, input validation, CLI errors, strategy routing, partial index report | 001 T001–T003, 003 T001–T002 | Implemented and verified 2026-10-01; carried forward |
 | v2 handle, text wire, counting boundary, budgeted search, retrieve `lines`, atomic allowance | 001 T004 | Locally implemented and verified on final4; unreleased |
-| Syntax units, search index v2, two-tier ranking, `path` filter, locator labels | 001 T005 | Slice 1 in progress; search integration not started; whole task unaccepted |
-| Outlines, forms ladder, candidate seam, retrieve `view` | 001 T006 | Approved, not implemented |
-| Multi-root identity, `roots`/`root`, per-root header | 007 T001 | Approved, not implemented |
+| Syntax units, search index v2, two-tier ranking, `path` filter, locator labels; leading-run units and head line (schema `"3"`) | 001 T005 | Locally implemented and accepted (r3 SHIP; leading-run amendment delta SHIP 2026-10-04, committed in `bd1d890`); unreleased |
+| Outlines, forms ladder, candidate seam, retrieve `view` | 001 T006 | Locally implemented and accepted (r3 SHIP); unreleased |
+| Multi-root identity, `roots`/`root`, per-root header | 007 T001 | Locally implemented and accepted 2026-10-04 (delta SHIP), committed in `cc402e0`; unreleased |
 
 ## Identity and reference validation
 
@@ -197,8 +199,9 @@ segments appear only when not at their default:
 7. `omitted:<n>` when packing dropped constructed candidates;
 8. `capped:<n>` when the per-file cap skipped hits;
 9. `stale:<n>` when the final read dropped stale source or graph candidates;
-10. `candidates:full` when a candidate window filled (a search tier window or the
-    graph examination bound);
+10. `candidates:full` when a candidate window filled: search tier 1 at 64, tier 2 at
+    256, or a context graph examination window (32 rows per seed and direction) that
+    filled exactly or was truncated;
 11. `graph:<ok|graph_unavailable|graph_stale|graph_invalid>` when the strategy
     resolved to graph.
 
@@ -229,6 +232,10 @@ source bytes of the handle's range (verbatim) or its § Outlines rendering. When
 body does not end with LF, one framing LF precedes the closing fence; it is framing,
 not source. The handle's range defines the verbatim bytes, so parsers take a verbatim
 body's length from the handle (an empty range is an empty body).
+
+Only verbatim bodies are byte-exact on the wire. A `[signature]` or `[outline]` body has
+no handle-derived length, so when its rendering does not end with LF a parser cannot
+tell the framing LF from content; `testkit::parse_v2` returns it as part of the body.
 
 **Reviewed item-line ambiguity limitation (T004).** A valid path can embed a complete
 `@<sha32>.<ws16>` suffix followed by a valid item tail, giving one item line two
@@ -324,19 +331,29 @@ method interface section block`. Unit nodes map to them by node kind:
 | Rust | `function_item` (fn), `struct_item` (struct), `enum_item` (enum), `union_item` (union), `trait_item` (trait), `impl_item` (impl), `mod_item` (mod), `macro_definition` (macro), `const_item` (const), `static_item` (static), `type_item` (type) |
 | Python | `function_definition` (fn), `class_definition` (class); a wrapping `decorated_definition` supplies the range |
 | TypeScript, TSX, JavaScript | `function_declaration`, `generator_function_declaration` (fn); `class_declaration` (class); `method_definition` (method); `interface_declaration` (interface); `type_alias_declaration` (type); `enum_declaration` (enum); `lexical_declaration`/`variable_declaration` with exactly one declarator whose value is `arrow_function`/`function_expression` (fn); a wrapping `export_statement` supplies the range |
-| Go | `function_declaration` (fn), `method_declaration` (method), `type_declaration` (type) |
+| Go | `function_declaration` (fn), `method_declaration` (method), `type_declaration` (type; it has no `name` field, so it renders as an unnamed `type` under the Name rule below) |
 | C, C++ | `function_definition` (fn); `struct_specifier` (struct), `class_specifier` (class), `union_specifier` (union) and `enum_specifier` (enum) that have a body; `namespace_definition` (mod); a wrapping `template_declaration` supplies the range |
 | Java | `class_declaration` (class), `interface_declaration` (interface), `enum_declaration` (enum), `record_declaration` (class), `method_declaration` and `constructor_declaration` (method) |
 | Markdown | heading section (section): from a heading to the next heading of equal or lower level number (equal or higher rank), or EOF; subsections are children; headings inside code fences do not count |
 
-Name: the `name` field; for C/C++ the innermost identifier of the declarator chain; for
-a Rust `impl` the `type` field's text; for Markdown the heading text with surrounding
-whitespace trimmed, cut at a UTF-8 boundary to at most 120 bytes. The qualified name
-joins ancestor unit names and the name with `::` (rust, cpp) or `.` (all others).
+Name: the `name` field; for C/C++ the innermost identifier of the declarator chain,
+including through parenthesized declarators; for a Rust `impl` the `type` field's text;
+for Markdown the heading text with surrounding whitespace trimmed, cut at a UTF-8
+boundary to at most 120 bytes. A unit with no such field is unnamed (accepted
+limitation: Go type declarations; changing it needs a contract amendment and a
+ranking test). The qualified name joins ancestor unit names and the name with `::`
+(rust, cpp) or `.` (all others). When it exceeds 256 bytes it keeps its last 256
+bytes, starting at the first UTF-8 boundary at or after that point, so the unit's own
+name and its nearest ancestors survive; it carries no cut marker. It is built from the
+parent's kept qualified name, which is exact for a tail and keeps deep nesting linear
+(owner decision, 2026-10-04).
 Body: the `body` field, or else the block/`declaration_list` child. Signature lines run
-from the unit's start line through the line containing the body's opening delimiter
-(`{`, or the `:` opening a Python block); a Markdown section's signature is its
-heading. A unit without a body has no elidable interior.
+from the unit's declaration start — the first attribute line of its leading run (§ Unit
+forest) when the run has a Rust attribute, otherwise the node's (or wrapper's) start
+line — through the line of the body's opening delimiter (`{`, `(` or `[`); for a body
+without one (a Python block, a Markdown section) through the line of the last
+non-whitespace byte before the body, such as a Python block's `:` or a heading. A unit
+without a body has no elidable interior.
 
 ### Unit forest
 
@@ -346,6 +363,28 @@ unit; zero-width, invalid or partially overlapping ranges are not units (of two
 partially overlapping ranges, the later is dropped). Parse errors are tolerated: the
 error-recovered tree still yields units. Zero units, an unmapped language or a source
 over 1 MiB falls back to blocks. Parsing is deterministic, with no time-based limit.
+For tree-sitter languages, a unit's range is its node's (or wrapper's) byte range,
+extended backward over its leading run (below); no following line terminator is
+appended to that range. Markdown section ranges run to the next equal-or-higher-rank
+heading or EOF and can include a trailing LF. A handle uses the range unchanged.
+
+**Leading run** (owner decision 2026-10-04, amending T005; implemented locally):
+the maximal sequence of sibling nodes immediately preceding a unit's node (or wrapper)
+in which every node is a documentation comment or attribute of that language, starts
+its line (only whitespace before it on that line), and is separated from the next
+node of the sequence, and the last from the unit, only by whitespace containing at
+most one line terminator (no blank line):
+
+| Language | Leading-run nodes |
+| --- | --- |
+| Rust | `line_comment` or `block_comment` with an `outer` doc marker (`///`, `/** */`); `attribute_item` (`#[…]`). Inner docs (`//!`) and `inner_attribute_item` (`#![…]`) never attach |
+| Java | `block_comment` beginning `/**` (Javadoc); annotations are already inside the declaration |
+| TypeScript, TSX, JavaScript | `comment` beginning `/**` (JSDoc) |
+| Go | any `comment` (Go doc comments are ordinary comments directly above a declaration) |
+
+Python, C, C++ and Markdown have no leading run. The run joins the unit's range, so
+it belongs to the unit's search documents (a container's own run lies in its residual
+region) and is retrieved with the unit; names and qualified names are unchanged.
 
 ### Search documents
 
@@ -418,13 +457,16 @@ either window filled. Scores may legitimately change when index statistics chang
 
 Merge candidates sharing a delivery unit, keeping the best-ranked. At most 4 hits per
 file survive (per root and path in a multi-root owner); skips are counted in
-`capped:<n>`. The best line is the delivery unit's first line for a tier-1 hit;
-otherwise the line with the most distinct query subtokens (`foundry_code` analysis),
-the earliest on ties. Context draws its units from this same materialized ranking.
+`capped:<n>`. For a tier-1 hit the best line is the delivery unit's head line: the
+node's (or wrapper's) own start, after its leading run (§ Unit forest), so never a
+leading-run documentation or attribute line; otherwise the line with the most
+distinct query subtokens (`foundry_code` analysis), the earliest on ties. Context
+draws its units from this same materialized ranking.
 
 ### Index version gate
 
-META key `search_schema = "2"` is written in the store-initialization transaction for
+META key `search_schema = "3"` (it was `"2"` before the 2026-10-04 leading-run
+amendment changed search-document ranges) is written in the store-initialization transaction for
 new stores and, for rebuilds, in the same authoritative transaction that clears
 `search_rebuild_required` after a successful commit/reload with an empty pending table.
 Open also checks the actual Tantivy field set. A missing or other value, or a field
@@ -441,19 +483,34 @@ search/context fail with `repair_required` ("search index format changed; run
 returns `Segment::{Kept{start,end}, Elided{first_line,last_line,indent}}` over source
 bytes. It is an independent implementation; the design reference is recorded in 001 T006.
 
-- Mandatory kept lines: every unit's signature lines, and its body's closing line
-  when the closing delimiter is on its own line. Member signatures are never hidden.
-- Elidable spans, considered only when fully inside `range`: body interiors of leaf
-  units with at least 4 interior lines; container gaps (runs of container interior
-  lines outside member units) of at least 4 lines; block comments of at least 6
-  lines; Markdown section bodies, excluding subsection headings. A body interior runs
-  from the line after the signature to the line before the closing line (without a
-  closing line, to the body's last line).
-- Start with every outermost elidable span folded. Breadth-first (outer before inner,
-  then source order), unfold a span — revealing its lines except nested elidable
-  spans, which become folded — while visible lines are fewer than `unfold_until`;
-  skip, without exploring its subtree, any unfold that would push visible lines above
-  `unfold_limit`. Visible lines count each marker as one line.
+- Mandatory kept lines: every unit's signature lines (so an ancestor's multi-line
+  signature stays visible); a body's closing line when its closing delimiter (`}`,
+  `)` or `]`) has only whitespace before it on its line; and every line of a
+  declaration-only member. Declaration-only members stay non-units, so ranking is
+  unchanged: Rust `function_signature_item` and `associated_type`; Go `method_elem`;
+  TypeScript/TSX `method_signature`, `property_signature`, `abstract_method_signature`,
+  `call_signature`, `construct_signature` and `index_signature`; C/C++ `declaration`
+  and `field_declaration` with a function declarator. A member takes the range of its
+  directly enclosing wrapper (a C++ `template` keeps its parameter lines).
+- Elidable spans are maximal runs of non-mandatory lines, so every mandatory line
+  splits them: body interiors of leaf units and container gaps (container interior
+  lines outside member units), each at least 4 lines; Markdown section-body runs of
+  any length, excluding subsection headings. A body interior runs from the line after
+  the signature to the line before the closing line (without a closing line, to the
+  body's last line). A unit's leading-run documentation lines before its declaration
+  start form one elidable span when they are at least 2 lines; that span replaces any
+  block-comment span inside it. Other block comments of at least 6 lines are elidable
+  when they occupy whole lines and hide no mandatory line; such a comment nests inside
+  the span that contains it.
+- A span is considered for a `range` when its first line starts at or after the range
+  start and its last line's content (before its LF or CRLF) ends at or before the range
+  end; a Python unit range, which ends at its last statement, therefore still contains
+  its interior. Elided bytes stop at the range end.
+- Start with every outermost considered span folded. Breadth-first (outer before
+  inner, then source order), unfold a span — revealing its lines except nested
+  considered spans, which become folded — while visible lines are fewer than
+  `unfold_until`; skip, without exploring its subtree, any unfold that would push
+  visible lines above `unfold_limit`. Visible lines count each marker as one line.
 - An elided span renders as one line: the indentation of its first line, then
   `⋯ <first>-<last>` (1-based inclusive line numbers).
 
@@ -500,12 +557,22 @@ Hits and items that do not fit are omitted and counted.
 control) -> FResult<CandidateBatch>`; 001 T006 adds `Engine::context_candidates(&self,
 query, strategy, control) -> FResult<CandidateBatch>` and settles the shared types:
 
-- `CandidateBatch { freshness, items: Vec<RankedItem>, counters }`;
-- `RankedItem { tier, rank, score, handle, line, label, lang, forms: Vec<RenderedForm> }`,
-  where `handle` keeps the full 64-hex identities (rendering shortens them) and the
-  forms are verbatim and signature for a unit, outline and outline-min for a file
-  outline, the single line for a graph item, and verbatim alone for a block or a unit
-  of an unmapped language.
+- `CandidateBatch { freshness, items: Vec<RankedItem>, counters: CandidateCounters }`;
+- `RankedItem { tier, rank, score, handle: Option<SourceHandle>, start_line, end_line,
+  line, label, lang, forms: Vec<RenderedForm> }`. `handle` keeps the full 64-hex
+  identities (rendering shortens them) and is `None` for a graph item;
+  `start_line..=end_line` are the lines the handle's range touches and `line` the
+  locator's best line. Tiers: 1 exact definition, 2 lexical, 3 graph, 4 file outline.
+- `RenderedForm` is `Verbatim | Signature | Outline | OutlineMin | Line`: verbatim and,
+  only when its rendering differs from the verbatim bytes, signature for a unit;
+  outline and outline-min for a file outline; the single line for a graph item;
+  verbatim alone for a block or a unit of an unmapped language.
+- `CandidateCounters { stale, capped, candidates_full, truncated, graph }`, where
+  `graph` is `ok`, `graph_unavailable`, `graph_stale` or `graph_invalid` when the
+  strategy resolved to graph.
+
+The `tokens` range (1..32768) is validated at the boundaries — CLI before opening the
+store, MCP in its argument parser — so `context_candidates` takes no budget.
 
 Items are already revalidated in that store's final read transaction. Packing is
 `response::pack(items, header, budget, byte_cap, boundary)` over an already ordered
@@ -518,9 +585,11 @@ Context candidates, in order:
 1. up to 32 delivery units from the two-tier ranking (§ Hit materialization);
 2. when the strategy resolves to graph, bounded graph items placed after the first
    unit, seeded by the paths of the top 3 units as in v1;
-3. up to 3 file outlines for the first distinct files among those units, skipping a
-   file when one of those units spans the whole file; only mapped languages have
-   outlines.
+3. up to 3 file outlines for the first distinct files among those units, skipping an
+   empty file and a file that one of those units spans (only whitespace lies outside
+   the unit). Only mapped languages have outlines, read literally: a mapped
+   language without units (`toml`, `json`, `yaml`, `bash`, `sql`, `html`, `css`) has an
+   outline equal to its text; an unmapped extension has none.
 
 v1's `following_chunks` candidates are removed.
 
@@ -582,9 +651,15 @@ header fits.
 
 `view:"outline"` renders the requested (clipped) range in the `outline` form, else
 `outline-min`. It is never paginated and never returns `next`. If neither fits, return
-`budget_too_small` with a sufficient minimum; an unmapped language is
-`unsupported_mode`. A mapped source over 1 MiB is not parsed, so its outline equals
-its text.
+`budget_too_small` with a budget sufficient for `outline-min`. When `outline-min`
+cannot fit 32768 tokens or the 256 KiB result cap under some limiter label, so that no
+budget could deliver it, return `unsupported_mode` advising `lines` or `view:"text"`
+instead of a hint that cannot succeed. A zero-allowance `budget_exhausted` refusal made
+before engine admission advertises 32768, the largest budget: outline-min is
+whole-or-nothing and content-dependent, so any deliverable outline fits it (owner
+decisions, 2026-10-04). An unmapped language is `unsupported_mode`; a mapped language
+without units, or a mapped source over 1 MiB (not parsed), has an outline equal to its
+text.
 
 ### Deduplication, no cross-call suppression
 
@@ -629,7 +704,7 @@ MCP errors are a bounded `isError:true` tool result with one text block containi
 outside successful budgets. Budget refusals name the limiting bound: `budget_exhausted`
 when the session allowance cannot be reserved (a refusal changes no counter) and
 `budget_too_small` when even the header cannot fit; both carry a sufficient-budget hint
-valid under any limiter label. An admitted `index` interrupted by `deadline_exceeded`,
+valid under any limiter label (for `view:"outline"`, § Retrieve views). An admitted `index` interrupted by `deadline_exceeded`,
 `cancelled` or `index_incomplete` additionally includes
 `partial:{changed,unchanged,deleted,excluded,failed,pending_sources,scan_complete,deletions_deferred}`.
 Counters are checked u64s; the final two fields are booleans. Changed/deleted count

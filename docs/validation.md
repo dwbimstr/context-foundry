@@ -1,5 +1,212 @@
 # Validation
 
+## Token-economics remainder — 003 T005 and 007 T001, 2026-10-04
+
+Locally implemented and verified; committed on main as `bd1d890` (001 T005 amendment),
+`5e99ffd` (003 T005) and `cc402e0` (007 T001), **unpushed and unreleased**. Authors: Z.ai
+`glm-5.3` (usage import and economics tests, multi-root, OMP hook) and Anthropic Claude
+Opus 5.5 (captain: 001 T005 leading-run amendment and integration). Reviewer: OpenAI
+`gpt-6.1-sol:xhigh`, one reviewer per slice on a different lab from both authors; not an
+independent quorum.
+
+| Slice | First review | Fixes | Final |
+| --- | --- | --- | --- |
+| 001 T005 leading-run amendment (`src/syntax.rs`, `src/store.rs`) | REVISE: ASCII-only whitespace detached docs (NBSP, form feed); `/**/` broke a JSDoc/Javadoc run; inner-doc test masked | One Unicode whitespace predicate; `/**/` kept; boundary test, which failed on the old predicates | SHIP (delta) |
+| 003 T005 usage import and economics tests | REVISE: unchecked per-record OMP input sum; full conflicting id fed a quadratic bounded-error renderer; whole-unit check compared a self-selected slice; fixture gaps; corpus identity unguarded | Checked arithmetic; bounded id in the message; hand-frozen unit spans; extended fixtures; nine frozen corpus digests | SHIP (delta) |
+| 007 T001 multi-root | REVISE: unknown alias ignored on a single-root owner; request order replaced admission order; empty-serving refusal listed no coverage; truncation could drop coverage pairs; outline slots backfilled | Alias validation before dispatch; admission-order selection; listed-root refusal; bounded compact pairs; key-counted outline slots | SHIP (delta) |
+| OMP first-call hook (team-kit) | REVISE in three rounds: per-command flag arity, relative `input.cwd`, stdio without args, `/` root, `rg` encoding clusters, explicit stdio with a stray `url`, empty `command` | Each fixed with a behavioral case; 21 cases | SHIP (delta) |
+
+Integration found one regression before review: with leading runs inside units, a
+tier-1 locator showed `#[derive(…)]` instead of `pub struct BudgetConfig`. The locator
+now uses the unit's head (its own node or wrapper start), separate from the outline's
+signature start. Units with leading runs need search schema `"3"`; older stores report
+`repair_required` until `repair-index`.
+
+**Gates** on the integrated tree (32-file manifest SHA-256 `b885606c…161c`), rustc
+1.97.1 and Rust 1.90.0:
+
+| Check | Exit |
+| --- | ---: |
+| `cargo fmt --check` | 0 |
+| Locked all-targets clippy, warnings denied | 0 |
+| Locked full test run, no fail-fast: 258 passed, 1 ignored (the payload report) | 0 |
+| Rust 1.90.0 check and clippy (warnings denied) | 0 |
+| `cargo test --locked --test economics -- --ignored --nocapture payload_report` | 0 |
+| `bun ~/.omp/team-kit/bin/check-foundry.ts`: 21 cases | 0 |
+
+**Economics on the frozen corpus** (exact `o200k_base` text-block tokens; one
+observation each): 12/12 expected units (six identifiers as search hit #1 retrieved
+whole within 2048 tokens; six questions surface their unit within `context` 2048).
+`tools/list` is 661 tokens (598 before 007 added `root`/`roots`; ceiling 800).
+
+| Query | v2 search (10) | v1 search | Ratio | v2 search + retrieve | v1 pair | Ratio | v2 context 2048 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `reconstruct_verified` | 253 | 2651 | 9.5% | 854 | 3399 | 25.1% | 1555 |
+| `pack_ordered` | 167 | 2056 | 8.1% | 627 | 2806 | 22.3% | 1352 |
+| `BudgetConfig` | 440 | 4640 | 9.5% | 570 | 5434 | 10.5% | 2032 |
+| `native_discovery_block` | 119 | 1337 | 8.9% | 392 | 2123 | 18.5% | 1356 |
+| `fit_prefix` | 192 | 2079 | 9.2% | 865 | 2880 | 30.0% | 1309 |
+| `take_context_id` | 133 | 1382 | 9.6% | 261 | 2162 | 12.1% | 1020 |
+| `stale handle rejected on retrieve` | 601 | 6483 | — | 1294 | — | — | 2030 |
+| `repair index quarantine marker` | 592 | 6069 | — | 1253 | — | — | 2011 |
+| `inbound frame byte limit` | 639 | 6478 | — | 739 | — | — | 1979 |
+| `session allowance refund` | 606 | 5934 | — | 731 | — | — | 1980 |
+| `receipt deduplication conflict` | 602 | 6803 | — | 848 | — | — | 2012 |
+| `sweep unseen sources after complete scan` | 607 | 6328 | — | 685 | — | — | 2019 |
+
+The search (≤20%) and search-plus-unit (≤35%) targets hold for all six identifier
+queries. The ≤40-token header bound is asserted on the v2 success fixtures of
+`tests/response.rs` (`assert_v2_success`) and `tests/mcp.rs` (`assert_v2_delivery`);
+this report does not measure it separately. v2 `context` ranges 1020–2032
+tokens against v1's 1439–1853 at the same 2048 request; there is no context-size
+target.
+
+**Latency of the two T006 risks** is recorded under the 001 T005/T006 acceptance below.
+
+**Real hosts (003 T005 runbook)**, counters only in
+[`real-host-te-2026-10-04.json`](review/real-host-te-2026-10-04.json): release binary
+SHA-256 `e32204fb…6cee7` built from the gated tree; OMP 18.6.0 with `zai/glm-5.3`;
+Codex CLI 0.159.2 with `gpt-6.1-sol`. Eight runs in 358.7 s of the 2400 s cap, no
+timeout or harness failure, plus one owner-authorized rerun of run 8 (run 9, 39.4 s;
+398.1 s in total). Label: **bundled Foundry adoption (v2 + instructions +
+optional hook), n=1 per task and arm**, not an isolated v2 effect or a general savings
+result. Every OMP import is `complete:false` because the session usage records omit a
+reasoning-token category; totals are the reported input-plus-output sums, and the
+reasoning breakdown is unknown.
+
+| Run | Oracle | Wall s | Provider tokens (input / cached / output) | Tool calls | Foundry / host payload estimate |
+| --- | --- | ---: | --- | --- | --- |
+| 1 hook probe, F | pass: step 1 refused with the hook reason; repeat, regex and `/tmp` greps ran; Foundry search via `xd://` then its grep ran | 69.2 | 80,013 (76,740 / 61,440 / 3,273) | grep 5, foundry.search 1, read 1 | 368 / 738 |
+| 2 A1-H | pass | 31.8 | 114,208 (113,129 / 83,200 / 1,079) | grep 3, bash 1, read 1, context 1 | 0 / 16,075 |
+| 3 A1-F | pass | 46.3 | 90,464 (89,081 / 84,736 / 1,383) | foundry.search 2, foundry.retrieve 3 | 2,668 / 0 |
+| 4 A2-H | pass | 27.4 | 79,360 (78,282 / 71,936 / 1,078) | grep 2, read 2 | 0 / 5,752 |
+| 5 A2-F | pass | 70.9 | 97,623 (94,323 / 87,424 / 3,300) | foundry.search 2, foundry.retrieve 4 | 4,686 / 0 |
+| 6 A3-H | pass: check exit 1 → 0 | 25.6 | 66,163 (65,655 / 53,312 / 508) | bash 2, read 2, edit 1 | 0 / 883 |
+| 7 A3-F | pass: check 1 → 0; pre-edit handle now `stale_handle` | 68.5 | 163,876 (162,335 / 158,016 / 1,541) | foundry.search 2, foundry.retrieve 4, foundry.index 1, read 2, bash 1, edit 1 | 1,082 / 736 |
+| 8 Codex T003 discovery | **miss**: first discovery was shell `rg`; the answer was correct (`src/records.rs:5`, callers `src/main.rs:13`, `:33`) | 19.0 | not imported (`--ephemeral`); stdout turn usage 50,729 (50,493 / 44,928 / 236) | shell 2 (`rg`, `nl`) | — |
+| 9 Codex rerun with instructions | pass: first discovery Foundry `search`; the answer cites `src/records.rs:5` and both callers | 39.4 | not imported (`--ephemeral`); stdout turn usage 105,511 (104,919 / 87,552 / 592) | context-foundry search 2, retrieve 5 | — |
+
+Findings, reported without prompt or threshold tuning:
+
+- A1-F used 21% fewer provider tokens than A1-H; A2-F used 23% more and A3-F 2.5×
+  more (A3-F's prompt adds the index refresh and citation, a recorded asymmetry
+  against F). Total imported tool-result payload estimates fell from 16,075 (H) to
+  2,668 (F) for A1 and from 5,752 (H) to 4,686 (F) for A2. These opened a follow-up
+  decision; the owner chose a root-cause analysis of the retained sessions (below).
+- **Cost root cause** (retained transcripts, arithmetic on the recorded turns; no new
+  runs or tuning). OMP re-sends the fixed prefix and task prompt plus accumulated
+  history on each turn. The fixed prefix plus initial user content is about
+  12.4–13.0k tokens per request; complete request input also includes replayed
+  history. F's fixed prefix is 11,672 tokens (11,671 in A3-F), versus 11,130 in H: a
+  bundled-setup difference of 542 tokens per request (541 in A3-F).
+  A1: one unscoped whole-repository grep in A1-H returned 51 KB, re-sent on three
+  later turns; H's accumulated history outweighs F's extra turn and catalog. (Turn-1
+  provider-cache warmth differed between arms but cannot move these totals, which
+  count cached tokens one for one.) A2: the extra F turn came from a failed
+  `retrieve`; removing that round trip leaves F 2.5% above H. A3: 11 turns against 5;
+  removing the runbook's refresh and citation turns would save about 47.7k input
+  tokens and, on top of that, the turn spent on a failed retrieve about 14.6k (each
+  estimate is arithmetic on the recorded run and they do not add exactly); a failed
+  retrieve inside another turn re-sent about 1.9k; F also fell back to two plain-read
+  turns. Three of eleven in-session retrieves failed: twice the agent sent `lines` as
+  a JSON array (`[1630, 1800]`), which OMP rejected against the schema's `a-b` string
+  pattern before calling Foundry, echoing the arguments in about 870 bytes; once it
+  copied a handle's byte range (`#650-1459`) as line numbers (`invalid_range`).
+  Accepting the array form and separating byte ranges from line numbers in handles
+  are Foundry-side options for the owner. Additional turns and replayed history are
+  observed costs; avoiding refusals and redundant calls is one option, but these n=1
+  runs do not establish that fewer turns are necessary for further savings.
+- Run 8: no MCP call and no MCP error item. A later local probe of the same release
+  owner on the run's store (no model) listed all five tools. Unlike the passing
+  2026-10-01 Codex run, which shared the OMP F arm's copy and its Foundry `AGENTS.md`,
+  this copy carried no project instructions (the runbook then named none). The owner
+  amended the runbook to write the printed Codex instructions into the copy and
+  authorized one rerun (run 9): Codex then called Foundry `search` first and answered
+  correctly, using about twice run 8's provider tokens (two searches and five
+  retrieves against two shell calls on this two-file fixture).
+- The A/B F arms (runs 3, 5 and 7) first called Foundry search through the `xd://`
+  device and ran no grep or `rg`, so the hook blocked nothing in runs 2–7; run 1 shows
+  one refusal followed by an allowed identical repeat.
+- A user-level custom Prakarana `context` tool stays loaded under `--no-extensions` in
+  both arms; A1-H's one `context` call returned a no-daemon error.
+
+Deviations: OMP 18.6.0 instead of the runbook's 18.4.10 (run 1 confirmed the hook
+matchers); the hook loaded from the team-kit source path, not an installed copy,
+because `./install.sh --sync` would also install 42 unrelated uncommitted team-kit
+edits; the binary and the A3 checks used private `CARGO_TARGET_DIR`s.
+
+Committed after the runs (owner decision): the team-kit hook as team-kit `e65f8cf`, only
+its own files (the 42 unrelated kit edits untouched), installed by copying the one
+extension file into `~/.omp/agent/extensions` (inactive until `TEAM_KIT_FOUNDRY_ROUTE=1`;
+not in the kit's install manifest). Nothing is pushed or released. Residual: the
+long-id usage regression test measures elapsed time but has no watchdog, so a
+reintroduced quadratic renderer would hang it rather than fail it (reviewer minor,
+accepted).
+
+This section and the real-host record were reviewed by the same OpenAI
+`gpt-6.1-sol:xhigh` lane: REVISE (a private hook digest and home path in the record,
+Codex stdout usage reported as absent, an unsupported reasoning-exclusion claim, three
+wording scopes), then SHIP on the corrections.
+
+## 001 T005/T006 local acceptance — 2026-10-04
+
+001 T005 (syntax units, search index v2, two-tier ranking, `path` filter) and T006
+(outlines, forms ladder, candidate seam, retrieve `view`; `following_chunks` removed)
+are locally implemented and **unreleased**. Each was accepted at the r3 **SHIP** of the
+same existing reviewer, `T004CutoverReview` (OpenAI `gpt-6.1-sol:xhigh`), cross-lab
+to the Anthropic author; one reviewer, not an independent quorum. Both were committed
+with T004 in `5edf32c`, whose 19 code files matched the accepted T006 hashes. Receipts,
+review history and the gate script are retained outside Git in the owner's handoff
+folder (`handoffs/context-foundry-001/artifacts/`); this record restates them and did
+not rerun the gates.
+
+| r3 gate (each task) | Exit |
+| --- | ---: |
+| `cargo fmt --check` | 0 |
+| Locked all-targets clippy, warnings denied (rustc 1.97.1) | 0 |
+| Locked full test run, no fail-fast | 0 |
+| Rust 1.90.0 `cargo check --all-targets` (toolchain first on `PATH`) | 0 |
+| Rust 1.90.0 clippy, warnings denied | 0 |
+| Freeze recheck: 19/19 files unchanged during the run | 0 |
+
+T006 test counts: lib 11, cli 16, core 36, integrity 15, laya 3, mcp 73, recovery all
+passed (custom harness), repair 9, response 15, scan_faults 15, syntax 28; 0 warnings.
+Review rounds: T005 r1 REVISE (C/C++ parenthesized declarator names; native recursion
+and a quadratic parent walk), r2 REVISE (quadratic qualified-name content), r3 SHIP;
+T006 r1 REVISE (mandatory member signatures, outline refusal hints, graph window,
+Python span ends, skip-versus-stop), r2 REVISE (C++ template wrapper on members), r3
+SHIP. Each fix had RED captured on the frozen pre-fix tree before GREEN. Owner decisions
+taken in review — the 256-byte qualified-name tail, metadata-only upgrade with explicit
+`repair-index`, and the two outline refusal policies — are written into the
+[v2 contract](../specs/001-source-state-recovery/contracts/context-v2.md). No RED was
+captured for T005's path-filter tests or limit-cut change.
+
+**Catalog re-measured, 2026-10-04.** At `c430997` (clean source; debug `foundry`
+SHA-256 `2f455d16…`) a throwaway stdio probe, mirroring `tests/mcp.rs` `RawStdio`,
+counted the raw `tools/list` result: 5 tools, 2401 bytes, **598** o200k tokens (568 at
+T004; v1 711; ceiling 800). T005/T006 grew the `search` (`path`) and `retrieve`
+(`view`) schemas. The probe was outside the repository and was removed.
+
+**Latency of the two T006 risks, measured 2026-10-04.** Release `foundry` built at
+`c430997` (SHA-256 `7e85efff…`); CLI wall time including process start and store
+open, median of 3 runs, local macOS arm64; disposable fixtures, removed afterwards.
+
+| Corpus | context `tokens` 2048 | context `tokens` 32768 | search |
+| --- | ---: | ---: | ---: |
+| Real: `git archive` of prakarana `ae159e85` (5,481 sources; index 36.5 s), four queries (one with no hits) | 0.08–0.27 s | 0.08–0.35 s | 0.08–0.12 s |
+| Synthetic worst case: 32 Rust files of about 1 MiB, each holding one matching unit | 4.19 s | 4.24 s | 0.22 s |
+
+Increasing the context budget from 2048 to 32768 changed the reported CLI wall time by
+at most 0.1 s. The synthetic 32-file corpus took about 4.2 s for context versus 0.22 s
+for search. Context additionally constructs syntax-based forms and ladder-packs them;
+this probe did not time parsing, form rendering and packing separately, so their
+individual costs are not established. The approximately 4.2 s CLI wall time is about
+84% of the MCP owner's 5,000 ms read-deadline duration, but is not an MCP latency
+measurement. 007 plans to share that deadline sequentially across roots, so these
+results identify a deadline risk, not a measured multi-root failure. Whether to bound
+or cache query-time parsing before release remains an owner decision; the measured
+real corpus's CLI times were substantially below five seconds.
+
 ## 001 T004 local closure — final4
 
 001 T004 is locally implemented and verified, **unreleased**. The owner reports that
@@ -28,12 +235,12 @@ or a failed smoke gate.
 | Measurement | T004 v2 | v1 comparison | Boundary and scope |
 | --- | ---: | ---: | --- |
 | Handle on `examples/workspace` | 33 o200k tokens; 68 bytes | 94 tokens; 207 bytes | Isolated v2 handle versus v1 JSON handle; fixture-specific, superseding the 29/85 estimate |
-| Five-tool `tools/list` | 568 o200k tokens | Historical baseline: 711 | Serialized catalog; the 800-token ceiling is met |
+| Five-tool `tools/list` | 568 o200k tokens (598 after T005/T006, above) | Historical baseline: 711 | Serialized catalog; the 800-token ceiling is met |
 
 These are handle/catalog measurements, not the complete twelve-query payload
 comparison, provider usage, a universal per-handle cost or host-session savings.
-T005 has slice-1 work in progress but no search integration or whole-task acceptance;
-T006, remaining 003 T005 work and 007 T001 remain unimplemented.
+T005, T006 and their measurements are recorded above; the 003 T005 remainder and
+007 T001 are recorded in the 2026-10-04 token-economics section at the top.
 
 **Reviewed ambiguity limitation:** a valid path embedding a complete handle suffix
 and valid item tail can give an item line two complete readings. The test parser
