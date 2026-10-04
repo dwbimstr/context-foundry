@@ -88,7 +88,7 @@ only the MCP probe has demonstrated that floor so far.
 
 No model preparation on the full corpus until its small fixture and target profile pass.
 One crate may build core plus feature-gated worker; ML dependencies stay out of default
-core. No new numbered spec, job platform, model registry or whole-product release gate.
+core. No new numbered spec, job platform or model registry.
 
 ## Tasks and acceptance
 

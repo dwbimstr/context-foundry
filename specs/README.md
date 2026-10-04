@@ -17,9 +17,9 @@ goals remain.
 
 The [validated implementation](../docs/validation.md) is the baseline. The user
 outcomes below retain the product goals. All active tasks specify behavior and
-acceptance, including 013's replacement ModernBERT/head contract. The selected next
-work is the token-economics tranche; the 001/003 scope ships through the ordinary
-[release checklist](../docs/release.md) once the owner names a release destination.
+acceptance, including 013's replacement ModernBERT/head contract. The token-economics
+tranche is implemented locally; a release waits until every active spec is complete,
+then runs the ordinary [release checklist](../docs/release.md) (owner policy 2026-10-04).
 The [team handoff simulation](../docs/review/handoff-simulation.md) traces startable
 work, unresolved integration inputs and corrected cross-spec dependencies. It is a
 source-backed paper walkthrough, not runtime acceptance or another required stage.
@@ -29,11 +29,11 @@ isolation and protocol evidence, with unresolved checks assigned to their owning
 KISS applies to the machinery, not the ambition. These specs are an organizational
 choice, not proof of simplicity. Preserve the [capability commitments](../docs/architecture.md#sophisticated-behavior-through-simple-ownership)
 and their failure guarantees while reducing independent state, protocols and operator
-work. A narrower first release does not redefine the intended product as basic search.
+work. A release delivers the whole intended product, not basic search alone.
 
-| Spec | User outcome | Needs | Shipping boundary |
+| Spec | User outcome | Needs | Completion boundary |
 | --- | --- | --- | --- |
-| [001](001-source-state-recovery/spec.md) | Find trustworthy, cited context after source updates or restart, in compact text with exact definitions first and deterministic outlines | None | Useful CLI release; no agent or model required |
+| [001](001-source-state-recovery/spec.md) | Find trustworthy, cited context after source updates or restart, in compact text with exact definitions first and deterministic outlines | None | Useful CLI on its own; no agent or model required |
 | [003](003-agent-retrieval-context/spec.md) | Bootstrap a repository, use Foundry before eligible grep/ripgrep and exploratory reads, deliver budgeted context at the fewest delivered tokens and optionally forward/meter model requests | 001 for MCP; gateway owns no store | Real agent tool-order/fallback acceptance; separately verified host/gateway protocol and accounting boundary |
 | [005](005-graph-evidence-lifecycle/spec.md) | Follow real code relationships in a large workspace | 001; 003 for agent demonstration | One language and real semantic producer, bounded ingest and delivery |
 | [007](007-multi-workspace-context/spec.md) | Ask one question across explicitly admitted repositories and receive one cited, budgeted response | 001 T004–T006; 003 T001–T002 | Admission at owner launch only; no cross-root edges, global snapshot or registry |
@@ -41,14 +41,13 @@ work. A narrower first release does not redefine the intended product as basic s
 | [009](009-optional-semantic-retrieval/spec.md) | Prepare neural context progressively and retain expensive work | 001; 003 for foreground coexistence | Nemotron 3 Embed 1B, local MLX 4-bit profile; useful partial coverage, warm restart and delta updates |
 | [013](013-owned-learning/spec.md) | Improve decisions through repeated owned Rust fine-tuning of ModernBERT with a decision head | 001/003 for data; 005 for useful graph selection; separate from 009 retrieval vectors | Contract v4; initial head adaptation, explicit selection and independently accepted package lifecycle |
 
-Do not wait for all of them to release. The first CLI release requires 001 and the
-ordinary [release checklist](../docs/release.md). The agent release adds 003. A
-compiler-backed graph claim adds 005. Multi-root context, memory and learning ship
-when useful in their own right; they cannot hold the first usable releases.
+A release waits for all of them (owner policy 2026-10-04): every task of 001, 003, 005,
+007, 008, 009 and 013 implemented and accepted, then the ordinary
+[release checklist](../docs/release.md). Deferred and superseded specs are excluded.
 
 009 is now planned alongside source ownership, before full-corpus model preparation.
-Its earlier blanket deferral missed first-use and repeated preparation costs. The
-lexical release can ship first; a release advertised as semantic must satisfy 009.
+Its earlier blanket deferral missed first-use and repeated preparation costs.
+Lexical retrieval works without it, but a release includes 009.
 Neural readiness does not depend on policy training or generating summaries.
 
 The normal retrieval plan uses deterministic candidate ordering. A learned reranker
@@ -92,7 +91,7 @@ is implied by writing a task, and a missing one fails by name in its spec.
 | [005 T001/T003](005-graph-evidence-lifecycle/spec.md) | A permitted jailed rust-analyzer run (it executes build scripts and proc macros); the scale corpus and numeric profile for T003 | Open |
 | [009 D001/T001](009-optional-semantic-retrieval/spec.md) | Authorization to run the pinned local weights; a USearch C++ build on the Rust 1.90 floor; isolation and package acceptance | Open |
 | [013 D001/T002–T004](013-owned-learning/spec.md) | Approved labeled rows; the LibTorch package; signing/notarization; an aggregate residency run with 009 | Open |
-| [Release](../docs/release.md) | A release destination | Local tag `v0.1.0` and macOS arm64 artifact chosen 2026-10-04; a publication destination remains open |
+| [Release](../docs/release.md) | Every active spec complete, then a release destination (owner policy 2026-10-04) | Open; the local `v0.1.0` tag of 2026-10-04 was withdrawn |
 
 ## What was subtracted
 

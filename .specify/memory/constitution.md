@@ -1,6 +1,6 @@
 # Context Foundry constitution
 
-Version 0.4.0 · 2026-09-29 · Working project policy. User instructions take precedence.
+Version 0.5.0 · 2026-10-04 · Working project policy. User instructions take precedence.
 This is the single owner of project policy; templates are aids, not extra gates.
 
 ## Purpose
@@ -21,8 +21,8 @@ of Git and public artifacts.
 **Keep It Simple, Stupid (KISS): choose the least complicated design that satisfies
 the declared capability and its failure guarantees.** Preserve sophisticated results:
 useful code relationships at scale, trustworthy context, explicit memory, complete
-token accounting and repeatable owned learning. Early release scope can be smaller;
-that does not silently shrink the product's goals.
+token accounting and repeatable owned learning. A release ships only when every active
+spec is complete, so release scope never silently shrinks the product's goals.
 
 Judge simplicity by how much a maintainer or operator must understand and coordinate:
 independent state owners, protocols, background loops, recovery paths and configuration.
@@ -58,9 +58,10 @@ this principle creates no new document, scoring system or approval stage.
 5. Source indexing never silently executes workspace code, trains or downloads models.
    Training consent is separate from retrieval. Models cannot create authoritative
    source facts, label their own correctness or select themselves for production.
-6. Optional learning/semantic features cannot block a working baseline release.
-   A failed safety contract blocks its affected feature; a failed optimization can
-   remain disabled. Named limitations are preferable to invented guarantees.
+6. A version is released only when every task of every active spec is implemented and
+   accepted. A feature is complete when its tasks pass, including an optimization that
+   is rejected and stays disabled. A failed safety contract blocks its affected feature
+   and therefore the release. Named limitations are preferable to invented guarantees.
 7. Bootstrap is explicit admission of a named root, not inference from session text.
    Adapters can enforce only the request/delivery boundaries they actually control.
    Hard budgets are deterministic; learned choices cannot grant rights or raise limits.
@@ -70,9 +71,10 @@ this principle creates no new document, scoring system or approval stage.
 
 ## Working procedure
 
-Agree on the user outcome, implement a small slice, check it, review and release the
-scope that works. Familiar Spec Kit commands remain available, but are not mandatory
-stages. No `/measure` or `/council` ceremony is required to close every feature.
+Agree on the user outcome, implement a small slice, check it and review it; release
+once every active spec is complete. Familiar Spec Kit commands remain available, but
+are not mandatory stages. No `/measure` or `/council` ceremony is required to close
+every feature.
 
 A numbered `spec.md` owns behavior, status, design, work and acceptance. Split out a
 plan/task file or external contract only when it has a useful reader. Keep repairs
@@ -91,8 +93,9 @@ one writer per tree. Do not operate external stores/services without task author
   need consistency/link checks, not Rust builds or live-store probes.
 - A claimed integration needs its real consumer; a claimed numerical improvement
   needs a comparison at that actual boundary. Fixtures are labeled as fixtures.
-- A release uses [the short release checklist](../../docs/release.md) for the features
-  it advertises. Future roadmap items cannot become retroactive release conditions.
+- A release requires every task of every active spec in the portfolio to be implemented
+  and accepted, then [the short release checklist](../../docs/release.md). Deferred and
+  superseded specs are not release conditions until reactivated.
 
 Before an experiment over ten minutes, state the decision it can change, inputs,
 budget and stop rule. Reuse valid evidence; repeat only what changed inputs invalidate.
@@ -120,3 +123,6 @@ and optional model-request forwarding/metering, with all first-party code in Rus
 The narrow gateway controls only traffic configured through it; it cannot become
 a hidden source owner or a prerequisite for basic retrieval. Earlier Laya contracts
 remain historical, not requirements.
+0.5.0 follows the owner's 2026-10-04 decision: a version is released only when every
+active spec is complete. The earlier rule of releasing the working scope, and the local
+`v0.1.0` tag made under it the same day, are withdrawn and remain only as history.

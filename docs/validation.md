@@ -1,9 +1,14 @@
 # Validation
 
-## v0.1.0 local release — 2026-10-04
+## v0.1.0 local release — 2026-10-04 (withdrawn)
 
-Owner decision 2026-10-04: a local tag `v0.1.0` and a macOS arm64 artifact; nothing is
-published or pushed. Checklist (`docs/release.md`):
+**Withdrawn the same day.** The owner decided that a version is released only when
+every active spec is complete (constitution 0.5.0), so the local tag `v0.1.0` and its
+artifacts were deleted; nothing had been published or pushed. This record remains as
+history of the checklist run against the scope implemented at the time.
+
+Owner decision 2026-10-04, since withdrawn: a local tag `v0.1.0` and a macOS arm64
+artifact; nothing published or pushed. Checklist (`docs/release.md`):
 
 1. **Scope and evidence:** 001 T001–T006 (with the T005 leading-run amendment), 003
    T001–T003 and T005, 007 T001; acceptance evidence and limitations are the sections

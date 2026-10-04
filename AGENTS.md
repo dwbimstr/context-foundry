@@ -22,8 +22,8 @@ boundaries and existing authorization; do not ask again for already selected wor
   for unsupported patterns, current-file checks and unavailable coverage. This
   instruction does not claim the proposed MCP adapter is already implemented.
 - Preserve source identity, freshness, provenance, bounded output and user data. Never
-  run workspace code merely to index it. Training is outside source transactions and
-  baseline release dependencies. Training consent differs from retrieval consent.
+  run workspace code merely to index it. Training stays outside source transactions.
+  Training consent differs from retrieval consent.
 - Keep private corpora, transcripts, datasets, credentials and weights out of Git.
   Neither regex filtering nor an MIT code license establishes data/model rights.
 - Preserve unrelated work. One writer per tree. Do not touch predecessor/Laya services,
@@ -36,8 +36,9 @@ boundaries and existing authorization; do not ask again for already selected wor
   differences. Link actual landed Rust code when available; mark proposed paths and
   unexecuted evidence. Use the [decision-ecosystem map](docs/references/laya-decision-ecosystem.md)
   for learning reviews. Keep references with their existing owner, without a new stage.
-- Release working selected scope using [the checklist](docs/release.md). Deferred
-  specs and optional learning cannot become new release gates. Publication is separate.
+- Release only when every task of every active spec is implemented and accepted, then
+  run [the checklist](docs/release.md) (owner policy 2026-10-04). Deferred and
+  superseded specs are not release conditions. Publication is separate.
 - Bootstrap, worker isolation and upgrades follow [deployment](docs/deployment.md).
   Distinguish MCP delivery budgets from host-request control; do not claim full token
   economics without actual adapter visibility. Never label an ordinary subprocess a jail.

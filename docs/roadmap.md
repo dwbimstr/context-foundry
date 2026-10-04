@@ -18,14 +18,14 @@ The [portfolio](../specs/README.md) owns order and status. Release useful workfl
 6. Explicit project memory as an independent feature (008).
 7. Repeated owned Rust policy fine-tuning with isolated execution, selection and rollback (013).
 
-These are feature opportunities, not gates before the first release. As of
+All seven are planned work; a release waits until every active spec is complete (owner
+policy 2026-10-04). As of
 2026-10-01, 001 T001–T003 and 003 T001–T003 (including the optional shared owner) are
 implemented and verified locally ([validation](validation.md)). The owner selected
 item 3 on 2026-10-03 as the current core work, ahead of the optional features; it is
 implemented locally: 001 T004–T006 are accepted and committed (`5edf32c`); 003 T005 and
-007 T001 were accepted and committed locally on 2026-10-04; none is released. The 001/003 scope
-ships through the ordinary
-[release checklist](release.md) once the owner names a release destination. 003 T004
+007 T001 were accepted and committed locally on 2026-10-04; none is released, and the
+[release checklist](release.md) runs only after every active spec is complete. 003 T004
 (gateway), 005, 008, 009 and 013 remain proposed; the 2026-10-03 spec pass classified
 their remaining unknowns as settled decisions, named open owned decisions (005 T002's
 `references` header segments, 009 T002's semantic-item line form) or external
@@ -37,8 +37,8 @@ owner-supplied MLX 4-bit artifact is selected and its D001 recipe values are cho
 run the serving-limit check and validate the isolated runtime bridge before
 full-corpus preparation.
 Neural retrieval can precede graph; it
-does not depend on policy training or generated summaries. Baseline release remains
-independent, but semantic-enabled adoption requires cold/partial/warm/edit/restart proof.
+does not depend on policy training or generated summaries. Semantic-enabled use
+requires cold/partial/warm/edit/restart proof.
 Use one embedding profile and deterministic candidate ordering first. A learned
 reranker is not selected; 009 names the ordering failure needed to revisit it.
 The owned policy target is ModernBERT with a decision head, separate from 009 retrieval.
@@ -51,7 +51,7 @@ acceptance remain open. Learning stays disabled in normal retrieval until a
 usage-import comparison shows equal correctness and lower total provider tokens. Laya
 is a research reference only. The [deployment contract](deployment.md) follows each
 advertised feature through installation, shutdown, upgrade, rollback and uninstall;
-libkrun is conditional infrastructure, not a baseline release dependency.
+libkrun is conditional infrastructure, needed only where an isolation profile requires it.
 
 Federation, generated knowledge, automatic watchers and legacy migration
 need specific user failures before implementation; launch-time multi-root context

@@ -53,8 +53,8 @@ recipe. Full model/MSRV and distributed-package acceptance remain D001 inputs.
 The model never authorizes repository enrollment, tool execution, provider spend or
 larger budgets. [Adapter economics](../specs/003-agent-retrieval-context/contracts/adapter-economics.md)
 owns those deterministic boundaries. Learning remains off until actual task benefit
-justifies it; source/agent releases can ship earlier. Model preparation and training
-costs are reported separately and amortized only over observed use.
+justifies it, but its tasks must be complete before any release. Model preparation
+and training costs are reported separately and amortized only over observed use.
 
 The existing `src/laya.rs`/`--laya-port` path is a legacy prototype interface scheduled
 for removal in 013 T003. [Legacy notes](laya.md) describe what currently exists; they

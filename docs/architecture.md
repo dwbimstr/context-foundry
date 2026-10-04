@@ -564,15 +564,16 @@ Preparation/training costs and all observed provider attempts matter to savings 
 
 ## Release discipline
 
-Ship an installable, limited vertical slice first. Its release checks cover its
-actual contract: update/delete/reopen, stale evidence, graph bounds, budget bounds,
-and a CLI interaction on a small public fixture. Optional learning and dense
-retrieval do not gate the lexical/graph core.
+A release ships only when every active spec is complete (owner policy 2026-10-04). Its
+release checks cover the actual contracts: update/delete/reopen, stale evidence, graph
+bounds, budget bounds and a CLI interaction on a small public fixture, plus each
+feature's own acceptance. At runtime the lexical/graph core works without learning or
+dense retrieval.
 
 Large-codebase scaling and cost improvements need real workload evidence before
 those claims appear in release notes. Such experiments answer a named decision,
 have a budget, and run once for that decision; they do not form an endless
-prerequisite chain for unrelated releases.
+prerequisite chain.
 
 ## Scale without recreating a database
 
