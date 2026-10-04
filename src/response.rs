@@ -1,22 +1,35 @@
-//! One renderer/packer seam shared by CLI and MCP. Packing decisions are made
-//! on the FINAL emitted bytes: the caller supplies the boundary renderer that
-//! maps compact application JSON to exactly what its transport emits (the MCP
-//! tool-result serializer, or identity for the CLI), and every trial, token
-//! budget, byte cap and `budget_too_small` hint is computed on that output.
-//! Token counting uses the locked `o200k_base` tokenizer with no
-//! character-per-token fallback.
+//! One renderer per boundary for the context-v2 text wire, shared by CLI and
+//! MCP. The text is identical at both boundaries — CLI stdout and the MCP
+//! result's single text block — and is exactly what is counted, with the
+//! locked `o200k_base` tokenizer and no character-per-token fallback; nothing
+//! is appended after counting. Each boundary supplies the measure of the
+//! bytes it emits for a text, so the 256 KiB cap applies to what it emits.
 use crate::Strategy;
 use crate::error::{FResult, FoundryError};
-use crate::store::{ContextOutcome, Evidence, RetrieveOutcome, SearchOutcome, SourceHandle};
+use crate::store::{
+    CandidateBatch, HandleRef, Hit, OutlineOutcome, RankedItem, RenderedForm, RetrieveOutcome,
+    SearchOutcome, SourceHandle,
+};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 pub const TOKENIZER: &str = "o200k_base";
 pub const BYTE_CAP: usize = 256 * 1024;
+/// The largest token budget any request may name.
+pub const MAX_BUDGET_TOKENS: usize = 32_768;
 const RETRIEVE_PREFIX_CAP: usize = 128 * 1024;
 
-/// Maps compact application JSON text to the exact bytes the boundary emits.
+/// Maps compact error JSON text to the exact bytes the boundary emits.
 pub type FinalRender<'a> = &'a dyn Fn(&str) -> String;
+
+/// The bytes a boundary emits for one success text: the text itself on CLI
+/// stdout, the serialized `CallToolResult` carrying it on MCP.
+pub type ByteMeasure<'a> = &'a dyn Fn(&str) -> usize;
+
+/// The CLI boundary's measure: stdout is exactly the text.
+pub fn stdout_bytes(text: &str) -> usize {
+    text.len()
+}
 
 /// Freshness metadata every successful context/retrieve response carries.
 #[derive(Clone, Debug, Serialize)]
@@ -28,22 +41,11 @@ pub struct Freshness {
     pub indexed_snapshot: String,
 }
 
-/// A packed CLI result: `text` is exactly what stdout carries.
+/// A packed v2 result: `text` is exactly what the boundary carries (CLI
+/// stdout, or the MCP text block) and `tokens` is its exact count.
 #[derive(Debug)]
 pub struct PackedText {
     pub text: String,
-    pub tokens: usize,
-    pub omitted: usize,
-    pub truncated: bool,
-}
-
-/// A packed application result. Emit `emitted`, never `application_json`:
-/// `emitted == render(application_json)`, `tokens == count_tokens(&emitted)`
-/// and `emitted.len() <= byte_cap`.
-#[derive(Debug)]
-pub struct PackedJson {
-    pub application_json: String,
-    pub emitted: String,
     pub tokens: usize,
     pub omitted: usize,
     pub truncated: bool,
@@ -56,13 +58,9 @@ pub fn count_tokens(text: &str) -> usize {
         .len()
 }
 
-/// The one serializer for counted and emitted application bytes.
+/// The one serializer for bounded JSON reports and errors.
 pub fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
-}
-
-fn identity(application: &str) -> String {
-    application.to_owned()
 }
 
 const GRAPH_KEYWORDS: [&str; 11] = [
@@ -122,267 +120,11 @@ fn sufficient_budget(requested: usize, tokens_at: &dyn Fn(usize) -> usize) -> us
     budget
 }
 
-struct Fit {
-    application: String,
-    emitted: String,
-    tokens: usize,
-    omitted: usize,
-}
-
-/// Greedy in-order packing against the final boundary. `render_app` produces
-/// the application JSON for the included items, the omission count and the
-/// budget value shown in the envelope.
-fn pack_ordered<T: Clone>(
-    items: &[T],
-    budget: usize,
-    byte_cap: usize,
-    boundary: FinalRender,
-    render_app: &dyn Fn(&[T], usize, usize) -> String,
-) -> FResult<Fit> {
-    let emit = |included: &[T], omitted: usize, shown: usize| -> (String, String) {
-        let application = render_app(included, omitted, shown);
-        let emitted = boundary(&application);
-        (application, emitted)
-    };
-    let fits = |emitted: &str| emitted.len() <= byte_cap && count_tokens(emitted) <= budget;
-    let mut included: Vec<T> = Vec::new();
-    let mut omitted = 0usize;
-    for item in items {
-        let mut trial = included.clone();
-        trial.push(item.clone());
-        if fits(&emit(&trial, omitted, budget).1) {
-            included = trial;
-        } else {
-            omitted += 1;
-        }
-    }
-    // Omission metadata can change the fit: drop trailing items until the
-    // final rendering fits.
-    loop {
-        let (application, emitted) = emit(&included, omitted, budget);
-        if fits(&emitted) {
-            let tokens = count_tokens(&emitted);
-            return Ok(Fit {
-                application,
-                emitted,
-                tokens,
-                omitted,
-            });
-        }
-        if included.pop().is_none() {
-            break;
-        }
-        omitted += 1;
-    }
-    let minimum = sufficient_budget(budget, &|b| count_tokens(&emit(&[], items.len(), b).1));
-    Err(FoundryError::BudgetTooSmall {
-        minimum_tokens: minimum,
-    })
-}
-
-fn graph_label(outcome: &ContextOutcome) -> String {
-    match (outcome.strategy, outcome.graph_reason) {
-        (Strategy::Graph, Some(reason)) => reason.to_owned(),
-        (Strategy::Graph, None) => "ok".to_owned(),
-        _ => "not_requested".to_owned(),
-    }
-}
-
-fn source_citation(path: &str, start_line: u64, end_line: u64, handle: &SourceHandle) -> String {
-    format!(
-        "{path}:{start_line}-{end_line} [sha256:{}; bytes {}-{}]",
-        handle.sha256, handle.start, handle.end
-    )
-}
-
-fn cli_item(evidence: &Evidence) -> String {
-    match evidence {
-        Evidence::Source {
-            path,
-            start_line,
-            end_line,
-            handle,
-            text,
-        } => format!(
-            "{}\n{text}",
-            source_citation(path, *start_line, *end_line, handle)
-        ),
-        Evidence::Graph { text, .. } => text.clone(),
-    }
-}
-
-fn application_item(evidence: &Evidence) -> Value {
-    match evidence {
-        Evidence::Source {
-            path,
-            start_line,
-            end_line,
-            handle,
-            text,
-        } => json!({
-            "kind": "source",
-            "path": path,
-            "start_line": start_line,
-            "end_line": end_line,
-            "handle": handle,
-            "text": text,
-        }),
-        Evidence::Graph { text, .. } => json!({"kind": "graph", "text": text}),
-    }
-}
-
-/// CLI context stdout: counted metadata envelope (freshness, strategy, graph
-/// coverage, stale/candidate/truncation limits) plus evidence, all inside the
-/// budget. Line citations are one-based inclusive; byte ranges are authoritative.
-pub fn pack_context_cli(outcome: &ContextOutcome) -> FResult<PackedText> {
-    let items: Vec<String> = outcome.candidates.iter().map(cli_item).collect();
-    let graph = graph_label(outcome);
-    let render = |included: &[String], omitted: usize, shown: usize| -> String {
-        let f = &outcome.freshness;
-        let mut text = format!(
-            "indexed_snapshot: {}; pending_sources: {}\nworkspace_id: {}\ntokenizer: {TOKENIZER}; boundary: cli_stdout; budget: {shown}; budget_satisfied: true\nstrategy: {}; graph: {graph}\nstale_candidates: {}; candidate_limit: {}; candidate_limit_reached: {}; search_truncated: {}; omitted_candidates: {omitted}\n\n",
-            f.indexed_snapshot,
-            f.pending_sources,
-            f.workspace_id,
-            outcome.strategy,
-            outcome.stale_candidates,
-            outcome.candidate_limit,
-            outcome.candidate_limit_reached,
-            outcome.search_truncated,
-        );
-        text.push_str(&included.join("\n\n"));
-        if !included.is_empty() {
-            text.push('\n');
-        }
-        text
-    };
-    let fit = pack_ordered(
-        &items,
-        outcome.requested_tokens,
-        BYTE_CAP,
-        &identity,
-        &render,
-    )?;
-    Ok(PackedText {
-        text: fit.emitted,
-        tokens: fit.tokens,
-        omitted: fit.omitted,
-        truncated: fit.omitted > 0,
-    })
-}
-
-/// MCP application JSON for context. `adapter_metadata` fields merge into the
-/// application envelope before rendering, so they are counted. `render` is the
-/// final boundary serializer; `outcome.requested_tokens` is the whole budget.
-pub fn pack_context_application(
-    outcome: &ContextOutcome,
-    adapter_metadata: Option<&Value>,
-    render: FinalRender,
-    byte_cap: usize,
-) -> FResult<PackedJson> {
-    let items: Vec<Value> = outcome.candidates.iter().map(application_item).collect();
-    let render_app = |included: &[Value], omitted: usize, shown: usize| -> String {
-        let f = &outcome.freshness;
-        let mut value = json!({
-            "format_version": 1,
-            "strategy": outcome.strategy,
-            "graph_reason": outcome.graph_reason,
-            "workspace_id": f.workspace_id,
-            "source_revision": f.source_revision,
-            "scan_state": f.scan_state,
-            "pending_sources": f.pending_sources,
-            "indexed_snapshot": f.indexed_snapshot,
-            "tokenizer": TOKENIZER,
-            "boundary": "mcp_tool_result",
-            "requested_budget": shown,
-            "budget_satisfied": true,
-            "omitted_count": omitted,
-            "stale_candidates": outcome.stale_candidates,
-            "candidate_limit": outcome.candidate_limit,
-            "candidate_limit_reached": outcome.candidate_limit_reached,
-            "search_truncated": outcome.search_truncated,
-            "evidence": included,
-        });
-        merge_adapter(&mut value, adapter_metadata);
-        compact_json(&value)
-    };
-    let fit = pack_ordered(
-        &items,
-        outcome.requested_tokens,
-        byte_cap,
-        render,
-        &render_app,
-    )?;
-    Ok(PackedJson {
-        application_json: fit.application,
-        emitted: fit.emitted,
-        tokens: fit.tokens,
-        omitted: fit.omitted,
-        truncated: fit.omitted > 0,
-    })
-}
-
-fn merge_adapter(value: &mut Value, adapter_metadata: Option<&Value>) {
-    if let (Some(extra), Some(object)) = (adapter_metadata, value.as_object_mut()) {
-        for (key, field) in extra.as_object().into_iter().flatten() {
-            object.insert(key.clone(), field.clone());
-        }
-    }
-}
-
-fn retrieve_next_handle(out: &RetrieveOutcome, delivered: usize) -> Option<SourceHandle> {
-    let returned_end = out.requested.start + delivered as u64;
-    (returned_end < out.requested.end).then(|| SourceHandle {
-        v: 1,
-        workspace_id: out.requested.workspace_id.clone(),
-        path: out.requested.path.clone(),
-        sha256: out.requested.sha256.clone(),
-        start: returned_end,
-        end: out.requested.end,
-    })
-}
-
-fn returned_handle(out: &RetrieveOutcome, delivered: usize) -> SourceHandle {
-    SourceHandle {
-        v: 1,
-        workspace_id: out.requested.workspace_id.clone(),
-        path: out.requested.path.clone(),
-        sha256: out.requested.sha256.clone(),
-        start: out.requested.start,
-        end: out.requested.start + delivered as u64,
-    }
-}
-
-/// Renders retrieve application JSON for `(span prefix, continuation handle,
-/// delivered byte length, budget shown in the envelope)`.
-type RenderPrefix<'a> = &'a dyn Fn(&str, Option<&SourceHandle>, usize, usize) -> String;
-
-/// An accepted retrieve prefix: its application JSON, the exact emitted bytes,
-/// their token count, and whether a continuation handle remains.
-struct Prefix {
-    application: String,
-    emitted: String,
-    tokens: usize,
-    truncated: bool,
-}
-
-/// Retrieve prefix fitting. Start with at most 128 KiB of the requested range
-/// ending on a UTF-8 boundary; if the fully rendered final result does not fit,
-/// halve the byte length (retreating to a boundary) and retry, ending with the
-/// first complete codepoint: at most 19 nonempty trials. An empty span has a
-/// single trial. When nothing fits, return `budget_too_small` with a budget
-/// that is sufficient for the smallest tested result. The accepted trial's
-/// `next` handle advances exactly to its delivered end.
-fn fit_prefix(
-    out: &RetrieveOutcome,
-    budget: usize,
-    byte_cap: usize,
-    boundary: FinalRender,
-    render_app: RenderPrefix,
-) -> FResult<Prefix> {
-    // Spans are validated on UTF-8 boundaries, so the bytes are valid UTF-8.
-    let span = std::str::from_utf8(&out.span)
-        .map_err(|e| FoundryError::Internal(anyhow::anyhow!("span is not UTF-8: {e}")))?;
+/// The retrieve prefix trial lengths: at most 128 KiB of `span` ending on a
+/// UTF-8 boundary, then halved (retreating to a boundary) down to the first
+/// complete codepoint, at most 19 nonempty trials. An empty span has the
+/// single trial 0. Shared by every retrieve renderer.
+fn prefix_lengths(span: &str) -> Vec<usize> {
     let first = span.chars().next().map_or(0, char::len_utf8);
     let mut lengths: Vec<usize> = Vec::new();
     if span.is_empty() {
@@ -406,140 +148,586 @@ fn fit_prefix(
         }
     }
     debug_assert!(lengths.len() <= 19);
-    let emit = |length: usize, shown: usize| -> (String, String, Option<SourceHandle>) {
-        let next = retrieve_next_handle(out, length);
-        let application = render_app(&span[..length], next.as_ref(), length, shown);
-        let emitted = boundary(&application);
-        (application, emitted, next)
+    lengths
+}
+
+// ---------------------------------------------------------------------------
+// context-v2 text wire (001 T004).
+
+/// The bound that produced the effective budget: the header's `budget:` suffix
+/// and the refusal label of the adapter economics contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BudgetLimiter {
+    /// The request itself, and the CLI; ties report the request.
+    Request,
+    /// The configured `max_context_tokens` ceiling.
+    Ceiling,
+    /// The remaining session allowance.
+    Session,
+}
+
+impl BudgetLimiter {
+    pub const ALL: [Self; 3] = [Self::Request, Self::Ceiling, Self::Session];
+
+    /// The refusal vocabulary: `request`, `context_ceiling`, `session_allowance`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::Ceiling => "context_ceiling",
+            Self::Session => "session_allowance",
+        }
+    }
+}
+
+/// The effective token budget of one v2 response and the bound that set it.
+#[derive(Clone, Copy, Debug)]
+pub struct Budget {
+    pub tokens: usize,
+    pub limited_by: BudgetLimiter,
+}
+
+impl Budget {
+    /// A budget set by the request (the CLI, or an unconstrained MCP call).
+    pub fn request(tokens: usize) -> Self {
+        Self {
+            tokens,
+            limited_by: BudgetLimiter::Request,
+        }
+    }
+}
+
+/// Header facts that do not depend on packing; `line` adds the budget and counts.
+struct HeaderV2<'a> {
+    op: &'static str,
+    revision: u64,
+    scan_state: &'a str,
+    pending: u64,
+    /// Search and context render `shown:`/`omitted:`; retrieve does not.
+    lists: bool,
+    /// Hits skipped by the per-file cap (search and context).
+    capped: u64,
+    stale: u64,
+    candidates_full: bool,
+    graph: Option<&'a str>,
+}
+
+impl HeaderV2<'_> {
+    /// Segments in contract order joined by ` · `; optional segments appear
+    /// only when not at their default.
+    fn line(
+        &self,
+        budget: usize,
+        limited_by: BudgetLimiter,
+        shown: usize,
+        omitted: usize,
+    ) -> String {
+        let mut segments = vec![
+            format!("foundry {}", self.op),
+            format!("r{}", self.revision),
+        ];
+        if self.scan_state != "complete" {
+            segments.push(format!("scan:{}", single_line(self.scan_state)));
+        }
+        if self.pending > 0 {
+            segments.push(format!("pending:{}", self.pending));
+        }
+        segments.push(match limited_by {
+            BudgetLimiter::Request => format!("budget:{budget}"),
+            BudgetLimiter::Ceiling => format!("budget:{budget}(ceiling)"),
+            BudgetLimiter::Session => format!("budget:{budget}(session)"),
+        });
+        if self.lists {
+            segments.push(format!("shown:{shown}"));
+            if omitted > 0 {
+                segments.push(format!("omitted:{omitted}"));
+            }
+        }
+        if self.capped > 0 {
+            segments.push(format!("capped:{}", self.capped));
+        }
+        if self.stale > 0 {
+            segments.push(format!("stale:{}", self.stale));
+        }
+        if self.candidates_full {
+            segments.push("candidates:full".into());
+        }
+        if let Some(graph) = self.graph {
+            segments.push(format!("graph:{graph}"));
+        }
+        let mut line = segments.join(" · ");
+        line.push('\n');
+        line
+    }
+}
+
+/// Single-line fields (labels, graph text, excerpts): every control character
+/// except TAB becomes `?`, so indexed text cannot forge a header, item or fence.
+fn single_line(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_ascii_control() && c != '\t' {
+                '?'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// A fenced body: backticks of length max(3, 1 + the longest backtick run that
+/// begins a body line after at most three spaces), the language tag as info
+/// string, the exact body bytes, one framing LF when the body does not end
+/// with LF, then the closing fence.
+fn fenced(body: &str, lang: Option<&str>) -> String {
+    let longest = body
+        .split('\n')
+        .map(|line| {
+            let indent = line.bytes().take(3).take_while(|&b| b == b' ').count();
+            line[indent..].bytes().take_while(|&b| b == b'`').count()
+        })
+        .max()
+        .unwrap_or(0);
+    let fence = "`".repeat((longest + 1).max(3));
+    let mut out = String::with_capacity(body.len() + 2 * fence.len() + 16);
+    out.push_str(&fence);
+    out.push_str(lang.unwrap_or(""));
+    out.push('\n');
+    out.push_str(body);
+    if !body.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&fence);
+    out.push('\n');
+    out
+}
+
+/// First and last 1-based lines a range touches (the line of `start` and the
+/// line of `end - 1`); an empty range touches none.
+fn touched_lines(start_line: u64, body: &str) -> Option<(u64, u64)> {
+    let last = body.len().checked_sub(1)?;
+    let newlines = body.as_bytes()[..last]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count() as u64;
+    Some((start_line, start_line + newlines))
+}
+
+/// `<handle>[ L<a>-<b>][ <label>][ <tag>]` then the fenced body.
+fn item_text(
+    handle: &str,
+    lines: Option<(u64, u64)>,
+    label: &str,
+    tag: Option<&str>,
+    lang: Option<&str>,
+    body: &str,
+) -> String {
+    let mut item = handle.to_owned();
+    if let Some((first, last)) = lines {
+        item.push_str(&format!(" L{first}-{last}"));
+    }
+    if !label.is_empty() {
+        item.push(' ');
+        item.push_str(&single_line(label));
+    }
+    if let Some(tag) = tag {
+        item.push(' ');
+        item.push_str(tag);
+    }
+    item.push('\n');
+    item.push_str(&fenced(body, lang));
+    item
+}
+
+/// A retrieve item: `<handle>[ L<a>-<b>]` then the fenced verbatim body.
+fn source_item(handle: &str, start_line: u64, path: &str, body: &str) -> String {
+    let lang = crate::syntax::Lang::from_path(path).map(crate::syntax::Lang::tag);
+    item_text(
+        handle,
+        touched_lines(start_line, body),
+        "",
+        None,
+        lang,
+        body,
+    )
+}
+
+/// Every form of a ranked item, rendered in ladder order.
+fn ranked_forms(item: &RankedItem) -> Vec<String> {
+    let handle = item.handle.as_ref();
+    let lines = handle
+        .filter(|handle| handle.start < handle.end)
+        .map(|_| (item.start_line, item.end_line));
+    let lang = item.lang.as_deref();
+    let source = |tag: Option<&str>, body: &str| {
+        handle.map_or_else(String::new, |handle| {
+            item_text(&handle.to_v2(), lines, &item.label, tag, lang, body)
+        })
     };
-    for &length in &lengths {
-        let (application, emitted, next) = emit(length, budget);
-        if emitted.len() <= byte_cap && count_tokens(&emitted) <= budget {
-            let tokens = count_tokens(&emitted);
-            return Ok(Prefix {
-                application,
-                emitted,
+    item.forms
+        .iter()
+        .map(|form| match form {
+            RenderedForm::Verbatim(body) => source(None, body),
+            RenderedForm::Signature(body) => source(Some("[signature]"), body),
+            RenderedForm::Outline(body) | RenderedForm::OutlineMin(body) => {
+                source(Some("[outline]"), body)
+            }
+            RenderedForm::Line(text) => format!("edge {}\n", single_line(text)),
+        })
+        .filter(|rendered| !rendered.is_empty())
+        .collect()
+}
+
+/// The fixed point of the most expensive limiter label's rendering: a budget
+/// sufficient under every label.
+fn sufficient_under_every_label(
+    requested: usize,
+    render: &dyn Fn(usize, BudgetLimiter) -> String,
+) -> usize {
+    let worst = |budget: usize| {
+        BudgetLimiter::ALL
+            .iter()
+            .map(|&limiter| count_tokens(&render(budget, limiter)))
+            .max()
+            .unwrap_or(0)
+    };
+    sufficient_budget(requested, &worst)
+}
+
+/// `budget_too_small` with a hint sufficient under every limiter label.
+fn too_small(requested: usize, render: &dyn Fn(usize, BudgetLimiter) -> String) -> FoundryError {
+    FoundryError::BudgetTooSmall {
+        minimum_tokens: sufficient_under_every_label(requested, render),
+    }
+}
+
+/// A sufficient budget for the smallest successful response of `op` when no
+/// engine outcome exists: a refused session reservation admits no engine
+/// work, yet its `budget_exhausted` must still carry a hint valid under any
+/// limiter label. Every variable header segment takes its longest form;
+/// retrieve adds one item of one maximal codepoint under `handle`'s path and
+/// identities with maximal offsets and lines, plus its `next:` line.
+/// Sufficient, not minimal.
+pub fn refusal_floor(op: &'static str, handle: Option<&HandleRef>) -> usize {
+    let longest = u64::MAX;
+    let header = HeaderV2 {
+        op,
+        revision: longest,
+        scan_state: "incomplete",
+        pending: longest,
+        lists: op != "retrieve",
+        capped: longest,
+        stale: longest,
+        candidates_full: true,
+        graph: (op == "context").then_some("graph_unavailable"),
+    };
+    let item = handle.map_or_else(String::new, |handle| {
+        let widest = HandleRef {
+            start: longest,
+            end: longest,
+            ..handle.clone()
+        }
+        .to_string();
+        let mut item = source_item(&widest, longest, &handle.path, "\u{10FFFF}");
+        item.push_str("next: ");
+        item.push_str(&widest);
+        item.push('\n');
+        item
+    });
+    sufficient_under_every_label(1, &|budget, limited_by| {
+        let mut text = header.line(budget, limited_by, 0, usize::MAX);
+        text.push_str(&item);
+        text
+    })
+}
+
+/// Ladder packing (context-v2 § Ladder packing) over an already ordered list
+/// of candidates, each given as its rendered forms in ladder order: include
+/// the first form whose complete response (header updated for that
+/// inclusion) fits the token budget and the byte cap, else omit and count
+/// the candidate; then drop last-added items until the final header fits.
+/// If even the header cannot fit, refuse with a sufficient budget.
+fn pack(
+    items: &[Vec<String>],
+    header: &HeaderV2,
+    budget: Budget,
+    byte_cap: usize,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let render =
+        |included: &[(usize, usize)], omitted: usize, shown: usize, limited_by: BudgetLimiter| {
+            let mut text = header.line(shown, limited_by, included.len(), omitted);
+            for &(index, form) in included {
+                text.push_str(&items[index][form]);
+            }
+            text
+        };
+    let fits = |text: &str| boundary(text) <= byte_cap && count_tokens(text) <= budget.tokens;
+    let mut included: Vec<(usize, usize)> = Vec::new();
+    let mut omitted = 0usize;
+    for (index, forms) in items.iter().enumerate() {
+        let mut placed = false;
+        for form in 0..forms.len() {
+            included.push((index, form));
+            if fits(&render(
+                &included,
+                omitted,
+                budget.tokens,
+                budget.limited_by,
+            )) {
+                placed = true;
+                break;
+            }
+            included.pop();
+        }
+        if !placed {
+            omitted += 1;
+        }
+    }
+    loop {
+        let text = render(&included, omitted, budget.tokens, budget.limited_by);
+        if fits(&text) {
+            let tokens = count_tokens(&text);
+            return Ok(PackedText {
+                text,
                 tokens,
-                truncated: next.is_some(),
+                omitted,
+                truncated: omitted > 0,
+            });
+        }
+        if included.pop().is_none() {
+            break;
+        }
+        omitted += 1;
+    }
+    Err(too_small(budget.tokens, &|shown, limited_by| {
+        render(&[], items.len(), shown, limited_by)
+    }))
+}
+
+/// v2 retrieve text view: header, one item naming the delivered prefix, and
+/// `next: <handle>` while bytes of the requested range remain. The prefix
+/// follows the shared halving schedule; `next` starts exactly at its end.
+pub fn pack_retrieve(
+    out: &RetrieveOutcome,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    // Spans are validated on UTF-8 boundaries, so the bytes are valid UTF-8.
+    let span = std::str::from_utf8(&out.span)
+        .map_err(|e| FoundryError::Internal(anyhow::anyhow!("span is not UTF-8: {e}")))?;
+    let f = &out.freshness;
+    let header = HeaderV2 {
+        op: "retrieve",
+        revision: f.source_revision,
+        scan_state: &f.scan_state,
+        pending: f.pending_sources,
+        lists: false,
+        capped: 0,
+        stale: 0,
+        candidates_full: false,
+        graph: None,
+    };
+    let render = |length: usize, shown: usize, limited_by: BudgetLimiter| {
+        let split = out.requested.start + length as u64;
+        let delivered = SourceHandle {
+            end: split,
+            ..out.requested.clone()
+        };
+        let mut text = header.line(shown, limited_by, 0, 0);
+        text.push_str(&source_item(
+            &delivered.to_v2(),
+            out.start_line,
+            &out.requested.path,
+            &span[..length],
+        ));
+        if length < span.len() {
+            let next = SourceHandle {
+                start: split,
+                ..out.requested.clone()
+            };
+            text.push_str("next: ");
+            text.push_str(&next.to_v2());
+            text.push('\n');
+        }
+        text
+    };
+    let lengths = prefix_lengths(span);
+    for &length in &lengths {
+        let text = render(length, budget.tokens, budget.limited_by);
+        if boundary(&text) <= BYTE_CAP && count_tokens(&text) <= budget.tokens {
+            let tokens = count_tokens(&text);
+            return Ok(PackedText {
+                text,
+                tokens,
+                omitted: 0,
+                truncated: length < span.len(),
             });
         }
     }
     let smallest = lengths.last().copied().unwrap_or(0);
-    let minimum = sufficient_budget(budget, &|b| count_tokens(&emit(smallest, b).1));
-    Err(FoundryError::BudgetTooSmall {
-        minimum_tokens: minimum,
-    })
+    Err(too_small(budget.tokens, &|shown, limited_by| {
+        render(smallest, shown, limited_by)
+    }))
 }
 
-fn freshness_head(f: &Freshness) -> String {
-    format!(
-        "indexed_snapshot: {}; pending_sources: {}\nworkspace_id: {}\n",
-        f.indexed_snapshot, f.pending_sources, f.workspace_id
-    )
-}
-
-/// CLI retrieve stdout: metadata lines, then the exact span bytes after a
-/// `---` separator line as the exact tail of stdout. Source bytes are never
-/// rewritten.
-pub fn pack_retrieve_cli(out: &RetrieveOutcome) -> FResult<PackedText> {
-    let render = |span: &str, next: Option<&SourceHandle>, delivered: usize, shown: usize| {
-        let handle = returned_handle(out, delivered);
-        format!(
-            "{}tokenizer: {TOKENIZER}; boundary: cli_stdout; budget: {shown}; budget_satisfied: true\nhandle: {}\nnext: {}\n---\n{span}",
-            freshness_head(&out.freshness),
-            handle.to_json(),
-            next.map_or_else(|| "null".to_owned(), SourceHandle::to_json)
-        )
+/// `view:"outline"`: the requested range in the `outline` form, else
+/// `outline-min`; never paginated, never `next`. If neither fits, refuse with
+/// a budget sufficient for `outline-min`; when no budget can deliver even
+/// `outline-min` (it exceeds the largest budget or the byte cap under some
+/// limiter label), the range is `unsupported_mode` for this view.
+pub fn pack_retrieve_outline(
+    out: &OutlineOutcome,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let f = &out.freshness;
+    let header = HeaderV2 {
+        op: "retrieve",
+        revision: f.source_revision,
+        scan_state: &f.scan_state,
+        pending: f.pending_sources,
+        lists: false,
+        capped: 0,
+        stale: 0,
+        candidates_full: false,
+        graph: None,
     };
-    let fit = fit_prefix(out, out.requested_tokens, BYTE_CAP, &identity, &render)?;
-    Ok(PackedText {
-        text: fit.emitted,
-        tokens: fit.tokens,
-        omitted: 0,
-        truncated: fit.truncated,
-    })
-}
-
-/// MCP application JSON for retrieve (see [`pack_context_application`]).
-pub fn pack_retrieve_application(
-    out: &RetrieveOutcome,
-    adapter_metadata: Option<&Value>,
-    render: FinalRender,
-    byte_cap: usize,
-) -> FResult<PackedJson> {
-    let render_app = |span: &str, next: Option<&SourceHandle>, delivered: usize, shown: usize| {
-        let f = &out.freshness;
-        let mut value = json!({
-            "format_version": 1,
-            "handle": returned_handle(out, delivered),
-            "next": next,
-            "text": span,
-            "workspace_id": f.workspace_id,
-            "source_revision": f.source_revision,
-            "scan_state": f.scan_state,
-            "pending_sources": f.pending_sources,
-            "indexed_snapshot": f.indexed_snapshot,
-            "tokenizer": TOKENIZER,
-            "boundary": "mcp_tool_result",
-            "requested_budget": shown,
-            "budget_satisfied": true,
-        });
-        merge_adapter(&mut value, adapter_metadata);
-        compact_json(&value)
+    let handle = out.requested.to_v2();
+    let lines = (out.requested.start < out.requested.end).then_some((out.start_line, out.end_line));
+    let render = |body: &str, shown: usize, limited_by: BudgetLimiter| {
+        let mut text = header.line(shown, limited_by, 0, 0);
+        text.push_str(&item_text(
+            &handle,
+            lines,
+            "",
+            Some("[outline]"),
+            Some(out.lang),
+            body,
+        ));
+        text
     };
-    let fit = fit_prefix(out, out.requested_tokens, byte_cap, render, &render_app)?;
-    Ok(PackedJson {
-        application_json: fit.application,
-        emitted: fit.emitted,
-        tokens: fit.tokens,
-        omitted: 0,
-        truncated: fit.truncated,
-    })
-}
-
-fn search_value(outcome: &SearchOutcome) -> Value {
-    json!({
-        "format_version": 1,
-        "workspace_id": &outcome.workspace_id,
-        "source_revision": outcome.source_revision,
-        "scan_state": &outcome.scan_state,
-        "hits": &outcome.hits,
-        "pending_sources": outcome.pending_sources,
-        "stale_candidates": outcome.stale_candidates,
-        "candidate_limit": outcome.candidate_limit,
-        "candidate_limit_reached": outcome.candidate_limit_reached,
-        "truncated": outcome.truncated,
-    })
-}
-
-/// Search output with `format_version:1` and handle fields. The output cap is
-/// a byte cap on the FINAL emitted bytes (not a token claim): trailing hits
-/// are dropped until the rendering fits and `truncated` is set. An empty
-/// search never proves absence outside the examined window.
-pub fn search_application(
-    outcome: &mut SearchOutcome,
-    render: FinalRender,
-    byte_cap: usize,
-) -> PackedJson {
-    loop {
-        let application_json = compact_json(&search_value(outcome));
-        let emitted = render(&application_json);
-        if emitted.len() <= byte_cap || outcome.hits.is_empty() {
-            let tokens = count_tokens(&emitted);
-            return PackedJson {
-                application_json,
-                emitted,
+    for body in [&out.outline, &out.outline_min] {
+        let text = render(body, budget.tokens, budget.limited_by);
+        if boundary(&text) <= BYTE_CAP && count_tokens(&text) <= budget.tokens {
+            let tokens = count_tokens(&text);
+            return Ok(PackedText {
+                text,
                 tokens,
                 omitted: 0,
-                truncated: outcome.truncated,
-            };
+                truncated: false,
+            });
         }
-        outcome.hits.pop();
-        outcome.truncated = true;
+    }
+    // The smallest form must fit the largest budget and the byte cap under
+    // every limiter label, else no retry can deliver this outline.
+    let undeliverable = || {
+        FoundryError::UnsupportedMode(format!(
+            "view:\"outline\" of this range cannot fit {MAX_BUDGET_TOKENS} tokens and the 256 KiB result cap at any budget; narrow it with `lines` or use view:\"text\""
+        ))
+    };
+    let deliverable = BudgetLimiter::ALL.iter().all(|&limited_by| {
+        let text = render(&out.outline_min, MAX_BUDGET_TOKENS, limited_by);
+        boundary(&text) <= BYTE_CAP && count_tokens(&text) <= MAX_BUDGET_TOKENS
+    });
+    if !deliverable {
+        return Err(undeliverable());
+    }
+    match too_small(budget.tokens, &|shown, limited_by| {
+        render(&out.outline_min, shown, limited_by)
+    }) {
+        FoundryError::BudgetTooSmall { minimum_tokens } if minimum_tokens > MAX_BUDGET_TOKENS => {
+            Err(undeliverable())
+        }
+        refusal => Err(refusal),
     }
 }
 
-/// CLI search stdout (identity boundary, 256 KiB cap).
-pub fn search_json(outcome: &mut SearchOutcome) -> String {
-    search_application(outcome, &identity, BYTE_CAP).emitted
+/// The outcome-free sufficient budget for a `view:"outline"` refusal made
+/// before any engine work: outline-min is whole-or-nothing and its size
+/// depends on the source, so the hint is the largest budget. Any outline that
+/// can be delivered at all fits within it; one that cannot is refused as
+/// `unsupported_mode`.
+pub fn outline_refusal_floor() -> usize {
+    MAX_BUDGET_TOKENS
+}
+
+/// v2 context: the batch's candidates in order (the first unit, graph items,
+/// the remaining units, file outlines), ladder-packed over their forms.
+pub fn pack_context(
+    batch: &CandidateBatch,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let items: Vec<Vec<String>> = batch.items.iter().map(ranked_forms).collect();
+    let f = &batch.freshness;
+    let header = HeaderV2 {
+        op: "context",
+        revision: f.source_revision,
+        scan_state: &f.scan_state,
+        pending: f.pending_sources,
+        lists: true,
+        capped: batch.counters.capped,
+        stale: batch.counters.stale,
+        candidates_full: batch.counters.candidates_full,
+        graph: batch.counters.graph,
+    };
+    pack(&items, &header, budget, BYTE_CAP, boundary)
+}
+
+/// v2 search: one locator line per hit, `<handle> L<line> <label>:
+/// <excerpt>`, packed in hit order; the best line comes from hit
+/// materialization.
+pub fn pack_search(
+    outcome: &SearchOutcome,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let items: Vec<Vec<String>> = outcome
+        .hits
+        .iter()
+        .map(|hit| {
+            vec![format!(
+                "{} L{} {}: {}\n",
+                hit.handle.to_v2(),
+                hit.line,
+                single_line(&hit.label),
+                excerpt(hit)
+            )]
+        })
+        .collect();
+    let header = HeaderV2 {
+        op: "search",
+        revision: outcome.source_revision,
+        scan_state: &outcome.scan_state,
+        pending: outcome.pending_sources,
+        lists: true,
+        capped: outcome.capped,
+        stale: outcome.stale_candidates,
+        candidates_full: outcome.candidate_limit_reached,
+        graph: None,
+    };
+    pack(&items, &header, budget, BYTE_CAP, boundary)
+}
+
+const EXCERPT_BYTES: usize = 160;
+
+/// The hit's best line without its LF or CRLF terminator and leading
+/// whitespace, cut at a UTF-8 boundary to at most 160 bytes with `…` appended
+/// when cut, single-line.
+fn excerpt(hit: &Hit) -> String {
+    let index = hit.line.saturating_sub(hit.start_line) as usize;
+    let line = hit.text.split_inclusive('\n').nth(index).unwrap_or("");
+    let line = line
+        .strip_suffix('\n')
+        .map_or(line, |l| l.strip_suffix('\r').unwrap_or(l))
+        .trim_start();
+    if line.len() <= EXCERPT_BYTES {
+        single_line(line)
+    } else {
+        let mut cut = EXCERPT_BYTES;
+        while !line.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}…", single_line(&line[..cut]))
+    }
 }

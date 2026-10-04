@@ -40,6 +40,7 @@ pub mod mcp;
 pub mod receipts;
 pub mod response;
 pub mod store;
+pub mod syntax;
 #[cfg(feature = "test-faults")]
 pub mod testkit;
 

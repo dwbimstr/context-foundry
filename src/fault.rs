@@ -41,7 +41,19 @@ pub mod names {
         "repair.after_quarantine_rename"
     );
     point!(REPAIR_AFTER_ENQUEUE_PAGE, "repair.after_enqueue_page");
+    point!(
+        REPAIR_BEFORE_REPLACEMENT_INDEX,
+        "repair.before_replacement_index"
+    );
+    point!(
+        REPAIR_AFTER_REPLACEMENT_INDEX,
+        "repair.after_replacement_index"
+    );
     point!(REPAIR_BEFORE_MARKER_CLEAR, "repair.before_marker_clear");
+    point!(
+        REPAIR_AFTER_SCHEMA_PUBLICATION,
+        "repair.after_schema_publication"
+    );
     point!(UPGRADE_BEFORE_COMMIT, "upgrade.before_commit");
     point!(UPGRADE_AFTER_COMMIT, "upgrade.after_commit");
     point!(

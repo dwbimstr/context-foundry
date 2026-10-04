@@ -1,6 +1,6 @@
 use context_foundry::testkit::{
-    self, CORRUPT_INDEX_BYTES, KEPT_BODY, corrupt_search_index, craft_v1_store, new_fixture,
-    quarantine_dirs, schema_marker,
+    self, CORRUPT_INDEX_BYTES, KEPT_BODY, V2Response, corrupt_search_index, craft_v1_store,
+    new_fixture, parse_v2, quarantine_dirs, schema_marker,
 };
 use std::fs;
 use std::path::Path;
@@ -45,6 +45,20 @@ fn error_json(out: &Output) -> serde_json::Value {
     serde_json::from_str(line).unwrap_or_else(|_| panic!("not JSON: {line}"))
 }
 
+/// A v2 stdout parsed by the shared testkit parser.
+fn v2(stdout: &[u8]) -> V2Response {
+    let text = std::str::from_utf8(stdout).unwrap();
+    parse_v2(text).unwrap_or_else(|e| panic!("not a v2 text ({e}):\n{text}"))
+}
+
+/// The v2 handle of the first search hit for `query`.
+fn search_handle(store: &Path, query: &str) -> String {
+    let out = ok(store, &["search", query]);
+    let parsed = v2(&out.stdout);
+    assert_eq!(parsed.header[0], "foundry search");
+    parsed.items[0].handle.clone()
+}
+
 #[test]
 fn cli_index_initializes_searches_and_reports_status() {
     let fixture = tempfile::tempdir().unwrap();
@@ -71,19 +85,27 @@ fn cli_index_initializes_searches_and_reports_status() {
     assert_eq!(status["source_revision"], 1);
     assert!(status["workspace_id"].as_str().is_some());
 
-    let search: serde_json::Value =
-        serde_json::from_slice(&ok(&store, &["search", "original_identifier"]).stdout).unwrap();
-    assert_eq!(search["format_version"], 1);
-    assert_eq!(search["hits"][0]["path"], "main.rs");
-    let handle = search["hits"][0]["handle"].to_string();
+    let search = v2(&ok(&store, &["search", "original_identifier"]).stdout);
+    assert!(
+        search.header.contains(&"budget:1024".to_owned()),
+        "{search:?}"
+    );
+    let handle = search.items[0].handle.clone();
+    assert!(handle.starts_with("main.rs#0-27@"), "{handle}");
 
     let context = ok(
         &store,
         &["context", "original_identifier", "--tokens", "256"],
     );
+    let parsed = v2(&context.stdout);
+    assert!(parsed.header.contains(&"budget:256".to_owned()));
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.body.contains("fn original_identifier"))
+    );
     let text = String::from_utf8(context.stdout).unwrap();
-    assert!(text.contains("fn original_identifier"));
-    assert!(text.contains("budget_satisfied: true"));
     assert!(
         tiktoken_rs::o200k_base_singleton()
             .encode_ordinary(&text)
@@ -92,10 +114,9 @@ fn cli_index_initializes_searches_and_reports_status() {
         "CLI context stdout must stay within the token budget"
     );
 
-    let retrieved = ok(&store, &["retrieve", "--handle", &handle]);
-    let text = String::from_utf8(retrieved.stdout).unwrap();
-    let span = text.split_once("---\n").unwrap().1;
-    assert_eq!(span, "fn original_identifier() {}\n");
+    let retrieved = v2(&ok(&store, &["retrieve", "--handle", &handle]).stdout);
+    assert_eq!(retrieved.items[0].body, "fn original_identifier() {}");
+    assert!(retrieved.next.is_none());
 }
 
 #[test]
@@ -106,9 +127,7 @@ fn cli_edit_invalidates_handles_and_delete_is_not_found() {
     std::fs::create_dir(&root).unwrap();
     std::fs::write(root.join("main.rs"), "fn first_version() {}\n").unwrap();
     ok(&store, &["index", root.to_str().unwrap()]);
-    let search: serde_json::Value =
-        serde_json::from_slice(&ok(&store, &["search", "first_version"]).stdout).unwrap();
-    let handle = search["hits"][0]["handle"].to_string();
+    let handle = search_handle(&store, "first_version");
 
     std::fs::write(root.join("main.rs"), "fn second_version() {}\n").unwrap();
     ok(&store, &["index", root.to_str().unwrap()]);
@@ -116,9 +135,7 @@ fn cli_edit_invalidates_handles_and_delete_is_not_found() {
     assert_eq!(error_json(&out)["code"], "stale_handle");
     assert!(out.stdout.is_empty());
 
-    let search: serde_json::Value =
-        serde_json::from_slice(&ok(&store, &["search", "second_version"]).stdout).unwrap();
-    let handle = search["hits"][0]["handle"].to_string();
+    let handle = search_handle(&store, "second_version");
     ok(&store, &["retrieve", "--handle", &handle]);
 
     std::fs::remove_file(root.join("main.rs")).unwrap();
@@ -154,6 +171,18 @@ fn cli_exit_codes_and_bounded_errors() {
     assert_eq!(error_json(&out)["code"], "invalid_argument");
     let out = expect_code(&store, &["search", "   ", "--limit", "5"], 2);
     assert_eq!(error_json(&out)["code"], "invalid_argument");
+    let out = expect_code(&store, &["search", "query", "--tokens", "0"], 2);
+    assert_eq!(error_json(&out)["code"], "invalid_argument");
+    for bad in ["0", "32769"] {
+        let out = expect_code(&store, &["context", "query", "--tokens", bad], 2);
+        assert_eq!(error_json(&out)["code"], "invalid_argument", "{bad}");
+    }
+    let out = expect_code(
+        &store,
+        &["retrieve", "--handle", "a.rs#0-1@0", "--view", "skeleton"],
+        2,
+    );
+    assert_eq!(error_json(&out)["code"], "invalid_argument");
     let out = expect_code(
         &store,
         &["context", "query", "--strategy", "verify_current"],
@@ -161,13 +190,14 @@ fn cli_exit_codes_and_bounded_errors() {
     );
     assert_eq!(error_json(&out)["code"], "unsupported_mode");
 
-    // Budget failure exits nonzero with empty stdout.
+    // Budget failure exits nonzero with empty stdout, on every budgeted read.
     let out = expect_code(&store, &["context", "budget_probe", "--tokens", "1"], 1);
     assert_eq!(error_json(&out)["code"], "budget_too_small");
     assert!(out.stdout.is_empty());
-    let search: serde_json::Value =
-        serde_json::from_slice(&ok(&store, &["search", "budget_probe"]).stdout).unwrap();
-    let handle = search["hits"][0]["handle"].to_string();
+    let out = expect_code(&store, &["search", "budget_probe", "--tokens", "1"], 1);
+    assert_eq!(error_json(&out)["code"], "budget_too_small");
+    assert!(out.stdout.is_empty());
+    let handle = search_handle(&store, "budget_probe");
     let out = expect_code(
         &store,
         &["retrieve", "--handle", &handle, "--tokens", "1"],
@@ -175,6 +205,12 @@ fn cli_exit_codes_and_bounded_errors() {
     );
     assert_eq!(error_json(&out)["code"], "budget_too_small");
     assert!(out.stdout.is_empty());
+    let out = expect_code(
+        &store,
+        &["retrieve", "--handle", &handle, "--lines", "0"],
+        2,
+    );
+    assert_eq!(error_json(&out)["code"], "invalid_argument");
 
     // Wrong root refuses before any mutation.
     let other = fixture.path().join("other");
@@ -233,7 +269,15 @@ fn cli_upgrade_and_repair_flows() {
     // feedback, and initializes revision/scan metadata.
     assert_eq!(status["source_count"], 1);
     assert_eq!(status["pending_count"], 1);
-    assert_eq!(status["index_state"], "lagging");
+    // Its derived index predates search schema v2: status names the explicit
+    // repair and nothing is rebuilt on open.
+    assert_eq!(status["index_state"], "repair_required");
+    assert!(
+        status["index_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("search_schema")),
+        "{status}"
+    );
     assert_eq!(status["source_revision"], 0);
     assert_eq!(status["scan_state"], "never");
     let training = ok(&store, &["export-training"]);
@@ -241,6 +285,18 @@ fn cli_upgrade_and_repair_flows() {
         String::from_utf8(training.stdout).unwrap().lines().count(),
         1
     );
+    // The explicit repair quarantines the v1 index, publishes schema v2 and
+    // drains the preserved pending work.
+    let repaired = ok(&store, &["repair-index"]);
+    let report: serde_json::Value = serde_json::from_slice(&repaired.stdout).unwrap();
+    assert_eq!(report["repaired"], true);
+    let upgraded = quarantine_dirs(&store);
+    assert_eq!(upgraded.len(), 1, "the v1 index is quarantined");
+    assert_eq!(report["quarantined_to"], upgraded[0].to_str().unwrap());
+    let status: serde_json::Value =
+        serde_json::from_slice(&ok(&store, &["status"]).stdout).unwrap();
+    assert_eq!(status["index_state"], "ready");
+    assert_eq!(status["pending_count"], 0);
 
     // Corrupt the derived index; repair-index restores it.
     let root = fixture.path().join("ws");
@@ -252,16 +308,20 @@ fn cli_upgrade_and_repair_flows() {
     let repaired = ok(&store, &["repair-index"]);
     let report: serde_json::Value = serde_json::from_slice(&repaired.stdout).unwrap();
     assert_eq!(report["repaired"], true);
-    let quarantines = quarantine_dirs(&store);
-    assert_eq!(quarantines.len(), 1);
+    let quarantines: Vec<_> = quarantine_dirs(&store)
+        .into_iter()
+        .filter(|dir| !upgraded.contains(dir))
+        .collect();
+    assert_eq!(quarantines.len(), 1, "exactly one new quarantine");
     assert_eq!(report["quarantined_to"], quarantines[0].to_str().unwrap());
     assert_eq!(
         std::fs::read(quarantines[0].join("meta.json")).unwrap(),
         CORRUPT_INDEX_BYTES
     );
-    let search: serde_json::Value =
-        serde_json::from_slice(&ok(&store, &["search", "kept"]).stdout).unwrap();
-    assert_eq!(search["hits"].as_array().unwrap().len(), 1);
+    // After the repair the rebuilt index serves the source again.
+    let search = v2(&ok(&store, &["search", "kept"]).stdout);
+    assert_eq!(search.items.len(), 1);
+    assert!(search.items[0].handle.starts_with("kept.rs#"));
 }
 
 #[test]
@@ -302,25 +362,114 @@ fn cli_query_text_naming_foreign_paths_reads_nothing() {
     let store = fixture.path().join("store-a");
     std::fs::create_dir_all(&root_a).unwrap();
     std::fs::create_dir_all(&root_b).unwrap();
-    std::fs::write(root_a.join("a.rs"), "alpha marker_a\n").unwrap();
-    std::fs::write(root_b.join("b.rs"), "beta marker_b\n").unwrap();
+    // Markers share no subtoken of two or more characters.
+    std::fs::write(root_a.join("a.rs"), "alpha quokka_apricot\n").unwrap();
+    std::fs::write(root_b.join("b.rs"), "beta walrus_banana\n").unwrap();
     ok(&store, &["index", root_a.to_str().unwrap()]);
     // Absolute paths in query text are ordinary search text, not reads.
-    let query = format!("find marker_b in {}", root_b.join("b.rs").display());
-    let search: serde_json::Value =
-        serde_json::from_slice(&ok(&store, &["search", &query]).stdout).unwrap();
-    assert_eq!(search["hits"].as_array().unwrap().len(), 0);
+    let query = format!("find walrus_banana in {}", root_b.join("b.rs").display());
+    let search = v2(&ok(&store, &["search", &query]).stdout);
+    assert!(search.items.is_empty(), "{search:?}");
     let status: serde_json::Value =
         serde_json::from_slice(&ok(&store, &["status"]).stdout).unwrap();
     assert_eq!(status["source_count"], 1);
     // A valid handle from workspace B is rejected as wrong_workspace.
     let store_b = fixture.path().join("store-b");
     ok(&store_b, &["index", root_b.to_str().unwrap()]);
-    let search_b: serde_json::Value =
-        serde_json::from_slice(&ok(&store_b, &["search", "marker_b"]).stdout).unwrap();
-    let handle = search_b["hits"][0]["handle"].to_string();
+    let handle = search_handle(&store_b, "walrus_banana");
     let out = expect_code(&store, &["retrieve", "--handle", &handle], 1);
     assert_eq!(error_json(&out)["code"], "wrong_workspace");
+}
+
+#[test]
+fn cli_search_path_restricts_both_tiers_to_a_normalized_subtree() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let store = fixture.path().join("store");
+    for path in ["src/a/x.rs", "src/b/x.rs", "src/ab.rs"] {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, "fn probe_fn() {}\n\nfn user() { probe_fn(); }\n").unwrap();
+    }
+    ok(&store, &["index", root.to_str().unwrap()]);
+    // Tier 1 `fn probe_fn` (bytes 0-16, L1), then tier 2 `fn user` (18-43, L3).
+    for (filter, file) in [("./src/a/", "src/a/x.rs"), ("src/b", "src/b/x.rs")] {
+        let search = v2(&ok(&store, &["search", "probe_fn", "--path", filter]).stdout);
+        let shown: Vec<(&str, Option<&str>, Option<&str>)> = search
+            .items
+            .iter()
+            .map(|item| {
+                (
+                    item.handle.split_once('@').unwrap().0,
+                    item.lines.as_deref(),
+                    item.label.as_deref(),
+                )
+            })
+            .collect();
+        let first = format!("{file}#0-16");
+        let second = format!("{file}#18-43");
+        assert_eq!(
+            shown,
+            [
+                (first.as_str(), Some("L1"), Some("fn probe_fn")),
+                (second.as_str(), Some("L3"), Some("fn user")),
+            ],
+            "{filter}"
+        );
+    }
+    for bad in ["../x", "/abs", "a//b", ""] {
+        let out = expect_code(&store, &["search", "probe_fn", "--path", bad], 2);
+        assert_eq!(error_json(&out)["code"], "invalid_argument", "{bad:?}");
+        assert!(out.stdout.is_empty());
+    }
+}
+
+#[test]
+fn cli_retrieve_view_outline_elides_interiors_and_refuses_unmapped_languages() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let store = fixture.path().join("store");
+    std::fs::create_dir_all(&root).unwrap();
+    let lets: String = (0..10).map(|j| format!("    let v{j} = {j};\n")).collect();
+    let body = format!("fn outlined_probe() {{\n{lets}}}\n");
+    std::fs::write(root.join("o.rs"), &body).unwrap();
+    std::fs::write(root.join("notes.txt"), "alpha_note\n").unwrap();
+    ok(&store, &["index", root.to_str().unwrap()]);
+    let unit = search_handle(&store, "outlined_probe");
+    // The unit's handle (bytes 0-183: a 22-byte signature line, ten 16-byte
+    // lines and `}`, without the final LF) in the outline form: the 10-line
+    // interior unfolds within the outline form's 60-line target.
+    assert!(unit.starts_with("o.rs#0-183@"), "{unit}");
+    let out = ok(
+        &store,
+        &[
+            "retrieve", "--handle", &unit, "--view", "outline", "--lines", "1-12",
+        ],
+    );
+    let parsed = v2(&out.stdout);
+    assert!(parsed.next.is_none());
+    assert_eq!(parsed.items[0].form.as_deref(), Some("outline"));
+    assert_eq!(parsed.items[0].lines.as_deref(), Some("L1-12"));
+    assert_eq!(parsed.items[0].body, body);
+    // A 1-token budget is refused with empty stdout; an unmapped language
+    // has no outline.
+    let out = expect_code(
+        &store,
+        &[
+            "retrieve", "--handle", &unit, "--view", "outline", "--tokens", "1",
+        ],
+        1,
+    );
+    assert_eq!(error_json(&out)["code"], "budget_too_small");
+    assert!(out.stdout.is_empty());
+    let note = search_handle(&store, "alpha_note");
+    let out = expect_code(
+        &store,
+        &["retrieve", "--handle", &note, "--view", "outline"],
+        2,
+    );
+    assert_eq!(error_json(&out)["code"], "unsupported_mode");
+    assert!(out.stdout.is_empty());
 }
 
 /// Run the CLI with a wall-clock limit so a regression that hangs fails the
@@ -390,15 +539,16 @@ fn cli_stdout_budget_matrix_counts_actual_stdout_and_hints_succeed() {
         .remove(0)
         .handle;
     let (_dir, store, _root) = fx.close();
-    let handle_json = handle.to_json();
+    let handle = handle.to_v2();
     let count = |text: &str| {
         tiktoken_rs::o200k_base_singleton()
             .encode_ordinary(text)
             .len()
     };
-    let commands: [(&str, Vec<&str>); 2] = [
+    let commands: [(&str, Vec<&str>); 3] = [
+        ("search", vec!["search", "matrix_probe_3"]),
         ("context", vec!["context", "matrix_probe_3"]),
-        ("retrieve", vec!["retrieve", "--handle", &handle_json]),
+        ("retrieve", vec!["retrieve", "--handle", &handle]),
     ];
     let mut succeeded_at_some_budget = false;
     for (name, base) in commands {
@@ -416,7 +566,19 @@ fn cli_stdout_budget_matrix_counts_actual_stdout_and_hints_succeed() {
                     count(&stdout)
                 );
                 assert!(stdout.len() <= 256 * 1024);
-                assert!(stdout.contains("budget_satisfied: true"));
+                let parsed = v2(&out.stdout);
+                assert_eq!(parsed.header[0], format!("foundry {name}"));
+                assert!(parsed.header.contains(&format!("budget:{budget}")));
+                for item in parsed.items.iter().filter(|item| item.lines.is_some()) {
+                    if item.kind != testkit::V2Kind::Source {
+                        continue;
+                    }
+                    let range = context_foundry::store::HandleRef::parse(&item.handle).unwrap();
+                    assert_eq!(
+                        item.body.as_bytes(),
+                        &body.as_bytes()[range.start as usize..range.end as usize]
+                    );
+                }
             } else {
                 // Budget failure: bounded named error, stdout stays empty, and
                 // the advertised minimum succeeds when retried.
@@ -472,13 +634,12 @@ fn cli_launched_from_another_workspace_keeps_binding_and_state() {
     // Query text naming B's absolute path is ordinary text, never a read.
     let search = from_b(&["search", &query]);
     assert!(search.status.success());
-    let value: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
-    assert_eq!(value["hits"].as_array().unwrap().len(), 0);
+    assert!(v2(&search.stdout).items.is_empty());
     let context = from_b(&["context", &query, "--tokens", "2048"]);
     assert!(context.status.success());
     assert!(!String::from_utf8_lossy(&context.stdout).contains("B_UNIQUE_MARKER_QQQ()"));
     // B's valid handle is wrong_workspace against A's bound store.
-    let retrieve = from_b(&["retrieve", "--handle", &b_handle.to_json()]);
+    let retrieve = from_b(&["retrieve", "--handle", &b_handle.to_v2()]);
     assert_eq!(retrieve.status.code(), Some(1));
     assert_eq!(error_json(&retrieve)["code"], "wrong_workspace");
     // Binding, sources, pending and revision: every row exactly as before.
@@ -496,7 +657,8 @@ fn cli_launched_from_another_workspace_keeps_binding_and_state() {
 
 #[test]
 fn cli_four_thousand_ninety_six_byte_escaped_path_round_trips_through_retrieve() {
-    let component = "\"\\".repeat(100);
+    // `#`, `@`, `.` and JSON-special characters, unescaped in v2 handles.
+    let component = "\"\\#@.".repeat(40);
     let mut parts: Vec<String> = Vec::new();
     while parts.len() * 201 + 200 < 4096 {
         parts.push(component.clone());
@@ -508,18 +670,27 @@ fn cli_four_thousand_ninety_six_byte_escaped_path_round_trips_through_retrieve()
     let mut fx = new_fixture();
     fx.add(&[(&path, "fn cli_escaped_path_probe() {}\n")]);
     let (_dir, store, _root) = fx.close();
-    let search = ok(&store, &["search", "cli_escaped_path_probe"]);
-    let value: serde_json::Value = serde_json::from_slice(&search.stdout).unwrap();
-    assert_eq!(value["hits"][0]["handle"]["path"], path.as_str());
-    let handle = value["hits"][0]["handle"].to_string();
-    assert!(
-        handle.len() > 8000 && handle.len() <= 32768,
-        "{}",
-        handle.len()
+    let search = ok(
+        &store,
+        &["search", "cli_escaped_path_probe", "--tokens", "32768"],
     );
-    // The escaped 8 KB handle line does not fit the default 2048-token budget:
-    // a named refusal whose hint succeeds when retried.
-    let refused = expect_code(&store, &["retrieve", "--handle", &handle], 1);
+    let handle = v2(&search.stdout).items[0].handle.clone();
+    let parsed = context_foundry::store::HandleRef::parse(&handle).unwrap();
+    assert_eq!(parsed.path, path);
+    assert!(handle.len() <= 4200, "{}", handle.len());
+    let retrieved = ok(
+        &store,
+        &["retrieve", "--handle", &handle, "--tokens", "32768"],
+    );
+    let retrieved = v2(&retrieved.stdout);
+    assert_eq!(retrieved.items[0].body, "fn cli_escaped_path_probe() {}\n");
+    assert_eq!(retrieved.items[0].handle, handle);
+    // A tiny budget is a named refusal whose hint succeeds when retried.
+    let refused = expect_code(
+        &store,
+        &["retrieve", "--handle", &handle, "--tokens", "1"],
+        1,
+    );
     assert!(refused.stdout.is_empty());
     let error = error_json(&refused);
     assert_eq!(error["code"], "budget_too_small");
@@ -528,27 +699,9 @@ fn cli_four_thousand_ninety_six_byte_escaped_path_round_trips_through_retrieve()
         &store,
         &["retrieve", "--handle", &handle, "--tokens", &hint],
     );
-    assert!(
-        String::from_utf8(at_hint.stdout)
-            .unwrap()
-            .ends_with("fn cli_escaped_path_probe() {}\n")
-    );
-    let retrieved = ok(
-        &store,
-        &["retrieve", "--handle", &handle, "--tokens", "32768"],
-    );
-    let text = String::from_utf8(retrieved.stdout).unwrap();
-    let (meta, span) = text.split_once("---\n").unwrap();
-    assert_eq!(span, "fn cli_escaped_path_probe() {}\n");
-    let returned = meta
-        .lines()
-        .find_map(|l| l.strip_prefix("handle: "))
-        .unwrap();
-    let returned: serde_json::Value = serde_json::from_str(returned).unwrap();
-    assert_eq!(returned["path"], path.as_str());
-    // A handle over the 32768-byte input bound is refused as invalid.
-    let oversized = format!("{handle}{}", " ".repeat(32768));
-    let out = expect_code(&store, &["retrieve", "--handle", &oversized], 2);
+    assert!(!v2(&at_hint.stdout).items.is_empty());
+    // A handle over the 4200-byte input cap is refused as invalid.
+    let out = expect_code(&store, &["retrieve", "--handle", &"x".repeat(4201)], 2);
     assert_eq!(error_json(&out)["code"], "invalid_argument");
 }
 
@@ -602,24 +755,25 @@ fn cli_cooperative_cancellation_exits_130_with_a_partial_report() {
 }
 
 #[test]
-fn cli_search_stdout_including_the_final_newline_stays_within_256_kib() {
+fn cli_search_stdout_including_the_final_newline_stays_within_its_caps() {
     let mut fx = new_fixture();
-    // Each 2048-byte chunk carries the query term plus quote-dense filler, so
-    // the serialized hits approach 2x their raw size: 64 of them cannot fit
-    // the byte cap and trailing hits must drop, highest-ranked retained first.
+    // 64 quote-dense hits under long paths: at the 32768-token maximum the
+    // complete stdout, final newline included, stays within the budget and
+    // the 256 KiB cap; hits that do not fit are omitted and counted, the
+    // highest-ranked retained first.
     let line = "\"".repeat(60) + "\\\\big_probe\\\\\n";
     for i in 0..64 {
         let body = format!("fn big_probe_{i}() {{\n{}\n}}\n", line.repeat(115));
         fx.engine
-            .replace_source(
-                &format!("big{i:02}_padding_padding_padding_padding_padding_padding.rs"),
-                &body,
-            )
+            .replace_source(&format!("big{i:02}_{}.rs", "padding_".repeat(400)), &body)
             .unwrap();
     }
     fx.drain();
     let (_dir, store, _root) = fx.close();
-    let out = ok(&store, &["search", "big_probe", "--limit", "64"]);
+    let out = ok(
+        &store,
+        &["search", "big_probe", "--limit", "64", "--tokens", "32768"],
+    );
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.ends_with('\n'));
     assert!(
@@ -627,15 +781,98 @@ fn cli_search_stdout_including_the_final_newline_stays_within_256_kib() {
         "stdout including the final newline is {} bytes",
         stdout.len()
     );
-    let value: serde_json::Value = serde_json::from_str(stdout.trim_end_matches('\n')).unwrap();
-    assert_eq!(
-        value["truncated"], true,
-        "trailing hits must be dropped and flagged"
+    assert!(
+        tiktoken_rs::o200k_base_singleton()
+            .encode_ordinary(&stdout)
+            .len()
+            <= 32768
     );
-    let hits = value["hits"].as_array().unwrap().len();
-    assert!(hits < 64, "the cap must have dropped hits, got {hits}");
+    let parsed = v2(stdout.as_bytes());
+    let omitted = parsed
+        .header
+        .iter()
+        .find_map(|segment| segment.strip_prefix("omitted:"))
+        .map_or(0, |n| n.parse::<usize>().unwrap());
+    assert_eq!(parsed.items.len() + omitted, 64, "{:?}", parsed.header);
+    let one = v2(&ok(
+        &store,
+        &["search", "big_probe", "--limit", "1", "--tokens", "32768"],
+    )
+    .stdout);
     assert_eq!(
-        value["hits"][0]["path"], "big00_padding_padding_padding_padding_padding_padding.rs",
+        parsed.items[0].handle, one.items[0].handle,
         "highest-ranked hits are retained first"
     );
+}
+
+/// 001 T004 CLI smoke on the shipped example and the agent-task fixture:
+/// `lines` selects whole absolute file lines inside the handle and never
+/// widens it.
+#[test]
+fn cli_retrieve_lines_select_whole_file_lines_and_never_widen_the_handle() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture = tempfile::tempdir().unwrap();
+    let store = fixture.path().join("cf-smoke");
+    ok(
+        &store,
+        &[
+            "index",
+            manifest.join("examples/workspace").to_str().unwrap(),
+        ],
+    );
+    let handle = search_handle(&store, "parse_record");
+    // The handle is the whole `parse_record` unit, bytes 0-86: lines 1-3
+    // without the file's final LF.
+    assert!(handle.starts_with("src/parser.rs#0-86@"), "{handle}");
+    let out = ok(&store, &["retrieve", "--handle", &handle, "--lines", "1-3"]);
+    let parsed = v2(&out.stdout);
+    assert_eq!(parsed.header[0], "foundry retrieve");
+    assert_eq!(
+        parsed.items[0].body,
+        "pub fn parse_record(input: &str) -> Option<(&str, &str)> {\n    input.split_once('=')\n}",
+        "exactly lines 1-3"
+    );
+    assert_eq!(parsed.items[0].lines.as_deref(), Some("L1-3"));
+    let out = expect_code(
+        &store,
+        &["retrieve", "--handle", &handle, "--lines", "4-6"],
+        2,
+    );
+    assert_eq!(error_json(&out)["code"], "invalid_range");
+    assert!(out.stdout.is_empty());
+
+    // records.rs: `parse_record` occupies lines 5-7 after a three-line `//!`
+    // comment and a blank line. A handle covering exactly lines 5-7 asked
+    // for lines 4-6 returns lines 5-6.
+    let store = fixture.path().join("agent-task");
+    let root = manifest.join("tests/fixtures/agent-task");
+    ok(&store, &["index", root.to_str().unwrap()]);
+    let records = fs::read_to_string(root.join("src/records.rs")).unwrap();
+    let line_start = |n: usize| -> usize {
+        records
+            .split_inclusive('\n')
+            .take(n - 1)
+            .map(str::len)
+            .sum()
+    };
+    let ws16 = context_foundry::store::HandleRef::parse(&search_handle(&store, "parse_record"))
+        .unwrap()
+        .ws16;
+    let lines_5_to_7 = format!(
+        "src/records.rs#{}-{}@{}.{ws16}",
+        line_start(5),
+        records.len(),
+        &context_foundry::digest(records.as_bytes())[..32]
+    );
+    let out = ok(
+        &store,
+        &["retrieve", "--handle", &lines_5_to_7, "--lines", "4-6"],
+    );
+    let parsed = v2(&out.stdout);
+    assert_eq!(
+        parsed.items[0].body,
+        &records[line_start(5)..line_start(7)],
+        "lines 5-6, never widened to line 4"
+    );
+    assert_eq!(parsed.items[0].lines.as_deref(), Some("L5-6"));
 }

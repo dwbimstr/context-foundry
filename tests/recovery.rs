@@ -34,6 +34,9 @@ fn work_dir() -> std::path::PathBuf {
 
 const V1: &str = "fn child_version_one() {}\n";
 const V2: &str = "fn child_version_two() {}\n";
+// The delivery units of V1 and V2: the function without the final LF.
+const V1_UNIT: &str = "fn child_version_one() {}";
+const V2_UNIT: &str = "fn child_version_two() {}";
 const PROBE: &str = "fn probe_a() { probe_b(); }\n";
 const PROBE_B: &str = "fn probe_b() {}\n";
 
@@ -151,7 +154,13 @@ fn child_fault(stage: &str) -> ! {
                 "repair_after_rename" => (names::REPAIR_AFTER_QUARANTINE_RENAME, 0),
                 // The second of three 128-source pages: two pages committed.
                 "repair_enqueue_page" => (names::REPAIR_AFTER_ENQUEUE_PAGE, 1),
+                "repair_before_replacement_index" => (names::REPAIR_BEFORE_REPLACEMENT_INDEX, 0),
+                "repair_after_replacement_index" => (names::REPAIR_AFTER_REPLACEMENT_INDEX, 0),
+                // The replacement's second search commit: one 128-source batch
+                // committed and cleared, the next committed but not cleared.
+                "repair_after_index_commit" => (names::INDEX_AFTER_SEARCH_COMMIT, 1),
                 "repair_before_marker_clear" => (names::REPAIR_BEFORE_MARKER_CLEAR, 0),
+                "repair_after_schema_publication" => (names::REPAIR_AFTER_SCHEMA_PUBLICATION, 0),
                 other => panic!("unknown repair stage {other}"),
             };
             fault::arm(point, skip, Action::Abort);
@@ -204,7 +213,7 @@ fn exit_before_source_commit_leaves_the_prior_state_exactly() {
         .unwrap()
         .hits
         .remove(0);
-    assert_eq!(hit.text, V1);
+    assert_eq!(hit.text, V1_UNIT);
     assert!(
         engine
             .search("child_version_two", 5)
@@ -235,7 +244,7 @@ fn exit_after_source_commit_keeps_new_bytes_and_rejects_the_old_hit() {
     engine.refresh(&Control::unbounded()).unwrap();
     assert_eq!(
         engine.search("child_version_two", 5).unwrap().hits[0].text,
-        V2
+        V2_UNIT
     );
     drop(engine);
     // Graph rows and feedback records are exactly what was committed before.
@@ -254,7 +263,7 @@ fn exit_between_search_commit_and_pending_clear_replays_idempotently() {
     // any replay. A boundary moved before the commit could not pass this.
     let hits = engine.search("child_version_two", 5).unwrap();
     assert_eq!(hits.hits.len(), 1);
-    assert_eq!(hits.hits[0].text, V2);
+    assert_eq!(hits.hits[0].text, V2_UNIT);
     engine.refresh(&Control::unbounded()).unwrap();
     assert_eq!(engine.pending().unwrap(), 0);
     assert_eq!(engine.search("child_version_two", 5).unwrap().hits.len(), 1);
@@ -271,8 +280,11 @@ fn exit_between_search_commit_and_pending_clear_replays_idempotently() {
         .hits
         .remove(0);
     assert_eq!(
-        engine.retrieve(&hit.handle.to_json(), 4096).unwrap().span,
-        V2.as_bytes()
+        engine
+            .retrieve(&hit.handle.to_v2(), None, 4096)
+            .unwrap()
+            .span,
+        V2_UNIT.as_bytes()
     );
 }
 
@@ -299,15 +311,24 @@ fn finish_repair_and_verify(work: &Path) {
         CORRUPT_INDEX_BYTES
     );
     let engine = Engine::open_existing(&store).unwrap();
+    assert_converged(&engine);
+    drop(engine);
+    assert_eq!(knowledge_owned(&store), before, "repair changed knowledge");
+}
+
+/// A converged store serves the rebuilt index with no stale documents: every
+/// candidate in a full 256-document window matches its current source.
+fn assert_converged(engine: &Engine) {
     let status = engine.status().unwrap();
     assert_eq!(
         (status.index_state.as_str(), status.pending_count),
         ("ready", 0)
     );
-    assert_eq!(engine.search("child_version_one", 5).unwrap().hits.len(), 1);
-    assert_eq!(engine.search("body", 64).unwrap().hits.len(), 64);
-    drop(engine);
-    assert_eq!(knowledge_owned(&store), before, "repair changed knowledge");
+    let one = engine.search("child_version_one", 5).unwrap();
+    assert_eq!((one.hits.len(), one.stale_candidates), (1, 0));
+    let body = engine.search("body", 64).unwrap();
+    assert_eq!((body.hits.len(), body.stale_candidates), (64, 0));
+    assert!(body.candidate_limit_reached, "the full window was examined");
 }
 
 fn repair_state(work: &Path) -> (Engine, std::path::PathBuf) {
@@ -379,6 +400,68 @@ fn exit_after_drain_before_marker_clear() {
     drop(engine);
     assert_eq!(quarantine_dirs(&store).len(), 1);
     finish_repair_and_verify(work.path());
+}
+
+fn exit_before_replacement_index_creation() {
+    let work = crash_at("repair_before_replacement_index");
+    let (engine, store) = repair_state(work.path());
+    let status = engine.status().unwrap();
+    assert_eq!(status.index_state, "repair_required");
+    assert_eq!(status.pending_count, 303, "every source enqueued");
+    drop(engine);
+    assert_eq!(quarantine_dirs(&store).len(), 1);
+    // The identified replacement directory exists without an index.
+    assert!(store.join("search").join("rebuild_id").is_file());
+    assert!(!store.join("search").join("meta.json").exists());
+    finish_repair_and_verify(work.path());
+}
+
+fn exit_after_replacement_index_creation() {
+    let work = crash_at("repair_after_replacement_index");
+    let (engine, store) = repair_state(work.path());
+    let status = engine.status().unwrap();
+    assert_eq!(status.index_state, "repair_required");
+    assert_eq!(status.pending_count, 303);
+    drop(engine);
+    assert_eq!(quarantine_dirs(&store).len(), 1);
+    assert!(store.join("search").join("meta.json").is_file());
+    finish_repair_and_verify(work.path());
+}
+
+fn exit_after_replacement_index_commit() {
+    let work = crash_at("repair_after_index_commit");
+    let (engine, store) = repair_state(work.path());
+    let status = engine.status().unwrap();
+    // The partly built replacement is never served while the marker is set.
+    assert_eq!(status.index_state, "repair_required");
+    assert_eq!(status.pending_count, 303 - 128);
+    assert_eq!(
+        engine.search("body", 5).unwrap_err().code(),
+        "repair_required"
+    );
+    drop(engine);
+    assert_eq!(quarantine_dirs(&store).len(), 1);
+    finish_repair_and_verify(work.path());
+}
+
+fn exit_after_schema_publication() {
+    let work = crash_at("repair_after_schema_publication");
+    let store = work.path().join("store");
+    // Publication committed: the reopened store is converged without a
+    // rerun, holding exactly the one original quarantine.
+    let engine = Engine::open_existing(&store).unwrap();
+    assert_converged(&engine);
+    drop(engine);
+    let quarantines = quarantine_dirs(&store);
+    assert_eq!(quarantines.len(), 1);
+    assert_eq!(
+        std::fs::read(quarantines[0].join("meta.json")).unwrap(),
+        CORRUPT_INDEX_BYTES
+    );
+    assert_eq!(
+        knowledge_owned(&store),
+        knowledge_of(&before_of(work.path()))
+    );
 }
 
 fn exit_during_upgrade_transaction_leaves_wholly_v1() {
@@ -470,14 +553,14 @@ fn global_arming_fires_on_worker_threads_for_spawned_processes() {
         0,
         GlobalAction::Delay(Duration::from_millis(150)),
     );
-    let handle_json = handle.to_json();
+    let handle_v2 = handle.to_v2();
     let (_dir, store, _root) = fx.close();
     let started = Instant::now();
     let worker = std::thread::spawn(move || {
         let engine = Engine::open_existing(&store).unwrap();
-        engine.retrieve(&handle_json, 2048).unwrap().span
+        engine.retrieve(&handle_v2, None, 2048).unwrap().span
     });
-    assert_eq!(worker.join().unwrap(), b"fn delay_probe() {}\n".to_vec());
+    assert_eq!(worker.join().unwrap(), b"fn delay_probe() {}".to_vec());
     assert!(started.elapsed() >= Duration::from_millis(150));
     assert!(fault::reached(names::RETRIEVE_BEFORE_FINAL_READ) >= 1);
     fault::disarm_all();
@@ -519,6 +602,22 @@ fn main() {
         (
             "exit_after_drain_before_marker_clear",
             exit_after_drain_before_marker_clear,
+        ),
+        (
+            "exit_before_replacement_index_creation",
+            exit_before_replacement_index_creation,
+        ),
+        (
+            "exit_after_replacement_index_creation",
+            exit_after_replacement_index_creation,
+        ),
+        (
+            "exit_after_replacement_index_commit",
+            exit_after_replacement_index_commit,
+        ),
+        (
+            "exit_after_schema_publication",
+            exit_after_schema_publication,
         ),
         (
             "exit_during_upgrade_transaction_leaves_wholly_v1",

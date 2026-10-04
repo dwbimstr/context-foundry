@@ -388,3 +388,337 @@ pub fn pending_value(dir: &Path, key: &str) -> Option<String> {
         .unwrap();
     pending.get(key).unwrap().map(|v| v.value().to_owned())
 }
+
+/// What a parsed context-v2 item is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum V2Kind {
+    /// An item line followed by a fenced body (context and retrieve).
+    Source,
+    /// A search locator line, `<handle> L<line>[ <label>]: <excerpt>`.
+    Locator,
+    /// A graph item line, `edge <text>`.
+    Edge,
+}
+
+/// One parsed context-v2 item. `body` is the fenced source bytes (framing LF
+/// removed), the locator excerpt or the edge text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct V2Item {
+    pub kind: V2Kind,
+    /// Empty for edges.
+    pub handle: String,
+    /// `L<a>-<b>` for fenced items, `L<line>` for locators.
+    pub lines: Option<String>,
+    pub label: Option<String>,
+    /// `signature` or `outline` for non-verbatim forms.
+    pub form: Option<String>,
+    /// The fence info string.
+    pub lang: Option<String>,
+    pub body: String,
+}
+
+/// A parsed context-v2 success: header segments, items and the optional
+/// retrieve continuation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct V2Response {
+    pub header: Vec<String>,
+    pub items: Vec<V2Item>,
+    pub next: Option<String>,
+}
+
+enum V2Tail {
+    Fenced {
+        lines: Option<String>,
+        label: Option<String>,
+        form: Option<String>,
+    },
+    Locator {
+        lines: String,
+        label: Option<String>,
+        excerpt: String,
+    },
+}
+
+/// Strict context-v2 parser for tests. Every line ends with LF; line 1 is the
+/// ` · `-joined header naming the operation, which fixes the item grammar:
+/// search has locator lines only; context has fenced items and `edge` lines;
+/// retrieve has fenced items and may end with `next: <handle>` (a valid
+/// handle). Item lines take precedence because a path may itself begin with
+/// `edge ` or `next: ` (a fenced item is recognized by the opening fence that
+/// must follow it). A verbatim body's length comes from its handle's range,
+/// then the framing LF (when the body does not end with LF) and the exact
+/// closing fence must follow.
+///
+/// An item line is tried at every `@<32 hex>.<16 hex>` suffix whose handle and
+/// remainder are valid for the operation; a fenced reading must also frame its
+/// body. Exactly one complete reading is required. A valid path, label or
+/// excerpt may embed suffix-lookalike text, and then the wire alone cannot
+/// name the item: such a line is refused, never attributed to either handle.
+pub fn parse_v2(text: &str) -> Result<V2Response, String> {
+    if !text.ends_with('\n') {
+        return Err("the text must end with LF".into());
+    }
+    let (header, mut pos) = v2_line(text, 0)?;
+    let Some(op) = header
+        .split(" · ")
+        .next()
+        .and_then(|first| first.strip_prefix("foundry "))
+        .filter(|op| matches!(*op, "search" | "context" | "retrieve"))
+    else {
+        return Err(format!("not a v2 header: {header:?}"));
+    };
+    let header: Vec<String> = header.split(" · ").map(str::to_owned).collect();
+    let mut items = Vec::new();
+    let mut next = None;
+    while pos < text.len() {
+        let (line, after) = v2_line(text, pos)?;
+        if op == "search" {
+            let mut readings = v2_splits(line, true);
+            let (handle, tail) = match readings.len() {
+                1 => readings.remove(0),
+                0 => return Err(format!("not a search item line: {line:?}")),
+                n => return Err(format!("ambiguous item line ({n} readings): {line:?}")),
+            };
+            let V2Tail::Locator {
+                lines,
+                label,
+                excerpt,
+            } = tail
+            else {
+                return Err(format!("not a locator: {line:?}"));
+            };
+            items.push(V2Item {
+                kind: V2Kind::Locator,
+                handle: handle.to_owned(),
+                lines: Some(lines),
+                label,
+                form: None,
+                lang: None,
+                body: excerpt,
+            });
+            pos = after;
+            continue;
+        }
+        let readings = if text[after..].starts_with("```") {
+            v2_splits(line, false)
+        } else {
+            Vec::new()
+        };
+        if !readings.is_empty() {
+            let mut complete = Vec::new();
+            let mut first_error = None;
+            for (handle, tail) in readings {
+                match v2_fenced_item(text, handle, tail, after) {
+                    Ok(found) => complete.push(found),
+                    Err(e) => {
+                        first_error.get_or_insert(e);
+                    }
+                }
+            }
+            match complete.len() {
+                1 => {
+                    let (item, end) = complete.remove(0);
+                    items.push(item);
+                    pos = end;
+                    continue;
+                }
+                0 => return Err(first_error.unwrap_or_default()),
+                n => return Err(format!("ambiguous item line ({n} readings): {line:?}")),
+            }
+        }
+        if op == "retrieve"
+            && after == text.len()
+            && let Some(handle) = line.strip_prefix("next: ")
+        {
+            crate::store::HandleRef::parse(handle)
+                .map_err(|e| format!("malformed continuation {handle:?}: {e}"))?;
+            next = Some(handle.to_owned());
+            pos = after;
+            continue;
+        }
+        if op == "context"
+            && let Some(edge) = line.strip_prefix("edge ")
+        {
+            items.push(V2Item {
+                kind: V2Kind::Edge,
+                handle: String::new(),
+                lines: None,
+                label: None,
+                form: None,
+                lang: None,
+                body: edge.to_owned(),
+            });
+            pos = after;
+            continue;
+        }
+        return Err(format!("not a {op} item line: {line:?}"));
+    }
+    Ok(V2Response {
+        header,
+        items,
+        next,
+    })
+}
+
+/// The line starting at `pos` (without its LF) and the position after its LF.
+fn v2_line(text: &str, pos: usize) -> Result<(&str, usize), String> {
+    let end = text[pos..]
+        .find('\n')
+        .map(|offset| pos + offset)
+        .ok_or_else(|| format!("unterminated line at byte {pos}"))?;
+    Ok((&text[pos..end], end + 1))
+}
+
+/// One fenced reading of an item line whose opening fence starts at `after`:
+/// the item and the position after its closing fence.
+fn v2_fenced_item(
+    text: &str,
+    handle: &str,
+    tail: V2Tail,
+    after: usize,
+) -> Result<(V2Item, usize), String> {
+    let V2Tail::Fenced { lines, label, form } = tail else {
+        return Err("not a fenced item".into());
+    };
+    let (open, body_start) = v2_line(text, after)?;
+    let ticks = open.bytes().take_while(|&b| b == b'`').count();
+    if ticks < 3 {
+        return Err(format!("expected an opening fence, got {open:?}"));
+    }
+    let fence = &open[..ticks];
+    let lang = (ticks < open.len()).then(|| open[ticks..].to_owned());
+    let (body, p) = if form.is_none() {
+        let range = crate::store::HandleRef::parse(handle).map_err(|e| e.to_string())?;
+        let end = usize::try_from(range.end - range.start)
+            .ok()
+            .and_then(|len| body_start.checked_add(len))
+            .filter(|&end| end <= text.len() && text.is_char_boundary(end))
+            .ok_or("the verbatim body exceeds the text")?;
+        let body = &text[body_start..end];
+        let mut p = end;
+        if !body.ends_with('\n') {
+            if !text[p..].starts_with('\n') {
+                return Err("missing framing LF before the closing fence".into());
+            }
+            p += 1;
+        }
+        (body, p)
+    } else {
+        let mut p = body_start;
+        loop {
+            let (candidate, next_line) = v2_line(text, p)?;
+            if candidate == fence {
+                break (&text[body_start..p], p);
+            }
+            p = next_line;
+        }
+    };
+    let (close, after_close) = v2_line(text, p)?;
+    if close != fence {
+        return Err(format!("expected closing fence {fence:?}, got {close:?}"));
+    }
+    let item = V2Item {
+        kind: V2Kind::Source,
+        handle: handle.to_owned(),
+        lines,
+        label,
+        form,
+        lang,
+        body: body.to_owned(),
+    };
+    Ok((item, after_close))
+}
+
+/// Every reading of `line` as `<handle><tail>`: a split after a
+/// `@<32 hex>.<16 hex>` suffix whose handle parses and whose remainder is a
+/// locator tail (`locator`) or a fenced item tail (otherwise).
+fn v2_splits(line: &str, locator: bool) -> Vec<(&str, V2Tail)> {
+    let bytes = line.as_bytes();
+    let hex = |s: &[u8]| s.iter().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    let mut readings = Vec::new();
+    for (at, _) in line.match_indices('@') {
+        let end = at + 50;
+        if end > bytes.len()
+            || bytes[at + 33] != b'.'
+            || !hex(&bytes[at + 1..at + 33])
+            || !hex(&bytes[at + 34..end])
+            || (end < bytes.len() && bytes[end] != b' ')
+        {
+            continue;
+        }
+        let handle = &line[..end];
+        if crate::store::HandleRef::parse(handle).is_err() {
+            continue;
+        }
+        match parse_v2_tail(&line[end..]) {
+            Some(tail @ V2Tail::Locator { .. }) if locator => readings.push((handle, tail)),
+            Some(tail @ V2Tail::Fenced { .. }) if !locator => readings.push((handle, tail)),
+            _ => {}
+        }
+    }
+    readings
+}
+
+fn parse_v2_tail(tail: &str) -> Option<V2Tail> {
+    if tail.is_empty() {
+        return Some(V2Tail::Fenced {
+            lines: None,
+            label: None,
+            form: None,
+        });
+    }
+    let rest = tail.strip_prefix(' ')?;
+    if let Some(after_l) = rest.strip_prefix('L') {
+        let digits = after_l.bytes().take_while(u8::is_ascii_digit).count();
+        if digits > 0 {
+            let (first, after_first) = after_l.split_at(digits);
+            if let Some(range_rest) = after_first.strip_prefix('-') {
+                let more = range_rest.bytes().take_while(u8::is_ascii_digit).count();
+                if more == 0 {
+                    return None;
+                }
+                let (last, remainder) = range_rest.split_at(more);
+                let (label, form) = v2_label_and_form(remainder)?;
+                return Some(V2Tail::Fenced {
+                    lines: Some(format!("L{first}-{last}")),
+                    label,
+                    form,
+                });
+            }
+            let (label, excerpt) = match after_first.strip_prefix(": ") {
+                Some(excerpt) => (None, excerpt),
+                None => {
+                    let (label, excerpt) = after_first.strip_prefix(' ')?.split_once(": ")?;
+                    (Some(label.to_owned()), excerpt)
+                }
+            };
+            return Some(V2Tail::Locator {
+                lines: format!("L{first}"),
+                label,
+                excerpt: excerpt.to_owned(),
+            });
+        }
+    }
+    let (label, form) = v2_label_and_form(tail)?;
+    Some(V2Tail::Fenced {
+        lines: None,
+        label,
+        form,
+    })
+}
+
+fn v2_label_and_form(remainder: &str) -> Option<(Option<String>, Option<String>)> {
+    if remainder.is_empty() {
+        return Some((None, None));
+    }
+    let rest = remainder.strip_prefix(' ')?;
+    for (tag, form) in [("[signature]", "signature"), ("[outline]", "outline")] {
+        if rest == tag {
+            return Some((None, Some(form.to_owned())));
+        }
+        if let Some(label) = rest.strip_suffix(&format!(" {tag}")) {
+            return Some((Some(label.to_owned()), Some(form.to_owned())));
+        }
+    }
+    Some((Some(rest.to_owned()), None))
+}

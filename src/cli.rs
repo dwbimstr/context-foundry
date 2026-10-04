@@ -1,8 +1,12 @@
 //! The command-line surface. This module is ordinary release code and never
 //! reads fault-environment variables.
 use crate::{
-    Control, Engine, FResult, FoundryError, Strategy, adapter_error::AResult, graph::GraphBundle,
-    laya::Feedback, response,
+    Control, Engine, FResult, FoundryError, Strategy,
+    adapter_error::AResult,
+    graph::GraphBundle,
+    laya::Feedback,
+    response::{self, Budget},
+    store::check_token_budget,
 };
 use clap::{Parser, Subcommand};
 use std::{
@@ -26,10 +30,16 @@ enum Command {
     Index {
         root: PathBuf,
     },
+    /// Print v2 locator lines (one per hit) within the token budget.
     Search {
         query: String,
         #[arg(long, default_value_t = 10)]
         limit: usize,
+        #[arg(long, default_value_t = 1024)]
+        tokens: usize,
+        /// Restrict both search tiers to one file or directory subtree.
+        #[arg(long)]
+        path: Option<String>,
     },
     /// Print only the token-budgeted evidence text to stdout.
     Context {
@@ -39,12 +49,18 @@ enum Command {
         #[arg(long, default_value = "auto")]
         strategy: String,
     },
-    /// Retrieve one exact span addressed by a source-handle JSON object.
+    /// Retrieve one exact span addressed by a v2 handle string
+    /// (`path#start-end@sha32.ws16`), optionally narrowed to whole file lines.
     Retrieve {
         #[arg(long)]
         handle: String,
         #[arg(long, default_value_t = 2048)]
         tokens: usize,
+        #[arg(long)]
+        lines: Option<String>,
+        /// `text` (bounded prefix with `next:`) or `outline` (never paginated).
+        #[arg(long, default_value = "text")]
+        view: String,
     },
     /// Traverse imported file relationships; symbol labels are producer-supplied.
     Graph {
@@ -172,20 +188,17 @@ fn run() -> AResult<()> {
                 return Err(error.into());
             }
         }
-        Command::Search { query, limit } => {
-            let engine = Engine::open_existing(&cli.store)?;
-            let mut outcome = engine.search(&query, limit)?;
-            println!("{}", response::search_json(&mut outcome));
-        }
-        Command::Context {
+        Command::Search {
             query,
+            limit,
             tokens,
-            strategy,
+            path,
         } => {
-            let strategy = parse_strategy(&strategy)?;
+            check_token_budget(tokens)?;
             let engine = Engine::open_existing(&cli.store)?;
-            let outcome = engine.context(&query, tokens, strategy, &Control::unbounded())?;
-            let packed = response::pack_context_cli(&outcome)?;
+            let outcome = engine.search_in(&query, path.as_deref(), limit)?;
+            let packed =
+                response::pack_search(&outcome, Budget::request(tokens), &response::stdout_bytes)?;
             print!("{}", packed.text);
             eprintln!(
                 "{}",
@@ -193,14 +206,61 @@ fn run() -> AResult<()> {
                     "stdout_tokens": packed.tokens,
                     "tokenizer": response::TOKENIZER,
                     "omitted": packed.omitted,
-                    "strategy": outcome.strategy.to_string(),
                 })
             );
         }
-        Command::Retrieve { handle, tokens } => {
+        Command::Context {
+            query,
+            tokens,
+            strategy,
+        } => {
+            let strategy = parse_strategy(&strategy)?;
+            check_token_budget(tokens)?;
             let engine = Engine::open_existing(&cli.store)?;
-            let outcome = engine.retrieve(&handle, tokens)?;
-            let packed = response::pack_retrieve_cli(&outcome)?;
+            let batch = engine.context_candidates(&query, strategy, &Control::unbounded())?;
+            let packed =
+                response::pack_context(&batch, Budget::request(tokens), &response::stdout_bytes)?;
+            print!("{}", packed.text);
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "stdout_tokens": packed.tokens,
+                    "tokenizer": response::TOKENIZER,
+                    "omitted": packed.omitted,
+                    "strategy": if batch.counters.graph.is_some() { "graph" } else { "search" },
+                })
+            );
+        }
+        Command::Retrieve {
+            handle,
+            tokens,
+            lines,
+            view,
+        } => {
+            let outline = match view.as_str() {
+                "text" => false,
+                "outline" => true,
+                other => {
+                    return Err(FoundryError::InvalidArgument(format!(
+                        "--view must be text or outline, not {other:?}"
+                    ))
+                    .into());
+                }
+            };
+            let engine = Engine::open_existing(&cli.store)?;
+            let packed = if outline {
+                response::pack_retrieve_outline(
+                    &engine.retrieve_outline(&handle, lines.as_deref(), tokens)?,
+                    Budget::request(tokens),
+                    &response::stdout_bytes,
+                )?
+            } else {
+                response::pack_retrieve(
+                    &engine.retrieve(&handle, lines.as_deref(), tokens)?,
+                    Budget::request(tokens),
+                    &response::stdout_bytes,
+                )?
+            };
             print!("{}", packed.text);
             eprintln!(
                 "{}",

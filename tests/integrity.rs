@@ -4,12 +4,27 @@
 use context_foundry::fault::{self, Action, names};
 use context_foundry::graph::{Edge, Endpoint, GraphBundle};
 use context_foundry::laya::{Feedback, Strategy as LayaStrategy};
+use context_foundry::store::{CandidateBatch, HandleRef, RenderedForm};
 use context_foundry::testkit;
 use context_foundry::testkit::{
     craft_v1_store, insert_raw_edge, knowledge, new_fixture, remove_chunk, schema_marker, set_meta,
     snapshot, tamper_chunk_body,
 };
-use context_foundry::{Control, Engine, FoundryError, SourceHandle, Strategy, digest};
+use context_foundry::{Control, Engine, FoundryError, Strategy, digest};
+
+/// Whether any candidate's first form (a unit's bytes, an outline or a graph
+/// line) contains `needle`.
+fn mentions(batch: &CandidateBatch, needle: &str) -> bool {
+    batch.items.iter().any(|item| {
+        item.forms.first().is_some_and(|form| match form {
+            RenderedForm::Verbatim(text)
+            | RenderedForm::Signature(text)
+            | RenderedForm::Outline(text)
+            | RenderedForm::OutlineMin(text)
+            | RenderedForm::Line(text) => text.contains(needle),
+        })
+    })
+}
 
 fn endpoint(path: &str, body: &str) -> Endpoint {
     Endpoint {
@@ -73,15 +88,10 @@ fn inconsistent_chunks_are_corrupt_source_for_search_context_and_retrieve() {
         let search = engine.search("parse_record", 5).unwrap_err();
         assert_eq!(search.code(), "corrupt_source", "search: {case}");
         let context = engine
-            .context(
-                "parse_record",
-                4096,
-                Strategy::Search,
-                &Control::unbounded(),
-            )
+            .context_candidates("parse_record", Strategy::Search, &Control::unbounded())
             .unwrap_err();
         assert_eq!(context.code(), "corrupt_source", "context: {case}");
-        let retrieve = engine.retrieve(&handle.to_json(), 4096).unwrap_err();
+        let retrieve = engine.retrieve(&handle.to_v2(), None, 4096).unwrap_err();
         assert_eq!(retrieve.code(), "corrupt_source", "retrieve: {case}");
     }
 }
@@ -158,12 +168,9 @@ fn path_syntax_is_validated_raw_before_workspace_and_never_committed() {
         "a/",
         "//",
     ] {
-        let handle = serde_json::json!({
-            "v": 1, "workspace_id": foreign, "path": bad, "sha256": sha, "start": 0, "end": 1
-        })
-        .to_string();
+        let handle = format!("{bad}#0-1@{}.{}", &sha[..32], &foreign[..16]);
         // Field validation precedes the workspace match.
-        let err = fx.engine.retrieve(&handle, 2048).unwrap_err();
+        let err = fx.engine.retrieve(&handle, None, 2048).unwrap_err();
         assert_eq!(err.code(), "invalid_argument", "retrieve {bad:?}");
         let err = fx.engine.replace_source(bad, "x\n").unwrap_err();
         assert_eq!(err.code(), "invalid_argument", "replace {bad:?}");
@@ -209,30 +216,20 @@ fn graph_context_names_invalid_stale_and_unavailable_without_losing_source() {
     fx.add(&[("a.rs", A), ("b.rs", B)]);
     let outcome = fx
         .engine
-        .context("alpha_probe", 4096, Strategy::Graph, &Control::unbounded())
+        .context_candidates("alpha_probe", Strategy::Graph, &Control::unbounded())
         .unwrap();
-    assert_eq!(outcome.graph_reason, Some("graph_unavailable"));
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .any(|c| c.text().contains("alpha_probe"))
-    );
+    assert_eq!(outcome.counters.graph, Some("graph_unavailable"));
+    assert!(mentions(&outcome, "alpha_probe"));
     // Healthy: a fresh edge, no reason.
     fx.engine
         .import_graph(&edge_bundle("p", ("a.rs", A), ("b.rs", B)))
         .unwrap();
     let outcome = fx
         .engine
-        .context("alpha_probe", 4096, Strategy::Graph, &Control::unbounded())
+        .context_candidates("alpha_probe", Strategy::Graph, &Control::unbounded())
         .unwrap();
-    assert_eq!(outcome.graph_reason, None);
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .any(|c| c.text().contains("--calls-->"))
-    );
+    assert_eq!(outcome.counters.graph, Some("ok"));
+    assert!(mentions(&outcome, "--calls-->"));
     // Stale only: every stored edge no longer matches its source hashes.
     fx.engine
         .replace_source("b.rs", "fn beta_probe() { changed(); }\n")
@@ -240,35 +237,20 @@ fn graph_context_names_invalid_stale_and_unavailable_without_losing_source() {
     fx.drain();
     let outcome = fx
         .engine
-        .context("alpha_probe", 4096, Strategy::Graph, &Control::unbounded())
+        .context_candidates("alpha_probe", Strategy::Graph, &Control::unbounded())
         .unwrap();
-    assert_eq!(outcome.graph_reason, Some("graph_stale"));
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .all(|c| !c.text().contains("--calls-->"))
-    );
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .any(|c| c.text().contains("alpha_probe"))
-    );
+    assert_eq!(outcome.counters.graph, Some("graph_stale"));
+    assert!(!mentions(&outcome, "--calls-->"));
+    assert!(mentions(&outcome, "alpha_probe"));
     // Invalid: an undecodable edge row degrades only the graph component.
     let (_dir, store, _root) = fx.close();
     insert_raw_edge(&store, "a.rs", "{\"not\": \"an edge\"");
     let engine = Engine::open_existing(&store).unwrap();
     let outcome = engine
-        .context("alpha_probe", 4096, Strategy::Graph, &Control::unbounded())
+        .context_candidates("alpha_probe", Strategy::Graph, &Control::unbounded())
         .unwrap();
-    assert_eq!(outcome.graph_reason, Some("graph_invalid"));
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .any(|c| c.text().contains("alpha_probe"))
-    );
+    assert_eq!(outcome.counters.graph, Some("graph_invalid"));
+    assert!(mentions(&outcome, "alpha_probe"));
     // The direct graph request names the same component-local failure.
     assert_eq!(
         engine.graph("a.rs", false, 1, 8).unwrap_err().code(),
@@ -315,14 +297,9 @@ fn search_reports_truncation_and_orders_ties_deterministically() {
     // The context packer carries both limitations into its outcome.
     let outcome = fx
         .engine
-        .context(
-            "window_match",
-            4096,
-            Strategy::Search,
-            &Control::unbounded(),
-        )
+        .context_candidates("window_match", Strategy::Search, &Control::unbounded())
         .unwrap();
-    assert!(outcome.candidate_limit_reached && outcome.search_truncated);
+    assert!(outcome.counters.candidates_full && outcome.counters.truncated);
 }
 
 #[test]
@@ -331,6 +308,24 @@ fn unbound_upgraded_store_binds_and_serves_queries_on_the_same_owner() {
     let v1 = fixture.path().join("v1store");
     craft_v1_store(&v1, None);
     Engine::upgrade_store(&v1, 2, &Control::unbounded()).unwrap();
+    // The upgraded index predates search schema v2: the explicit repair
+    // publishes it before the store serves queries.
+    let engine = Engine::open_existing(&v1).unwrap();
+    let status = engine.status().unwrap();
+    assert_eq!(status.index_state, "repair_required");
+    assert!(
+        status
+            .index_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("search_schema")),
+        "{status:?}"
+    );
+    drop(engine);
+    assert!(
+        Engine::repair_index(&v1, &Control::unbounded())
+            .unwrap()
+            .repaired
+    );
     let mut engine = Engine::open_existing(&v1).unwrap();
     assert!(engine.workspace_id().is_none());
     assert_eq!(
@@ -351,7 +346,7 @@ fn unbound_upgraded_store_binds_and_serves_queries_on_the_same_owner() {
     );
     let hit = engine.search("kept", 5).unwrap().hits.remove(0);
     assert_eq!(hit.handle.workspace_id, expected);
-    let outcome = engine.retrieve(&hit.handle.to_json(), 2048).unwrap();
+    let outcome = engine.retrieve(&hit.handle.to_v2(), None, 2048).unwrap();
     assert_eq!(outcome.span, testkit::KEPT_BODY.as_bytes());
     // A second root is refused after the bind.
     let other = fixture.path().join("other");
@@ -389,18 +384,17 @@ fn repeated_reads_leave_every_authoritative_row_and_pending_unchanged() {
         engine.status().unwrap();
         engine.search("read_probe", 5).unwrap();
         engine
-            .context(
+            .context_candidates(
                 "references to read_probe",
-                4096,
                 Strategy::Auto,
                 &Control::unbounded(),
             )
             .unwrap();
-        engine.retrieve(&hit.handle.to_json(), 4096).unwrap();
+        engine.retrieve(&hit.handle.to_v2(), None, 4096).unwrap();
         engine.graph("a.rs", false, 1, 16).unwrap();
         engine.training_examples().unwrap();
         // A missing-handle read and a failed read mutate nothing either.
-        assert!(engine.retrieve("{\"v\":1}", 8).is_err());
+        assert!(engine.retrieve("{\"v\":1}", None, 8).is_err());
         drop(engine);
         assert_eq!(
             snapshot(&store),
@@ -440,14 +434,15 @@ fn broken_search_still_serves_status_retrieve_graph_and_feedback_exports() {
     );
     assert_eq!(
         engine
-            .context("serve_probe", 4096, Strategy::Search, &Control::unbounded())
+            .context_candidates("serve_probe", Strategy::Search, &Control::unbounded())
             .unwrap_err()
             .code(),
         "repair_required"
     );
+    // The handle is the whole `serve_probe` unit, without the final LF.
     assert_eq!(
-        engine.retrieve(&handle.to_json(), 4096).unwrap().span,
-        A.as_bytes()
+        engine.retrieve(&handle.to_v2(), None, 4096).unwrap().span,
+        b"fn serve_probe() { dep(); }"
     );
     let graph = engine.graph("a.rs", false, 1, 8).unwrap();
     assert_eq!(graph.edges.len(), 1);
@@ -508,30 +503,15 @@ fn edit_between_candidate_collection_and_final_validation_is_omitted_not_relabel
     );
     let outcome = fx
         .engine
-        .context(
-            "mutation_probe",
-            4096,
-            Strategy::Search,
-            &Control::unbounded(),
-        )
+        .context_candidates("mutation_probe", Strategy::Search, &Control::unbounded())
         .unwrap();
     fault::disarm_all();
     // The response reports the FINAL read transaction's revision, and carries
     // only evidence valid in that snapshot.
     assert_eq!(outcome.freshness.source_revision, revision_before + 1);
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .any(|c| c.text().contains("mutation_probe() "))
-    );
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .all(|c| !c.text().contains("mutation_probe_two"))
-    );
-    assert!(outcome.stale_candidates >= 1);
+    assert!(mentions(&outcome, "mutation_probe() "));
+    assert!(!mentions(&outcome, "mutation_probe_two"));
+    assert!(outcome.counters.stale >= 1);
 }
 
 #[test]
@@ -546,27 +526,12 @@ fn delete_between_candidate_collection_and_final_validation_is_omitted() {
     );
     let outcome = fx
         .engine
-        .context(
-            "mutation_probe",
-            4096,
-            Strategy::Search,
-            &Control::unbounded(),
-        )
+        .context_candidates("mutation_probe", Strategy::Search, &Control::unbounded())
         .unwrap();
     fault::disarm_all();
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .all(|c| !c.text().contains("mutation_probe_two"))
-    );
-    assert!(outcome.stale_candidates >= 1);
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .any(|c| c.text().contains("mutation_probe() "))
-    );
+    assert!(!mentions(&outcome, "mutation_probe_two"));
+    assert!(outcome.counters.stale >= 1);
+    assert!(mentions(&outcome, "mutation_probe() "));
 }
 
 #[test]
@@ -596,30 +561,20 @@ fn graph_replacement_between_candidate_collection_and_final_validation_is_omitte
     );
     let outcome = fx
         .engine
-        .context("graph_inject", 4096, Strategy::Graph, &Control::unbounded())
+        .context_candidates("graph_inject", Strategy::Graph, &Control::unbounded())
         .unwrap();
     fault::disarm_all();
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .all(|c| !c.text().contains("--calls-->"))
-    );
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .any(|c| c.text().contains("graph_inject"))
-    );
-    assert!(outcome.stale_candidates >= 1);
-    assert_eq!(outcome.graph_reason, Some("graph_stale"));
+    assert!(!mentions(&outcome, "--calls-->"));
+    assert!(mentions(&outcome, "graph_inject"));
+    assert!(outcome.counters.stale >= 1);
+    assert_eq!(outcome.counters.graph, Some("graph_stale"));
 }
 
 #[test]
 fn four_thousand_ninety_six_byte_escaped_path_round_trips_through_search_and_handles() {
-    // Every byte of the path JSON-escapes to two bytes, so the serialized
-    // handle is about twice the raw path length.
-    let component = "\"\\".repeat(100);
+    // `#`, `@`, `.` and JSON-special characters appear unescaped in a v2
+    // handle, so a 4096-byte path stays within the 4200-byte handle cap.
+    let component = "\"\\#@.".repeat(40);
     let mut parts = Vec::new();
     while parts.len() * 201 + 200 < 4096 {
         parts.push(component.clone());
@@ -637,27 +592,29 @@ fn four_thousand_ninety_six_byte_escaped_path_round_trips_through_search_and_han
         .hits
         .remove(0);
     assert_eq!(hit.path, path);
-    let handle_json = hit.handle.to_json();
-    assert!(
-        handle_json.len() > 8000 && handle_json.len() <= 32768,
-        "{}",
-        handle_json.len()
-    );
-    let out = fx.engine.retrieve(&handle_json, 4096).unwrap();
+    let handle = hit.handle.to_v2();
+    assert!(handle.len() <= 4200, "{}", handle.len());
+    let out = fx.engine.retrieve(&handle, None, 4096).unwrap();
     assert_eq!(out.span, b"fn escaped_path_probe() {}\n");
-    // The JSON round trip of the search output preserves the exact path.
-    let mut outcome = fx.engine.search("escaped_path_probe", 5).unwrap();
-    let json = context_foundry::response::search_json(&mut outcome);
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["hits"][0]["handle"]["path"], path.as_str());
-    let reparsed = SourceHandle::from_json(&value["hits"][0]["handle"].to_string()).unwrap();
-    assert_eq!(reparsed.path, path);
-    // An over-long serialized handle is an invalid argument, not a read.
-    let padded = format!("{handle_json}{}", " ".repeat(32768));
-    assert_eq!(
-        fx.engine.retrieve(&padded, 4096).unwrap_err().code(),
-        "invalid_argument"
-    );
+    // The search wire round trip preserves the exact path.
+    let outcome = fx.engine.search("escaped_path_probe", 5).unwrap();
+    let text = context_foundry::response::pack_search(
+        &outcome,
+        context_foundry::response::Budget::request(32768),
+        &context_foundry::response::stdout_bytes,
+    )
+    .unwrap()
+    .text;
+    let located = testkit::parse_v2(&text).unwrap().items.remove(0).handle;
+    assert_eq!(located, handle);
+    assert_eq!(HandleRef::parse(&located).unwrap().path, path);
+    // Over the 4200-byte input cap is an invalid argument, not a read.
+    for over in [format!("{handle}{}", " ".repeat(64)), "x".repeat(4201)] {
+        assert_eq!(
+            fx.engine.retrieve(&over, None, 4096).unwrap_err().code(),
+            "invalid_argument"
+        );
+    }
     let _ = FoundryError::NotFound;
 }
 
@@ -679,10 +636,10 @@ fn delay_stalls_read_boundaries_for_external_deadline_testing() {
         Action::Delay(std::time::Duration::from_millis(120)),
     );
     let started = std::time::Instant::now();
-    let out = fx.engine.retrieve(&handle.to_json(), 2048).unwrap();
+    let out = fx.engine.retrieve(&handle.to_v2(), None, 2048).unwrap();
     fault::disarm_all();
     assert!(started.elapsed() >= std::time::Duration::from_millis(120));
-    assert_eq!(out.span, b"fn delay_probe() {}\n");
+    assert_eq!(out.span, b"fn delay_probe() {}");
     // And between candidate collection and the final context validation.
     let mut fx = new_fixture();
     fx.add(&[("d.rs", "fn delay_probe() {}\n")]);
@@ -694,14 +651,9 @@ fn delay_stalls_read_boundaries_for_external_deadline_testing() {
     let started = std::time::Instant::now();
     let outcome = fx
         .engine
-        .context("delay_probe", 2048, Strategy::Search, &Control::unbounded())
+        .context_candidates("delay_probe", Strategy::Search, &Control::unbounded())
         .unwrap();
     fault::disarm_all();
     assert!(started.elapsed() >= std::time::Duration::from_millis(120));
-    assert!(
-        outcome
-            .candidates
-            .iter()
-            .any(|c| c.text().contains("delay_probe"))
-    );
+    assert!(mentions(&outcome, "delay_probe"));
 }

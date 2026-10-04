@@ -10,12 +10,19 @@ use redb::{
     WriteTransaction,
 };
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use tantivy::collector::TopDocs;
-use tantivy::query::QueryParser;
-use tantivy::schema::{Field, STORED, STRING, Schema, TEXT, Value};
-use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term, doc};
+use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery};
+use tantivy::schema::{
+    FAST, Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
+};
+use tantivy::tokenizer::{LowerCaser, RawTokenizer, TextAnalyzer, Token, TokenStream, Tokenizer};
+use tantivy::{
+    DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, SegmentReader, TantivyDocument,
+    Term,
+};
 
 pub(crate) const SOURCES: TableDefinition<&str, &str> = TableDefinition::new("sources");
 const CHUNKS: TableDefinition<&str, &str> = TableDefinition::new("chunks");
@@ -27,8 +34,23 @@ pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("f
 pub const SCHEMA_VERSION: u32 = 2;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
-/// Search examines at most this many candidates.
+/// Search tier 2 (lexical) examines at most this many candidates.
 const CANDIDATE_LIMIT: usize = 256;
+/// Search tier 1 (exact definitions) keeps at most this many documents.
+const TIER1_LIMIT: usize = 64;
+/// At most this many hits per file survive materialization.
+const PER_FILE_CAP: usize = 4;
+/// Context draws at most this many delivery units from the ranking.
+const CONTEXT_UNITS: usize = 32;
+/// Context adds at most this many file outlines.
+const CONTEXT_OUTLINES: usize = 3;
+/// Context graph expansion examines at most this many rows per seed and
+/// direction.
+const CONTEXT_GRAPH_EDGES: usize = 32;
+/// The META value naming the current search index format.
+const SEARCH_SCHEMA: &str = "2";
+const SEARCH_SCHEMA_REASON: &str =
+    "search_schema: search index format changed; run `foundry repair-index`";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SourceMeta {
@@ -47,11 +69,11 @@ pub struct Chunk {
     pub body: String,
 }
 
-/// Shared source reference: `{v:1, workspace_id, path, sha256, start, end}`.
-/// Byte ranges are half-open; the only empty range is `[0,0)` on empty sources.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Full-identity source reference: full 64-hex `workspace_id` and `sha256`
+/// plus a half-open byte range. The wire form is the v2 string of
+/// [`HandleRef`]; the only empty range is `[0,0)` on an empty source.
+#[derive(Clone, Debug, Serialize)]
 pub struct SourceHandle {
-    pub v: u8,
     pub workspace_id: String,
     pub path: String,
     pub sha256: String,
@@ -59,95 +81,212 @@ pub struct SourceHandle {
     pub end: u64,
 }
 
-impl SourceHandle {
-    /// Field/type/version/bounds validation only. Workspace, existence, hash
-    /// and range checks happen later, in that order, against the store.
-    pub fn from_json(raw: &str) -> FResult<Self> {
-        if raw.len() > 32768 {
-            return Err(FoundryError::InvalidArgument(
-                "handle exceeds 32768 bytes".into(),
-            ));
-        }
-        let value: serde_json::Value = serde_json::from_str(raw)
-            .map_err(|e| FoundryError::InvalidArgument(format!("handle is not valid JSON: {e}")))?;
-        let Some(object) = value.as_object() else {
-            return Err(FoundryError::InvalidArgument(
-                "handle must be a JSON object".into(),
-            ));
-        };
-        let expected = ["v", "workspace_id", "path", "sha256", "start", "end"];
-        if object.len() != expected.len() {
-            return Err(FoundryError::InvalidArgument(
-                "handle must contain exactly v, workspace_id, path, sha256, start, end".into(),
-            ));
-        }
-        for key in expected {
-            if !object.contains_key(key) {
-                return Err(FoundryError::InvalidArgument(format!(
-                    "handle is missing field {key}"
-                )));
+/// context-v2 handle input cap: a 4096-byte path plus the longest 92-byte suffix.
+const HANDLE_V2_MAX_BYTES: usize = 4200;
+pub(crate) const HANDLE_V2_GRAMMAR: &str = "handle must be a v2 string `path#start-end@sha32.ws16`";
+
+/// context-v2 source handle `<path>#<start>-<end>@<sha32>.<ws16>`. It names the
+/// first 32 hex digits of the source SHA-256 and the first 16 of `workspace_id`;
+/// `Engine::retrieve` compares those prefixes with the stored full values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HandleRef {
+    pub path: String,
+    pub start: u64,
+    pub end: u64,
+    pub sha32: String,
+    pub ws16: String,
+}
+
+impl HandleRef {
+    /// Stage 1 only (syntax and bounds): everything is `invalid_argument`.
+    /// Equivalent to the contract's end-anchored
+    /// `#(0|[1-9][0-9]*)-(0|[1-9][0-9]*)@([0-9a-f]{32})\.([0-9a-f]{16})$`, with
+    /// the path being everything before the match. The suffix alphabet has no
+    /// `#`, so scanning back from the end finds the only possible match.
+    pub fn parse(raw: &str) -> FResult<Self> {
+        let grammar = || FoundryError::InvalidArgument(HANDLE_V2_GRAMMAR.into());
+        if raw.len() > HANDLE_V2_MAX_BYTES {
+            // Over the cap nothing is a valid v2 handle; a v1 JSON object still
+            // names the v2 grammar. Under the cap a v1 object fails the
+            // end-anchored grammar below with the same message, while a v2 path
+            // that legitimately starts with `{` still parses.
+            if raw.starts_with('{') {
+                return Err(grammar());
             }
-        }
-        let invalid = |field: &str| FoundryError::InvalidArgument(format!("handle field {field}"));
-        let v = object["v"].as_u64().ok_or_else(|| invalid("v"))?;
-        if v != 1 {
             return Err(FoundryError::InvalidArgument(format!(
-                "unsupported handle version {v}"
+                "handle exceeds {HANDLE_V2_MAX_BYTES} bytes"
             )));
         }
-        let workspace_id = object["workspace_id"]
-            .as_str()
-            .ok_or_else(|| invalid("workspace_id"))?
-            .to_owned();
-        if !is_lower_hex64(&workspace_id) {
-            return Err(FoundryError::InvalidArgument(
-                "workspace_id must be 64 lowercase hex characters".into(),
-            ));
+        let bytes = raw.as_bytes();
+        let n = bytes.len();
+        // `@` + 32 hex + `.` + 16 hex is 50 bytes; `#0-0` needs 4 more.
+        if n < 54 {
+            return Err(grammar());
         }
-        let path = object["path"]
-            .as_str()
-            .ok_or_else(|| invalid("path"))?
-            .to_owned();
-        validate_path(&path)
+        let lower_hex = |s: &[u8]| s.iter().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        let (at, dot) = (n - 50, n - 17);
+        if bytes[at] != b'@'
+            || bytes[dot] != b'.'
+            || !lower_hex(&bytes[at + 1..dot])
+            || !lower_hex(&bytes[dot + 1..])
+        {
+            return Err(grammar());
+        }
+        let digits_from = |end: usize| {
+            let mut s = end;
+            while s > 0 && bytes[s - 1].is_ascii_digit() {
+                s -= 1;
+            }
+            s
+        };
+        let end_digits = digits_from(at);
+        if end_digits == at || end_digits == 0 || bytes[end_digits - 1] != b'-' {
+            return Err(grammar());
+        }
+        let dash = end_digits - 1;
+        let start_digits = digits_from(dash);
+        if start_digits == dash || start_digits == 0 || bytes[start_digits - 1] != b'#' {
+            return Err(grammar());
+        }
+        let number = |digits: &[u8]| {
+            canonical_decimal(digits).ok_or_else(|| {
+                FoundryError::InvalidArgument(
+                    "handle offsets must be decimal u64 without leading zeros".into(),
+                )
+            })
+        };
+        let start = number(&bytes[start_digits..dash])?;
+        let end = number(&bytes[end_digits..at])?;
+        // `#` is ASCII, so the byte index is a char boundary.
+        let path = &raw[..start_digits - 1];
+        validate_path(path)
             .map_err(|e| FoundryError::InvalidArgument(format!("handle path: {e}")))?;
-        let sha256 = object["sha256"]
-            .as_str()
-            .ok_or_else(|| invalid("sha256"))?
-            .to_owned();
-        if !is_lower_hex64(&sha256) {
-            return Err(FoundryError::InvalidArgument(
-                "sha256 must be 64 lowercase hex characters".into(),
-            ));
-        }
-        let start = object["start"].as_u64().ok_or_else(|| invalid("start"))?;
-        let end = object["end"].as_u64().ok_or_else(|| invalid("end"))?;
-        if end < start {
+        if start > end {
             return Err(FoundryError::InvalidArgument(
                 "handle end precedes start".into(),
             ));
         }
-        Ok(SourceHandle {
-            v: 1,
-            workspace_id,
-            path,
-            sha256,
+        Ok(HandleRef {
+            path: path.to_owned(),
             start,
             end,
+            sha32: raw[at + 1..dot].to_owned(),
+            ws16: raw[dot + 1..].to_owned(),
+        })
+    }
+}
+
+impl std::fmt::Display for HandleRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}#{}-{}@{}.{}",
+            self.path, self.start, self.end, self.sha32, self.ws16
+        )
+    }
+}
+
+impl From<&SourceHandle> for HandleRef {
+    /// Shortens full identities to their prefixes. A malformed short identity
+    /// is kept whole, so the rendered handle fails `parse` instead of panicking.
+    fn from(handle: &SourceHandle) -> Self {
+        HandleRef {
+            path: handle.path.clone(),
+            start: handle.start,
+            end: handle.end,
+            sha32: handle.sha256.get(..32).unwrap_or(&handle.sha256).to_owned(),
+            ws16: handle
+                .workspace_id
+                .get(..16)
+                .unwrap_or(&handle.workspace_id)
+                .to_owned(),
+        }
+    }
+}
+
+impl SourceHandle {
+    /// context-v2 rendering of this full-identity handle.
+    pub fn to_v2(&self) -> String {
+        HandleRef::from(self).to_string()
+    }
+}
+
+/// Decimal u64 without leading zeros (`0` itself is allowed): the number rule
+/// shared by v2 handle offsets and `lines`.
+fn canonical_decimal(digits: &[u8]) -> Option<u64> {
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    if digits.len() > 1 && digits[0] == b'0' {
+        return None;
+    }
+    // ASCII digits only, so this is valid UTF-8 and only overflow fails.
+    std::str::from_utf8(digits).ok()?.parse().ok()
+}
+
+/// context-v2 retrieve `lines`: `"A"` or `"A-B"`, absolute 1-based file lines.
+#[derive(Clone, Copy, Debug)]
+pub struct LineSelection {
+    first: u64,
+    last: u64,
+}
+
+impl LineSelection {
+    /// Syntax only (stage 1): malformed or `0` is `invalid_argument`. `A > B`
+    /// parses and is refused as a range in `clip`, after the handle checks.
+    pub fn parse(raw: &str) -> FResult<Self> {
+        let number = |digits: &str| {
+            canonical_decimal(digits.as_bytes())
+                .filter(|&n| n > 0)
+                .ok_or_else(|| {
+                    FoundryError::InvalidArgument(
+                        "lines must be \"A\" or \"A-B\": 1-based decimal line numbers without leading zeros"
+                            .into(),
+                    )
+                })
+        };
+        let (first, last) = raw.split_once('-').unwrap_or((raw, raw));
+        Ok(Self {
+            first: number(first)?,
+            last: number(last)?,
         })
     }
 
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
+    /// Intersect the selected whole lines with `[start, end)`, never widening it.
+    /// Lines are LF-delimited: CR stays with its line, an unterminated last line
+    /// ends at EOF, a trailing LF opens no line and an empty source has none;
+    /// lines past the end select nothing. `A > B`, an empty selection or an
+    /// empty intersection is `invalid_range`. Line edges follow an LF or touch
+    /// 0/EOF, so the result keeps the handle's UTF-8 boundaries.
+    fn clip(self, body: &[u8], start: usize, end: usize) -> FResult<(usize, usize)> {
+        if self.first > self.last {
+            return Err(FoundryError::InvalidRange);
+        }
+        let mut offset = 0;
+        let mut selected: Option<(usize, usize)> = None;
+        for (index, line) in body.split_inclusive(|&b| b == b'\n').enumerate() {
+            let number = index as u64 + 1;
+            let next = offset + line.len();
+            if number >= self.first {
+                selected = Some((selected.map_or(offset, |(from, _)| from), next));
+            }
+            if number >= self.last {
+                break;
+            }
+            offset = next;
+        }
+        let (from, to) = selected.ok_or(FoundryError::InvalidRange)?;
+        let (from, to) = (from.max(start), to.min(end));
+        if from >= to {
+            return Err(FoundryError::InvalidRange);
+        }
+        Ok((from, to))
     }
 }
 
-fn is_lower_hex64(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
+/// One materialized search hit: its delivery unit's handle and verbatim text,
+/// the unit's label (`<kind>[ <qualified name>]`), the ranking tier (1 exact
+/// definition, 2 lexical) and the best line for its locator.
 #[derive(Clone, Debug, Serialize)]
 pub struct Hit {
     pub path: String,
@@ -155,6 +294,9 @@ pub struct Hit {
     pub end_line: u64,
     pub handle: SourceHandle,
     pub text: String,
+    pub label: String,
+    pub tier: u8,
+    pub line: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -164,104 +306,85 @@ pub struct SearchOutcome {
     pub hits: Vec<Hit>,
     pub pending_sources: u64,
     pub stale_candidates: u64,
+    /// Hits skipped by the per-file cap.
+    pub capped: u64,
     pub candidate_limit: usize,
     pub candidate_limit_reached: bool,
     pub truncated: bool,
     pub scan_state: String,
 }
 
-/// One ordered evidence candidate for a context bundle. Sources come first
-/// (highest ranked), then bounded graph evidence, then remaining spans.
-#[derive(Clone, Debug)]
-pub enum Evidence {
-    Source {
-        path: String,
-        /// One-based inclusive line citation of the span.
-        start_line: u64,
-        end_line: u64,
-        handle: SourceHandle,
-        text: String,
-    },
-    Graph {
-        text: String,
-        /// The exact stored edge row; revalidated in the final read.
-        raw: String,
-        from_path: String,
-        /// (path, sha256) endpoints revalidated in the final read.
-        endpoints: Vec<(String, String)>,
-    },
+/// One rendering of a ranked item (context-v2 § Forms): the exact unit bytes,
+/// the unit's signature form, a file's `outline` and `outline-min` forms, or
+/// a graph item's single line. Packing takes the first form that fits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RenderedForm {
+    Verbatim(String),
+    Signature(String),
+    Outline(String),
+    OutlineMin(String),
+    Line(String),
 }
 
-impl Evidence {
-    pub(crate) fn source(hit: Hit) -> Self {
-        Evidence::Source {
-            path: hit.path,
-            start_line: hit.start_line,
-            end_line: hit.end_line,
-            handle: hit.handle,
-            text: hit.text,
-        }
-    }
+/// Ranking tiers: exact definitions, lexical hits, graph items, file outlines.
+pub const TIER_GRAPH: u8 = 3;
+pub const TIER_OUTLINE: u8 = 4;
 
-    pub(crate) fn graph(evidence: &graph::GraphEvidence) -> Self {
-        let edge = &evidence.edge;
-        Evidence::Graph {
-            text: format!(
-                "{}:{} ({}) --{}--> {}:{} ({}) [{}; provider={}@{}]",
-                edge.from.path,
-                edge.from.line,
-                edge.from.symbol,
-                edge.kind,
-                edge.to.path,
-                edge.to.line,
-                edge.to.symbol,
-                edge.evidence,
-                evidence.provider,
-                evidence.revision
-            ),
-            raw: evidence.raw.clone(),
-            from_path: edge.from.path.clone(),
-            endpoints: vec![
-                (edge.from.path.clone(), edge.from.hash.clone()),
-                (edge.to.path.clone(), edge.to.hash.clone()),
-            ],
-        }
-    }
-
-    pub fn text(&self) -> &str {
-        match self {
-            Evidence::Source { text, .. } | Evidence::Graph { text, .. } => text,
-        }
-    }
-
-    /// Deduplication identity: `(workspace_id, path, sha256, start, end)` for
-    /// source spans and the stable stored edge row for graph evidence.
-    fn dedup_key(&self) -> String {
-        match self {
-            Evidence::Source { handle, .. } => format!(
-                "{}/{}/{}/{}/{}",
-                handle.workspace_id, handle.path, handle.sha256, handle.start, handle.end
-            ),
-            Evidence::Graph { raw, .. } => format!("edge/{raw}"),
-        }
-    }
+/// One ranked, already revalidated candidate (context-v2 § Candidate seam).
+/// `handle` keeps the full identities of a source item and is `None` for a
+/// graph item; `start_line..=end_line` are the lines the handle's range
+/// touches and `line` the locator's best line.
+#[derive(Clone, Debug)]
+pub struct RankedItem {
+    pub tier: u8,
+    pub rank: usize,
+    pub score: f32,
+    pub handle: Option<SourceHandle>,
+    pub start_line: u64,
+    pub end_line: u64,
+    pub line: u64,
+    pub label: String,
+    pub lang: Option<String>,
+    pub forms: Vec<RenderedForm>,
 }
 
+/// What candidate selection dropped or bounded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CandidateCounters {
+    /// Candidates whose source changed or vanished since indexing, and graph
+    /// items whose row or endpoints changed.
+    pub stale: u64,
+    /// Hits skipped by the per-file cap.
+    pub capped: u64,
+    /// A candidate window filled: search tier 1 at 64, tier 2 at 256, or a
+    /// context graph examination window at 32 rows.
+    pub candidates_full: bool,
+    /// More hits survived materialization than the requested limit.
+    pub truncated: bool,
+    /// `ok`, `graph_unavailable`, `graph_stale` or `graph_invalid` when the
+    /// context strategy resolved to graph.
+    pub graph: Option<&'static str>,
+}
+
+/// The ordered candidates of one store, revalidated in its final read.
 #[derive(Clone, Debug)]
-pub struct ContextOutcome {
-    pub query: String,
-    pub requested_tokens: usize,
-    pub strategy: Strategy,
-    /// `graph_unavailable`, `graph_stale` or `graph_invalid` when graph
-    /// evidence was requested but is not (fully) available.
-    pub graph_reason: Option<&'static str>,
+pub struct CandidateBatch {
     pub freshness: Freshness,
-    pub candidates: Vec<Evidence>,
-    pub stale_candidates: u64,
-    pub candidate_limit: usize,
-    pub candidate_limit_reached: bool,
-    /// Search stopped at the requested-hit or candidate-window limit.
-    pub search_truncated: bool,
+    pub items: Vec<RankedItem>,
+    pub counters: CandidateCounters,
+}
+
+/// The `outline` and `outline-min` renderings of a retrieve range
+/// (context-v2 § Retrieve views).
+#[derive(Clone, Debug, Serialize)]
+pub struct OutlineOutcome {
+    pub requested: SourceHandle,
+    pub start_line: u64,
+    pub end_line: u64,
+    pub lang: &'static str,
+    pub outline: String,
+    pub outline_min: String,
+    pub freshness: Freshness,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -270,6 +393,8 @@ pub struct RetrieveOutcome {
     pub requested_tokens: usize,
     /// Full requested span bytes; packers may deliver a fitting prefix.
     pub span: Vec<u8>,
+    /// One-based line of `requested.start` in the source, for v2 `L<a>-<b>`.
+    pub start_line: u64,
     pub source_bytes: u64,
     pub freshness: Freshness,
 }
@@ -306,15 +431,27 @@ pub struct RepairReport {
     pub reason: Option<String>,
 }
 
+/// The Tantivy schema v2 fields (context-v2 § Search index v2).
 struct Fields {
     key: Field,
+    key_hash: Field,
     path: Field,
+    dir: Field,
     hash: Field,
+    start: Field,
+    end: Field,
+    unit_start: Field,
+    unit_end: Field,
+    kind: Field,
+    lang: Field,
+    name: Field,
+    qname: Field,
+    def_name: Field,
+    ident: Field,
     body: Field,
 }
 
 struct SearchHandles {
-    index: Index,
     reader: IndexReader,
     writer: IndexWriter,
     fields: Fields,
@@ -410,33 +547,6 @@ fn read_scan_state<T: ReadableTable<&'static str, &'static str>>(meta: &T) -> FR
 /// verified (keys, ownership, length, SHA-256) against its metadata.
 struct VerifiedSource {
     body: String,
-    /// Byte range of each chunk in `body`, by ordinal.
-    offsets: Vec<(usize, usize)>,
-    /// One-based inclusive line range of each chunk, by ordinal.
-    lines: Vec<(u64, u64)>,
-}
-
-impl VerifiedSource {
-    /// The chunk at `ordinal` as a hit. Line citations are computed from the
-    /// verified bytes, never trusted from stored chunk records.
-    fn hit(&self, workspace_id: &str, path: &str, sha256: &str, ordinal: usize) -> Option<Hit> {
-        let (start, end) = *self.offsets.get(ordinal)?;
-        let (start_line, end_line) = *self.lines.get(ordinal)?;
-        Some(Hit {
-            path: path.to_owned(),
-            start_line,
-            end_line,
-            handle: SourceHandle {
-                v: 1,
-                workspace_id: workspace_id.to_owned(),
-                path: path.to_owned(),
-                sha256: sha256.to_owned(),
-                start: start as u64,
-                end: end as u64,
-            },
-            text: self.body[start..end].to_owned(),
-        })
-    }
 }
 
 /// Reconstruct a source inside the caller's transaction and verify every
@@ -454,13 +564,10 @@ fn reconstruct_verified<C: ReadableTable<&'static str, &'static str>>(
     let first = chunk_key(path, 0);
     let end = chunk_key(path, meta.chunks);
     let mut body = String::with_capacity(meta.bytes);
-    let mut offsets = Vec::new();
-    let mut lines = Vec::new();
-    let mut next_line = 1u64;
+    let mut count = 0usize;
     for row in stored.range(first.as_str()..end.as_str())? {
         let (key, raw) = row?;
-        let ordinal = offsets.len();
-        if key.value() != chunk_key(path, ordinal) {
+        if key.value() != chunk_key(path, count) {
             return Err(corrupt(
                 "chunk keys are not the contiguous ordinal sequence",
             ));
@@ -470,18 +577,13 @@ fn reconstruct_verified<C: ReadableTable<&'static str, &'static str>>(
         if chunk.path != path || chunk.hash != meta.hash {
             return Err(corrupt("chunk belongs to a different source version"));
         }
-        let start = body.len();
         body.push_str(&chunk.body);
         if body.len() > meta.bytes {
             return Err(corrupt("chunks exceed the recorded length"));
         }
-        offsets.push((start, body.len()));
-        let newlines = chunk.body.bytes().filter(|b| *b == b'\n').count() as u64;
-        let ends_line = u64::from(chunk.body.ends_with('\n'));
-        lines.push((next_line, next_line + newlines.saturating_sub(ends_line)));
-        next_line += newlines;
+        count += 1;
     }
-    if offsets.len() != meta.chunks {
+    if count != meta.chunks {
         return Err(corrupt("chunk count differs from the source record"));
     }
     if body.len() != meta.bytes || crate::digest(body.as_bytes()) != meta.hash {
@@ -489,11 +591,7 @@ fn reconstruct_verified<C: ReadableTable<&'static str, &'static str>>(
             "reconstructed bytes do not match the recorded hash",
         ));
     }
-    Ok(VerifiedSource {
-        body,
-        offsets,
-        lines,
-    })
+    Ok(VerifiedSource { body })
 }
 
 fn chunks(path: &str, hash: &str, content: &str) -> Vec<Chunk> {
@@ -527,21 +625,147 @@ fn chunks(path: &str, hash: &str, content: &str) -> Vec<Chunk> {
 }
 
 fn search_schema() -> Schema {
+    let analyzed = |tokenizer: &str, positions: bool| {
+        TextOptions::default().set_indexing_options(
+            TextFieldIndexing::default()
+                .set_tokenizer(tokenizer)
+                .set_index_option(if positions {
+                    IndexRecordOption::WithFreqsAndPositions
+                } else {
+                    IndexRecordOption::WithFreqs
+                }),
+        )
+    };
     let mut schema = Schema::builder();
     schema.add_text_field("key", STRING | STORED);
+    schema.add_u64_field("key_hash", FAST | STORED);
     schema.add_text_field("path", STRING | STORED);
+    schema.add_text_field("dir", STRING);
     schema.add_text_field("hash", STRING | STORED);
-    schema.add_text_field("body", TEXT);
+    for field in ["start", "end", "unit_start", "unit_end"] {
+        schema.add_u64_field(field, STORED);
+    }
+    schema.add_text_field("kind", STRING | STORED);
+    schema.add_text_field("lang", STRING | STORED);
+    schema.add_text_field("name", STORED);
+    schema.add_text_field("qname", STORED);
+    schema.add_text_field("def_name", analyzed("foundry_lower", false));
+    schema.add_text_field("ident", analyzed("foundry_ident", false));
+    schema.add_text_field("body", analyzed("foundry_code", true));
     schema.build()
 }
 
 fn fields_of(schema: &Schema) -> Fields {
+    // Every caller holds a schema equal to `search_schema()` (created from it,
+    // or compared with it before use).
+    let field = |name: &str| schema.get_field(name).expect("schema v2 field");
     Fields {
-        key: schema.get_field("key").expect("key field"),
-        path: schema.get_field("path").expect("path field"),
-        hash: schema.get_field("hash").expect("hash field"),
-        body: schema.get_field("body").expect("body field"),
+        key: field("key"),
+        key_hash: field("key_hash"),
+        path: field("path"),
+        dir: field("dir"),
+        hash: field("hash"),
+        start: field("start"),
+        end: field("end"),
+        unit_start: field("unit_start"),
+        unit_end: field("unit_end"),
+        kind: field("kind"),
+        lang: field("lang"),
+        name: field("name"),
+        qname: field("qname"),
+        def_name: field("def_name"),
+        ident: field("ident"),
+        body: field("body"),
     }
+}
+
+/// A Tantivy tokenizer over one `syntax` analysis: lowercased tokens of at
+/// least 2 characters at consecutive positions.
+#[derive(Clone)]
+struct SplitTokenizer(fn(&str) -> Vec<(usize, usize)>);
+
+struct SplitTokens {
+    tokens: Vec<Token>,
+    next: usize,
+}
+
+impl Tokenizer for SplitTokenizer {
+    type TokenStream<'a> = SplitTokens;
+    fn token_stream<'a>(&'a mut self, text: &'a str) -> SplitTokens {
+        SplitTokens {
+            tokens: analyzed_tokens(self.0, text),
+            next: 0,
+        }
+    }
+}
+
+/// Tantivy reads a token only after `advance` returned true.
+impl TokenStream for SplitTokens {
+    fn advance(&mut self) -> bool {
+        let more = self.next < self.tokens.len();
+        self.next += usize::from(more);
+        more
+    }
+    fn token(&self) -> &Token {
+        &self.tokens[self.next - 1]
+    }
+    fn token_mut(&mut self) -> &mut Token {
+        &mut self.tokens[self.next - 1]
+    }
+}
+
+fn analyzed_tokens(split: fn(&str) -> Vec<(usize, usize)>, text: &str) -> Vec<Token> {
+    split(text)
+        .into_iter()
+        .filter(|&(from, to)| text[from..to].chars().nth(1).is_some())
+        .enumerate()
+        .map(|(position, (from, to))| Token {
+            offset_from: from,
+            offset_to: to,
+            position,
+            text: text[from..to].to_lowercase(),
+            position_length: 1,
+        })
+        .collect()
+}
+
+/// The query-side terms of one analysis, identical to the indexed tokens.
+fn analyzed_terms(split: fn(&str) -> Vec<(usize, usize)>, text: &str) -> Vec<String> {
+    analyzed_tokens(split, text)
+        .into_iter()
+        .map(|token| token.text)
+        .collect()
+}
+
+/// Registers the schema v2 tokenizers (they are per index instance, never
+/// persisted) and opens the reader and the single writer.
+fn search_handles(index: Index) -> tantivy::Result<SearchHandles> {
+    let tokenizers = index.tokenizers();
+    tokenizers.register(
+        "foundry_lower",
+        TextAnalyzer::builder(RawTokenizer::default())
+            .filter(LowerCaser)
+            .build(),
+    );
+    tokenizers.register(
+        "foundry_ident",
+        SplitTokenizer(crate::syntax::identifier_runs),
+    );
+    tokenizers.register(
+        "foundry_code",
+        SplitTokenizer(crate::syntax::code_subtokens),
+    );
+    let fields = fields_of(&index.schema());
+    let reader = index
+        .reader_builder()
+        .reload_policy(ReloadPolicy::Manual)
+        .try_into()?;
+    let writer = index.writer_with_num_threads(1, 20_000_000)?;
+    Ok(SearchHandles {
+        reader,
+        writer,
+        fields,
+    })
 }
 
 fn open_search(dir: &Path) -> Result<SearchHandles, String> {
@@ -553,25 +777,114 @@ fn open_search(dir: &Path) -> Result<SearchHandles, String> {
         return Err("derived index path is a symlink".into());
     }
     let index = Index::open_in_dir(&index_dir).map_err(|e| format!("derived index open: {e}"))?;
-    let schema = search_schema();
-    if index.schema() != schema {
-        return Err("derived index schema mismatch; rebuild required".into());
+    // The actual Tantivy field set must be schema v2.
+    if index.schema() != search_schema() {
+        return Err(SEARCH_SCHEMA_REASON.into());
     }
-    let fields = fields_of(&schema);
-    let reader = index
-        .reader_builder()
-        .reload_policy(ReloadPolicy::Manual)
-        .try_into()
-        .map_err(|e| format!("derived index reader: {e}"))?;
-    let writer = index
-        .writer_with_num_threads(1, 20_000_000)
-        .map_err(|e| format!("derived index writer: {e}"))?;
-    Ok(SearchHandles {
-        index,
-        reader,
-        writer,
-        fields,
-    })
+    search_handles(index).map_err(|e| format!("derived index open: {e}"))
+}
+
+/// The schema v2 documents of one verified source (context-v2 § Search
+/// documents): one per syntax document, carrying its delivery unit; a
+/// document delivered as a named programming-language unit (not a Markdown
+/// section or block) also carries that unit's `def_name`.
+fn search_documents(fields: &Fields, path: &str, hash: &str, body: &str) -> Vec<TantivyDocument> {
+    use crate::syntax::UnitKind;
+    let lang = crate::syntax::Lang::from_path(path);
+    let mut dirs: Vec<&str> = path.match_indices('/').map(|(i, _)| &path[..i]).collect();
+    dirs.push(path);
+    crate::syntax::documents(body, lang)
+        .into_iter()
+        .map(|document| {
+            let unit = &document.unit;
+            let key = format!("{path}\0{}", document.start);
+            let text = &body[document.start..document.end];
+            let mut out = TantivyDocument::default();
+            out.add_u64(fields.key_hash, key_hash(&key));
+            out.add_text(fields.key, &key);
+            out.add_text(fields.path, path);
+            for dir in &dirs {
+                out.add_text(fields.dir, dir);
+            }
+            out.add_text(fields.hash, hash);
+            out.add_u64(fields.start, document.start as u64);
+            out.add_u64(fields.end, document.end as u64);
+            out.add_u64(fields.unit_start, unit.start as u64);
+            out.add_u64(fields.unit_end, unit.end as u64);
+            out.add_text(fields.kind, unit.kind.as_str());
+            if let Some(lang) = lang {
+                out.add_text(fields.lang, lang.tag());
+            }
+            if let Some(name) = &unit.name {
+                out.add_text(fields.name, name);
+                if !matches!(unit.kind, UnitKind::Section | UnitKind::Block) {
+                    out.add_text(fields.def_name, name);
+                }
+            }
+            if let Some(qname) = &unit.qname {
+                out.add_text(fields.qname, qname);
+            }
+            out.add_text(fields.ident, text);
+            out.add_text(fields.body, text);
+            out
+        })
+        .collect()
+}
+
+/// The first 8 bytes of SHA-256 of `key`, big-endian: the deterministic
+/// cutoff tie-breaker of both search tiers.
+fn key_hash(key: &str) -> u64 {
+    let hex = crate::digest(key.as_bytes());
+    // SHA-256 hex is 64 lowercase hex digits, so the first 16 always parse.
+    u64::from_str_radix(&hex[..16], 16).unwrap_or(0)
+}
+
+/// The `path` search input: one leading `./` and one trailing `/` stripped;
+/// the rest must satisfy the handle path rules.
+pub(crate) fn path_filter(raw: &str) -> FResult<String> {
+    let trimmed = raw.strip_prefix("./").unwrap_or(raw);
+    let trimmed = trimmed.strip_suffix('/').unwrap_or(trimmed);
+    validate_path(trimmed)
+        .map_err(|e| FoundryError::InvalidArgument(format!("path filter: {e}")))?;
+    Ok(trimmed.to_owned())
+}
+
+/// The 0-based index of the line of `text` holding the most distinct query
+/// subtokens, the earliest on ties.
+fn best_line_index(text: &str, wanted: &std::collections::BTreeSet<String>) -> u64 {
+    let mut best = (0usize, 0u64);
+    for (index, line) in text.split_inclusive('\n').enumerate() {
+        let distinct: std::collections::BTreeSet<String> =
+            analyzed_terms(crate::syntax::code_subtokens, line)
+                .into_iter()
+                .collect();
+        let score = distinct.intersection(wanted).count();
+        if score > best.0 {
+            best = (score, index as u64);
+        }
+    }
+    best.1
+}
+
+/// One search document selected by a tier, before revalidation.
+struct Candidate {
+    tier: u8,
+    score: Score,
+    path: String,
+    hash: String,
+    start: u64,
+    unit_start: u64,
+    unit_end: u64,
+    kind: String,
+    lang: Option<String>,
+    qname: Option<String>,
+}
+
+impl Candidate {
+    /// The delivery unit's identity within this store.
+    fn unit(&self) -> (String, u64, u64) {
+        (self.path.clone(), self.unit_start, self.unit_end)
+    }
 }
 
 /// Write schema last in the initializing transaction.
@@ -639,6 +952,7 @@ impl Engine {
             meta.insert("source_revision", "0")?;
             meta.insert("scan_id", "0")?;
             meta.insert("scan_status", "never")?;
+            meta.insert("search_schema", SEARCH_SCHEMA)?;
             let root_str = root.to_str().ok_or_else(|| {
                 FoundryError::InvalidArgument("workspace path is not UTF-8".into())
             })?;
@@ -648,22 +962,12 @@ impl Engine {
         tx.commit()?;
         std::fs::create_dir_all(store_dir.join("search"))?;
         let index = Index::create_in_dir(store_dir.join("search"), search_schema())?;
-        let fields = fields_of(&index.schema());
-        let reader = index
-            .reader_builder()
-            .reload_policy(ReloadPolicy::Manual)
-            .try_into()?;
-        let writer = index.writer_with_num_threads(1, 20_000_000)?;
+        let handles = search_handles(index)?;
         let (workspace, workspace_id) = Self::read_binding(&db)?;
         Ok(Self {
             db,
             directory: store_dir.canonicalize()?,
-            search: Some(SearchHandles {
-                index,
-                reader,
-                writer,
-                fields,
-            }),
+            search: Some(handles),
             repair_reason: None,
             workspace,
             workspace_id,
@@ -739,9 +1043,21 @@ impl Engine {
             .then(|| "search_rebuild_required marker is set".to_owned());
         let mut search = None;
         if marker.is_none() && construct_search {
-            match open_search(store_dir) {
-                Ok(handles) => search = Some(handles),
-                Err(reason) => repair_reason = Some(reason),
+            // Index version gate: anything but the current format, recorded
+            // or actual, needs an explicit repair; an open never rebuilds.
+            let recorded = {
+                let tx = db.begin_read()?;
+                let meta = tx.open_table(META)?;
+                meta.get("search_schema")?
+                    .map(|v| v.value() == SEARCH_SCHEMA)
+            };
+            if recorded != Some(true) {
+                repair_reason = Some(SEARCH_SCHEMA_REASON.to_owned());
+            } else {
+                match open_search(store_dir) {
+                    Ok(handles) => search = Some(handles),
+                    Err(reason) => repair_reason = Some(reason),
+                }
             }
         }
         Ok(Self {
@@ -1189,18 +1505,12 @@ impl Engine {
                 .delete_term(Term::from_field_text(handles.fields.path, path));
             if let Some(source) = sources.get(path.as_str())? {
                 let source: SourceMeta = decode(source.value(), "source")?;
-                for i in 0..source.chunks {
-                    let key = chunk_key(path, i);
-                    let raw = stored.get(key.as_str())?.ok_or_else(|| {
-                        FoundryError::CorruptSource(format!("chunk missing for {path}"))
-                    })?;
-                    let chunk: Chunk = decode(raw.value(), "chunk")?;
-                    handles.writer.add_document(doc!(
-                        handles.fields.key => key,
-                        handles.fields.path => path.clone(),
-                        handles.fields.hash => source.hash.clone(),
-                        handles.fields.body => chunk.body
-                    ))?;
+                // Documents are built from the verified source bytes.
+                let verified = reconstruct_verified(&stored, path, &source)?;
+                for document in
+                    search_documents(&handles.fields, path, &source.hash, &verified.body)
+                {
+                    handles.writer.add_document(document)?;
                 }
             }
         }
@@ -1251,7 +1561,73 @@ impl Engine {
         }
     }
 
+    /// Search hits for context and path-less callers: [`Self::search_in`]
+    /// without a `path` filter.
     pub fn search(&self, query: &str, limit: usize) -> FResult<SearchOutcome> {
+        self.search_in(query, None, limit)
+    }
+
+    /// Search hits for the CLI and MCP: the materialized ranking of
+    /// [`Self::search_candidates`], restricted by `path` to one file or
+    /// directory subtree when given.
+    pub fn search_in(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+    ) -> FResult<SearchOutcome> {
+        let batch = self.search_candidates(query, path, limit, &crate::Control::unbounded())?;
+        let hits = batch
+            .items
+            .into_iter()
+            .filter_map(|item| {
+                let handle = item.handle?;
+                let text = item.forms.into_iter().find_map(|form| match form {
+                    RenderedForm::Verbatim(text) => Some(text),
+                    _ => None,
+                })?;
+                Some(Hit {
+                    path: handle.path.clone(),
+                    start_line: item.start_line,
+                    end_line: item.end_line,
+                    handle,
+                    text,
+                    label: item.label,
+                    tier: item.tier,
+                    line: item.line,
+                })
+            })
+            .collect();
+        let counters = batch.counters;
+        let freshness = batch.freshness;
+        Ok(SearchOutcome {
+            workspace_id: freshness.workspace_id,
+            source_revision: freshness.source_revision,
+            hits,
+            pending_sources: freshness.pending_sources,
+            stale_candidates: counters.stale,
+            capped: counters.capped,
+            candidate_limit: CANDIDATE_LIMIT,
+            candidate_limit_reached: counters.candidates_full,
+            truncated: counters.truncated || counters.candidates_full,
+            scan_state: freshness.scan_state,
+        })
+    }
+
+    /// Two-tier candidate selection for one store (context-v2 § Two-tier
+    /// query, § Hit materialization). Tier 1 is exact definitions (at most
+    /// 64, smallest `key_hash` kept, ordered by path and start); tier 2 is
+    /// lexical (at most 256 by score, `key_hash` breaking cutoff ties).
+    /// `path` restricts both tiers to a file or directory subtree. Candidates
+    /// are revalidated in one final read transaction, merged per delivery
+    /// unit, capped at 4 per file and cut to `limit`.
+    pub fn search_candidates(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+        control: &crate::Control,
+    ) -> FResult<CandidateBatch> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
@@ -1260,116 +1636,267 @@ impl Engine {
         if !(1..=64).contains(&limit) {
             return Err(FoundryError::InvalidArgument("limit must be 1..64".into()));
         }
+        let filter = path.map(path_filter).transpose()?;
         let workspace_id = self.require_workspace_id()?;
         let handles = self.require_search()?;
-        let parser = QueryParser::for_index(&handles.index, vec![handles.fields.body]);
-        // Literal terms avoid exposing Tantivy's query language as an API.
-        let literal = query
-            .split_whitespace()
-            .map(|part| format!("\"{}\"", part.replace(['\\', '"'], " ")))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let parsed = tantivy::query::BooleanQuery::union(vec![
-            parser
-                .parse_query(&literal)
-                .map_err(|e| FoundryError::InvalidArgument(format!("query: {e}")))?,
-            Box::new(tantivy::query::BoostQuery::new(
-                Box::new(tantivy::query::TermQuery::new(
-                    Term::from_field_text(handles.fields.path, query.trim()),
-                    tantivy::schema::IndexRecordOption::Basic,
-                )),
-                100.0,
-            )),
-        ]);
+        let fields = &handles.fields;
+        let restrict = |query: Box<dyn Query>| -> Box<dyn Query> {
+            match &filter {
+                None => query,
+                Some(dir) => Box::new(BooleanQuery::new(vec![
+                    (Occur::Must, query),
+                    (
+                        Occur::Must,
+                        Box::new(TermQuery::new(
+                            Term::from_field_text(fields.dir, dir),
+                            IndexRecordOption::Basic,
+                        )),
+                    ),
+                ])),
+            }
+        };
+        let term = |field: Field, text: &str, option: IndexRecordOption| -> Box<dyn Query> {
+            Box::new(TermQuery::new(Term::from_field_text(field, text), option))
+        };
         let searcher = handles.reader.searcher();
-        let scored = searcher
+        let mut runs: Vec<String> = crate::syntax::identifier_runs(query)
+            .into_iter()
+            .map(|(from, to)| query[from..to].to_lowercase())
+            .collect();
+        runs.sort();
+        runs.dedup();
+        let tier1: Vec<(Score, tantivy::DocAddress)> = if runs.is_empty() {
+            Vec::new()
+        } else {
+            let union = BooleanQuery::union(
+                runs.iter()
+                    .map(|run| term(fields.def_name, run, IndexRecordOption::Basic))
+                    .collect(),
+            );
+            let collector =
+                TopDocs::with_limit(TIER1_LIMIT).tweak_score(|reader: &SegmentReader| {
+                    let key_hash = reader
+                        .fast_fields()
+                        .u64("key_hash")
+                        .expect("schema v2 fast field")
+                        .first_or_default_col(0);
+                    move |doc: DocId, _score: Score| Reverse(key_hash.get_val(doc))
+                });
+            searcher
+                .search(restrict(Box::new(union)).as_ref(), &collector)?
+                .into_iter()
+                .map(|(_, address)| (0.0, address))
+                .collect()
+        };
+        let mut clauses: Vec<Box<dyn Query>> = Vec::new();
+        for part in query.split_whitespace() {
+            let terms = analyzed_terms(crate::syntax::code_subtokens, part);
+            match terms.as_slice() {
+                [] => {}
+                [one] => clauses.push(term(fields.body, one, IndexRecordOption::WithFreqs)),
+                many => clauses.push(Box::new(PhraseQuery::new(
+                    many.iter()
+                        .map(|subtoken| Term::from_field_text(fields.body, subtoken))
+                        .collect(),
+                ))),
+            }
+        }
+        let mut idents = analyzed_terms(crate::syntax::identifier_runs, query);
+        idents.sort();
+        idents.dedup();
+        for ident in &idents {
+            clauses.push(Box::new(BoostQuery::new(
+                term(fields.ident, ident, IndexRecordOption::WithFreqs),
+                3.0,
+            )));
+        }
+        clauses.push(Box::new(BoostQuery::new(
+            term(fields.path, query.trim(), IndexRecordOption::Basic),
+            100.0,
+        )));
+        let collector =
+            TopDocs::with_limit(CANDIDATE_LIMIT).tweak_score(|reader: &SegmentReader| {
+                let key_hash = reader
+                    .fast_fields()
+                    .u64("key_hash")
+                    .expect("schema v2 fast field")
+                    .first_or_default_col(0);
+                move |doc: DocId, score: Score| (score, Reverse(key_hash.get_val(doc)))
+            });
+        let tier2: Vec<(Score, tantivy::DocAddress)> = searcher
             .search(
-                &parsed,
-                &TopDocs::with_limit(CANDIDATE_LIMIT).order_by_score(),
-            )
-            .map_err(FoundryError::from)?;
-        let candidate_limit_reached = scored.len() >= CANDIDATE_LIMIT;
+                restrict(Box::new(BooleanQuery::union(clauses))).as_ref(),
+                &collector,
+            )?
+            .into_iter()
+            .map(|((score, _), address)| (score, address))
+            .collect();
+        let candidates_full = tier1.len() >= TIER1_LIMIT || tier2.len() >= CANDIDATE_LIMIT;
+        control.check()?;
+
+        let read = |tier: u8, score: Score, address| -> FResult<Candidate> {
+            let doc: TantivyDocument = searcher.doc(address)?;
+            let invalid = || FoundryError::CorruptStore("invalid search document".into());
+            let text = |field| {
+                doc.get_first(field)
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            };
+            let number = |field| {
+                doc.get_first(field)
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(invalid)
+            };
+            Ok(Candidate {
+                tier,
+                score,
+                path: text(fields.path).ok_or_else(invalid)?,
+                hash: text(fields.hash).ok_or_else(invalid)?,
+                start: number(fields.start)?,
+                unit_start: number(fields.unit_start)?,
+                unit_end: number(fields.unit_end)?,
+                kind: text(fields.kind).ok_or_else(invalid)?,
+                lang: text(fields.lang),
+                qname: text(fields.qname),
+            })
+        };
+        let mut first: Vec<Candidate> = tier1
+            .into_iter()
+            .map(|(score, address)| read(1, score, address))
+            .collect::<FResult<_>>()?;
+        first.sort_by(|a, b| a.path.cmp(&b.path).then(a.start.cmp(&b.start)));
+        let units: std::collections::BTreeSet<_> = first.iter().map(Candidate::unit).collect();
+        let mut second: Vec<Candidate> = Vec::new();
+        for (score, address) in tier2 {
+            let candidate = read(2, score, address)?;
+            if !units.contains(&candidate.unit()) {
+                second.push(candidate);
+            }
+        }
+        second.sort_by(|a, b| {
+            b.score
+                .total_cmp(&a.score)
+                .then_with(|| a.path.cmp(&b.path))
+                .then_with(|| a.start.cmp(&b.start))
+        });
+
+        // Final read: revalidate, merge per delivery unit and cap per file over
+        // the whole candidate window, then cut to `limit`; stale and capped
+        // skips are counted past the cut.
         let tx = self.db.begin_read()?;
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
-        // Phase 1: drop stale candidates by source hash. A replaced source may
-        // have fewer chunks, so a stale candidate's chunk row may be gone.
-        let mut current: Vec<(f32, String, usize, SourceMeta)> = Vec::new();
-        let mut stale = 0u64;
-        for (score, address) in scored {
-            let doc: TantivyDocument = searcher.doc(address).map_err(FoundryError::from)?;
-            let field = |f| {
-                doc.get_first(f)
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| FoundryError::CorruptStore("invalid search document".into()))
-            };
-            let path = field(handles.fields.path)?;
-            let hash = field(handles.fields.hash)?;
-            let key = field(handles.fields.key)?;
-            let Some(meta_raw) = sources.get(path)? else {
-                stale += 1;
-                continue;
-            };
-            let meta: SourceMeta = decode(meta_raw.value(), "source")?;
-            if meta.hash != hash {
-                stale += 1;
-                continue;
-            }
-            let ordinal = key
-                .rsplit('\0')
-                .next()
-                .and_then(|o| o.parse::<usize>().ok())
-                .filter(|ordinal| chunk_key(path, *ordinal) == key)
-                .ok_or_else(|| FoundryError::CorruptStore("invalid chunk key".into()))?;
-            current.push((score, path.to_owned(), ordinal, meta));
-        }
-        // Deterministic order: score, then source path, then byte start (the
-        // chunk ordinal is monotonic with the byte start within a path).
-        current.sort_by(|a, b| {
-            b.0.total_cmp(&a.0)
-                .then_with(|| a.1.cmp(&b.1))
-                .then_with(|| a.2.cmp(&b.2))
-        });
-        let truncated_by_limit = current.len() > limit;
-        current.truncate(limit);
-        // Phase 2: transaction-local verified reconstruction, once per
-        // distinct selected source, before any span is emitted.
-        let mut by_path: std::collections::BTreeMap<String, Vec<(f32, usize, SourceMeta)>> =
+        let mut counters = CandidateCounters {
+            candidates_full,
+            ..CandidateCounters::default()
+        };
+        let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
             std::collections::BTreeMap::new();
-        for (score, path, ordinal, meta) in current {
-            by_path
-                .entry(path)
-                .or_default()
-                .push((score, ordinal, meta));
-        }
-        let mut hits: Vec<(f32, Hit)> = Vec::new();
-        for (path, wanted) in by_path {
-            let verified = reconstruct_verified(&stored, &path, &wanted[0].2)?;
-            for (score, ordinal, meta) in wanted {
-                let Some(hit) = verified.hit(&workspace_id, &path, &meta.hash, ordinal) else {
-                    return Err(FoundryError::CorruptSource(format!(
-                        "{path}: chunk ordinal {ordinal} is outside the stored chunks"
-                    )));
+        let mut seen = std::collections::BTreeSet::new();
+        let mut per_file: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        let mut kept: Vec<Candidate> = Vec::new();
+        for candidate in first.into_iter().chain(second) {
+            if !current.contains_key(&candidate.path) {
+                let meta = match sources.get(candidate.path.as_str())? {
+                    Some(raw) => Some(decode::<SourceMeta>(raw.value(), "source")?),
+                    None => None,
                 };
-                hits.push((score, hit));
+                current.insert(candidate.path.clone(), meta);
             }
+            if current[&candidate.path]
+                .as_ref()
+                .is_none_or(|meta| meta.hash != candidate.hash)
+            {
+                counters.stale += 1;
+                continue;
+            }
+            if !seen.insert(candidate.unit()) {
+                continue;
+            }
+            let count = per_file.entry(candidate.path.clone()).or_default();
+            if *count == PER_FILE_CAP {
+                counters.capped += 1;
+                continue;
+            }
+            *count += 1;
+            if kept.len() == limit {
+                counters.truncated = true;
+                continue;
+            }
+            kept.push(candidate);
         }
-        hits.sort_by(|a, b| {
-            b.0.total_cmp(&a.0)
-                .then_with(|| a.1.path.cmp(&b.1.path))
-                .then_with(|| a.1.handle.start.cmp(&b.1.handle.start))
-        });
+        let wanted: std::collections::BTreeSet<String> =
+            analyzed_terms(crate::syntax::code_subtokens, query)
+                .into_iter()
+                .collect();
+        let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
+            std::collections::BTreeMap::new();
+        let mut items = Vec::with_capacity(kept.len());
+        for (rank, candidate) in kept.into_iter().enumerate() {
+            let Some(Some(meta)) = current.get(&candidate.path) else {
+                continue;
+            };
+            if !verified.contains_key(&candidate.path) {
+                let source = reconstruct_verified(&stored, &candidate.path, meta)?;
+                verified.insert(candidate.path.clone(), source);
+            }
+            let body = &verified[&candidate.path].body;
+            let (from, to) = (candidate.unit_start as usize, candidate.unit_end as usize);
+            if !(from < to
+                && to <= body.len()
+                && body.is_char_boundary(from)
+                && body.is_char_boundary(to))
+            {
+                return Err(FoundryError::CorruptStore(format!(
+                    "search document unit outside {}",
+                    candidate.path
+                )));
+            }
+            let text = &body[from..to];
+            let start_line = body.as_bytes()[..from]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count() as u64
+                + 1;
+            let line = if candidate.tier == 1 {
+                start_line
+            } else {
+                start_line + best_line_index(text, &wanted)
+            };
+            let label = match &candidate.qname {
+                Some(qname) => format!("{} {qname}", candidate.kind),
+                None => candidate.kind.clone(),
+            };
+            let end_line = start_line
+                + text.as_bytes()[..text.len().saturating_sub(1)]
+                    .iter()
+                    .filter(|&&b| b == b'\n')
+                    .count() as u64;
+            items.push(RankedItem {
+                tier: candidate.tier,
+                rank,
+                score: candidate.score,
+                handle: Some(SourceHandle {
+                    workspace_id: workspace_id.clone(),
+                    path: candidate.path,
+                    sha256: meta.hash.clone(),
+                    start: candidate.unit_start,
+                    end: candidate.unit_end,
+                }),
+                start_line,
+                end_line,
+                line,
+                label,
+                lang: candidate.lang,
+                forms: vec![RenderedForm::Verbatim(text.to_owned())],
+            });
+        }
         let freshness = self.freshness_in(&tx)?;
-        Ok(SearchOutcome {
-            workspace_id,
-            source_revision: freshness.source_revision,
-            hits: hits.into_iter().map(|(_, h)| h).collect(),
-            pending_sources: freshness.pending_sources,
-            stale_candidates: stale,
-            candidate_limit: CANDIDATE_LIMIT,
-            candidate_limit_reached,
-            truncated: truncated_by_limit || candidate_limit_reached,
-            scan_state: freshness.scan_state,
+        Ok(CandidateBatch {
+            freshness,
+            items,
+            counters,
         })
     }
 
@@ -1386,95 +1913,58 @@ impl Engine {
         })
     }
 
-    /// The verified chunk that follows each given hit, in one read
-    /// transaction. These are the remaining source spans of a context bundle.
-    fn following_chunks(&self, after: &[Hit]) -> FResult<Vec<Evidence>> {
-        let tx = self.db.begin_read()?;
-        let sources = tx.open_table(SOURCES)?;
-        let stored = tx.open_table(CHUNKS)?;
-        let mut out = Vec::new();
-        for hit in after {
-            let Some(raw) = sources.get(hit.path.as_str())? else {
-                continue;
-            };
-            let meta: SourceMeta = decode(raw.value(), "source")?;
-            if meta.hash != hit.handle.sha256 {
-                continue;
-            }
-            let verified = reconstruct_verified(&stored, &hit.path, &meta)?;
-            let Some(ordinal) = verified
-                .offsets
-                .iter()
-                .position(|(start, _)| *start as u64 == hit.handle.start)
-            else {
-                continue;
-            };
-            if let Some(next) =
-                verified.hit(&hit.handle.workspace_id, &hit.path, &meta.hash, ordinal + 1)
-            {
-                out.push(Evidence::source(next));
-            }
-        }
-        Ok(out)
-    }
-
-    /// Build ordered context candidates, then revalidate every candidate
-    /// against one final authoritative read transaction. Sources come first
-    /// (highest ranked), then bounded graph evidence, then remaining source
-    /// spans; a fitting highest-ranked source is never crowded out by graph
-    /// annotations. Packing happens at the boundary.
-    pub fn context(
+    /// Context candidates (context-v2 § Context candidates and routing), in
+    /// order: the first of up to 32 delivery units from the two-tier ranking,
+    /// bounded graph items when the strategy resolves to graph (seeded by the
+    /// paths of the top 3 units), the remaining units, then up to 3 file
+    /// outlines for the first distinct files among the units. Every candidate
+    /// is revalidated, and its signature and outline forms are built, in one
+    /// final read transaction.
+    pub fn context_candidates(
         &self,
         query: &str,
-        tokens: usize,
         strategy: Strategy,
         control: &crate::Control,
-    ) -> FResult<ContextOutcome> {
+    ) -> FResult<CandidateBatch> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
-            ));
-        }
-        if !(1..=32768).contains(&tokens) {
-            return Err(FoundryError::InvalidArgument(
-                "token budget must be 1..32768".into(),
             ));
         }
         let resolved = match strategy {
             Strategy::Auto => response::strategy_for_query(query),
             explicit => explicit,
         };
-        let search = self.search(query, 32)?;
+        let search = self.search_candidates(query, None, CONTEXT_UNITS, control)?;
         control.check()?;
-        let mut candidates: Vec<Evidence> = Vec::new();
-        let mut seen_keys = std::collections::BTreeSet::new();
-        let mut push = |evidence: Evidence| {
-            if seen_keys.insert(evidence.dedup_key()) {
-                candidates.push(evidence);
-            }
-        };
-        for hit in &search.hits {
-            push(Evidence::source(hit.clone()));
-        }
-        let mut graph_reason: Option<&'static str> = None;
-        let mut graph_candidates = 0usize;
+        let mut edges: Vec<graph::GraphEvidence> = Vec::new();
+        let mut graph_state: Option<&'static str> = None;
+        // The graph examination window (32 rows per seed and direction) filled.
+        let mut graph_full = false;
         if resolved == Strategy::Graph {
             let mut seeds: Vec<&str> = Vec::new();
-            for hit in &search.hits {
-                if seeds.len() < 3 && !seeds.contains(&hit.path.as_str()) {
-                    seeds.push(&hit.path);
+            for item in &search.items {
+                if let Some(handle) = &item.handle
+                    && seeds.len() < 3
+                    && !seeds.contains(&handle.path.as_str())
+                {
+                    seeds.push(&handle.path);
                 }
             }
+            let mut seen = std::collections::BTreeSet::new();
             let (mut fresh_edges, mut stale_edges, mut invalid) = (0usize, 0usize, false);
             for path in seeds {
                 for reverse in [false, true] {
-                    match self.graph(path, reverse, 1, 32) {
+                    match self.graph(path, reverse, 1, CONTEXT_GRAPH_EDGES) {
                         Ok(graph) => {
+                            graph_full |=
+                                graph.truncated || graph.examined_edges >= CONTEXT_GRAPH_EDGES;
                             fresh_edges += graph.edges.len();
                             stale_edges += graph.stale_edges;
                             for evidence in graph.edges {
-                                graph_candidates += 1;
-                                push(Evidence::graph(&evidence));
+                                if seen.insert(evidence.raw.clone()) {
+                                    edges.push(evidence);
+                                }
                             }
                         }
                         // Component-local: baseline source context survives.
@@ -1485,19 +1975,15 @@ impl Engine {
                     control.check()?;
                 }
             }
-            graph_reason = if invalid {
-                Some("graph_invalid")
+            graph_state = Some(if invalid {
+                "graph_invalid"
             } else if fresh_edges > 0 {
-                None
+                "ok"
             } else if stale_edges > 0 {
-                Some("graph_stale")
+                "graph_stale"
             } else {
-                Some("graph_unavailable")
-            };
-        }
-        let top: Vec<Hit> = search.hits.iter().take(3).cloned().collect();
-        for evidence in self.following_chunks(&top)? {
-            push(evidence);
+                "graph_unavailable"
+            });
         }
         control.check()?;
         // Candidates are collected. Anything may commit before the final read.
@@ -1509,119 +1995,335 @@ impl Engine {
         )?;
         let tx = self.db.begin_read()?;
         let sources = tx.open_table(SOURCES)?;
-        let current_hash = |path: &str| -> FResult<Option<String>> {
-            match sources.get(path)? {
-                Some(raw) => Ok(Some(decode::<SourceMeta>(raw.value(), "source")?.hash)),
-                None => Ok(None),
+        let stored = tx.open_table(CHUNKS)?;
+        let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
+            std::collections::BTreeMap::new();
+        let mut current_meta = |path: &str| -> FResult<Option<SourceMeta>> {
+            if let Some(meta) = current.get(path) {
+                return Ok(meta.clone());
             }
-        };
-        let mut kept = Vec::with_capacity(candidates.len());
-        let mut stale_dropped = 0u64;
-        let mut graph_dropped = 0usize;
-        for candidate in candidates {
-            let valid = match &candidate {
-                Evidence::Source { handle, .. } => {
-                    current_hash(&handle.path)?.is_some_and(|hash| hash == handle.sha256)
-                }
-                Evidence::Graph {
-                    raw,
-                    from_path,
-                    endpoints,
-                    ..
-                } => {
-                    let mut valid = graph::edge_row_present(&tx, from_path, raw)?;
-                    for (path, hash) in endpoints {
-                        valid &= current_hash(path)?.is_some_and(|current| current == *hash);
-                    }
-                    valid
-                }
+            let meta = match sources.get(path)? {
+                Some(raw) => Some(decode::<SourceMeta>(raw.value(), "source")?),
+                None => None,
             };
-            if valid {
-                kept.push(candidate);
+            current.insert(path.to_owned(), meta.clone());
+            Ok(meta)
+        };
+        let mut counters = CandidateCounters {
+            graph: graph_state,
+            candidates_full: search.counters.candidates_full || graph_full,
+            ..search.counters
+        };
+        let mut units: Vec<RankedItem> = Vec::new();
+        for item in search.items {
+            let Some(handle) = &item.handle else {
+                continue;
+            };
+            let fresh = current_meta(&handle.path)?.is_some_and(|meta| meta.hash == handle.sha256);
+            if fresh {
+                units.push(item);
             } else {
-                stale_dropped += 1;
-                if matches!(candidate, Evidence::Graph { .. }) {
-                    graph_dropped += 1;
-                }
+                counters.stale += 1;
             }
         }
-        let graph_kept = kept
+        let mut graph_items: Vec<RankedItem> = Vec::new();
+        let mut graph_dropped = 0usize;
+        for evidence in &edges {
+            let edge = &evidence.edge;
+            let mut valid = graph::edge_row_present(&tx, &edge.from.path, &evidence.raw)?;
+            for endpoint in [&edge.from, &edge.to] {
+                valid &=
+                    current_meta(&endpoint.path)?.is_some_and(|meta| meta.hash == endpoint.hash);
+            }
+            if !valid {
+                counters.stale += 1;
+                graph_dropped += 1;
+                continue;
+            }
+            graph_items.push(RankedItem {
+                tier: TIER_GRAPH,
+                rank: 0,
+                score: 0.0,
+                handle: None,
+                start_line: 0,
+                end_line: 0,
+                line: 0,
+                label: String::new(),
+                lang: None,
+                forms: vec![RenderedForm::Line(format!(
+                    "{}:{} ({}) --{}--> {}:{} ({}) [{}; provider={}@{}]",
+                    edge.from.path,
+                    edge.from.line,
+                    edge.from.symbol,
+                    edge.kind,
+                    edge.to.path,
+                    edge.to.line,
+                    edge.to.symbol,
+                    edge.evidence,
+                    evidence.provider,
+                    evidence.revision
+                ))],
+            });
+        }
+        if graph_state == Some("ok") && graph_dropped > 0 && graph_items.is_empty() {
+            counters.graph = Some("graph_stale");
+        }
+        // Verified bodies, once per path, for the signature forms of units in
+        // languages with units and for the first distinct files' outlines.
+        let mut outline_paths: Vec<String> = Vec::new();
+        for item in &units {
+            let Some(handle) = &item.handle else {
+                continue;
+            };
+            if outline_paths.len() < CONTEXT_OUTLINES && !outline_paths.contains(&handle.path) {
+                outline_paths.push(handle.path.clone());
+            }
+        }
+        let mut bodies: std::collections::BTreeMap<String, (String, String)> =
+            std::collections::BTreeMap::new();
+        for item in &units {
+            let Some(handle) = &item.handle else {
+                continue;
+            };
+            let has_units = crate::syntax::Lang::from_path(&handle.path)
+                .is_some_and(crate::syntax::Lang::has_units);
+            let wanted =
+                (has_units && item.label != "block") || outline_paths.contains(&handle.path);
+            if wanted
+                && !bodies.contains_key(&handle.path)
+                && let Some(meta) = current_meta(&handle.path)?
+            {
+                let verified = reconstruct_verified(&stored, &handle.path, &meta)?;
+                bodies.insert(handle.path.clone(), (meta.hash, verified.body));
+            }
+        }
+        let outliners: std::collections::BTreeMap<&str, crate::syntax::Outliner> = bodies
             .iter()
-            .any(|candidate| matches!(candidate, Evidence::Graph { .. }));
-        if resolved == Strategy::Graph
-            && graph_reason.is_none()
-            && graph_dropped > 0
-            && graph_candidates > 0
-            && !graph_kept
-        {
-            graph_reason = Some("graph_stale");
+            .filter_map(|(path, (_, body))| {
+                crate::syntax::Lang::from_path(path)
+                    .map(|lang| (path.as_str(), crate::syntax::Outliner::new(body, lang)))
+            })
+            .collect();
+        for item in &mut units {
+            let Some(handle) = &item.handle else {
+                continue;
+            };
+            if item.label == "block" {
+                continue;
+            }
+            let Some(outliner) = outliners.get(handle.path.as_str()) else {
+                continue;
+            };
+            let signature = outliner.render(handle.start as usize..handle.end as usize, 0, 0);
+            let same = item
+                .forms
+                .iter()
+                .any(|form| matches!(form, RenderedForm::Verbatim(text) if *text == signature));
+            if !same {
+                item.forms.push(RenderedForm::Signature(signature));
+            }
+        }
+        let mut outlines: Vec<RankedItem> = Vec::new();
+        for path in &outline_paths {
+            let (Some((hash, body)), Some(outliner)) =
+                (bodies.get(path), outliners.get(path.as_str()))
+            else {
+                continue;
+            };
+            // Skip a file when one of the units spans the whole file.
+            let whole = units
+                .iter()
+                .filter_map(|item| item.handle.as_ref())
+                .any(|handle| {
+                    handle.path == *path
+                        && body[..handle.start as usize].trim().is_empty()
+                        && body[handle.end as usize..].trim().is_empty()
+                });
+            if whole || body.is_empty() {
+                continue;
+            }
+            let end_line = 1 + body.as_bytes()[..body.len() - 1]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count() as u64;
+            outlines.push(RankedItem {
+                tier: TIER_OUTLINE,
+                rank: 0,
+                score: 0.0,
+                handle: Some(SourceHandle {
+                    workspace_id: self.workspace_id.clone().unwrap_or_default(),
+                    path: path.clone(),
+                    sha256: hash.clone(),
+                    start: 0,
+                    end: body.len() as u64,
+                }),
+                start_line: 1,
+                end_line,
+                line: 1,
+                label: String::new(),
+                lang: crate::syntax::Lang::from_path(path).map(|lang| lang.tag().to_owned()),
+                forms: vec![
+                    RenderedForm::Outline(outliner.render(0..body.len(), 60, 120)),
+                    RenderedForm::OutlineMin(outliner.render(0..body.len(), 0, 0)),
+                ],
+            });
         }
         let freshness = self.freshness_in(&tx)?;
-        drop(sources);
-        drop(tx);
-        Ok(ContextOutcome {
-            query: query.to_owned(),
-            requested_tokens: tokens,
-            strategy: resolved,
-            graph_reason,
+        // The first unit, then graph items, then the remaining units, then
+        // outlines: a fitting first unit precedes graph items.
+        let mut rest = units.into_iter();
+        let mut items: Vec<RankedItem> = rest.next().into_iter().collect();
+        items.extend(graph_items);
+        items.extend(rest);
+        items.extend(outlines);
+        for (rank, item) in items.iter_mut().enumerate() {
+            item.rank = rank;
+        }
+        Ok(CandidateBatch {
             freshness,
-            candidates: kept,
-            stale_candidates: search.stale_candidates + stale_dropped,
-            candidate_limit: CANDIDATE_LIMIT,
-            candidate_limit_reached: search.candidate_limit_reached,
-            search_truncated: search.truncated,
+            items,
+            counters,
         })
     }
 
-    /// Direct authoritative read: field validation, workspace match, source
-    /// existence, source hash, then range — each against one final read
-    /// transaction. Never touches the derived index.
-    pub fn retrieve(&self, handle_json: &str, tokens: usize) -> FResult<RetrieveOutcome> {
-        if !(1..=32768).contains(&tokens) {
-            return Err(FoundryError::InvalidArgument(
-                "token budget must be 1..32768".into(),
-            ));
-        }
-        let handle = SourceHandle::from_json(handle_json)?;
+    /// Direct authoritative read in context-v2 contract order: syntax and
+    /// bounds (handle and `lines`), `ws16` prefix of the bound `workspace_id`,
+    /// existence, `sha32` prefix of the stored SHA-256, then range — the last
+    /// three against one final read transaction. With `lines`, the outcome's
+    /// handle names the intersection of those file lines with the handle's
+    /// range. The outcome carries the full stored identities. Never touches
+    /// the derived index.
+    pub fn retrieve(
+        &self,
+        handle: &str,
+        lines: Option<&str>,
+        tokens: usize,
+    ) -> FResult<RetrieveOutcome> {
+        check_token_budget(tokens)?;
+        let parsed = HandleRef::parse(handle)?;
+        let lines = lines.map(LineSelection::parse).transpose()?;
         let bound = self.require_workspace_id()?;
-        if handle.workspace_id != bound {
+        if !bound.starts_with(&parsed.ws16) {
             return Err(FoundryError::WrongWorkspace);
         }
+        let read =
+            self.read_handle_span(&parsed.path, parsed.start, parsed.end, &parsed.sha32, lines)?;
+        let requested = SourceHandle {
+            workspace_id: bound,
+            path: parsed.path,
+            sha256: read.sha256.clone(),
+            start: read.start,
+            end: read.end,
+        };
+        Ok(read.outcome(requested, tokens))
+    }
+
+    /// `view:"outline"` (context-v2 § Retrieve views): the requested range,
+    /// after any `lines` clipping, in the `outline` and `outline-min` forms,
+    /// validated in contract order like [`Self::retrieve`]. An unmapped
+    /// language is `unsupported_mode`; a mapped source over 1 MiB is not
+    /// parsed, so its outline equals its text.
+    pub fn retrieve_outline(
+        &self,
+        handle: &str,
+        lines: Option<&str>,
+        tokens: usize,
+    ) -> FResult<OutlineOutcome> {
+        check_token_budget(tokens)?;
+        let parsed = HandleRef::parse(handle)?;
+        let lines = lines.map(LineSelection::parse).transpose()?;
+        let bound = self.require_workspace_id()?;
+        if !bound.starts_with(&parsed.ws16) {
+            return Err(FoundryError::WrongWorkspace);
+        }
+        let read =
+            self.read_handle_span(&parsed.path, parsed.start, parsed.end, &parsed.sha32, lines)?;
+        let Some(lang) = crate::syntax::Lang::from_path(&parsed.path) else {
+            return Err(FoundryError::UnsupportedMode(
+                "view:\"outline\" needs a mapped language".into(),
+            ));
+        };
+        let outliner = crate::syntax::Outliner::new(&read.body, lang);
+        let range = read.start as usize..read.end as usize;
+        let end_line = read.start_line
+            + read.span[..read.span.len().saturating_sub(1)]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count() as u64;
+        let outline = outliner.render(range.clone(), 60, 120);
+        let outline_min = outliner.render(range, 0, 0);
+        Ok(OutlineOutcome {
+            requested: SourceHandle {
+                workspace_id: bound,
+                path: parsed.path,
+                sha256: read.sha256,
+                start: read.start,
+                end: read.end,
+            },
+            start_line: read.start_line,
+            end_line,
+            lang: lang.tag(),
+            outline,
+            outline_min,
+            freshness: read.freshness,
+        })
+    }
+
+    /// Existence, digest (`sha32` against the prefix of the stored full
+    /// SHA-256) and range, then the optional `lines` intersection, in one final
+    /// read transaction.
+    fn read_handle_span(
+        &self,
+        path: &str,
+        start: u64,
+        end: u64,
+        sha32: &str,
+        lines: Option<LineSelection>,
+    ) -> FResult<HandleRead> {
         // Boundary after validation, before the final authoritative read.
-        fault!(RETRIEVE_BEFORE_FINAL_READ, Some(self), None, &handle.path)?;
+        fault!(RETRIEVE_BEFORE_FINAL_READ, Some(self), None, path)?;
         let tx = self.db.begin_read()?;
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
-        let Some(raw) = sources.get(handle.path.as_str())? else {
+        let Some(raw) = sources.get(path)? else {
             return Err(FoundryError::NotFound);
         };
         let meta: SourceMeta = decode(raw.value(), "source")?;
-        if meta.hash != handle.sha256 {
+        if !meta.hash.starts_with(sha32) {
             return Err(FoundryError::StaleHandle);
         }
-        let verified = reconstruct_verified(&stored, &handle.path, &meta)?;
+        let verified = reconstruct_verified(&stored, path, &meta)?;
         let body = &verified.body;
         let len = body.len() as u64;
-        let valid_empty = handle.start == 0 && handle.end == 0 && meta.bytes == 0;
-        let valid_span = handle.start < handle.end
-            && handle.end <= len
-            && body.is_char_boundary(handle.start as usize)
-            && body.is_char_boundary(handle.end as usize);
+        let valid_empty = start == 0 && end == 0 && meta.bytes == 0;
+        let valid_span = start < end
+            && end <= len
+            && body.is_char_boundary(start as usize)
+            && body.is_char_boundary(end as usize);
         if !valid_empty && !valid_span {
             return Err(FoundryError::InvalidRange);
         }
+        let (start, end) = match lines {
+            None => (start as usize, end as usize),
+            Some(lines) => lines.clip(body.as_bytes(), start as usize, end as usize)?,
+        };
         // Boundaries were validated above; slicing the byte view is equivalent.
-        let span = body.as_bytes()[handle.start as usize..handle.end as usize].to_vec();
+        let span = body.as_bytes()[start..end].to_vec();
+        let start_line = body.as_bytes()[..start]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count() as u64
+            + 1;
         let freshness = self.freshness_in(&tx)?;
-        drop(stored);
-        drop(sources);
-        drop(tx);
-        Ok(RetrieveOutcome {
-            requested: handle,
-            requested_tokens: tokens,
+        Ok(HandleRead {
+            sha256: meta.hash,
+            start: start as u64,
+            end: end as u64,
             span,
+            start_line,
             source_bytes: len,
             freshness,
+            body: verified.body,
         })
     }
 
@@ -1826,19 +2528,20 @@ impl Engine {
         }
         control.check()?;
         // Construct the replacement index and drain.
+        fault!(
+            REPAIR_BEFORE_REPLACEMENT_INDEX,
+            Some(&engine),
+            Some(control),
+            ""
+        )?;
         let index = Index::create_in_dir(&search_dir, search_schema())?;
-        let fields = fields_of(&index.schema());
-        let reader = index
-            .reader_builder()
-            .reload_policy(ReloadPolicy::Manual)
-            .try_into()?;
-        let writer = index.writer_with_num_threads(1, 20_000_000)?;
-        engine.search = Some(SearchHandles {
-            index,
-            reader,
-            writer,
-            fields,
-        });
+        engine.search = Some(search_handles(index)?);
+        fault!(
+            REPAIR_AFTER_REPLACEMENT_INDEX,
+            Some(&engine),
+            Some(control),
+            ""
+        )?;
         engine.repair_reason = None;
         let mut drained = 0usize;
         loop {
@@ -1858,10 +2561,22 @@ impl Engine {
         fault!(REPAIR_BEFORE_MARKER_CLEAR, Some(&engine), Some(control), "")?;
         control.check()?;
         {
+            // The current index format is published in the same transaction
+            // that clears the marker.
             let tx = engine.db.begin_write()?;
-            tx.open_table(META)?.remove("search_rebuild_required")?;
+            {
+                let mut meta = tx.open_table(META)?;
+                meta.remove("search_rebuild_required")?;
+                meta.insert("search_schema", SEARCH_SCHEMA)?;
+            }
             tx.commit()?;
         }
+        fault!(
+            REPAIR_AFTER_SCHEMA_PUBLICATION,
+            Some(&engine),
+            Some(control),
+            ""
+        )?;
         Ok(RepairReport {
             repaired: true,
             quarantined_to,
@@ -1872,6 +2587,42 @@ impl Engine {
 
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+}
+
+/// The shared `tokens` range of search, context and retrieve: 1..32768.
+pub(crate) fn check_token_budget(tokens: usize) -> FResult<()> {
+    if !(1..=response::MAX_BUDGET_TOKENS).contains(&tokens) {
+        return Err(FoundryError::InvalidArgument(
+            "token budget must be 1..32768".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The validated bytes of one handle read, their range and the stored full digest.
+struct HandleRead {
+    sha256: String,
+    start: u64,
+    end: u64,
+    span: Vec<u8>,
+    start_line: u64,
+    source_bytes: u64,
+    freshness: Freshness,
+    /// The whole verified source, for outline views.
+    body: String,
+}
+
+impl HandleRead {
+    fn outcome(self, requested: SourceHandle, requested_tokens: usize) -> RetrieveOutcome {
+        RetrieveOutcome {
+            requested,
+            requested_tokens,
+            span: self.span,
+            start_line: self.start_line,
+            source_bytes: self.source_bytes,
+            freshness: self.freshness,
+        }
     }
 }
 /// The expected workspace identity for a root: lowercase SHA-256 of the

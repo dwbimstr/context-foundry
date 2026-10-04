@@ -242,3 +242,63 @@ fn a_positively_matched_replacement_is_reset_and_completes() {
     let engine = Engine::open_existing(&state.store).unwrap();
     assert_eq!(engine.status().unwrap().index_state, "ready");
 }
+
+/// 001 T005 index version gate: a store indexed before T005 (no
+/// `search_schema = "2"`) reports `repair_required` with reason
+/// `search_schema` while retrieve and status work; an ordinary open writes
+/// nothing; `repair-index` makes it ready with zero source changes.
+#[test]
+fn a_store_without_search_schema_2_needs_repair_and_repair_publishes_it() {
+    let dir = Scratch::new();
+    let root = dir.path().join("ws");
+    fs::create_dir(&root).unwrap();
+    let store = dir.path().join("store");
+    let handle = {
+        let mut engine = Engine::initialize(&store, &root).unwrap();
+        engine
+            .replace_source("a.rs", "fn schema_probe() {}\n")
+            .unwrap();
+        engine.refresh(&Control::unbounded()).unwrap();
+        let hit = engine.search("schema_probe", 5).unwrap().hits.remove(0);
+        hit.handle.to_v2()
+    };
+    assert_eq!(
+        meta_value(&store, "search_schema").as_deref(),
+        Some("2"),
+        "a new store publishes search_schema 2 at initialization"
+    );
+    context_foundry::testkit::set_meta(&store, "search_schema", None);
+    let before = snapshot(&store);
+
+    let engine = Engine::open_existing(&store).unwrap();
+    let status = engine.status().unwrap();
+    assert_eq!(status.index_state, "repair_required");
+    assert!(
+        status
+            .index_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("search_schema")),
+        "{status:?}"
+    );
+    let err = engine.search("schema_probe", 5).unwrap_err();
+    assert_eq!(err.code(), "repair_required");
+    assert!(err.to_string().contains("repair-index"), "{err}");
+    assert_eq!(
+        engine.retrieve(&handle, None, 2048).unwrap().span,
+        b"fn schema_probe() {}"
+    );
+    drop(engine);
+    assert_eq!(snapshot(&store), before, "an ordinary open writes nothing");
+
+    let report = Engine::repair_index(&store, &Control::unbounded()).unwrap();
+    assert!(report.repaired);
+    assert_eq!(meta_value(&store, "search_schema").as_deref(), Some("2"));
+    assert_eq!(
+        owned(&knowledge(&snapshot(&store))),
+        owned(&knowledge(&before)),
+        "zero source changes"
+    );
+    let engine = Engine::open_existing(&store).unwrap();
+    assert_eq!(engine.status().unwrap().index_state, "ready");
+    assert_eq!(engine.search("schema_probe", 5).unwrap().hits.len(), 1);
+}
