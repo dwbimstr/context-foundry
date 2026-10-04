@@ -1,0 +1,62 @@
+{
+  "note": "Byte ranges [start,end) of the parse_record identifier, enumerated from the fixture text, not from any producer output.",
+  "definitions": {
+    "a": {
+      "path": "src/a.rs",
+      "start": 27,
+      "end": 39,
+      "line": 2,
+      "utf8_col": 7,
+      "utf16_col": 7
+    },
+    "b": {
+      "path": "src/b.rs",
+      "start": 27,
+      "end": 39,
+      "line": 2,
+      "utf8_col": 7,
+      "utf16_col": 7
+    }
+  },
+  "references_to_a": [
+    {
+      "path": "src/use_one.rs",
+      "start": 58,
+      "end": 70,
+      "line": 1,
+      "utf8_col": 14,
+      "utf16_col": 14
+    },
+    {
+      "path": "src/use_two.rs",
+      "start": 108,
+      "end": 120,
+      "line": 1,
+      "utf8_col": 63,
+      "utf16_col": 53
+    },
+    {
+      "path": "src/pointer.rs",
+      "start": 100,
+      "end": 112,
+      "line": 1,
+      "utf8_col": 53,
+      "utf16_col": 53
+    }
+  ],
+  "references_to_b": [
+    {
+      "path": "src/use_b.rs",
+      "start": 58,
+      "end": 70,
+      "line": 1,
+      "utf8_col": 14,
+      "utf16_col": 14
+    }
+  ],
+  "direct_uses_of_a": [
+    "src/use_one.rs",
+    "src/use_two.rs"
+  ],
+  "function_pointer_reference": "src/pointer.rs"
+}

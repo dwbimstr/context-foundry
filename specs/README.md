@@ -10,8 +10,9 @@ economics tests, operator hook) and 007 T001 were implemented and accepted local
 2026-10-04 and committed locally (unreleased); the real-host runbook is recorded in validation.
 The same spec pass classified the remaining specified unknowns
 of 003 T004, 005, 008, 009 and 013 as settled decisions, named open owned decisions
-(005 T002's `references` header segments; 009 T002's semantic-item line form) or
-external prerequisites (below); those specs stay proposed. The owner requested
+(005 T002's `references` header segments; 009 T002's semantic-item line form, both
+decided 2026-10-04 in context-v2) or external prerequisites (below); those specs stay
+proposed. The owner requested
 thoughtful subtraction, not a Rust translation of the old system. The other active
 goals remain.
 
@@ -64,18 +65,19 @@ the first search/graph family is not a claim of full Laya parity.
 | --- | --- | --- |
 | 001 | D001 resolved: retain redb/Tantivy; T001 recovery; T002 reconciliation; T003 exact retrieval; T004 compact v2 wire and atomic allowance; T005 syntax-unit search with exact definitions first; T006 outlines, context ladder and retrieve views | T001–T003 verified 2026-10-01; T004–T006 accepted locally at SHIP and committed in `5edf32c`; the T005 leading-run amendment accepted 2026-10-04 and committed in `bd1d890`. Release checklist remains |
 | 003 | T001 bootstrap/MCP; T002 budgets/receipts; T003 actual agent task; T004 owned request gateway; T005 catalog/instructions, opt-in OMP hook, usage import and economics evidence | T001–T003 verified with OMP and Codex 2026-10-01. T004 retargeted 2026-10-04 by the owner to OMP on Z.ai `glm-5.3-flash`, meter only; contract amended, refuted-then-held at review and approved by the owner on 2026-10-04; implementation in progress. T005 implemented and accepted 2026-10-04, committed in `5e99ffd`; the hook is committed in the team-kit (`e65f8cf`) and installed default-off; real-host runbook recorded in validation |
-| 005 | T001 real SCIP; T002 scoped publication; T003 large-workspace workflow | Spec-pass decisions recorded 2026-10-03; T002 first fixes the `references` coverage and count header segments within the v2 header grammar (open owned decision); external prerequisites below |
+| 005 | T001 real SCIP; T002 scoped publication; T003 large-workspace workflow | Spec-pass decisions recorded 2026-10-03. The `references` header segments were decided 2026-10-04 (context-v2 segments 12–14). The T001 producer ran in a jail on 2026-10-04 (fixture artifact recorded); implementation follows 008's schema change. External prerequisites below |
 | 007 | T001 admit, query and cite several roots in one budgeted response | T001 implemented and accepted 2026-10-04, committed in `cc402e0`; unreleased |
 | 008 | T001 record lifecycle; T002 export/forget | Spec-pass decisions recorded 2026-10-03 (one `memory` tool); accepted 001 owner/schema contract; 003 only for the advertised MCP surface |
-| 009 | D001 runtime/index disposition; T001 durable preparation; T002 retrieval; T003 progressive preparation | D001 chosen values recorded 2026-10-03; pinned artifact/runtime stand; T002 first closes the open semantic-item line form (open owned decision); external prerequisites below |
-| 013 | D001 actual recipe/package acceptance; T001 joint-input data; T002 real fitting; T003 inference/rollback; T004 repeat/deploy | v4 pins model/input/backend; spec-pass decisions recorded 2026-10-03; scratch gradients pass; external prerequisites below |
+| 009 | D001 runtime/index disposition; T001 durable preparation; T002 retrieval; T003 progressive preparation | D001 chosen values recorded 2026-10-03; pinned artifact/runtime stand. The semantic-item line form was decided 2026-10-04 (context-v2 § Evidence items). USearch builds on Rust 1.90. D001 serving-limit evidence is in progress. External prerequisites below |
+| 013 | D001 actual recipe/package acceptance; T001 joint-input data; T002 real fitting; T003 inference/rollback; T004 repeat/deploy | v4 pins model/input/backend; spec-pass decisions recorded 2026-10-03; scratch gradients pass. tch 0.24.0 + LibTorch 2.11.0 and `tokenizers` 0.23.2 build and run on Rust 1.90 (2026-10-04). Labels will come from task checkers, and the task set awaits owner approval after 005 T002. External prerequisites below |
 
 001 D001 is resolved. 009 D001's chosen values are recorded; its limit checks and
 runtime/package acceptance remain. 013 D001 is recipe/MSRV/package acceptance, not a
 new model/backend selection. Their partial executed feasibility does not close these
 checks. A missing runtime input causes the named prerequisite failure in its spec; it
-is not an invitation to guess or a passed criterion. The two open owned decisions are
-closed by their tasks before implementation and reviewed against 001's v2 contract.
+is not an invitation to guess or a passed criterion. The two owned decisions were
+closed on 2026-10-04 and refuted cross-lab against 001's v2 contract before any
+implementation.
 [Current review/evidence](../docs/planning-validation.md) records what was inspected
 and checked, including the 2026-10-03 spec-pass ledger. Task detail alone is not
 implementation acceptance.
@@ -88,9 +90,9 @@ is implied by writing a task, and a missing one fails by name in its spec.
 | Owning task | Prerequisite | Status |
 | --- | --- | --- |
 | [003 T004](003-agent-retrieval-context/spec.md#t004--forward-and-meter-an-actual-supported-model-workflow) | The owner's Z.ai key (a private file read into the gateway's environment) and the GLM Coding Plan terms acceptance; live check authorized at 3 runs and 15 minutes | Supplied 2026-10-04 |
-| [005 T001/T003](005-graph-evidence-lifecycle/spec.md) | A permitted jailed rust-analyzer run (it executes build scripts and proc macros); the scale corpus and numeric profile for T003 | Open |
-| [009 D001/T001](009-optional-semantic-retrieval/spec.md) | Authorization to run the pinned local weights; a USearch C++ build on the Rust 1.90 floor; isolation and package acceptance | Open |
-| [013 D001/T002–T004](013-owned-learning/spec.md) | Approved labeled rows; the LibTorch package; signing/notarization; an aggregate residency run with 009 | Open |
+| [005 T001/T003](005-graph-evidence-lifecycle/spec.md) | A permitted jailed rust-analyzer run (it executes build scripts and proc macros); the scale corpus and numeric profile for T003 | Producer authorized and run 2026-10-04 (installed 2026-08-31 build, no-network jail). Corpus: rust-lang/rust 1.99.0, cloned 2026-10-04. Numeric profile proposed at run selection |
+| [009 D001/T001](009-optional-semantic-retrieval/spec.md) | Authorization to run the pinned local weights; a USearch C++ build on the Rust 1.90 floor; isolation and package acceptance | Weights and runtime authorized 2026-10-04; artifact downloaded and hash-verified. USearch 1.90 build passed. Package acceptance still needs signing/notarization (owner: decide later) |
+| [013 D001/T002–T004](013-owned-learning/spec.md) | Approved labeled rows; the LibTorch package; signing/notarization; an aggregate residency run with 009 | LibTorch 2.11.0 downloaded and smoke-built 2026-10-04. Rows: task-checker labels, with the task set pending owner approval. Signing open (decide later). Residency open |
 | [Release](../docs/release.md) | Every active spec complete, then a release destination (owner policy 2026-10-04) | Open; the local `v0.1.0` tag of 2026-10-04 was withdrawn |
 
 ## What was subtracted

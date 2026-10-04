@@ -1,0 +1,73 @@
+{
+  "v": 1,
+  "recorded": "2026-10-04",
+  "producer": {
+    "name": "rust-analyzer",
+    "release_tag": "2026-08-31",
+    "commit": "f8996691e991a4dc3c6f135e0fc04fc5561e4e9a",
+    "version_output": "rust-analyzer 0.0.0 (f8996691e9 2026-08-30)",
+    "binary": "/opt/homebrew/Cellar/rust-analyzer/2026-08-31/bin/rust-analyzer (Homebrew formula 2026-08-31)",
+    "binary_sha256": "91c40055ac1da1e21c0983fda9f3bee75253a3e84a5ed9d3ab6b5e4df4d020a8",
+    "scip_rs_recheck": "crates/rust-analyzer/src/cli/scip.rs at tag 2026-08-31: load_out_dirs_from_check true, ProcMacroServerChoice::Sysroot, PositionEncoding UTF8CodeUnitOffsetFromLineStart",
+    "toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Homebrew)"
+  },
+  "invocation": "sandbox-exec -f jail.sb env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME=<scratch> TMPDIR=<scratch>/tmp CARGO_HOME=<scratch>/cargo-home CARGO_TARGET_DIR=<scratch>/target CARGO_NET_OFFLINE=true rust-analyzer scip <snapshot> --output <scratch>/index.scip",
+  "config": "no --config-path; rust-analyzer defaults",
+  "jail": {
+    "profile": "(version 1) (allow default) (deny network*) (deny file-write*) (allow file-write* (subpath <scratch>) (literal \"/dev/null\") (literal \"/dev/tty\") (regex #\"^/dev/fd/\") (regex #\"^/dev/ttys\"))",
+    "negative_checks": {
+      "write_outside_scratch": "denied (Operation not permitted)",
+      "write_live_fixture": "denied (Operation not permitted)",
+      "network": "denied (curl: could not resolve host)",
+      "write_scratch": "allowed"
+    }
+  },
+  "snapshot": {
+    "method": "cp -R of tests/fixtures/semantic/workspace, then chmod -R a-w before production; hashed before and after production, identical",
+    "inputs": [
+      {
+        "path": "Cargo.lock",
+        "sha256": "0cc831ca0c60c19cbe43e94f93545fdd2c4514dfda45a2de6bcc4d06b08e2344"
+      },
+      {
+        "path": "Cargo.toml",
+        "sha256": "6d18cccdd78247ed3f93d0d5844864b1bf490cbbac3cdbb324e1ca24abe5670c"
+      },
+      {
+        "path": "src/a.rs",
+        "sha256": "6fede443e0c38cbc4259d30427602de4e2fa37b6e3f281ca43a8388cfa98fcad"
+      },
+      {
+        "path": "src/b.rs",
+        "sha256": "93ca9c6c17e170d3d7f4df84450162f5ff031a1f1322cbb6fa295f9b6d068566"
+      },
+      {
+        "path": "src/lib.rs",
+        "sha256": "624dfd0ff66536cbf57d1c6545978c676b1d24330bd98834196cffd816c51cb5"
+      },
+      {
+        "path": "src/pointer.rs",
+        "sha256": "83f77a73ea3eb8d7f768f3c60c44fb3945027b3637151cbc43acfa73d61e0ff2"
+      },
+      {
+        "path": "src/use_b.rs",
+        "sha256": "ac1031f71da5879f9c3d45f79d0ed86665beab70a86a1ad5e608c9ecb01cbcee"
+      },
+      {
+        "path": "src/use_one.rs",
+        "sha256": "c6031765cc63d16506c546d84390b87b95660790f6ddfd684debde53a7f80fe8"
+      },
+      {
+        "path": "src/use_two.rs",
+        "sha256": "dd36fb56b5f847e893cc75bf395a0a2898d88bdfa72cf48469ad3854325e9ed3"
+      }
+    ]
+  },
+  "artifact": {
+    "file": "index.scip",
+    "bytes": 6845,
+    "sha256": "0e4d34e7fce4725a714401cdae48fac9122f44ae6b56bac988d2e751dc920080"
+  },
+  "elapsed_s": 5,
+  "observed": "every document declares position_encoding 1 (UTF8CodeUnitOffsetFromLineStart); only deprecated range/enclosing_range are emitted (no typed ranges); occurrences match expected.json"
+}

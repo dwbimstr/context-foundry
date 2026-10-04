@@ -187,7 +187,7 @@ errors keep `{code,message,retryable}` of at most 1024 bytes; `connect`, `usage`
 Line 1 joins these segments with ` · ` (space, U+00B7, space), in this order; optional
 segments appear only when not at their default:
 
-1. `foundry search`, `foundry context` or `foundry retrieve`;
+1. `foundry search`, `foundry context`, `foundry retrieve` or `foundry references` (005);
 2. `r<source_revision>` for a single-root owner, or the per-root segments of a
    multi-root owner defined by [007](../../007-multi-workspace-context/spec.md);
 3. `scan:<state>` when the scan state is not `complete`;
@@ -203,7 +203,26 @@ segments appear only when not at their default:
     256, or a context graph examination window (32 rows per seed and direction) that
     filled exactly or was truncated;
 11. `graph:<ok|graph_unavailable|graph_stale|graph_invalid>` when the strategy
-    resolved to graph.
+    resolved to graph;
+12. `examined:<n>`: `foundry references` only, always present. Counts the graph records
+    examined in this window, definition lookups included;
+13. `unresolved:<n>`: `foundry references` only, present when n > 0. Counts examined
+    occurrences of the seed symbol whose target is external, unknown or ambiguous;
+14. `coverage:<complete|partial|stale|unavailable>`: `foundry references` only, always
+    present and last.
+
+For `foundry references` (decided 2026-10-04 for 005 T002; cross-lab refutation
+held), segments 7–10 keep their meanings:
+- `omitted` counts examined eligible references dropped by token or byte packing, not
+  unexamined matches;
+- `stale` counts final-read drops;
+- `candidates:full` marks a filled 256-record/64-file examination window.
+
+`examined` and `coverage` are mandatory because references is used to reason about
+absence. `coverage:complete` still covers only supported indexed input inside the
+examined window, so it never proves absence beyond it (§ Deduplication, no cross-call
+suppression). Database and store failures stay named errors, never a
+`coverage:unavailable` success. `graph:` stays context-only.
 
 Removed from v1: `format_version`, `tokenizer`, `boundary`, `budget_satisfied`,
 `indexed_snapshot`, `candidate_limit`, per-item `workspace_id`, `strategy` (except the
@@ -224,6 +243,35 @@ Each context and retrieve item is an item line followed by a fenced block:
   unit without a name, renders its kind alone. Retrieve items carry no label.
 - `[signature]` marks the signature form; `[outline]` marks the `outline` and
   `outline-min` forms; verbatim bodies carry no tag.
+
+Semantic evidence items (009 T002; decided 2026-10-04, revised after cross-lab
+refutation) put a selection tag in a fixed slot: immediately after `L<a>-<b>` and
+before the optional label.
+
+- The three forms:
+  - `<handle> L<a>-<b> [whole_unit][ <kind> <qualified name>]`;
+  - `<handle> L<a>-<b> [lexical_span <matched handle>][ <kind> <qualified name>]`;
+  - `<handle> L<a>-<b> [preview <matched handle>][ <kind> <qualified name>]`.
+- The item handle names the returned bytes. `whole_unit` returns the matched unit
+  itself, so its handle is not repeated.
+- Because the tag never trails the label, a source-derived label such as a Markdown
+  heading ending in `[whole_unit]` stays label text.
+- Only neural candidates carry a selection tag; exact-definition, lexical and graph
+  items render as above.
+- Semantic bodies are verbatim bytes of the returned handle. The packer tries the whole
+  unit, then the selected lexical span, then a bounded prefix labeled `preview`;
+  `[signature]`/`[outline]` forms do not participate.
+- After a preview's closing fence, a line `next: <handle>` names its remaining range
+  while bytes of that range remain. The item, its fence and that line pack as one
+  indivisible rendering, and final backtracking removes them together.
+
+Parsers dispatch by operation:
+- a context `next:` line belongs to the immediately preceding preview;
+- retrieve keeps its single final `next: <handle>`;
+- references ends with `next: after=<path>#<start>`.
+
+Framed source items are parsed before continuation prefixes. A literal `next:` inside a
+fenced body stays body content.
 
 The fence is backticks of length max(3, 1 + the longest backtick run that begins a
 body line after at most three spaces). Its info string is the language tag of the

@@ -6,6 +6,17 @@ Spec-pass decisions recorded 2026-10-03: pinned producer release, UTF-8-only pos
 the producer coverage rule, budgeted v2 `references` and MCP import through `index`.
 External prerequisites (owner): a permitted jailed rust-analyzer run for T001, and the
 scale corpus and numeric profile for T003.
+
+Owner answers, 2026-10-04:
+- **T001 producer.** Run the installed rust-analyzer: Homebrew 2026-08-31, i.e. weekly
+  tag `2026-08-31`, commit `f8996691e991`. It ran once in a no-network `sandbox-exec`
+  jail on the T001 fixture; the producer record is
+  `tests/fixtures/semantic/producer.json`.
+- **T003 corpus.** rust-lang/rust at tag 1.99.0 (commit `b940084d`, 62,035 files). The
+  numeric profile is still proposed at run selection, as T003 states.
+- **T002 header segments.** Decided 2026-10-04 in context-v2 § Header line, segments
+  12–14.
+
 Current baseline: `src/graph.rs` replaces whole producer bundles, indexes both file
 adjacency directions and filters endpoint hashes. Supplied symbol labels are not a
 resolved symbol graph; whole-producer replacement and decoding are capped today.
@@ -35,14 +46,16 @@ bounded context response for the investigation instead of a mandatory graph-hop 
 
 ## Artifact and freshness contract
 
-T001 pins the rust-analyzer weekly release tag current at its start and records that
-tag, the binary's SHA-256 and its `--version` output. It reads that tag's
+T001 pins one rust-analyzer weekly release tag. Owner decision 2026-10-04: the
+installed 2026-08-31 build rather than a fresh download. T001 records that tag, the
+binary's SHA-256 and its `--version` output. It reads that tag's
 [SCIP implementation](https://github.com/rust-lang/rust-analyzer/blob/master/crates/rust-analyzer/src/cli/scip.rs)
 and the matching [SCIP schema](https://github.com/scip-code/scip/blob/main/scip.proto)
 revision rather than these floating `master`/`main` links. SCIP carries symbol
 occurrences and roles; optional source text and position encodings need explicit
-handling. No live producer has run in this project. A bare artifact plus hashes taken
-afterwards does not prove its basis.
+handling. The first live producer run (2026-10-04) is recorded with its jail and
+snapshot hashes in `tests/fixtures/semantic/producer.json`. A bare artifact plus hashes
+taken afterwards does not prove its basis.
 
 Proposed CLI: `import-scip --index FILE --snapshot MANIFEST`. The manifest identifies
 workspace ID, source revision, producer binary/version, literal invocation/config,
@@ -180,9 +193,10 @@ enclosing delivery unit, `L<line>` is the occurrence's line and `<kind> <qualifi
 names that unit. While more references remain, the last line is
 `next: after=<path>#<start>`, a cursor passed back as `after` to continue. Coverage
 (complete/partial/stale/unavailable) and exact examined/stale/unresolved/omitted counts
-are reported in the header, naming segments within the v2 header grammar that T002
-fixes before implementation; these counts cover the examined window, not all unvisited
-graph records. Source/handle errors use 001 precedence.
+are reported in the header as context-v2 § Header line segments 12–14 (`examined`,
+`unresolved`, `coverage`), together with the shared `stale`, `omitted` and
+`candidates:full` segments (decided 2026-10-04). These counts cover the examined window,
+not all unvisited graph records. Source/handle errors use 001 precedence.
 Import failures name unbound_artifact, stale_artifact, invalid_range,
 unsupported_encoding, artifact_too_large, document_too_large or producer_incomplete;
 partial import exits 1 with committed/failed counts, invalid invocation exits 2, and

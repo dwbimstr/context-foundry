@@ -14,6 +14,14 @@ temperature below 0.5, and enablement only after a usage-import comparison. Exte
 prerequisites (owner): approved labeled rows, the LibTorch package,
 signing/notarization and an aggregate residency run.
 
+Owner answers, 2026-10-04:
+- **LibTorch.** Download authorized and done (2.11.0 CPU, macOS arm64). tch 0.24.0 and
+  `tokenizers` 0.23.2 build and run on Rust 1.90; evidence in
+  [prerequisites](../../docs/review/prerequisites-2026-10-04.md).
+- **Rows.** Labels come from mechanically checked coding tasks (`task_checker`). The
+  task set is proposed for owner approval once 005 T002 provides the graph option.
+- **Signing/notarization.** Decide later.
+
 ## Outcome and requirements
 
 Repeatedly prepare permitted feedback, adapt the model, evaluate, select or reject,

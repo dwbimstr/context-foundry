@@ -4,12 +4,22 @@ Status: Proposed, 2026-09-28; D001 recorded 2026-09-29; D001 chosen values recor
 2026-10-03 (below). Reactivated for planning by the
 owner's preparation-cost concern. No dense retrieval or preparation worker exists in
 the prototype. Dependencies:
-001; 003 for preparation during agent use. Implementation requires D001 below. No model
-downloads, long experiments, predecessor migration or external-repo changes are authorized.
+001; 003 for preparation during agent use. Implementation requires D001 below. Beyond
+the owner's 2026-10-04 answers below, no model downloads, long experiments, predecessor
+migration or external-repo changes are authorized.
 External prerequisites (owner): authorization to run the pinned local weights, a
-USearch C++ build on the Rust 1.90 floor, and isolation/package acceptance. One owned
-decision is open: the v2 line form of a semantic evidence item (§ Documents, embedding
-units and returned evidence), fixed in T002 before implementation.
+USearch C++ build on the Rust 1.90 floor, and isolation/package acceptance.
+
+Owner answers, 2026-10-04:
+- **Downloads and installs.** Authorized: the pinned artifact (downloaded and
+  hash-verified that day) and pinned MLX/mlx-lm in a private venv.
+- **USearch.** 2.26.2 builds on Rust 1.90.0 with Apple clang 21 and passes an F16
+  2048-d persistence/update smoke.
+- **Signing/notarization for package acceptance.** Still open.
+
+The semantic-item line form was decided 2026-10-04 (§ Documents, embedding units and
+returned evidence).
+
 Selected model: **`nvidia/Nemotron-3-Embed-1B-BF16`**, explicitly chosen by the owner.
 Selected local artifact: **`mlx-community/Nemotron-3-Embed-1B-BF16-4bit`**, subsequently
 supplied by the owner. Output: 2048 dimensions, cached as float32 vectors; the search
@@ -274,15 +284,21 @@ All these fields count toward the existing budget; if none fits, report an omiss
 Search returns v2 locator lines without bodies, so a semantic search hit names its
 matched unit's handle and never claims `whole_unit`.
 
-**Open owned decision — semantic item line form.** The content above is settled; how
-it renders is not. [context-v2](../001-source-state-recovery/contracts/context-v2.md)
-requires each owning spec to state its line form, and no approved decision fixes this
-one: the item-line tag carrying the selection and matched handle, and the continuation
-line a preview uses inside a context response, where v2 currently defines `next:` only
-for retrieve. It is left open rather than invented because it extends the shared v2
-grammar and adds per-item tokens, so it needs review against 001's contract. T002 fixes
-it before implementation within v2's evidence-item and single-line-field rules, and
-records it in this section and in context-v2; until then no semantic item is emitted.
+**Decision — semantic item line form (2026-10-04; revised after cross-lab
+refutation).** Recorded in context-v2 § Evidence items.
+
+- The selection tag sits immediately after `L<a>-<b>`, before the optional label:
+  `[whole_unit]`, `[lexical_span <matched handle>]` or `[preview <matched handle>]`.
+- The item handle names the returned bytes. `whole_unit` does not repeat it.
+- Bodies are verbatim. The packer tries the whole unit, then the lexical span, then a
+  preview; `[signature]`/`[outline]` forms do not participate.
+- After a preview's fence, `next: <handle>` names its remaining range. Item, fence and
+  continuation pack as one indivisible rendering.
+- Only neural candidates carry a tag.
+- T002 extends the renderer and the parser together:
+  - the selection is not an outline form;
+  - a preview continuation belongs to its item, not to the response;
+  - parser success alone is not semantic verification.
 
 Preview text is a navigation aid, not proof that the answer was localized. Graph
 expansion may use whole-unit or lexical-span evidence under its existing bounds, but
