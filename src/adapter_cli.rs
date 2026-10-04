@@ -86,6 +86,15 @@ fn read_budget(path: Option<&std::path::Path>) -> FResult<crate::config::BudgetC
     let mut bytes = Vec::new();
     std::fs::File::open(path)?
         .take(crate::config::CONFIG_MAX_BYTES as u64 + 1)
+    /// Import one host session record (offline counters only; no store).
+    Import {
+        /// Host session format: `omp` or `codex`.
+        #[arg(long)]
+        host: crate::usage::UsageHost,
+        /// The host's own session JSONL file.
+        #[arg(long)]
+        session: PathBuf,
+    },
         .read_to_end(&mut bytes)?;
     crate::config::BudgetConfig::parse(&bytes)
 }
@@ -307,3 +316,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
     }
     Ok(())
 }
+            UsageAction::Import { host, session } => {
+                let summary = crate::usage::import_session(host, &session)?;
+                println!("{}", summary.to_json());
+            }

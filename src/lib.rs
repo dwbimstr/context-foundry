@@ -44,6 +44,7 @@ pub mod syntax;
 #[cfg(feature = "test-faults")]
 pub mod testkit;
 
+pub mod usage;
 pub use control::Control;
 pub use error::{FResult, FoundryError, PartialIndexCounts};
 pub use ingest::IndexReport;

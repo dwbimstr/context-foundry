@@ -1,0 +1,4 @@
+{"type":"session","version":3,"id":"01fixture00-sess-0005","timestamp":"2026-10-04T00:00:00.000Z","cwd":"/tmp/usage-fixture"}
+{"type":"message","id":"a1","parentId":null,"timestamp":"2026-10-04T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"question"}]}}
+{"type":"message","id":"a2","parentId":"a1","timestamp":"2026-10-04T00:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"answer without usage"}],"provider":"fixture-provider","model":"fixture/model-a","stopReason":"stop","timestamp":1770000002000}}
+{"type":"message","id":"t1","parentId":"a2","timestamp":"2026-10-04T00:00:02.500Z","message":{"role":"toolResult","toolCallId":"call_x","toolName":"bash","content":[{"type":"text","text":"no provider usage here"}],"details":{},"isError":false,"timestamp":1770000002500}}
