@@ -1,0 +1,962 @@
+{
+  "schema": "cf-009-d001-evidence.v1",
+  "scope": "Context Foundry spec 009 decision D001 evidence in private scratch /private/tmp/cf-009-d001 only. Not production integration; no quality claim; no repository, ~/.omp, ~/VSC_DEV edits.",
+  "authorization_used": [
+    "pip install mlx==0.32.3 mlx-lm==0.31.3 (+ their dependencies) into a private venv",
+    "local build and run",
+    "read of the already-downloaded pinned artifact"
+  ],
+  "identities": {
+    "macos": {
+      "version": "27.0.1",
+      "build": "26A434"
+    },
+    "chip": "Apple M3 Pro",
+    "ram_bytes": 19327352832,
+    "ram_gib": 18.0,
+    "logical_cpus": 12,
+    "rustc": "rustc 1.90.0 (1159e78c4 2025-09-14)",
+    "cargo": "cargo 1.90.0 (840b83a10 2025-07-30)",
+    "pyo3": {
+      "cargo_toml_requirement": "=0.29.2 (features: auto-initialize)",
+      "cargo_lock_version": "0.29.2"
+    },
+    "python": "Python 3.12.11",
+    "python_base_interpreter_linked_by_bridge": "/opt/homebrew/opt/python@3.12/Frameworks/Python.framework/Versions/3.12/Python -> Cellar python@3.12/3.12.11",
+    "pip_freeze": {
+      "file": "freeze.txt",
+      "sha256": "848fbce5ef2977ee5ed2c1a680bad25573ec6c0ea11ef2001dc27a8f32bf9132",
+      "package_count": 34
+    },
+    "mlx": "0.32.3",
+    "mlx_lm": "0.31.3",
+    "mlx_metal": "0.32.3",
+    "transformers": "5.18.0",
+    "numpy": "2.5.3",
+    "tokenizers": "0.23.2",
+    "huggingface_hub": "1.33.0",
+    "safetensors": "0.8.0",
+    "torch_installed": false,
+    "sentence_transformers_installed": false,
+    "packages_explicitly_requested": [
+      "mlx==0.32.3",
+      "mlx-lm==0.31.3"
+    ],
+    "packages_in_feasibility_requirements_not_installed_here": [
+      "charset-normalizer",
+      "mpmath",
+      "networkx",
+      "requests",
+      "setuptools",
+      "sympy",
+      "torch",
+      "urllib3"
+    ],
+    "version_differences_vs_feasibility_requirements": {
+      "filelock": {
+        "here": "4.0.10",
+        "feasibility": "4.0.6"
+      },
+      "markupsafe": {
+        "here": "3.0.4",
+        "feasibility": "3.0.3"
+      },
+      "transformers": {
+        "here": "5.18.0",
+        "feasibility": "5.17.0"
+      }
+    },
+    "artifact_revision": "mlx-community/Nemotron-3-Embed-1B-BF16-4bit @ d0408b94c50fc327b6ea37dce7409c51e020a4d8",
+    "artifact_dir": "/Users/satishlomte/VSC_DEV/models/Nemotron-3-Embed-1B-BF16-4bit-d0408b94",
+    "artifact_files_sha256": {
+      "model.safetensors": "73b06890e9d44ac792c98d38cd1d624ad4c45b5e0a4106bae6bef1ae356dd62f",
+      "tokenizer.json": "797410dfb649a5b9ba92bc4fef7dbf4022d00e73de6867c4ac199a8846439421",
+      "nemotron3_embed_mlx.py": "a30a86d8967593736ab9a04999529646bb26d9ef8027b2e4070b77a4c5fcc80c",
+      "config.json": "b23e43e3b2097f28991a01f9ece734025d42eb7af986c795845a714ea2bfcbab",
+      "compare_backends.py": "481a0d01d550a555544cb468f1c3b41692bf18e3938208f925651adece07b379",
+      "tokenizer_config.json": "7bbb77c55282bc679b86d21a1b3953ed8d5d63aaf75f10800c20596eab30b980",
+      "model.safetensors.index.json": "a543f2f8f35cf797bcc875cdb60ffd8dc8d04ecf7ac2524364208f2f864ed640",
+      "1_Pooling/config.json": "6dcf44c2f7e7878ac0ee2e992c8e7d1f6812e12724b00d1d0cb0fa3336f07f0d",
+      "sentence_bert_config.json": "0b1d25d4d13c72c255a7eaaf8921ca481c4cd61ad894e7209c52dc5e1ac3f3bd",
+      "modules.json": "21ddb3037a55ebf4549eb5c1dc44c3f28f10b56ec7f1335c92fd90e5b30d88ac",
+      "config_sentence_transformers.json": "dc2bc223baa9e5eedd8593d1d4230210681001e7dec73ac53d89697df97079ee",
+      "README.md": "118b8dc5399c0bef53f3caee8e3f2bea4cecd99ac1d757e6293560e4461d1912"
+    },
+    "artifact_hash_checks": {
+      "model.safetensors": {
+        "sha256": "73b06890e9d44ac792c98d38cd1d624ad4c45b5e0a4106bae6bef1ae356dd62f",
+        "matches_feasibility_artifacts_json": true,
+        "matches_brief": true
+      },
+      "tokenizer.json": {
+        "sha256": "797410dfb649a5b9ba92bc4fef7dbf4022d00e73de6867c4ac199a8846439421",
+        "matches_feasibility_artifacts_json": true,
+        "matches_brief": true
+      },
+      "tokenizer_config.json": {
+        "sha256": "7bbb77c55282bc679b86d21a1b3953ed8d5d63aaf75f10800c20596eab30b980",
+        "matches_feasibility_artifacts_json": true
+      },
+      "config.json": {
+        "sha256": "b23e43e3b2097f28991a01f9ece734025d42eb7af986c795845a714ea2bfcbab",
+        "matches_feasibility_artifacts_json": true
+      },
+      "nemotron3_embed_mlx.py": {
+        "sha256": "a30a86d8967593736ab9a04999529646bb26d9ef8027b2e4070b77a4c5fcc80c",
+        "matches_feasibility_artifacts_json": true
+      }
+    },
+    "loader_used_unchanged": true,
+    "bridge": {
+      "source_main_rs_sha256": "44843de6ae08ca97a97caf76c4eaa6c3d139244a6e7945531742068dbd348269",
+      "binary_sha256_pre_signing": "bc13ed17752951b88737d06b3f67d032d752f1871575c80a6f32b3921c1dc48d",
+      "app_bundle": "/private/tmp/cf-009-d001/Probe.app",
+      "bundle_id": "org.context-foundry.feasibility.d001scratch",
+      "signature": "ad-hoc",
+      "cdhash": "9eb966d8c3eefe0b19e6cd2df1f3f0338c4db784",
+      "profile": "cargo dev (debug) build, --offline --locked",
+      "entitlements_file": "entitlements.plist",
+      "entitlements_sha256": "b1d41d2aa6921e272a7f97a89c1e7ab34ef70bc2d4c9596603f3f33468c640d9",
+      "nproc_launcher_sha256": "7f4658cb0d197456bfe3e18f2f15e62817ab018bca0083506aba7cb93a9d3e51",
+      "nproc_launcher_source": "copy of repo tools/feasibility/nproc_launcher.rs (sha256 eefca183f4d02c63c57170955c72b709a28997dc2066934c39008f7a29da6376)"
+    }
+  },
+  "isolation": {
+    "launch_chain": "/usr/bin/time -l ./run_env.sh ./nproc-launcher Probe.app/Contents/MacOS/probe <args> (env -i minimal environment -> RLIMIT_NPROC soft=hard=0 set before exec -> ad-hoc signed App Sandbox bundle)",
+    "entitlements": {
+      "com.apple.security.app-sandbox": true,
+      "com.apple.security.temporary-exception.files.absolute-path.read-only": [
+        "/private/tmp/cf-009-d001/venv/",
+        "/private/tmp/cf-009-d001/texts/",
+        "/Users/satishlomte/VSC_DEV/models/Nemotron-3-Embed-1B-BF16-4bit-d0408b94/",
+        "/opt/homebrew/"
+      ],
+      "not_granted": [
+        "network.client",
+        "network.server",
+        "files.user-selected",
+        "inherit",
+        "disable-library-validation",
+        "any read-write path"
+      ],
+      "note": "development-only grants (venv, Homebrew libs, artifact, scratch texts); NOT a distribution entitlement recipe"
+    },
+    "negative_checks_sandbox_plus_nproc0": {
+      "cmd": "deny-checks",
+      "control_granted_artifact_read_ok": true,
+      "control_thread_spawn_ok": true,
+      "fork_denied": true,
+      "fork_ret": -1,
+      "granted_dir_write_denied": true,
+      "granted_dir_write_error": "Operation not permitted (os error 1)",
+      "loopback_listen_denied": true,
+      "outbound_connect_1.1.1.1_denied": true,
+      "outbound_connect_error": "Operation not permitted (os error 1)",
+      "outside_sentinel_read_denied": true,
+      "outside_sentinel_read_error": "Operation not permitted (os error 1)",
+      "outside_sentinel_write_denied": true,
+      "outside_sentinel_write_error": "Operation not permitted (os error 1)",
+      "posix_spawn_error": "Resource temporarily unavailable (os error 35)",
+      "posix_spawn_usr_bin_true_denied": true,
+      "raise_nproc_denied": true,
+      "raise_nproc_errno": 1,
+      "rlimit_nproc_current": 0,
+      "rlimit_nproc_get_ok": true,
+      "rlimit_nproc_maximum": 0
+    },
+    "control_sandbox_only_no_nproc_limit": {
+      "cmd": "deny-checks",
+      "control_granted_artifact_read_ok": true,
+      "control_thread_spawn_ok": true,
+      "fork_denied": false,
+      "fork_ret": 91932,
+      "granted_dir_write_denied": true,
+      "granted_dir_write_error": "Operation not permitted (os error 1)",
+      "loopback_listen_denied": true,
+      "outbound_connect_1.1.1.1_denied": true,
+      "outbound_connect_error": "Operation not permitted (os error 1)",
+      "outside_sentinel_read_denied": true,
+      "outside_sentinel_read_error": "Operation not permitted (os error 1)",
+      "outside_sentinel_write_denied": true,
+      "outside_sentinel_write_error": "Operation not permitted (os error 1)",
+      "posix_spawn_error": "",
+      "posix_spawn_usr_bin_true_denied": false,
+      "raise_nproc_denied": false,
+      "raise_nproc_errno": 0,
+      "rlimit_nproc_current": 2666,
+      "rlimit_nproc_get_ok": true,
+      "rlimit_nproc_maximum": 4000
+    },
+    "outside_sentinel_exists_and_is_readable_outside_sandbox": true,
+    "outside_write_file_created": false,
+    "granted_dir_write_file_created": false,
+    "summary": {
+      "child_spawn_denied": true,
+      "child_spawn_errno_text": "Resource temporarily unavailable (os error 35)",
+      "child_spawn_allowed_in_sandbox_only_control": true,
+      "raising_nproc_limit_denied": true,
+      "network_outbound_denied": true,
+      "loopback_listen_denied": true,
+      "outside_sentinel_read_denied": true,
+      "outside_sentinel_write_denied": true,
+      "write_into_read_only_grant_denied": true,
+      "positive_controls_ok": true
+    },
+    "every_measurement_process_context": {
+      "all_rlimit_nproc_hard_zero": true,
+      "all_outside_sentinel_denied_in_process": true,
+      "all_have_app_sandbox_container_env": true,
+      "env_keys_example": [
+        "PATH",
+        "HOME",
+        "PYTHONPATH",
+        "PYTHONDONTWRITEBYTECODE",
+        "PYTHONUNBUFFERED",
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+        "TOKENIZERS_PARALLELISM",
+        "OMP_NUM_THREADS",
+        "CFFIXED_USER_HOME",
+        "APP_SANDBOX_CONTAINER_ID",
+        "TMPDIR",
+        "__CF_USER_TEXT_ENCODING",
+        "TRANSFORMERS_NO_ADVISORY_WARNINGS"
+      ],
+      "ran_unsandboxed_for_any_measurement": false
+    }
+  },
+  "measurements": {
+    "serving_limit_tokens": 2048,
+    "tokenizer_recipe": {
+      "command": "./run_sandboxed.sh tokenizer_recipe pyrun $M texts/tokenizer_recipe.py $M",
+      "log": "logs/tokenizer_recipe.json",
+      "special_tokens_added_by_tokenizer": 0,
+      "tokenizer_json_post_processor_special_tokens": {},
+      "bos_eos_defined_but_never_inserted": [
+        "<s>",
+        1,
+        "</s>",
+        2
+      ],
+      "prefix_overhead_tokens": {
+        "query": 2,
+        "passage": 3
+      },
+      "how_counted": "tokens = len(tokenizer('<prefix><text>', truncation=False).input_ids) with the artifact tokenizer, i.e. the identical call the loader's encode() makes; the prefix is rendered once by the bridge and the loader is called with input_type omitted"
+    },
+    "a_exactly_2048_encodes": {
+      "command": "./run_sandboxed.sh a_2048 measure $M a texts/a_2048.txt  [x3: a_2048, a_2048_r2, a_2048_r3]",
+      "launch": "/usr/bin/time -l ./run_env.sh ./nproc-launcher Probe.app/Contents/MacOS/probe <args> (env -i minimal environment -> RLIMIT_NPROC soft=hard=0 set before exec -> ad-hoc signed App Sandbox bundle)",
+      "input": "texts/a_2048.txt, passage profile, natural prose, built by `fit` to exactly 2048 tokens including 'passage: ' (fit log: logs/fit.log)",
+      "result": "encoded",
+      "runs": [
+        {
+          "run": "a_2048",
+          "tokens_incl_overhead": 2048,
+          "dim": 2048,
+          "finite": true,
+          "l2_norm": 1.0000000370871531,
+          "model_load_ms": 2332.0,
+          "encode_ms_cold_first_call": 1267.3,
+          "encode_ms_warm_second_call": 981.6,
+          "warm_vector_bitwise_identical": true,
+          "mlx_active_bytes_after_load": 641864264,
+          "mlx_peak_bytes_during_encode": 1422063278,
+          "max_rss_bytes": 505364480,
+          "peak_memory_footprint_bytes": 1696433616,
+          "wall_s": 4.67,
+          "peak_memory_footprint_gib": 1.58,
+          "max_rss_mib": 482.0,
+          "log": [
+            "logs/a_2048.json",
+            "logs/a_2048.err"
+          ]
+        },
+        {
+          "run": "a_2048_r2",
+          "tokens_incl_overhead": 2048,
+          "dim": 2048,
+          "finite": true,
+          "l2_norm": 1.0000000370871531,
+          "model_load_ms": 3673.3,
+          "encode_ms_cold_first_call": 1371.6,
+          "encode_ms_warm_second_call": 1510.8,
+          "warm_vector_bitwise_identical": true,
+          "mlx_active_bytes_after_load": 641864264,
+          "mlx_peak_bytes_during_encode": 1422063278,
+          "max_rss_bytes": 406421504,
+          "peak_memory_footprint_bytes": 1732331392,
+          "wall_s": 6.65,
+          "peak_memory_footprint_gib": 1.613,
+          "max_rss_mib": 387.6,
+          "log": [
+            "logs/a_2048_r2.json",
+            "logs/a_2048_r2.err"
+          ]
+        },
+        {
+          "run": "a_2048_r3",
+          "tokens_incl_overhead": 2048,
+          "dim": 2048,
+          "finite": true,
+          "l2_norm": 1.0000000370871531,
+          "model_load_ms": 3004.6,
+          "encode_ms_cold_first_call": 1720.9,
+          "encode_ms_warm_second_call": 1702.6,
+          "warm_vector_bitwise_identical": true,
+          "mlx_active_bytes_after_load": 641864264,
+          "mlx_peak_bytes_during_encode": 1422063278,
+          "max_rss_bytes": 617938944,
+          "peak_memory_footprint_bytes": 1687963088,
+          "wall_s": 6.56,
+          "peak_memory_footprint_gib": 1.572,
+          "max_rss_mib": 589.3,
+          "log": [
+            "logs/a_2048_r3.json",
+            "logs/a_2048_r3.err"
+          ]
+        }
+      ],
+      "summary": {
+        "dim": 2048,
+        "all_finite": true,
+        "l2_norm_min": 1.0000000370871531,
+        "l2_norm_max": 1.0000000370871531,
+        "encode_ms_cold_range": [
+          1267.3,
+          1720.9
+        ],
+        "encode_ms_warm_range": [
+          981.6,
+          1702.6
+        ],
+        "peak_memory_footprint_bytes_range": [
+          1687963088,
+          1732331392
+        ],
+        "max_rss_bytes_range": [
+          406421504,
+          617938944
+        ],
+        "mlx_peak_bytes_during_encode": 1422063278,
+        "mlx_weights_active_bytes": 641864264,
+        "short_input_footprint_baseline_bytes": {
+          "c_query_batch1": 1055327696,
+          "f_selfcheck": 1032865208
+        },
+        "encode_2048_added_footprint_bytes_vs_short_baseline": 641105920,
+        "note": "peak footprint includes model load; the short-query runs (c, f) are the baseline for load plus tiny inputs; max RSS varies run to run and under-reports unified/GPU memory, so use footprint and the MLX allocator peak"
+      }
+    },
+    "b_2049_refused_before_encode": {
+      "command": "./run_sandboxed.sh b_2049 measure $M b texts/b_2049.txt ; ./run_sandboxed.sh tokens_<name> tokens $M <profile> \"$(cat texts/<name>.txt)\"",
+      "input": "texts/b_2049.txt (passage, exactly 2049 tokens incl. 'passage: ')",
+      "bridge_refusal": {
+        "refused_before_encode": true,
+        "tokens": 2049,
+        "limit": 2048,
+        "decision_time_ms": 2.5,
+        "mlx_peak_bytes_since_reset_just_before_check": 0,
+        "meaning_of_mlx_peak_0": "no MLX allocation occurred between the reset and the end of the check, so the loader's encode() was never invoked",
+        "code": "bridge/src/main.rs serve_embed(): count_tokens() then `if tokens > limit { return Refused }` before module.encode"
+      },
+      "tokenizer_only_decisions_no_weights_loaded": {
+        "a_2048": {
+          "tokens": 2048,
+          "decision": "accept",
+          "model_loaded": false,
+          "profile": "passage"
+        },
+        "b_2049": {
+          "tokens": 2049,
+          "decision": "refuse_before_encode",
+          "model_loaded": false,
+          "profile": "passage"
+        },
+        "q_2048": {
+          "tokens": 2048,
+          "decision": "accept",
+          "model_loaded": false,
+          "profile": "query"
+        },
+        "q_2049": {
+          "tokens": 2049,
+          "decision": "refuse_before_encode",
+          "model_loaded": false,
+          "profile": "query"
+        }
+      },
+      "loader_evidence_only_not_a_serving_path": {
+        "phase_loader_max_length_4096": {
+          "dim": 2048,
+          "encode_ms": 1228.612083,
+          "finite": true,
+          "l2_norm": 0.99999999989359,
+          "loader_call_returned_without_error": true,
+          "loader_max_length": 4096,
+          "mlx_mem": {
+            "mlx_active_bytes": 641867784,
+            "mlx_cache_bytes": 8192,
+            "mlx_peak_bytes": 1423259318
+          },
+          "tokens_kept_by_loader_tokenizer": 2049,
+          "tokens_pre": 2049,
+          "truncated": false
+        },
+        "phase_loader_max_length_2048": {
+          "dim": 2048,
+          "encode_ms": 955.612292,
+          "finite": true,
+          "l2_norm": 1.0000000370871531,
+          "loader_call_returned_without_error": true,
+          "loader_max_length": 2048,
+          "mlx_mem": {
+            "mlx_active_bytes": 641867784,
+            "mlx_cache_bytes": 8192,
+            "mlx_peak_bytes": 1422057618
+          },
+          "tokens_dropped": 1,
+          "tokens_kept_by_loader_tokenizer": 2048,
+          "tokens_pre": 2049,
+          "truncated": true
+        },
+        "cosine_between_the_two_vectors": 0.9999806799224878,
+        "stderr_lines_between_PHASE_b3_and_PHASE_b-end": [
+          "PHASE b3: loader encode max_length=2048"
+        ],
+        "conclusion": "With max_length raised to 4096 the loader encodes all 2049 tokens (no truncation). With max_length=2048 it silently drops the last token (kept 2048 of 2049), raises nothing and prints nothing, and returns a valid unit-norm 2048-d vector that differs from the full-input vector (cosine 0.999981). The loader's own truncation is therefore not a usable limit signal; the Foundry-side count-and-refuse check is required."
+      },
+      "process": {
+        "max_rss_bytes": 647397376,
+        "peak_memory_footprint_bytes": 1686799848,
+        "wall_s": 5.05,
+        "log": [
+          "logs/b_2049.json",
+          "logs/b_2049.err"
+        ]
+      }
+    },
+    "c_query_batch1_warm_latency": {
+      "command": "./run_sandboxed.sh c_query_batch1 measure $M c",
+      "n": 5,
+      "batch_size": 1,
+      "median_total_ms": 59.3,
+      "max_total_ms": 110.4,
+      "per_query_total_ms": [
+        13.3,
+        15.0,
+        59.3,
+        83.5,
+        110.4
+      ],
+      "per_query_tokens_incl_prefix": [
+        10,
+        12,
+        12,
+        11,
+        13
+      ],
+      "warmup_call_ms_not_counted": 142.9,
+      "model_load_ms": 2693.3,
+      "what_total_ms_includes": "token count + refusal check + loader encode (batch 1, max_length 2048) + tolist, one process, after one warm-up call",
+      "against_1500ms_ceiling": "0 of 5 queries over 1500 ms in this run (max 110.4 ms); n=5, not a throughput claim",
+      "process": {
+        "max_rss_bytes": 559120384,
+        "peak_memory_footprint_bytes": 1055327696,
+        "wall_s": 3.19,
+        "log": [
+          "logs/c_query_batch1.json",
+          "logs/c_query_batch1.err"
+        ]
+      }
+    },
+    "d_document_batch_of_8_near_1024": {
+      "command": "./run_sandboxed.sh d_batch8_1024 measure $M d texts",
+      "batch_size": 8,
+      "token_counts_incl_prefix": [
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024
+      ],
+      "all_dims": [
+        2048
+      ],
+      "all_finite": true,
+      "l2_norms": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "runs": [
+        {
+          "kind": "cold",
+          "batch_encode_ms": 4649.5,
+          "mlx_peak_bytes_since_post_load_reset": 1531146584
+        },
+        {
+          "kind": "warm",
+          "batch_encode_ms": 3650.1,
+          "mlx_peak_bytes_since_post_load_reset": 1531146584
+        }
+      ],
+      "docs_per_s_warm": 2.19,
+      "process": {
+        "max_rss_bytes": 426901504,
+        "peak_memory_footprint_bytes": 1955612064,
+        "wall_s": 11.27,
+        "peak_memory_footprint_gib": 1.821,
+        "log": [
+          "logs/d_batch8_1024.json",
+          "logs/d_batch8_1024.err"
+        ]
+      },
+      "note": "8 passages of exactly 1024 tokens (equal length, so no padding waste); the first call is cold, the second warm. Not a preparation-throughput claim."
+    },
+    "e_apply_yarn_scaling_warning": {
+      "command": "./run_sandboxed.sh e_rope_analysis pyrun $M texts/e_rope_analysis.py $M texts ; warning also in every logs/*.err",
+      "warning_text": "[transformers] Unrecognized keys in `rope_parameters` for 'rope_type'='yarn': {'apply_yarn_scaling'}",
+      "reproduced": true,
+      "emitted_when": "AutoTokenizer.from_pretrained(artifact_dir) loads the config (every run, including tokenizer-only runs); not emitted by the model code",
+      "source": {
+        "config_key": "config.json:29 rope_parameters.apply_yarn_scaling = false (artifact; sha256 b23e43e3b2097f28991a01f9ece734025d42eb7af986c795845a714ea2bfcbab)",
+        "warning_site": "venv/lib/python3.12/site-packages/transformers/modeling_rope_utils.py:1118 (logger.warning in _check_received_keys, defined 1091-1118)",
+        "why_unrecognized": "modeling_rope_utils.py:931-941 _validate_yarn_rope_parameters lists required {rope_type, factor, original_max_position_embeddings} and optional {rope_theta, attention_factor, beta_fast, beta_slow, mscale, mscale_all_dim, truncate}; apply_yarn_scaling is in neither set",
+        "also_printed": "[transformers] PyTorch was not found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.  (no torch installed; expected)"
+      },
+      "mlx_behaviour": {
+        "rope_builder": "venv/lib/python3.12/site-packages/mlx_lm/models/rope_utils.py:235-281 initialize_rope(); rope_type 'yarn' -> YarnRoPE (class at :128). Called from mlx_lm/models/ministral3.py Attention.__init__ (the loader's NemotronEmbedModel reuses TransformerBlock).",
+        "keys_read_by_mlx": "rope_utils.py:263-273 reads factor + [original_max_position_embeddings, beta_fast, beta_slow, mscale, mscale_all_dim]; apply_yarn_scaling is never read",
+        "measured_class": "YarnRoPE",
+        "measured_yarn_mscale": 1.0,
+        "apply_yarn_scaling_is_ignored_by_mlx": true,
+        "mlx_applies_yarn_frequency_interpolation": true,
+        "frequency_pairs_of_64": {
+          "unchanged": 21,
+          "fully_interpolated_x16": 27,
+          "partially": 16
+        },
+        "yarn_attention_mscale": "mscale/mscale_all_dim = 1.0/1.0 -> YarnRoPE.mscale = 1.0, so no q/k magnitude change",
+        "llama_4_attention_scale_by_length": {
+          "2048": {
+            "min": 1.0,
+            "max": 1.0
+          },
+          "2049": {
+            "min": 1.0,
+            "max": 1.0
+          },
+          "16384": {
+            "min": 1.0,
+            "max": 1.0
+          },
+          "16385": {
+            "min": 1.0,
+            "max": 1.06931471824646
+          }
+        }
+      },
+      "meaning_for_inputs_at_or_below_2048_tokens": [
+        "The warning is about a key that is simply not part of the YaRN schema; it is not a failure and MLX never consults it.",
+        "MLX applies YaRN (factor 16, original 16384) to all positions: 27 of 64 rotary frequency pairs are slowed by 16x and 16 partially, at every sequence length including <=2048; the yarn magnitude scale is 1.0.",
+        "llama_4 position scaling 1 + 0.1*ln(1+floor(pos/16384)) is exactly 1.0 for every position below 16384, so it is a no-op at <=2048 and also at 2049.",
+        "Whether the upstream model wants YaRN applied (apply_yarn_scaling=false could mean 'disabled' in NeMo) is NOT resolved offline. Sensitivity: swapping YaRN for plain RoPE (same unchanged loader, only the rope constructor swapped) moves the vector by cosine 1.0000 (10 tok), 0.9996 (330 tok), 0.9986 (1024 tok), 0.9971 (2048 tok).",
+        "That is a small but non-zero length-dependent shift; the torch/sentence-transformers reference (needs authorization) is what would settle which side matches upstream. No quality claim."
+      ],
+      "sensitivity": [
+        {
+          "case": "query_short",
+          "tokens": 10,
+          "cosine_yarn_vs_plain_rope": 0.9999818801879883
+        },
+        {
+          "case": "passage_~256",
+          "tokens": 330,
+          "cosine_yarn_vs_plain_rope": 0.999555230140686
+        },
+        {
+          "case": "passage_1024",
+          "tokens": 1024,
+          "cosine_yarn_vs_plain_rope": 0.9986352920532227
+        },
+        {
+          "case": "passage_2048",
+          "tokens": 2048,
+          "cosine_yarn_vs_plain_rope": 0.9971439838409424
+        }
+      ],
+      "process": {
+        "max_rss_bytes": 1170210816,
+        "peak_memory_footprint_bytes": 2100643496,
+        "wall_s": 7.32,
+        "log": [
+          "logs/e_rope_analysis.json",
+          "logs/e_rope_analysis.err"
+        ]
+      }
+    },
+    "f_reference_and_self_consistency": {
+      "reference_vectors_shipped_in_artifact": false,
+      "artifact_files_checked": "ls of the artifact dir: no .npy/.npz/.pt/reference vectors; only compare_backends.py and benchmark_mteb.py",
+      "compare_backends_py": {
+        "command": "./run_sandboxed.sh f2_compare_backends_mlx_this_repo pyrun $M $M/compare_backends.py 200 mlx-this-repo   (cwd set to the artifact dir by pyrun; script run unchanged via runpy)",
+        "sha256": "481a0d01d550a555544cb468f1c3b41692bf18e3938208f925651adece07b379",
+        "log": [
+          "logs/f2_compare_backends_mlx_this_repo.json",
+          "logs/f2_compare_backends_mlx_this_repo.err"
+        ],
+        "output_line": "mlx-this-repo    21.1s    9.47 docs/s  peak_rss=    392MB",
+        "elapsed_s": 21.1,
+        "docs_per_s": 9.47,
+        "peak_rss_mb_reported_by_script": 392,
+        "process": {
+          "max_rss_bytes": 391741440,
+          "peak_memory_footprint_bytes": 1784808912,
+          "wall_s": 24.73
+        },
+        "what_it_proves": "the unchanged publisher script runs without new installs for its mlx-this-repo row (200 synthetic docs, avg 1193 chars, batch 8, loader default max_length 4096)",
+        "what_it_cannot_do_here": "cosine agreement ('cos_vs_torch') is printed only when the torch-mps row ran first; that row imports torch + sentence_transformers and loads MODEL_ID from the Hub"
+      },
+      "reference_comparison": "NOT EXECUTED - needs authorization: torch, sentence-transformers (and their dependencies) in the venv, plus a download of the upstream nvidia/Nemotron-3-Embed-1B-BF16 weights (compare_backends.py loads MODEL_ID from the Hub; README lists 2.28 GB). The mlx-upstream-bf16 row would download the same repo through the loader's snapshot_download. No network access was used.",
+      "self_consistency_evidence_only": {
+        "command": "./run_sandboxed.sh f_selfcheck measure $M f",
+        "identical_text_twice": {
+          "bitwise_identical": true,
+          "max_abs_diff": 0.0
+        },
+        "query_vs_passage_same_text": {
+          "cosine": 0.8173237036521954,
+          "differ": true
+        },
+        "three_pairs_each_query_vs_6_passages_own_rank": [
+          {
+            "query": "Where does the parser read configuration records during enrollment?",
+            "own_rank": 1,
+            "own_cosine": 0.6972,
+            "top_cosine": 0.6972
+          },
+          {
+            "query": "How are unchanged documents avoided after a restart?",
+            "own_rank": 1,
+            "own_cosine": 0.5966,
+            "top_cosine": 0.5966
+          },
+          {
+            "query": "What happens to an input longer than the serving limit?",
+            "own_rank": 1,
+            "own_cosine": 0.6978,
+            "top_cosine": 0.6978
+          }
+        ],
+        "all_own_passage_rank_1": true,
+        "caveat": "3 hand-made pairs against 6 candidates (3 own + 3 distractors); proves no quality claim",
+        "process": {
+          "max_rss_bytes": 879460352,
+          "peak_memory_footprint_bytes": 1032865208,
+          "wall_s": 4.56,
+          "log": [
+            "logs/f_selfcheck.json",
+            "logs/f_selfcheck.err"
+          ]
+        }
+      }
+    },
+    "g_admission": {
+      "command": "./run_sandboxed.sh g_admission measure $M g texts/a_2048.txt ; g_admission_r2 (repeat)",
+      "design": "worker threads call the unchanged loader through PyO3. A = long 2048-token encode, abandoned 100 ms after it starts (the client 'times out' and stops waiting; there is no cancel API). B = a short query arriving right after. Scenario 1 adds nothing; scenario 2 holds an atomic busy slot in the worker thread itself until the encode returns.",
+      "run_1": {
+        "solo_long_2048_encode_ms": 1137.4,
+        "solo_short_query_ms": 34.6,
+        "unguarded": {
+          "a_kept_running_after_client_timeout_ms": 887.3,
+          "b_done_before_a_done": true,
+          "b_entered_python_before_a_done": true,
+          "b_outcome": "ran",
+          "b_total_ms_from_request": 720.7,
+          "guarded": false,
+          "timeline_ms": [
+            [
+              "a_requested",
+              0.6
+            ],
+            [
+              "a_entered_python",
+              0.6
+            ],
+            [
+              "client_timeout_abandons_a",
+              112.2
+            ],
+            [
+              "b_requested",
+              112.2
+            ],
+            [
+              "b_entered_python",
+              112.3
+            ],
+            [
+              "b_done",
+              832.9
+            ],
+            [
+              "a_encode_done",
+              999.4
+            ],
+            [
+              "all_done",
+              1001.5
+            ]
+          ]
+        },
+        "worker_held_slot": {
+          "a_kept_running_after_client_timeout_ms": 847.8,
+          "b_done_before_a_done": null,
+          "b_entered_python_before_a_done": null,
+          "b_outcome": "refused_busy_before_any_work",
+          "b_total_ms_from_request": null,
+          "guarded": true,
+          "timeline_ms": [
+            [
+              "a_requested",
+              0.1
+            ],
+            [
+              "a_entered_python",
+              0.1
+            ],
+            [
+              "client_timeout_abandons_a",
+              111.0
+            ],
+            [
+              "b_requested",
+              111.0
+            ],
+            [
+              "b_refused_busy_before_enqueue",
+              111.0
+            ],
+            [
+              "a_encode_done",
+              958.8
+            ],
+            [
+              "all_done",
+              960.4
+            ]
+          ]
+        }
+      },
+      "run_2": {
+        "solo_long_2048_encode_ms": 1401.2,
+        "solo_short_query_ms": 102.6,
+        "unguarded": {
+          "a_kept_running_after_client_timeout_ms": 1589.2,
+          "b_done_before_a_done": true,
+          "b_entered_python_before_a_done": true,
+          "b_outcome": "ran",
+          "b_total_ms_from_request": 1552.2,
+          "guarded": false,
+          "timeline_ms": [
+            [
+              "a_requested",
+              0.5
+            ],
+            [
+              "a_entered_python",
+              0.5
+            ],
+            [
+              "client_timeout_abandons_a",
+              112.0
+            ],
+            [
+              "b_requested",
+              112.0
+            ],
+            [
+              "b_entered_python",
+              112.1
+            ],
+            [
+              "b_done",
+              1664.2
+            ],
+            [
+              "a_encode_done",
+              1701.2
+            ],
+            [
+              "all_done",
+              1701.5
+            ]
+          ]
+        },
+        "worker_held_slot": {
+          "a_kept_running_after_client_timeout_ms": 1418.2,
+          "b_done_before_a_done": null,
+          "b_entered_python_before_a_done": null,
+          "b_outcome": "refused_busy_before_any_work",
+          "b_total_ms_from_request": null,
+          "guarded": true,
+          "timeline_ms": [
+            [
+              "a_requested",
+              0.0
+            ],
+            [
+              "a_entered_python",
+              0.0
+            ],
+            [
+              "client_timeout_abandons_a",
+              110.8
+            ],
+            [
+              "b_requested",
+              110.8
+            ],
+            [
+              "b_refused_busy_before_enqueue",
+              110.8
+            ],
+            [
+              "a_encode_done",
+              1529.0
+            ],
+            [
+              "all_done",
+              1531.5
+            ]
+          ]
+        }
+      },
+      "findings": [
+        "Timed-out call keeps running: A finished 887 / 1589 ms after the simulated client timeout (run 1 / run 2); nothing cancels it.",
+        "Calls are not serialized: B entered Python 0.1 ms after it was requested while A was still executing, and both ran (A and B finished 167 / 37 ms apart in runs 1 / 2, B first). B completed 721 / 1552 ms after its request vs 35 / 103 ms solo, so its latency was set by A's remaining work on the shared GPU queue; against the 1500 ms query ceiling that is over it in 1 of 2 runs (721 ms / 1552 ms). [inference] A does not hold the GIL for its whole call (MLX evaluation releases it).",
+        "Neither the loader nor PyO3 exposes a queue limit, busy refusal or cancellation. One active request with no queue therefore has to be enforced by worker-owned state: scenario 2's worker-held slot refused B at 0 ms before any work and stayed held until A truly finished (848 / 1418 ms after the client gave up).",
+        "A client-side semaphore alone would have released at the timeout while A kept executing for another 887 / 1589 ms (runs 1 / 2). Stopping abandoned work needs process termination, which this scratch run did not exercise."
+      ],
+      "scope": "evidence for the later supervisor; the atomic slot is scratch bridge code, not a product mechanism",
+      "process": {
+        "run_1": {
+          "max_rss_bytes": 501432320,
+          "peak_memory_footprint_bytes": 1761428944,
+          "wall_s": 7.75,
+          "log": [
+            "logs/g_admission.json",
+            "logs/g_admission.err"
+          ]
+        },
+        "run_2": {
+          "max_rss_bytes": 492175360,
+          "peak_memory_footprint_bytes": 1699792384,
+          "wall_s": 8.08,
+          "log": [
+            "logs/g_admission_r2.json",
+            "logs/g_admission_r2.err"
+          ]
+        }
+      }
+    },
+    "missing_artifact": {
+      "command": "./run_sandboxed.sh missing_check missing-check $M texts/probe_missing texts/probe_absent",
+      "log": "logs/missing_check.json",
+      "foundry_guard_missing_model_safetensors": "artifact file missing: /private/tmp/cf-009-d001/texts/probe_missing/model.safetensors",
+      "foundry_guard_absent_dir": "artifact directory missing: /private/tmp/cf-009-d001/texts/probe_absent",
+      "loader_called_directly_probe_dir": "RuntimeError: [load_safetensors] Failed to open file /private/tmp/cf-009-d001/texts/probe_missing/model.safetensors",
+      "loader_called_directly_absent_dir": "HFValidationError: Repo id must be in the form 'repo_name' or 'namespace/repo_name': '/private/tmp/cf-009-d001/texts/probe_absent'. Use `repo_type` argument if needed.",
+      "note": "the loader's load() sends any non-directory path to huggingface_hub.snapshot_download; the bridge guard (require_artifact) fails by file name before that branch. HF_HUB_OFFLINE=1 and the sandbox's missing network entitlement apply in addition."
+    }
+  },
+  "run_to_run_variance_other_runs": {
+    "logs_prev_final": {
+      "c_median_ms": 47.1,
+      "c_max_ms": 123.1,
+      "d_cold_ms": 4301.6,
+      "d_warm_ms": 3564.3,
+      "f2_docs_per_s": 10.11,
+      "a_cold_ms": 1115.8,
+      "a_warm_ms": 1216.7,
+      "b_loader_max4096_encode_ms": 1386.1,
+      "b_loader_max2048_encode_ms": 1198.8,
+      "g_admission_b_total_ms_unguarded": 1436.5,
+      "g_admission_r2_b_total_ms_unguarded": 1481.4
+    },
+    "logs_prelim": {
+      "c_median_ms": 104.6,
+      "c_max_ms": 152.5,
+      "d_cold_ms": 5858.6,
+      "d_warm_ms": 4164.3,
+      "f2_docs_per_s": 7.48,
+      "a_cold_ms": 1690.3,
+      "a_warm_ms": 1603.0,
+      "b_loader_max4096_encode_ms": 2160.9,
+      "b_loader_max2048_encode_ms": 1712.2,
+      "g_admission_b_total_ms_unguarded": 1345.9,
+      "g_admission_r2_b_total_ms_unguarded": 1694.2
+    },
+    "note": "logs_prev_final = earlier complete suite run on the identical source minus the artifact guard/missing-check/tokenizer-recipe additions; logs_prelim = first pass with earlier binaries (some fields absent). The very first 2048-token run in a fresh process cache measured 3637.7 ms cold / 1758.8 ms warm (max RSS 579010560, footprint 1732527568) but its log file was overwritten and is NOT retained evidence."
+  },
+  "model_execution_budget": {
+    "sum_of_wall_clock_seconds_of_model_touching_processes_all_retained_runs": 288.2,
+    "process_count": 36,
+    "limit_s": 600,
+    "note": "wall clock of /usr/bin/time -l for every retained model-loading process (final suite + previous suite + preliminary pass); includes model load; excludes pip, build, tokenizer-only text generation and the non-model deny/token checks"
+  },
+  "pass_fail": {
+    "a_2048_encodes": true,
+    "b_2049_refused_before_encode": true,
+    "2048_accepted_both_profiles_by_precheck": true,
+    "peak_memory_recorded": true,
+    "identities_recorded": true,
+    "isolation_negative_checks_pass": true,
+    "sandboxed_for_all_measurements": true
+  },
+  "not_executed": [
+    "Reference-vector comparison against upstream (torch-mps / sentence-transformers) - needs authorization (see needs_authorization).",
+    "Retrieval quality of any kind (self-consistency checks are not quality evidence).",
+    "Inputs above 2049 tokens in any way other than the 2049 loader evidence; no 32768-token or memory-ceiling probing.",
+    "Process-kill / owner-death cleanup and timeout enforcement (only the abandoned-call behaviour was observed).",
+    "Aggregate resource ceiling with a second resident model; no GPU/Metal quota claim from RSS.",
+    "Distribution entitlement recipe, notarization, private pinned libraries (current grants are development-only and broad).",
+    "DNS, UDP, non-loopback inbound and brokered-OS-service denial (only TCP connect to 1.1.1.1:80 and loopback bind were probed).",
+    "Pure-Rust tokenization: token counts come from the artifact tokenizer.json through the transformers tokenizer inside the PyO3 interpreter, not a Rust `tokenizers` crate path.",
+    "Release/optimized (--release) bridge build; the bridge is a cargo dev build."
+  ],
+  "needs_authorization": [
+    {
+      "item": "reference comparison",
+      "packages": [
+        "torch",
+        "sentence-transformers (+ transitive deps)"
+      ],
+      "downloads": [
+        "nvidia/Nemotron-3-Embed-1B-BF16 upstream weights (README: 2.28 GB) at a pinned revision"
+      ],
+      "why": "compare_backends.py prints cos_vs_torch only after its torch-mps row; also settles whether apply_yarn_scaling=false means YaRN should be disabled"
+    }
+  ],
+  "deviations_and_caveats": [
+    "transformers resolved to 5.18.0 (feasibility record: 5.17.0); the brief pinned only mlx and mlx-lm. pip freeze hash is recorded.",
+    "Every measurement ran inside the signed sandbox bundle with RLIMIT_NPROC=0; the unsandboxed fallback was never needed or used.",
+    "run_env.sh gained PYTHONUNBUFFERED=1 after the first publisher-script attempt lost its Python-side prints at exit (embedded interpreter is not finalized); all retained final logs were produced with it.",
+    "pyrun sets cwd to the artifact directory before running compare_backends.py because the sandboxed app does not inherit the launch cwd and the script loads the model as '.'. The script itself is unmodified.",
+    "A first (a) run's log was overwritten and is excluded (see run_to_run_variance_other_runs.note).",
+    "macOS created a sandbox container ~/Library/Containers/org.context-foundry.feasibility.d001scratch when the bundle first ran (outside scratch). Its symlinks and empty directories were deleted at the end, but macOS refused to remove the system-protected `.com.apple.containermanagerd.metadata.plist` (Operation not permitted), so an empty OS-managed stub for that bundle id remains, like the five older org.context-foundry.feasibility.* containers from the earlier feasibility probes. It holds no data.",
+    "Incidental tool-cache writes outside scratch, not cleaned: pip's default HTTP cache (~/Library/Caches/pip, from the authorized pip install) and cargo's last-use tracking (~/.cargo/.global-cache). Cargo ran --offline from the existing registry; no crate was downloaded or newly unpacked (pyo3-0.29.2 and parking_lot sources predate this run).",
+    "Two read-only git status invocations were run by mistake against the repo and its models parent (the latter is not a repository); no git write operation, no repository edit.",
+    "Texts are natural prose from spec 009 itself fitted to exact token counts; content affects vectors but not the memory/latency measurements materially."
+  ],
+  "reproduce": "cd /private/tmp/cf-009-d001 && ./make_app.sh && ./run_all.sh && ./venv/bin/python build_report.py   (builds offline; texts/*.txt come from the `fit` commands in logs/fit.log)"
+}

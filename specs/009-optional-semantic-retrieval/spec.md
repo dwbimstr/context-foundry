@@ -176,6 +176,32 @@ for background preparation; do not silently add a retry/job service.
 A run over ten minutes needs its decision, budget and stop rule first. Missing local
 artifacts/runtime leave D001 incomplete. This is not a baseline-release prerequisite.
 
+**Executed 2026-10-04**
+([evidence](../../docs/review/009-d001-2026-10-04.md),
+[build checks](../../docs/review/prerequisites-2026-10-04.md)). Every model call ran
+through a Rust PyO3 0.29.2 bridge in an ad-hoc-signed App Sandbox bundle with a hard
+`RLIMIT_NPROC=0` set before exec. In that profile, fork/spawn, outbound TCP, loopback
+listen and outside reads/writes were denied.
+
+- **Runtime and artifact.** Runtime: MLX 0.32.3, mlx-lm 0.31.3, transformers 5.18.0 (the
+  dependency closure, not a pin). Artifact `d0408b94…` with its hashes verified.
+- **Serving limit.** A 2048-token input (prefix included) encodes: 2048-d, finite,
+  norm 1, peak footprint about 1.6 GiB. A 2049-token input is refused by the bridge
+  before encode. Run alone at `max_length` 2048, the loader silently drops the extra
+  token, so the Foundry-side count-and-refuse is required.
+- **Token overhead.** The tokenizer adds no special tokens, so overhead is the prefix
+  only: 2 tokens for `query: `, 3 for `passage: `.
+- **YaRN.** MLX applies YaRN whatever the `apply_yarn_scaling: false` config key says.
+  Against plain RoPE, cosine is 0.99714 at 2048 tokens.
+- **Admission.** An abandoned call keeps executing and concurrent calls are not
+  serialized. Only a worker-held slot, released when the work truly ends, bounds it.
+
+Still open:
+- the upstream reference-vector comparison, which needs torch and sentence-transformers
+  installs (the BF16 checkpoint is already local at revision `a5e0f804…`);
+- process-kill and owner-death cleanup;
+- package acceptance, which needs signing/notarization.
+
 ## Identity and reusable work
 
 The embedding profile owns model/weights revision and quantization, tokenizer and
