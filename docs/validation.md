@@ -1,5 +1,40 @@
 # Validation
 
+## v0.1.0 local release — 2026-10-04
+
+Owner decision 2026-10-04: a local tag `v0.1.0` and a macOS arm64 artifact; nothing is
+published or pushed. Checklist (`docs/release.md`):
+
+1. **Scope and evidence:** 001 T001–T006 (with the T005 leading-run amendment), 003
+   T001–T003 and T005, 007 T001; acceptance evidence and limitations are the sections
+   below. Advertised integrations were exercised with their real consumers: OMP 18.6.0
+   and Codex 0.159.2 ran against this release binary in the 2026-10-04 runbook.
+2. **Checks:** the integrated gates (fmt, clippy `-D warnings`, 258 passing Rust tests
+   plus 16 custom-harness recovery scenarios with one payload report ignored, Rust 1.90
+   check and clippy) ran on build inputs identical to the tag's `src/`, `tests/`,
+   `Cargo.toml` and `Cargo.lock`. Install smoke:
+   `cargo install --path . --locked` into a scratch root, then 18 README steps on fresh
+   stores (missing store, index, search, context, status, graph import and traversal,
+   retrieve, re-index, bootstrap inspect/apply, connect for OMP and Codex, usage help)
+   all exited as documented; the installed binary equals the release binary.
+3. **Compatibility and data:** stores are schema 2 (`upgrade-store --to 2` from v1);
+   search schema `"3"` makes older indexes report `repair_required` until
+   `repair-index`, preserving source, revisions and feedback. No automatic migration or
+   downgrade; rollback is restoring a store copy and the previous binary. Removing the
+   binary never deletes stores.
+4. **Contents and licenses:** 154 tracked files, no credential or private data patterns
+   (the four private-key-marker matches are deny-rule string literals at
+   `src/ingest.rs:489–490` and `tests/fixtures/.economics/src/ingest.rs:489–490`). The
+   artifact carries `LICENSE` (MIT)
+   and `THIRD-PARTY/` with the license/notice files of the 287 runtime dependency
+   packages; 20 crate packages ship no license file, so a supplied notice records each
+   declared license with canonical texts. The binary links only system libraries and
+   contains no fault-hook strings.
+5. **Artifact:** `context-foundry-v0.1.0-macos-arm64.tar.gz` (binary, README, LICENSE,
+   release notes, THIRD-PARTY) and `context-foundry-v0.1.0-source.tar.gz` (`git archive`
+   of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
+   only.
+
 ## Token-economics remainder — 003 T005 and 007 T001, 2026-10-04
 
 Locally implemented and verified; committed on main as `bd1d890` (001 T005 amendment),

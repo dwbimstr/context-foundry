@@ -28,6 +28,8 @@ private credential boundary, input/output admission, unknown-usage handling and 
 host-config restoration on opt-out. Missing integration proof blocks that gateway
 claim, not CLI/MCP. Gateway credentials never enter packaged data or worker grants.
 
-The current repository has no published release. Rust checks from the initial slice
-are documented in [validation](validation.md); planned features remain unimplemented.
+The current repository has no published release. `v0.1.0` is a local tag with a
+macOS arm64 artifact (owner decision 2026-10-04; not published or pushed); its
+checklist evidence is the first section of [validation](validation.md). Planned
+features beyond its scope remain unimplemented.
 The CLI can ship before MCP; MCP before compiler-backed graphs; each before learning.

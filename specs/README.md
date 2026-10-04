@@ -92,7 +92,7 @@ is implied by writing a task, and a missing one fails by name in its spec.
 | [005 T001/T003](005-graph-evidence-lifecycle/spec.md) | A permitted jailed rust-analyzer run (it executes build scripts and proc macros); the scale corpus and numeric profile for T003 | Open |
 | [009 D001/T001](009-optional-semantic-retrieval/spec.md) | Authorization to run the pinned local weights; a USearch C++ build on the Rust 1.90 floor; isolation and package acceptance | Open |
 | [013 D001/T002–T004](013-owned-learning/spec.md) | Approved labeled rows; the LibTorch package; signing/notarization; an aggregate residency run with 009 | Open |
-| [Release](../docs/release.md) | A release destination | Open |
+| [Release](../docs/release.md) | A release destination | Local tag `v0.1.0` and macOS arm64 artifact chosen 2026-10-04; a publication destination remains open |
 
 ## What was subtracted
 
