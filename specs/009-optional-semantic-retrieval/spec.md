@@ -506,6 +506,148 @@ T003's, each passing only with that task's verification.
   one source and reject its old mapping/count eligibility without retokenizing others.
 - **Review/cutover:** verify identity, source eligibility and repair preservation.
   Disabling semantics leaves baseline/source state intact. No predecessor-cache import.
+- **Implementation decisions (captain, 2026-10-04; amended after a GPT-6 Astra refutation
+  the same day, which found the architecture sound but the identity, admission,
+  isolation and owner-death wording insufficient).**
+  - *Tokenizer boundary.* Foundry tokenizes in Rust with `tokenizers` =0.23.2 (`onig`,
+    no default features), loading the artifact's `tokenizer.json`. On 34 inputs (the
+    D001 texts plus Unicode, CRLF and the 2048/2049-token cases) its IDs equal the
+    publisher stack's: Python `tokenizers` 0.23.2 under transformers 5.18.0. Foundry
+    alone applies the prefix, counts exact model input, partitions and refuses. The
+    worker receives token IDs, never text. It loads through the unchanged publisher
+    `load` and calls the unchanged `NemotronEmbedModel.__call__`; the first-party adapter
+    only builds the input-ID and attention-mask arrays (right padding, pad ID 11, the
+    dtypes `encode` produces), forces evaluation, copies the float32 output and clears
+    the MLX cache. Pooling and normalization happen only inside the publisher model. The
+    loader's `encode` is not called because it truncates silently.
+  - *Parity before corpus preparation.* With tolerances declared before running
+    (cosine ≥ 0.9999 and max absolute difference ≤ 1e-3 per vector), compare the
+    direct-ID path with publisher `encode(input_type=None)` on identical rendered
+    inputs: batch sizes 1 and 8, heterogeneous lengths (a short input beside a
+    1024-token one), reordered batch members, Unicode/CRLF and the limit boundaries.
+    Token parity alone does not establish batch invariance. A failure is reported and
+    becomes an explicit recipe decision; batchmates never enter the cache key to hide it.
+  - *Document-function descriptor.* A versioned descriptor, hashed with the exact
+    rendered input bytes under an unambiguous length-prefixed encoding, gives the cache
+    key. It covers:
+    - the SHA-256 of every artifact file the loader reads (weights, configs, tokenizer
+      files, loader source) and the quantization;
+    - the Rust tokenizer version and effective configuration (special tokens on,
+      right padding, pad ID 11);
+    - the first-party adapter revision: array construction, input/mask dtypes and
+      output materialization;
+    - pooling/normalization (publisher mean + L2), 2048 dimensions, float32 output;
+    - the verified numerical runtime closure: Python, MLX, mlx-metal, mlx-lm,
+      transformers and NumPy versions, plus the hash of the venv's frozen requirements.
+
+    Production rendering is exactly `passage: ` followed by the unit's source bytes,
+    with no path, title or language. Worker location, signing identity, labels, the
+    query recipe, ranking/packing, partition grammar and limits, and ANN scalar settings
+    are excluded: changing them re-embeds nothing whose rendered input is unchanged. The
+    worker's `hello` must equal the expected descriptor fields; it never selects them.
+  - *Crate shape.* One crate, two features:
+    - `semantic`, default on, gates the core's `tokenizers` and `usearch` =2.26.2 (both
+      built on Rust 1.90). `--no-default-features` builds a lexical-only core, and the
+      gates check that build.
+    - `embed-worker`, default off, builds the second binary `foundry-embed`, the only
+      code linking `pyo3` =0.29.2.
+
+    The core never embeds Python. Semantic rows survive a build without `semantic`.
+  - *Isolation admission.* Normal admission requires an accepted platform profile and
+    passing startup enforcement checks. Until signing/notarization and package
+    acceptance close, normal semantic execution is `isolation_unavailable` and source
+    access is untouched.
+
+    The development profile is a script-built, ad-hoc-signed App Sandbox bundle around
+    `foundry-embed`, with:
+    - read-only grants for the model directory and the operator's Python runtime only;
+    - soft and hard `RLIMIT_NPROC=0` set by the supervisor before exec;
+    - an `env -i`-style offline environment (`HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE`,
+      `PYTHONNOUSERSITE`, `PYTHONDONTWRITEBYTECODE`, isolated `sys.path`), with no
+      credentials in its environment, argv or IPC;
+    - descriptors closed beyond stdio and the liveness pipe.
+
+    It runs only behind an explicit `--development-isolation` flag under the owner's
+    existing authorization, and it is never advertised as production isolation. Its
+    negative tests have positive controls:
+    - reads and writes outside the grants and of the live store, and writes into the
+      read-only grants;
+    - symlink substitution;
+    - inherited environment credentials and descriptors;
+    - TCP, UDP, DNS and IPv6, outbound and listening;
+    - fork/spawn and limit restoration;
+    - oversized or malformed IPC;
+    - memory breach, timeout and owner death.
+  - *Admission and IPC.* Admission is enforced inside the worker. A nonblocking
+    try-acquire takes the one shared document/query slot before any inference
+    allocation. The slot is held through MLX evaluation, vector copy and the bounded
+    write of the reply; client timeout or cancellation never releases it. A dedicated
+    reader thread stays responsive during inference and refuses further `embed`
+    requests with `provider_busy`, never queueing them. A replacement worker starts only
+    after the old process is confirmed gone.
+
+    Frames carry a protocol version, a request ID and the descriptor digest. Header and
+    frame sizes are checked before allocation, and length arithmetic is checked. Limits
+    apply per input as well as per batch (≤8 documents of ≤1024 IDs; one query of ≤2048
+    IDs), and every ID must be below the vocabulary size. Replies are checked for an
+    exact payload byte count, the expected dimension and finite values. Stderr is
+    drained continuously into a bounded buffer. A late reply with a stale request ID is
+    discarded. The capacity-one handoff stays occupied until a result is consumed or
+    discarded.
+  - *Owner death.* Before importing Python, the worker starts a native thread that
+    watches a dedicated liveness pipe and a kqueue `NOTE_EXIT` on the owner PID. The
+    supervisor passes that PID; the worker checks it equals `getppid()` at start and
+    refuses otherwise. On either signal it calls `_exit` without the GIL, destructors or
+    locks.
+
+    Normal shutdown closes stdin, sends TERM, waits 5 seconds, sends KILL and reaps
+    through the verified child handle. Ownership is released only after the process is
+    gone. Tests kill the owner with SIGKILL during model load, during a long native call
+    and while IPC is blocked, then assert the worker disappears within 2 s; a separate
+    test kills a worker that ignores TERM.
+
+    Named limitation: a worker stopped by SIGSTOP cannot exit itself. Package
+    acceptance therefore needs an OS-level guardian (a launch guardian or service
+    profile), which stays open with signing.
+  - *Resources.* Process count is `hard` (`RLIMIT_NPROC=0`). Memory is `supervised`:
+    the supervisor polls the worker's physical footprint (`proc_pid_rusage`) every
+    250 ms against a 3 GiB ceiling (D001 measured 1.82 GiB for 8 × 1024 tokens). A
+    breach kills the worker and stops preparation with `resource_limit`. A job that
+    requires a hard memory bound is refused.
+
+    `--budget-seconds` counts from argument parsing, so profile verification, worker
+    start, loading and partitioning are all included. At expiry no new batch is
+    admitted. An in-flight call gets at most 30 seconds before the worker is stopped,
+    and the report names `budget_exhausted` with committed counts.
+  - *Storage.* Store schema 5 (`upgrade-store --to 5` from v1–v4) keeps every earlier
+    table, including disabled features', and adds three tables:
+    - partitions: path → source hash, recipe ID, and unit ranges with input keys, or a
+      completed empty partition. The bound store supplies workspace identity;
+    - the f32 vector cache keyed by input key;
+    - semantic state: profile, stopped/paused/running, last error and committed counts.
+
+    Cache commits precede derived publication. Mapping acceptance and every serving
+    lookup check the current source hash, recipe and range. The USearch F16 index and
+    its label map under `<store>/semantic/<profile id>/` form one validated generation:
+    a missing, partial or mismatched pair is unavailable and is rebuilt from the cache,
+    never served by directory name.
+
+    Startup never resumes preparation. Purge commits removal and the stopped state
+    under sole ownership; leftover derived files are ineligible and never repopulate
+    the cache.
+  - *Profile and CLI.* There are three commands:
+    - `foundry semantic prepare --profile FILE --budget-seconds N
+      [--development-isolation]`;
+    - `foundry semantic status`, which never loads Python, the tokenizer or a broken
+      profile;
+    - `foundry semantic purge`.
+
+    The profile file is bounded (≤64 KiB) and versioned, and is parsed before any
+    worker exists. It names the model directory, worker bundle, runtime paths and
+    expected hashes. Every named object is resolved and verified, with symlink
+    substitution refused, before publisher `load` runs. A missing, malformed or
+    mismatched profile, worker, runtime or artifact gives a named semantic failure with
+    no download, install, fallback execution or cache reset.
 
 ### T002 — Deliver useful semantic context within the existing budget
 

@@ -1,0 +1,1370 @@
+{
+ "v": 1,
+ "recorded": "2026-10-04",
+ "purpose": "005 T003 preselected questions, fixed before any timed Foundry query",
+ "corpus": {
+  "repo": "rust-lang/rust",
+  "tag": "1.99.0",
+  "commit": "b940084d7eb6a299eb4bfeb8e34901bc051e7ac4"
+ },
+ "producer_snapshot": {
+  "admitted_inputs": 2255,
+  "bytes": 35613612,
+  "inputs_json_sha256": "24a19886151848cbae2b4a5e85917505b77764725f7e370812db70a669e39ac0",
+  "omissions": [
+   {
+    "path": "library/backtrace",
+    "reason": "uninitialized submodule (gitlink)"
+   },
+   {
+    "path": "library/compiler-builtins/.editorconfig",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/compiler-builtins/.git-blame-ignore-revs",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/compiler-builtins/.github/renovate.json5",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/compiler-builtins/.github/workflows/main.yaml",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/compiler-builtins/.github/workflows/publish.yaml",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/compiler-builtins/.github/workflows/rustc-pull.yml",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/compiler-builtins/.gitignore",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/compiler-builtins/.rustfmt.toml",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/portable-simd/.github/ISSUE_TEMPLATE/blank_issue.md",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/portable-simd/.github/ISSUE_TEMPLATE/bug_report.md",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/portable-simd/.github/ISSUE_TEMPLATE/config.yml",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/portable-simd/.github/ISSUE_TEMPLATE/feature_request.md",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/portable-simd/.github/PULL_REQUEST_TEMPLATE.md",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/portable-simd/.github/workflows/ci.yml",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/portable-simd/.github/workflows/doc.yml",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/portable-simd/.gitignore",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/std_detect/src/detect/test_data/linux-artificial-aarch64.auxv",
+    "reason": "binary NUL"
+   },
+   {
+    "path": "library/std_detect/src/detect/test_data/linux-empty-hwcap2-aarch64.auxv",
+    "reason": "binary NUL"
+   },
+   {
+    "path": "library/std_detect/src/detect/test_data/linux-hwcap2-aarch64.auxv",
+    "reason": "binary NUL"
+   },
+   {
+    "path": "library/std_detect/src/detect/test_data/linux-no-hwcap2-aarch64.auxv",
+    "reason": "binary NUL"
+   },
+   {
+    "path": "library/std_detect/src/detect/test_data/linux-rpi3.auxv",
+    "reason": "binary NUL"
+   },
+   {
+    "path": "library/std_detect/src/detect/test_data/macos-virtualbox-linux-x86-4850HQ.auxv",
+    "reason": "binary NUL"
+   },
+   {
+    "path": "library/stdarch/.git-blame-ignore-revs",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/stdarch/.github/workflows/main.yml",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/stdarch/.github/workflows/rustc-pull.yml",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/stdarch/.gitignore",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/stdarch/.gitmodules",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/stdarch/crates/core_arch/src/aarch64/sve/generated.rs",
+    "reason": "over 2 MiB",
+    "bytes": 2330532
+   },
+   {
+    "path": "library/stdarch/crates/core_arch/src/arm_shared/neon/generated.rs",
+    "reason": "over 2 MiB",
+    "bytes": 2688224
+   },
+   {
+    "path": "library/stdarch/crates/core_arch/src/x86/avx512f.rs",
+    "reason": "over 2 MiB",
+    "bytes": 2970943
+   },
+   {
+    "path": "library/stdarch/crates/stdarch-verify/.gitattributes",
+    "reason": "hidden"
+   },
+   {
+    "path": "library/stdarch/intrinsics_data/arm_intrinsics.json",
+    "reason": "over 2 MiB",
+    "bytes": 5124039
+   },
+   {
+    "path": "library/stdarch/intrinsics_data/x86-intel.xml",
+    "reason": "over 2 MiB",
+    "bytes": 6673004
+   }
+  ]
+ },
+ "artifact": {
+  "sha256": "db3066620ae601308e0e131adb8e6cfea0316c2baf260506d50e2df0e5ac0dc6",
+  "bytes": 56888257,
+  "documents": 958,
+  "occurrences": 436829
+ },
+ "rule": "Preselect the 20 T003 definition/reference questions from producer + source evidence.\n\nDeterministic rule (fixed before any Foundry query or timing):\n- global symbol, exactly one definition occurrence in the artifact, defined under\n  library/{std,alloc,core}/src/ outside test files; descriptor is a type (`#`) or a\n  function/method (`().`);\n- the definition range and every reference range read exactly the symbol's name in\n  the frozen snapshot bytes (UTF-8 line/column -> byte conversion);\n- supported (15): 3..60 distinct reference ranges in at most 30 files; the first five\n  per crate (std, alloc, core) in SHA-256(symbol) order;\n- high-degree (5): more than 256 distinct reference ranges; the first five in\n  SHA-256(symbol) order, at most two per crate.\nExpected sets are the distinct (path, start, end) reference ranges of that symbol.",
+ "canonical_expected_encoding": "compact JSON array of [path,start,end] in (path,start,end) order; expected_sha256 is its SHA-256",
+ "source_check_method": "three read-only agents read definition/import/module/type context and classified every same-name lexical candidate (supported) or the first 64 references in order (high-degree); host cfg aarch64-apple-darwin plus rust-analyzer default cfgs (debug_assertions, miri)",
+ "questions": [
+  {
+   "q": 1,
+   "kind": "supported",
+   "crate": "std",
+   "name": "log2",
+   "symbol": "rust-analyzer cargo std https://github.com/rust-lang/rust/library/std f32/impl#[f32]log2().",
+   "symbol_id": "b52fe99af90f66762c5bc4a99918e0d06e4d83db39a66c2b44e9f35746320e9a",
+   "definition": {
+    "path": "library/std/src/num/f32.rs",
+    "start": 18852,
+    "end": 18856,
+    "source_sha256": "66f1aa3fb28e3449e3d0992e51333c370443ed9c2cf9aaebeb5e084c294c6f87",
+    "source_bytes": 44655
+   },
+   "expected_count": 5,
+   "expected_files": 1,
+   "expected_sha256": "5a8aa6182fa50f9d6574701e9db1404f9a8733a210b92127606e41dddc3ebd58",
+   "expected": [
+    [
+     "library/coretests/tests/num/int_log.rs",
+     2406,
+     2410
+    ],
+    [
+     "library/coretests/tests/num/int_log.rs",
+     2495,
+     2499
+    ],
+    [
+     "library/coretests/tests/num/int_log.rs",
+     2582,
+     2586
+    ],
+    [
+     "library/coretests/tests/num/int_log.rs",
+     2721,
+     2725
+    ],
+    [
+     "library/coretests/tests/num/int_log.rs",
+     3220,
+     3224
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 5,
+    "spurious": [],
+    "missing": [],
+    "notes": "All 5 expected entries are literal f32 receivers: int_log.rs:64,65,66 `(NNNNf32).log2()`, :71,:89 `(i as f32).log2()` inside #[test] fn checked_ilog2 (int_log.rs:52-105; `mod int_log;` at coretests/tests/num/mod.rs:33); each token slice verified byte-exact against snapshot (start/end/col). No other f32-typed non-macro, non-cfg'd `.log2()` calls exist in the snapshot. int_log.rs:79 and :101 are textual f32::log2 calls absent from the expected set because they sit under `#[cfg(not(miri))]` (statement attrs at int_log.rs:75 and :97). Excluding them is correct iff the producer enabled the `miri` cfg: rust-analyzer's default `rust-analyzer.cargo.cfgs` is [\"debug_assertions\",\"miri\"] [INFERENCE from RA docs/memory, not verifiable offline] and ra-config.json only sets cargo.sysrootSrc, so the default applies; corroboration: stat/occ.tsv has inference-dependent occurrences (checked_ilog2, Some, f32 log2) on the unconditional loop bodies at lines 70-71 and 88-89, but only RangeInclusive/assert_eq! tokens (no checked_ilog2/Some/log2 occurrences) in the three #[cfg(not(miri))] loops at lines 76-82, 94-96 and 98-104. If a reader assumes only the host cfgs listed in the task (no `miri`), lines 79 and 101 would instead be `missing`."
+   }
+  },
+  {
+   "q": 2,
+   "kind": "supported",
+   "crate": "std",
+   "name": "take_error",
+   "symbol": "rust-analyzer cargo std https://github.com/rust-lang/rust/library/std sys/net/connection/socket/unix/impl#[Socket]take_error().",
+   "symbol_id": "fdadd27a30d8ba68161c1bba0c6217162e7683dd63d78525e40b9edcc7605e46",
+   "definition": {
+    "path": "library/std/src/sys/net/connection/socket/unix.rs",
+    "start": 23058,
+    "end": 23068,
+    "source_sha256": "c9997415bf1c89a9deb3d6f12840abfd58dc91b6e43c8a16095fc34dd216072c",
+    "source_bytes": 25636
+   },
+   "expected_count": 8,
+   "expected_files": 5,
+   "expected_sha256": "84003e2a3cc846973628e080aeaa4a07f35ec2d1bf10b7d0f00bd3cc218f300b",
+   "expected": [
+    [
+     "library/std/src/os/unix/net/datagram.rs",
+     31725,
+     31735
+    ],
+    [
+     "library/std/src/os/unix/net/listener.rs",
+     10344,
+     10354
+    ],
+    [
+     "library/std/src/os/unix/net/stream.rs",
+     16806,
+     16816
+    ],
+    [
+     "library/std/src/sys/net/connection/socket/mod.rs",
+     15101,
+     15111
+    ],
+    [
+     "library/std/src/sys/net/connection/socket/mod.rs",
+     19884,
+     19894
+    ],
+    [
+     "library/std/src/sys/net/connection/socket/mod.rs",
+     26923,
+     26933
+    ],
+    [
+     "library/std/src/sys/net/connection/socket/unix.rs",
+     7950,
+     7960
+    ],
+    [
+     "library/std/src/sys/net/connection/socket/unix.rs",
+     8367,
+     8377
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 8,
+    "spurious": [],
+    "missing": [],
+    "notes": "Expected: socket/mod.rs:503,640,855 (`self.inner.take_error()`, inner: Socket), socket/unix.rs:220,227 (`self.take_error()?` in Socket::connect_timeout; :220 is inside `if cfg!(target_os=\"vxworks\")` which is an expression-level cfg!, so still lexically/type resolved), os/unix/net/{datagram.rs:901,listener.rs:278,stream.rs:472} (`self.0.take_error()`, self.0: Socket via struct tuple fields datagram.rs:63, listener.rs:41, stream.rs:75). Same-name decoys excluded: std::net wrappers (tcp.rs:624-625,1064-1065, udp.rs:646-647; their `self.0.take_error()` calls hit sys TcpStream/TcpListener/UdpSocket::take_error at socket/mod.rs:502/639/854, not Socket::take_error); other-platform Socket impls: hermit.rs:106,306, solid.rs:176,366, windows.rs:202,447 (cfg_select! arms in socket/mod.rs:17-38 select unix for target_family=unix), and os/windows/net/* (os/mod.rs:47-65 gates windows on target_family=windows, `cfg(doc)` branch not set); whole-module alternates xous/sgx/uefi/wasip1/unsupported/motor are not selected by sys/net/connection/mod.rs:1-8 on macOS."
+   }
+  },
+  {
+   "q": 3,
+   "kind": "supported",
+   "crate": "std",
+   "name": "DirBuilder",
+   "symbol": "rust-analyzer cargo std https://github.com/rust-lang/rust/library/std fs/DirBuilder#",
+   "symbol_id": "3251e941aabd9ad807256d8040f7f215b8b71d49637fdf144e58aa306acda432",
+   "definition": {
+    "path": "library/std/src/fs.rs",
+    "start": 11660,
+    "end": 11670,
+    "source_sha256": "9d6d8134748d4fa301339478ed6fdeb5fa6f555d4c39a83d66aefbdf744f4054",
+    "source_bytes": 128307
+   },
+   "expected_count": 8,
+   "expected_files": 2,
+   "expected_sha256": "10bf4a6c71ce0867e6c1c78702ca9423e811007723c3fa64ba0e45286048a0d1",
+   "expected": [
+    [
+     "library/std/src/fs.rs",
+     110765,
+     110775
+    ],
+    [
+     "library/std/src/fs.rs",
+     112331,
+     112341
+    ],
+    [
+     "library/std/src/fs.rs",
+     123170,
+     123180
+    ],
+    [
+     "library/std/src/fs.rs",
+     123539,
+     123549
+    ],
+    [
+     "library/std/src/fs.rs",
+     123560,
+     123570
+    ],
+    [
+     "library/std/src/fs.rs",
+     126881,
+     126891
+    ],
+    [
+     "library/std/src/os/unix/fs.rs",
+     38281,
+     38291
+    ],
+    [
+     "library/std/src/os/unix/fs.rs",
+     38340,
+     38350
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 8,
+    "spurious": [],
+    "missing": [],
+    "notes": "Expected tokens: fs.rs:3153 (`DirBuilder::new()` in create_dir), :3199 (create_dir_all), :3502 (`impl DirBuilder`), :3515 (`-> DirBuilder`), :3516 col 8 (struct literal `DirBuilder { inner: ..}`), :3612 col 40 (`for DirBuilder` in `impl AsInnerMut<fs_imp::DirBuilder> for DirBuilder`), os/unix/fs.rs:1124,1125 (`fs::DirBuilder` in `impl DirBuilderExt for fs::DirBuilder`). Two lines hold a second same-line token that is the sys item and is correctly not expected: fs.rs:3516 col 32 `fs_imp::DirBuilder::new()` and :3612 col 29 `fs_imp::DirBuilder`; fs.rs:310 and :3614 are sys-item uses. fs.rs:307 is the string \"DirBuilder\" in an attribute. sys/fs/unix.rs:466,1697-1699,1712,1714-1715 are the compiled-but-distinct sys::fs::unix::DirBuilder (1715 is a debug_struct string literal). 9 doc-comment hits (fs.rs:3509,3511,3528,3530,3548,3551; os/unix/fs.rs:1103,1113,1116) are doc text."
+   }
+  },
+  {
+   "q": 4,
+   "kind": "supported",
+   "crate": "std",
+   "name": "as_raw_fd",
+   "symbol": "rust-analyzer cargo std https://github.com/rust-lang/rust/library/std sys/fs/unix/impl#[File][AsRawFd]as_raw_fd().",
+   "symbol_id": "86fc2aadab27581fbe9069b87b6cf15374911d2f79f87405feb5c47a302a24a9",
+   "definition": {
+    "path": "library/std/src/sys/fs/unix.rs",
+    "start": 59095,
+    "end": 59104,
+    "source_sha256": "61f4ef3a4b679a38182e76634f96e551ef0b21b06c5695f36187f557d1efc232",
+    "source_bytes": 85443
+   },
+   "expected_count": 14,
+   "expected_files": 2,
+   "expected_sha256": "4c1ad2bd36cbef8beee086236def38d720792957b7b4702254ec13de914a6efc",
+   "expected": [
+    [
+     "library/std/src/os/fd/raw.rs",
+     5974,
+     5983
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     42450,
+     42459
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     43043,
+     43052
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     43460,
+     43469
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     45247,
+     45256
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     46031,
+     46040
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     46842,
+     46851
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     48069,
+     48078
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     49267,
+     49276
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     49698,
+     49707
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     51729,
+     51738
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     52416,
+     52425
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     53289,
+     53298
+    ],
+    [
+     "library/std/src/sys/fs/unix.rs",
+     59502,
+     59511
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 14,
+    "spurious": [],
+    "missing": [],
+    "notes": "Expected 13 in sys/fs/unix.rs: 1246 (file_attr), 1265 (fsync), 1279 (datasync), 1336/1360/1384/1419/1454 (lock/lock_shared/try_lock/try_lock_shared/unlock; cfg_select arms include target_vendor=\"apple\"), 1466 (truncate), 1532 (seek), 1554 (set_permissions), 1573 (set_times, `target_vendor = \"apple\"` arm of cfg_select! at 1559-1620), 1773 (Debug for File) + os/fd/raw.rs:175. In-file same-name tokens correctly absent: unix.rs:1755 (`self.0.as_raw_fd()` = FileDesc), 1589 (android arm), 1612 (cfg linux+gnu+32-bit), 1617 (`_` fallback arm; macOS selects the apple arm at 1570), 2220/2249 (apple `copy`: reader/writer come from `open_from() -> (crate::fs::File, Metadata)`, unix.rs:2010, i.e. std::fs::File -> raw.rs:174), 2366 (OwnedFd). Whole-file exclusions: kernel_copy/linux* (kernel_copy/mod.rs cfg linux|android), process/unix/pidfd* (`#[cfg(target_os=\"linux\")] mod pidfd`), random/linux.rs, os/linux/process.rs, motor/hermit/solid/wasi/sgx modules. No receiver-ambiguous (generic `T: AsRawFd`, UFCS) call sites exist in the snapshot."
+   }
+  },
+  {
+   "q": 5,
+   "kind": "supported",
+   "crate": "std",
+   "name": "new",
+   "symbol": "rust-analyzer cargo std https://github.com/rust-lang/rust/library/std sync/poison/impl#[`PoisonError<T>`]new().",
+   "symbol_id": "8f5415166e0f27813e92b6d2d17b986f30c95fb13bab47dacdb91f0b8336d32d",
+   "definition": {
+    "path": "library/std/src/sync/poison.rs",
+    "start": 9643,
+    "end": 9646,
+    "source_sha256": "4a66d88019ac53f7930459910b803f7195c02a1e05df147d4da51bdb8d4ca2b2",
+    "source_bytes": 13442
+   },
+   "expected_count": 11,
+   "expected_files": 4,
+   "expected_sha256": "2b0f344591a277092ded483f9efc1bdeac04cd0d972c5e49380910eb86452a72",
+   "expected": [
+    [
+     "library/std/src/sync/poison.rs",
+     4462,
+     4465
+    ],
+    [
+     "library/std/src/sync/poison.rs",
+     4804,
+     4807
+    ],
+    [
+     "library/std/src/sync/poison.rs",
+     13419,
+     13422
+    ],
+    [
+     "library/std/src/sync/poison/condvar.rs",
+     4596,
+     4599
+    ],
+    [
+     "library/std/src/sync/poison/condvar.rs",
+     12822,
+     12825
+    ],
+    [
+     "library/std/src/sync/poison/mutex.rs",
+     15141,
+     15144
+    ],
+    [
+     "library/std/src/sync/poison/mutex.rs",
+     16327,
+     16330
+    ],
+    [
+     "library/std/src/sync/poison/mutex.rs",
+     17253,
+     17256
+    ],
+    [
+     "library/std/src/sync/poison/rwlock.rs",
+     11757,
+     11760
+    ],
+    [
+     "library/std/src/sync/poison/rwlock.rs",
+     12987,
+     12990
+    ],
+    [
+     "library/std/src/sync/poison/rwlock.rs",
+     13958,
+     13961
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 11,
+    "spurious": [],
+    "missing": [],
+    "notes": "Regex `PoisonError(::<[^>]*>)?::new\\b|PoisonError::<` over the whole library yields exactly 11 lines, all expected: poison.rs:110,120,386 (386 under #[cfg(panic=\"unwind\")] arm in map_result), condvar.rs:131,333, mutex.rs:379,417,446, rwlock.rs:288,327,357; each file imports `PoisonError` from crate::sync (mutex.rs:7, rwlock.rs:7, condvar.rs:3, poison.rs defines it). No `Self::new` exists inside impl PoisonError (poison.rs `new` tokens are lines 100,103,110,120,269,283,386 only). Definition is cfg-sensitive: with host panic=\"unwind\" the call sites bind to :269; under panic=abort they would bind to :283."
+   }
+  },
+  {
+   "q": 6,
+   "kind": "supported",
+   "crate": "alloc",
+   "name": "StringError",
+   "symbol": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc boxed/convert/StringError#",
+   "symbol_id": "90b826ccef0ee2da92a9a05f081652cd3888f58a330e75ca7ce4c33ba8853798",
+   "definition": {
+    "path": "library/alloc/src/boxed/convert.rs",
+    "start": 17439,
+    "end": 17450,
+    "source_sha256": "de370be8a44d929d51a2634797a529f336376c461a4fa826051e8ce6093ff940",
+    "source_bytes": 22876
+   },
+   "expected_count": 4,
+   "expected_files": 1,
+   "expected_sha256": "ee5d8a9be876cb099615df958848698b079e8343eb3853bacd886594fb12f4c6",
+   "expected": [
+    [
+     "library/alloc/src/boxed/convert.rs",
+     17484,
+     17495
+    ],
+    [
+     "library/alloc/src/boxed/convert.rs",
+     17530,
+     17541
+    ],
+    [
+     "library/alloc/src/boxed/convert.rs",
+     17770,
+     17781
+    ],
+    [
+     "library/alloc/src/boxed/convert.rs",
+     17941,
+     17952
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 4,
+    "spurious": [],
+    "missing": [],
+    "notes": "580 `impl Error for StringError {}`, 582 `impl fmt::Display for StringError`, 589 `impl fmt::Debug for StringError`, 595 `Box::new(StringError(err))` (tuple-struct constructor call) are the 4 references; 578 is the definition; 588 is a `//` comment containing the text \"StringError(..)\". `no_global_oom_handling` is not set on the host so the impl is compiled."
+   }
+  },
+  {
+   "q": 7,
+   "kind": "supported",
+   "crate": "alloc",
+   "name": "Search",
+   "symbol": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc collections/btree/set/DifferenceInner#Search#",
+   "symbol_id": "7b23e87fca2078e974f84f9958260dea832c2a1dfe83d1d6cfe7a1d835f05839",
+   "definition": {
+    "path": "library/alloc/src/collections/btree/set.rs",
+    "start": 6428,
+    "end": 6434,
+    "source_sha256": "a7be8e5e576fac0975d0af0f24407ddd709751820bbb1f5059d55f08414a4888",
+    "source_bytes": 83670
+   },
+   "expected_count": 6,
+   "expected_files": 1,
+   "expected_sha256": "e4243eec1d9c844cf95f06600cfec9fe8cb3bb8861200232c4ed50a801eca72a",
+   "expected": [
+    [
+     "library/alloc/src/collections/btree/set.rs",
+     7106,
+     7112
+    ],
+    [
+     "library/alloc/src/collections/btree/set.rs",
+     15580,
+     15586
+    ],
+    [
+     "library/alloc/src/collections/btree/set.rs",
+     61043,
+     61049
+    ],
+    [
+     "library/alloc/src/collections/btree/set.rs",
+     61117,
+     61123
+    ],
+    [
+     "library/alloc/src/collections/btree/set.rs",
+     62188,
+     62194
+    ],
+    [
+     "library/alloc/src/collections/btree/set.rs",
+     62757,
+     62763
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 6,
+    "spurious": [],
+    "missing": [],
+    "notes": "Expected: set.rs:213 (pattern in Debug for DifferenceInner), 451 (construction in BTreeSet::difference), 1943 (pattern) and 1944 (construction) in Clone for Difference, 1972 (pattern in Iterator::next), 1987 (pattern in size_hint). 22 `DifferenceInner` lines total were reviewed; the 6 `::Search` ones are exactly the expected set. IntersectionInner::Search decoys: 270 def, 285, 531, 534, 2044, 2045, 2069, 2082. String literals: 214, 286."
+   }
+  },
+  {
+   "q": 8,
+   "kind": "supported",
+   "crate": "alloc",
+   "name": "Join",
+   "symbol": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc slice/Join#",
+   "symbol_id": "8118c2aceb5d5d94c943ce45d5d9d1441a7c848d6e9deb6b26c934ba0da925ce",
+   "definition": {
+    "path": "library/alloc/src/slice.rs",
+    "start": 28744,
+    "end": 28748,
+    "source_sha256": "67228d05babee451c4f29b12fb6e922d1b7be19cf8bdc7efb21edd02c8a69a3e",
+    "source_bytes": 33649
+   },
+   "expected_count": 12,
+   "expected_files": 3,
+   "expected_sha256": "9c0ddac79138373875dae3c0a86adb0722966e04f608e939b0c831d1ea870846",
+   "expected": [
+    [
+     "library/alloc/src/slice.rs",
+     24710,
+     24714
+    ],
+    [
+     "library/alloc/src/slice.rs",
+     24759,
+     24763
+    ],
+    [
+     "library/alloc/src/slice.rs",
+     24790,
+     24794
+    ],
+    [
+     "library/alloc/src/slice.rs",
+     25393,
+     25397
+    ],
+    [
+     "library/alloc/src/slice.rs",
+     25442,
+     25446
+    ],
+    [
+     "library/alloc/src/slice.rs",
+     25473,
+     25477
+    ],
+    [
+     "library/alloc/src/slice.rs",
+     29643,
+     29647
+    ],
+    [
+     "library/alloc/src/slice.rs",
+     30358,
+     30362
+    ],
+    [
+     "library/alloc/src/str.rs",
+     2315,
+     2319
+    ],
+    [
+     "library/alloc/src/str.rs",
+     2726,
+     2730
+    ],
+    [
+     "library/alloc/src/str.rs",
+     2873,
+     2877
+    ],
+    [
+     "library/std/src/ffi/os_str.rs",
+     58396,
+     58400
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 12,
+    "spurious": [],
+    "missing": [],
+    "notes": "slice.rs:597/617 (`<Self as Join<Separator>>::Output` in join/connect), 599/619 (`Self: Join<Separator>` where-bounds), 601/621 (`Join::join(self, sep)` trait-path calls), 738/761 (`impl Join<&T>/Join<&[T]> for [V]`), str.rs:54 (`use crate::slice::{Concat, Join, ..}`), 66 (`Join::join(slice, \"\")`), 72 (`impl Join<&str> for [S]`), std ffi/os_str.rs:1714 (`impl Join<&OsStr> for [S]`, written `alloc::slice::Join`). All impls/calls are under #[cfg(not(no_global_oom_handling))] which is unset on the host. Byte spans verified."
+   }
+  },
+  {
+   "q": 9,
+   "kind": "supported",
+   "crate": "alloc",
+   "name": "replace_range",
+   "symbol": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc string/impl#[String]replace_range().",
+   "symbol_id": "4da0409703acfdaae71261955f9339ba9ea51a234d61c208f2f9968edf45787d",
+   "definition": {
+    "path": "library/alloc/src/string.rs",
+    "start": 70822,
+    "end": 70835,
+    "source_sha256": "3e9e19850a540af6378741210bdf62ef06946b1d0ba6ab34b1bb68330505bb72",
+    "source_bytes": 116535
+   },
+   "expected_count": 17,
+   "expected_files": 3,
+   "expected_sha256": "ef70fbae102c49c37a9284364651cc0b93040ac9d1fba42a906d4ba2a1b3d7ad",
+   "expected": [
+    [
+     "library/alloc/src/string.rs",
+     72560,
+     72573
+    ],
+    [
+     "library/alloc/src/string.rs",
+     73478,
+     73491
+    ],
+    [
+     "library/alloctests/tests/str.rs",
+     52462,
+     52475
+    ],
+    [
+     "library/alloctests/tests/str.rs",
+     52676,
+     52689
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     16982,
+     16995
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     17225,
+     17238
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     17419,
+     17432
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     17541,
+     17554
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     17605,
+     17618
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     17829,
+     17842
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     18036,
+     18049
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     18328,
+     18341
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     18645,
+     18658
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     18789,
+     18802
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     18933,
+     18946
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     19462,
+     19475
+    ],
+    [
+     "library/alloctests/tests/string.rs",
+     20048,
+     20061
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 17,
+    "spurious": [],
+    "missing": [],
+    "notes": "17 expected = 2 internal callers (string.rs:2139 replace_first, :2168 replace_last; both `self.replace_range(range, to)` in `impl String`, #[cfg(not(no_global_oom_handling))] active) + 2 in alloctests/tests/str.rs (1660, 1665; `modified_needle` is `String::new()` at str.rs:1647) + 13 in alloctests/tests/string.rs (613..728; receivers `s`/`v` are String via to_owned/String::from; 705/728 pass a local `EvilRange: RangeBounds<usize>` as `range`). alloctests/tests/lib.rs:92-93 `mod str; mod string;` are ungated. Column check: every expected byte column lands exactly on the identifier. alloctests has no copy of alloc::string (lib.rs path-includes only collections/raw_vec/wtf8), so no split identity is possible, matching split_identities={}."
+   }
+  },
+  {
+   "q": 10,
+   "kind": "supported",
+   "crate": "alloc",
+   "name": "WriterPanicked",
+   "symbol": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc io/buffered/bufwriter/WriterPanicked#",
+   "symbol_id": "11707805e1622bf2018d10a130e6c5b5f5a32e6d198d1cd1201872f58e69dc71",
+   "definition": {
+    "path": "library/alloc/src/io/buffered/bufwriter.rs",
+    "start": 19980,
+    "end": 19994,
+    "source_sha256": "0490df0f09c1e98a2a7923938855d40db8b9cc6234d7ee14d702223ff3e6666c",
+    "source_bytes": 27906
+   },
+   "expected_count": 9,
+   "expected_files": 4,
+   "expected_sha256": "ad526a1defab99f908d50245500b3b072b6f2c28459913e85813410e56d530e8",
+   "expected": [
+    [
+     "library/alloc/src/io/buffered/bufwriter.rs",
+     7018,
+     7032
+    ],
+    [
+     "library/alloc/src/io/buffered/bufwriter.rs",
+     7188,
+     7202
+    ],
+    [
+     "library/alloc/src/io/buffered/bufwriter.rs",
+     20023,
+     20037
+    ],
+    [
+     "library/alloc/src/io/buffered/bufwriter.rs",
+     20517,
+     20531
+    ],
+    [
+     "library/alloc/src/io/buffered/bufwriter.rs",
+     20620,
+     20634
+    ],
+    [
+     "library/alloc/src/io/buffered/bufwriter.rs",
+     20882,
+     20896
+    ],
+    [
+     "library/alloc/src/io/buffered/mod.rs",
+     218,
+     232
+    ],
+    [
+     "library/alloc/src/io/mod.rs",
+     6859,
+     6873
+    ],
+    [
+     "library/std/src/io/mod.rs",
+     11282,
+     11296
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 9,
+    "spurious": [],
+    "missing": [],
+    "notes": "Genuine breakdown: 186 (return type of BufWriter::into_parts), 189 (struct literal `WriterPanicked { buf }`), 523 (`impl WriterPanicked`), 534/537/544 (`impl error::Error/Display/Debug for WriterPanicked`), 3 `pub use` re-export sites (buffered/mod.rs:11, io/mod.rs:215, std/src/io/mod.rs:304). No cfg gates on any site: `mod buffered;` (io/mod.rs:179) and `pub mod io;` (alloc/src/lib.rs:257, #[unstable(alloc_io)] only) are ungated; unix.rs/windows split does not apply. No hit in alloctests/tests or elsewhere (no test references the type by name)."
+   }
+  },
+  {
+   "q": 11,
+   "kind": "supported",
+   "crate": "core",
+   "name": "ReadOnlyFilesystem",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core io/error/ErrorKind#ReadOnlyFilesystem#",
+   "symbol_id": "afe70bcfcb1c005220378acb9df50b316a4f4ed664074478a24fe705fdc35e80",
+   "definition": {
+    "path": "library/core/src/io/error.rs",
+    "start": 30766,
+    "end": 30784,
+    "source_sha256": "f61c893fce373f4234a7a304ec1314984857189040431ff9a415b6a55b9fe8dc",
+    "source_bytes": 43347
+   },
+   "expected_count": 3,
+   "expected_files": 2,
+   "expected_sha256": "cabc0f2d2ec3d57352ff4b19ac2378f9acb2c03b829c910486fc11d8a6ffc1b4",
+   "expected": [
+    [
+     "library/core/src/io/error.rs",
+     40087,
+     40105
+    ],
+    [
+     "library/core/src/io/error.rs",
+     42072,
+     42090
+    ],
+    [
+     "library/std/src/sys/io/error/unix.rs",
+     4465,
+     4483
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 3,
+    "spurious": [],
+    "missing": [],
+    "notes": "Genuine: error.rs:1045 (arm in `ErrorKind::as_str`, body starts `use ErrorKind::*; match *self`), error.rs:1097 (ident inside the local macro invocation `from_prim!(ek => ErrorKind { .. ReadOnlyFilesystem, .. })` in `ErrorKind::from_prim`; macro_rules body uses `$Enum::$Variant` so the token resolves to ErrorKind::ReadOnlyFilesystem via expansion, an invocation-argument token not a macro_rules-body token), std/src/sys/io/error/unix.rs:170 (`libc::EROFS => ReadOnlyFilesystem` in `decode_error_kind` after `use io::ErrorKind::*;`; cfg_select! in sys/io/error/mod.rs picks `unix` for target_family=\"unix\" = macOS host, and the earlier hermit/motor/sgx/solid/uefi arms do not match). The two excluded sites are in modules that cfg_select! compiles only for uefi/windows, so they are the cfg_excluded candidates the brief anticipates; absent from expected, which is correct."
+   }
+  },
+  {
+   "q": 12,
+   "kind": "supported",
+   "crate": "core",
+   "name": "split_at_unchecked",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core slice/impl#[`[T]`]split_at_unchecked().",
+   "symbol_id": "6a838e99709308d00bf0f6b2b80700f8ddec2dbc98c5c436c0d4015b2847e266",
+   "definition": {
+    "path": "library/core/src/slice/mod.rs",
+    "start": 75216,
+    "end": 75234,
+    "source_sha256": "8026ddec62fb732d01dc6fcb700fbf109aa5dd94d2391387db3202f405669d43",
+    "source_bytes": 219227
+   },
+   "expected_count": 12,
+   "expected_files": 6,
+   "expected_sha256": "6aa15b0b3e917a646f53693aa95f4a01627b1eef7c96147da56866c62e65a8f9",
+   "expected": [
+    [
+     "library/alloc/src/vec/extract_if.rs",
+     5412,
+     5430
+    ],
+    [
+     "library/core/src/slice/ascii.rs",
+     14644,
+     14662
+    ],
+    [
+     "library/core/src/slice/iter.rs",
+     48025,
+     48043
+    ],
+    [
+     "library/core/src/slice/iter.rs",
+     57238,
+     57256
+    ],
+    [
+     "library/core/src/slice/iter.rs",
+     73063,
+     73081
+    ],
+    [
+     "library/core/src/slice/iter.rs",
+     75078,
+     75096
+    ],
+    [
+     "library/core/src/slice/iter.rs",
+     84255,
+     84273
+    ],
+    [
+     "library/core/src/slice/mod.rs",
+     50725,
+     50743
+    ],
+    [
+     "library/core/src/slice/mod.rs",
+     79669,
+     79687
+    ],
+    [
+     "library/core/src/str/lossy.rs",
+     9511,
+     9529
+    ],
+    [
+     "library/core/src/str/lossy.rs",
+     9748,
+     9766
+    ],
+    [
+     "library/std/src/ffi/os_str.rs",
+     38513,
+     38531
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 12,
+    "spurious": [],
+    "missing": [],
+    "notes": "Receiver types of the 12 expected: alloc/src/vec/extract_if.rs:146 `valid_tail = slice::from_raw_parts(..)` = &[T]; slice/ascii.rs:399 `bytes` = `slice.unwrap_or_default().as_slice()` = &[u8]; slice/iter.rs:1593 (Chunks::next_back), 2341 (RChunks::next), 2407 (RChunks::next_back): `self.v: &'a [T]` of Chunks/RChunks (struct fields at iter.rs:1479, 2310); iter.rs:1853 (ChunksExact::new) and 2662 (RChunksExact::new): `slice: &'a [T]`; slice/mod.rs:1402 (as_chunks, `self: &[T]`) and 2166 (split_at_checked, `self: &[T]`); str/lossy.rs:277 `self.source: &'a [u8]` (lossy.rs:187) and :282 `inspected` = first half of that split = &[u8]; std/src/ffi/os_str.rs:1100 `self.as_encoded_bytes()` = &[u8]. No cfg gating on any site, no macro_rules involvement. Non-word hits at slice/mod.rs:2042/2043/2096 are `feature = \"slice_split_at_unchecked\"` attribute strings, not candidates."
+   }
+  },
+  {
+   "q": 13,
+   "kind": "supported",
+   "crate": "core",
+   "name": "AlwaysApplicableOrd",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core slice/cmp/AlwaysApplicableOrd#",
+   "symbol_id": "2581737e73b1119f236dd30d917b6741bcd9759cc99fba2641825ff6426632dd",
+   "definition": {
+    "path": "library/core/src/slice/cmp.rs",
+    "start": 9811,
+    "end": 9830,
+    "source_sha256": "7c41479582d6cf55d342001ae1f846d240f153c23f9d148ea179af29f2467f51",
+    "source_bytes": 16660
+   },
+   "expected_count": 4,
+   "expected_files": 1,
+   "expected_sha256": "5c969471fa146f957882c0cda91d278f02b08f8dfb899a6fbc557028570a5fd6",
+   "expected": [
+    [
+     "library/core/src/slice/cmp.rs",
+     9535,
+     9554
+    ],
+    [
+     "library/core/src/slice/cmp.rs",
+     10211,
+     10230
+    ],
+    [
+     "library/core/src/slice/cmp.rs",
+     10244,
+     10263
+    ],
+    [
+     "library/core/src/slice/cmp.rs",
+     10281,
+     10300
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 4,
+    "spurious": [],
+    "missing": [],
+    "notes": "Genuine: cmp.rs:251 (`const impl<A: [const] AlwaysApplicableOrd> SlicePartialOrd for A`, a trait-bound use) and cmp.rs:272/273/274 (`[T: AlwaysApplicableOrd] &T / &mut T / Option<T>` are `$p:tt` argument tokens of the `always_applicable_ord! { .. }` invocation at cmp.rs:267-275; they are substituted into `impl<T: AlwaysApplicableOrd> AlwaysApplicableOrd for &T {}`, i.e. real bound uses resolved via expansion). Semantic remark: the trait name at line 263 is also a real use in every expansion (20 impls `impl AlwaysApplicableOrd for <ty>`), but it is a macro_rules-body token, which the brief defines as not-a-reference; not counted as missing. No cfg gating."
+   }
+  },
+  {
+   "q": 14,
+   "kind": "supported",
+   "crate": "core",
+   "name": "recip",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core f128/impl#[f128]recip().",
+   "symbol_id": "02358a1ae063b76d3beed0d1b26ee14bcb271d47a71596546f29db732040d706",
+   "definition": {
+    "path": "library/core/src/num/f128.rs",
+    "start": 30373,
+    "end": 30378,
+    "source_sha256": "e6e9d69ee6ce95b8debaac63d9eed8cbfe8132b6b7aa3cff78bd14b8fef2e40a",
+    "source_bytes": 76020
+   },
+   "expected_count": 8,
+   "expected_files": 1,
+   "expected_sha256": "2ee808f9b5bf7a7dbf7c2684ef6100ea492504a861fb92fae8710737556822aa",
+   "expected": [
+    [
+     "library/coretests/tests/num/floats.rs",
+     65023,
+     65028
+    ],
+    [
+     "library/coretests/tests/num/floats.rs",
+     65069,
+     65074
+    ],
+    [
+     "library/coretests/tests/num/floats.rs",
+     65116,
+     65121
+    ],
+    [
+     "library/coretests/tests/num/floats.rs",
+     65163,
+     65168
+    ],
+    [
+     "library/coretests/tests/num/floats.rs",
+     65198,
+     65203
+    ],
+    [
+     "library/coretests/tests/num/floats.rs",
+     65243,
+     65248
+    ],
+    [
+     "library/coretests/tests/num/floats.rs",
+     65288,
+     65293
+    ],
+    [
+     "library/coretests/tests/num/floats.rs",
+     65330,
+     65335
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 8,
+    "spurious": [],
+    "missing": [],
+    "notes": "All 8 expected sites (coretests/tests/num/floats.rs:1537-1544) are the 8 `.recip()` calls in the test body of `float_test! { name: recip, .. }` (floats.rs:1524-1546). The macro (floats.rs:356-440) pastes `$test` into 8 fns (test_f16/f32/f64/f128 at module level, and again inside `mod const_` wrapped in `const { $test }`), each with `type Float = fNN;` and `const fn flt(x: Float) -> Float`, so the SAME tokens resolve to f16/f32/f64/f128 `recip` respectively; the f128 reading is genuine: `flt(..)` returns Float=f128 (1537-1540), `nan/inf/neg_inf/max: Float` (1541-1544). cfg check: runtime `test_f128` carries `#[cfg(any(miri, target_has_reliable_f128_math))]`, which is FALSE for aarch64-apple-darwin under plain rustc (compiler/rustc_codegen_llvm/src/llvm_util.rs:443-457: f128 math reliable only for 64-bit Linux non-musl non-x86_64) unless cfg(miri) is set (rust-analyzer's default cargo.cfgs includes `miri`; ra-config.json does not override it) [INFERENCE on RA default]. BUT the `mod const_` variant `const f128` has no cfg attribute in recip's invocation (macro only emits `$f128_const_meta` there, floats.rs:425-426; recip supplies no `const f128:` entry), so `const_::test_f128` is compiled on the host regardless and contains the same 8 tokens resolving to f128::recip. Hence the 8 references hold under the strict host cfg too. Side observation (artifact, not source; stat/occ.tsv): at these 8 positions only the f128 symbol is present (no f16/f32/f64 recip rows), i.e. the artifact keeps one symbol per multiply-expanded token; harmless for this f128 question but means the f16/f32/f64 recip reference sets in the same artifact would lack these sites. Col check: every expected column lands on `recip`. Zero `recip` hits in non-.rs files."
+   }
+  },
+  {
+   "q": 15,
+   "kind": "supported",
+   "crate": "core",
+   "name": "wrapping_byte_add",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core ptr/const_ptr/impl#[`*const T`]wrapping_byte_add().",
+   "symbol_id": "35ac6c863e04f8d67f026995dd9ab39468b476abdfeebd1e94e84ba8084ace11",
+   "definition": {
+    "path": "library/core/src/ptr/const_ptr.rs",
+    "start": 44522,
+    "end": 44539,
+    "source_sha256": "1ed082d30575560aee249205ae51aff780d05ce54d85ce00a7a5e953c76530cf",
+    "source_bytes": 65996
+   },
+   "expected_count": 6,
+   "expected_files": 3,
+   "expected_sha256": "e0c01299f544b09dd8875045c5f78d3485c85e37f729ca9e5f2cbebae92346f1",
+   "expected": [
+    [
+     "library/compiler-builtins/compiler-builtins/src/mem/impls.rs",
+     2881,
+     2898
+    ],
+    [
+     "library/compiler-builtins/compiler-builtins/src/mem/impls.rs",
+     4689,
+     4706
+    ],
+    [
+     "library/coretests/tests/ptr.rs",
+     13752,
+     13769
+    ],
+    [
+     "library/coretests/tests/ptr.rs",
+     13808,
+     13825
+    ],
+    [
+     "library/coretests/tests/ptr.rs",
+     13865,
+     13882
+    ],
+    [
+     "library/std/src/sys/sync/once/queue.rs",
+     11355,
+     11372
+    ]
+   ],
+   "split_identities": {},
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 6,
+    "spurious": [],
+    "missing": [],
+    "notes": "Genuine: coretests/tests/ptr.rs:484-486 (`ptr: *const i32`, ptr.rs:479; test fn `is_aligned`, `mod ptr;` ungated at coretests/tests/lib.rs:208); std/src/sys/sync/once/queue.rs:267 (`ptr::from_ref(node)` returns *const Waiter; queue.rs is the selected Once impl for target_family=unix per sys/sync/once/mod.rs, macOS is not in the futex arm); compiler-builtins/src/mem/impls.rs:59 (second occurrence col 58: `src.wrapping_byte_add(offset)`, src: *const usize in `load_chunk_aligned`) and :102 (`src.wrapping_byte_add(WORD_SIZE - load_sz)`, src: *const usize in `load_aligned_end_partial`). No missing candidates. CFG CAVEAT on 2 of the 6 (impls.rs:59 and :102): both live in functions annotated `#[cfg(not(mem_unaligned))]` (impls.rs:49, 91). compiler-builtins/build.rs:45-49 calls `set_cfg(\"mem_unaligned\", ..)` which is TRUE for target_arch containing x86_64/x86/aarch64/bpf, so under a real cargo build for aarch64-apple-darwin `mem_unaligned` is set and those two functions are compiled OUT (strictly host-cfg_excluded:not(mem_unaligned)). They are still genuine, correctly-resolved references to this exact item at source level (receiver *const usize), and rust-analyzer emitted them (artifact side-evidence from stat/occ.tsv: RA produced occurrences both inside `#[cfg(mem_unaligned)] read_usize_unaligned` (line 42) and inside the `#[cfg(not(mem_unaligned))]` fns, i.e. it did not enforce that build-script cfg). If the acceptance must follow strict host-cfg semantics, expected would be 4, not 6, for this question; if it follows 'what a cfg-agnostic source scan resolves', 6 is right. The other 4 are unconditional on the host."
+   }
+  },
+  {
+   "q": 16,
+   "kind": "high",
+   "crate": "core",
+   "name": "unwrap",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core option/impl#[`Option<T>`]unwrap().",
+   "symbol_id": "8f933555e3b409f010051ee8e3620e19e7f7cd765954c1dd2549fcdf1f2d73bc",
+   "definition": {
+    "path": "library/core/src/option.rs",
+    "start": 39434,
+    "end": 39440,
+    "source_sha256": "2dab92cdbec51b006307496b24cc757d7b2bc4056eff156d0fff445f66c1d2f5",
+    "source_bytes": 102358
+   },
+   "expected_count": 652,
+   "expected_files": 87,
+   "expected_sha256": "898f0b6445018c9093b3412fb170025e0d3940df9b71dd31346d5b8a11fb3f79",
+   "split_identities": {
+    "core 0.0.0 ref": 165
+   },
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 64,
+    "spurious": [],
+    "missing": [],
+    "notes": "Mechanical checks on all 64: file present in snapshot; line_text equals snapshot line; bytes[start:end]==name; col_byte+start consistent; identifier word-bounded; not after '//' on the line (so not a comment/doc comment); not inside a /* */ block or a macro_rules! body (brace-matched scan); enclosing item's #[cfg(..)] attributes satisfied on aarch64-apple-darwin. Receiver-type evidence: BTreeMap.root is Option<Root<K,V>> (alloc/src/collections/btree/map.rs:194) -> map.rs:246,269,306,1571, entry.rs:465,663; map.rs:2223 dormant_root: Option<DormantMutRef<..>> (map.rs:2151); map.rs:3462,3508,3594,3623 self.root is DormantMutRef<'a, Option<Root>> (map.rs:3189), reborrow() -> &mut Option<Root> (borrow.rs:51), then .as_mut(); map.rs:1308 IntoIter::next; navigate.rs:78,94 front/back are Option<..> (navigate.rs:11-12); navigate.rs:79,95,534,546,560,574 `.next_kv()/.next_back_kv()` return Result (navigate.rs:380,401,426) so `.ok()` gives Option; navigate.rs:161-208 init_front/init_back return Option<&mut Handle> (navigate.rs:221,235); navigate.rs:600,621 deallocating_next[_back] return Option<(..)> (navigate.rs:459,491); node.rs:240 NonZero::new; linked_list.rs:1067,1073,1128 CursorMut::remove_current -> Option<T> (linked_list.rs:1732); thin.rs:338 usize::checked_sub, thin.rs:356/rc.rs:4509,4523/sync.rs:3856,4307,4321 NonNull::new; c_str.rs:279 checked_add, c_str.rs:636 core::slice::memchr::memchr -> Option<usize> (c_str.rs:6); rc.rs:4540,4554/sync.rs:4338,4352 UniqueRc/ArcUninit.alloc: Option<A> (rc.rs:4494, sync.rs:4292); alloctests tests: Box<dyn Any>::downcast_ref -> Option, Weak::upgrade -> Option, BinaryHeap::peek/pop/peek_mut, Vec::last/pop -> Option. 16 of the 64 sit inside macro invocations (assert_eq!/assert!/debug_assert!) which are ordinary call expressions, not macro_rules bodies. Entries in alloctests/tests/* are genuine references to the same source item (the SCIP 'core 0.0.0' split is an instance artifact, not a different source item). Window check found no Option::unwrap candidate in the 64's span that is both host-compiled and absent from the 64."
+   }
+  },
+  {
+   "q": 17,
+   "kind": "high",
+   "crate": "core",
+   "name": "collect",
+   "symbol": "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core iter/traits/iterator/Iterator#collect().",
+   "symbol_id": "1fc9ad9dedfdb1e4afd46350c1c7c85d524e1300ebe659f4043ce90c74ca4525",
+   "definition": {
+    "path": "library/core/src/iter/traits/iterator.rs",
+    "start": 70103,
+    "end": 70110,
+    "source_sha256": "73b8d516443f0e73a1b1f59c94215e2dd5b6d2ec482c91f245b61e21edac46fb",
+    "source_bytes": 144065
+   },
+   "expected_count": 471,
+   "expected_files": 68,
+   "expected_sha256": "43381794c9066de674570268a52a6e09946e8f3de5ea72f5c4d1471c3d697214",
+   "split_identities": {
+    "core 0.0.0 ref": 145
+   },
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 64,
+    "spurious": [],
+    "missing": [],
+    "notes": "Mechanical checks on all 64: file present in snapshot; line_text equals snapshot line; bytes[start:end]==name; col_byte+start consistent; identifier word-bounded; not after '//' on the line (so not a comment/doc comment); not inside a /* */ block or a macro_rules! body (brace-matched scan); enclosing item's #[cfg(..)] attributes satisfied on aarch64-apple-darwin. Receivers: generic `T: IntoIterator`/`I: Iterator` bounds (boxed/iter.rs:145, bstr.rs:285-301, binary_heap/mod.rs:1993, btree/map.rs:2545, btree/set.rs:1472, rc.rs:3148 `I: Iterator<Item=T>`, sync.rs:4215), self.replace_with.by_ref() (vec_deque/splice.rs:92, vec/splice.rs:87), .iter().map(..) (slice.rs:642,661; str.rs:1014), char::decode_utf16(..) (DecodeUtf16 is an Iterator) with map/collect (string.rs:765,796,835,869,908), from_fn(..) (string.rs:1604), String::IntoChars.bytes: vec::IntoIter<u8> (string.rs:3403-3404, 3458), (0..n).map(f) (vec/mod.rs:795), Range/RangeInclusive/cycle().take() in tests/benches, VecDeque/BinaryHeap iterator adapters (binary_heap.rs:27-587), local `struct Iter` with `impl Iterator for Iter` (alloctests/tests/arc.rs, struct Iter in shared_from_iter_trustedlen_no_fuse -> entry arc.rs:222), heap.rs:25 `(0..iterations).map(..).collect()`. alloctests/benches/vec_deque_append.rs:9,10 is a separate [[bench]] target without the not(miri) gate (alloctests/Cargo.toml:38-41). alloctests/lib.rs:110 and tests/lib.rs:114 are `.into_iter().chain(0u8..8).collect::<Vec<u8>>()`. Entries inside assert_eq!/ByteString(..) wrappers are ordinary expressions."
+   }
+  },
+  {
+   "q": 18,
+   "kind": "high",
+   "crate": "alloc",
+   "name": "Arc",
+   "symbol": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc sync/Arc#",
+   "symbol_id": "393d643349122cb770ccd47d6d41631cdf674db2b86fcb1abf860e78ad550c7e",
+   "definition": {
+    "path": "library/alloc/src/sync.rs",
+    "start": 10222,
+    "end": 10225,
+    "source_sha256": "b2f806b0f696a181018072625dceed25304aa97dfef6a79bac9800d529afdd0e",
+    "source_bytes": 179132
+   },
+   "expected_count": 591,
+   "expected_files": 30,
+   "expected_sha256": "ed8c9196031c6b97f131aa0f557891ba6865a8f81daeae768a2ede567075f71d",
+   "split_identities": {
+    "alloc 0.0.0 ref": 95
+   },
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 64,
+    "spurious": [],
+    "missing": [],
+    "notes": "Mechanical checks on all 64: file present in snapshot; line_text equals snapshot line; bytes[start:end]==name; col_byte+start consistent; identifier word-bounded; not after '//' on the line (so not a comment/doc comment); not inside a /* */ block or a macro_rules! body (brace-matched scan); enclosing item's #[cfg(..)] attributes satisfied on aarch64-apple-darwin. Form breakdown of the 64: 3 imports (bstr.rs:24, ffi/c_str.rs:15, io/impls.rs:13), 40 type-position (From/Read/Write/Seek/Send/Sync/UnwindSafe/CoerceUnsized/DispatchFromDyn/CloneFromCell impl headers, fn signatures, Pin<Arc<T>>, Result<Arc<..>>), 21 `Arc::path` qualifiers (Arc::from_raw/into_raw/from/from_ptr/allocate_for_layout/try_allocate_for_layout/new/try_new/is_unique). cfg attributes on enclosing items (not(no_global_oom_handling), not(no_rc), target_has_atomic=\"ptr\") all hold on the host. No Arc token before the 64th entry in alloc/src was missed other than strings/definition, so the 64 are a faithful prefix of the lexical reference set."
+   }
+  },
+  {
+   "q": 19,
+   "kind": "high",
+   "crate": "std",
+   "name": "Path",
+   "symbol": "rust-analyzer cargo std https://github.com/rust-lang/rust/library/std path/Path#",
+   "symbol_id": "011bae69d68de59dd04a31f87c5d31105363d4cca8857c545b75c53655e50306",
+   "definition": {
+    "path": "library/std/src/path.rs",
+    "start": 77513,
+    "end": 77517,
+    "source_sha256": "a41beffcf2ecd2b331c71cc7d6d2e7ca18f85e613106abee770821dd0e53be14",
+    "source_bytes": 139026
+   },
+   "expected_count": 330,
+   "expected_files": 25,
+   "expected_sha256": "017267b54b520733fcaf311da0dcf41041d92357f511235d3cde80703c539c53",
+   "split_identities": {
+    "std 0.0.0 ref": 96
+   },
+   "source_check": {
+    "verdict": "DISCREPANCY",
+    "genuine": 64,
+    "spurious": [],
+    "missing": [
+     {
+      "path": "library/compiler-builtins/compiler-builtins/build.rs",
+      "line": 594,
+      "reason": "`builtins_dir: &Path,` (fn build_aarch64_out_of_line_atomics_libraries parameter, byte col 23) is a plain type reference to std::path::Path via `use std::path::{Path, PathBuf};` at build.rs:155 inside `#[cfg(feature = \"c\")] mod c` (build.rs:149-649). Same module as expected entry build.rs:155, no extra cfg on the fn (the call site build.rs:550 is under the runtime `if cfg.target_arch == \"aarch64\" ..` at build.rs:548, not a cfg attribute). It sorts between expected build.rs:155 and proc_macro/src/lib.rs:1901 so it should be inside the first-64 window but is not listed. Source-level it is a genuine reference. (Diagnostic peek at stat/occ.tsv, not used for classification: the SCIP artifact has no occurrence on build.rs lines 593-596 at all, i.e. the whole fn signature is missing, so this looks like a producer gap rather than a source-level exclusion.)"
+     }
+    ],
+    "notes": "Mechanical checks on all 64: file present in snapshot; line_text equals snapshot line; bytes[start:end]==name; col_byte+start consistent; identifier word-bounded; not after '//' on the line (so not a comment/doc comment); not inside a /* */ block or a macro_rules! body (brace-matched scan); enclosing item's #[cfg(..)] attributes satisfied on aarch64-apple-darwin. All 64 listed entries are genuine: 7 imports (alloctests/tests/borrow.rs:3, compiler-builtins/compiler-builtins/build.rs:155, proc_macro/src/lib.rs:1901 [inside `pub mod tracked`, real code], std/src/env.rs:17, std/src/fs.rs:47, std/src/os/unix/fs.rs:16, std/src/os/unix/net/addr.rs:6), 54 type positions (AsRef<Path>, &Path), 3 `Path::new(..)` calls (borrow.rs:45, fs.rs:3569, fs.rs:3580). borrow.rs:46 `test_from_cow!(path: &Path);` is a macro INVOCATION argument (macro_rules defined at borrow.rs:7), not a macro_rules body. compiler-builtins build.rs:155 is only analysed because compiler-builtins/compiler-builtins is a path dependency (rustc-std-workspace-core/Cargo.toml:20) and `mod c` is active under the run's features. std/src/os/unix/fs.rs:1227 chroot is cfg(not(target_os=\"fuchsia\")) - true on macos. The only DISCREPANCY is completeness of the first-64 window (build.rs:594), not the genuineness of any listed entry; no spurious entries. No other shadowing `Path` definition exists in the 64's files (rg struct/enum/type Path: only std/src/path.rs:2356)."
+   }
+  },
+  {
+   "q": 20,
+   "kind": "high",
+   "crate": "alloc",
+   "name": "Rc",
+   "symbol": "rust-analyzer cargo alloc https://github.com/rust-lang/rust/library/alloc rc/Rc#",
+   "symbol_id": "83201b680b7b59e6025d2e2af44fb5932d7bed05497b2aea1ff9cd2f3e9375a8",
+   "definition": {
+    "path": "library/alloc/src/rc.rs",
+    "start": 12564,
+    "end": 12566,
+    "source_sha256": "34317c854ee831c21877200c5e234b829a3560ae5ff6caa9bb7ddc45d2214791",
+    "source_bytes": 156504
+   },
+   "expected_count": 589,
+   "expected_files": 24,
+   "expected_sha256": "ee9c8e1c847f084d68ae36cdb24f3a778cc82ef53f722071726fcf7a0015d4b9",
+   "split_identities": {
+    "alloc 0.0.0 ref": 21
+   },
+   "source_check": {
+    "verdict": "CONSISTENT",
+    "genuine": 64,
+    "spurious": [],
+    "missing": [],
+    "notes": "Mechanical checks on all 64: file present in snapshot; line_text equals snapshot line; bytes[start:end]==name; col_byte+start consistent; identifier word-bounded; not after '//' on the line (so not a comment/doc comment); not inside a /* */ block or a macro_rules! body (brace-matched scan); enclosing item's #[cfg(..)] attributes satisfied on aarch64-apple-darwin. Form breakdown of the 64: 2 imports (bstr.rs:21, ffi/c_str.rs:12), 38 type-position (impl headers !Send/!Sync/UnwindSafe/RefUnwindSafe/CoerceUnsized/DispatchFromDyn/CloneFromCell/From/Default, fn signatures, Pin<Rc<T>>, Result<Rc<..>>), 24 `Rc::path` qualifiers (Rc::from_raw/into_raw/from/from_ptr/allocate_for_layout/try_allocate_for_layout/new/is_unique/get_mut_unchecked). rc.rs:334/342 are negative impls `impl !Send/!Sync for Rc<T, A>`. cfg attributes on enclosing items (not(no_rc), not(no_global_oom_handling)) hold on the host. The only lexical Rc candidates in the 64's span that are absent are cfg(test)-gated, strings, or the definition."
+   }
+  }
+ ]
+}

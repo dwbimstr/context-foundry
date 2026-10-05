@@ -21,8 +21,56 @@ Owner answers, 2026-10-04:
   - Numeric profile, fixed before the run: `max_index_seconds=900`,
     `max_peak_rss_bytes=2147483648`, `max_query_p95_ms=250`, `max_run_seconds=3600`.
     Producer time and RSS are disclosed separately.
-  - The MCP catalog ceiling rises from 800 to 900 o200k tokens for the `references`
-    tool (003).
+  - The MCP catalog ceiling rises from 800 o200k tokens for the `references` tool (003):
+    to 900 at first, then to 1000 (owner, 2026-10-04) after measurement put full
+    schemas with the read-only annotation at about 971 tokens. Existing descriptions
+    stay unchanged.
+- **T003 producer run (captain decisions, 2026-10-04; amended after a GPT-6 Astra
+  refutation the same day).**
+  - Snapshot: a read-only tree holding only `library/`, made of the tracked files there
+    that Foundry admits (2,255 files, 35.6 MB). `rust-analyzer scip <snapshot>` then
+    names documents by their workspace paths, so the importer needs no path mapping.
+    This is a filtered, incomplete `library/` input, not a complete build of the
+    release tree. Named omissions:
+    - five files over 2 MiB, three of them `.rs` under `stdarch/crates/core_arch`;
+    - six NUL test-data files and 22 hidden files;
+    - the uninitialized `library/backtrace` submodule.
+
+    Coverage and absence claims cover only the retained inputs. Each question is
+    checked against the source to confirm the omitted compiler inputs cannot change
+    its expected set.
+  - Config: rust-lang/rust's own `src/etc/rust_analyzer_settings.json` choices for
+    `library/`: `cargo.sysrootSrc` is the snapshot's `library`, and `RUSTC_BOOTSTRAP=1`
+    is set because the workspace manifest uses the nightly `profile-rustflags` feature
+    (the authorized `cargo fetch` needed it too).
+
+    The artifact carries two compiler instances of `core`: `core 0.0.0`, the workspace
+    package that coretests and alloctests use, and the sysroot instance. SCIP identities
+    stay as produced and are never merged by name. Each question records the instance
+    it targets and the split-identity occurrences of the same descriptor; a question
+    whose intended target spans both instances must account for the split, or that
+    criterion is reported unmet.
+  - `max_run_seconds` bounds the Foundry session: index, import, the 20 timed queries
+    and the edit/re-index/reimport cycle. The Foundry timer pauses during the two
+    permitted producer executions, which are timed and disclosed separately with their
+    RSS, together with the total end-to-end elapsed time. A Foundry-only pass is not
+    described as a one-hour end-to-end workflow.
+  - The 20 questions come from a fixed rule over the artifact and the snapshot bytes,
+    applied before any Foundry query. The run record keeps the rule and the expected
+    sets.
+
+    The artifact is the oracle for import fidelity, not for Rust semantics. So, before
+    timing, an independent source check covers every supported question: it reads the
+    definition, import, module and type context, enumerates same-name lexical
+    candidates in scope, and records why each one is excluded. For high-degree
+    questions the returned subset is source-checked as well.
+
+    The comparator exits nonzero on any mismatch and checks:
+    - every returned handle's full identity (path, current source hash and workspace),
+      and that its range is the enclosing delivery unit containing the occurrence;
+    - each header's coverage and the truncation (`next:`) behavior;
+    - exact occurrence byte ranges, read back through single-record pages;
+    - corrupted-handle and wrong-symbol same-name controls, which must be rejected.
 - **T002 header segments.** Decided 2026-10-04 in context-v2 § Header line, segments
   12–14.
 
@@ -244,8 +292,9 @@ symbol references.
 
 ### Import through the existing agent owner
 
-005 adds `references` to 003's catalog, making six tools (`search`, `context`,
-`retrieve`, `index`, `status`, `references`), and moves MCP import into `index`:
+005 adds `references` to 003's catalog, making seven tools with 008's `memory`
+(`search`, `context`, `retrieve`, `index`, `status`, `memory`, `references`; catalog at
+most 1000 o200k tokens), and moves MCP import into `index`:
 `index {scip: {index_file, snapshot_file}, timeout_ms?, root?}` performs the import
 that a separate `import_scip` tool would have, for the selected root's store; without
 `scip`, `index` refreshes sources as before. There is no `import_scip` tool. File names
