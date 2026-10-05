@@ -207,7 +207,8 @@ measurement, targets and claim labels.
 | Deduplicate within one response only; no cross-call suppression; deterministic elision only | v2 § Deduplication, no cross-call suppression | Compaction drops earlier results, and a forced extra retrieve turn costs more than resending (prakarana T008) |
 
 Catalog ceiling: the serialized `tools/list` result stays within 800 o200k tokens,
-asserted by a test; the exact descriptions and instruction text are owned by
+asserted by a test. It rises to 900 when 005 T003 adds `references` (owner decision
+2026-10-04). The exact descriptions and instruction text are owned by
 [003](../spec.md) (§ Catalog and instruction text).
 
 ### Usage import

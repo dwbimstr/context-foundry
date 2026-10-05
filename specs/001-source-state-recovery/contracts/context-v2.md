@@ -269,7 +269,7 @@ before the optional label.
 Parsers dispatch by operation:
 - a context `next:` line belongs to the immediately preceding preview;
 - retrieve keeps its single final `next: <handle>`;
-- references ends with `next: after=<path>#<start>`.
+- references ends with `next: after=<path>#<start>-<end>` (005).
 
 Framed source items are parsed before continuation prefixes. A literal `next:` inside a
 fenced body stays body content.

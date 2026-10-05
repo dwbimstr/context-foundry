@@ -12,8 +12,17 @@ Owner answers, 2026-10-04:
   tag `2026-08-31`, commit `f8996691e991`. It ran once in a no-network `sandbox-exec`
   jail on the T001 fixture; the producer record is
   `tests/fixtures/semantic/producer.json`.
-- **T003 corpus.** rust-lang/rust at tag 1.99.0 (commit `b940084d`, 62,035 files). The
-  numeric profile is still proposed at run selection, as T003 states.
+- **T003 corpus.** rust-lang/rust at tag 1.99.0 (commit `b940084d`; 62,035 files and
+  214 MiB tracked). Owner decisions, 2026-10-04:
+  - Foundry admits the whole repository.
+  - The producer covers only the `library/` (std) workspace, after one authorized
+    `cargo fetch` of its 30 registry crates outside the jail. The 20 questions target
+    std symbols, and other paths are out of producer scope.
+  - Numeric profile, fixed before the run: `max_index_seconds=900`,
+    `max_peak_rss_bytes=2147483648`, `max_query_p95_ms=250`, `max_run_seconds=3600`.
+    Producer time and RSS are disclosed separately.
+  - The MCP catalog ceiling rises from 800 to 900 o200k tokens for the `references`
+    tool (003).
 - **T002 header segments.** Decided 2026-10-04 in context-v2 § Header line, segments
   12–14.
 
@@ -179,19 +188,29 @@ unresolved/unsupported inputs remains partial and cannot certify no references.
 Proposed `references` operation arguments are `{symbol_id?, handle?, byte_offset?,
 limit?, tokens?, after?}`: exactly one seed form, either a `symbol_id` (16-hex prefix)
 or a source `handle` plus an absolute `byte_offset` within it; unknown/null fields and
-both/neither forms are `invalid_argument`. Resolve the occurrence at that position:
-none→`symbol_not_found`; more than one→`ambiguous_symbol` with at most eight candidates
-and a truncation flag. Defaults: limit 64, max examined graph records 256, max visited
+both/neither forms are `invalid_argument`. Resolve the occurrence at that position
+(refined 2026-10-04: rust-analyzer's module-definition occurrences span whole files):
+- among all occurrences whose range contains the offset, the narrowest range wins;
+- none→`symbol_not_found`;
+- two or more different symbols sharing that narrowest range→`ambiguous_symbol`, with
+  at most eight candidates and a truncation flag;
+- a resolution scan that exhausts its examination window certifies neither uniqueness
+  nor absence. It reports truncation, and so does an interrupted definition lookup.
+
+Defaults: limit 64, max examined graph records 256, max visited
 files 64; request limits 1..256. `tokens` budgets the response like search (1..32768,
 default 1024; the effective budget, reservation and charge of
 [003's economics contract](../003-agent-retrieval-context/contracts/adapter-economics.md)).
 The result is v2 text under 001's
 [shared context contract](../001-source-state-recovery/contracts/context-v2.md): its
-header, then one line per reference in path and byte-start order,
+header, then one line per reference in (path, byte start, byte end) order,
 `<handle> L<line> in <kind> <qualified name>`, where the handle covers the reference's
 enclosing delivery unit, `L<line>` is the occurrence's line and `<kind> <qualified name>`
 names that unit. While more references remain, the last line is
-`next: after=<path>#<start>`, a cursor passed back as `after` to continue. Coverage
+`next: after=<path>#<start>-<end>`, a cursor passed back as `after` to continue (amended
+2026-10-04 so that references sharing a start paginate without skipping; limits apply
+per record and no tied group is indivisible). The seed's own source read counts toward
+the 64-file budget. Coverage
 (complete/partial/stale/unavailable) and exact examined/stale/unresolved/omitted counts
 are reported in the header as context-v2 § Header line segments 12–14 (`examined`,
 `unresolved`, `coverage`), together with the shared `stale`, `omitted` and
@@ -199,9 +218,16 @@ are reported in the header as context-v2 § Header line segments 12–14 (`exami
 not all unvisited graph records. Source/handle errors use 001 precedence.
 Import failures name unbound_artifact, stale_artifact, invalid_range,
 unsupported_encoding, artifact_too_large, document_too_large or producer_incomplete;
-partial import exits 1 with committed/failed counts, invalid invocation exits 2, and
-cooperative cancellation exits 130. No failed document is counted accepted-empty. `complete` means complete for supported
-indexed input, not all possible runtime references. Bounds do not remove facts.
+An import is `complete` when every manifest/artifact document was consumed and published
+with none failed or interrupted; it exits 0. Failed or interrupted documents make a
+partial import that exits 1 with committed/failed counts. Invalid invocation exits 2,
+and cooperative cancellation exits 130. Coverage is reported separately (decided
+2026-10-04): the import report carries `coverage: complete|partial` with its unresolved,
+unknown and unsupported source counts. Unresolved or unsupported references never fail
+the run, but they keep coverage `partial`, which certifies no absence. No failed
+document is counted accepted-empty. A failed or cancelled run retires no scope. `complete`
+coverage means complete for supported indexed input, not all possible runtime
+references. Bounds do not remove facts.
 
 `context(strategy=graph)` expands at most three retrieved source spans' overlapping
 resolved symbols in that order, symbol-ID tie break. Reference occurrences contribute
