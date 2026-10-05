@@ -58,6 +58,19 @@ pub enum FoundryError {
     /// A memory record cannot be decoded (008). Names the record; source
     /// operations remain available.
     CorruptMemory(String),
+    /// A named 005 compiler-graph failure (SCIP import or `references`):
+    /// `unbound_artifact`, `stale_artifact`, `invalid_range`,
+    /// `unsupported_encoding`, `artifact_too_large`, `manifest_too_large`,
+    /// `document_too_large`, `producer_incomplete`, `scratch_full`,
+    /// `duplicate_document`, `duplicate_input`, `symbol_not_found`,
+    /// `ambiguous_symbol`. Callers build it through `crate::scip::fail`.
+    Scip {
+        code: &'static str,
+        message: String,
+    },
+    /// A caller-named import file is missing, not a regular file or
+    /// unreadable. An invalid invocation (CLI exit 2).
+    ArtifactUnavailable(String),
     Internal(anyhow::Error),
 }
 /// Counts-only partial index state for bounded MCP/CLI cancellation errors.
@@ -106,6 +119,8 @@ impl FoundryError {
             Self::Conflict(_) => "conflict",
             Self::AlreadyAbsent(_) => "already_absent",
             Self::CorruptMemory(_) => "corrupt_memory",
+            Self::Scip { code, .. } => code,
+            Self::ArtifactUnavailable(_) => "artifact_unavailable",
             Self::Internal(_) => "internal",
         }
     }
@@ -127,6 +142,7 @@ impl FoundryError {
             Self::InvalidArgument(_)
             | Self::UnsupportedMode(_)
             | Self::InvalidRange
+            | Self::ArtifactUnavailable(_)
             | Self::UnsupportedSchema { .. }
             | Self::UpgradeRequired { .. } => 2,
             Self::StoreBusy => 3,
@@ -157,7 +173,7 @@ impl FoundryError {
                 format!("unsupported store schema {found}; no automatic upgrade")
             }
             Self::UpgradeRequired { found } => {
-                format!("store schema {found} requires an explicit upgrade-store --to 3")
+                format!("store schema {found} requires an explicit upgrade-store --to 4")
             }
             Self::CorruptStore(m) => format!("authoritative store data is corrupt: {m}"),
             Self::RepairRequired(m) => format!("derived search index needs explicit repair: {m}"),
@@ -178,6 +194,8 @@ impl FoundryError {
             }
             Self::AlreadyAbsent(m) => format!("memory record {m} is absent"),
             Self::CorruptMemory(m) => format!("memory record cannot be decoded: {m}"),
+            Self::Scip { message, .. } => message.clone(),
+            Self::ArtifactUnavailable(m) => format!("import file is unavailable: {m}"),
             Self::Internal(e) => format!("{e:#}"),
         }
     }

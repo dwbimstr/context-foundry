@@ -650,7 +650,7 @@ fn broken_lexical_index_still_reads_and_exports_and_a_corrupt_row_is_named() {
     fails(e.export(&[]), "corrupt_memory");
 }
 
-// --- T001: schema-3 upgrade --------------------------------------------------
+// --- T001: schema-3 steps inside the schema-4 upgrade ------------------------
 
 #[test]
 fn v2_upgrade_preserves_rows_migrates_pending_keys_and_is_all_or_nothing() {
@@ -667,25 +667,29 @@ fn v2_upgrade_preserves_rows_migrates_pending_keys_and_is_all_or_nothing() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 3, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(&store, 4, &Control::unbounded()).unwrap_err();
     fault::disarm_all();
     assert_eq!(testkit::schema_marker(&store), "2");
     assert_eq!(testkit::snapshot(&store), before);
-    // `--to 2` is no longer a target; nothing changed.
+    // `--to 2` and `--to 3` are no longer targets; nothing changed.
     fails(
         run(&store, &["upgrade-store", "--to", "2"], None),
         "unsupported_mode",
     );
+    fails(
+        run(&store, &["upgrade-store", "--to", "3"], None),
+        "unsupported_mode",
+    );
 
-    // Interrupted after commit: wholly v3.
+    // Interrupted after commit: wholly v4.
     fault::arm(
         names::UPGRADE_AFTER_COMMIT,
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 3, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(&store, 4, &Control::unbounded()).unwrap_err();
     fault::disarm_all();
-    assert_eq!(testkit::schema_marker(&store), "3");
+    assert_eq!(testkit::schema_marker(&store), "4");
     let after = testkit::snapshot(&store);
     for table in [
         "sources",
@@ -726,15 +730,18 @@ fn v2_upgrade_preserves_rows_migrates_pending_keys_and_is_all_or_nothing() {
     assert_eq!(after["edges_in"], before["edges_in"]);
     assert_eq!(after["scan_seen"], before["scan_seen"]);
     assert!(after["memory"].is_empty());
+    for table in testkit::COMPILER_TABLES {
+        assert!(after[table].is_empty(), "{table} starts empty");
+    }
     assert_eq!(
         testkit::meta_value(&store, "memory_revision").as_deref(),
         Some("0")
     );
-    // Re-running the upgrade is a no-op; the status reports schema 3.
-    ok(run(&store, &["upgrade-store", "--to", "3"], None));
+    // Re-running the upgrade is a no-op; the status reports schema 4.
+    ok(run(&store, &["upgrade-store", "--to", "4"], None));
     assert_eq!(
         stdout_json(&ok(run(&store, &["status"], None)))["schema"],
-        3
+        4
     );
 }
 

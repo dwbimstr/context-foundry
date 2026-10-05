@@ -45,6 +45,7 @@ pub mod memory;
 pub mod receipts;
 pub mod response;
 pub mod roots;
+pub mod scip;
 pub mod store;
 pub mod syntax;
 #[cfg(feature = "test-faults")]

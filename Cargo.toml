@@ -33,6 +33,14 @@ tree-sitter-cpp = "0.23"
 tree-sitter-java = "0.23"
 pulldown-cmark = { version = "0.13", default-features = false }
 
+# 005 T001 compiler-fact import: the SCIP protobuf types and the streaming
+# wire reader. rust-analyzer 2026-08-31 builds its artifact with scip 0.7.1
+# (deprecated `range`/`enclosing_range` only); scip 0.10.0 is a wire-
+# compatible superset that adds `typed_range`/`typed_enclosing_range`. Both
+# pins are exact and build on the Rust 1.90 floor.
+scip = "=0.10.0"
+protobuf = "=3.7.2"
+
 # 003 adapter: real MCP SDK (rmcp 3.5.0, feasibility-proven on Rust 1.90) and
 # the async/HTTP runtime it mounts on. The bounded codec rides tokio-util;
 # axum hosts the SDK's tower service at /mcp.

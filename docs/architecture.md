@@ -274,9 +274,11 @@ Both transports keep one-active/zero-queued engine admission and immutable scope
 Implemented modules (2026-10-01): `store` (authoritative redb state, derived Tantivy,
 repair/upgrade), `ingest` (held-root paged reconciliation), `response` (handles,
 packing and exact counting against a caller-supplied final renderer), `control`
-(cooperative cancellation/deadlines), `error` (contract codes), `graph`, `cli` (core
-commands), and the 003 adapter: `mcp`, `bootstrap`, `config`, `receipts`,
-`adapter_cli`, `adapter_error`. `fault`/`testkit` compile only under the test feature;
+(cooperative cancellation/deadlines), `error` (contract codes), `graph` (manual bundles
+and the 005 compiler tables/`references` read), `scip` (005 streaming SCIP decoder,
+manifest and frozen-copy importer), `memory` (008), `cli` (core commands), and the 003
+adapter: `mcp`, `bootstrap`, `config`, `receipts`, `adapter_cli`, `adapter_error`,
+`gateway`. `fault`/`testkit` compile only under the test feature;
 fault arming lives in a separate test binary. CLI and MCP call the same library API;
 no plugin framework or generic execution planner.
 
@@ -291,7 +293,7 @@ old facts ineligible immediately after the source commit. The current traversal
 accepts direction, depth and an examined-edge cap and exposes staleness/truncation.
 It visits file neighborhoods; symbol resolution and edge-kind filtering are future
 work. Evidence classes remain producer declarations, not certifications by the
-importer. The proposed 005 adapter supports definitions/references, not inferred calls. Compiler
+importer. The 005 importer (T001/T002) supports definitions/references, not inferred calls. Compiler
 facts bind to the whole indexed source revision; a third-file edit invalidates older
 compiler facts even if endpoint bytes match. This is stricter than the existing manual
 bundle rule. Producer execution uses an immutable input snapshot and remains explicit.
@@ -477,6 +479,7 @@ snapshot eligibility rules above.
 | Search during index lag | Check each candidate against the redb source hash; reject stale candidates and report pending work. New versions can be temporarily absent from search. |
 | Missing or corrupt search index | Ordinary opens never repair: search/context return `repair_required`, while status and direct retrieve use an authoritative-only open. Explicit `repair-index` sets the durable `search_rebuild_required` marker, queues sources in pages of 128, moves the old index to one retained quarantine, rebuilds and clears the marker only after commit/reload with no pending work; an interrupted repair keeps the marker and a rerun converges. |
 | Graph import | Validate all endpoints and bounds before replacing a producer's old bundle in one transaction. A rejected bundle leaves the prior bundle intact. |
+| Compiler (SCIP) import | Freeze copies of the artifact and manifest in owned scratch, check their digests and the manifest's workspace, revision and input hashes, then build a disk-backed definition lookup before selecting the snapshot tuple. Each source scope `(producer, path)` is replaced in its own transaction with its coverage row. A failed or cancelled run keeps committed scopes and retires none; scopes retire only when a completed run with no failed document proves their source absent. |
 | Incomplete workspace scan | Keep unseen sources because absence was not established; report failures. Known unsupported inputs are explicit exclusions and retire their previous indexed content. |
 | Legacy prototype Laya failure | Timeout, invalid response, unknown action or confidence below threshold selects a deterministic strategy and reports the reason. Retrieval remains available. |
 
@@ -488,11 +491,12 @@ processes are not a supported serving topology; the optional shared HTTP owner (
 serves several MCP clients through that one owner. Do not add process retries and
 lock stealing as a substitute for one serving owner.
 
-The implemented store schema is version 3 (008, 2026-10-04). `upgrade-store --to 3` is
-the one explicit transaction from v1 or v2. It applies the v1→v2 revision/scan/repair
-metadata (001 T001), then adds the memory table and its revision counter, and types
-every pending-index key (`source:`/`memory:`). Other targets are refused, and so are
-older readers. There is no predecessor-store reader or
+The implemented store schema is version 4 (005, 2026-10-04). `upgrade-store --to 4` is
+the one explicit transaction from v1, v2 or v3. It applies the v1→v2 revision/scan/repair
+metadata (001 T001), then the v3 steps for v1 and v2 stores: the memory table and its
+revision counter, and typed pending-index keys (`source:`/`memory:`). Every store then
+gains the empty compiler-fact tables (005), filled only by `import-scip`. Other targets
+are refused, and so are older readers. There is no predecessor-store reader or
 automatic migration. The first compatibility promise is source rebuildability;
 feedback must be exported before replacing an incompatible store. A future schema
 change must either migrate preserved user data explicitly or refuse with instructions.

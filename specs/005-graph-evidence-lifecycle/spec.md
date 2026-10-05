@@ -1,7 +1,9 @@
 # 005 — Real relationships in a large workspace
 
-Status: Proposed; compiler-symbol integration is unimplemented. Dependencies: 001;
-003 only for the agent-facing part of T003. Authorization: specification refinement.
+Status: T001 and T002 locally implemented and accepted 2026-10-04 (CLI `import-scip` and
+`references`, store schema 4); T003 (MCP tool, `index {scip}`, graph context and the scale
+run) in progress. Dependencies: 001; 003 only for the agent-facing part of T003.
+Authorization: specification refinement.
 Spec-pass decisions recorded 2026-10-03: pinned producer release, UTF-8-only positions,
 the producer coverage rule, budgeted v2 `references` and MCP import through `index`.
 External prerequisites (owner): a permitted jailed rust-analyzer run for T001, and the

@@ -6,6 +6,7 @@
 //! bytes it emits for a text, so the 256 KiB cap applies to what it emits.
 use crate::Strategy;
 use crate::error::{FResult, FoundryError};
+use crate::graph::ReferencesOutcome;
 use crate::store::{
     CandidateBatch, HandleRef, Hit, OutlineOutcome, RankedItem, RenderedForm, RetrieveOutcome,
     SearchOutcome, SourceHandle,
@@ -1026,4 +1027,137 @@ fn excerpt(hit: &Hit) -> String {
         }
         format!("{}…", single_line(&line[..cut]))
     }
+}
+
+/// The `foundry references` header (context-v2 § Header line): segments 1-5,
+/// 7, 9 and 10 keep their meanings; 12 `examined`, 13 `unresolved` (only when
+/// positive) and 14 `coverage` are references-only. There is no `shown`,
+/// `capped` or `graph` segment.
+struct ReferencesHeader<'a> {
+    revision: u64,
+    scan_state: &'a str,
+    pending: u64,
+    stale: usize,
+    candidates_full: bool,
+    examined: usize,
+    unresolved: usize,
+    coverage: &'static str,
+}
+
+impl ReferencesHeader<'_> {
+    fn line(&self, budget: usize, limited_by: BudgetLimiter, omitted: usize) -> String {
+        let mut segments = vec![
+            "foundry references".to_owned(),
+            format!("r{}", self.revision),
+        ];
+        if self.scan_state != "complete" {
+            segments.push(format!("scan:{}", single_line(self.scan_state)));
+        }
+        if self.pending > 0 {
+            segments.push(format!("pending:{}", self.pending));
+        }
+        segments.push(match limited_by {
+            BudgetLimiter::Request => format!("budget:{budget}"),
+            BudgetLimiter::Ceiling => format!("budget:{budget}(ceiling)"),
+            BudgetLimiter::Session => format!("budget:{budget}(session)"),
+        });
+        if omitted > 0 {
+            segments.push(format!("omitted:{omitted}"));
+        }
+        if self.stale > 0 {
+            segments.push(format!("stale:{}", self.stale));
+        }
+        if self.candidates_full {
+            segments.push("candidates:full".into());
+        }
+        segments.push(format!("examined:{}", self.examined));
+        if self.unresolved > 0 {
+            segments.push(format!("unresolved:{}", self.unresolved));
+        }
+        segments.push(format!("coverage:{}", self.coverage));
+        let mut line = segments.join(" · ");
+        line.push('\n');
+        line
+    }
+}
+
+/// 005 `references` text: the header, one line per reference in
+/// `(path, start, end)` order, `<handle> L<line> in <kind> <qualified name>`,
+/// then `next: after=<path>#<start>-<end>` while references remain. The
+/// delivered lines are always a bounded PREFIX of the outcome's lines: every
+/// record is its own page unit, so a prefix may end anywhere (including
+/// between references sharing one `(path, start)` — the cursor's `end`
+/// disambiguates) and no undelivered record is ever skipped. If lines exist
+/// but not even the first fits, the answer is `budget_too_small` with a
+/// sufficient budget - never an unchanged continuation.
+pub fn pack_references(
+    outcome: &ReferencesOutcome,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let f = &outcome.freshness;
+    let header = ReferencesHeader {
+        revision: f.source_revision,
+        scan_state: &f.scan_state,
+        pending: f.pending_sources,
+        stale: outcome.stale,
+        candidates_full: outcome.candidates_full,
+        examined: outcome.examined,
+        unresolved: outcome.unresolved,
+        coverage: outcome.coverage.as_str(),
+    };
+    let items = &outcome.items;
+    let total = items.len();
+    let lines: Vec<String> = items
+        .iter()
+        .map(|item| {
+            format!(
+                "{} L{} in {}\n",
+                item.unit.to_v2(),
+                item.line,
+                single_line(&item.label)
+            )
+        })
+        .collect();
+    let continuation = |n: usize| -> Option<String> {
+        match n {
+            0 if total > 0 => None,
+            n if n < total => Some(items[n - 1].cursor()),
+            _ => outcome.more.then(|| outcome.resume.clone()).flatten(),
+        }
+    };
+    let render = |n: usize, at_budget: usize, limited_by: BudgetLimiter| {
+        let mut text = header.line(at_budget, limited_by, total - n);
+        for line in &lines[..n] {
+            text.push_str(line);
+        }
+        if let Some(cursor) = continuation(n) {
+            text.push_str(&format!("next: after={cursor}\n"));
+        }
+        text
+    };
+    let fits = |text: &str| boundary(text) <= BYTE_CAP && count_tokens(text) <= budget.tokens;
+    let mut included = 0usize;
+    for n in 1..=total {
+        if !fits(&render(n, budget.tokens, budget.limited_by)) {
+            break;
+        }
+        included = n;
+    }
+    if included == 0 {
+        let hint = total.min(1);
+        if total > 0 || !fits(&render(0, budget.tokens, budget.limited_by)) {
+            return Err(too_small(budget.tokens, &|b, limited_by| {
+                render(hint, b, limited_by)
+            }));
+        }
+    }
+    let text = render(included, budget.tokens, budget.limited_by);
+    let tokens = count_tokens(&text);
+    Ok(PackedText {
+        text,
+        tokens,
+        omitted: total - included,
+        truncated: included < total || outcome.more,
+    })
 }

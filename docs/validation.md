@@ -40,6 +40,82 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 005 compiler references — T001 and T002, 2026-10-04
+
+Locally implemented and verified, **unpushed and unreleased**.
+- **Authors:** Z.ai GLM-5.3 (implementer); captain integration (the `fault.rs` point
+  union and the `Cargo.lock` three-way merge with the gateway commit).
+- **Review:** cross-lab by OpenAI GPT-6.1 Sol:
+  - round 1, REVISE with 8 Majors: same-start pagination bypassed `limit`; the narrowest
+    position rule was wrong; no import `coverage`; failed documents counted toward
+    resolution; failed runs retired scopes; key parsing could underflow; FIFO inputs
+    blocked; the occurrence cap ran after allocation;
+  - round 2, REVISE: a reachable panic on a missing definition source; non-atomic
+    retirement under cancellation; a budget cliff and masked staleness; key decode
+    before the examined cap; outside-scope inputs degrading coverage; ignored SCIP
+    metadata still materialized; an ordinal label treated as a path. The captain added
+    M10: on the real artifact, position seeds deep in a file exhausted the scan because
+    rust-analyzer's whole-file module occurrence defeated the early stop;
+  - round 3, REVISE:
+    - a stored seed-key range not checked against the verified source body;
+    - an oversized document identified by its first rather than last path, which let a
+      duplicate slip past preflight.
+
+    In flight, the captain added two Majors, both closed by round 4: definition lookup
+    could consume the record reserved for reference progress, and the new decoder
+    accepted field number 0 and unterminated groups;
+  - round 4, REVISE: the rewritten oversized-message scan accepted a document truncated
+    at physical end of file;
+  - round 5, SHIP: the truncation guard closed it, and the reviewer checked that no
+    other early-EOF path accepts a truncated message.
+
+  Round 2 found no remaining issue with the FIFO refusal or with failed documents
+  counting toward resolution. Each later round's fixes were mutation-checked: disabling
+  a fix makes its regression test fail.
+- **Gates on the integrated main tree.**
+  - Source manifest `8ba6fa5a…4a00`, the SHA-256 of sorted file hashes over `src`,
+    `tests` (minus the frozen economics corpus), `Cargo.toml` and `Cargo.lock`.
+  - `cargo fmt --check` and `cargo clippy --all-targets -D warnings` pass.
+  - The full suite: **435 passed, 0 failed, 1 ignored**; all recovery scenarios passed.
+  - Rust 1.90.0 `check` and `clippy -D warnings` pass.
+- **`tests/semantic.rs` (83 tests).** These run on the T001 fixture artifact
+  (`tests/fixtures/semantic/`) and on crafted SCIP:
+  - `a::parse_record` versus `b::parse_record`, Unicode before an occurrence, an
+    indirect use, and stale-to-fresh after a third-file edit and reimport;
+  - frozen copies, FIFO refusal, hash mismatch before selection, duplicate
+    documents and inputs;
+  - every import limit at its real value, and the counting-allocator proofs that 4
+    million ignored symbols or diagnostics are skipped without being materialized;
+  - strict wire decoding (field 0, groups, wire types 6/7, overruns) at every
+    nesting level;
+  - atomic finalization under cancellation;
+  - the narrowest-range and tie rules, deep seeds, pagination and budget reserves
+    (a property loop over seed costs 250–255);
+  - corrupted rows, short IDs and missing definition sources named without panics;
+  - oversized documents identified by their last path, and truncated messages
+    refused before selection.
+- **Real artifact (005 T003 producer run, see below).** The 56.9 MB rust-lang/rust
+  `library/` artifact (958 documents, 436,829 occurrences) imported into the
+  whole-repository store (60,739 sources):
+  - `complete: true`, 0 failed, `coverage: partial` (unresolved external references);
+  - 22.5 s at 480 MiB peak RSS (round 2); with the final release binary
+    `fd3c166b…6e3a` (no test-hook strings), 35.3 s at 465 MiB;
+  - all 20 preselected questions match their expected sets on exact byte ranges
+    (2,780 records), read back through single-record pages;
+  - the controls hold: a deep position seed, a corrupted handle, a foreign workspace,
+    an unknown ID, and a same-name symbol that differs.
+
+  This is functional evidence, not the T003 measured run.
+- **Compatibility.**
+  - Store schema 4: `upgrade-store --to 4` from v1, v2 or v3 in one transaction; v3
+    memory and typed pending keys are preserved.
+  - Older readers refuse. Rollback means restoring a pre-upgrade store copy and the
+    previous binary.
+  - New dependencies `scip` =0.10.0 and `protobuf` =3.7.2 (Rust 1.90 verified).
+- **Integration notes.** Every removed line was audited: 87 lines, all schema 3→4
+  edits, visibility widenings and test assertions; nothing was removed from
+  `graph.rs`, `scip.rs` or `response.rs`.
+
 ## 003 T004 owned model gateway — 2026-10-04
 
 Locally implemented and verified, **unpushed and unreleased**.

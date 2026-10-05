@@ -26,13 +26,13 @@ use tantivy::{
 };
 
 pub(crate) const SOURCES: TableDefinition<&str, &str> = TableDefinition::new("sources");
-const CHUNKS: TableDefinition<&str, &str> = TableDefinition::new("chunks");
+pub(crate) const CHUNKS: TableDefinition<&str, &str> = TableDefinition::new("chunks");
 pub(crate) const PENDING: TableDefinition<&str, &str> = TableDefinition::new("pending_index");
 pub(crate) const META: TableDefinition<&str, &str> = TableDefinition::new("meta");
 pub(crate) const SEEN: TableDefinition<&str, &str> = TableDefinition::new("scan_seen");
 pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("feedback");
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
 /// Search tier 2 (lexical) examines at most this many candidates.
@@ -219,7 +219,7 @@ impl SourceHandle {
 
 /// Decimal u64 without leading zeros (`0` itself is allowed): the number rule
 /// shared by v2 handle offsets and `lines`.
-fn canonical_decimal(digits: &[u8]) -> Option<u64> {
+pub(crate) fn canonical_decimal(digits: &[u8]) -> Option<u64> {
     if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
         return None;
     }
@@ -520,7 +520,7 @@ fn chunk_key(path: &str, ordinal: usize) -> String {
 
 /// Decode stored authoritative JSON; a decode failure is corruption, never an
 /// invented empty value.
-fn decode<T: for<'de> Deserialize<'de>>(raw: &str, what: &str) -> FResult<T> {
+pub(crate) fn decode<T: for<'de> Deserialize<'de>>(raw: &str, what: &str) -> FResult<T> {
     serde_json::from_str(raw)
         .map_err(|e| FoundryError::CorruptStore(format!("{what} record cannot be decoded: {e}")))
 }
@@ -572,14 +572,14 @@ fn read_scan_state<T: ReadableTable<&'static str, &'static str>>(meta: &T) -> FR
 
 /// A source reconstructed from its stored chunks in ordinal order and
 /// verified (keys, ownership, length, SHA-256) against its metadata.
-struct VerifiedSource {
-    body: String,
+pub(crate) struct VerifiedSource {
+    pub(crate) body: String,
 }
 
 /// Reconstruct a source inside the caller's transaction and verify every
 /// chunk key/ownership plus the full length and hash before anything is
 /// sliced. Any inconsistency is `corrupt_source`, never partial evidence.
-fn reconstruct_verified<C: ReadableTable<&'static str, &'static str>>(
+pub(crate) fn reconstruct_verified<C: ReadableTable<&'static str, &'static str>>(
     stored: &C,
     path: &str,
     meta: &SourceMeta,
@@ -987,6 +987,7 @@ fn initialize_tables(tx: &WriteTransaction) -> FResult<()> {
     tx.open_table(FEEDBACK)?;
     tx.open_table(SEEN)?;
     crate::graph::init(tx)?;
+    crate::graph::init_compiler(tx)?;
     Ok(())
 }
 
@@ -1106,12 +1107,12 @@ impl Engine {
                 ));
             };
             match version.value() {
-                "1" | "2" => {
+                "1" | "2" | "3" => {
                     return Err(FoundryError::UpgradeRequired {
                         found: version.value().to_owned(),
                     });
                 }
-                "3" => 3u32,
+                "4" => 4u32,
                 other => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: other.to_owned(),
@@ -1119,8 +1120,8 @@ impl Engine {
                 }
             }
         };
-        // Confirm the schema-3 tables exist; missing authoritative tables in a
-        // schema-3 store are corruption, not something an open recreates.
+        // Confirm the schema-4 tables exist; missing authoritative tables in a
+        // schema-4 store are corruption, not something an open recreates.
         {
             let tx = db.begin_read()?;
             tx.open_table(SEEN).map_err(|e| {
@@ -1134,6 +1135,7 @@ impl Engine {
                 .map_err(|e| FoundryError::CorruptStore(format!("pending table: {e}")))?;
             tx.open_table(MEMORY)
                 .map_err(|e| FoundryError::CorruptStore(format!("memory table: {e}")))?;
+            crate::graph::check_compiler_tables(&tx)?;
         }
         let (workspace, workspace_id) = Self::read_binding(&db)?;
         let marker = Self::read_marker(&db)?;
@@ -1181,14 +1183,16 @@ impl Engine {
         }
     }
 
-    /// Explicit v1|v2 -> v3 transaction under exclusive ownership. A v1
-    /// store first receives the v2 steps, then the v3 steps; both run in ONE
-    /// write transaction that creates the memory table and its never-reset
-    /// revision counter, migrates every pending key to the typed form
-    /// (`source:<path>`), and publishes `schema = "3"` last. Sources, chunks,
-    /// graph, feedback, scan state and pending work are preserved, so an
-    /// interrupted upgrade leaves the store wholly old or wholly v3. Only the
-    /// current version is a target; this is a clean cutover.
+    /// Explicit v1|v2|v3 -> v4 transaction under exclusive ownership. A v1
+    /// store first receives the v2 steps, a v1|v2 store the v3 steps, then
+    /// every store the v4 steps; all run in ONE write transaction. The v3
+    /// steps create the memory table and its never-reset revision counter
+    /// and migrate every pending key to the typed form (`source:<path>`); the
+    /// v4 steps (005) create the empty compiler-fact tables. `schema = "4"`
+    /// is published last. Sources, chunks, manual graph, feedback, memory,
+    /// scan state and pending work are preserved, so an interrupted upgrade
+    /// leaves the store wholly old or wholly v4. Only the current version is
+    /// a target; this is a clean cutover.
     pub fn upgrade_store(store_dir: &Path, to: u32, control: &crate::Control) -> FResult<()> {
         if to != SCHEMA_VERSION {
             return Err(FoundryError::UnsupportedMode(format!(
@@ -1201,7 +1205,7 @@ impl Engine {
             return Err(FoundryError::StoreNotFound);
         }
         let db = Database::open(&db_path)?;
-        let from_v1 = {
+        let from = {
             let tx = db.begin_read()?;
             let meta = tx.open_table(META)?;
             match meta.get("schema")? {
@@ -1210,9 +1214,10 @@ impl Engine {
                         "store has no schema marker".into(),
                     ));
                 }
-                Some(v) if v.value() == "3" => return Ok(()), // already upgraded
-                Some(v) if v.value() == "1" => true,
-                Some(v) if v.value() == "2" => false,
+                Some(v) if v.value() == "4" => return Ok(()), // already upgraded
+                Some(v) if v.value() == "1" => 1u32,
+                Some(v) if v.value() == "2" => 2u32,
+                Some(v) if v.value() == "3" => 3u32,
                 Some(v) => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: v.value().to_owned(),
@@ -1225,7 +1230,7 @@ impl Engine {
         {
             tx.open_table(SEEN)?;
             let mut meta = tx.open_table(META)?;
-            if from_v1 {
+            if from == 1 {
                 // The v2 steps, unchanged: initialize revision/scan metadata
                 // and derive the bound workspace identity.
                 meta.insert("source_revision", "0")?;
@@ -1237,38 +1242,44 @@ impl Engine {
                     meta.insert("workspace_id", id.as_str())?;
                 }
             }
-            // The v3 steps: the memory table (empty; records arrive only by
-            // explicit puts) and its revision counter, which starts at 0 and
-            // is never reset, even when the table is empty again.
-            tx.open_table(MEMORY)?;
-            meta.insert("memory_revision", "0")?;
-            // Typed pending keys: every pre-v3 key is a raw source path (v3
-            // writers have always typed theirs), so prefix them all. A path
-            // may itself contain `:` — `source:memory:x` stays distinct from
-            // the memory key `memory:x`.
-            let mut pending = tx.open_table(PENDING)?;
-            let rows: Vec<(String, String)> = pending
-                .iter()?
-                .map(|row| {
-                    let (k, v) = row?;
-                    Ok((k.value().to_owned(), v.value().to_owned()))
-                })
-                .collect::<Result<Vec<_>, redb::StorageError>>()
-                .map_err(FoundryError::from)?;
-            // Remove EVERY original key before inserting any typed key:
-            // interleaving would overwrite a raw `source:a` row while
-            // migrating `a`, losing that path's pending work.
-            for (key, _) in &rows {
-                pending.remove(key.as_str())?;
+            if from < 3 {
+                // The v3 steps: the memory table (empty; records arrive only
+                // by explicit puts) and its revision counter, which starts
+                // at 0 and is never reset, even when the table is empty
+                // again. A v3 store keeps both untouched.
+                tx.open_table(MEMORY)?;
+                meta.insert("memory_revision", "0")?;
+                // Typed pending keys: every pre-v3 key is a raw source path
+                // (v3 writers have always typed theirs), so prefix them all.
+                // A path may itself contain `:` — `source:memory:x` stays
+                // distinct from the memory key `memory:x`.
+                let mut pending = tx.open_table(PENDING)?;
+                let rows: Vec<(String, String)> = pending
+                    .iter()?
+                    .map(|row| {
+                        let (k, v) = row?;
+                        Ok((k.value().to_owned(), v.value().to_owned()))
+                    })
+                    .collect::<Result<Vec<_>, redb::StorageError>>()
+                    .map_err(FoundryError::from)?;
+                // Remove EVERY original key before inserting any typed key:
+                // interleaving would overwrite a raw `source:a` row while
+                // migrating `a`, losing that path's pending work.
+                for (key, _) in &rows {
+                    pending.remove(key.as_str())?;
+                }
+                for (key, value) in rows {
+                    pending.insert(source_pending_key(&key).as_str(), value.as_str())?;
+                }
             }
-            for (key, value) in rows {
-                pending.insert(source_pending_key(&key).as_str(), value.as_str())?;
-            }
+            // The v4 steps (005): the empty compiler-fact tables. Facts
+            // arrive only by an explicit `import-scip`.
+            crate::graph::init_compiler(&tx)?;
             // Publish the schema last inside the same transaction.
             meta.insert("schema", SCHEMA_VERSION.to_string().as_str())?;
         }
         // The upgrade transaction is live and fully written but uncommitted:
-        // an exit here must leave the store wholly v1/v2.
+        // an exit here must leave the store wholly v1/v2/v3.
         fault!(UPGRADE_BEFORE_COMMIT, None, Some(control), "")?;
         control.check()?;
         tx.commit()?;

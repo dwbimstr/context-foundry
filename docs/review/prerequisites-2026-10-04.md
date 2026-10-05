@@ -81,3 +81,10 @@ quality or package acceptance.
 - macOS SIP strips `DYLD_LIBRARY_PATH` across `/usr/bin/time`. Measure with
   `/usr/bin/time -l /usr/bin/env DYLD_LIBRARY_PATH=… <binary>` or use an rpath.
 - Not covered: ModernBERT weights, the package target, signing/notarization.
+- Update, same day: the ModernBERT/typed-choice checkpoint is now local (Downloads
+  table). Rust `tokenizers` 0.23.2 loaded its `tokenizer/tokenizer.json` and encoded
+  nine renderer-shaped inputs with special tokens on and off: the instruction, both
+  space-prefixed options, states with locator lines, Unicode/CRLF/emoji, a literal
+  `[MASK]`, whitespace runs and code. All 18 ID sequences equal the publisher stack's
+  (`AutoTokenizer`, transformers 5.18.0). Special IDs: CLS 50281, SEP 50282, PAD 50283,
+  MASK 50284. Scratch: `/private/tmp/cf-013-tok`.

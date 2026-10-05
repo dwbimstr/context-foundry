@@ -45,7 +45,7 @@ matching host configuration with `--http-port PORT --token-env NAME`:
 
 ## What works
 
-- Explicit store creation, schema-3 upgrade (`upgrade-store --to 3`, from v1 or v2), bounded
+- Explicit store creation, schema-4 upgrade (`upgrade-store --to 4`, from v1, v2 or v3), bounded
   refresh and explicit `repair-index` with one retained quarantine. Reads never create,
   upgrade or repair a store; a broken lexical index leaves status and retrieve usable.
   An upgraded store, or one indexed before search schema 3 (leading-run units),
@@ -71,6 +71,12 @@ matching host configuration with `--http-port PORT --token-env NAME`:
   training export. `mcp --no-memory` hides the tool.
 - Hash-checked graph bundle imports with bounded file-neighborhood traversal; graph
   failures degrade context to source evidence with a named reason.
+- Compiler references (005): `foundry import-scip --index FILE --snapshot MANIFEST`
+  imports a rust-analyzer SCIP artifact bound by its manifest to the indexed source
+  revision and hashes. It decodes in bounded batches, publishes per source and records
+  coverage. `foundry references` answers from a symbol ID or a handle plus byte offset,
+  paginating with `next: after=`. Facts become stale when any indexed source changes,
+  until a fresh artifact is imported. Import never runs the producer.
 - Multi-root context (007): `--reference ROOT=STORE` (up to 8) admits outside
   repositories at launch; `search`/`context` merge them with per-root coverage and
   handles, and an unavailable root is named rather than silently skipped.
@@ -93,8 +99,10 @@ foundry --store /tmp/foundry-demo context 'who calls parse_record' --tokens 1024
 
 One store has one owner: a CLI command, a stdio MCP session or the explicit shared
 HTTP owner. Others get `store_busy`. It is not a daemon fleet, compiler indexer,
-vector engine or memory service. Graph symbol labels and evidence classes are supplied
-by the importer; the implementation traverses files, not a resolved symbol graph.
+vector engine or memory service. Imported graph-bundle labels are supplied by the
+importer; compiler references come only from an imported SCIP artifact, never from a
+compiler run by Foundry. The MCP `references` tool and graph context over compiler
+facts are not yet available (005 T003).
 Routing is deterministic (`auto`/`search`/`graph`); the legacy Laya client is no
 longer reachable from the CLI.
 
@@ -108,8 +116,11 @@ restores them). The narrow sensitive-file deny rules are not a secret/PII scrubb
 
 Search examines at most 256 candidates; graph traversal examines at most 256
 edges and visits at most 64 files. Whole-producer graph replacement is capped at
-100,000 edges. Reconciliation pages source keys (128) and bounds diagnostic samples;
-these are explicit limits, not evidence of million-file scale.
+100,000 edges. `references` examines at most 256 records and visits at most 64
+files per call; a SCIP import accepts artifacts up to 1 GiB, documents up to 8 MiB
+and 16,384 occurrences, and uses at most 4 GiB of scratch. Reconciliation pages
+source keys (128) and bounds diagnostic samples; these are explicit limits, not
+evidence of million-file scale.
 
 ## Design and development
 

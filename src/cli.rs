@@ -1,5 +1,6 @@
 //! The command-line surface. This module is ordinary release code and never
 //! reads fault-environment variables.
+use crate::graph::{REFERENCES_DEFAULT_LIMIT, ReferencesRequest, ReferencesSeed};
 use crate::{
     Control, Engine, FResult, FoundryError, Strategy,
     adapter_error::AResult,
@@ -78,6 +79,36 @@ enum Command {
     ImportGraph {
         bundle: PathBuf,
     },
+    /// 005: import one completed SCIP artifact bound by a snapshot manifest
+    /// (explicit, CLI-only; the importer runs no compiler). Exits 1 for a
+    /// partial import, 2 for an invalid invocation, 130 when cancelled.
+    ImportScip {
+        /// The completed SCIP artifact (a rust-analyzer `scip` output).
+        #[arg(long)]
+        index: PathBuf,
+        /// The snapshot manifest v1 (JSON) that binds the artifact.
+        #[arg(long)]
+        snapshot: PathBuf,
+    },
+    /// 005: budgeted compiler references of one symbol, as v2 text. Seed with
+    /// `--symbol-id` (16 hex) or with `--handle` plus `--byte-offset`.
+    #[command(group(clap::ArgGroup::new("seed").required(true).args(["symbol_id", "handle"])))]
+    References {
+        #[arg(long)]
+        symbol_id: Option<String>,
+        #[arg(long, requires = "byte_offset")]
+        handle: Option<String>,
+        /// Absolute byte offset inside the handle's range.
+        #[arg(long, requires = "handle")]
+        byte_offset: Option<u64>,
+        #[arg(long, default_value_t = REFERENCES_DEFAULT_LIMIT)]
+        limit: usize,
+        #[arg(long, default_value_t = 1024)]
+        tokens: usize,
+        /// Continue strictly after `<path>#<start>-<end>` (the `next: after=` value).
+        #[arg(long)]
+        after: Option<String>,
+    },
     /// Accept one explicitly labeled feedback JSON object from stdin.
     Feedback,
     /// Emit opted-in local examples as JSONL. Redirect outside the source checkout.
@@ -86,7 +117,7 @@ enum Command {
     Refresh,
     /// Store metadata; never touches the filesystem on a missing store.
     Status,
-    /// Explicit v1|v2 -> v3 schema upgrade under exclusive ownership.
+    /// Explicit v1|v2|v3 -> v4 schema upgrade under exclusive ownership.
     UpgradeStore {
         #[arg(long)]
         to: u32,
@@ -535,6 +566,69 @@ fn run() -> AResult<()> {
             println!(
                 "{}",
                 serde_json::json!({"imported_edges": engine.import_graph(&bundle)?})
+            );
+        }
+        Command::ImportScip { index, snapshot } => {
+            let control = live_control();
+            let engine = Engine::open_existing(&cli.store)?;
+            let report = engine.import_scip(&index, &snapshot, &control)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            match report.interrupted.as_deref() {
+                Some("cancelled") => return Err(FoundryError::Cancelled(None).into()),
+                Some("deadline_exceeded") => {
+                    return Err(FoundryError::DeadlineExceeded(None).into());
+                }
+                _ => {}
+            }
+            if !report.complete {
+                return Err(crate::scip::fail(
+                    crate::scip::code::IMPORT_INCOMPLETE,
+                    format!(
+                        "the import finished partial: {} sources committed, {} failed",
+                        report.completed + report.accepted_empty + report.unresolved,
+                        report.failed
+                    ),
+                )
+                .into());
+            }
+        }
+        Command::References {
+            symbol_id,
+            handle,
+            byte_offset,
+            limit,
+            tokens,
+            after,
+        } => {
+            check_token_budget(tokens)?;
+            let seed = match (symbol_id, handle, byte_offset) {
+                (Some(id), None, None) => ReferencesSeed::SymbolId(id),
+                (None, Some(handle), Some(byte_offset)) => ReferencesSeed::Position {
+                    handle,
+                    byte_offset,
+                },
+                _ => {
+                    return Err(FoundryError::InvalidArgument(
+                        "exactly one seed form: --symbol-id, or --handle with --byte-offset".into(),
+                    )
+                    .into());
+                }
+            };
+            let engine = Engine::open_existing(&cli.store)?;
+            let outcome = engine.references(&ReferencesRequest { seed, limit, after })?;
+            let packed = response::pack_references(
+                &outcome,
+                Budget::request(tokens),
+                &response::stdout_bytes,
+            )?;
+            print!("{}", packed.text);
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "stdout_tokens": packed.tokens,
+                    "tokenizer": response::TOKENIZER,
+                    "omitted": packed.omitted,
+                })
             );
         }
         Command::Feedback => {

@@ -81,6 +81,15 @@ pub mod names {
         GATEWAY_LAUNCH_AFTER_MODELS_CREATE,
         "gateway.launch.after_models_create"
     );
+    point!(SCIP_AFTER_COPY, "scip.after_copy");
+    point!(SCIP_COPY_BUFFER, "scip.copy_buffer");
+    point!(SCIP_AFTER_LOOKUP, "scip.after_lookup");
+    point!(SCIP_AFTER_SELECTION, "scip.after_selection");
+    point!(SCIP_BETWEEN_DOCUMENTS, "scip.between_documents");
+    point!(SCIP_SCOPE_BEFORE_COMMIT, "scip.scope_before_commit");
+    point!(SCIP_SCOPE_AFTER_COMMIT, "scip.scope_after_commit");
+    point!(SCIP_RETIRE_PROPOSED, "scip.retire_proposed");
+    point!(SCIP_FINALIZE_BEFORE_COMMIT, "scip.finalize_before_commit");
 }
 
 /// What a point sees when it is reached.

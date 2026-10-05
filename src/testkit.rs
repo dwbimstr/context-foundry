@@ -129,7 +129,7 @@ pub fn quarantine_dirs(store: &Path) -> Vec<std::path::PathBuf> {
 pub type Snapshot = BTreeMap<&'static str, Vec<(String, String)>>;
 
 /// Tables whose rows are authoritative knowledge (not scan/pending/meta bookkeeping).
-pub const KNOWLEDGE_TABLES: [&str; 7] = [
+pub const KNOWLEDGE_TABLES: [&str; 11] = [
     "sources",
     "chunks",
     "feedback",
@@ -137,9 +137,13 @@ pub const KNOWLEDGE_TABLES: [&str; 7] = [
     "edges_out",
     "edges_in",
     "memory",
+    "compiler_producers",
+    "compiler_scopes",
+    "compiler_occurrences",
+    "compiler_by_symbol",
 ];
 
-const TABLES: [&str; 9] = [
+const TABLES: [&str; 13] = [
     "sources",
     "chunks",
     "pending_index",
@@ -149,6 +153,10 @@ const TABLES: [&str; 9] = [
     "provider_bundles",
     "edges_out",
     "memory",
+    "compiler_producers",
+    "compiler_scopes",
+    "compiler_occurrences",
+    "compiler_by_symbol",
 ];
 
 pub fn snapshot(dir: &Path) -> Snapshot {
@@ -468,6 +476,8 @@ pub enum V2Kind {
     Locator,
     /// A graph item line, `edge <text>`.
     Edge,
+    /// A references item line, `<handle> L<line> in <label>` (005).
+    Reference,
 }
 
 /// One parsed context-v2 item. `body` is the fenced source bytes (framing LF
@@ -533,7 +543,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
         .split(" · ")
         .next()
         .and_then(|first| first.strip_prefix("foundry "))
-        .filter(|op| matches!(*op, "search" | "context" | "retrieve"))
+        .filter(|op| matches!(*op, "search" | "context" | "retrieve" | "references"))
     else {
         return Err(format!("not a v2 header: {header:?}"));
     };
@@ -542,6 +552,46 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
     let mut next = None;
     while pos < text.len() {
         let (line, after) = v2_line(text, pos)?;
+        if op == "references" {
+            // Item lines take precedence over the final `next: after=` line:
+            // a path may itself begin with `next: after=`.
+            let mut readings = v2_reference_splits(line);
+            match readings.len() {
+                1 => {
+                    let (handle, lines, label) = readings.remove(0);
+                    items.push(V2Item {
+                        kind: V2Kind::Reference,
+                        handle: handle.to_owned(),
+                        lines: Some(lines),
+                        label: Some(label),
+                        form: None,
+                        lang: None,
+                        body: String::new(),
+                    });
+                }
+                0 => {
+                    let cursor = line
+                        .strip_prefix("next: after=")
+                        .filter(|_| after == text.len())
+                        .ok_or_else(|| format!("not a references item line: {line:?}"))?;
+                    let (path, span) = cursor
+                        .rsplit_once('#')
+                        .ok_or_else(|| format!("malformed cursor {cursor:?}"))?;
+                    crate::store::validate_path(path).map_err(|e| e.to_string())?;
+                    let (start, end) = span
+                        .split_once('-')
+                        .ok_or_else(|| format!("malformed cursor {cursor:?}"))?;
+                    start
+                        .parse::<u64>()
+                        .and_then(|s| end.parse::<u64>().map(|e| (s, e)))
+                        .map_err(|e| format!("malformed cursor {cursor:?}: {e}"))?;
+                    next = Some(cursor.to_owned());
+                }
+                n => return Err(format!("ambiguous item line ({n} readings): {line:?}")),
+            }
+            pos = after;
+            continue;
+        }
         if op == "search" {
             let mut readings = v2_splits(line, true);
             let (handle, tail) = match readings.len() {
@@ -791,4 +841,124 @@ fn v2_label_and_form(remainder: &str) -> Option<(Option<String>, Option<String>)
         }
     }
     Some((Some(rest.to_owned()), None))
+}
+
+/// Every reading of `line` as `<handle> L<line> in <label>`: a split after a
+/// `@<32 hex>.<16 hex>` suffix whose handle parses and whose remainder is
+/// ` L<digits> in <non-empty label>`. Returns `(handle, "L<line>", label)`.
+fn v2_reference_splits(line: &str) -> Vec<(&str, String, String)> {
+    let bytes = line.as_bytes();
+    let hex = |s: &[u8]| s.iter().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    let mut readings = Vec::new();
+    for (at, _) in line.match_indices('@') {
+        let end = at + 50;
+        if end > bytes.len()
+            || bytes[at + 33] != b'.'
+            || !hex(&bytes[at + 1..at + 33])
+            || !hex(&bytes[at + 34..end])
+            || (end < bytes.len() && bytes[end] != b' ')
+        {
+            continue;
+        }
+        let handle = &line[..end];
+        if crate::store::HandleRef::parse(handle).is_err() {
+            continue;
+        }
+        let Some(rest) = line[end..].strip_prefix(" L") else {
+            continue;
+        };
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 {
+            continue;
+        }
+        let (number, after_number) = rest.split_at(digits);
+        if let Some(label) = after_number.strip_prefix(" in ")
+            && !label.is_empty()
+        {
+            readings.push((handle, format!("L{number}"), label.to_owned()));
+        }
+    }
+    readings
+}
+
+/// The four compiler-fact tables (005), in creation order.
+pub const COMPILER_TABLES: [&str; 4] = [
+    "compiler_producers",
+    "compiler_scopes",
+    "compiler_occurrences",
+    "compiler_by_symbol",
+];
+
+/// Turn a closed schema-4 store into the schema-3 store 008 wrote: remove the
+/// compiler-fact tables and mark `schema = "3"`. Every other row stays, so a
+/// populated store models a populated v3 store (memory table and counter,
+/// typed pending keys, manual graph, feedback).
+pub fn downgrade_to_v3(dir: &Path) {
+    write_store(dir, |tx| {
+        for name in COMPILER_TABLES {
+            tx.delete_table(TableDefinition::<&str, &str>::new(name))
+                .unwrap();
+        }
+        tx.open_table(META).unwrap().insert("schema", "3").unwrap();
+    });
+}
+
+/// A schema-3 store: a freshly initialized store bound to `root`, downgraded.
+pub fn craft_v3_store(dir: &Path, root: &Path) {
+    std::fs::create_dir_all(root).unwrap();
+    drop(crate::Engine::initialize(dir, root).unwrap());
+    downgrade_to_v3(dir);
+}
+
+/// Every row of one table of a closed store, in key order.
+pub fn table_rows(dir: &Path, table: &'static str) -> Vec<(String, String)> {
+    snapshot(dir).remove(table).unwrap_or_default()
+}
+
+/// The compiler-fact invariants of a closed store: the reverse index and the
+/// occurrence table name exactly the same occurrences (no half reverse
+/// index), every occurrence belongs to a scope row and every scope row's
+/// counts equal its occurrences.
+pub fn compiler_consistency(dir: &Path) -> Result<(), String> {
+    let occurrences = table_rows(dir, "compiler_occurrences");
+    let by_symbol = table_rows(dir, "compiler_by_symbol");
+    let scopes: BTreeMap<String, serde_json::Value> = table_rows(dir, "compiler_scopes")
+        .into_iter()
+        .map(|(key, value)| (key, serde_json::from_str(&value).unwrap()))
+        .collect();
+    let mut expected: BTreeMap<String, String> = BTreeMap::new();
+    let mut counts: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    for (key, _) in &occurrences {
+        let parts: Vec<&str> = key.split('\0').collect();
+        let [namespace, path, start, end, tag, symbol] = parts[..] else {
+            return Err(format!("malformed occurrence key {key:?}"));
+        };
+        expected.insert(
+            format!("{symbol}\0{tag}\0{path}\0{start}\0{end}"),
+            namespace.to_owned(),
+        );
+        let scope = format!("{namespace}\0{path}");
+        if !scopes.contains_key(&scope) {
+            return Err(format!("occurrence without a scope row: {key:?}"));
+        }
+        let count = counts.entry(scope).or_default();
+        if tag == "d" {
+            count.0 += 1;
+        } else {
+            count.1 += 1;
+        }
+    }
+    let actual: BTreeMap<String, String> = by_symbol.into_iter().collect();
+    if expected != actual {
+        return Err("the reverse index and the occurrence table disagree".into());
+    }
+    for (scope, row) in &scopes {
+        let (definitions, references) = counts.get(scope).copied().unwrap_or_default();
+        if row["definitions"] != definitions || row["references"] != references {
+            return Err(format!(
+                "scope counts disagree with its occurrences: {scope:?}"
+            ));
+        }
+    }
+    Ok(())
 }
