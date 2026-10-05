@@ -129,7 +129,7 @@ pub fn quarantine_dirs(store: &Path) -> Vec<std::path::PathBuf> {
 pub type Snapshot = BTreeMap<&'static str, Vec<(String, String)>>;
 
 /// Tables whose rows are authoritative knowledge (not scan/pending/meta bookkeeping).
-pub const KNOWLEDGE_TABLES: [&str; 11] = [
+pub const KNOWLEDGE_TABLES: [&str; 14] = [
     "sources",
     "chunks",
     "feedback",
@@ -141,9 +141,12 @@ pub const KNOWLEDGE_TABLES: [&str; 11] = [
     "compiler_scopes",
     "compiler_occurrences",
     "compiler_by_symbol",
+    "learning_feedback",
+    "learning_history",
+    "learning_datasets",
 ];
 
-const TABLES: [&str; 15] = [
+const TABLES: [&str; 18] = [
     "sources",
     "chunks",
     "pending_index",
@@ -159,6 +162,9 @@ const TABLES: [&str; 15] = [
     "compiler_by_symbol",
     "semantic_partitions",
     "semantic_state",
+    "learning_feedback",
+    "learning_history",
+    "learning_datasets",
 ];
 
 pub fn snapshot(dir: &Path) -> Snapshot {
@@ -937,6 +943,22 @@ pub fn craft_v4_store(dir: &Path, root: &Path) {
     downgrade_to_v4(dir);
 }
 
+/// The three learning tables (013 schema 6).
+pub const LEARNING_TABLES: [&str; 3] =
+    ["learning_feedback", "learning_history", "learning_datasets"];
+
+/// Turn a closed schema-6 store into the schema-5 store 009 wrote: remove
+/// the learning tables and mark `schema = "5"`. Every other row stays.
+pub fn downgrade_to_v5(dir: &Path) {
+    write_store(dir, |tx| {
+        for name in LEARNING_TABLES {
+            tx.delete_table(TableDefinition::<&str, &str>::new(name))
+                .unwrap();
+        }
+        tx.open_table(META).unwrap().insert("schema", "5").unwrap();
+    });
+}
+
 /// Every `semantic_cache` row of a closed store, in key order.
 pub fn semantic_cache_rows(dir: &Path) -> Vec<(String, Vec<u8>)> {
     let db = Database::open(dir.join("knowledge.redb")).unwrap();
@@ -1178,5 +1200,23 @@ pub fn write_raw_partition(dir: &Path, path: &str, raw: &str) {
     write_store(dir, |tx| {
         let table: TableDefinition<&str, &str> = TableDefinition::new("semantic_partitions");
         tx.open_table(table).unwrap().insert(path, raw).unwrap();
+    });
+}
+
+/// Set (or, with `None`, remove) one row of a learning table of a closed
+/// store (013 split-conflict and lineage tests).
+pub fn set_learning_row(dir: &Path, table: &str, key: &str, raw: Option<&str>) {
+    write_store(dir, |tx| {
+        let mut rows = tx
+            .open_table(TableDefinition::<&str, &str>::new(table))
+            .unwrap();
+        match raw {
+            Some(raw) => {
+                rows.insert(key, raw).unwrap();
+            }
+            None => {
+                rows.remove(key).unwrap();
+            }
+        }
     });
 }

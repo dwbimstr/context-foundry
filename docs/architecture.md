@@ -495,12 +495,18 @@ processes are not a supported serving topology; the optional shared HTTP owner (
 serves several MCP clients through that one owner. Do not add process retries and
 lock stealing as a substitute for one serving owner.
 
-The implemented store schema is version 5 (009, 2026-10-05). `upgrade-store --to 5` is
-the one explicit transaction from v1–v4. It applies the v1→v2 revision/scan/repair
+The implemented store schema is version 6 (013 T001, 2026-10-05). `upgrade-store --to 6` is
+the one explicit transaction from v1–v5. It applies the v1→v2 revision/scan/repair
 metadata (001 T001); for v1 and v2 stores, the v3 steps (the memory table, its revision
 counter, and typed pending-index keys `source:`/`memory:`); for v1–v3, the v4 steps (the
 empty 005 compiler-fact tables). Every store then gains the empty 009 semantic tables
-(partitions, vector cache, preparation state), filled only by `semantic prepare`. Other targets
+(partitions, vector cache, preparation state), filled only by `semantic prepare`, and
+the empty 013 learning tables (`learning_feedback`: v4 rows keyed by example ID;
+`learning_history`: per-group split, dataset, example-ID and fingerprint trail, with no
+text; `learning_datasets`: each published dataset's lineage, keyed by the SHA-256 of its
+exact manifest bytes, so a repeat round resolves ancestors without their directories),
+filled only by `feedback v4` and `learning prepare`. Legacy `feedback` rows are
+preserved untouched. Other targets
 are refused, and so are older readers. There is no predecessor-store reader or
 automatic migration. The first compatibility promise is source rebuildability;
 feedback must be exported before replacing an incompatible store. A future schema

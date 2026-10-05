@@ -81,6 +81,22 @@ pub enum FoundryError {
         code: &'static str,
         message: String,
     },
+    /// A named 013 learning-loop failure: `row_invalid`, `policy_invalid`,
+    /// `tokenizer_invalid`, `tokenizer_mismatch`, `learning_unavailable`,
+    /// `state_too_large`, `input_too_long`, `header_too_long`,
+    /// `option_too_long`, `duplicate_conflict`, `lineage_missing`,
+    /// `base_model_changed`, `base_permission_changed`, `split_conflict`,
+    /// `group_floors`, `dataset_bounds`, `dataset_invalid`, `output_exists`,
+    /// `output_in_source_root`, `output_write` or `output_ownership` (the
+    /// staged or published directory is not the one the run built); and the
+    /// state composer's
+    /// `graph_unavailable` / `graph_stale` (no current compiler graph - the
+    /// caller uses deterministic routing). Diagnostics name codes and
+    /// identities, never state or dataset contents.
+    Learning {
+        code: &'static str,
+        message: String,
+    },
     Internal(anyhow::Error),
 }
 /// Counts-only partial index state for bounded MCP/CLI cancellation errors.
@@ -132,6 +148,7 @@ impl FoundryError {
             Self::Scip { code, .. } => code,
             Self::ArtifactUnavailable(_) => "artifact_unavailable",
             Self::Semantic { code, .. } => code,
+            Self::Learning { code, .. } => code,
             Self::Internal(_) => "internal",
         }
     }
@@ -156,6 +173,13 @@ impl FoundryError {
             | Self::ArtifactUnavailable(_)
             | Self::UnsupportedSchema { .. }
             | Self::UpgradeRequired { .. } => 2,
+            // 013 data/preflight failures are invalid input (2); artifact
+            // writing and output ownership are execution failures (1).
+            Self::Learning { code, .. }
+                if !matches!(*code, "output_write" | "output_ownership") =>
+            {
+                2
+            }
             Self::StoreBusy => 3,
             Self::Cancelled(_) | Self::DeadlineExceeded(_) => 130,
             _ => 1,
@@ -184,7 +208,7 @@ impl FoundryError {
                 format!("unsupported store schema {found}; no automatic upgrade")
             }
             Self::UpgradeRequired { found } => {
-                format!("store schema {found} requires an explicit upgrade-store --to 5")
+                format!("store schema {found} requires an explicit upgrade-store --to 6")
             }
             Self::CorruptStore(m) => format!("authoritative store data is corrupt: {m}"),
             Self::RepairRequired(m) => format!("derived search index needs explicit repair: {m}"),
@@ -208,6 +232,7 @@ impl FoundryError {
             Self::Scip { message, .. } => message.clone(),
             Self::ArtifactUnavailable(m) => format!("import file is unavailable: {m}"),
             Self::Semantic { code, message } => format!("semantic retrieval ({code}): {message}"),
+            Self::Learning { code, message } => format!("learning ({code}): {message}"),
             Self::Internal(e) => format!("{e:#}"),
         }
     }

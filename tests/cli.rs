@@ -77,7 +77,7 @@ fn cli_index_initializes_searches_and_reports_status() {
 
     let status: serde_json::Value =
         serde_json::from_slice(&ok(&store, &["status"]).stdout).unwrap();
-    assert_eq!(status["schema"], 5);
+    assert_eq!(status["schema"], 6);
     assert_eq!(status["source_count"], 1);
     assert_eq!(status["pending_count"], 0);
     assert_eq!(status["index_state"], "ready");
@@ -263,10 +263,10 @@ fn cli_upgrade_and_repair_flows() {
         "1",
         "a refused upgrade changes nothing"
     );
-    ok(&store, &["upgrade-store", "--to", "5"]);
+    ok(&store, &["upgrade-store", "--to", "6"]);
     let status: serde_json::Value =
         serde_json::from_slice(&ok(&store, &["status"]).stdout).unwrap();
-    assert_eq!(status["schema"], 5);
+    assert_eq!(status["schema"], 6);
     // Upgrade preserves the committed source, its unfinished index work and
     // feedback, and initializes revision/scan metadata.
     assert_eq!(status["source_count"], 1);

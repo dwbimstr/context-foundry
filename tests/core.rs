@@ -55,7 +55,7 @@ fn explicit_initialize_and_existing_only_open() {
     assert!(!store.exists(), "open must not create filesystem state");
     // Explicit initialization accepts a missing directory.
     let engine = Engine::initialize(&store, &root).unwrap();
-    assert_eq!(engine.status().unwrap().schema, 5);
+    assert_eq!(engine.status().unwrap().schema, 6);
     assert!(engine.workspace_id().is_some());
     // Nonempty directory without a store is unrecognized.
     let stray = fixture.path().join("stray");
@@ -242,7 +242,7 @@ fn upgrade_preserves_records_and_is_atomic() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&v1, 5, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(&v1, 6, &Control::unbounded()).unwrap_err();
     fault::disarm_all();
     assert_eq!(schema_marker(&v1), "1");
     assert_eq!(testkit::snapshot(&v1), before);
@@ -251,11 +251,11 @@ fn upgrade_preserves_records_and_is_atomic() {
     assert_eq!(code(&err), "unsupported_mode");
     let err = Engine::upgrade_store(&v1, 3, &Control::unbounded()).unwrap_err();
     assert_eq!(code(&err), "unsupported_mode");
-    Engine::upgrade_store(&v1, 5, &Control::unbounded()).unwrap();
-    assert_eq!(schema_marker(&v1), "5");
+    Engine::upgrade_store(&v1, 6, &Control::unbounded()).unwrap();
+    assert_eq!(schema_marker(&v1), "6");
     let engine = Engine::open_existing(&v1).unwrap();
     let status = engine.status().unwrap();
-    assert_eq!(status.schema, 5);
+    assert_eq!(status.schema, 6);
     assert_eq!(status.source_revision, 0);
     assert_eq!(status.source_count, 1);
     assert_eq!(status.scan_state, "never");
@@ -296,7 +296,7 @@ fn unbound_store_names_workspace_unbound_for_queries() {
     let fixture = tempfile::tempdir().unwrap();
     let v1 = fixture.path().join("v1store");
     craft_v1_store(&v1, None);
-    Engine::upgrade_store(&v1, 5, &Control::unbounded()).unwrap();
+    Engine::upgrade_store(&v1, 6, &Control::unbounded()).unwrap();
     let engine = Engine::open_existing(&v1).unwrap();
     let status = engine.status().unwrap();
     assert!(status.workspace_id.is_none());

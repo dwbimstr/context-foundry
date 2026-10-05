@@ -32,7 +32,7 @@ pub(crate) const META: TableDefinition<&str, &str> = TableDefinition::new("meta"
 pub(crate) const SEEN: TableDefinition<&str, &str> = TableDefinition::new("scan_seen");
 pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("feedback");
 
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
 /// Search tier 2 (lexical) examines at most this many candidates.
@@ -1002,6 +1002,7 @@ fn initialize_tables(tx: &WriteTransaction) -> FResult<()> {
     crate::graph::init(tx)?;
     crate::graph::init_compiler(tx)?;
     crate::neural::cache::init_tables(tx)?;
+    crate::learning::init_tables(tx)?;
     Ok(())
 }
 
@@ -1131,12 +1132,12 @@ impl Engine {
                 ));
             };
             match version.value() {
-                "1" | "2" | "3" | "4" => {
+                "1" | "2" | "3" | "4" | "5" => {
                     return Err(FoundryError::UpgradeRequired {
                         found: version.value().to_owned(),
                     });
                 }
-                "5" => 5u32,
+                "6" => 6u32,
                 other => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: other.to_owned(),
@@ -1144,8 +1145,8 @@ impl Engine {
                 }
             }
         };
-        // Confirm the schema-5 tables exist; missing authoritative tables in
-        // a schema-5 store are corruption, not something an open recreates.
+        // Confirm the schema-6 tables exist; missing authoritative tables in
+        // a schema-6 store are corruption, not something an open recreates.
         {
             let tx = db.begin_read()?;
             tx.open_table(SEEN).map_err(|e| {
@@ -1161,6 +1162,7 @@ impl Engine {
                 .map_err(|e| FoundryError::CorruptStore(format!("memory table: {e}")))?;
             crate::graph::check_compiler_tables(&tx)?;
             crate::neural::cache::check_tables(&db)?;
+            crate::learning::check_tables(&db)?;
         }
         let (workspace, workspace_id) = Self::read_binding(&db)?;
         let marker = Self::read_marker(&db)?;
@@ -1217,16 +1219,19 @@ impl Engine {
         }
     }
 
-    /// Explicit v1|v2|v3|v4 -> v5 transaction under exclusive ownership. A
+    /// Explicit v1..=v5 -> v6 transaction under exclusive ownership. A
     /// v1 store first receives the v2 steps, a v1|v2 store the v3 steps, a
-    /// v1|v2|v3 store the v4 steps, then every store the v5 steps; all run
-    /// in ONE write transaction. The v3 steps create the memory table and
+    /// v1|v2|v3 store the v4 steps, a v1..=v4 store the v5 steps, then every
+    /// store the v6 steps; all run in ONE write transaction. The v3 steps create the memory table and
     /// its never-reset revision counter and migrate every pending key to the
     /// typed form (`source:<path>`); the v4 steps (005) create the empty
     /// compiler-fact tables; the v5 steps (009) create the empty semantic
-    /// tables (partitions, vector cache, state). `schema = "5"` is published
-    /// last. Every earlier table is preserved, so an interrupted upgrade
-    /// leaves the store wholly old or wholly v5. Only the current version is
+    /// tables (partitions, vector cache, state); the v6 steps (013) create
+    /// the empty learning tables (v4 feedback rows, group history, published
+    /// dataset lineage). `schema
+    /// = "6"` is published last. Every earlier table, legacy feedback
+    /// included, is preserved, so an interrupted upgrade leaves the store
+    /// wholly old or wholly v6. Only the current version is
     /// a target; this is a clean cutover.
     pub fn upgrade_store(store_dir: &Path, to: u32, control: &crate::Control) -> FResult<()> {
         if to != SCHEMA_VERSION {
@@ -1249,11 +1254,12 @@ impl Engine {
                         "store has no schema marker".into(),
                     ));
                 }
-                Some(v) if v.value() == "5" => return Ok(()), // already upgraded
+                Some(v) if v.value() == "6" => return Ok(()), // already upgraded
                 Some(v) if v.value() == "1" => 1u32,
                 Some(v) if v.value() == "2" => 2u32,
                 Some(v) if v.value() == "3" => 3u32,
                 Some(v) if v.value() == "4" => 4u32,
+                Some(v) if v.value() == "5" => 5u32,
                 Some(v) => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: v.value().to_owned(),
@@ -1315,7 +1321,15 @@ impl Engine {
             }
             // The v5 steps (009): the empty semantic tables. Rows arrive
             // only by an explicit `semantic prepare`.
-            crate::neural::cache::init_tables(&tx)?;
+            if from < 5 {
+                crate::neural::cache::init_tables(&tx)?;
+            }
+            // The v6 steps (013): the empty learning tables. Rows arrive
+            // only by explicit operator `feedback v4` input and `learning
+            // prepare`.
+            if from < 6 {
+                crate::learning::init_tables(&tx)?;
+            }
             // Publish the schema last inside the same transaction.
             meta.insert("schema", SCHEMA_VERSION.to_string().as_str())?;
         }
@@ -1368,6 +1382,12 @@ impl Engine {
 
     pub fn workspace_id(&self) -> Option<String> {
         self.workspace_id.clone()
+    }
+
+    /// The bound workspace root path, if a root is bound (013 uses it to
+    /// keep learning output out of the admitted source root).
+    pub fn workspace_root(&self) -> Option<&str> {
+        self.workspace.as_deref()
     }
 
     fn require_workspace_id(&self) -> FResult<String> {

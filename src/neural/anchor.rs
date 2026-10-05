@@ -214,18 +214,54 @@ impl Dir {
         Ok(file)
     }
 
-    /// Create a NEW file (`O_EXCL | O_NOFOLLOW`, mode 0600), write `bytes`
-    /// and sync it. An existing name of any kind is an error.
-    pub fn write_new(&self, name: impl AsRef<OsStr>, bytes: &[u8]) -> io::Result<()> {
+    /// Create a NEW file for writing (`O_EXCL | O_NOFOLLOW`, mode 0600) and
+    /// return it. An existing name of any kind is an error. Callers that
+    /// stream a large member write to the returned file and `sync_all` it.
+    pub fn create_new(&self, name: impl AsRef<OsStr>) -> io::Result<File> {
         let c = component(name.as_ref())?;
         let flags =
             libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
         // SAFETY: openat(2) relative to a live directory descriptor; the
         // variadic mode argument is a `c_uint` as the ABI requires.
         let fd = cvt(unsafe { libc::openat(self.raw(), c.as_ptr(), flags, 0o600_u32) })?;
-        let mut file = File::from(own(fd));
+        Ok(File::from(own(fd)))
+    }
+
+    /// Create a NEW file (`O_EXCL | O_NOFOLLOW`, mode 0600), write `bytes`
+    /// and sync it. An existing name of any kind is an error.
+    pub fn write_new(&self, name: impl AsRef<OsStr>, bytes: &[u8]) -> io::Result<()> {
+        let mut file = self.create_new(name)?;
         file.write_all(bytes)?;
         file.sync_all()
+    }
+
+    /// Flush this directory's entries to stable storage (`fsync` on the
+    /// descriptor, so no pathname is resolved).
+    pub fn sync_all(&self) -> io::Result<()> {
+        File::from(self.try_clone()?.fd).sync_all()
+    }
+
+    /// The `(device, inode)` of this directory, read from the descriptor.
+    /// Two descriptors name the same directory exactly when these are equal,
+    /// whatever pathnames or symlinks led to them.
+    // The `st_dev`/`st_ino` widths differ by platform; the casts are the
+    // portable common type, not a no-op everywhere.
+    #[allow(clippy::unnecessary_cast)]
+    pub fn identity(&self) -> io::Result<(u64, u64)> {
+        // SAFETY: an all-zero `stat` is a valid out-parameter for fstat(2).
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: fstat(2) on a live descriptor owned by `self`.
+        cvt(unsafe { libc::fstat(self.raw(), &mut st) })?;
+        Ok((st.st_dev as u64, st.st_ino as u64))
+    }
+
+    /// Open this directory's parent (`..`) through the descriptor. The
+    /// kernel's `..` of a held directory is independent of any pathname used
+    /// to reach it, so a walk to the root cannot be redirected by a symlink.
+    pub fn open_parent(&self) -> io::Result<Dir> {
+        // SAFETY: openat(2) of ".." relative to a live directory descriptor.
+        let fd = cvt(unsafe { libc::openat(self.raw(), c"..".as_ptr(), DIR_FLAGS) })?;
+        Ok(Dir { fd: own(fd) })
     }
 
     /// `renameat(self/from -> to_dir/to)`; replaces a regular file at `to`.
@@ -242,6 +278,50 @@ impl Dir {
             .map(|_| ())
     }
 
+    /// Like [`Self::rename_into`], but NEVER replaces: a destination of any
+    /// kind that exists at the moment of the rename is `AlreadyExists` and is
+    /// left untouched (`renameatx_np(RENAME_EXCL)` on macOS,
+    /// `renameat2(RENAME_NOREPLACE)` on Linux). An ordinary `renameat`
+    /// silently replaces an empty directory, which would let a destination
+    /// created after a preflight check be overwritten.
+    pub fn rename_noreplace_into(
+        &self,
+        from: impl AsRef<OsStr>,
+        to_dir: &Dir,
+        to: impl AsRef<OsStr>,
+    ) -> io::Result<()> {
+        let from = component(from.as_ref())?;
+        let to = component(to.as_ref())?;
+        #[cfg(target_os = "macos")]
+        // SAFETY: renameatx_np(2) between two live directory descriptors.
+        let rc = unsafe {
+            libc::renameatx_np(
+                self.raw(),
+                from.as_ptr(),
+                to_dir.raw(),
+                to.as_ptr(),
+                libc::RENAME_EXCL,
+            )
+        };
+        #[cfg(target_os = "linux")]
+        // SAFETY: renameat2(2) between two live directory descriptors.
+        let rc = unsafe {
+            libc::renameat2(
+                self.raw(),
+                from.as_ptr(),
+                to_dir.raw(),
+                to.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let rc: libc::c_int = {
+            let _ = (&from, &to, to_dir);
+            return Err(io::Error::from(io::ErrorKind::Unsupported));
+        };
+        cvt(rc).map(|_| ())
+    }
+
     fn unlink(&self, name: &OsStr, directory: bool) -> io::Result<()> {
         let c = component(name)?;
         let flags = if directory { libc::AT_REMOVEDIR } else { 0 };
@@ -256,6 +336,12 @@ impl Dir {
     /// `Ok(false)` when the name is absent.
     pub fn remove_tree(&self, name: impl AsRef<OsStr>) -> io::Result<bool> {
         self.remove_tree_at(name.as_ref(), 0)
+    }
+
+    /// `unlinkat(AT_REMOVEDIR)`: remove an EMPTY child directory. A
+    /// non-empty directory, a symlink or a file is an error and untouched.
+    pub fn remove_dir(&self, name: impl AsRef<OsStr>) -> io::Result<()> {
+        self.unlink(name.as_ref(), true)
     }
 
     fn remove_tree_at(&self, name: &OsStr, depth: usize) -> io::Result<bool> {
@@ -365,5 +451,87 @@ mod tests {
         }
         assert!(Dir::open_path(&scratch.path().join("link")).is_err());
         assert!(dir.open_dir("../real").is_err(), "no path traversal");
+    }
+
+    #[test]
+    fn a_no_replace_rename_never_replaces_an_existing_destination() {
+        use std::os::unix::fs::MetadataExt as _;
+        let scratch = tempfile::tempdir().unwrap();
+        std::fs::create_dir(scratch.path().join("src")).unwrap();
+        std::fs::write(scratch.path().join("src/payload"), b"payload").unwrap();
+        // An EMPTY directory is exactly what an ordinary rename would replace.
+        std::fs::create_dir(scratch.path().join("dest")).unwrap();
+        let identity = std::fs::metadata(scratch.path().join("dest"))
+            .unwrap()
+            .ino();
+        let dir = Dir::open_path(scratch.path()).unwrap();
+        let error = dir
+            .rename_noreplace_into("src", &dir, "dest")
+            .expect_err("an existing destination is refused");
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            std::fs::metadata(scratch.path().join("dest"))
+                .unwrap()
+                .ino(),
+            identity,
+            "the foreign directory is the same inode and still empty"
+        );
+        assert_eq!(
+            std::fs::read_dir(scratch.path().join("dest"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert!(
+            scratch.path().join("src/payload").exists(),
+            "the source stays"
+        );
+        // With the destination gone it renames.
+        std::fs::remove_dir(scratch.path().join("dest")).unwrap();
+        dir.rename_noreplace_into("src", &dir, "dest").unwrap();
+        assert_eq!(
+            std::fs::read(scratch.path().join("dest/payload")).unwrap(),
+            b"payload"
+        );
+        assert!(!scratch.path().join("src").exists());
+    }
+
+    #[test]
+    fn identity_and_parent_walk_follow_descriptors_not_pathnames() {
+        let scratch = tempfile::tempdir().unwrap();
+        let real = scratch.path().join("real");
+        std::fs::create_dir_all(real.join("inner/deeper")).unwrap();
+        let link = scratch.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let deeper = Dir::open_path(&real.join("inner/deeper")).unwrap();
+        let via_link = Dir::open_path(&link.canonicalize().unwrap()).unwrap();
+        // `..` twice from the held directory is `real`, however it was reached.
+        let two_up = deeper.open_parent().unwrap().open_parent().unwrap();
+        assert_eq!(two_up.identity().unwrap(), via_link.identity().unwrap());
+        assert_ne!(deeper.identity().unwrap(), two_up.identity().unwrap());
+        // The walk ends at the root: `..` of `/` is `/`.
+        let mut current = Dir::open_path(Path::new("/")).unwrap();
+        let up = current.open_parent().unwrap();
+        assert_eq!(up.identity().unwrap(), current.identity().unwrap());
+        current = up;
+        assert!(current.identity().is_ok());
+    }
+
+    #[test]
+    fn create_new_refuses_an_existing_name_and_a_dangling_symlink() {
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = Dir::open_path(scratch.path()).unwrap();
+        dir.write_new("file", b"one").unwrap();
+        assert!(
+            dir.create_new("file").is_err(),
+            "O_EXCL on an existing file"
+        );
+        std::os::unix::fs::symlink("/nonexistent/target", scratch.path().join("dangling")).unwrap();
+        assert!(
+            dir.create_new("dangling").is_err(),
+            "O_EXCL never follows a link"
+        );
+        assert!(!std::path::Path::new("/nonexistent/target").exists());
+        dir.sync_all().unwrap();
     }
 }

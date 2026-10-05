@@ -30,6 +30,7 @@ pub mod bootstrap;
 pub mod cli;
 pub mod config;
 pub mod control;
+pub mod decision_model;
 pub mod error;
 #[cfg(feature = "test-faults")]
 pub mod fault;
@@ -40,6 +41,7 @@ pub mod gateway_launch;
 pub mod graph;
 pub mod ingest;
 pub mod laya;
+pub mod learning;
 pub mod mcp;
 pub mod memory;
 pub mod neural;

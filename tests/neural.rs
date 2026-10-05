@@ -1027,21 +1027,21 @@ fn schema_5_upgrade_from_v4_preserves_every_table_atomically() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 5, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
     fault::disarm_all();
     assert_eq!(testkit::snapshot(&store), before);
     // The previous version is no longer a target.
     let error = Engine::upgrade_store(&store, 4, &Control::unbounded()).unwrap_err();
     assert_eq!(error.code(), "unsupported_mode");
-    // The interrupted-after-commit boundary leaves it wholly v5.
+    // The interrupted-after-commit boundary leaves it wholly v6.
     fault::arm(
         names::UPGRADE_AFTER_COMMIT,
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 5, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
     fault::disarm_all();
-    assert_eq!(testkit::schema_marker(&store), "5");
+    assert_eq!(testkit::schema_marker(&store), "6");
     let after = testkit::snapshot(&store);
     for table in [
         "sources",
@@ -1073,6 +1073,84 @@ fn schema_5_upgrade_from_v4_preserves_every_table_atomically() {
     // The upgraded store opens and serves source reads.
     let engine = Engine::open_existing(&store).unwrap();
     assert!(engine.source("kept.rs").unwrap().is_some());
+}
+
+#[test]
+fn schema_6_upgrade_from_v5_preserves_every_table_and_the_vector_cache() {
+    use context_foundry::fault::{self, Action, names};
+    // A populated schema-5 store: a committed semantic preparation (cache,
+    // partitions, state), memory and legacy feedback; then the 013 learning
+    // tables are removed and the marker says 5.
+    let (mut env, report) = first_preparation(&[("a.txt", &body(100)), ("b.txt", &body(200))]);
+    assert!(!report.partial);
+    {
+        let engine = env.open();
+        engine
+            .memory_put(&context_foundry::memory::PutInput {
+                fields: context_foundry::memory::RecordFields {
+                    id: "kept-note".into(),
+                    text: "kept memory".into(),
+                    author: "tests".into(),
+                    provenance: "tests".into(),
+                    source_links: vec![],
+                },
+                workspace_id: engine.workspace_id().unwrap(),
+            })
+            .unwrap();
+        engine
+            .record_feedback(&context_foundry::laya::Feedback {
+                task_id: "t".into(),
+                query: "q".into(),
+                correct_strategy: context_foundry::laya::Strategy::Search,
+                label_source: "operator".into(),
+                allow_training: true,
+            })
+            .unwrap();
+    }
+    env.close();
+    testkit::downgrade_to_v5(&env.store);
+    let before = testkit::snapshot(&env.store);
+    let cache_before = testkit::semantic_cache_rows(&env.store);
+    assert!(!cache_before.is_empty(), "the vector cache is populated");
+    assert!(!before["semantic_partitions"].is_empty());
+    assert!(!before["memory"].is_empty() && !before["feedback"].is_empty());
+    assert_eq!(testkit::schema_marker(&env.store), "5");
+    let Err(refused) = Engine::open_existing(&env.store) else {
+        panic!("a schema-5 store must not open");
+    };
+    assert_eq!(refused.code(), "upgrade_required");
+    // Interrupted before commit: wholly v5, row for row.
+    fault::arm(
+        names::UPGRADE_BEFORE_COMMIT,
+        0,
+        Action::Fail("injected".into()),
+    );
+    Engine::upgrade_store(&env.store, 6, &Control::unbounded()).unwrap_err();
+    fault::disarm_all();
+    assert_eq!(testkit::snapshot(&env.store), before);
+    assert_eq!(testkit::semantic_cache_rows(&env.store), cache_before);
+    assert_eq!(testkit::schema_marker(&env.store), "5");
+    Engine::upgrade_store(&env.store, 6, &Control::unbounded()).unwrap();
+    assert_eq!(testkit::schema_marker(&env.store), "6");
+    let after = testkit::snapshot(&env.store);
+    for (table, rows) in &before {
+        let (mut left, mut right) = (after[table].clone(), rows.clone());
+        if *table == "meta" {
+            left.retain(|(key, _)| key != "schema");
+            right.retain(|(key, _)| key != "schema");
+        }
+        assert_eq!(left, right, "{table} preserved");
+    }
+    assert_eq!(
+        testkit::semantic_cache_rows(&env.store),
+        cache_before,
+        "the vector cache is preserved byte for byte"
+    );
+    for table in testkit::LEARNING_TABLES {
+        assert!(after[table].is_empty(), "{table} starts empty");
+    }
+    // The upgraded store opens and serves source reads.
+    assert!(env.open().source("a.txt").unwrap().is_some());
 }
 
 #[test]

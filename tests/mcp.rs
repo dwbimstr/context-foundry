@@ -265,7 +265,7 @@ async fn stdio_lists_the_seven_tool_catalog_and_serves_it() {
         .unwrap();
     let status_json: serde_json::Value =
         serde_json::from_str(&assert_single_text_success(&status)).unwrap();
-    assert_eq!(status_json["schema"], 5);
+    assert_eq!(status_json["schema"], 6);
 
     let indexed = client
         .call_tool(CallToolRequestParams::new("index"))
@@ -293,6 +293,64 @@ async fn stdio_lists_the_seven_tool_catalog_and_serves_it() {
         "{text}"
     );
     client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_offers_no_feedback_or_training_consent_path() {
+    // 013: training consent (`allow_training:true`) is granted only through
+    // the trusted operator CLI. The real catalog has no tool that records
+    // feedback or learning rows and no tool argument that names consent; a
+    // feedback call is refused as an unknown tool, and nothing reaches the
+    // feedback tables.
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("workspace");
+    let store = fixture.path().join("store");
+    write_fixture(&root, 1);
+    bootstrap_apply(&store, &root);
+    let client = stdio_client(&store, &root).await;
+    let tools = client.list_tools(None).await.unwrap();
+    assert!(!tools.tools.is_empty());
+    for tool in &tools.tools {
+        let name = tool.name.to_lowercase();
+        for forbidden in ["feedback", "learning", "training", "consent"] {
+            assert!(
+                !name.contains(forbidden),
+                "tool {name} is a {forbidden} path"
+            );
+        }
+        let declared = serde_json::to_string(tool).unwrap();
+        assert!(
+            !declared.contains("allow_training"),
+            "tool {name} declares a consent argument: {declared}"
+        );
+    }
+    for name in ["feedback", "record_feedback", "learning_feedback"] {
+        assert!(
+            client
+                .call_tool(
+                    CallToolRequestParams::new(name).with_arguments(
+                        serde_json::json!({
+                            "task_id": "t",
+                            "allow_training": true,
+                        })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    ),
+                )
+                .await
+                .is_err(),
+            "{name} must be an unknown tool"
+        );
+    }
+    client.cancel().await.unwrap();
+    let _ = wait_for_cli_status(&store).await;
+    for table in ["learning_feedback", "feedback"] {
+        assert!(
+            context_foundry::testkit::table_rows(&store, table).is_empty(),
+            "{table} stays empty"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

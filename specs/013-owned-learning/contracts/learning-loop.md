@@ -111,7 +111,8 @@ disable/restart. No hidden revocation watcher. Feedback uses 001's sole schema o
 ## Dataset and repeat rounds
 
 Commands: `learning prepare --out DIR --policy FILE [--parent MANIFEST]`,
-`learning check --manifest FILE`, `learning train --input MANIFEST --policy FILE
+`learning check --manifest FILE --policy FILE` (the policy pins the tokenizer that the
+exact read-back re-rendering requires), `learning train --input MANIFEST --policy FILE
 --out DIR`, and `learning select --candidate DIR --out CONFIG`. All operator commands
 require exclusive store ownership where they read feedback/permission. No competing
 writer or long read transaction during model work; no implicit shutdown of MCP.

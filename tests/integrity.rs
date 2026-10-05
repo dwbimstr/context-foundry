@@ -307,7 +307,7 @@ fn unbound_upgraded_store_binds_and_serves_queries_on_the_same_owner() {
     let fixture = tempfile::tempdir().unwrap();
     let v1 = fixture.path().join("v1store");
     craft_v1_store(&v1, None);
-    Engine::upgrade_store(&v1, 5, &Control::unbounded()).unwrap();
+    Engine::upgrade_store(&v1, 6, &Control::unbounded()).unwrap();
     // The upgraded index predates search schema v2: the explicit repair
     // publishes it before the store serves queries.
     let engine = Engine::open_existing(&v1).unwrap();
@@ -456,14 +456,14 @@ fn unknown_schema_is_refused_and_changes_no_record() {
     let fixture = tempfile::tempdir().unwrap();
     let store = fixture.path().join("future");
     craft_v1_store(&store, Some(&fixture.path().join("ws")));
-    set_meta(&store, "schema", Some("6"));
+    set_meta(&store, "schema", Some("7"));
     let before = snapshot(&store);
     assert_eq!(
         Engine::open_existing(&store).unwrap_err().code(),
         "unsupported_schema"
     );
     assert_eq!(
-        Engine::upgrade_store(&store, 5, &Control::unbounded())
+        Engine::upgrade_store(&store, 6, &Control::unbounded())
             .unwrap_err()
             .code(),
         "unsupported_schema"
@@ -474,7 +474,7 @@ fn unknown_schema_is_refused_and_changes_no_record() {
             .code(),
         "unsupported_schema"
     );
-    assert_eq!(schema_marker(&store), "6");
+    assert_eq!(schema_marker(&store), "7");
     assert_eq!(snapshot(&store), before);
 }
 

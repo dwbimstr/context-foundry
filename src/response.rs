@@ -314,7 +314,7 @@ impl HeaderV2<'_> {
 
 /// Single-line fields (labels, graph text, excerpts): every control character
 /// except TAB becomes `?`, so indexed text cannot forge a header, item or fence.
-fn single_line(text: &str) -> String {
+pub(crate) fn single_line(text: &str) -> String {
     text.chars()
         .map(|c| {
             if c.is_ascii_control() && c != '\t' {

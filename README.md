@@ -45,11 +45,22 @@ matching host configuration with `--http-port PORT --token-env NAME`:
 
 ## What works
 
-- Explicit store creation, schema-5 upgrade (`upgrade-store --to 5`, from v1–v4), bounded
+- Explicit store creation, schema-6 upgrade (`upgrade-store --to 6`, from v1–v5), bounded
   refresh and explicit `repair-index` with one retained quarantine. Reads never create,
   upgrade or repair a store; a broken lexical index leaves status and retrieve usable.
   An upgraded store, or one indexed before search schema 3 (leading-run units),
   needs `repair-index` before search and context work.
+- Owned learning data (013 T001, `semantic` feature): `feedback v4` records exact, permitted
+  examples through the trusted operator CLI only (MCP can never grant training consent);
+  `learning prepare --out DIR --policy FILE [--parent MANIFEST]` freezes an immutable
+  schema-4 grouped, tokenized dataset through the exact pinned renderer, and
+  `learning check --manifest FILE --policy FILE` verifies it read-back, re-rendering every
+  row through the policy's pinned tokenizer (a missing tokenizer is a named refusal).
+  `learning compose-state --query Q` prints the core's composed `state` (the query,
+  `graph: <complete|partial>` from the current compiler graph, and up to three lexical
+  locator lines) so rows are built from the one composer; it refuses `graph_unavailable`
+  or `graph_stale` when no current graph exists. No model is loaded and nothing is
+  trained; legacy `feedback` rows stay exportable and ineligible.
 - Paged, held-root reconciliation: symlink/FIFO/root replacement is refused, failures
   defer absence deletion, and source revision/scan IDs are checked counters.
 - Syntax-unit search (Rust, Python, TS/TSX/JS, Go, C/C++, Java, Markdown) with exact

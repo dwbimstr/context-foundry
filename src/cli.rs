@@ -1,6 +1,7 @@
 //! The command-line surface. This module is ordinary release code and never
 //! reads fault-environment variables.
 use crate::graph::{REFERENCES_DEFAULT_LIMIT, ReferencesRequest, ReferencesSeed};
+use crate::learning;
 use crate::{
     Control, Engine, FResult, FoundryError, Strategy,
     adapter_error::AResult,
@@ -109,15 +110,26 @@ enum Command {
         #[arg(long)]
         after: Option<String>,
     },
-    /// Accept one explicitly labeled feedback JSON object from stdin.
-    Feedback,
+    /// Accept one explicitly labeled feedback JSON object from stdin. The
+    /// default is the legacy v1 shape (kept exportable, never trainable);
+    /// `feedback v4` reads one 013 v4 row with exact inputs and rights.
+    Feedback {
+        #[command(subcommand)]
+        action: Option<FeedbackAction>,
+    },
+    /// 013: prepare the exact permitted dataset and verify it read-back.
+    Learning {
+        #[command(subcommand)]
+        action: LearningAction,
+    },
     /// Emit opted-in local examples as JSONL. Redirect outside the source checkout.
     ExportTraining,
     /// Resume pending derived-index work after an interrupted indexing command.
     Refresh,
     /// Store metadata; never touches the filesystem on a missing store.
     Status,
-    /// Explicit v1|v2|v3 -> v4 schema upgrade under exclusive ownership.
+    /// Explicit v1..v5 -> v6 schema upgrade under exclusive ownership; `--to`
+    /// must be 6, the only supported target.
     UpgradeStore {
         #[arg(long)]
         to: u32,
@@ -163,6 +175,55 @@ enum SemanticAction {
     /// generation under sole ownership. Sources, graph, memory and feedback
     /// stay; nothing repopulates.
     Purge,
+}
+
+#[derive(Subcommand)]
+enum FeedbackAction {
+    /// Record one 013 v4 row (exact state/options/consent, <=24 KiB,
+    /// strict). Consent for training can be granted ONLY here — the
+    /// operator CLI — never over MCP.
+    V4,
+}
+
+#[derive(Subcommand)]
+enum LearningAction {
+    /// Prepare the immutable schema-4 dataset under exclusive ownership:
+    /// renders every permitted row through the exact pinned renderer,
+    /// enforces duplicate/split/lineage rules and group floors, and writes
+    /// the output through an owned partial sibling (manifest last).
+    Prepare {
+        /// Output directory; must not exist and must not sit under the
+        /// admitted source root.
+        #[arg(long)]
+        out: PathBuf,
+        /// The v2 run policy pinning recipe, seed and the tokenizer.
+        #[arg(long)]
+        policy: PathBuf,
+        /// A prior dataset manifest this round builds on (base replay).
+        #[arg(long)]
+        parent: Option<PathBuf>,
+    },
+    /// Verify a prepared dataset read-back through the exact pinned
+    /// renderer: manifest bytes, bounds, sort order, dataset identity, group
+    /// ownership, coverage floors and every row's token IDs and markers. The
+    /// policy's tokenizer is required; there is no structural-only pass.
+    Check {
+        #[arg(long)]
+        manifest: PathBuf,
+        /// The v2 run policy pinning the tokenizer the rows are re-rendered
+        /// with.
+        #[arg(long)]
+        policy: PathBuf,
+    },
+    /// Print the core's composed `state` for a query: the query, LF,
+    /// `graph: <complete|partial>` from the current compiler graph, then up
+    /// to three lexical locator lines. Exactly the state, one trailing LF,
+    /// so a `feedback v4` row stores the state the policy would see. Refuses
+    /// `graph_unavailable` / `graph_stale` when no current graph exists.
+    ComposeState {
+        #[arg(long)]
+        query: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -666,21 +727,49 @@ fn run() -> AResult<()> {
                 })
             );
         }
-        Command::Feedback => {
+        Command::Feedback { action } => {
             let engine = Engine::open_existing(&cli.store)?;
-            let mut line = String::new();
-            io::stdin().lock().take(8193).read_line(&mut line)?;
-            if line.len() > 8192 {
-                return Err(
-                    FoundryError::InvalidArgument("feedback exceeds 8192 bytes".into()).into(),
-                );
+            match action {
+                None => {
+                    let mut line = String::new();
+                    io::stdin().lock().take(8193).read_line(&mut line)?;
+                    if line.len() > 8192 {
+                        return Err(FoundryError::InvalidArgument(
+                            "feedback exceeds 8192 bytes".into(),
+                        )
+                        .into());
+                    }
+                    let feedback: Feedback = serde_json::from_str(&line)?;
+                    println!(
+                        "{}",
+                        serde_json::json!({"id": engine.record_feedback(&feedback)?})
+                    );
+                }
+                Some(FeedbackAction::V4) => {
+                    // The ONLY path that may set allow_training=true.
+                    let mut line = String::new();
+                    io::stdin()
+                        .lock()
+                        .take(24 * 1024 + 1)
+                        .read_line(&mut line)?;
+                    if line.len() > 24 * 1024 {
+                        return Err(FoundryError::InvalidArgument(
+                            "feedback v4 exceeds 24576 bytes".into(),
+                        )
+                        .into());
+                    }
+                    let (example_id, status) = engine.record_learning_feedback(line.trim_end())?;
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "example_id": example_id,
+                            "status": status,
+                        })
+                    );
+                }
             }
-            let feedback: Feedback = serde_json::from_str(&line)?;
-            println!(
-                "{}",
-                serde_json::json!({"id": engine.record_feedback(&feedback)?})
-            );
         }
+        Command::Learning { action } => learning_run(&cli.store, action)?,
         Command::ExportTraining => {
             let engine = Engine::open_existing(&cli.store)?;
             for row in engine.training_examples()? {
@@ -717,6 +806,66 @@ fn run() -> AResult<()> {
                 )
                 .into());
             }
+        }
+    }
+    Ok(())
+}
+
+/// 013 operator commands. `prepare` and `check` require exclusive store
+/// ownership where they read feedback/permission; a named `no_new_data`
+/// outcome is success (exit 0), and nothing here grants MCP any consent
+/// path.
+fn learning_run(store: &std::path::Path, action: LearningAction) -> AResult<()> {
+    let control = live_control();
+    match action {
+        LearningAction::Prepare {
+            out,
+            policy,
+            parent,
+        } => {
+            let engine = Engine::open_existing(store)?;
+            match learning::prepare(&engine, &out, &policy, parent.as_deref(), &control)? {
+                learning::PrepareOutcome::Completed(prepared) => {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "outcome": "completed",
+                            "dataset_id": prepared.dataset_id,
+                            "manifest": prepared.manifest_path,
+                            "new_rows": prepared.new_rows,
+                            "replay_rows": prepared.replay_rows,
+                            "train_rows": prepared.train_rows,
+                            "calibration_rows": prepared.calibration_rows,
+                            "evaluation_rows": prepared.evaluation_rows,
+                            "groups": prepared.groups,
+                            // An earlier run's identical, unrecorded output
+                            // was verified and recorded (lost response).
+                            "adopted": prepared.adopted,
+                        })
+                    );
+                }
+                learning::PrepareOutcome::NoNewData {
+                    parent_manifest_sha256,
+                } => {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "outcome": "no_new_data",
+                            "parent_manifest_sha256": parent_manifest_sha256,
+                        })
+                    );
+                }
+            }
+        }
+        LearningAction::Check { manifest, policy } => {
+            let report = learning::check(&manifest, &policy, &control)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        LearningAction::ComposeState { query } => {
+            let engine = Engine::open_existing(store)?;
+            let state = engine.compose_route_state(&query, &control)?;
+            // Exactly the state plus the one LF `println!` adds.
+            println!("{state}");
         }
     }
     Ok(())

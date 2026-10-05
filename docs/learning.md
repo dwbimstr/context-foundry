@@ -1,8 +1,20 @@
 # Owned continuous learning
 
 Status: Proposed, 2026-09-29. [013](../specs/013-owned-learning/spec.md) owns the
-design and acceptance. The implementation is still the original Rust prototype;
-it does not yet train or launch isolated model workers.
+design and acceptance. T001 (exact permitted examples) is implemented and awaits
+review: `src/decision_model.rs` (the one shared renderer/tokenizer path, no weights),
+`src/learning.rs` (v4 rows, consent, groups and splits, fingerprints, dataset
+prepare/check, manifest, and `Engine::compose_route_state` — the one composer of the
+`state` that rows store and T003 will send) and `tests/learning_data.rs`, pinned to the
+upstream renderer's IDs by `tests/fixtures/learning/render.json`. The rest is still the
+original Rust prototype; nothing trains or launches isolated model workers yet.
+
+A `learning prepare` whose process died after publishing its output but before
+recording it leaves a dataset that is not yet a valid parent (`lineage_missing`).
+Rerunning the same preparation adopts that output only after a full read-back —
+the same manifest bytes, then every member's length, hash, framing, grouping, floors
+and exact rendering, as `learning check` reads it — records it and completes with
+`"adopted": true`; any other existing destination stays `output_exists`, untouched.
 
 The [decision-ecosystem source map](references/laya-decision-ecosystem.md) is the
 review entry point: immutable repository/model revisions, upstream functions/tests,
