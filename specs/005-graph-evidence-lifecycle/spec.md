@@ -1,9 +1,10 @@
 # 005 — Real relationships in a large workspace
 
-Status: T001 and T002 locally implemented and accepted 2026-10-04 (CLI `import-scip` and
-`references`, store schema 4). The T003 agent surface (MCP `references`, `index {scip}`,
-compiler graph context) was accepted 2026-10-05; its measured large-workspace run is
-next. Dependencies: 001; 003 only for the agent-facing part of T003.
+Status: complete and locally accepted, unreleased. T001 and T002 were accepted
+2026-10-04 (CLI `import-scip` and `references`, store schema 4). T003 was accepted
+2026-10-05: its agent surface (MCP `references`, `index {scip}`, compiler graph
+context) and its measured run on rust-lang/rust 1.99.0, which passed every criterion
+(see validation). Dependencies: 001; 003 only for the agent-facing part of T003.
 Authorization: specification refinement.
 Spec-pass decisions recorded 2026-10-03: pinned producer release, UTF-8-only positions,
 the producer coverage rule, budgeted v2 `references` and MCP import through `index`.
@@ -430,5 +431,6 @@ T003's, each passing only with that task's verification.
   limitations; undo only session-owned host configuration. Token savings require
   actual consumer/provider comparison and are not implied by passing SC-003.
 
-All three SCs remain unexecuted. Compiler/scale prerequisites are explicit. A failed
-scale run does not block an already accepted smaller CLI or agent release.
+All three SCs were executed and passed: SC-001 and SC-002 on 2026-10-04, and SC-003 on
+2026-10-05 in one measured run with no failed criterion (validation). A failed scale run
+would not have blocked an already accepted smaller CLI or agent release.

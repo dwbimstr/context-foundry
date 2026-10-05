@@ -40,6 +40,65 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 005 T003 measured run — rust-lang/rust 1.99.0, 2026-10-05
+
+One run, executed once, against the declared profile. Every acceptance criterion
+passed, with no failed check (50 checks).
+[Evidence](review/005-t003-run-2026-10-05.json);
+[preselected questions and source check](review/005-t003-questions-2026-10-04.json).
+- **Inputs.**
+  - Corpus: rust-lang/rust 1.99.0 (`b940084d`), clean before the run. Foundry admitted
+    60,739 sources: 75 named exclusions, about 179 MB by the admission rule.
+  - Host: Apple M3 Pro, macOS 27.
+  - Binary: release `eac5d97b…8775` from main `f7a7233`, with no test-hook strings.
+  - Producer artifact: `db306662…0dc6`.
+  - Questions: preselected and source-checked before timing (`4f564f2`).
+  - Profile, fixed before the run: `max_index_seconds=900`, `max_peak_rss_bytes=2 GiB`,
+    `max_query_p95_ms=250`, `max_run_seconds=3600`.
+- **Foundry (measured).**
+  - Index: 429.6 s, 556 MiB peak.
+  - Import: 30.0 s, 469 MiB; `complete: true`, 0 failed, `coverage: partial` (external
+    references unresolved).
+  - Queries: the 20 timed MCP `references` calls (tokens 4096) had p95 105.3 ms
+    (nearest rank, sorted sample 19) and a maximum of 132.8 ms.
+  - Session: 861.3 s, with the timer paused during the producer rerun.
+- **Producer (disclosed separately).** Jailed rust-analyzer 2026-08-31 over the
+  filtered `library/` snapshot:
+  - first run 1,128 s at 1.07 GiB (2026-10-04);
+  - edit-cycle rerun 73.3 s at 1.10 GiB (a warm scratch target directory);
+  - end to end 934.6 s.
+- **Answers.**
+  - The 15 supported questions returned exactly their expected references on page 1,
+    with `coverage:complete` and no continuation.
+  - The five high-degree questions returned a correct nonempty first page with
+    `next: after=`. Their full pagination equals the expected sets: 2,633 records.
+  - All 2,780 records match on exact byte ranges, read back through single-record
+    pages.
+  - Controls held: a deep position seed, a corrupted handle, a foreign workspace, an
+    unknown symbol and a same-name different symbol.
+- **Edit cycle through one MCP owner.** An appended comment in
+  `library/std/src/os/unix/net/datagram.rs` was picked up by MCP `index`
+  (revision 60739 → 60740), and q02 then answered `coverage:stale` with no items. The
+  producer was rerun on an edited snapshot copy and `index {scip}` re-imported. The
+  same q02 then answered `coverage:complete` with its expected set. There was no restart
+  and no competing writer; a competing CLI import was refused `store_busy`.
+- **Protocol checks.**
+  - Traversal, path and `.` names are `invalid_argument`.
+  - Missing and symlinked staged files are `artifact_unavailable`.
+  - A 65 MiB manifest is `manifest_too_large` (untimed supplement).
+  - A 2 s deadline mid-import returned `complete: false` with committed counts.
+  - Staged caller files were untouched.
+- **Limits of this result.**
+  - The producer input is a filtered, incomplete `library/` snapshot (named omissions in
+    spec 005).
+  - The independent source check found one reference rust-analyzer did not emit (q19:
+    `library/compiler-builtins/compiler-builtins/build.rs:594`); the expected sets follow
+    the artifact.
+  - SCIP identities stay as produced: the `core 0.0.0` workspace instance is not merged
+    into the sysroot instance (counts are in the questions record).
+  - This tests one named corpus, not universal capacity. It is not a token-savings or
+    cost claim.
+
 ## 005 T003 agent surface — MCP `references`, `index {scip}`, graph context, 2026-10-05
 
 Locally implemented and verified, **unpushed and unreleased**. The measured

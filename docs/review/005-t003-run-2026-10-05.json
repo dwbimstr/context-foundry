@@ -1,0 +1,718 @@
+{
+ "v": 1,
+ "run": "005 T003 measured large-workspace run",
+ "started_utc": "2026-10-05T18:39:19Z",
+ "ended_utc": "2026-10-05T18:54:55Z",
+ "profile": {
+  "max_index_seconds": 900,
+  "max_peak_rss_bytes": 2147483648,
+  "max_query_p95_ms": 250,
+  "max_run_seconds": 3600
+ },
+ "timed_query_args": {
+  "tokens": 4096
+ },
+ "hardware": [
+  "Mac15,6",
+  "Apple M3 Pro",
+  "12",
+  "19327352832",
+  ""
+ ],
+ "os": [
+  "ProductName:\t\tmacOS",
+  "ProductVersion:\t\t27.0.1",
+  "BuildVersion:\t\t26A434"
+ ],
+ "foundry_sha256": "eac5d97b0d4abc5b0167fcbc22ba0db01b9e530cd9814bf2fad7b6417dc18775",
+ "corpus_commit": "b940084d7eb6a299eb4bfeb8e34901bc051e7ac4",
+ "corpus_dirty_before": "",
+ "artifact_sha256": "db3066620ae601308e0e131adb8e6cfea0316c2baf260506d50e2df0e5ac0dc6",
+ "questions_sha256": "b548bbae34f467ba4fb13c004c44cf1eaf405e695ae353adf7ac727d41418d0f",
+ "index_report": {
+  "changed": 60739,
+  "excluded": 75,
+  "failures": 0,
+  "scan_complete": true,
+  "partial": false,
+  "source_revision": 60739
+ },
+ "phases": {
+  "index": {
+   "exit": 0,
+   "elapsed_s": 429.624,
+   "peak_rss_bytes": 582893568
+  },
+  "import": {
+   "exit": 0,
+   "elapsed_s": 29.995,
+   "peak_rss_bytes": 491995136
+  },
+  "mcp_reindex": {
+   "error": false,
+   "elapsed_ms": 16289.1,
+   "report": "{\"changed\":1,\"deleted\":0,\"deletions_deferred\":false,\"excluded\":75,\"exclusion_samples\":[\"tests/ui/include-macros/invalid-utf8-binary-file.bin: binary NUL\",\"tests/ui/rfcs/rfc-3348-c-string-literals/no-nuls.rs: binary NUL\",\"tests/ui/parser/survive-peano-lesson-queue.rs: over 2 MiB\",\"tests/ui/parser/bad-char-literals.rs: binary NUL\",\"tests/ui/parser/utf16-le-without-bom.rs: binary NUL\",\"tests/ui/parser/issues/issue-68730.rs: binary NUL\",\"tests/ui/parser/issues/issue-66473.rs: binary NUL\",\"tests/ui/parser/issues/issue-68629.rs: binary NUL\",\"tests/ui/parser/utf16-be-without-bom.rs: binary NUL\",\"tests/ui/parser/raw/raw-string-literals.rs: binary NUL\",\"tests/ui/macros/not-utf8.bin: binary NUL\",\"tests/ui/argfile/commandline-argfile-badutf8.args: not UTF-8\",\"tests/rustdoc-ui/argfile/commandline-argfile-badutf8.args: not UTF-8\",\"tests/run-make/checksum-freshness/binary_file: not UTF-8\",\"library/stdarch/crates/core_arch/src/x86/avx512f.rs: over 2 MiB\",\"library/stdarch/crates/core_arch/src/arm_shared/neon/generated.rs: over 2 MiB\",\"library/stdarch/crates/core_arch/src/aarch64/sve/generated.rs: over 2 MiB\",\"library/stdarch/intrinsics_data/arm_intrinsics.json: over 2 MiB\",\"library/stdarch/intrinsics_data/x86-intel.xml: over 2 MiB\",\"library/std_detect/src/detect/test_data/linux-empty-hwcap2-aarch64.auxv: binary NUL\"],\"failure_samples\":[],\"failures\":0,\"partial\":false,\"pending_sources\":0,\"reason\":null,\"reason_code\":null,\"scan_complete\":true,\"scan_id\":2,\"source_revision\":60740,\"unchanged\":60738}"
+  },
+  "stale_answer": "foundry references \u00b7 r60740 \u00b7 budget:1024 \u00b7 examined:0 \u00b7 coverage:stale\n",
+  "status_after_reindex": "{\"index_reason\":null,\"index_state\":\"ready\",\"pending_count\":0,\"scan_state\":\"complete\",\"schema\":4,\"source_count\":60739,\"source_revision\":60740,\"workspace_id\":\"e148bc0a63340c19fa5a6e79dd397ab031af359b1527db1d04b249342f54e693\"}",
+  "mcp_reimport": {
+   "error": false,
+   "elapsed_ms": 37293.7,
+   "report": "{\"accepted_empty\":1040,\"artifact_sha256\":\"c50a180890b3f653e8add6253fb3f32f09ae166ddeb65abb8f14628fed6e8923\",\"complete\":true,\"completed\":262,\"copied_bytes\":57183397,\"coverage\":\"partial\",\"definitions\":79288,\"documents\":958,\"failed\":0,\"failure\":null,\"failure_samples\":[],\"interrupted\":null,\"manifest_sha256\":\"a401c8a722fbc83e18efd9dbd4e3ef43e13ddece55a7d66cd3f98749db7d36ea\",\"occurrences\":436829,\"outside_scope\":257,\"producer\":\"rust-analyzer\",\"references\":357541,\"retired\":0,\"scratch_peak_bytes\":90873169,\"selected\":true,\"snapshot_id\":\"06b2cb8f14e28de7ab49693da6dc5ad9f1d1879b93143c0302894bc540c34303\",\"source_revision\":60740,\"timings\":{\"copy_ms\":165,\"lookup_ms\":1312,\"publish_ms\":35668,\"total_ms\":37154},\"unknown\":0,\"unresolved\":696,\"unresolved_references\":63014}"
+  }
+ },
+ "import_report": {
+  "complete": true,
+  "coverage": "partial",
+  "documents": 958,
+  "completed": 262,
+  "accepted_empty": 1040,
+  "unresolved": 696,
+  "failed": 0,
+  "outside_scope": 257,
+  "unknown": 0,
+  "occurrences": 436829,
+  "definitions": 79288,
+  "references": 357541,
+  "unresolved_references": 63014,
+  "copied_bytes": 57183351,
+  "scratch_peak_bytes": 90873123,
+  "timings": {
+   "copy_ms": 187,
+   "lookup_ms": 1155,
+   "publish_ms": 28211,
+   "total_ms": 29560
+  }
+ },
+ "producer2": {
+  "exit": 0,
+  "elapsed_s": 73.3,
+  "peak_rss_bytes": 1158643712
+ },
+ "producer1": {
+  "elapsed_s": 1127.92,
+  "peak_rss_bytes": 1122009088,
+  "note": "first jailed run 2026-10-04, before the Foundry session"
+ },
+ "catalog": {
+  "tools": [
+   "context",
+   "index",
+   "memory",
+   "references",
+   "retrieve",
+   "search",
+   "status"
+  ],
+  "o200k_tokens": 977
+ },
+ "queries": {
+  "raw_ms": [
+   65.657,
+   13.114,
+   17.497,
+   14.56,
+   17.384,
+   4.815,
+   12.569,
+   17.342,
+   42.876,
+   40.979,
+   8.686,
+   47.953,
+   5.279,
+   26.188,
+   20.525,
+   105.251,
+   132.782,
+   30.207,
+   58.529,
+   29.135
+  ],
+  "sorted_ms": [
+   4.815,
+   5.279,
+   8.686,
+   12.569,
+   13.114,
+   14.56,
+   17.342,
+   17.384,
+   17.497,
+   20.525,
+   26.188,
+   29.135,
+   30.207,
+   40.979,
+   42.876,
+   47.953,
+   58.529,
+   65.657,
+   105.251,
+   132.782
+  ],
+  "p95_nearest_rank_ms": 105.251
+ },
+ "answer_headers": [
+  {
+   "q": 1,
+   "ms": 65.657,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:6 \u00b7 coverage:complete"
+  },
+  {
+   "q": 2,
+   "ms": 13.114,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:9 \u00b7 coverage:complete"
+  },
+  {
+   "q": 3,
+   "ms": 17.497,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:9 \u00b7 coverage:complete"
+  },
+  {
+   "q": 4,
+   "ms": 14.56,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:15 \u00b7 coverage:complete"
+  },
+  {
+   "q": 5,
+   "ms": 17.384,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:12 \u00b7 coverage:complete"
+  },
+  {
+   "q": 6,
+   "ms": 4.815,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:5 \u00b7 coverage:complete"
+  },
+  {
+   "q": 7,
+   "ms": 12.569,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:7 \u00b7 coverage:complete"
+  },
+  {
+   "q": 8,
+   "ms": 17.342,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:13 \u00b7 coverage:complete"
+  },
+  {
+   "q": 9,
+   "ms": 42.876,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:18 \u00b7 coverage:complete"
+  },
+  {
+   "q": 10,
+   "ms": 40.979,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:10 \u00b7 coverage:complete"
+  },
+  {
+   "q": 11,
+   "ms": 8.686,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:4 \u00b7 coverage:complete"
+  },
+  {
+   "q": 12,
+   "ms": 47.953,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:13 \u00b7 coverage:complete"
+  },
+  {
+   "q": 13,
+   "ms": 5.279,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:5 \u00b7 coverage:complete"
+  },
+  {
+   "q": 14,
+   "ms": 26.188,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:9 \u00b7 coverage:complete"
+  },
+  {
+   "q": 15,
+   "ms": 20.525,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 examined:7 \u00b7 coverage:complete"
+  },
+  {
+   "q": 16,
+   "ms": 105.251,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 omitted:36 \u00b7 examined:65 \u00b7 coverage:complete"
+  },
+  {
+   "q": 17,
+   "ms": 132.782,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 omitted:27 \u00b7 examined:65 \u00b7 coverage:complete"
+  },
+  {
+   "q": 18,
+   "ms": 30.207,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 omitted:26 \u00b7 examined:65 \u00b7 coverage:complete"
+  },
+  {
+   "q": 19,
+   "ms": 58.529,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 omitted:22 \u00b7 examined:65 \u00b7 coverage:complete"
+  },
+  {
+   "q": 20,
+   "ms": 29.135,
+   "header": "foundry references \u00b7 r60739 \u00b7 budget:2048(ceiling) \u00b7 omitted:25 \u00b7 examined:65 \u00b7 coverage:complete"
+  }
+ ],
+ "foundry_session_seconds": 861.3,
+ "end_to_end_seconds": 934.6,
+ "checks": {
+  "corpus clean before run": {
+   "ok": true,
+   "detail": null
+  },
+  "store absent before run": {
+   "ok": true,
+   "detail": null
+  },
+  "index exit 0 and complete": {
+   "ok": true,
+   "detail": {
+    "changed": 60739,
+    "excluded": 75,
+    "failures": 0,
+    "scan_complete": true,
+    "partial": false,
+    "source_revision": 60739
+   }
+  },
+  "index within max_index_seconds": {
+   "ok": true,
+   "detail": 429.623610083
+  },
+  "index within max_peak_rss_bytes": {
+   "ok": true,
+   "detail": 582893568
+  },
+  "import complete (exit 0)": {
+   "ok": true,
+   "detail": {
+    "complete": true,
+    "coverage": "partial",
+    "failed": 0,
+    "documents": 958
+   }
+  },
+  "import within max_index_seconds": {
+   "ok": true,
+   "detail": 29.994629625000016
+  },
+  "import within max_peak_rss_bytes": {
+   "ok": true,
+   "detail": 491995136
+  },
+  "exact ranges and controls": {
+   "ok": true,
+   "detail": "ALL EXACT"
+  },
+  "catalog has references and <= 1000 tokens": {
+   "ok": true,
+   "detail": {
+    "tools": [
+     "context",
+     "index",
+     "memory",
+     "references",
+     "retrieve",
+     "search",
+     "status"
+    ],
+    "o200k_tokens": 977
+   }
+  },
+  "q01 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 5,
+    "expected": 5,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "6",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q02 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 8,
+    "expected": 8,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "9",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q03 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 8,
+    "expected": 8,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "9",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q04 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 14,
+    "expected": 14,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "15",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q05 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 11,
+    "expected": 11,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "12",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q06 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 4,
+    "expected": 4,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "5",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q07 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 6,
+    "expected": 6,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "7",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q08 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 12,
+    "expected": 12,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "13",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q09 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 17,
+    "expected": 17,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "18",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q10 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 9,
+    "expected": 9,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "10",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q11 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 3,
+    "expected": 3,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "4",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q12 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 12,
+    "expected": 12,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "13",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q13 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 4,
+    "expected": 4,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "5",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q14 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 8,
+    "expected": 8,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "9",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q15 supported answer": {
+   "ok": true,
+   "detail": {
+    "items": 6,
+    "expected": 6,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "examined": "7",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q16 high answer": {
+   "ok": true,
+   "detail": {
+    "items": 28,
+    "expected": 652,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "omitted": "36",
+     "examined": "65",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q17 high answer": {
+   "ok": true,
+   "detail": {
+    "items": 37,
+    "expected": 471,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "omitted": "27",
+     "examined": "65",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q18 high answer": {
+   "ok": true,
+   "detail": {
+    "items": 38,
+    "expected": 591,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "omitted": "26",
+     "examined": "65",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q19 high answer": {
+   "ok": true,
+   "detail": {
+    "items": 42,
+    "expected": 330,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "omitted": "22",
+     "examined": "65",
+     "coverage": "complete"
+    }
+   }
+  },
+  "q20 high answer": {
+   "ok": true,
+   "detail": {
+    "items": 39,
+    "expected": 589,
+    "header": {
+     "rev": 60739,
+     "budget": "2048(ceiling)",
+     "omitted": "25",
+     "examined": "65",
+     "coverage": "complete"
+    }
+   }
+  },
+  "query p95 <= max_query_p95_ms": {
+   "ok": true,
+   "detail": 105.25141600010102
+  },
+  "q16 full pagination equals expected": {
+   "ok": true,
+   "detail": {
+    "pages": 18,
+    "records": 652
+   }
+  },
+  "q17 full pagination equals expected": {
+   "ok": true,
+   "detail": {
+    "pages": 13,
+    "records": 471
+   }
+  },
+  "q18 full pagination equals expected": {
+   "ok": true,
+   "detail": {
+    "pages": 16,
+    "records": 591
+   }
+  },
+  "q19 full pagination equals expected": {
+   "ok": true,
+   "detail": {
+    "pages": 9,
+    "records": 330
+   }
+  },
+  "q20 full pagination equals expected": {
+   "ok": true,
+   "detail": {
+    "pages": 16,
+    "records": 589
+   }
+  },
+  "MCP re-index after edit": {
+   "ok": true,
+   "detail": "{\"changed\":1,\"deleted\":0,\"deletions_deferred\":false,\"excluded\":75,\"exclusion_samples\":[\"tests/ui/include-macros/invalid-utf8-binary-file.bin: binary NUL\",\"tests/ui/rfcs/rfc-3348-c-string-literals/no-nuls.rs: binary NUL\",\"tests/ui/parser/survive-peano-lesson-queue.rs: over 2 MiB\",\"tests/ui/parser/bad"
+  },
+  "stale after edit (coverage:stale, no items)": {
+   "ok": true,
+   "detail": {
+    "rev": 60740,
+    "budget": "1024",
+    "examined": "0",
+    "coverage": "stale"
+   }
+  },
+  "producer rerun exit 0": {
+   "ok": true,
+   "detail": {
+    "exit": 0,
+    "elapsed_s": 73.3,
+    "peak_rss_bytes": 1158643712
+   }
+  },
+  "status after re-index names a newer revision": {
+   "ok": true,
+   "detail": 60740
+  },
+  "MCP re-import complete": {
+   "ok": true,
+   "detail": {
+    "complete": true,
+    "coverage": "partial",
+    "failed": 0
+   }
+  },
+  "fresh after re-import (same expected set)": {
+   "ok": true,
+   "detail": {
+    "rev": 60740,
+    "budget": "1024",
+    "examined": "9",
+    "coverage": "complete"
+   }
+  },
+  "staged name '../x' -> invalid_argument": {
+   "ok": true,
+   "detail": "{\"code\":\"invalid_argument\",\"message\":\"`../x` is not a staged import name: 1..128 ASCII letters, digits, `.`, `_` or `-`\",\"retryable\":false}"
+  },
+  "staged name 'a/b' -> invalid_argument": {
+   "ok": true,
+   "detail": "{\"code\":\"invalid_argument\",\"message\":\"`a/b` is not a staged import name: 1..128 ASCII letters, digits, `.`, `_` or `-`\",\"retryable\":false}"
+  },
+  "staged name '.' -> invalid_argument": {
+   "ok": true,
+   "detail": "{\"code\":\"invalid_argument\",\"message\":\"`.` is not a staged import name: 1..128 ASCII letters, digits, `.`, `_` or `-`\",\"retryable\":false}"
+  },
+  "staged name 'missing.scip' -> artifact_unavailable": {
+   "ok": true,
+   "detail": "{\"code\":\"artifact_unavailable\",\"message\":\"import file is unavailable: the staged import `missing.scip` is missing\",\"retryable\":false}"
+  },
+  "symlinked staged file -> artifact_unavailable": {
+   "ok": true,
+   "detail": "{\"code\":\"artifact_unavailable\",\"message\":\"import file is unavailable: the staged import `link.scip` is a symlink, not a regular entry\",\"retryable\":false}"
+  },
+  "competing CLI writer -> store_busy": {
+   "ok": true,
+   "detail": "{\"code\":\"store_busy\",\"message\":\"store is locked by another owner\",\"retryable\":true}\n"
+  },
+  "deadline mid-import -> complete:false with counts (or named deadline)": {
+   "ok": true,
+   "detail": "{\"accepted_empty\":0,\"artifact_sha256\":\"c50a180890b3f653e8add6253fb3f32f09ae166ddeb65abb8f14628fed6e8923\",\"complete\":false,\"completed\":2,\"copied_bytes\":57183397,\"coverage\":\"partial\",\"definitions\":628,\"documents\":958,\"failed\":0,\"failure\":{\"code\":\"deadline_exceeded\",\"message\":\"deadline_exceeded: operat"
+  },
+  "Foundry session within max_run_seconds": {
+   "ok": true,
+   "detail": 861.315412
+  }
+ },
+ "failed_checks": [],
+ "supplement": {
+  "admitted_files_by_rule": 60736,
+  "admitted_bytes_by_rule": 178857581,
+  "oversized_manifest": {
+   "is_error": true,
+   "text": "{\"code\":\"manifest_too_large\",\"message\":\"snapshot manifest is 68157440 bytes; the limit is 67108864\",\"retryable\":false}"
+  },
+  "caller_files_untouched": [
+   "index2.scip",
+   "link.scip",
+   "manifest2.json"
+  ]
+ },
+ "post_corpus_status": "?? .context-foundry/\n"
+}
