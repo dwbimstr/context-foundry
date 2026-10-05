@@ -21,7 +21,7 @@ implementing MCP. Limits are selected engineering bounds, not measured capacity 
 | Syntax units, search index v2, two-tier ranking, `path` filter, locator labels; leading-run units and head line (schema `"3"`) | 001 T005 | Locally implemented and accepted (r3 SHIP; leading-run amendment delta SHIP 2026-10-04, committed in `bd1d890`); unreleased |
 | Outlines, forms ladder, candidate seam, retrieve `view` | 001 T006 | Locally implemented and accepted (r3 SHIP); unreleased |
 | Multi-root identity, `roots`/`root`, per-root header | 007 T001 | Locally implemented and accepted 2026-10-04 (delta SHIP), committed in `cc402e0`; unreleased |
-| `foundry references` header segments 12–14, `next: after=<path>#<start>-<end>` cursor | 005 T002 | Locally implemented and accepted 2026-10-04 (CLI); the MCP `references` tool is 005 T003; unreleased |
+| `foundry references` header segments 12–14, `next: after=<path>#<start>-<end>` cursor; MCP `references`, `index.scip`, compiler graph context | 005 T002, T003 | Locally implemented and accepted (CLI 2026-10-04; MCP and graph context 2026-10-05); unreleased |
 
 ## Identity and reference validation
 

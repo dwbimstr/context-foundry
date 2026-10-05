@@ -1,8 +1,9 @@
 # 005 — Real relationships in a large workspace
 
 Status: T001 and T002 locally implemented and accepted 2026-10-04 (CLI `import-scip` and
-`references`, store schema 4); T003 (MCP tool, `index {scip}`, graph context and the scale
-run) in progress. Dependencies: 001; 003 only for the agent-facing part of T003.
+`references`, store schema 4). The T003 agent surface (MCP `references`, `index {scip}`,
+compiler graph context) was accepted 2026-10-05; its measured large-workspace run is
+next. Dependencies: 001; 003 only for the agent-facing part of T003.
 Authorization: specification refinement.
 Spec-pass decisions recorded 2026-10-03: pinned producer release, UTF-8-only positions,
 the producer coverage rule, budgeted v2 `references` and MCP import through `index`.
@@ -283,7 +284,12 @@ references. Bounds do not remove facts.
 resolved symbols in that order, symbol-ID tie break. Reference occurrences contribute
 their enclosing delivery units (001's search documents), deduplicated into at most 32
 total units and 256 examined graph records, including definition lookups as well as
-reference occurrences.
+reference occurrences. Amended 2026-10-05 (captain, T003 review): only symbols with a
+unique eligible, source-verified definition expand. The final read re-proves each
+expansion's snapshot, witness rows, uniqueness and source bodies in a separately bounded
+pass of at most 256 graph records. That pass discovers nothing new, so one response
+examines at most 512 graph records. A proof the pass cannot finish drops the expansion
+and sets `candidates:full`.
 Before 009 these seeds are lexical; when semantics is enabled its merged ordering
 applies, excluding unlocalized previews. Compiler occurrences are not embedding units,
 and graph arrival cannot repartition source embeddings or require a second vector set.

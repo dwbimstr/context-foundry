@@ -234,7 +234,7 @@ fn hit_handle(search_text: &str, path: Option<&str>) -> String {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn stdio_lists_the_six_tool_catalog_and_serves_it() {
+async fn stdio_lists_the_seven_tool_catalog_and_serves_it() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path().join("workspace");
     let store = fixture.path().join("store");
@@ -247,8 +247,16 @@ async fn stdio_lists_the_six_tool_catalog_and_serves_it() {
     names.sort();
     assert_eq!(
         names,
-        vec!["context", "index", "memory", "retrieve", "search", "status"],
-        "the five source tools plus the single memory tool; stable catalog"
+        vec![
+            "context",
+            "index",
+            "memory",
+            "references",
+            "retrieve",
+            "search",
+            "status",
+        ],
+        "the six source tools plus the single memory tool; stable catalog"
     );
 
     let status = client
@@ -1135,7 +1143,7 @@ async fn http_requires_bearer_on_every_method() {
     assert_eq!(oversized.status(), 413, "64 KiB body bound, request-only");
     let after = server.sdk_client().await;
     let tools = after.list_tools(None).await.unwrap();
-    assert_eq!(tools.tools.len(), 6, "other clients unaffected");
+    assert_eq!(tools.tools.len(), 7, "other clients unaffected");
     after.cancel().await.unwrap();
 }
 
@@ -4096,7 +4104,7 @@ async fn chunked_http_bodies_are_accepted_at_exactly_64_kib_and_refused_one_byte
         "the existing session is intact: {status}"
     );
     let other = server.sdk_client().await;
-    assert_eq!(other.list_tools(None).await.unwrap().tools.len(), 6);
+    assert_eq!(other.list_tools(None).await.unwrap().tools.len(), 7);
     other.cancel().await.unwrap();
 }
 
@@ -5249,7 +5257,7 @@ async fn barrier_released_same_session_calls_leave_the_exact_remaining_allowance
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_800_tokens() {
+async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_1000_tokens() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path().join("workspace");
     let store = fixture.path().join("store");
@@ -5264,8 +5272,12 @@ async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_800_
     );
 
     let listed = server.rpc("tools/list", serde_json::json!({})).await;
+    eprintln!(
+        "tools/list measured at {} o200k tokens",
+        count_tokens(&listed)
+    );
     assert!(
-        count_tokens(&listed) <= 800,
+        count_tokens(&listed) <= 1000,
         "the serialized tools/list result is {} o200k tokens",
         count_tokens(&listed)
     );
@@ -5296,6 +5308,10 @@ async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_800_
             "Explicit project memory records.",
         ),
         (
+            "references",
+            "Compiler references to one symbol from imported SCIP: `symbol_id`, or `handle` + `byte_offset`. Page with `after`.",
+        ),
+        (
             "retrieve",
             r#"Read exact indexed source for a handle. `lines` narrows to a line range; `view:"outline"` returns a skeleton with elided line ranges. Stale handles are rejected."#,
         ),
@@ -5310,6 +5326,16 @@ async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_800_
     ]
     .map(|(name, description)| (name.to_owned(), description.to_owned()));
     assert_eq!(descriptions, expected);
+    // `mcp --help` names all seven tools (005 moved import into `index`).
+    let help = {
+        let mut command = std::process::Command::new(BIN);
+        command.args(["mcp", "--help"]);
+        command.output().unwrap()
+    };
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(help.contains("seven MCP tools"), "{help}");
+    assert!(help.contains("references"), "{help}");
+    assert!(!help.contains("six MCP tools"), "{help}");
 
     assert_eq!(
         context_foundry::bootstrap::native_discovery_block(),
@@ -5569,4 +5595,907 @@ async fn a_maximum_length_special_path_round_trips_through_mcp_search_and_retrie
     assert_eq!(parsed.items[0].handle, handle);
     assert_eq!(parsed.items[0].body, body);
     assert!(parsed.next.is_none());
+}
+
+// ---------------------------------------------------------------------------
+// 11. 005 T003: the `references` tool and `index {scip}`
+// ---------------------------------------------------------------------------
+
+fn semantic_fixture_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/semantic")
+}
+
+fn copy_dir_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// One synchronous `foundry` CLI run against `store` (the MCP tests drive
+/// real child servers; setup may use the real CLI directly).
+fn foundry_sync(store: &Path, args: &[&str]) -> std::process::Output {
+    let mut command = std::process::Command::new(BIN);
+    command
+        .env(TOKEN_ENV, TOKEN)
+        .arg("--store")
+        .arg(store)
+        .args(args);
+    command.output().unwrap()
+}
+
+/// The 005 fixture workspace, indexed through the real CLI, with the real
+/// artifact and a bound manifest staged under `<store>/imports`.
+struct ScipWorld {
+    #[allow(dead_code)]
+    dir: tempfile::TempDir,
+    root: std::path::PathBuf,
+    store: std::path::PathBuf,
+    artifact: Vec<u8>,
+    workspace_id: String,
+}
+
+impl ScipWorld {
+    fn cli(&self, args: &[&str]) -> std::process::Output {
+        foundry_sync(&self.store, args)
+    }
+
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("ws");
+        copy_dir_tree(&semantic_fixture_dir().join("workspace"), &root);
+        let store = dir.path().join("store");
+        let mut out = foundry_sync(&store, &["index", &root.display().to_string()]);
+        for _ in 0..100 {
+            if out.status.success() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            out = foundry_sync(&store, &["index", &root.display().to_string()]);
+        }
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let artifact = std::fs::read(semantic_fixture_dir().join("index.scip")).unwrap();
+        let mut world = ScipWorld {
+            dir,
+            root,
+            store,
+            artifact,
+            // Captured once, before any owner server holds the store: the
+            // CLI cannot read the store while a server owns it.
+            workspace_id: String::new(),
+        };
+        let status = world.status();
+        world.workspace_id = status["workspace_id"].as_str().unwrap().to_owned();
+        let revision = status["source_revision"].as_u64().unwrap();
+        std::fs::create_dir_all(world.store.join("imports")).unwrap();
+        world.stage_valid_pair("index.scip", "snapshot.json", revision);
+        world
+    }
+
+    fn cli_with(store: &Path, args: &[&str], root: &Path) -> std::process::Output {
+        let root_arg = root.display().to_string();
+        let mut all: Vec<&str> = args.to_vec();
+        all.push(&root_arg);
+        foundry_sync(store, &all)
+    }
+
+    fn status(&self) -> serde_json::Value {
+        // A just-dropped child server releases its store lock
+        // asynchronously; the CLI may briefly see store_busy.
+        let mut last = String::new();
+        for _ in 0..100 {
+            let out = self.cli(&["status"]);
+            if out.status.success() {
+                return serde_json::from_slice(&out.stdout).unwrap();
+            }
+            last = format!(
+                "exit {:?}: {}",
+                out.status.code(),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        panic!("status never succeeded on {}: {last}", self.store.display());
+    }
+
+    /// A manifest v1 bound to this store's current state and the real
+    /// artifact, using the fixture's own producer facts.
+    fn manifest(&self, revision: u64) -> serde_json::Value {
+        let producer: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(semantic_fixture_dir().join("producer.json")).unwrap(),
+        )
+        .unwrap();
+        let mut inputs: Vec<(String, String)> = Vec::new();
+        fn walk(base: &Path, dir: &Path, inputs: &mut Vec<(String, String)>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if entry.file_type().unwrap().is_dir() {
+                    walk(base, &path, inputs);
+                } else {
+                    let rel = path
+                        .strip_prefix(base)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .to_owned();
+                    inputs.push((rel, context_foundry::digest(&std::fs::read(&path).unwrap())));
+                }
+            }
+        }
+        walk(&self.root, &self.root, &mut inputs);
+        inputs.sort();
+        // The producer snapshots the workspace, never the store; when the
+        // store sits inside the root its files are not manifest inputs.
+        inputs.retain(|(path, _)| !path.starts_with(".context-foundry"));
+        let p = &producer["producer"];
+        serde_json::json!({
+            "v": 1,
+            "workspace_id": self.workspace_id,
+            "source_revision": revision,
+            "producer": {
+                "name": p["name"], "release_tag": p["release_tag"], "commit": p["commit"],
+                "version_output": p["version_output"], "binary_sha256": p["binary_sha256"],
+            },
+            "invocation": producer["invocation"],
+            "config": producer["config"],
+            "artifact_sha256": context_foundry::digest(&self.artifact),
+            "inputs": inputs.into_iter()
+                .map(|(path, sha256)| serde_json::json!({"path": path, "sha256": sha256}))
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    fn stage(&self, name: &str, bytes: &[u8]) {
+        std::fs::create_dir_all(self.store.join("imports")).unwrap();
+        std::fs::write(self.store.join("imports").join(name), bytes).unwrap();
+    }
+
+    /// The real artifact plus a manifest bound to the CURRENT store state.
+    fn stage_valid_pair(&self, index_name: &str, snapshot_name: &str, revision: u64) {
+        self.stage(index_name, &self.artifact);
+        self.stage(
+            snapshot_name,
+            &serde_json::to_vec(&self.manifest(revision)).unwrap(),
+        );
+    }
+
+    fn a_prefix(&self) -> String {
+        let id = context_foundry::graph::symbol_id(
+            "rust-analyzer",
+            "src/a.rs",
+            "rust-analyzer cargo semantic_fixture 0.1.0 a/parse_record().",
+        );
+        id[..16].to_owned()
+    }
+
+    fn whole_file_handle(&self, path: &str) -> String {
+        let bytes = std::fs::read(self.root.join(path)).unwrap();
+        context_foundry::store::SourceHandle {
+            workspace_id: self.workspace_id.clone(),
+            path: path.to_owned(),
+            sha256: context_foundry::digest(&bytes),
+            start: 0,
+            end: bytes.len() as u64,
+        }
+        .to_v2()
+    }
+}
+
+/// The `a::parse_record` reference sites expected.json enumerates.
+const A_REFERENCES: [(&str, u64, u64); 3] = [
+    ("src/use_one.rs", 58, 70),
+    ("src/use_two.rs", 108, 120),
+    ("src/pointer.rs", 100, 112),
+];
+
+#[tokio::test]
+async fn references_answers_by_symbol_and_by_handle_and_pages_exactly() {
+    let world = ScipWorld::new();
+    // The owner imports the staged pair first, through the tool under test.
+    let mut server = RawStdio::start(&world.store, &world.root).await;
+    let imported = server
+        .call(
+            "index",
+            serde_json::json!({"scip": {"index_file": "index.scip", "snapshot_file": "snapshot.json"}}),
+        )
+        .await;
+    assert_typed_success(&imported);
+    let report = imported.json();
+    assert_eq!(report["complete"], true, "{report}");
+
+    // By symbol id: the three expected references, complete, no cursor.
+    let by_symbol = server
+        .call(
+            "references",
+            serde_json::json!({"symbol_id": world.a_prefix()}),
+        )
+        .await;
+    assert_typed_success(&by_symbol);
+    let text = by_symbol.text();
+    let parsed = v2(&text);
+    assert_eq!(parsed.header[0], "foundry references");
+    assert!(
+        parsed
+            .header
+            .iter()
+            .any(|segment| segment == "coverage:complete"),
+        "{text}"
+    );
+    assert_eq!(parsed.items.len(), A_REFERENCES.len(), "{text}");
+    // Cursor order is (path, start, end), so pointer precedes use_one.
+    for ((path, _start, _end), item) in [A_REFERENCES[2], A_REFERENCES[0], A_REFERENCES[1]]
+        .iter()
+        .zip(&parsed.items)
+    {
+        assert!(item.handle.contains(path), "{}", item.handle);
+    }
+    assert!(parsed.next.is_none(), "{text}");
+
+    // By handle + byte_offset inside the definition: the same answer.
+    let by_handle = server
+        .call(
+            "references",
+            serde_json::json!({
+                "handle": world.whole_file_handle("src/a.rs"),
+                "byte_offset": 27
+            }),
+        )
+        .await;
+    assert_typed_success(&by_handle);
+    let handle_parsed = v2(&by_handle.text());
+    assert_eq!(handle_parsed.items.len(), A_REFERENCES.len());
+
+    // Paging with `after` continues exactly: two pages, no loss, no repeat.
+    let page = server
+        .call(
+            "references",
+            serde_json::json!({"symbol_id": world.a_prefix(), "limit": 2}),
+        )
+        .await;
+    assert_typed_success(&page);
+    let page_parsed = v2(&page.text());
+    assert_eq!(page_parsed.items.len(), 2);
+    assert!(page_parsed.items[0].handle.contains("src/pointer.rs"));
+    assert!(page_parsed.items[1].handle.contains("src/use_one.rs"));
+    let cursor = page_parsed.next.clone().expect("a continuation cursor");
+    assert_eq!(
+        cursor,
+        format!("src/use_one.rs#{}-{}", A_REFERENCES[0].1, A_REFERENCES[0].2),
+        "{}",
+        page.text()
+    );
+    let rest = server
+        .call(
+            "references",
+            serde_json::json!({"symbol_id": world.a_prefix(), "after": cursor}),
+        )
+        .await;
+    assert_typed_success(&rest);
+    let rest_parsed = v2(&rest.text());
+    assert_eq!(rest_parsed.items.len(), 1);
+    assert!(rest_parsed.items[0].handle.contains("src/use_two.rs"));
+    assert!(rest_parsed.next.is_none(), "{}", rest.text());
+
+    // A foreign ws16 is wrong_workspace: a well-formed handle whose
+    // workspace prefix names no admitted root.
+    let handle = world.whole_file_handle("src/a.rs");
+    // ws16 is the trailing dot-separated field of the v2 handle grammar.
+    let at = handle.rfind('.').expect("a ws16 field");
+    let foreign_handle = format!("{}.{}", &handle[..at], "f".repeat(16));
+    assert_ne!(foreign_handle, handle);
+    let foreign = server
+        .call(
+            "references",
+            serde_json::json!({"handle": foreign_handle, "byte_offset": 27}),
+        )
+        .await;
+    let value: serde_json::Value = serde_json::from_str(&foreign.text()).unwrap();
+    assert_eq!(value["code"], "wrong_workspace", "{}", foreign.text());
+
+    for bad in [
+        serde_json::json!({"symbol_id": world.a_prefix(), "handle": handle}),
+        serde_json::json!({"symbol_id": world.a_prefix(), "byte_offset": 4}),
+        serde_json::json!({"handle": handle}),
+        serde_json::json!({}),
+        serde_json::json!({"byte_offset": 4}),
+        serde_json::json!({"symbol_id": null}),
+        serde_json::json!({"symbol_id": world.a_prefix(), "extra": 1}),
+    ] {
+        let call = server.call("references", bad.clone()).await;
+        assert!(call.is_error(), "{bad}: {}", call.text());
+        let value: serde_json::Value = serde_json::from_str(&call.text()).unwrap();
+        assert_eq!(value["code"], "invalid_argument", "{bad}: {}", call.text());
+    }
+}
+
+#[tokio::test]
+async fn references_answers_while_the_lexical_index_is_repair_required() {
+    let world = ScipWorld::new();
+    let mut server = RawStdio::start(&world.store, &world.root).await;
+    let imported = server
+        .call(
+            "index",
+            serde_json::json!({"scip": {"index_file": "index.scip", "snapshot_file": "snapshot.json"}}),
+        )
+        .await;
+    assert!(imported.json()["complete"] == true);
+    drop(server);
+    let _ = wait_for_cli_status(&world.store).await;
+    // Damage only the derived lexical index: search is refused, references
+    // (compiler tables + verified chunks) still answers.
+    std::fs::write(world.store.join("search").join("meta.json"), b"{not json").unwrap();
+    let mut server = RawStdio::start(&world.store, &world.root).await;
+    let answered = server
+        .call(
+            "references",
+            serde_json::json!({"symbol_id": world.a_prefix()}),
+        )
+        .await;
+    assert_typed_success(&answered);
+    let parsed = v2(&answered.text());
+    assert_eq!(parsed.items.len(), A_REFERENCES.len());
+    let refused = server
+        .call("search", serde_json::json!({"query": "parse_record"}))
+        .await;
+    let value: serde_json::Value = serde_json::from_str(&refused.text()).unwrap();
+    assert_eq!(value["code"], "repair_required");
+}
+
+#[tokio::test]
+async fn index_scip_validates_names_and_entries_and_leaves_the_caller_files_alone() {
+    let world = ScipWorld::new();
+    // Captured before the server owns the store.
+    let revision = world.status()["source_revision"].as_u64().unwrap();
+    let mut server = RawStdio::start(&world.store, &world.root).await;
+    // Bad names are invalid_argument before anything is opened.
+    for name in ["../x", "a/b", ".", "..", &"x".repeat(129), "café"] {
+        let call = server
+            .call(
+                "index",
+                serde_json::json!({"scip": {"index_file": name, "snapshot_file": "snapshot.json"}}),
+            )
+            .await;
+        assert!(call.is_error(), "{name}");
+        let value: serde_json::Value = serde_json::from_str(&call.text()).unwrap();
+        assert_eq!(value["code"], "invalid_argument", "{name}: {}", call.text());
+    }
+    // Non-regular or missing entries are artifact_unavailable.
+    std::os::unix::fs::symlink(
+        semantic_fixture_dir().join("index.scip"),
+        world.store.join("imports").join("link.scip"),
+    )
+    .unwrap();
+    std::process::Command::new("mkfifo")
+        .arg(world.store.join("imports").join("pipe.scip"))
+        .status()
+        .unwrap();
+    std::fs::create_dir_all(world.store.join("imports").join("dir.scip")).unwrap();
+    for name in ["link.scip", "pipe.scip", "dir.scip", "missing.scip"] {
+        let call = server
+            .call(
+                "index",
+                serde_json::json!({"scip": {"index_file": name, "snapshot_file": "snapshot.json"}}),
+            )
+            .await;
+        assert!(call.is_error(), "{name}");
+        let value: serde_json::Value = serde_json::from_str(&call.text()).unwrap();
+        assert_eq!(
+            value["code"],
+            "artifact_unavailable",
+            "{name}: {}",
+            call.text()
+        );
+    }
+    // A missing `imports/` directory is the same refusal.
+    let bare = tempfile::tempdir().unwrap();
+    let bare_root = bare.path().join("ws");
+    copy_dir_tree(&semantic_fixture_dir().join("workspace"), &bare_root);
+    let bare_store = bare.path().join("store");
+    let out = ScipWorld::cli_with(&bare_store, &["index"], &bare_root);
+    assert!(out.status.success());
+    let mut bare_server = RawStdio::start(&bare_store, &bare_root).await;
+    let call = bare_server
+        .call(
+            "index",
+            serde_json::json!({"scip": {"index_file": "index.scip", "snapshot_file": "snapshot.json"}}),
+        )
+        .await;
+    let value: serde_json::Value = serde_json::from_str(&call.text()).unwrap();
+    assert_eq!(value["code"], "artifact_unavailable", "{}", call.text());
+
+    // An oversized manifest is the importer's manifest_too_large.
+    let cap = context_foundry::scip::ImportLimits::default().manifest_bytes;
+    let mut oversized = serde_json::to_vec(&world.manifest(revision)).unwrap();
+    oversized.extend(std::iter::repeat_n(
+        b' ',
+        (cap + 1) as usize - oversized.len(),
+    ));
+    world.stage("big.json", &oversized);
+    let call = server
+        .call(
+            "index",
+            serde_json::json!({"scip": {"index_file": "index.scip", "snapshot_file": "big.json"}}),
+        )
+        .await;
+    let value: serde_json::Value = serde_json::from_str(&call.text()).unwrap();
+    assert_eq!(value["code"], "manifest_too_large", "{}", call.text());
+
+    // Nothing above touched or removed the caller's staged files.
+    drop(server);
+    let _ = wait_for_cli_status(&world.store).await;
+    assert_eq!(
+        std::fs::read(world.store.join("imports").join("index.scip")).unwrap(),
+        world.artifact
+    );
+    assert_eq!(
+        std::fs::read(world.store.join("imports").join("link.scip")).unwrap(),
+        world.artifact,
+        "the symlink itself is untouched"
+    );
+    assert!(world.store.join("imports").join("pipe.scip").exists());
+    assert!(world.store.join("imports").join("dir.scip").is_dir());
+}
+
+#[tokio::test]
+async fn index_scip_reports_a_controlled_partial_with_committed_counts() {
+    // One document of two fails validation (its range runs past the source):
+    // the report comes back with complete:false and the committed counts of
+    // the other document — never an empty success.
+    let world = ScipWorld::new();
+    let mut documents: Vec<scip::types::Document> = Vec::new();
+    let artifact = {
+        let mut index = scip::types::Index::new();
+        let mut good = scip::types::Document::new();
+        good.relative_path = "src/a.rs".to_owned();
+        good.position_encoding = protobuf::EnumOrUnknown::new(
+            scip::types::PositionEncoding::UTF8CodeUnitOffsetFromLineStart,
+        );
+        let mut occurrence = scip::types::Occurrence::new();
+        occurrence.range = vec![2, 4, 16];
+        occurrence.symbol =
+            "rust-analyzer cargo semantic_fixture 0.1.0 a/parse_record().".to_owned();
+        occurrence.symbol_roles = 1;
+        good.occurrences.push(occurrence);
+        let mut bad = scip::types::Document::new();
+        bad.relative_path = "src/lib.rs".to_owned();
+        bad.position_encoding = protobuf::EnumOrUnknown::new(
+            scip::types::PositionEncoding::UTF8CodeUnitOffsetFromLineStart,
+        );
+        let mut occurrence = scip::types::Occurrence::new();
+        occurrence.range = vec![0, 0, 999];
+        occurrence.symbol = "rust-analyzer cargo semantic_fixture 0.1.0 lib#".to_owned();
+        occurrence.symbol_roles = 1;
+        bad.occurrences.push(occurrence);
+        documents.push(good);
+        documents.push(bad);
+        index.documents = documents;
+        use protobuf::Message as _;
+        index.write_to_bytes().unwrap()
+    };
+    world.stage("partial.scip", &artifact);
+    // A manifest bound to the CURRENT state names the same artifact digest.
+    let revision = world.status()["source_revision"].as_u64().unwrap();
+    let mut manifest = world.manifest(revision);
+    manifest["artifact_sha256"] = serde_json::json!(context_foundry::digest(&artifact));
+    world.stage("partial.json", &serde_json::to_vec(&manifest).unwrap());
+
+    let mut server = RawStdio::start(&world.store, &world.root).await;
+    let call = server
+        .call(
+            "index",
+            serde_json::json!({"scip": {"index_file": "partial.scip", "snapshot_file": "partial.json"}}),
+        )
+        .await;
+    assert_typed_success(&call);
+    let report = call.json();
+    assert_eq!(report["complete"], false, "{report}");
+    assert_eq!(report["failed"], 1, "{report}");
+    assert_eq!(report["documents"], 2, "{report}");
+    assert_eq!(
+        report["occurrences"], 1,
+        "the committed scope counts: {report}"
+    );
+    assert_eq!(report["definitions"], 1, "{report}");
+}
+
+#[tokio::test]
+async fn one_session_imports_references_and_recovers_after_an_edit() {
+    let world = ScipWorld::new();
+    let mut server = RawStdio::start(&world.store, &world.root).await;
+    let imported = server
+        .call(
+            "index",
+            serde_json::json!({"scip": {"index_file": "index.scip", "snapshot_file": "snapshot.json"}}),
+        )
+        .await;
+    assert!(imported.json()["complete"] == true);
+    let answered = server
+        .call(
+            "references",
+            serde_json::json!({"symbol_id": world.a_prefix()}),
+        )
+        .await;
+    assert!(v2(&answered.text()).items.len() == A_REFERENCES.len());
+
+    // Edit an indexed non-`.rs` input, then refresh sources through `index`.
+    let toml = world.root.join("Cargo.toml");
+    let edited = format!(
+        "{}\n# edited in session\n",
+        std::fs::read_to_string(&toml).unwrap()
+    );
+    std::fs::write(&toml, edited).unwrap();
+    let refreshed = server.call("index", serde_json::json!({})).await;
+    assert_typed_success(&refreshed);
+    // The graph predates the new revision: stale, and no lines.
+    let stale = server
+        .call(
+            "references",
+            serde_json::json!({"symbol_id": world.a_prefix()}),
+        )
+        .await;
+    assert_typed_success(&stale);
+    let stale_parsed = v2(&stale.text());
+    assert!(
+        stale_parsed.header.iter().any(|s| s == "coverage:stale"),
+        "{}",
+        stale.text()
+    );
+    assert!(stale_parsed.items.is_empty(), "{}", stale.text());
+
+    // Stage a manifest for the NEW revision and import again: complete. The
+    // revision comes from the status TOOL: the server owns the store, so
+    // the CLI cannot read it.
+    let status = server.call("status", serde_json::json!({})).await;
+    let status: serde_json::Value = serde_json::from_str(&status.text()).unwrap();
+    let revision = status["source_revision"].as_u64().unwrap();
+    world.stage_valid_pair("index.scip", "snapshot2.json", revision);
+    let reimported = server
+        .call(
+            "index",
+            serde_json::json!({"scip": {"index_file": "index.scip", "snapshot_file": "snapshot2.json"}}),
+        )
+        .await;
+    assert_typed_success(&reimported);
+    assert_eq!(reimported.json()["complete"], true);
+    let answered = server
+        .call(
+            "references",
+            serde_json::json!({"symbol_id": world.a_prefix()}),
+        )
+        .await;
+    assert_eq!(v2(&answered.text()).items.len(), A_REFERENCES.len());
+    // The previous manifest still sits where the caller staged it.
+    drop(server);
+    let _ = wait_for_cli_status(&world.store).await;
+    assert!(world.store.join("imports").join("snapshot.json").exists());
+    assert!(world.store.join("imports").join("snapshot2.json").exists());
+}
+
+#[tokio::test]
+async fn a_competing_cli_import_while_the_owner_holds_the_store_is_store_busy() {
+    let world = ScipWorld::new();
+    let _server = RawStdio::start(&world.store, &world.root).await;
+    // The owner holds the store; a CLI import cannot even open it.
+    let out = {
+        let mut command = std::process::Command::new(BIN);
+        command
+            .env(TOKEN_ENV, TOKEN)
+            .arg("--store")
+            .arg(&world.store)
+            .args(["import-scip", "--index"])
+            .arg(world.store.join("imports").join("index.scip"))
+            .arg("--snapshot")
+            .arg(world.store.join("imports").join("snapshot.json"))
+            .output()
+            .unwrap()
+    };
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let code = stderr
+        .lines()
+        .rev()
+        .find(|line| line.starts_with('{'))
+        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .map(|value| value["code"].as_str().unwrap_or_default().to_owned())
+        .unwrap_or_default();
+    assert_eq!(code, "store_busy", "{stderr}");
+}
+
+#[tokio::test]
+async fn the_store_imports_directory_is_excluded_from_source_admission() {
+    // The store sits INSIDE the root: its `imports/` staging area must never
+    // be admitted as sources by a refresh.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("ws");
+    copy_dir_tree(&semantic_fixture_dir().join("workspace"), &root);
+    let store = root.join(".context-foundry");
+    let out = ScipWorld::cli_with(&store, &["index"], &root);
+    assert!(out.status.success());
+    let artifact = std::fs::read(semantic_fixture_dir().join("index.scip")).unwrap();
+    let mut world = ScipWorld {
+        dir,
+        root: root.clone(),
+        store: store.clone(),
+        artifact,
+        workspace_id: String::new(),
+    };
+    let status = world.status();
+    world.workspace_id = status["workspace_id"].as_str().unwrap().to_owned();
+    world.stage_valid_pair(
+        "index.scip",
+        "snapshot.json",
+        status["source_revision"].as_u64().unwrap(),
+    );
+    let mut server = RawStdio::start(&store, &root).await;
+    let imported = server
+        .call(
+            "index",
+            serde_json::json!({"scip": {"index_file": "index.scip", "snapshot_file": "snapshot.json"}}),
+        )
+        .await;
+    assert!(imported.json()["complete"] == true);
+    let refreshed = server.call("index", serde_json::json!({})).await;
+    assert_typed_success(&refreshed);
+    drop(server);
+    let _ = wait_for_cli_status(&store).await;
+    let snapshot = context_foundry::testkit::snapshot(&store);
+    for (path, _) in snapshot.get("sources").unwrap_or(&Vec::new()) {
+        assert!(
+            !path.contains(".context-foundry"),
+            "a staged file was admitted as a source: {path}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 12. 005 T003 review round 1: staging descriptors, deadline, field precedence
+// ---------------------------------------------------------------------------
+
+fn scip_args() -> serde_json::Value {
+    serde_json::json!({"scip": {"index_file": "index.scip", "snapshot_file": "snapshot.json"}})
+}
+
+/// The importer copies the DESCRIPTORS the staging check opened, not a name it
+/// re-resolves: an entry replaced by a symlink to other bytes after the check
+/// (here: while the manifest copy is stalled) must not change what is
+/// imported.
+#[tokio::test]
+async fn a_staged_entry_swapped_to_a_symlink_after_validation_is_not_what_gets_imported() {
+    let world = ScipWorld::new();
+    let spec = format!(
+        "{}=delay:1500",
+        context_foundry::fault::names::SCIP_COPY_BUFFER
+    );
+    let client = faults_client(&world.store, &world.root, &spec).await;
+    let call = tokio::spawn({
+        let peer = client.peer().clone();
+        async move { call_with(&peer, "index", Some(scip_args())).await }
+    });
+    // The manifest copy has begun once its scratch file exists: both entries
+    // were opened and checked before that.
+    let scratch = world.store.join("import-scratch");
+    let mut started = false;
+    for _ in 0..200 {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        started = std::fs::read_dir(&scratch)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|run| run.path().join("manifest.json").exists());
+        if started {
+            break;
+        }
+    }
+    assert!(started, "the import began copying");
+    let external = world.dir.path().join("external.scip");
+    std::fs::write(&external, b"these are not the staged bytes").unwrap();
+    let entry = world.store.join("imports").join("index.scip");
+    std::fs::remove_file(&entry).unwrap();
+    std::os::unix::fs::symlink(&external, &entry).unwrap();
+
+    let result = call.await.unwrap();
+    let report: serde_json::Value =
+        serde_json::from_str(&assert_single_text_success(&result)).unwrap();
+    assert_eq!(report["complete"], true, "{report}");
+    assert_eq!(
+        report["artifact_sha256"],
+        context_foundry::digest(&world.artifact),
+        "the checked descriptor was copied, not the swapped name"
+    );
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_symlinked_imports_directory_is_artifact_unavailable() {
+    let world = ScipWorld::new();
+    let real = world.dir.path().join("elsewhere");
+    std::fs::rename(world.store.join("imports"), &real).unwrap();
+    std::os::unix::fs::symlink(&real, world.store.join("imports")).unwrap();
+    let mut server = RawStdio::start(&world.store, &world.root).await;
+    let refused = server.call("index", scip_args()).await;
+    assert!(refused.is_error(), "{}", refused.text());
+    assert_eq!(refused.json()["code"], "artifact_unavailable");
+    // A regular file where `imports` should be is refused the same way.
+    drop(server);
+    let _ = wait_for_cli_status(&world.store).await;
+    std::fs::remove_file(world.store.join("imports")).unwrap();
+    std::fs::write(world.store.join("imports"), b"not a directory").unwrap();
+    let mut server = RawStdio::start(&world.store, &world.root).await;
+    let refused = server.call("index", scip_args()).await;
+    assert_eq!(refused.json()["code"], "artifact_unavailable");
+    // Nothing behind the link was touched.
+    assert_eq!(
+        std::fs::read(real.join("index.scip")).unwrap(),
+        world.artifact
+    );
+}
+
+/// A deadline that expires between documents is a controlled partial: the
+/// report comes back with `complete:false`, the interruption named and the
+/// committed counts - never an error and never an empty success.
+#[tokio::test]
+async fn a_deadline_mid_import_returns_the_report_with_committed_counts() {
+    let world = ScipWorld::new();
+    let spec = format!(
+        "{}=delay:700",
+        context_foundry::fault::names::SCIP_BETWEEN_DOCUMENTS
+    );
+    let client = faults_client(&world.store, &world.root, &spec).await;
+    let mut arguments = scip_args();
+    arguments["timeout_ms"] = 2500.into();
+    let result = call_with(client.peer(), "index", Some(arguments)).await;
+    let report: serde_json::Value =
+        serde_json::from_str(&assert_single_text_success(&result)).unwrap();
+    assert_eq!(report["complete"], false, "{report}");
+    assert_eq!(report["interrupted"], "deadline_exceeded", "{report}");
+    let completed = report["completed"].as_u64().unwrap();
+    assert!((1..7).contains(&completed), "{report}");
+    assert!(report["occurrences"].as_u64().unwrap() > 0, "{report}");
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_malformed_references_field_is_refused_before_engine_admission_even_while_busy() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("workspace");
+    let store = fixture.path().join("store");
+    write_fixture(&root, 4);
+    bootstrap_apply(&store, &root);
+    let spec = format!(
+        "{}=delay:{STALL_MS}",
+        context_foundry::fault::names::CONTEXT_BEFORE_FINAL_VALIDATION
+    );
+    let client = faults_client(&store, &root, &spec).await;
+    let stalled = tokio::spawn({
+        let peer = client.peer().clone();
+        async move {
+            call_with(
+                &peer,
+                "context",
+                Some(serde_json::json!({"query": "parse_record_0001", "tokens": 1024})),
+            )
+            .await
+        }
+    });
+    let mut held = false;
+    for _ in 0..80 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let probe = call_with(client.peer(), "status", None).await;
+        if probe.is_error == Some(true) && bounded_error(&probe).0 == "busy" {
+            held = true;
+            break;
+        }
+    }
+    assert!(held, "the stalled read holds the engine slot");
+
+    const SYMBOL: &str = "0123456789abcdef";
+    for arguments in [
+        serde_json::json!({"symbol_id": "NOTHEX"}),
+        serde_json::json!({"symbol_id": SYMBOL, "after": "no-cursor"}),
+        serde_json::json!({"symbol_id": SYMBOL, "limit": 0}),
+        serde_json::json!({"symbol_id": SYMBOL, "tokens": null}),
+        serde_json::json!({"handle": "not-a-handle", "byte_offset": 0}),
+    ] {
+        let malformed = call_with(client.peer(), "references", Some(arguments.clone())).await;
+        assert_eq!(
+            bounded_error(&malformed).0,
+            "invalid_argument",
+            "validation precedes admission for {arguments}: {}",
+            text_of(&malformed)
+        );
+    }
+    // A well-formed request still takes the engine path and is refused busy.
+    let busy = call_with(
+        client.peer(),
+        "references",
+        Some(serde_json::json!({"symbol_id": SYMBOL})),
+    )
+    .await;
+    assert_eq!(bounded_error(&busy).0, "busy");
+    let result = stalled.await.unwrap();
+    assert_eq!(bounded_error(&result).0, "deadline_exceeded");
+    client.cancel().await.unwrap();
+}
+
+/// With the whole session allowance held by an in-flight call, a valid
+/// `references` request is refused as `budget_exhausted` before any engine
+/// work, with the conservative outcome-free hint (the shape of the first
+/// reference line cannot be bounded below the largest budget); a malformed
+/// one is still `invalid_argument`, never an allowance refusal.
+#[tokio::test]
+async fn a_zero_allowance_references_refusal_advertises_the_conservative_floor() {
+    const ALLOWANCE: u64 = 600;
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("workspace");
+    let store = fixture.path().join("store");
+    write_fixture(&root, 12);
+    bootstrap_apply(&store, &root);
+    let source = std::fs::read(root.join("mod_0003.rs")).unwrap();
+    let workspace = cli_status(&store).unwrap()["workspace_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let handle = format!(
+        "mod_0003.rs#0-{}@{}.{}",
+        source.len(),
+        &context_foundry::digest(&source)[..32],
+        &workspace[..16]
+    );
+    let spec = format!(
+        "{}=delay:1500",
+        context_foundry::fault::names::RETRIEVE_BEFORE_FINAL_READ
+    );
+    let budget = budget_arguments(fixture.path(), None, Some(ALLOWANCE));
+    let client = faults_client_with(&store, &root, &spec, &budget).await;
+    let holder = tokio::spawn({
+        let peer = client.peer().clone();
+        async move {
+            call_with(
+                &peer,
+                "retrieve",
+                Some(serde_json::json!({"handle": handle, "tokens": ALLOWANCE})),
+            )
+            .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let refused = call_with(
+        client.peer(),
+        "references",
+        Some(serde_json::json!({"symbol_id": "0123456789abcdef"})),
+    )
+    .await;
+    let (code, retryable) = bounded_error(&refused);
+    assert_eq!(code, "budget_exhausted", "{}", text_of(&refused));
+    assert!(!retryable);
+    let (message, hint) = refusal_minimum(&refused);
+    assert!(
+        message.contains("limited by session_allowance"),
+        "{message}"
+    );
+    assert_eq!(
+        hint,
+        context_foundry::response::references_refusal_floor() as u64
+    );
+    assert_eq!(hint, 32768);
+    let malformed = call_with(
+        client.peer(),
+        "references",
+        Some(serde_json::json!({"symbol_id": "NOTHEX"})),
+    )
+    .await;
+    assert_eq!(bounded_error(&malformed).0, "invalid_argument");
+    assert_single_text_success(&holder.await.unwrap());
+    client.cancel().await.unwrap();
 }

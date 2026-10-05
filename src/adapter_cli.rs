@@ -9,8 +9,9 @@ use std::{io::Read, path::PathBuf};
 
 #[derive(Subcommand)]
 pub enum AdapterCommand {
-    /// Serve the six MCP tools (search/context/retrieve/index/status/memory):
-    /// stdio by default, or one shared owner at /mcp with --transport
+    /// Serve the seven MCP tools
+    /// (search/context/retrieve/index/status/memory/references): stdio by
+    /// default, or one shared owner at /mcp with --transport
     /// streamable-http.
     Mcp {
         /// Repository root; canonicalized and bound once.

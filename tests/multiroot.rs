@@ -1193,3 +1193,328 @@ async fn fully_spanned_files_consume_outline_slots() {
     assert_eq!(distinct.len(), 2, "{text}");
     client.cancel().await.unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// 005 T003: the `references` tool routes by the handle's root
+// ---------------------------------------------------------------------------
+
+/// The 005 fixture workspace, indexed and SCIP-imported through the CLI
+/// before the owner launches, so the reference root can serve `references`.
+fn semantic_repo(parent: &Path, name: &str) -> Repo {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/semantic");
+    let root = parent.join(name);
+    copy_fixture_tree(&fixture.join("workspace"), &root);
+    let store = parent.join(format!("{name}-store"));
+    let out = std::process::Command::new(BIN)
+        .arg("--store")
+        .arg(&store)
+        .args(["index"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let artifact = std::fs::read(fixture.join("index.scip")).unwrap();
+    let imports = store.join("imports");
+    std::fs::create_dir_all(&imports).unwrap();
+    std::fs::write(imports.join("index.scip"), &artifact).unwrap();
+    // A manifest v1 bound to this store's state and the fixture's producer.
+    let status: serde_json::Value = {
+        let out = std::process::Command::new(BIN)
+            .arg("--store")
+            .arg(&store)
+            .args(["status"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let producer: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("producer.json")).unwrap()).unwrap();
+    let mut inputs: Vec<(String, String)> = Vec::new();
+    fn collect(base: &Path, dir: &Path, inputs: &mut Vec<(String, String)>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if entry.file_type().unwrap().is_dir() {
+                collect(base, &path, inputs);
+            } else {
+                let rel = path
+                    .strip_prefix(base)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned();
+                inputs.push((rel, context_foundry::digest(&std::fs::read(&path).unwrap())));
+            }
+        }
+    }
+    collect(&root, &root, &mut inputs);
+    inputs.sort();
+    let p = &producer["producer"];
+    let manifest = serde_json::json!({
+        "v": 1,
+        "workspace_id": status["workspace_id"],
+        "source_revision": status["source_revision"],
+        "producer": {
+            "name": p["name"], "release_tag": p["release_tag"], "commit": p["commit"],
+            "version_output": p["version_output"], "binary_sha256": p["binary_sha256"],
+        },
+        "invocation": producer["invocation"],
+        "config": producer["config"],
+        "artifact_sha256": context_foundry::digest(&artifact),
+        "inputs": inputs.into_iter()
+            .map(|(path, sha256)| serde_json::json!({"path": path, "sha256": sha256}))
+            .collect::<Vec<_>>(),
+    });
+    std::fs::write(
+        imports.join("snapshot.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let out = std::process::Command::new(BIN)
+        .arg("--store")
+        .arg(&store)
+        .args(["import-scip", "--index"])
+        .arg(imports.join("index.scip"))
+        .arg("--snapshot")
+        .arg(imports.join("snapshot.json"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Repo { root, store }
+}
+
+fn copy_fixture_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_fixture_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn references_routes_by_handle_root_and_symbol_seeds_query_the_primary() {
+    let parent = tempfile::tempdir().unwrap();
+    let primary = repo(parent.path(), "primary", PRIMARY_LIB);
+    let semantic = semantic_repo(parent.path(), "semantic");
+
+    // The reference root's whole-file handle for src/a.rs, and its symbol.
+    let handle = {
+        let bytes = std::fs::read(semantic.root.join("src/a.rs")).unwrap();
+        let status: serde_json::Value = {
+            let out = std::process::Command::new(BIN)
+                .arg("--store")
+                .arg(&semantic.store)
+                .args(["status"])
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+            serde_json::from_slice(&out.stdout).unwrap()
+        };
+        context_foundry::store::SourceHandle {
+            workspace_id: status["workspace_id"].as_str().unwrap().to_owned(),
+            path: "src/a.rs".to_owned(),
+            sha256: context_foundry::digest(&bytes),
+            start: 0,
+            end: bytes.len() as u64,
+        }
+        .to_v2()
+    };
+    let a_prefix = context_foundry::graph::symbol_id(
+        "rust-analyzer",
+        "src/a.rs",
+        "rust-analyzer cargo semantic_fixture 0.1.0 a/parse_record().",
+    )[..16]
+        .to_owned();
+
+    let peer = stdio_owner(
+        &primary.store,
+        &primary.root,
+        &[reference_arg(&semantic.root, &semantic.store)],
+        &[],
+    )
+    .await;
+
+    // A symbol seed queries the PRIMARY root: it has no import, so the
+    // answer is unavailable with no items, not a cross-root guess.
+    let answered = call(
+        &peer,
+        "references",
+        Some(serde_json::json!({"symbol_id": a_prefix})),
+    )
+    .await;
+    let text = assert_success(&answered);
+    let parsed = parse_v2(&text).unwrap();
+    assert!(
+        parsed
+            .header
+            .iter()
+            .any(|segment| segment == "coverage:unavailable"),
+        "{text}"
+    );
+    assert!(parsed.items.is_empty(), "{text}");
+
+    // The handle's ws16 routes to the reference root, which serves the
+    // three expected references.
+    let answered = call(
+        &peer,
+        "references",
+        Some(serde_json::json!({"handle": handle, "byte_offset": 27})),
+    )
+    .await;
+    let text = assert_success(&answered);
+    let parsed = parse_v2(&text).unwrap();
+    assert_eq!(parsed.items.len(), 3, "{text}");
+    assert!(
+        parsed
+            .header
+            .iter()
+            .any(|segment| segment == "coverage:complete"),
+        "{text}"
+    );
+
+    // A foreign ws16 names no admitted root.
+    let at = handle.rfind('.').unwrap();
+    let foreign = format!("{}.{}", &handle[..at], "f".repeat(16));
+    let refused = call(
+        &peer,
+        "references",
+        Some(serde_json::json!({"handle": foreign, "byte_offset": 27})),
+    )
+    .await;
+    let value: serde_json::Value = serde_json::from_str(&text_of(&refused)).unwrap();
+    assert_eq!(value["code"], "wrong_workspace", "{}", text_of(&refused));
+
+    peer.cancel().await.unwrap();
+}
+
+/// The reference root's whole-file handle for `src/a.rs` and the 16-hex
+/// prefix of `a::parse_record`'s symbol id (shared by the review-round tests).
+fn semantic_a(semantic: &Repo) -> (String, String) {
+    let bytes = std::fs::read(semantic.root.join("src/a.rs")).unwrap();
+    let out = std::process::Command::new(BIN)
+        .arg("--store")
+        .arg(&semantic.store)
+        .args(["status"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let status: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let handle = context_foundry::store::SourceHandle {
+        workspace_id: status["workspace_id"].as_str().unwrap().to_owned(),
+        path: "src/a.rs".to_owned(),
+        sha256: context_foundry::digest(&bytes),
+        start: 0,
+        end: bytes.len() as u64,
+    }
+    .to_v2();
+    let prefix = context_foundry::graph::symbol_id(
+        "rust-analyzer",
+        "src/a.rs",
+        "rust-analyzer cargo semantic_fixture 0.1.0 a/parse_record().",
+    )[..16]
+        .to_owned();
+    (handle, prefix)
+}
+
+#[tokio::test]
+async fn references_headers_list_every_root_and_malformed_fields_win_over_routing() {
+    let parent = tempfile::tempdir().unwrap();
+    let primary = repo(parent.path(), "primary", PRIMARY_LIB);
+    let semantic = semantic_repo(parent.path(), "semantic");
+    let gone = unbootstrapped_repo(parent.path(), "gone", REF2_LIB);
+    let (handle, prefix) = semantic_a(&semantic);
+    let peer = stdio_owner(
+        &primary.store,
+        &primary.root,
+        &[
+            reference_arg(&semantic.root, &semantic.store),
+            reference_arg(&gone.root, &parent.path().join("nowhere-store")),
+        ],
+        &[],
+    )
+    .await;
+
+    // A handle answered by the reference root: the header lists EVERY
+    // admitted root - the answering root's own revision, the primary's, and
+    // the root that cannot serve with its coverage - and the references and
+    // coverage segments are unchanged.
+    let answered = call(
+        &peer,
+        "references",
+        Some(serde_json::json!({"handle": handle, "byte_offset": 27, "tokens": 2048})),
+    )
+    .await;
+    let text = assert_success(&answered);
+    let roots = root_segments(&text);
+    assert_eq!(roots.len(), 3, "{text}");
+    assert!(roots[0].starts_with("primary(primary) r"), "{text}");
+    assert!(roots[1].starts_with("ref1(semantic) r"), "{text}");
+    assert_eq!(roots[2], "ref2(gone) missing_store", "{text}");
+    let parsed = parse_v2(&text).unwrap();
+    assert_eq!(parsed.items.len(), 3, "{text}");
+    assert_eq!(parsed.header.last().unwrap(), "coverage:complete", "{text}");
+    assert!(
+        !parsed
+            .header
+            .iter()
+            .any(|segment| segment.starts_with('r')
+                && segment[1..].chars().all(|c| c.is_ascii_digit())),
+        "no single-root `r<rev>` segment: {text}"
+    );
+
+    // A symbol seed queries the primary; the header still lists every root.
+    let by_symbol = call(
+        &peer,
+        "references",
+        Some(serde_json::json!({"symbol_id": prefix})),
+    )
+    .await;
+    let text = assert_success(&by_symbol);
+    assert_eq!(root_segments(&text).len(), 3, "{text}");
+
+    // Field precedence: a malformed field is `invalid_argument` even for a
+    // handle that names no admitted root or a root that cannot serve.
+    let at = handle.rfind('.').unwrap();
+    let foreign = format!("{}.{}", &handle[..at], "f".repeat(16));
+    let unavailable = format!("src/lib.rs#0-10@{}.{}", "0".repeat(32), ws16_of(&gone.root));
+    for (target, expected) in [
+        (&foreign, "wrong_workspace"),
+        (&unavailable, "root_unavailable"),
+    ] {
+        let routed = call(
+            &peer,
+            "references",
+            Some(serde_json::json!({"handle": target, "byte_offset": 0})),
+        )
+        .await;
+        assert_eq!(bounded_error(&routed).0, expected, "{}", text_of(&routed));
+        for malformed in [
+            serde_json::json!({"handle": target, "byte_offset": 0, "tokens": null}),
+            serde_json::json!({"handle": target, "byte_offset": 0, "limit": 0}),
+            serde_json::json!({"handle": target, "byte_offset": 0, "after": "no-cursor"}),
+        ] {
+            let refused = call(&peer, "references", Some(malformed.clone())).await;
+            assert_eq!(
+                bounded_error(&refused).0,
+                "invalid_argument",
+                "{malformed}: {}",
+                text_of(&refused)
+            );
+        }
+    }
+    peer.cancel().await.unwrap();
+}

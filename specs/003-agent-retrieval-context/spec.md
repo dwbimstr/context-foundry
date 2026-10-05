@@ -154,8 +154,9 @@ memory: Explicit project memory records.
 
 The serialized `tools/list` result stays within 800 o200k tokens, asserted by a test.
 v1's catalog measured 711 tokens on 2026-10-03; see [validation](../../docs/validation.md).
-Owner decision 2026-10-04: the ceiling becomes 900 when 005 T003 adds the `references`
-tool, keeping these descriptions unchanged.
+Owner decisions 2026-10-04: when 005 T003 adds the `references` tool, the ceiling becomes
+900 and then 1000 tokens (full schemas measured about 971), keeping these descriptions
+unchanged.
 `INIT_INSTRUCTIONS` in `src/mcp.rs`, exactly:
 
 ~~~text

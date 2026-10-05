@@ -1034,6 +1034,9 @@ fn excerpt(hit: &Hit) -> String {
 /// positive) and 14 `coverage` are references-only. There is no `shown`,
 /// `capped` or `graph` segment.
 struct ReferencesHeader<'a> {
+    /// The per-root segments of a multi-root owner (007); they replace the
+    /// single-root `r<rev>`/`scan:`/`pending:` segments.
+    roots: Option<&'a [RootHeader]>,
     revision: u64,
     scan_state: &'a str,
     pending: u64,
@@ -1046,15 +1049,22 @@ struct ReferencesHeader<'a> {
 
 impl ReferencesHeader<'_> {
     fn line(&self, budget: usize, limited_by: BudgetLimiter, omitted: usize) -> String {
-        let mut segments = vec![
-            "foundry references".to_owned(),
-            format!("r{}", self.revision),
-        ];
-        if self.scan_state != "complete" {
-            segments.push(format!("scan:{}", single_line(self.scan_state)));
-        }
-        if self.pending > 0 {
-            segments.push(format!("pending:{}", self.pending));
+        let mut segments = vec!["foundry references".to_owned()];
+        match self.roots {
+            None => {
+                segments.push(format!("r{}", self.revision));
+                if self.scan_state != "complete" {
+                    segments.push(format!("scan:{}", single_line(self.scan_state)));
+                }
+                if self.pending > 0 {
+                    segments.push(format!("pending:{}", self.pending));
+                }
+            }
+            Some(roots) => {
+                for root in roots {
+                    segments.push(root.render());
+                }
+            }
         }
         segments.push(match limited_by {
             BudgetLimiter::Request => format!("budget:{budget}"),
@@ -1095,8 +1105,30 @@ pub fn pack_references(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    pack_references_impl(outcome, None, budget, boundary)
+}
+
+/// The multi-root form of [`pack_references`] (007): the header names every
+/// listed root's own revision, or the coverage of a root that cannot serve,
+/// exactly as `retrieve` does; the references and the cursor are unchanged.
+pub fn pack_references_roots(
+    outcome: &ReferencesOutcome,
+    roots: &[RootHeader],
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    pack_references_impl(outcome, Some(roots), budget, boundary)
+}
+
+fn pack_references_impl(
+    outcome: &ReferencesOutcome,
+    roots: Option<&[RootHeader]>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
     let f = &outcome.freshness;
     let header = ReferencesHeader {
+        roots,
         revision: f.source_revision,
         scan_state: &f.scan_state,
         pending: f.pending_sources,
@@ -1160,4 +1192,18 @@ pub fn pack_references(
         omitted: total - included,
         truncated: included < total || outcome.more,
     })
+}
+
+/// The outcome-free sufficient budget for a `references` refusal made before
+/// any engine work (a refused session reservation admits no engine work, yet
+/// its `budget_exhausted` must carry a hint valid under every limiter label).
+/// The size of the first reference line cannot be bounded below the largest
+/// budget: its handle carries a source path of up to 4096 bytes - whose
+/// token count depends on the characters - the label is a source-derived
+/// qualified name, the `next:` cursor repeats the path, and a multi-root
+/// owner's header adds one segment per root. So, like the whole-or-nothing
+/// outline view, the hint is the largest budget; a reference that cannot fit
+/// even that is refused by the packer itself with its real minimum.
+pub fn references_refusal_floor() -> usize {
+    MAX_BUDGET_TOKENS
 }

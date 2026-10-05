@@ -618,21 +618,29 @@ struct Frozen {
     sha256: String,
 }
 
-/// Copy `source` into the run directory in at most 1 MiB buffers, hashing the
-/// COPY as it is written. A cap overrun fails by name without a retry.
-fn freeze(
-    source: &Path,
-    target: PathBuf,
-    cap: u64,
-    over: &'static str,
-    what: &str,
-    control: &Control,
-    meter: &mut ScratchMeter,
-) -> FResult<Frozen> {
+/// One import input. The CLI names a path and keeps its explicit-path
+/// semantics; the MCP staging path hands over a descriptor it has already
+/// opened without following links and fstat'ed as a regular file, so the
+/// importer copies the very object that was checked and never re-resolves a
+/// name.
+pub enum ImportInput<'a> {
+    Path(&'a Path),
+    Open(File),
+}
+
+impl ImportInput<'_> {
+    fn into_file(self, what: &str) -> FResult<File> {
+        match self {
+            Self::Open(file) => Ok(file),
+            Self::Path(path) => open_explicit(path, what),
+        }
+    }
+}
+
+/// Open a named input without blocking - a FIFO without a writer must
+/// refuse, not hang.
+fn open_explicit(source: &Path, what: &str) -> FResult<File> {
     let unavailable = |e: std::io::Error| FoundryError::ArtifactUnavailable(format!("{what}: {e}"));
-    // Open without blocking — a FIFO without a writer must refuse, not hang —
-    // and stat the descriptor itself: the object actually read is the object
-    // that was checked.
     use std::os::fd::FromRawFd;
     let name = std::ffi::CString::new(source.as_os_str().as_encoded_bytes())
         .map_err(|_| unavailable(std::io::Error::new(std::io::ErrorKind::InvalidInput, "NUL")))?;
@@ -646,7 +654,24 @@ fn freeze(
         return Err(unavailable(std::io::Error::last_os_error()));
     }
     // SAFETY: a fresh descriptor from open(2), owned by this File.
-    let mut input = unsafe { File::from_raw_fd(fd) };
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+/// Copy `input` into the run directory in at most 1 MiB buffers, hashing the
+/// COPY as it is written. A cap overrun fails by name without a retry.
+fn freeze(
+    input: ImportInput<'_>,
+    target: PathBuf,
+    cap: u64,
+    over: &'static str,
+    what: &str,
+    control: &Control,
+    meter: &mut ScratchMeter,
+) -> FResult<Frozen> {
+    let unavailable = |e: std::io::Error| FoundryError::ArtifactUnavailable(format!("{what}: {e}"));
+    // Stat the descriptor itself: the object actually read is the object
+    // that was checked.
+    let mut input = input.into_file(what)?;
     let metadata = input.metadata().map_err(unavailable)?;
     if !metadata.is_file() {
         return Err(FoundryError::ArtifactUnavailable(format!(
@@ -1422,7 +1447,12 @@ fn millis(started: Instant) -> u64 {
 impl Run<'_> {
     /// Copy, parse and bind everything without changing any graph state.
     /// Any failure here leaves the prior selection untouched.
-    fn prepare(&mut self, index: &Path, snapshot: &Path, workspace_id: &str) -> FResult<Prepared> {
+    fn prepare(
+        &mut self,
+        index: ImportInput<'_>,
+        snapshot: ImportInput<'_>,
+        workspace_id: &str,
+    ) -> FResult<Prepared> {
         let copy_started = Instant::now();
         let control = self.control;
         let manifest = freeze(
@@ -1995,6 +2025,25 @@ impl Engine {
         &self,
         index: &Path,
         snapshot: &Path,
+        control: &Control,
+        limits: &ImportLimits,
+    ) -> FResult<ImportReport> {
+        self.import_scip_inputs(
+            ImportInput::Path(index),
+            ImportInput::Path(snapshot),
+            control,
+            limits,
+        )
+    }
+
+    /// [`Engine::import_scip_with`] over [`ImportInput`]s: the same
+    /// importer, but an input may be an already-open, already-checked
+    /// descriptor (the MCP staging area), which is copied as it is and never
+    /// reopened by name.
+    pub fn import_scip_inputs(
+        &self,
+        index: ImportInput<'_>,
+        snapshot: ImportInput<'_>,
         control: &Control,
         limits: &ImportLimits,
     ) -> FResult<ImportReport> {

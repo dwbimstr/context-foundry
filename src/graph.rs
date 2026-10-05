@@ -1926,3 +1926,783 @@ impl Engine {
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// Context graph expansion (005 § context(strategy=graph), T003).
+// ---------------------------------------------------------------------------
+
+/// Retrieval spans a context's compiler expansion seeds from.
+pub(crate) const CONTEXT_GRAPH_SPANS: usize = 3;
+/// Delivery units the compiler graph may contribute to one context. With the
+/// lexical units they are bounded again by the context's one 32-unit total.
+pub(crate) const CONTEXT_GRAPH_UNITS: usize = 32;
+/// Graph records one context expansion may examine: seed-span occurrences,
+/// definition lookups and reference records all draw from it.
+pub(crate) const CONTEXT_GRAPH_EXAMINED: usize = 256;
+/// The share of that window the seed-span scan may take, so the symbols it
+/// collected can still be resolved.
+const CONTEXT_SEED_SCAN: usize = CONTEXT_GRAPH_EXAMINED / 2;
+
+/// The relation one compiler reference was collected under: the snapshot it
+/// was read from, the `(path, source sha256)` of its seed, definition and
+/// reference scopes, and the three stored rows that state it (the seed
+/// occurrence, the unique definition and the reference). The final read must
+/// find ALL of it again: a same-revision replacement or a re-import under a
+/// new snapshot is a different relation even when some scope row for the
+/// same path and hash still exists.
+#[derive(Clone, Debug)]
+pub(crate) struct ContextWitness {
+    pub(crate) namespace: String,
+    pub(crate) snapshot_id: String,
+    pub(crate) seed: (String, String),
+    pub(crate) definition: (String, String),
+    pub(crate) reference: (String, String),
+    /// Full id of the seed symbol the relation was resolved for.
+    pub(crate) symbol_id: String,
+    /// `COMPILER_OCCURRENCES` key of the seed occurrence.
+    pub(crate) seed_key: String,
+    /// `COMPILER_BY_SYMBOL` keys of the unique definition and the reference.
+    pub(crate) definition_key: String,
+    pub(crate) reference_key: String,
+    /// The delivery unit `(path, start, end)` this witness speaks for. The
+    /// final pass keeps ONE witness per delivered unit, so a unit holding
+    /// many occurrences of the symbol is verified once.
+    pub(crate) unit: (String, u64, u64),
+}
+
+/// One delivery unit contributed by the compiler graph: the unit that
+/// encloses an eligible reference occurrence, exactly as `references`
+/// reports it, with the relation that put it here.
+pub(crate) struct ContextUnit {
+    pub(crate) path: String,
+    pub(crate) sha256: String,
+    pub(crate) start: u64,
+    pub(crate) end: u64,
+    pub(crate) line: u64,
+    pub(crate) label: String,
+    pub(crate) witness: ContextWitness,
+}
+
+/// The compiler half of a graph context: evidence still to be revalidated in
+/// the caller's final read.
+pub(crate) struct ContextGraphUnits {
+    /// Units no search unit already covers.
+    pub(crate) units: Vec<ContextUnit>,
+    /// Relations whose reference unit was ALREADY selected as a search unit:
+    /// they add no unit, but they are evidence the eligible graph was used,
+    /// so the graph is `ok`, never `unavailable`.
+    pub(crate) already_selected: Vec<ContextWitness>,
+    pub(crate) examined: usize,
+    pub(crate) stale: usize,
+    /// A bound was hit (the examination window, the seed-scan share or the
+    /// unit cap).
+    pub(crate) full: bool,
+    /// Every selected snapshot predates the current source revision, the
+    /// same state `references` answers `coverage:stale` for.
+    pub(crate) state_stale: bool,
+}
+
+impl ContextGraphUnits {
+    pub(crate) fn empty() -> Self {
+        Self {
+            units: Vec::new(),
+            already_selected: Vec::new(),
+            examined: 0,
+            stale: 0,
+            full: false,
+            state_stale: false,
+        }
+    }
+}
+
+/// What a final-read check found about one source range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SourceProof {
+    /// The source is absent or no longer carries the expected hash.
+    Missing,
+    /// The source's chunks reconstruct to its recorded hash and the range
+    /// lies inside the verified body on UTF-8 boundaries.
+    Verified,
+    /// The source verifies but the stored range does not lie inside it.
+    Outside,
+}
+
+/// The final read's verdicts: one per witness, in order, and whether the
+/// shared record allowance ran out anywhere (an unfinished proof).
+pub(crate) struct WitnessVerdicts {
+    pub(crate) holds: Vec<bool>,
+    pub(crate) unfinished: bool,
+}
+
+/// The outcome of re-establishing one symbol's resolution in the final read.
+#[derive(Clone, Debug)]
+enum FinalResolution {
+    /// Exactly one eligible, source-verified definition: its `by_symbol` key.
+    Unique(String),
+    /// None, or more than one: the symbol no longer resolves uniquely.
+    NotUnique,
+    /// The allowance ran out before uniqueness could be concluded.
+    Unfinished,
+}
+
+/// Graph records the final pass may read across ALL delivered units and
+/// symbols: witness membership rows (seed, definition and reference) and
+/// uniqueness-walk rows alike. Source-body verification is separate source
+/// work and is not counted here.
+const CONTEXT_FINAL_RECORDS: usize = CONTEXT_GRAPH_EXAMINED;
+
+/// Count one final-pass graph record. A release build carries no counter.
+#[cfg(feature = "test-faults")]
+fn count_final_record() {
+    crate::fault::count_final_graph_record();
+}
+
+/// Count one final-pass graph record. A release build carries no counter.
+#[cfg(not(feature = "test-faults"))]
+fn count_final_record() {}
+
+/// Re-establish `symbol_id`'s resolution under `snapshot_id` in THIS
+/// transaction: walk its definition records (each one counted against
+/// `allowance`, checked before the record is decoded) and require exactly one
+/// whose scope belongs to the snapshot and whose source verifies through
+/// `proof`. A definition range outside its verified source is `graph_invalid`.
+fn final_resolution(
+    by_symbol: &redb::ReadOnlyTable<&'static str, &'static str>,
+    scopes: &redb::ReadOnlyTable<&'static str, &'static str>,
+    proof: &mut dyn FnMut(&str, &str, u64, u64) -> FResult<SourceProof>,
+    namespace: &str,
+    snapshot_id: &str,
+    symbol_id: &str,
+    allowance: &mut usize,
+) -> FResult<FinalResolution> {
+    let low = format!("{symbol_id}\0d\0");
+    let high = format!("{symbol_id}\0d\u{1}");
+    let mut found: Option<String> = None;
+    for entry in by_symbol.range(low.as_str()..high.as_str())? {
+        if *allowance == 0 {
+            return Ok(FinalResolution::Unfinished);
+        }
+        let (key, _) = entry?;
+        *allowance -= 1;
+        count_final_record();
+        let parsed = parse_symbol_key(key.value())?;
+        let Some(raw) = scopes.get(scope_key(namespace, &parsed.path).as_str())? else {
+            continue;
+        };
+        let scope: ScopeRow = stored_row(raw.value(), "compiler scope")?;
+        if scope.snapshot_id != snapshot_id {
+            continue;
+        }
+        match proof(&parsed.path, &scope.source_hash, parsed.start, parsed.end)? {
+            SourceProof::Missing => continue,
+            SourceProof::Outside => {
+                return Err(FoundryError::GraphInvalid(format!(
+                    "a stored definition lies outside its source: {}",
+                    parsed.path
+                )));
+            }
+            SourceProof::Verified => {}
+        }
+        if found.is_some() {
+            return Ok(FinalResolution::NotUnique);
+        }
+        found = Some(key.value().to_owned());
+    }
+    Ok(found.map_or(FinalResolution::NotUnique, FinalResolution::Unique))
+}
+
+/// Whether each witness still holds in THIS transaction:
+///
+/// * its producer's selected snapshot is still the one it was collected
+///   under and is current for the source revision;
+/// * its seed, definition and reference scopes still belong to that
+///   snapshot and name the same source bytes, and the seed occurrence,
+///   definition and reference rows still exist. Those three membership rows
+///   are charged against the shared record allowance (cached, so a repeated
+///   witness is not re-read), as is every uniqueness-walk record below:
+///   EVERY graph record the final pass reads counts, and a depleted
+///   allowance leaves the proof unfinished;
+/// * the seed, definition and reference SOURCES verify through `proof`
+///   (chunks, hash and the stored range) - the caller shares one
+///   verified-body cache with context rendering, so each file is
+///   reconstructed once. That is separate source work; it is not counted
+///   against the record allowance;
+/// * the seed symbol STILL resolves to exactly the witnessed unique,
+///   source-verified definition. The same snapshot can gain a second
+///   definition after collection (a partial import completed by a replay of
+///   the same artifact), so presence of the witnessed row is not enough. The
+///   verdict is cached per `(namespace, snapshot, symbol)`; an ambiguous or
+///   unfinished check drops the symbol's expansion.
+///
+/// The caller passes ONE witness per delivered unit (at most 32), so many
+/// occurrences of a symbol inside one delivered unit cost one membership
+/// check, not one per occurrence.
+///
+/// A malformed producer or scope row, or a range outside its source, is
+/// `graph_invalid` (component-local at the caller). Chunk corruption and
+/// database errors keep their own named codes: they are never an empty graph.
+pub(crate) fn witnesses_hold(
+    tx: &redb::ReadTransaction,
+    revision: u64,
+    witnesses: &[&ContextWitness],
+    proof: &mut dyn FnMut(&str, &str, u64, u64) -> FResult<SourceProof>,
+) -> FResult<WitnessVerdicts> {
+    let producers = read_producers(tx)?;
+    let scopes = tx.open_table(COMPILER_SCOPES)?;
+    let occurrences = tx.open_table(COMPILER_OCCURRENCES)?;
+    let by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
+    let mut resolutions: HashMap<(String, String, String), FinalResolution> = HashMap::new();
+    let mut memberships: HashMap<[String; 5], bool> = HashMap::new();
+    let mut allowance = CONTEXT_FINAL_RECORDS;
+    let mut unfinished = false;
+    let mut holds_all = Vec::with_capacity(witnesses.len());
+    // Charge one record before it is read; a depleted allowance leaves the
+    // rest of that witness unfinished.
+    let charge = |allowance: &mut usize| -> bool {
+        if *allowance == 0 {
+            return false;
+        }
+        *allowance -= 1;
+        count_final_record();
+        true
+    };
+    for witness in witnesses {
+        let current = producers
+            .iter()
+            .find(|(name, _)| *name == witness.namespace)
+            .and_then(|(_, row)| row.selected.as_ref())
+            .is_some_and(|selected| {
+                selected.tuple.snapshot_id == witness.snapshot_id
+                    && selected.tuple.source_revision == revision
+            });
+        if !current {
+            holds_all.push(false);
+            continue;
+        }
+        // Membership: the three stored rows the relation was collected
+        // under, charged and cached per witness identity.
+        let membership_key = [
+            witness.namespace.clone(),
+            witness.snapshot_id.clone(),
+            witness.seed_key.clone(),
+            witness.definition_key.clone(),
+            witness.reference_key.clone(),
+        ];
+        let mut holds = match memberships.get(&membership_key) {
+            Some(&known) => known,
+            None => {
+                let mut known = true;
+                for _ in 0..3 {
+                    if !charge(&mut allowance) {
+                        unfinished = true;
+                        known = false;
+                        break;
+                    }
+                }
+                if known {
+                    known &= occurrences.get(witness.seed_key.as_str())?.is_some();
+                    for key in [&witness.definition_key, &witness.reference_key] {
+                        known &= by_symbol
+                            .get(key.as_str())?
+                            .is_some_and(|namespace| namespace.value() == witness.namespace);
+                    }
+                    for (path, hash) in [&witness.seed, &witness.definition, &witness.reference] {
+                        let scope =
+                            match scopes.get(scope_key(&witness.namespace, path).as_str())? {
+                                Some(raw) => {
+                                    Some(stored_row::<ScopeRow>(raw.value(), "compiler scope")?)
+                                }
+                                None => None,
+                            };
+                        known &= scope.is_some_and(|row| {
+                            row.snapshot_id == witness.snapshot_id && row.source_hash == *hash
+                        });
+                    }
+                }
+                memberships.insert(membership_key, known);
+                known
+            }
+        };
+        if !holds {
+            holds_all.push(false);
+            continue;
+        }
+        // The sources the relation stands on, verified in this transaction.
+        let seed = parse_occurrence_key(&witness.seed_key)?;
+        let definition = parse_symbol_key(&witness.definition_key)?;
+        let reference = parse_symbol_key(&witness.reference_key)?;
+        for ((path, hash), start, end) in [
+            (&witness.seed, seed.start, seed.end),
+            (&witness.definition, definition.start, definition.end),
+            (&witness.reference, reference.start, reference.end),
+        ] {
+            match proof(path, hash, start, end)? {
+                SourceProof::Verified => {}
+                SourceProof::Missing => holds = false,
+                SourceProof::Outside => {
+                    return Err(FoundryError::GraphInvalid(format!(
+                        "a stored occurrence lies outside its source: {path}"
+                    )));
+                }
+            }
+        }
+        if !holds {
+            holds_all.push(false);
+            continue;
+        }
+        // The symbol must still resolve uniquely to the witnessed definition.
+        let cache_key = (
+            witness.namespace.clone(),
+            witness.snapshot_id.clone(),
+            witness.symbol_id.clone(),
+        );
+        let resolution = match resolutions.get(&cache_key) {
+            Some(known) => known.clone(),
+            None => {
+                let fresh = final_resolution(
+                    &by_symbol,
+                    &scopes,
+                    proof,
+                    &witness.namespace,
+                    &witness.snapshot_id,
+                    &witness.symbol_id,
+                    &mut allowance,
+                )?;
+                resolutions.insert(cache_key, fresh.clone());
+                fresh
+            }
+        };
+        match resolution {
+            FinalResolution::Unique(key) => holds = key == witness.definition_key,
+            FinalResolution::NotUnique => holds = false,
+            FinalResolution::Unfinished => {
+                holds = false;
+                unfinished = true;
+            }
+        }
+        holds_all.push(holds);
+    }
+    Ok(WitnessVerdicts {
+        holds: holds_all,
+        unfinished,
+    })
+}
+
+/// A stored occurrence range must lie inside the verified source body, on
+/// UTF-8 boundaries: the guard `resolve_position` applies, reused here.
+fn lies_in(body: &str, start: u64, end: u64) -> bool {
+    end <= body.len() as u64
+        && body.is_char_boundary(start as usize)
+        && body.is_char_boundary(end as usize)
+}
+
+/// A seed occurrence collected from a retrieval span.
+struct ContextSeed {
+    namespace: String,
+    symbol_id: String,
+    seed_key: String,
+    path: String,
+    hash: String,
+}
+
+impl Engine {
+    /// Compiler delivery units for `context(strategy=graph)`, seeded by the
+    /// first retrieved spans.
+    ///
+    /// * Seeds: for each span (retrieval order), the eligible occurrences
+    ///   overlapping it - those starting inside it, then the earlier ones
+    ///   that reach into it - symbol ids ordered within a span, each symbol
+    ///   once. Every examined occurrence range is validated against the
+    ///   verified source before it counts as overlapping.
+    /// * Resolution: only a symbol with a UNIQUE eligible, source-verified
+    ///   definition expands. Every inspected definition record is counted
+    ///   against the shared window; an ambiguous symbol, or one whose
+    ///   uniqueness the window cannot conclude, is skipped (the latter marks
+    ///   the window full).
+    /// * Units: the delivery units enclosing the symbol's eligible reference
+    ///   occurrences, deduplicated against each other and against `taken`.
+    ///
+    /// Everything shares one examination window; hitting it (or the unit
+    /// cap) sets `full`. The result is NOT final: the caller revalidates
+    /// every witness in its own final read transaction. A stored occurrence
+    /// outside its source is `graph_invalid`, component-local at the caller.
+    pub(crate) fn context_graph_units(
+        &self,
+        spans: &[(String, u64, u64)],
+        taken: &BTreeSet<(String, u64, u64)>,
+    ) -> FResult<ContextGraphUnits> {
+        let tx = self.db.begin_read()?;
+        let freshness = self.freshness_in(&tx)?;
+        let revision = freshness.source_revision;
+        let producers = read_producers(&tx)?;
+        let mut outcome = ContextGraphUnits::empty();
+        let selected_rows: Vec<&(String, ProducerRow)> = producers
+            .iter()
+            .filter(|(_, row)| row.selected.is_some())
+            .collect();
+        if selected_rows.is_empty() {
+            return Ok(outcome);
+        }
+        // The same early state `references` reports `coverage:stale` for:
+        // every selected snapshot predates the source revision, so no
+        // compiler fact is eligible. Decided before any deep scan.
+        outcome.state_stale = selected_rows.iter().all(|(_, row)| {
+            row.selected
+                .as_ref()
+                .is_some_and(|selected| selected.tuple.source_revision != revision)
+        });
+        if outcome.state_stale {
+            return Ok(outcome);
+        }
+        let occurrences = tx.open_table(COMPILER_OCCURRENCES)?;
+        let by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
+        let scope_table = tx.open_table(COMPILER_SCOPES)?;
+        let sources = tx.open_table(SOURCES)?;
+        let chunks = tx.open_table(CHUNKS)?;
+        let mut files: HashMap<String, Option<FileView>> = HashMap::new();
+        let mut ordered: Vec<ContextSeed> = Vec::new();
+        let mut done: BTreeSet<String> = BTreeSet::new();
+        // Units this expansion already added (`taken` holds the search units).
+        let mut seen: BTreeSet<(String, u64, u64)> = BTreeSet::new();
+        'spans: for (path, span_start, span_end) in spans.iter().take(CONTEXT_GRAPH_SPANS) {
+            // symbol id -> its first seed occurrence, so ids sort per span.
+            let mut per_span: BTreeMap<String, ContextSeed> = BTreeMap::new();
+            for (namespace, row) in &producers {
+                let Some(selected) = &row.selected else {
+                    continue;
+                };
+                if selected.tuple.source_revision != revision {
+                    continue;
+                }
+                let Some(scope) = scope_table
+                    .get(scope_key(namespace, path).as_str())?
+                    .map(|raw| stored_row::<ScopeRow>(raw.value(), "compiler scope"))
+                    .transpose()?
+                else {
+                    continue;
+                };
+                if scope.snapshot_id != selected.tuple.snapshot_id {
+                    continue;
+                }
+                // Only a scope published from the current bytes of this
+                // source can contribute eligible occurrences.
+                ensure_file(&mut files, &sources, &chunks, path, &scope.source_hash)?;
+                let Some(body) = body_of(&files, path) else {
+                    continue;
+                };
+                let outside = || {
+                    FoundryError::GraphInvalid(format!(
+                        "a stored occurrence lies outside its source: {path}"
+                    ))
+                };
+                let mut collect = |key: &str, parsed: OccurrenceKey| {
+                    per_span
+                        .entry(parsed.symbol_id)
+                        .or_insert_with(|| ContextSeed {
+                            namespace: namespace.clone(),
+                            symbol_id: String::new(),
+                            seed_key: key.to_owned(),
+                            path: path.clone(),
+                            hash: scope.source_hash.clone(),
+                        });
+                };
+                // Occurrences STARTING inside the span all overlap it.
+                let inside_low = format!("{namespace}\0{path}\0{span_start:020}");
+                let inside_high = format!("{namespace}\0{path}\0{span_end:020}");
+                for entry in occurrences.range(inside_low.as_str()..inside_high.as_str())? {
+                    if outcome.examined >= CONTEXT_SEED_SCAN {
+                        outcome.full = true;
+                        break;
+                    }
+                    let (key, _) = entry?;
+                    outcome.examined += 1;
+                    let parsed = parse_occurrence_key(key.value())?;
+                    if !lies_in(body, parsed.start, parsed.end) {
+                        return Err(outside());
+                    }
+                    collect(key.value(), parsed);
+                }
+                // Earlier occurrences that reach into it, nearest first,
+                // until none can: the longest stored occurrence bounds how
+                // far back one can start.
+                let before_low = format!("{namespace}\0{path}\0");
+                for entry in occurrences
+                    .range(before_low.as_str()..inside_low.as_str())?
+                    .rev()
+                {
+                    if outcome.examined >= CONTEXT_SEED_SCAN {
+                        outcome.full = true;
+                        break;
+                    }
+                    let (key, _) = entry?;
+                    outcome.examined += 1;
+                    let parsed = parse_occurrence_key(key.value())?;
+                    if !lies_in(body, parsed.start, parsed.end) {
+                        return Err(outside());
+                    }
+                    let (start, end) = (parsed.start, parsed.end);
+                    if end > *span_start {
+                        collect(key.value(), parsed);
+                    }
+                    if start.saturating_add(scope.max_span) <= *span_start {
+                        break;
+                    }
+                }
+            }
+            // What the span collected is kept even when its scan stopped at
+            // the window: those symbols still resolve below.
+            for (symbol_id, mut seed) in per_span {
+                if done.insert(symbol_id.clone()) {
+                    seed.symbol_id = symbol_id;
+                    ordered.push(seed);
+                }
+            }
+            if outcome.full {
+                break 'spans;
+            }
+        }
+        'symbols: for seed in ordered {
+            let Some(selected) = producers
+                .iter()
+                .find(|(name, _)| *name == seed.namespace)
+                .and_then(|(_, row)| row.selected.as_ref())
+            else {
+                continue;
+            };
+            let mut scopes = EligibleScopes {
+                scopes: tx.open_table(COMPILER_SCOPES)?,
+                namespace: seed.namespace.clone(),
+                snapshot_id: selected.tuple.snapshot_id.clone(),
+                cache: HashMap::new(),
+            };
+            // Definition lookup under the same eligibility as `references`,
+            // but the context only expands a UNIQUE eligible definition:
+            // the second eligible record ends the check as ambiguous, and a
+            // window that runs out first leaves it unfinished.
+            let mut definition: Option<(String, String, String)> = None;
+            let mut eligible = 0usize;
+            let mut finished = true;
+            let low = format!("{}\0d\0", seed.symbol_id);
+            let high = format!("{}\0d\u{1}", seed.symbol_id);
+            for entry in by_symbol.range(low.as_str()..high.as_str())? {
+                if outcome.examined >= CONTEXT_GRAPH_EXAMINED {
+                    finished = false;
+                    break;
+                }
+                let (key, _) = entry?;
+                outcome.examined += 1;
+                let parsed = parse_symbol_key(key.value())?;
+                let Some(scope) = scopes.get(&parsed.path)? else {
+                    outcome.stale += 1;
+                    continue;
+                };
+                ensure_file(
+                    &mut files,
+                    &sources,
+                    &chunks,
+                    &parsed.path,
+                    &scope.source_hash,
+                )?;
+                let Some(body) = body_of(&files, &parsed.path) else {
+                    outcome.stale += 1;
+                    continue;
+                };
+                if !lies_in(body, parsed.start, parsed.end) {
+                    return Err(FoundryError::GraphInvalid(format!(
+                        "a stored definition lies outside its source: {}",
+                        parsed.path
+                    )));
+                }
+                eligible += 1;
+                if eligible > 1 {
+                    break;
+                }
+                definition = Some((key.value().to_owned(), parsed.path, scope.source_hash));
+            }
+            if !finished {
+                outcome.full = true;
+                break 'symbols;
+            }
+            if eligible != 1 {
+                continue;
+            }
+            let Some(definition) = definition else {
+                continue;
+            };
+            let low = format!("{}\0r\0", seed.symbol_id);
+            let high = format!("{}\0r\u{1}", seed.symbol_id);
+            for entry in by_symbol.range(low.as_str()..high.as_str())? {
+                // Both caps are checked on the EXISTENCE of the next record,
+                // before it is decoded.
+                if outcome.examined >= CONTEXT_GRAPH_EXAMINED
+                    || outcome.units.len() >= CONTEXT_GRAPH_UNITS
+                {
+                    outcome.full = true;
+                    break;
+                }
+                let (key, _) = entry?;
+                outcome.examined += 1;
+                let parsed = parse_symbol_key(key.value())?;
+                let Some(scope) = scopes.get(&parsed.path)? else {
+                    outcome.stale += 1;
+                    continue;
+                };
+                ensure_file(
+                    &mut files,
+                    &sources,
+                    &chunks,
+                    &parsed.path,
+                    &scope.source_hash,
+                )?;
+                let Some(Some(view)) = files.get(&parsed.path) else {
+                    outcome.stale += 1;
+                    continue;
+                };
+                if !lies_in(&view.body, parsed.start, parsed.end) {
+                    return Err(FoundryError::GraphInvalid(format!(
+                        "a stored occurrence lies outside its source: {}",
+                        parsed.path
+                    )));
+                }
+                let start = parsed.start as usize;
+                let (unit_start, unit_end, label) = match view.unit_at(start) {
+                    Some(unit) => (unit.start as u64, unit.end as u64, unit_label(unit)),
+                    None => (parsed.start, parsed.end, "block".to_owned()),
+                };
+                let unit_key = (parsed.path.clone(), unit_start, unit_end);
+                let witness = ContextWitness {
+                    namespace: seed.namespace.clone(),
+                    snapshot_id: selected.tuple.snapshot_id.clone(),
+                    symbol_id: seed.symbol_id.clone(),
+                    seed: (seed.path.clone(), seed.hash.clone()),
+                    definition: (definition.1.clone(), definition.2.clone()),
+                    reference: (parsed.path.clone(), scope.source_hash.clone()),
+                    seed_key: seed.seed_key.clone(),
+                    definition_key: definition.0.clone(),
+                    reference_key: key.value().to_owned(),
+                    unit: unit_key.clone(),
+                };
+                if taken.contains(&unit_key) {
+                    // One witness per unit: later occurrences of the same
+                    // symbol in the SAME already-selected unit add nothing.
+                    if !outcome
+                        .already_selected
+                        .iter()
+                        .any(|kept| kept.unit == unit_key)
+                    {
+                        outcome.already_selected.push(witness);
+                    }
+                } else if seen.insert(unit_key) {
+                    outcome.units.push(ContextUnit {
+                        path: parsed.path,
+                        sha256: scope.source_hash,
+                        start: unit_start,
+                        end: unit_end,
+                        line: view.line_of(start),
+                        label,
+                        witness,
+                    });
+                }
+            }
+        }
+        Ok(outcome)
+    }
+}
+
+impl ReferencesRequest {
+    /// The request's pure syntax and bounds, checked with no store access:
+    /// `limit`, the `after` cursor grammar, the symbol-id prefix or the
+    /// handle's v2 grammar. Existence, digest and range stay in the
+    /// authoritative read. The MCP adapter runs this before routing,
+    /// reservation and engine admission.
+    pub fn validate(&self) -> FResult<()> {
+        if !(1..=REFERENCES_MAX_LIMIT).contains(&self.limit) {
+            return Err(invalid("references limit must be 1..256"));
+        }
+        self.after.as_deref().map(parse_cursor).transpose()?;
+        match &self.seed {
+            ReferencesSeed::SymbolId(raw) => {
+                symbol_prefix(raw)?;
+            }
+            ReferencesSeed::Position { handle, .. } => {
+                HandleRef::parse(handle)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "test-faults")]
+impl Engine {
+    /// Test seam (feature `test-faults` only; release builds carry none):
+    /// overwrite one compiler scope row of an OPEN engine with `raw`, so a
+    /// barrier test can corrupt a row between candidate collection and the
+    /// final read - something a closed-store rewrite cannot reach.
+    pub fn overwrite_compiler_scope_for_tests(
+        &self,
+        namespace: &str,
+        path: &str,
+        raw: &str,
+    ) -> FResult<()> {
+        let tx = self.db.begin_write()?;
+        {
+            let mut scopes = tx.open_table(COMPILER_SCOPES)?;
+            scopes.insert(scope_key(namespace, path).as_str(), raw)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "test-faults")]
+impl Engine {
+    /// Test seam (feature `test-faults` only): replace the `body` of one
+    /// stored chunk of an OPEN engine, keeping its JSON shape, path and
+    /// hash, so the source no longer reconstructs to its recorded hash. A
+    /// barrier test uses it to corrupt a file AFTER candidate collection,
+    /// which a closed-store rewrite cannot reach.
+    pub fn overwrite_chunk_body_for_tests(
+        &self,
+        path: &str,
+        ordinal: usize,
+        body: &str,
+    ) -> FResult<()> {
+        let tx = self.db.begin_write()?;
+        {
+            let mut chunks = tx.open_table(CHUNKS)?;
+            let key = format!("{path}\0{ordinal:010}");
+            let raw = chunks
+                .get(key.as_str())?
+                .map(|value| value.value().to_owned())
+                .ok_or(FoundryError::NotFound)?;
+            let mut value: serde_json::Value = serde_json::from_str(&raw)?;
+            value["body"] = body.into();
+            chunks.insert(key.as_str(), value.to_string().as_str())?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "test-faults")]
+impl Engine {
+    /// Test seam (feature `test-faults` only): insert raw `compiler_by_symbol`
+    /// rows of an OPEN engine, each valued `namespace`. A barrier test uses it
+    /// to add records AFTER candidate collection (for example hundreds of
+    /// ineligible definition rows that exhaust the final uniqueness allowance).
+    pub fn insert_compiler_by_symbol_for_tests(
+        &self,
+        keys: &[String],
+        namespace: &str,
+    ) -> FResult<()> {
+        let tx = self.db.begin_write()?;
+        {
+            let mut by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
+            for key in keys {
+                by_symbol.insert(key.as_str(), namespace)?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+}

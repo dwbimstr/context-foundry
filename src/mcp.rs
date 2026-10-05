@@ -87,9 +87,11 @@ use crate::{
     Control, Engine, FResult, FoundryError, Strategy,
     adapter_error::{AResult, AdapterError},
     config::BudgetConfig,
+    graph::{REFERENCES_DEFAULT_LIMIT, REFERENCES_MAX_LIMIT, ReferencesRequest, ReferencesSeed},
     memory::{self, MemoryRequest},
     response::{self, BudgetLimiter, RootHeader},
     roots::{self, AdmittedRoot, Coverage},
+    scip::{ImportInput, ImportLimits},
     store::{HandleRef, LineSelection},
 };
 
@@ -713,6 +715,93 @@ fn optional_str<'a>(args: &'a JsonObject, key: &str) -> FResult<Option<&'a str>>
     }
 }
 
+/// A staged import name (005 T003): 1..128 ASCII characters from
+/// `[A-Za-z0-9._-]`, and neither `.` nor `..`, so the entry is always a
+/// direct child of `<store>/imports` and never a path.
+fn valid_staged_name(name: &str) -> bool {
+    (1..=128).contains(&name.len())
+        && !matches!(name, "." | "..")
+        && name
+            .bytes()
+            .all(|b| matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'))
+}
+
+/// Why an `open(2)` of a staging entry failed, in the caller's terms.
+fn describe_open_error(error: &std::io::Error) -> String {
+    match error.raw_os_error() {
+        Some(libc::ENOENT) => "missing".to_owned(),
+        Some(libc::EACCES) => "unreadable (permission denied)".to_owned(),
+        // O_NOFOLLOW on a symlink fails with ELOOP.
+        Some(libc::ELOOP) => "a symlink, not a regular entry".to_owned(),
+        Some(libc::ENOTDIR) => "not a directory".to_owned(),
+        _ => format!("unreadable ({error})"),
+    }
+}
+
+/// Open the two staged import entries of `<store>/imports` (005 T003) and
+/// return the descriptors the importer copies. `store` is the engine's
+/// canonical store directory. `imports` is opened below it with
+/// `O_DIRECTORY|O_NOFOLLOW` (a symlinked or non-directory `imports` is
+/// refused), each entry below `imports` with `O_NOFOLLOW|O_NONBLOCK` (a
+/// symlink is refused; a FIFO cannot stall the open) and decided on the
+/// DESCRIPTOR's `fstat`: only a regular file is acceptable. Every refusal
+/// is `artifact_unavailable`; the caller's files are only read.
+fn open_staged_pair(store: &Path, names: [&str; 2]) -> FResult<(std::fs::File, std::fs::File)> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    let open = |parent: Option<&std::fs::File>,
+                name: &std::ffi::CStr,
+                flags: i32|
+     -> std::io::Result<std::fs::File> {
+        let flags = flags | libc::O_RDONLY | libc::O_CLOEXEC;
+        // SAFETY: open(2)/openat(2) on a NUL-terminated name and, for
+        // openat, a live directory descriptor; a fresh descriptor is owned
+        // by the returned File.
+        let fd = unsafe {
+            match parent {
+                Some(parent) => libc::openat(parent.as_raw_fd(), name.as_ptr(), flags),
+                None => libc::open(name.as_ptr(), flags),
+            }
+        };
+        if fd < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+        }
+    };
+    let refuse = |what: &str, error: &std::io::Error| {
+        FoundryError::ArtifactUnavailable(format!("{what} is {}", describe_open_error(error)))
+    };
+    let store_name = std::ffi::CString::new(store.as_os_str().as_bytes())
+        .map_err(|_| FoundryError::ArtifactUnavailable("the store path contains NUL".into()))?;
+    let store_dir = open(None, &store_name, libc::O_DIRECTORY)
+        .map_err(|e| refuse("the store directory", &e))?;
+    let imports = open(
+        Some(&store_dir),
+        c"imports",
+        libc::O_DIRECTORY | libc::O_NOFOLLOW,
+    )
+    .map_err(|e| refuse("the staging directory `imports`", &e))?;
+    let mut files = Vec::with_capacity(2);
+    for name in names {
+        let label = format!("the staged import `{name}`");
+        let c_name = std::ffi::CString::new(name)
+            .map_err(|_| FoundryError::ArtifactUnavailable(format!("{label} contains NUL")))?;
+        let file = open(Some(&imports), &c_name, libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .map_err(|e| refuse(&label, &e))?;
+        let regular = file.metadata().is_ok_and(|meta| meta.is_file());
+        if !regular {
+            return Err(FoundryError::ArtifactUnavailable(format!(
+                "{label} is not a regular file"
+            )));
+        }
+        files.push(file);
+    }
+    let snapshot = files.pop().expect("two staged entries");
+    let index = files.pop().expect("two staged entries");
+    Ok((index, snapshot))
+}
+
 /// The optional `roots` selector (007): a nonempty list of at most 9 unique
 /// alias strings. Unknown or duplicate aliases are refused here; whether an
 /// alias is admitted is resolved against the owner's roots before dispatch.
@@ -1188,7 +1277,7 @@ impl FoundryMcp {
     #[tool(
         name = "index",
         description = "Re-index after edits: the bound repo, or an admitted reference root via `root`.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"}}}"#),
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"},"scip":{"type":"object","additionalProperties":false,"required":["index_file","snapshot_file"],"properties":{"index_file":{"type":"string"},"snapshot_file":{"type":"string"}}}}}"#),
         // `index` writes only Foundry's own store for the bound root; it
         // never modifies workspace files, and re-indexing converges.
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
@@ -1198,7 +1287,7 @@ impl FoundryMcp {
         ctx: RequestContext<RoleServer>,
         arguments: JsonObject,
     ) -> Result<CallToolResult, ErrorData> {
-        if let Err(e) = unknown_fields(&arguments, &["timeout_ms", "root"]) {
+        if let Err(e) = unknown_fields(&arguments, &["timeout_ms", "root", "scip"]) {
             return Ok(foundry_error_result(&e));
         }
         // `root` re-indexes one admitted alias through its own store
@@ -1240,6 +1329,29 @@ impl FoundryMcp {
             Ok(timeout_ms) => timeout_ms,
             Err(e) => return Ok(foundry_error_result(&e)),
         };
+        // 005 T003: with `scip`, `index` imports the staged artifact and
+        // manifest INSTEAD of refreshing sources.
+        let scip = match arguments.get("scip") {
+            None => None,
+            Some(serde_json::Value::Null) => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "optional argument `scip` must be omitted, not null",
+                    false,
+                ));
+            }
+            Some(value @ serde_json::Value::Object(_)) => Some(value),
+            Some(_) => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "argument `scip` must be an object naming `index_file` and `snapshot_file`",
+                    false,
+                ));
+            }
+        };
+        if let Some(scip) = scip {
+            return Ok(self.index_scip(&ctx, index, scip, timeout_ms).await);
+        }
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         let meta = Arc::clone(&self.state.meta);
         let attempt = run_op(
@@ -1278,6 +1390,221 @@ impl FoundryMcp {
             ));
         }
         Ok(result)
+    }
+
+    /// 005 T003: `index {scip}` — import a staged artifact and manifest for
+    /// the selected root's store instead of refreshing sources. Inside the
+    /// one engine slot, the engine's canonical store directory is opened,
+    /// its `imports` directory below it and each named entry below that,
+    /// all without following links and relative to the descriptor above;
+    /// each entry is `fstat`ed as a regular file, and the importer copies
+    /// THOSE descriptors (never a re-resolved name), so a swap after the
+    /// check cannot change what is imported. The caller's staged files are
+    /// only read, never modified or removed. A controlled partial or
+    /// cancelled import is the report with `complete:false` and its
+    /// committed counts; preflight refusals keep their bounded errors, and a
+    /// competing owner is `store_busy`.
+    async fn index_scip(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        index: usize,
+        scip: &serde_json::Value,
+        timeout_ms: u64,
+    ) -> CallToolResult {
+        let invalid = |detail: &str| error_result("invalid_argument", detail, false);
+        let names = ["index_file", "snapshot_file"];
+        let staged: Vec<String> = match names
+            .iter()
+            .map(|field| scip.get(*field).and_then(serde_json::Value::as_str))
+            .collect::<Option<Vec<&str>>>()
+        {
+            Some(values) if scip.as_object().is_some_and(|map| map.len() == names.len()) => {
+                values.into_iter().map(str::to_owned).collect()
+            }
+            _ => {
+                return invalid(
+                    "argument `scip` must name exactly `index_file` and `snapshot_file` strings",
+                );
+            }
+        };
+        for name in &staged {
+            if !valid_staged_name(name) {
+                return invalid(&format!(
+                    "`{name}` is not a staged import name: 1..128 ASCII letters, digits, `.`, `_` or `-`"
+                ));
+            }
+        }
+        let (index_name, snapshot_name) = (staged[0].clone(), staged[1].clone());
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        let attempt = run_op(
+            &self.state,
+            deadline,
+            Some(ctx.ct.clone()),
+            Self::admission_guard(ctx),
+            false,
+            move |engines, control| {
+                let engine = engines[index]
+                    .as_mut()
+                    .expect("a serving root holds an engine");
+                let (index_file, snapshot_file) =
+                    open_staged_pair(engine.directory(), [&index_name, &snapshot_name])?;
+                engine.import_scip_inputs(
+                    ImportInput::Open(index_file),
+                    ImportInput::Open(snapshot_file),
+                    control,
+                    &ImportLimits::default(),
+                )
+            },
+        )
+        .await;
+        let report = match attempt {
+            Ok(report) => report,
+            Err(e) => return foundry_error_result(&e),
+        };
+        let report_value = serde_json::to_value(&report).unwrap_or(serde_json::Value::Null);
+        let result = text_result(response::compact_json(&report_value));
+        if serialize_result(&result).len() > OUTPUT_BYTE_CAP {
+            return error_result(
+                "budget_too_small",
+                "serialized import report exceeds the 256 KiB output cap",
+                false,
+            );
+        }
+        result
+    }
+
+    #[tool(
+        name = "references",
+        description = "Compiler references to one symbol from imported SCIP: `symbol_id`, or `handle` + `byte_offset`. Page with `after`.",
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"symbol_id":{"type":"string"},"handle":{"type":"string","maxLength":4200},"byte_offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":256,"default":64},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":1024},"after":{"type":"string"}}}"#),
+        annotations(read_only_hint = true, open_world_hint = false)
+    )]
+    async fn references(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        arguments: JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
+        if let Err(e) = unknown_fields(
+            &arguments,
+            &[
+                "symbol_id",
+                "handle",
+                "byte_offset",
+                "limit",
+                "tokens",
+                "after",
+            ],
+        ) {
+            return Ok(foundry_error_result(&e));
+        }
+        let symbol_id = match optional_str(&arguments, "symbol_id") {
+            Ok(symbol_id) => symbol_id,
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        let handle = match optional_str(&arguments, "handle") {
+            Ok(handle) => handle,
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        let byte_offset = match arguments.get("byte_offset") {
+            None => None,
+            Some(serde_json::Value::Null) => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "optional argument `byte_offset` must be omitted, not null",
+                    false,
+                ));
+            }
+            Some(value) => match value.as_u64() {
+                Some(offset) => Some(offset),
+                None => {
+                    return Ok(error_result(
+                        "invalid_argument",
+                        "argument `byte_offset` must be a nonnegative integer",
+                        false,
+                    ));
+                }
+            },
+        };
+        // Exactly one seed form: `symbol_id`, or `handle` with
+        // `byte_offset`.
+        let seed = match (symbol_id, handle, byte_offset) {
+            (Some(_), Some(_), _)
+            | (Some(_), None, Some(_))
+            | (None, Some(_), None)
+            | (None, None, _) => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "exactly one seed form is required: `symbol_id`, or `handle` with `byte_offset`",
+                    false,
+                ));
+            }
+            (Some(symbol_id), None, None) => ReferencesSeed::SymbolId(symbol_id.to_owned()),
+            (None, Some(handle), Some(byte_offset)) => ReferencesSeed::Position {
+                handle: handle.to_owned(),
+                byte_offset,
+            },
+        };
+        let limit = match optional_u64(
+            &arguments,
+            "limit",
+            REFERENCES_DEFAULT_LIMIT as u64,
+            1,
+            REFERENCES_MAX_LIMIT as u64,
+        ) {
+            Ok(limit) => limit as usize,
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        let tokens = match optional_u64(&arguments, "tokens", 1024, 1, 32768) {
+            Ok(tokens) => tokens,
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        let after = match optional_str(&arguments, "after") {
+            Ok(after) => after.map(str::to_owned),
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        let request = ReferencesRequest { seed, limit, after };
+        // Field-stage validation of EVERY field - types, bounds, nulls, the
+        // symbol-id and handle grammars and the cursor grammar - before any
+        // root routing, reservation or engine admission, exactly like
+        // `retrieve`: a malformed field is `invalid_argument` even for a
+        // foreign handle, an unavailable root or a busy slot. Existence,
+        // digest and range stay in the authoritative read.
+        if let Err(e) = request.validate() {
+            return Ok(foundry_error_result(&e));
+        }
+        // A multi-root owner routes a handle seed by its `ws16` exactly
+        // like `retrieve`; a symbol seed queries the primary root.
+        if self.state.meta.len() > 1 {
+            let root = match &request.seed {
+                ReferencesSeed::Position { handle, .. } => {
+                    let parsed = match HandleRef::parse(handle) {
+                        Ok(parsed) => parsed,
+                        Err(e) => return Ok(foundry_error_result(&e)),
+                    };
+                    match self.root_of_handle(&parsed.ws16) {
+                        Ok(root) => root,
+                        Err(result) => return Ok(result),
+                    }
+                }
+                ReferencesSeed::SymbolId(_) => 0,
+            };
+            return Ok(self.references_roots(&ctx, tokens, request, root).await);
+        }
+        Ok(self
+            .deliver(
+                &ctx,
+                tokens,
+                "references",
+                response::references_refusal_floor,
+                move |engines, _control, _budget| {
+                    engines[0]
+                        .as_ref()
+                        .expect("the primary engine is open")
+                        .references(&request)
+                },
+                response::pack_references,
+            )
+            .await)
     }
 
     #[tool(
@@ -1891,6 +2218,45 @@ impl FoundryMcp {
                 let listed: Vec<usize> = (0..pack_meta.len()).collect();
                 let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
                 response::pack_retrieve_outline_roots(&outcome.served, &headers, budget, boundary)
+            },
+        )
+        .await
+    }
+
+    /// 005 `references` on a multi-root owner (007): the request runs in the
+    /// selected root (the handle's root, or the primary for a symbol seed)
+    /// and the header lists every admitted root's own live revision or
+    /// coverage, exactly as `retrieve` does - with one reservation and one
+    /// charge.
+    async fn references_roots(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        tokens: u64,
+        request: ReferencesRequest,
+        root: usize,
+    ) -> CallToolResult {
+        let pack_meta = Arc::clone(&self.state.meta);
+        self.deliver(
+            ctx,
+            tokens,
+            "references",
+            response::references_refusal_floor,
+            move |engines, _control, _budget| {
+                let outcome = engines[root]
+                    .as_ref()
+                    .expect("a read-serving root holds an engine")
+                    .references(&request)?;
+                Ok(MultiOutcome {
+                    served: outcome,
+                    root_facts: root_facts(engines)?,
+                })
+            },
+            move |outcome: &MultiOutcome<crate::graph::ReferencesOutcome>,
+                  budget: response::Budget,
+                  boundary: response::ByteMeasure| {
+                let listed: Vec<usize> = (0..pack_meta.len()).collect();
+                let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
+                response::pack_references_roots(&outcome.served, &headers, budget, boundary)
             },
         )
         .await

@@ -61,7 +61,7 @@ matching host configuration with `--http-port PORT --token-env NAME`:
   emitted bytes are counted with `o200k_base` (complete CLI stdout including its
   trailing LF, or the final MCP text block). The serialized MCP result is separately
   byte-capped. Not a host-envelope or dollar-savings measurement.
-- Six MCP tools (`search`, `context`, `retrieve`, `index`, `status`, `memory`) through the rmcp
+- Seven MCP tools (`search`, `context`, `retrieve`, `index`, `status`, `memory`, `references`) through the rmcp
   SDK: one active engine operation and zero queued, bounded frames/bodies/handlers,
   named `busy`/deadline/cancellation errors, delivery budgets and usage receipts.
 - Explicit project memory (008): `foundry memory put|update|get|forget|search|export`
@@ -76,7 +76,10 @@ matching host configuration with `--http-port PORT --token-env NAME`:
   revision and hashes. It decodes in bounded batches, publishes per source and records
   coverage. `foundry references` answers from a symbol ID or a handle plus byte offset,
   paginating with `next: after=`. Facts become stale when any indexed source changes,
-  until a fresh artifact is imported. Import never runs the producer.
+  until a fresh artifact is imported. Import never runs the producer. Over MCP, the
+  `references` tool answers the same queries, `index {scip: {index_file,
+  snapshot_file}}` imports files staged in `<store>/imports`, and `context` with the
+  graph strategy adds the units enclosing a resolved symbol's references.
 - Multi-root context (007): `--reference ROOT=STORE` (up to 8) admits outside
   repositories at launch; `search`/`context` merge them with per-root coverage and
   handles, and an unavailable root is named rather than silently skipped.
@@ -101,8 +104,7 @@ One store has one owner: a CLI command, a stdio MCP session or the explicit shar
 HTTP owner. Others get `store_busy`. It is not a daemon fleet, compiler indexer,
 vector engine or memory service. Imported graph-bundle labels are supplied by the
 importer; compiler references come only from an imported SCIP artifact, never from a
-compiler run by Foundry. The MCP `references` tool and graph context over compiler
-facts are not yet available (005 T003).
+compiler run by Foundry.
 Routing is deterministic (`auto`/`search`/`graph`); the legacy Laya client is no
 longer reachable from the CLI.
 

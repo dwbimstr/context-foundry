@@ -335,6 +335,10 @@ pub enum RenderedForm {
 /// Ranking tiers: exact definitions, lexical hits, graph items, file outlines.
 pub const TIER_GRAPH: u8 = 3;
 pub const TIER_OUTLINE: u8 = 4;
+/// Source-bearing compiler-graph units (005 T003): delivery units that enclose
+/// an eligible reference of a uniquely resolved seed symbol. They are not
+/// graph edge lines, so the multi-root merge counts them with the units.
+pub const TIER_COMPILER: u8 = 5;
 
 /// One ranked, already revalidated candidate (context-v2 § Candidate seam).
 /// `handle` keeps the full identities of a source item and is `None` for a
@@ -2290,7 +2294,8 @@ impl Engine {
     /// Context candidates (context-v2 § Context candidates and routing), in
     /// order: the first of up to 32 delivery units from the two-tier ranking,
     /// bounded graph items when the strategy resolves to graph (seeded by the
-    /// paths of the top 3 units), the remaining units, then up to 3 file
+    /// paths of the top 3 units), the compiler units of the first three
+    /// spans' symbols (005 T003), the remaining units, then up to 3 file
     /// outlines for the first distinct files among the units. Every candidate
     /// is revalidated, and its signature and outline forms are built, in one
     /// final read transaction.
@@ -2341,6 +2346,10 @@ impl Engine {
         let mut graph_state: Option<&'static str> = None;
         // The graph examination window (32 rows per seed and direction) filled.
         let mut graph_full = false;
+        // 005 T003: the compiler half of a graph context, filled only when
+        // the strategy resolves to graph; its units validate in the final
+        // read below either way.
+        let mut compiler = graph::ContextGraphUnits::empty();
         if resolved == Strategy::Graph {
             let mut seeds: Vec<&str> = Vec::new();
             for item in &search.items {
@@ -2375,11 +2384,36 @@ impl Engine {
                     control.check()?;
                 }
             }
+            // 005 T003: the compiler half, seeded by the first three
+            // retrieved spans. Component-local like the manual edges: an
+            // invalid compiler graph never fails the call.
+            let mut spans: Vec<(String, u64, u64)> = Vec::new();
+            let mut taken = std::collections::BTreeSet::new();
+            for item in &search.items {
+                let Some(handle) = &item.handle else {
+                    continue;
+                };
+                taken.insert((handle.path.clone(), handle.start, handle.end));
+                if spans.len() < graph::CONTEXT_GRAPH_SPANS {
+                    spans.push((handle.path.clone(), handle.start, handle.end));
+                }
+            }
+            if !spans.is_empty() {
+                match self.context_graph_units(&spans, &taken) {
+                    Ok(outcome) => compiler = outcome,
+                    Err(FoundryError::GraphInvalid(_)) => invalid = true,
+                    Err(other) => return Err(other),
+                }
+            }
+            graph_full |= compiler.full;
             graph_state = Some(if invalid {
                 "graph_invalid"
-            } else if fresh_edges > 0 {
+            } else if fresh_edges > 0
+                || !compiler.units.is_empty()
+                || !compiler.already_selected.is_empty()
+            {
                 "ok"
-            } else if stale_edges > 0 {
+            } else if stale_edges > 0 || compiler.stale > 0 || compiler.state_stale {
                 "graph_stale"
             } else {
                 "graph_unavailable"
@@ -2465,9 +2499,155 @@ impl Engine {
                 ))],
             });
         }
-        if graph_state == Some("ok") && graph_dropped > 0 && graph_items.is_empty() {
+        // 005 T003: the compiler evidence goes through the same final read.
+        // The DELIVERED units are selected FIRST, under the one 32-unit
+        // bound over the lexical ranking and the compiler candidates (the
+        // first unit keeps its place, the compiler units follow the graph
+        // edges, the lexical tail yields); only they are proven. One
+        // witness per delivered unit is revalidated in THIS transaction
+        // against the snapshot it was collected under (still selected,
+        // current for the revision) and against its witness rows, and every
+        // graph record that pass reads is charged to one shared allowance -
+        // a depleted allowance leaves the proof unfinished and drops the
+        // expansion with `candidates_full`. A failing unit is counted in
+        // `stale` and dropped. A malformed producer or scope row is
+        // component-local, like the collection phase: the compiler evidence
+        // is discarded and the graph reports `graph_invalid`, while valid
+        // source and manual-edge evidence survives.
+        let final_revision = self.freshness_in(&tx)?.source_revision;
+        let mut compiler_items: Vec<RankedItem> = Vec::new();
+        let compiler_collected =
+            !compiler.units.is_empty() || !compiler.already_selected.is_empty();
+        let mut compiler_used = false;
+        let mut compiler_invalid = false;
+        // The selection: candidates removed here are never probed.
+        let first = usize::from(!units.is_empty());
+        let delivered: Vec<&graph::ContextUnit> = {
+            let mut candidates: Vec<&graph::ContextUnit> = compiler.units.iter().collect();
+            if candidates.len() > CONTEXT_UNITS - first {
+                candidates.truncate(CONTEXT_UNITS - first);
+                counters.candidates_full = true;
+            }
+            candidates
+        };
+        let lexical_room = CONTEXT_UNITS - delivered.len();
+        if units.len() > lexical_room {
+            units.truncate(lexical_room);
+            counters.candidates_full = true;
+        }
+        // The verified-body cache context rendering uses below. The final
+        // relation proof fills it first - every source a relation stands on
+        // (seed, definition, reference) is reconstructed and hash-checked in
+        // this transaction - so each file is verified once, and a corrupt
+        // chunk is a named `corrupt_source`, never an empty graph.
+        let mut bodies: std::collections::BTreeMap<String, (String, String)> =
+            std::collections::BTreeMap::new();
+        if compiler_collected {
+            // One witness per delivered compiler unit, plus one for an
+            // already-selected lexical unit - but only where that unit STAYS
+            // delivered after the cut above.
+            let delivered_lexical: std::collections::BTreeSet<(&str, u64, u64)> = units
+                .iter()
+                .filter_map(|item| {
+                    item.handle
+                        .as_ref()
+                        .map(|handle| (handle.path.as_str(), handle.start, handle.end))
+                })
+                .collect();
+            let witnesses: Vec<&graph::ContextWitness> = delivered
+                .iter()
+                .map(|unit| &unit.witness)
+                .chain(compiler.already_selected.iter().filter(|witness| {
+                    delivered_lexical.contains(&(
+                        witness.unit.0.as_str(),
+                        witness.unit.1,
+                        witness.unit.2,
+                    ))
+                }))
+                .collect();
+            let verdicts = {
+                let mut proof =
+                    |path: &str, hash: &str, start: u64, end: u64| -> FResult<graph::SourceProof> {
+                        let Some(meta) = current_meta(path)? else {
+                            return Ok(graph::SourceProof::Missing);
+                        };
+                        if meta.hash != hash {
+                            return Ok(graph::SourceProof::Missing);
+                        }
+                        if !bodies.contains_key(path) {
+                            let verified = reconstruct_verified(&stored, path, &meta)?;
+                            bodies.insert(path.to_owned(), (meta.hash, verified.body));
+                        }
+                        let body = &bodies[path].1;
+                        let (start, end) = (start as usize, end as usize);
+                        Ok(
+                            if end <= body.len()
+                                && body.is_char_boundary(start)
+                                && body.is_char_boundary(end)
+                            {
+                                graph::SourceProof::Verified
+                            } else {
+                                graph::SourceProof::Outside
+                            },
+                        )
+                    };
+                match graph::witnesses_hold(&tx, final_revision, &witnesses, &mut proof) {
+                    Ok(verdicts) => verdicts,
+                    Err(FoundryError::GraphInvalid(_)) => {
+                        compiler_invalid = true;
+                        graph::WitnessVerdicts {
+                            holds: vec![false; witnesses.len()],
+                            unfinished: false,
+                        }
+                    }
+                    Err(other) => return Err(other),
+                }
+            };
+            if verdicts.unfinished {
+                counters.candidates_full = true;
+            }
+            compiler_used = verdicts.holds.iter().any(|&holds| holds);
+            for (unit, &holds) in delivered.iter().zip(&verdicts.holds) {
+                if compiler_invalid {
+                    break;
+                }
+                let fresh = current_meta(&unit.path)?.is_some_and(|meta| meta.hash == unit.sha256);
+                if !(holds && fresh) {
+                    counters.stale += 1;
+                    graph_dropped += 1;
+                    continue;
+                }
+                compiler_items.push(RankedItem {
+                    tier: TIER_COMPILER,
+                    rank: 0,
+                    score: 0.0,
+                    handle: Some(SourceHandle {
+                        workspace_id: self.workspace_id.clone().unwrap_or_default(),
+                        path: unit.path.clone(),
+                        sha256: unit.sha256.clone(),
+                        start: unit.start,
+                        end: unit.end,
+                    }),
+                    start_line: 0,
+                    end_line: 0,
+                    line: unit.line,
+                    label: unit.label.clone(),
+                    lang: crate::syntax::Lang::from_path(&unit.path)
+                        .map(|lang| lang.tag().to_owned()),
+                    forms: Vec::new(),
+                });
+            }
+        }
+        if compiler_invalid {
+            counters.graph = Some("graph_invalid");
+        } else if graph_state == Some("ok")
+            && graph_items.is_empty()
+            && !compiler_used
+            && (graph_dropped > 0 || compiler_collected)
+        {
             counters.graph = Some("graph_stale");
         }
+        // (The one 32-unit bound was applied above, before the final proof.)
         // Verified bodies, once per path, for the signature forms of units in
         // languages with units and for the first distinct files' outlines.
         let mut outline_paths: Vec<String> = Vec::new();
@@ -2479,8 +2659,6 @@ impl Engine {
                 outline_paths.push(handle.path.clone());
             }
         }
-        let mut bodies: std::collections::BTreeMap<String, (String, String)> =
-            std::collections::BTreeMap::new();
         for item in &units {
             let Some(handle) = &item.handle else {
                 continue;
@@ -2491,6 +2669,19 @@ impl Engine {
                 (has_units && item.label != "block") || outline_paths.contains(&handle.path);
             if wanted
                 && !bodies.contains_key(&handle.path)
+                && let Some(meta) = current_meta(&handle.path)?
+            {
+                let verified = reconstruct_verified(&stored, &handle.path, &meta)?;
+                bodies.insert(handle.path.clone(), (meta.hash, verified.body));
+            }
+        }
+        // 005 T003: the compiler units' bodies join the same verified map,
+        // so their forms render from the same bytes as every other unit.
+        for item in &compiler_items {
+            let Some(handle) = &item.handle else {
+                continue;
+            };
+            if !bodies.contains_key(&handle.path)
                 && let Some(meta) = current_meta(&handle.path)?
             {
                 let verified = reconstruct_verified(&stored, &handle.path, &meta)?;
@@ -2521,6 +2712,38 @@ impl Engine {
                 .any(|form| matches!(form, RenderedForm::Verbatim(text) if *text == signature));
             if !same {
                 item.forms.push(RenderedForm::Signature(signature));
+            }
+        }
+        // 005 T003: source-first forms for the compiler units, from the same
+        // verified bodies and outliners as the search units: the verbatim
+        // unit text, then its signature when the language has units.
+        for item in &mut compiler_items {
+            let Some(handle) = &item.handle else {
+                continue;
+            };
+            let Some((_, body)) = bodies.get(&handle.path) else {
+                continue;
+            };
+            let (start, end) = (handle.start as usize, handle.end as usize);
+            // The bounds cannot fail — the unit came from these same bytes
+            // (the hash was revalidated above) — but a unit that somehow
+            // cannot render is skipped rather than delivered empty.
+            if start >= end
+                || end > body.len()
+                || !body.is_char_boundary(start)
+                || !body.is_char_boundary(end)
+            {
+                continue;
+            }
+            item.start_line = 1 + body[..start].bytes().filter(|&b| b == b'\n').count() as u64;
+            item.end_line = 1 + body[..end - 1].bytes().filter(|&b| b == b'\n').count() as u64;
+            item.forms
+                .push(RenderedForm::Verbatim(body[start..end].to_owned()));
+            if item.label != "block"
+                && let Some(outliner) = outliners.get(handle.path.as_str())
+            {
+                item.forms
+                    .push(RenderedForm::Signature(outliner.render(start..end, 0, 0)));
             }
         }
         let mut outlines: Vec<RankedItem> = Vec::new();
@@ -2607,11 +2830,15 @@ impl Engine {
             None => Vec::new(),
         };
         let freshness = self.freshness_in(&tx)?;
-        // The first unit, then graph items, then the remaining units, then
-        // outlines: a fitting first unit precedes graph items.
+        // The first unit, then graph items, then the compiler units, then
+        // the remaining units, then outlines: a fitting first unit precedes
+        // graph evidence, and compiler units sit between the graph edges and
+        // the remaining search units (they are graph evidence too, ranked
+        // after the manual edge lines by the same tier).
         let mut rest = units.into_iter();
         let mut items: Vec<RankedItem> = rest.next().into_iter().collect();
         items.extend(graph_items);
+        items.extend(compiler_items);
         items.extend(rest);
         items.extend(outlines);
         for (rank, item) in items.iter_mut().enumerate() {

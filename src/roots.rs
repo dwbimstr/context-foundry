@@ -14,8 +14,8 @@
 
 use crate::FoundryError;
 use crate::store::{
-    CandidateBatch, CandidateCounters, Hit, RankedItem, RenderedForm, SearchOutcome, TIER_GRAPH,
-    TIER_OUTLINE,
+    CandidateBatch, CandidateCounters, Hit, RankedItem, RenderedForm, SearchOutcome, TIER_COMPILER,
+    TIER_GRAPH, TIER_OUTLINE,
 };
 use std::path::{Path, PathBuf};
 
@@ -444,18 +444,40 @@ pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
     }
 }
 
-/// Merge the serving roots' context batches: the first [`CONTEXT_UNITS`]
-/// merged units, graph items after the first merged unit in root order
-/// (carrying their root's alias), then the remaining units and the outlines
-/// of the first [`CONTEXT_OUTLINES`] distinct (root, path) files. Counters
-/// are summed across roots; graph takes the worst coverage.
+/// Merge the serving roots' context batches: the first merged unit, graph
+/// edge items after it in root order (carrying their root's alias), the
+/// roots' compiler units (source-bearing, `TIER_COMPILER`), then the
+/// remaining merged units and the outlines of the first
+/// [`CONTEXT_OUTLINES`] distinct (root, path) files. The lexical units and the
+/// compiler units share ONE [`CONTEXT_UNITS`] bound across all roots, so the
+/// lexical tail yields; a cut sets `candidates_full`. Counters are summed
+/// across roots; graph takes the worst coverage.
 pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
     let merged = merged_units(batches);
-    let units: Vec<RankedItem> = merged
+    let mut units: Vec<RankedItem> = merged
         .iter()
         .take(CONTEXT_UNITS)
         .map(|(_, item)| (*item).clone())
         .collect();
+    // Each root's compiler units, in root order. Their identity carries the
+    // root (`ws16` in the handle), so identical rows in two roots stay two.
+    let mut compiler: Vec<RankedItem> = batches
+        .iter()
+        .flat_map(|root| root.batch.items.iter())
+        .filter(|item| item.tier == TIER_COMPILER)
+        .cloned()
+        .collect();
+    let first = usize::from(!units.is_empty());
+    let mut cut = false;
+    if compiler.len() > CONTEXT_UNITS - first {
+        compiler.truncate(CONTEXT_UNITS - first);
+        cut = true;
+    }
+    let lexical_room = CONTEXT_UNITS - compiler.len();
+    if units.len() > lexical_room {
+        units.truncate(lexical_room);
+        cut = true;
+    }
     // Graph items, in root order, each carrying its seed root's alias.
     let mut graph: Vec<RankedItem> = Vec::new();
     for root in batches {
@@ -484,7 +506,7 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
     // file never takes a suppressed file's place.
     let mut outlines: Vec<RankedItem> = Vec::new();
     let mut outlined: Vec<(usize, String)> = Vec::new();
-    for (root, item) in merged.iter().take(CONTEXT_UNITS) {
+    for (root, item) in merged.iter().take(units.len()) {
         if outlined.len() == CONTEXT_OUTLINES {
             break;
         }
@@ -507,20 +529,24 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
             outlines.push(outline);
         }
     }
-    // The first unit, then graph items, then the remaining units, then
-    // outlines: a fitting first unit precedes graph items.
+    // The first unit, then graph items, then the compiler units, then the
+    // remaining units, then outlines: a fitting first unit precedes graph
+    // items.
     let mut rest = units.into_iter();
     let mut items: Vec<RankedItem> = rest.next().into_iter().collect();
     items.append(&mut graph);
+    items.extend(compiler);
     items.extend(rest);
     items.extend(outlines);
     for (rank, item) in items.iter_mut().enumerate() {
         item.rank = rank;
     }
+    let mut counters = summed_counters(batches);
+    counters.candidates_full |= cut;
     CandidateBatch {
         freshness: batches[0].batch.freshness.clone(),
         items,
-        counters: summed_counters(batches),
+        counters,
     }
 }
 
@@ -711,5 +737,78 @@ mod tests {
                 "outline".to_owned(),
             ]
         );
+    }
+
+    fn root(alias: &str, lexical: usize, compiler: usize, edges: usize) -> RootBatch {
+        let mut items: Vec<RankedItem> = (0..lexical)
+            .map(|i| unit(2, &format!("{alias}/lex{i}.rs"), 0))
+            .collect();
+        items.extend((0..edges).map(|_| RankedItem {
+            handle: None,
+            forms: vec![RenderedForm::Line(
+                "src/a.rs:1 (f) --calls--> src/b.rs:2 (g)".to_owned(),
+            )],
+            ..unit(TIER_GRAPH, "", 0)
+        }));
+        items.extend((0..compiler).map(|i| unit(TIER_COMPILER, &format!("{alias}/cmp{i}.rs"), 0)));
+        RootBatch {
+            alias: alias.to_owned(),
+            batch: batch(items),
+        }
+    }
+
+    fn source_units(merged: &CandidateBatch) -> (usize, usize) {
+        let lexical = merged
+            .items
+            .iter()
+            .filter(|item| item.tier == 1 || item.tier == 2)
+            .count();
+        let compiler = merged
+            .items
+            .iter()
+            .filter(|item| item.tier == TIER_COMPILER)
+            .count();
+        (lexical, compiler)
+    }
+
+    #[test]
+    fn compiler_units_share_the_32_unit_bound_with_the_lexical_units_across_roots() {
+        // 30 + 20 lexical candidates (cut to 32 by the merge) and 5 compiler
+        // units from each root: 10 compiler + 32 lexical would be 42.
+        let merged = merge_context(&[root("primary", 30, 5, 1), root("ref1", 20, 5, 1)]);
+        let (lexical, compiler) = source_units(&merged);
+        assert_eq!(compiler, 10, "both roots' compiler units are kept");
+        assert_eq!(lexical + compiler, CONTEXT_UNITS);
+        assert!(merged.counters.candidates_full, "a cut fills the window");
+        // Order: the first unit, the edge lines (not counted as units), the
+        // compiler units, then the remaining lexical units.
+        let tiers: Vec<u8> = merged.items.iter().map(|item| item.tier).collect();
+        assert_eq!(tiers[0], 2);
+        assert_eq!(&tiers[1..3], &[TIER_GRAPH, TIER_GRAPH]);
+        assert!(tiers[3..13].iter().all(|&tier| tier == TIER_COMPILER));
+        assert!(tiers[13..].iter().all(|&tier| tier == 2));
+        // Edge lines carry their root's alias; compiler units do not.
+        for item in merged.items.iter().filter(|item| item.tier == TIER_GRAPH) {
+            let RenderedForm::Line(text) = &item.forms[0] else {
+                panic!("an edge line")
+            };
+            assert!(
+                text.starts_with("primary ") || text.starts_with("ref1 "),
+                "{text}"
+            );
+        }
+        // 33 would not fit: 32 compiler units from two roots keep their
+        // place and the lexical tail yields entirely but the first unit.
+        let merged = merge_context(&[root("primary", 10, 20, 0), root("ref1", 10, 20, 0)]);
+        let (lexical, compiler) = source_units(&merged);
+        assert_eq!((lexical, compiler), (1, 31));
+        assert!(merged.counters.candidates_full);
+    }
+
+    #[test]
+    fn compiler_units_under_the_bound_are_not_cut() {
+        let merged = merge_context(&[root("primary", 3, 2, 0), root("ref1", 2, 1, 0)]);
+        assert_eq!(source_units(&merged), (5, 3));
+        assert!(!merged.counters.candidates_full);
     }
 }

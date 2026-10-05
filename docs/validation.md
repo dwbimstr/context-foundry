@@ -40,6 +40,56 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 005 T003 agent surface — MCP `references`, `index {scip}`, graph context, 2026-10-05
+
+Locally implemented and verified, **unpushed and unreleased**. The measured
+large-workspace run is recorded separately.
+- **Authors:** Z.ai GLM-5.3 (implementer). The captain made the contract rulings during
+  review (spec 005, "Amended 2026-10-05").
+- **Review:** cross-lab by OpenAI GPT-6.1 Sol in four rounds:
+  - round 1, REVISE with 10 Majors:
+    - context units lacked snapshot provenance;
+    - staged files were checked and then reopened by path;
+    - ambiguous symbols expanded;
+    - compiler units bypassed the 32-unit bound, including the multi-root merge;
+    - corruption in the final read failed source context;
+    - seed ranges went unvalidated;
+    - deduplication turned a used graph into `graph_unavailable`;
+    - field validation ran after routing and admission;
+    - multi-root `references` headers were missing;
+    - the budget floor hint could be too low;
+  - round 2, REVISE: a same-snapshot completion could make a witnessed definition
+    ambiguous, and the final read did not reverify definition source chunks;
+  - round 3, REVISE: the final pass did not charge witness membership reads to its
+    allowance;
+  - round 4, SHIP.
+
+  Each round's fixes were mutation-checked: disabling a fix makes its regression test
+  fail. Midway, the implementer accidentally overwrote `src/mcp.rs` and rebuilt it. The
+  captain confirmed only 2 removed lines against the base, and the reviewer read the
+  whole rebuilt diff.
+- **Behaviour.**
+  - `references` is the seventh MCP tool (catalog 977 o200k tokens; ceiling 1000). It
+    validates fields before routing and admission, routes handles by `ws16` like
+    `retrieve`, uses the root-aware header, and answers while the lexical index is
+    `repair_required`.
+  - `index {scip}` imports files staged in `<store>/imports`. It opens and freezes
+    them by descriptor (no-follow), inside the engine slot, with the timeout and
+    cancellation of `index`.
+  - `context` with the graph strategy expands only uniquely resolved symbols. One
+    32-unit bound covers lexical and compiler units in single- and multi-root
+    responses. The final read re-proves each expansion's snapshot, witness rows,
+    uniqueness and source bodies within a separate ≤256-record allowance.
+- **Gates** (worktree on `3a81f8c`): fmt, clippy `-D warnings`, Rust 1.90.0 `check`
+  and clippy pass; full suite **474 passed, 0 failed, 1 ignored**.
+  `http_dropped_stream_keeps_slot_and_overload_keeps_control_traffic_serviceable` (an
+  existing test) failed once under concurrent build load: its 300 ms client timeout
+  dropped the request before it reached the server. It passed 3/3 in isolation.
+- **Integration notes.** `src/graph.rs` changes are additions only: lines 1–1928 are
+  byte-identical to `3a81f8c`. Every removed line elsewhere was audited: the
+  index schema and allow-list, catalog assertions, graph-state branches, the multi-root
+  merge, the references header prologue and the `scip.rs` freeze signature.
+
 ## 005 compiler references — T001 and T002, 2026-10-04
 
 Locally implemented and verified, **unpushed and unreleased**.

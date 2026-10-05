@@ -501,7 +501,15 @@ async fn catalog_names_one_memory_tool_and_no_memory_restores_the_old_catalog() 
     let listed = names(&on).await;
     assert_eq!(
         listed,
-        ["context", "index", "memory", "retrieve", "search", "status"]
+        [
+            "context",
+            "index",
+            "memory",
+            "references",
+            "retrieve",
+            "search",
+            "status"
+        ]
     );
     for gone in [
         "remember",
@@ -519,7 +527,14 @@ async fn catalog_names_one_memory_tool_and_no_memory_restores_the_old_catalog() 
     let off = client(&e, &["--no-memory"]).await;
     assert_eq!(
         names(&off).await,
-        ["context", "index", "retrieve", "search", "status"]
+        [
+            "context",
+            "index",
+            "references",
+            "retrieve",
+            "search",
+            "status"
+        ]
     );
     let refused = call(
         &off,
