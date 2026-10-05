@@ -635,6 +635,25 @@ T003's, each passing only with that task's verification.
     Startup never resumes preparation. Purge commits removal and the stopped state
     under sole ownership; leftover derived files are ineligible and never repopulate
     the cache.
+
+    Decisions made during review, 2026-10-05:
+    - *Publication shares the budget.* `--budget-seconds` bounds the whole command,
+      including publication. New batches stop when the remaining time falls below a
+      publication reserve of max(5 s, budget/10). Publication then runs under the run
+      control. If it cannot finish, the run reports `budget_exhausted`, the committed
+      vectors stay cached, and `index_published` is false with the reason. Every run
+      publishes pending committed coverage before admitting new inference.
+    - *Status trusts committed payloads.* Status counts come from committed metadata:
+      mappings, row lengths and stored function digests. It does not scan vector
+      payloads. A payload tampered with after commit is caught by the lookup that uses
+      it, which disables that vector by name and reclassifies it at the next
+      preparation or repair. Every vector is validated (length, finite values) before it
+      is committed.
+    - *Destructive filesystem work is descriptor-anchored.* Purge, generation
+      publication and removal open the store and `semantic/` directories without
+      following symlinks. They then work through descriptor-relative calls that do not
+      follow links, so renaming or substituting an ancestor after a check cannot
+      redirect them.
   - *Profile and CLI.* There are three commands:
     - `foundry semantic prepare --profile FILE --budget-seconds N
       [--development-isolation]`;
