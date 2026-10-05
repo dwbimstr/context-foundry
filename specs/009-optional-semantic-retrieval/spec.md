@@ -1,9 +1,10 @@
 # 009 — Neural context that becomes useful and stays prepared
 
-Status: Proposed, 2026-09-28; D001 recorded 2026-09-29; D001 chosen values recorded
-2026-10-03 (below). Reactivated for planning by the
-owner's preparation-cost concern. No dense retrieval or preparation worker exists in
-the prototype. Dependencies:
+Status: T001 (preparation, cache, index and the supervised development worker)
+implemented and accepted locally on 2026-10-05, under development isolation only (see
+validation); T002 and T003 open. D001 recorded 2026-09-29; its chosen values were
+recorded 2026-10-03 (below). Reactivated for planning by the owner's preparation-cost
+concern. Dependencies:
 001; 003 for preparation during agent use. Implementation requires D001 below. Beyond
 the owner's 2026-10-04 answers below, no model downloads, long experiments, predecessor
 migration or external-repo changes are authorized.

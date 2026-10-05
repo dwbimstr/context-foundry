@@ -1,0 +1,372 @@
+{
+ "v": 1,
+ "task": "009 T001 prepare once and preserve expensive work",
+ "date": "2026-10-05",
+ "branch_head": "te-009 424af47 on main 59dcfa0",
+ "gates": {
+  "full_suite": "598 passed, 0 failed, 6 ignored (5 development gates + economics)",
+  "clippy": "stable and 1.90, default / embed-worker / no-default-features"
+ },
+ "worker_bundle": {
+  "app": "/private/tmp/cf-009-dev/FoundryEmbedFinal.app",
+  "executable_sha256": "3cb10e27bf65a1a63afe8e0fcc9b1ee01011805aa6713cb6ae3165968121c2c9",
+  "test_hooks": "none (--phase-file absent)",
+  "signing": "ad hoc, App Sandbox development profile"
+ },
+ "profile": {
+  "descriptor_digest": "5e0e9cb83beff0a1ef0f8c81fb0fa08d84b568af6c946aaeafcca0af51d09559",
+  "model": "mlx-community/Nemotron-3-Embed-1B-BF16-4bit@d0408b94",
+  "runtime": "Python 3.12.11, MLX 0.32.3, mlx-metal 0.32.3, mlx-lm 0.31.3, transformers 5.18.0, NumPy 2.5.3"
+ },
+ "real_model_smoke": {
+  "1-index.json": {
+   "changed": 5,
+   "unchanged": 0,
+   "deleted": 0,
+   "excluded": 0,
+   "failures": 0,
+   "source_revision": 5
+  },
+  "2-status-cold.json": {
+   "workspace_id": "ba335eac5169ff88ec887431bf4b82831654e2f4a703d6f2dd027dee5f2b67c7",
+   "source_revision": 5,
+   "profile": null,
+   "provider": {
+    "state": "unknown",
+    "code": null,
+    "observed_at_unix": null,
+    "profile": null
+   },
+   "state": "stopped",
+   "last_error": null,
+   "sources": 5,
+   "unpartitioned_sources": 5,
+   "partition_coverage": "partial",
+   "corpus": "unknown",
+   "eligible_units": 0,
+   "cached_current_units": 0,
+   "searchable_current_units": 0,
+   "missing_units": 0,
+   "committed_units": 0,
+   "cache": {
+    "entries": 0,
+    "bytes": 0,
+    "orphan_entries": 0,
+    "corrupt_entries": 0,
+    "cap_bytes": 2147483648
+   },
+   "index": {
+    "available": false,
+    "entries": 0,
+    "reason": "no semantic profile prepared"
+   }
+  },
+  "3-prepare-noflag.json": {
+   "code": "isolation_unavailable",
+   "message": "semantic retrieval (isolation_unavailable): isolation_unavailable: normal semantic admission stays closed until platform isolation acceptance; pass --development-isolation under the owner's authorization",
+   "retryable": false
+  },
+  "4-prepare.json": {
+   "profile": "nemotron-3-embed-1b-4bit-dev",
+   "function_digest": "5e0e9cb83beff0a1ef0f8c81fb0fa08d84b568af6c946aaeafcca0af51d09559",
+   "recipe_id": "nemotron-units-v1+tokenizers 0.23.2 onig",
+   "sources": 5,
+   "partitioned_sources": 5,
+   "reused_partitions": 0,
+   "eligible_units": 17,
+   "embedded_units": 17,
+   "reused_cached_units": 0,
+   "missing_units": 0,
+   "document_calls": 3,
+   "corrupt_cache_rows": 0,
+   "cache_entries": 17,
+   "cache_bytes": 140352,
+   "index_published": true,
+   "index_entries": 17,
+   "index_reason": null,
+   "provider_state": "ready",
+   "provider_code": null,
+   "publication_reserve_seconds": 60,
+   "state": "stopped",
+   "reason_code": null,
+   "partial": false,
+   "budget_seconds": 600,
+   "elapsed_ms": 15798
+  },
+  "5-status.json": {
+   "workspace_id": "ba335eac5169ff88ec887431bf4b82831654e2f4a703d6f2dd027dee5f2b67c7",
+   "source_revision": 5,
+   "profile": {
+    "name": "nemotron-3-embed-1b-4bit-dev",
+    "function_digest": "5e0e9cb83beff0a1ef0f8c81fb0fa08d84b568af6c946aaeafcca0af51d09559",
+    "recipe_id": "nemotron-units-v1+tokenizers 0.23.2 onig"
+   },
+   "provider": {
+    "state": "ready",
+    "code": null,
+    "observed_at_unix": 1791227441,
+    "profile": "nemotron-3-embed-1b-4bit-dev"
+   },
+   "state": "stopped",
+   "last_error": null,
+   "sources": 5,
+   "unpartitioned_sources": 0,
+   "partition_coverage": "complete",
+   "corpus": "nonempty",
+   "eligible_units": 17,
+   "cached_current_units": 17,
+   "searchable_current_units": 17,
+   "missing_units": 0,
+   "committed_units": 17,
+   "cache": {
+    "entries": 17,
+    "bytes": 140352,
+    "orphan_entries": 0,
+    "corrupt_entries": 0,
+    "cap_bytes": 2147483648
+   },
+   "index": {
+    "available": true,
+    "entries": 17,
+    "reason": null
+   }
+  },
+  "6-prepare-again.json": {
+   "profile": "nemotron-3-embed-1b-4bit-dev",
+   "function_digest": "5e0e9cb83beff0a1ef0f8c81fb0fa08d84b568af6c946aaeafcca0af51d09559",
+   "recipe_id": "nemotron-units-v1+tokenizers 0.23.2 onig",
+   "sources": 5,
+   "partitioned_sources": 0,
+   "reused_partitions": 5,
+   "eligible_units": 17,
+   "embedded_units": 0,
+   "reused_cached_units": 17,
+   "missing_units": 0,
+   "document_calls": 0,
+   "corrupt_cache_rows": 0,
+   "cache_entries": 17,
+   "cache_bytes": 140352,
+   "index_published": true,
+   "index_entries": 17,
+   "index_reason": null,
+   "provider_state": "ready",
+   "provider_code": null,
+   "publication_reserve_seconds": 60,
+   "state": "stopped",
+   "reason_code": null,
+   "partial": false,
+   "budget_seconds": 600,
+   "elapsed_ms": 8406
+  },
+  "7-reindex.json": {
+   "changed": 1,
+   "unchanged": 4,
+   "deleted": 0,
+   "excluded": 0,
+   "failures": 0,
+   "source_revision": 6
+  },
+  "8-status-after-edit.json": {
+   "workspace_id": "ba335eac5169ff88ec887431bf4b82831654e2f4a703d6f2dd027dee5f2b67c7",
+   "source_revision": 6,
+   "profile": {
+    "name": "nemotron-3-embed-1b-4bit-dev",
+    "function_digest": "5e0e9cb83beff0a1ef0f8c81fb0fa08d84b568af6c946aaeafcca0af51d09559",
+    "recipe_id": "nemotron-units-v1+tokenizers 0.23.2 onig"
+   },
+   "provider": {
+    "state": "ready",
+    "code": null,
+    "observed_at_unix": 1791227460,
+    "profile": "nemotron-3-embed-1b-4bit-dev"
+   },
+   "state": "stopped",
+   "last_error": null,
+   "sources": 5,
+   "unpartitioned_sources": 1,
+   "partition_coverage": "partial",
+   "corpus": "unknown",
+   "eligible_units": 13,
+   "cached_current_units": 13,
+   "searchable_current_units": 13,
+   "missing_units": 0,
+   "committed_units": 17,
+   "cache": {
+    "entries": 17,
+    "bytes": 140352,
+    "orphan_entries": 4,
+    "corrupt_entries": 0,
+    "cap_bytes": 2147483648
+   },
+   "index": {
+    "available": true,
+    "entries": 17,
+    "reason": null
+   }
+  },
+  "9-prepare-edit.json": {
+   "profile": "nemotron-3-embed-1b-4bit-dev",
+   "function_digest": "5e0e9cb83beff0a1ef0f8c81fb0fa08d84b568af6c946aaeafcca0af51d09559",
+   "recipe_id": "nemotron-units-v1+tokenizers 0.23.2 onig",
+   "sources": 5,
+   "partitioned_sources": 1,
+   "reused_partitions": 4,
+   "eligible_units": 17,
+   "embedded_units": 1,
+   "reused_cached_units": 16,
+   "missing_units": 0,
+   "document_calls": 1,
+   "corrupt_cache_rows": 0,
+   "cache_entries": 18,
+   "cache_bytes": 148608,
+   "index_published": true,
+   "index_entries": 17,
+   "index_reason": null,
+   "provider_state": "ready",
+   "provider_code": null,
+   "publication_reserve_seconds": 60,
+   "state": "stopped",
+   "reason_code": null,
+   "partial": false,
+   "budget_seconds": 600,
+   "elapsed_ms": 8956
+  },
+  "10-repair.json": {
+   "repaired": true,
+   "quarantined_to": "/private/tmp/cf-009-smoke/store/search.quarantine-4d77d9168654",
+   "drained_sources": 5,
+   "drained_memory": 0,
+   "reason": null,
+   "semantic_index": {
+    "rebuilt": true,
+    "entries": 17,
+    "reason": null
+   }
+  },
+  "11-status-after-repair.json": {
+   "workspace_id": "ba335eac5169ff88ec887431bf4b82831654e2f4a703d6f2dd027dee5f2b67c7",
+   "source_revision": 6,
+   "profile": {
+    "name": "nemotron-3-embed-1b-4bit-dev",
+    "function_digest": "5e0e9cb83beff0a1ef0f8c81fb0fa08d84b568af6c946aaeafcca0af51d09559",
+    "recipe_id": "nemotron-units-v1+tokenizers 0.23.2 onig"
+   },
+   "provider": {
+    "state": "ready",
+    "code": null,
+    "observed_at_unix": 1791227469,
+    "profile": "nemotron-3-embed-1b-4bit-dev"
+   },
+   "state": "stopped",
+   "last_error": null,
+   "sources": 5,
+   "unpartitioned_sources": 0,
+   "partition_coverage": "complete",
+   "corpus": "nonempty",
+   "eligible_units": 17,
+   "cached_current_units": 17,
+   "searchable_current_units": 17,
+   "missing_units": 0,
+   "committed_units": 18,
+   "cache": {
+    "entries": 18,
+    "bytes": 148608,
+    "orphan_entries": 1,
+    "corrupt_entries": 0,
+    "cap_bytes": 2147483648
+   },
+   "index": {
+    "available": true,
+    "entries": 17,
+    "reason": null
+   }
+  },
+  "12-prepare-after-repair.json": {
+   "profile": "nemotron-3-embed-1b-4bit-dev",
+   "function_digest": "5e0e9cb83beff0a1ef0f8c81fb0fa08d84b568af6c946aaeafcca0af51d09559",
+   "recipe_id": "nemotron-units-v1+tokenizers 0.23.2 onig",
+   "sources": 5,
+   "partitioned_sources": 0,
+   "reused_partitions": 5,
+   "eligible_units": 17,
+   "embedded_units": 0,
+   "reused_cached_units": 17,
+   "missing_units": 0,
+   "document_calls": 0,
+   "corrupt_cache_rows": 0,
+   "cache_entries": 18,
+   "cache_bytes": 148608,
+   "index_published": true,
+   "index_entries": 17,
+   "index_reason": null,
+   "provider_state": "ready",
+   "provider_code": null,
+   "publication_reserve_seconds": 60,
+   "state": "stopped",
+   "reason_code": null,
+   "partial": false,
+   "budget_seconds": 600,
+   "elapsed_ms": 8726
+  },
+  "13-purge.json": {
+   "removed_partitions": 5,
+   "removed_cache_entries": 18,
+   "removed_cache_bytes": 148608,
+   "removed_generation_dirs": 1,
+   "state": "stopped"
+  },
+  "14-status-purged.json": {
+   "workspace_id": "ba335eac5169ff88ec887431bf4b82831654e2f4a703d6f2dd027dee5f2b67c7",
+   "source_revision": 6,
+   "profile": null,
+   "provider": {
+    "state": "unknown",
+    "code": null,
+    "observed_at_unix": null,
+    "profile": null
+   },
+   "state": "stopped",
+   "last_error": null,
+   "sources": 5,
+   "unpartitioned_sources": 5,
+   "partition_coverage": "partial",
+   "corpus": "unknown",
+   "eligible_units": 0,
+   "cached_current_units": 0,
+   "searchable_current_units": 0,
+   "missing_units": 0,
+   "committed_units": 0,
+   "cache": {
+    "entries": 0,
+    "bytes": 0,
+    "orphan_entries": 0,
+    "corrupt_entries": 0,
+    "cap_bytes": 2147483648
+   },
+   "index": {
+    "available": false,
+    "entries": 0,
+    "reason": "no semantic profile prepared"
+   }
+  }
+ },
+ "development_runs": {
+  "parity": "direct-ID path equals publisher encode(input_type=None): cosine 1.0000000, max abs diff 0, batch 1/8, reordered, heterogeneous with 1024, exact 2048; 2049 refused before any model call (r2/r3/r4 logs)",
+  "owner_death_stress_gate_gone_after_ms": [
+   50.350208,
+   102.66575,
+   83.181083,
+   43.359959,
+   63.192666,
+   64.228625,
+   102.66575
+  ],
+  "owner_death_note": "six scenarios incl. cold first inference under CPU and GPU pressure and the original resident-worker repeated-ID cold call; gone <= 2 s asserted in every scenario; worst ~102.7 ms. One earlier unacknowledged run (pid 95942) exceeded 2 s; not reproduced, cause unknown.",
+  "sandbox_probes": "outside/live-store read+write, read-only-grant writes, symlink escapes (parent-created links, errno-strict), inherited env/FD, TCP/UDP/DNS/IPv6 out+listen, fork/spawn + RLIMIT restore, oversized IPC; each with an unsandboxed positive control"
+ },
+ "reviews": {
+  "slice_A": "GPT-6.1 Sol: BLOCK, BLOCK, BLOCK, SHIP (4 rounds)",
+  "slice_B": "GPT-6.1 Sol: BLOCK, BLOCK, REVISE, SHIP (4 rounds)"
+ },
+ "limits": "development isolation only; normal admission is isolation_unavailable until signing/notarization and package acceptance; SIGSTOP needs an OS guardian; status trusts committed payloads (tampered rows are named by the lookup that uses them); semantic search delivery is T002"
+}

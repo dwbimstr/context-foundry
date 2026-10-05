@@ -276,9 +276,13 @@ repair/upgrade), `ingest` (held-root paged reconciliation), `response` (handles,
 packing and exact counting against a caller-supplied final renderer), `control`
 (cooperative cancellation/deadlines), `error` (contract codes), `graph` (manual bundles
 and the 005 compiler tables/`references` read), `scip` (005 streaming SCIP decoder,
-manifest and frozen-copy importer), `memory` (008), `cli` (core commands), and the 003
-adapter: `mcp`, `bootstrap`, `config`, `receipts`, `adapter_cli`, `adapter_error`,
-`gateway`. `fault`/`testkit` compile only under the test feature;
+manifest and frozen-copy importer), `memory` (008), `neural` (009: partition, cache,
+USearch generations, bounded preparation, status, the provider/frame/profile contract
+and the supervised embedding worker), `cli` (core commands), and the 003 adapter:
+`mcp`, `bootstrap`, `config`, `receipts`, `adapter_cli`, `adapter_error`, `gateway`.
+The `foundry-embed` worker binary builds only with the `embed-worker` feature; the
+`semantic` feature (default) gates the core's tokenizer and USearch dependencies.
+`fault`/`testkit` compile only under the test feature;
 fault arming lives in a separate test binary. CLI and MCP call the same library API;
 no plugin framework or generic execution planner.
 
@@ -491,11 +495,12 @@ processes are not a supported serving topology; the optional shared HTTP owner (
 serves several MCP clients through that one owner. Do not add process retries and
 lock stealing as a substitute for one serving owner.
 
-The implemented store schema is version 4 (005, 2026-10-04). `upgrade-store --to 4` is
-the one explicit transaction from v1, v2 or v3. It applies the v1→v2 revision/scan/repair
-metadata (001 T001), then the v3 steps for v1 and v2 stores: the memory table and its
-revision counter, and typed pending-index keys (`source:`/`memory:`). Every store then
-gains the empty compiler-fact tables (005), filled only by `import-scip`. Other targets
+The implemented store schema is version 5 (009, 2026-10-05). `upgrade-store --to 5` is
+the one explicit transaction from v1–v4. It applies the v1→v2 revision/scan/repair
+metadata (001 T001); for v1 and v2 stores, the v3 steps (the memory table, its revision
+counter, and typed pending-index keys `source:`/`memory:`); for v1–v3, the v4 steps (the
+empty 005 compiler-fact tables). Every store then gains the empty 009 semantic tables
+(partitions, vector cache, preparation state), filled only by `semantic prepare`. Other targets
 are refused, and so are older readers. There is no predecessor-store reader or
 automatic migration. The first compatibility promise is source rebuildability;
 feedback must be exported before replacing an incompatible store. A future schema

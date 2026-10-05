@@ -207,6 +207,40 @@ Ad-hoc signatures, development Homebrew read grants and a loopback-listener deni
 do not satisfy distribution, all network variants, descriptor hygiene or owner-death
 cleanup. Missing required enforcement still disables the affected feature.
 
+**009 embedding worker, implemented 2026-10-05 (009 T001; development profile only).**
+Normal semantic admission returns `isolation_unavailable` until signing/notarization
+and package acceptance close. `foundry semantic prepare --development-isolation` runs
+the development profile, which works as follows:
+- **Profile and bundle.** The semantic profile (≤64 KiB, versioned) names the model
+  directory, worker bundle and executable hash, the Python home and site-packages, the
+  frozen requirements, the expected document-function descriptor and
+  `worker.scratch_root`. `scripts/embed-worker-bundle.sh --profile FILE` builds an
+  ad-hoc-signed App Sandbox bundle. Every grant comes from that profile: read-only
+  grants for its input paths, and one read-write grant for exactly the scratch root.
+- **Refusals before launch.** Validation, the script and the launcher all refuse a
+  scratch root that equals, contains or lies inside any read-only grant, aliases
+  included. Scratch and per-run directories are created 0700. The load timeout is
+  capped at 3600 s.
+- **Launch.** Before exec the supervisor sets soft and hard `RLIMIT_NPROC=0`, an
+  `env -i`-style offline environment, and closes descriptors beyond stdio and the
+  liveness pipe.
+- **Interpreter.** The worker starts CPython isolated: no site import, no user site,
+  no environment, and an explicit search path of stdlib plus the profile's
+  site-packages. This happens before any Python runs. It verifies the artifact
+  inventory and adapter claims before loading.
+- **Resources.** Process count is `hard`. Memory is `supervised`: the supervisor
+  polls the physical footprint every 250 ms against the profile's ceiling (3 GiB by
+  default), and a breach stops the worker with `resource_limit`.
+- **Owner death.** A native watcher on the liveness pipe and a kqueue `NOTE_EXIT`
+  calls `_exit` without the GIL.
+
+  Measured on the development bundle under cold and warm load and under CPU and GPU
+  pressure: `_exit` within about 1 ms of an owner SIGKILL, and the process gone within
+  103 ms. One earlier unacknowledged run exceeded 2 s, cause unknown (see validation).
+
+  A SIGSTOPped worker cannot exit itself; package acceptance needs an OS-level
+  guardian.
+
 For every platform declare `resource_enforcement` as `hard` or `supervised`, by resource.
 OS-enforced memory/process bounds differ from supervisor RSS polling, which can overshoot.
 A job requiring hard limits refuses a merely supervised profile. 013's

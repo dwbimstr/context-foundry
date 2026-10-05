@@ -45,7 +45,7 @@ matching host configuration with `--http-port PORT --token-env NAME`:
 
 ## What works
 
-- Explicit store creation, schema-4 upgrade (`upgrade-store --to 4`, from v1, v2 or v3), bounded
+- Explicit store creation, schema-5 upgrade (`upgrade-store --to 5`, from v1–v4), bounded
   refresh and explicit `repair-index` with one retained quarantine. Reads never create,
   upgrade or repair a store; a broken lexical index leaves status and retrieve usable.
   An upgraded store, or one indexed before search schema 3 (leading-run units),
@@ -83,6 +83,15 @@ matching host configuration with `--http-port PORT --token-env NAME`:
 - Multi-root context (007): `--reference ROOT=STORE` (up to 8) admits outside
   repositories at launch; `search`/`context` merge them with per-root coverage and
   handles, and an unavailable root is named rather than silently skipped.
+- Semantic preparation (009 T001): `foundry semantic prepare --profile FILE
+  --budget-seconds N`, `semantic status` and `semantic purge`. Sources are partitioned
+  into embedding units of at most 1024 tokens and tokenized in Rust. Vectors are cached
+  by document function and exact input, and a USearch F16 index is built from the cache.
+  Unchanged inputs are never re-embedded across restarts, repairs or profile rollback.
+  Model execution needs an accepted isolation profile. Until signing and package
+  acceptance close it runs only with `--development-isolation`, in an ad-hoc App
+  Sandbox worker; otherwise it is `isolation_unavailable`. Semantic search delivery is
+  009 T002.
 - `foundry usage import --host omp|codex --session FILE`: offline counter summary of a
   host session (provider usage, tool calls and Foundry payloads); opens no store.
 - Owned model gateway (003 T004): `foundry gateway --config FILE` meters OMP 18.6.0

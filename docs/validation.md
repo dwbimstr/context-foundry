@@ -40,6 +40,74 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 009 T001 semantic preparation and supervised worker — 2026-10-05
+
+Locally implemented and verified, **unpushed and unreleased**. Development isolation
+only; normal admission stays `isolation_unavailable` until signing/notarization and
+package acceptance. [Evidence](review/009-t001-2026-10-05.json).
+- **Authors and shape.** Z.ai GLM-5.3 wrote two slices; the captain wrote the shared
+  boundary (`provider`, `protocol`, `profile`). Slice A covers partition, the schema-5
+  tables, cache, USearch generations, bounded prepare, status and purge. Slice B
+  covers the worker runtime, the `foundry-embed` worker, the supervisor and the bundle
+  script.
+- **Review:** cross-lab by OpenAI GPT-6.1 Sol, four rounds per slice.
+  - Slice A: BLOCK ×3, then SHIP. Findings fixed:
+    - symlink and ancestor substitution in purge and publication, now anchored to
+      a store descriptor held for the Engine's life;
+    - the run deadline not reaching the provider or artifact verification;
+    - duplicate-input generations;
+    - partial runs never publishing, now under a publication reserve;
+    - mapping ranges and exact-input key identity;
+    - whitespace direction, and a depth cutoff now replaced by a work stack;
+    - durable progress counters;
+    - retained-profile and nonfinite cache classification;
+    - status deadlines.
+  - Slice B: BLOCK ×2, REVISE, then SHIP. Findings fixed:
+    - an unexplained owner-death miss, now behind a pressure gate;
+    - a lost exit event during watcher arming;
+    - the worker's descriptor and inventory not being validated;
+    - acquisition not bounded by the caller's deadline;
+    - late replies and retries after the deadline;
+    - site hooks running before isolation, now an isolated `PyConfig`;
+    - a vacuous symlink probe;
+    - scratch-root binding and overlap with read-only grants, aliases included;
+    - timeout overflow.
+
+  The captain recorded three decisions in spec 009: publication shares the budget,
+  status trusts committed payloads, and destructive filesystem work is
+  descriptor-anchored.
+- **Gates** on `te-009` over main `59dcfa0`:
+  - fmt, clippy `-D warnings` and the Rust 1.90.0 check and clippy pass, including the
+    `embed-worker` and `--no-default-features` builds;
+  - full suite **598 passed, 0 failed, 6 ignored**: five `--ignored` real-model
+    development gates plus the existing economics test;
+  - `tests/neural.rs` 51, `tests/embed_worker.rs` 46 (+5).
+- **Real model.** A release `foundry` drove the production worker bundle (`3cb10e27…`,
+  no test hooks) with the pinned Nemotron 4-bit profile (function digest
+  `5e0e9cb8…`):
+  - first preparation: 5 sources → 17 units, 3 document calls, 17 cached f32 vectors,
+    an F16 generation of 17 entries, 15.8 s, 657 MiB peak (CLI process);
+  - unchanged restart: 0 calls, 17 reused;
+  - one-file edit: the old mapping was rejected immediately; re-preparation made 1 call
+    and reused 16;
+  - `repair-index`: rebuilt the semantic index from the cache with 0 calls;
+  - purge: removed partitions, cache (including the orphan) and the generation, while
+    lexical search kept working;
+  - without `--development-isolation`: `isolation_unavailable`.
+- **Development worker runs.**
+  - Parity: the direct-ID path equals publisher `encode` (cosine 1.0000000, max
+    difference 0) for batch 1 and 8, reordered and heterogeneous batches, and exact
+    1024- and 2048-token inputs; 2049 is refused before any model call.
+  - Owner death: across six pressure scenarios (cold and warm, CPU and GPU), the worker
+    was gone within 2 s in every one, worst 102.7 ms. One earlier unacknowledged run
+    (pid 95942) exceeded 2 s; it was not reproduced, and its cause is unknown.
+  - Sandbox: negative probes, each with an unsandboxed positive control.
+- **Limits.**
+  - A SIGSTOPped worker cannot exit itself; package acceptance needs an OS guardian.
+  - Memory is supervised, not hard.
+  - The ad-hoc signed bundle is not a distribution package.
+  - Semantic search delivery and MCP preparation are T002 and T003.
+
 ## 005 T003 measured run — rust-lang/rust 1.99.0, 2026-10-05
 
 One run, executed once, against the declared profile. Every acceptance criterion
