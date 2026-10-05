@@ -73,8 +73,19 @@ hyper = { version = "1", default-features = false, features = ["http1", "server"
 hyper-util = { version = "0.1", default-features = false, features = ["tokio", "server"] }
 http-body-util = "0.1"
 bytes = "1"
+# 009 semantic retrieval (D001 pins, built on Rust 1.90): Rust tokenization of
+# the pinned artifact's tokenizer.json and the USearch F16 index. Default on;
+# `--no-default-features` builds the lexical-only core.
+tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
+usearch = { version = "=2.26.2", optional = true }
+# 009 embedding worker only (`embed-worker`): the embedded Python runtime that
+# runs the publisher's MLX model. `foundry` never links it.
+pyo3 = { version = "=0.29.2", features = ["auto-initialize"], optional = true }
 
 [features]
+default = ["semantic"]
+semantic = ["dep:tokenizers", "dep:usearch"]
+embed-worker = ["dep:pyo3"]
 # Named deterministic fault points for recovery tests. Never enabled by
 # default; release builds contain no hook code or fault-name strings.
 test-faults = []
