@@ -51,6 +51,12 @@ Owner answers, 2026-10-04:
   - Fixture: its `rl_agent_config.json` carries the inherited
     `temperature_by_options` (`choice:11+` = 0.1006) that T002 must refuse.
 - **Signing/notarization.** Decide later.
+- **Development isolation, 2026-10-05.** The owner extended the 009 development-isolation
+  authorization to the 013 training worker. The worker is an ad-hoc-signed App Sandbox
+  bundle with zero descendants (`RLIMIT_NPROC=0`), read-only grants for the checkpoint
+  and LibTorch, writes to scratch only, and no network. It runs only behind
+  `--development-isolation` and is never advertised as production isolation. Normal
+  admission stays `isolation_unavailable` until signing and package acceptance close.
 
 ## Outcome and requirements
 
