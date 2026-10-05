@@ -94,9 +94,10 @@ Locally implemented and verified, **unpushed and unreleased**.
   - corrupted rows, short IDs and missing definition sources named without panics;
   - oversized documents identified by their last path, and truncated messages
     refused before selection.
-- **Real artifact (005 T003 producer run, see below).** The 56.9 MB rust-lang/rust
-  `library/` artifact (958 documents, 436,829 occurrences) imported into the
-  whole-repository store (60,739 sources):
+- **Real artifact.** The 005 T003 producer run (spec 005 § Owner answers, T003 producer run;
+  [questions record](review/005-t003-questions-2026-10-04.json)) produced a 56.9 MB
+  rust-lang/rust `library/` artifact (958 documents, 436,829 occurrences). Imported into
+  the whole-repository store (60,739 sources):
   - `complete: true`, 0 failed, `coverage: partial` (unresolved external references);
   - 22.5 s at 480 MiB peak RSS (round 2); with the final release binary
     `fd3c166b…6e3a` (no test-hook strings), 35.3 s at 465 MiB;
