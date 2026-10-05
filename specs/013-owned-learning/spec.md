@@ -35,6 +35,13 @@ Owner answers, 2026-10-04:
       delivered tokens (a tie goes to `search`). If neither does, no row is written.
   - Rows become trainable only through the trusted operator CLI. Labeling runs after
     005 T003's graph context lands.
+  - Labeling run, 2026-10-05: applying the approved rule to the refreshed 005 T003 store
+    (rust-lang/rust 1.99.0, revision 60741) produced 4,597 tasks over 400 groups, more
+    than the ~900 estimated. The task checker labeled 1,088 (856 `search`, 232 `graph`)
+    over 268 groups. The split floors are met with both labels in every split: train
+    209 groups, calibration 35, evaluation 24. The owner accepted the full labeled set
+    the same day. Rows enter through `feedback v4`, with states composed by the core
+    (013 T001).
 - **Decision checkpoint.** Download authorized and done 2026-10-04:
   - Source: `convaiinnovations/laya-typed-decisions@1a793eb5`, Hub card license
     apache-2.0, 7 files, 846,203,578 bytes.
