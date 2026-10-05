@@ -254,6 +254,9 @@ struct HeaderV2<'a> {
     stale: u64,
     candidates_full: bool,
     graph: Option<&'a str>,
+    /// The 009 T002 semantic word: `ready`, `partial` or
+    /// `fallback:<reason>`; `None` keeps the baseline header byte-for-byte.
+    semantic: Option<&'a str>,
 }
 
 impl HeaderV2<'_> {
@@ -305,6 +308,9 @@ impl HeaderV2<'_> {
         }
         if let Some(graph) = self.graph {
             segments.push(format!("graph:{graph}"));
+        }
+        if let Some(semantic) = self.semantic {
+            segments.push(format!("semantic:{}", single_line(semantic)));
         }
         let mut line = segments.join(" · ");
         line.push('\n');
@@ -403,8 +409,13 @@ fn source_item(handle: &str, start_line: u64, path: &str, body: &str) -> String 
     )
 }
 
+/// One rendering of a candidate and the full-identity handle it delivers
+/// (`None` for edges and for signature/outline forms, which are not the
+/// verbatim bytes of that identity).
+type RenderedChoice = (String, Option<String>);
+
 /// Every form of a ranked item, rendered in ladder order.
-fn ranked_forms(item: &RankedItem) -> Vec<String> {
+fn ranked_forms(item: &RankedItem) -> Vec<RenderedChoice> {
     let handle = item.handle.as_ref();
     let lines = handle
         .filter(|handle| handle.start < handle.end)
@@ -418,15 +429,143 @@ fn ranked_forms(item: &RankedItem) -> Vec<String> {
     item.forms
         .iter()
         .map(|form| match form {
-            RenderedForm::Verbatim(body) => source(None, body),
-            RenderedForm::Signature(body) => source(Some("[signature]"), body),
+            RenderedForm::Verbatim(body) => (
+                source(None, body),
+                handle.map(crate::store::SourceHandle::to_v2),
+            ),
+            RenderedForm::Signature(body) => (source(Some("[signature]"), body), None),
             RenderedForm::Outline(body) | RenderedForm::OutlineMin(body) => {
-                source(Some("[outline]"), body)
+                (source(Some("[outline]"), body), None)
             }
-            RenderedForm::Line(text) => format!("edge {}\n", single_line(text)),
+            RenderedForm::Line(text) => (format!("edge {}\n", single_line(text)), None),
         })
-        .filter(|rendered| !rendered.is_empty())
+        .filter(|(rendered, _)| !rendered.is_empty())
         .collect()
+}
+
+/// One semantic item line (009 T002): the selection tag sits immediately
+/// after `L<a>-<b>` and BEFORE the optional label, then the fenced body.
+fn semantic_item_text(
+    handle: &str,
+    lines: Option<(u64, u64)>,
+    tag: &str,
+    label: &str,
+    lang: Option<&str>,
+    body: &str,
+) -> String {
+    let mut item = handle.to_owned();
+    if let Some((first, last)) = lines {
+        item.push_str(&format!(" L{first}-{last}"));
+    }
+    item.push(' ');
+    item.push_str(&single_line(tag));
+    if !label.is_empty() {
+        item.push(' ');
+        item.push_str(&single_line(label));
+    }
+    item.push('\n');
+    item.push_str(&fenced(body, lang));
+    item
+}
+
+/// The semantic evidence ladder (009 T002): the whole matched unit, then
+/// the selected lexical span, then bounded prefixes of the selected bytes
+/// labeled `preview` — each preview carrying its `next:` continuation after
+/// the fence, item, fence and continuation packing as ONE form. The packer
+/// takes the first form that fits; `[signature]`/`[outline]` forms never
+/// participate.
+fn semantic_forms(item: &RankedItem) -> Vec<RenderedChoice> {
+    let Some(evidence) = &item.semantic else {
+        return ranked_forms(item);
+    };
+    let Some(handle) = &item.handle else {
+        return ranked_forms(item);
+    };
+    let lang = item.lang.as_deref();
+    let matched = evidence.matched.to_v2();
+    let last_line_of = |start_line: u64, body: &str| {
+        start_line
+            + body.as_bytes()[..body.len().saturating_sub(1)]
+                .iter()
+                .filter(|&&b| b == b'\n')
+                .count() as u64
+    };
+    let mut forms: Vec<RenderedChoice> = Vec::with_capacity(4);
+    // 1. The whole matched unit.
+    let whole = handle.to_v2();
+    forms.push((
+        semantic_item_text(
+            &whole,
+            Some((evidence.unit_start_line, item.end_line)),
+            "[whole_unit]",
+            &item.label,
+            lang,
+            &evidence.unit_body,
+        ),
+        Some(whole),
+    ));
+    // 2. The selected lexical span, clipped to the unit. A span that IS the
+    //    unit is the whole-unit form already, not a second rung.
+    let mut selected: Option<(crate::store::SourceHandle, String, u64)> = None;
+    if let Some((span_handle, span_body, span_start_line)) = &evidence.span {
+        if (span_handle.start, span_handle.end) != (evidence.matched.start, evidence.matched.end) {
+            let end_line = last_line_of(*span_start_line, span_body);
+            let span_v2 = span_handle.to_v2();
+            forms.push((
+                semantic_item_text(
+                    &span_v2,
+                    Some((*span_start_line, end_line)),
+                    &format!("[lexical_span {matched}]"),
+                    &item.label,
+                    lang,
+                    span_body,
+                ),
+                Some(span_v2),
+            ));
+        }
+        selected = Some((span_handle.clone(), span_body.clone(), *span_start_line));
+    }
+    // 3. Bounded proper prefixes of the selected bytes, each with its
+    //    remaining range as the continuation. A prefix that is everything
+    //    is not a preview: that is the form above.
+    let (base, bytes, start_line) = match selected {
+        Some((base, bytes, start_line)) => (base, bytes, start_line),
+        None => (
+            evidence.matched.clone(),
+            evidence.unit_body.clone(),
+            evidence.unit_start_line,
+        ),
+    };
+    for length in prefix_lengths(&bytes)
+        .into_iter()
+        .filter(|&length| length < bytes.len())
+    {
+        let split = base.start + length as u64;
+        let delivered = crate::store::SourceHandle {
+            end: split,
+            ..base.clone()
+        };
+        let preview = &bytes[..length];
+        let end_line = last_line_of(start_line, preview);
+        let delivered_v2 = delivered.to_v2();
+        let mut form = semantic_item_text(
+            &delivered_v2,
+            Some((start_line, end_line)),
+            &format!("[preview {matched}]"),
+            &item.label,
+            lang,
+            preview,
+        );
+        let next = crate::store::SourceHandle {
+            start: split,
+            ..base.clone()
+        };
+        form.push_str("next: ");
+        form.push_str(&next.to_v2());
+        form.push('\n');
+        forms.push((form, Some(delivered_v2)));
+    }
+    forms
 }
 
 /// The fixed point of the most expensive limiter label's rendering: a budget
@@ -500,6 +639,7 @@ fn refusal_floor_impl(
         stale: longest,
         candidates_full: true,
         graph: (op == "context").then_some("graph_unavailable"),
+        semantic: None,
     };
     let item = handle.map_or_else(String::new, |handle| {
         let widest = HandleRef {
@@ -521,6 +661,14 @@ fn refusal_floor_impl(
     })
 }
 
+/// 001 § Deduplication for a batch carrying neural evidence: the
+/// full-identity handle each verbatim form delivers, `claims[item][form]`
+/// parallel to the ladder forms. Signature, outline and edge forms carry
+/// `None`: they never claim an identity and never merge. A later candidate
+/// of ANY origin whose verbatim form names an already delivered identity
+/// merges into the earlier item instead of delivering the bytes twice.
+type Claims = [Vec<Option<String>>];
+
 /// Ladder packing (context-v2 § Ladder packing) over an already ordered list
 /// of candidates, each given as its rendered forms in ladder order: include
 /// the first form whose complete response (header updated for that
@@ -539,6 +687,7 @@ fn pack(
     budget: Budget,
     byte_cap: usize,
     boundary: ByteMeasure,
+    claims: Option<&Claims>,
 ) -> FResult<PackedText> {
     let render = |included: &[(usize, usize)],
                   tail_kept: &[usize],
@@ -562,9 +711,19 @@ fn pack(
     let fits = |text: &str| boundary(text) <= byte_cap && count_tokens(text) <= budget.tokens;
     let mut included: Vec<(usize, usize)> = Vec::new();
     let mut omitted = 0usize;
+    let mut claimed: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for (index, forms) in items.iter().enumerate() {
         let mut placed = false;
+        let mut merged = false;
         for form in 0..forms.len() {
+            let identity = claims.and_then(|claims| claims[index][form].as_deref());
+            if identity.is_some_and(|identity| claimed.contains(identity)) {
+                // These exact bytes are already in the response (earlier
+                // forms of this candidate are the same bytes or contain
+                // them): the candidate merges into the earlier item.
+                merged = true;
+                break;
+            }
             included.push((index, form));
             if fits(&render(
                 &included,
@@ -574,11 +733,14 @@ fn pack(
                 budget.limited_by,
             )) {
                 placed = true;
+                if let Some(identity) = identity {
+                    claimed.insert(identity);
+                }
                 break;
             }
             included.pop();
         }
-        if !placed {
+        if !placed && !merged {
             omitted += 1;
         }
     }
@@ -682,6 +844,7 @@ fn pack_retrieve_impl(
         stale: 0,
         candidates_full: false,
         graph: None,
+        semantic: None,
     };
     let render = |length: usize, shown: usize, limited_by: BudgetLimiter| {
         let split = out.requested.start + length as u64;
@@ -767,6 +930,7 @@ fn pack_retrieve_outline_impl(
         stale: 0,
         candidates_full: false,
         graph: None,
+        semantic: None,
     };
     let handle = out.requested.to_v2();
     let lines = (out.requested.start < out.requested.end).then_some((out.start_line, out.end_line));
@@ -884,7 +1048,11 @@ fn pack_context_impl(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    let items: Vec<Vec<String>> = batch.items.iter().map(ranked_forms).collect();
+    let (items, identities): (Vec<Vec<String>>, Vec<Vec<Option<String>>>) = batch
+        .items
+        .iter()
+        .map(|item| semantic_forms(item).into_iter().unzip())
+        .unzip();
     let f = &batch.freshness;
     let header = HeaderV2 {
         op: "context",
@@ -897,8 +1065,19 @@ fn pack_context_impl(
         stale: batch.counters.stale,
         candidates_full: batch.counters.candidates_full,
         graph: batch.counters.graph,
+        semantic: batch.semantic.as_deref(),
     };
-    pack(&items, tail, &header, budget, BYTE_CAP, boundary)
+    // 001 § Deduplication: a neural candidate can deliver a full identity a
+    // lexical candidate also names (a dense unit's lexical span equal to a
+    // lexical hit), in either order; the later delivery merges into the
+    // earlier one. Batches without neural evidence (no profile, or a
+    // fallback) are packed exactly as before.
+    let claims = batch
+        .items
+        .iter()
+        .any(|item| item.semantic.is_some())
+        .then_some(identities.as_slice());
+    pack(&items, tail, &header, budget, BYTE_CAP, boundary, claims)
 }
 
 /// v2 search: one locator line per hit, `<handle> L<line> <label>:
@@ -952,8 +1131,9 @@ fn pack_search_impl(
         stale: outcome.stale_candidates,
         candidates_full: outcome.candidate_limit_reached,
         graph: None,
+        semantic: outcome.semantic.as_deref(),
     };
-    pack(&items, &[], &header, budget, BYTE_CAP, boundary)
+    pack(&items, &[], &header, budget, BYTE_CAP, boundary, None)
 }
 
 /// 008 memory search: the v2 header exactly as `search` builds it (from the
@@ -982,8 +1162,9 @@ pub fn pack_memory_search(
         stale: outcome.stale_candidates,
         candidates_full: outcome.candidates_full,
         graph: None,
+        semantic: None,
     };
-    pack(&items, &[], &header, budget, BYTE_CAP, boundary)
+    pack(&items, &[], &header, budget, BYTE_CAP, boundary, None)
 }
 
 /// One compact memory line (008): `mem:<id>@r<revision> <author>:

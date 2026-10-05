@@ -201,8 +201,11 @@ pub fn child_setup(read_fd: i32) -> impl FnMut() -> std::io::Result<()> + Send +
 }
 
 /// Physical footprint in bytes of `pid` (`proc_pid_rusage`, flavor V0), the
-/// figure Activity Monitor reports as memory. `None` when the call fails.
-fn physical_footprint(pid: u32) -> Option<u64> {
+/// figure Activity Monitor reports as memory, or why it could not be read.
+/// `fault_detail` names the worker at the measurement fault point.
+#[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
+fn physical_footprint(pid: u32, fault_detail: &str) -> Result<u64, String> {
+    neural_fault!(FOOTPRINT_MEASURE, None, fault_detail).map_err(|e| e.to_string())?;
     let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v0>() };
     let rc = unsafe {
         libc::proc_pid_rusage(
@@ -211,7 +214,14 @@ fn physical_footprint(pid: u32) -> Option<u64> {
             std::ptr::addr_of_mut!(info).cast(),
         )
     };
-    (rc == 0).then_some(info.ri_phys_footprint)
+    if rc == 0 {
+        Ok(info.ri_phys_footprint)
+    } else {
+        Err(format!(
+            "proc_pid_rusage: {}",
+            std::io::Error::last_os_error()
+        ))
+    }
 }
 
 enum LaunchEvent {
@@ -590,6 +600,9 @@ impl WorkerProvider {
         {
             let shared = Arc::clone(&shared);
             let ceiling = profile.memory_ceiling_bytes;
+            // The worker's private scratch root names it at the measurement
+            // fault point (tests fail one worker's measurement only).
+            let fault_detail = profile.worker.scratch_root.display().to_string();
             handles.push(Some(std::thread::spawn(move || {
                 loop {
                     std::thread::sleep(MEMORY_POLL_INTERVAL);
@@ -597,25 +610,32 @@ impl WorkerProvider {
                         break;
                     }
                     // Measure only while the child is unreaped, so a reused
-                    // PID is never read.
-                    let Some(measured) = shared.with_live_pid(physical_footprint) else {
+                    // PID is never read; a reaped child ends the poll.
+                    let Some(measured) =
+                        shared.with_live_pid(|pid| physical_footprint(pid, &fault_detail))
+                    else {
                         break;
                     };
-                    let Some(footprint) = measured else {
-                        continue;
-                    };
-                    if footprint > ceiling {
-                        let detail = format!(
+                    // A LIVE child whose footprint cannot be read fails
+                    // closed: the ceiling cannot be enforced, so the worker
+                    // is stopped exactly like a breach.
+                    let detail = match measured {
+                        Ok(footprint) if footprint <= ceiling => continue,
+                        Ok(footprint) => format!(
                             "physical footprint {footprint} bytes exceeds the {ceiling} byte ceiling"
-                        );
-                        if let Ok(mut slot) = shared.breach_info.lock() {
-                            *slot = detail.clone();
-                        }
-                        shared.breach.store(true, Ordering::SeqCst);
-                        shared.signal_child(libc::SIGKILL);
-                        shared.notify(Reply::Broken(detail));
-                        break;
+                        ),
+                        Err(why) => format!(
+                            "the live worker's physical footprint could not be measured ({why}), \
+                             so the {ceiling} byte ceiling cannot be enforced"
+                        ),
+                    };
+                    if let Ok(mut slot) = shared.breach_info.lock() {
+                        *slot = detail.clone();
                     }
+                    shared.breach.store(true, Ordering::SeqCst);
+                    shared.signal_child(libc::SIGKILL);
+                    shared.notify(Reply::Broken(detail));
+                    break;
                 }
             })));
         }

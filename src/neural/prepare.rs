@@ -77,6 +77,9 @@ pub struct PrepareReport {
     pub reused_cached_units: u64,
     pub missing_units: u64,
     pub document_calls: u64,
+    /// Real-tokenizer token count of the document inputs sent in this run's
+    /// document calls (prefix and special tokens included).
+    pub input_tokens: u64,
     pub corrupt_cache_rows: u64,
     pub cache_entries: u64,
     pub cache_bytes: u64,
@@ -779,6 +782,10 @@ fn flush_batch(
         return Err(StopOrError::Error(FoundryError::from(e)));
     }
     report.document_calls += 1;
+    report.input_tokens += inputs
+        .iter()
+        .map(|input| input.ids.len() as u64)
+        .sum::<u64>();
     let vectors = match provider.embed_documents(&inputs, control) {
         Ok(vectors) => vectors,
         Err(e) => {

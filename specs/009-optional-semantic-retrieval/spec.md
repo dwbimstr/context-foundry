@@ -613,8 +613,9 @@ T003's, each passing only with that task's verification.
   - *Resources.* Process count is `hard` (`RLIMIT_NPROC=0`). Memory is `supervised`:
     the supervisor polls the worker's physical footprint (`proc_pid_rusage`) every
     250 ms against a 3 GiB ceiling (D001 measured 1.82 GiB for 8 × 1024 tokens). A
-    breach kills the worker and stops preparation with `resource_limit`. A job that
-    requires a hard memory bound is refused.
+    breach kills the worker and stops preparation with `resource_limit`; so does a
+    failed footprint measurement of a live worker, which is stopped like a breach. A
+    job that requires a hard memory bound is refused.
 
     `--budget-seconds` counts from argument parsing, so profile verification, worker
     start, loading and partitioning are all included. At expiry no new batch is
@@ -631,7 +632,12 @@ T003's, each passing only with that task's verification.
     lookup check the current source hash, recipe and range. The USearch F16 index and
     its label map under `<store>/semantic/<profile id>/` form one validated generation:
     a missing, partial or mismatched pair is unavailable and is rebuilt from the cache,
-    never served by directory name.
+    never served by directory name. Since generation format v2 (T002) the label map
+    lists, per label, every unit location `{path, start, end, source_sha256}` its key
+    had at publication, and the manifest records the `source_revision` those were read
+    at and `coverage` (`complete` only when every admitted source had a current
+    partition and every eligible unit's vector is in the index); a v1 generation is
+    unavailable by name until preparation republishes it from the cache.
 
     Startup never resumes preparation. Purge commits removal and the stopped state
     under sole ownership; leftover derived files are ineligible and never repopulate
@@ -702,6 +708,13 @@ T003's, each passing only with that task's verification.
   not gate the earlier semantic-only release.
 - **Review/cutover:** advertise only the observed corpus/model/hardware scope. No
   task/token uplift from one fixture. Disable semantics without losing source/cache.
+- **Decisions made during review, 2026-10-05:**
+  - *Embedding wait.* The query embedding waits at most min(1500 ms, half the remaining
+    read deadline), inside the ceiling above. Waiting the full remaining deadline would
+    end the wait exactly at the request deadline, leaving no time for the baseline
+    retrieval and final read, so the named fallback could never be delivered; half
+    leaves the fallback at least as much time as the embedding had. Normal requests
+    under the 5 s read deadline still wait 1500 ms.
 
 ### T003 — Prepare progressively during real agent use
 

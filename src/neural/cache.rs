@@ -312,6 +312,7 @@ fn probe_row(bytes: &[u8], function_digest: &str) -> CacheProbe {
 impl Engine {
     /// The recorded partition of one source, if any. Metadata-only.
     pub fn semantic_partition(&self, path: &str) -> FResult<Option<PartitionRecord>> {
+        neural_fault!(PARTITION_READ, None, path)?;
         let tx = self.db.begin_read()?;
         let table = tx.open_table(PARTITIONS)?;
         match table.get(path)? {

@@ -24,6 +24,14 @@ pub mod fault_names {
     // Publication: the semantic root and generation directory are open;
     // nothing has been written yet.
     point!(PUBLISH_AFTER_CHECK, "semantic.publish_after_check");
+    // Serving load: the index bytes were read once and matched the manifest;
+    // the USearch header check and restore from those bytes come next.
+    point!(LOAD_AFTER_VERIFY, "semantic.load_after_verify");
+    // Supervisor memory poll: one footprint measurement of a live worker;
+    // the detail is the worker's scratch root.
+    point!(FOOTPRINT_MEASURE, "supervisor.footprint_measure");
+    // Every read of one stored partition row (tests count them).
+    point!(PARTITION_READ, "semantic.partition_read");
 }
 
 /// The fault hook entry (test-faults only).
@@ -62,12 +70,15 @@ pub mod cache;
 #[cfg(all(feature = "test-faults", feature = "semantic"))]
 pub mod fake;
 pub mod index;
+pub mod merge;
 pub mod partition;
 #[cfg(feature = "semantic")]
 pub mod prepare;
 pub mod profile;
 pub mod protocol;
 pub mod provider;
+#[cfg(feature = "semantic")]
+pub mod query;
 pub mod status;
 #[cfg(target_os = "macos")]
 pub mod supervisor;

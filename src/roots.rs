@@ -413,6 +413,7 @@ pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
         hits: hits
             .into_iter()
             .map(|item| {
+                let dense_only = item.is_dense_only();
                 let handle = item.handle.expect("search units carry handles");
                 let text = item
                     .forms
@@ -428,7 +429,13 @@ pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
                     end_line: item.end_line,
                     handle,
                     text,
-                    label: item.label,
+                    // 009 T002: a dense hit has no delivery-unit label; its
+                    // locator names it `semantic` (never `whole_unit`).
+                    label: if dense_only {
+                        "semantic".to_owned()
+                    } else {
+                        item.label
+                    },
                     tier: item.tier,
                     line: item.line,
                 }
@@ -441,6 +448,9 @@ pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
         candidate_limit_reached: counters.candidates_full,
         truncated: counters.truncated,
         scan_state: freshness.scan_state.clone(),
+        // 009 T002: the primary root's semantic word (see
+        // `primary_semantic`).
+        semantic: primary_semantic(batches),
     }
 }
 
@@ -547,7 +557,21 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
         freshness: batches[0].batch.freshness.clone(),
         items,
         counters,
+        semantic: primary_semantic(batches),
     }
+}
+
+/// 009 T002: semantic evidence exists only for the PRIMARY root's store.
+/// A single-root owner reports its word unchanged; with more than one
+/// serving root the word says it covers the primary root only, so the merge
+/// never silently drops or broadens it.
+fn primary_semantic(batches: &[RootBatch]) -> Option<String> {
+    let word = batches[0].batch.semantic.as_ref()?;
+    Some(if batches.len() > 1 {
+        format!("{word}; primary root only")
+    } else {
+        word.clone()
+    })
 }
 
 #[cfg(test)]
@@ -583,6 +607,7 @@ mod tests {
             line: 1,
             label: "fn x".to_owned(),
             lang: None,
+            semantic: None,
             forms: vec![RenderedForm::Verbatim("fn x() {}".to_owned())],
         }
     }
@@ -592,6 +617,7 @@ mod tests {
             freshness: freshness(1),
             items,
             counters: CandidateCounters::default(),
+            semantic: None,
         }
     }
 

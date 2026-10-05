@@ -318,6 +318,9 @@ pub struct SearchOutcome {
     pub candidate_limit_reached: bool,
     pub truncated: bool,
     pub scan_state: String,
+    /// The 009 T002 semantic word (`ready`, `partial`) or `None` on the
+    /// baseline path; search locators never claim `whole_unit`.
+    pub semantic: Option<String>,
 }
 
 /// One rendering of a ranked item (context-v2 § Forms): the exact unit bytes,
@@ -356,6 +359,40 @@ pub struct RankedItem {
     pub label: String,
     pub lang: Option<String>,
     pub forms: Vec<RenderedForm>,
+    /// 009 T002 neural evidence; `None` for every non-dense candidate.
+    pub semantic: Option<SemanticEvidence>,
+}
+
+impl RankedItem {
+    /// A candidate only the dense window retrieved.
+    pub fn is_dense_only(&self) -> bool {
+        self.semantic
+            .as_ref()
+            .is_some_and(|evidence| evidence.dense_only)
+    }
+}
+
+/// The neural evidence of one dense candidate (009 T002): the whole matched
+/// embedding unit, its verbatim bytes, and — when a lexical span retrieved
+/// in the same request intersects the unit — that span clipped to the
+/// unit's bounds. The packer tries the whole unit, then the span, then a
+/// bounded prefix labeled `preview`; the selection is decided by what fits.
+#[derive(Clone, Debug)]
+pub struct SemanticEvidence {
+    /// The matched handle: the whole embedding unit.
+    pub matched: SourceHandle,
+    /// The unit's verbatim bytes.
+    pub unit_body: String,
+    /// The intersecting lexical span clipped to the unit, with its own
+    /// first line.
+    pub span: Option<(SourceHandle, String, u64)>,
+    /// The unit's first 1-based line.
+    pub unit_start_line: u64,
+    /// True when the unit came from the dense window alone (no lexical
+    /// delivery unit shares its span): it carries no delivery-unit label
+    /// and never seeds graph expansion, since a preview is not a localized
+    /// seed.
+    pub dense_only: bool,
 }
 
 /// What candidate selection dropped or bounded.
@@ -382,6 +419,9 @@ pub struct CandidateBatch {
     pub freshness: Freshness,
     pub items: Vec<RankedItem>,
     pub counters: CandidateCounters,
+    /// The semantic header word (009 T002): `ready`, `partial`, or
+    /// `fallback:<reason>`; `None` keeps the baseline header byte-for-byte.
+    pub semantic: Option<String>,
 }
 
 /// The `outline` and `outline-min` renderings of a retrieve range
@@ -948,6 +988,15 @@ pub(crate) fn path_filter(raw: &str) -> FResult<String> {
     validate_path(trimmed)
         .map_err(|e| FoundryError::InvalidArgument(format!("path filter: {e}")))?;
     Ok(trimmed.to_owned())
+}
+
+/// Whether `path` lies under a normalized [`path_filter`]: the file itself
+/// or a component-boundary subtree (`src/a` admits `src/a/x.rs`, never
+/// `src/ab.rs`) — the predicate the lexical tiers apply through `dir` terms.
+#[cfg(feature = "semantic")]
+fn within_filter(path: &str, filter: &str) -> bool {
+    path.strip_prefix(filter)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// The 0-based index of the line of `text` holding the most distinct query
@@ -1894,23 +1943,42 @@ impl Engine {
         path: Option<&str>,
         limit: usize,
     ) -> FResult<SearchOutcome> {
-        let batch = self.search_candidates(query, path, limit, &crate::Control::unbounded())?;
+        Ok(Self::search_outcome(self.search_candidates(
+            query,
+            path,
+            limit,
+            &crate::Control::unbounded(),
+        )?))
+    }
+
+    /// The materialized hits of one candidate batch, as the CLI and MCP
+    /// render them: locator lines never carry a selection tag, so a dense
+    /// hit names its matched unit's handle under the `semantic` label and
+    /// never claims `whole_unit` (009 T002).
+    pub fn search_outcome(batch: CandidateBatch) -> SearchOutcome {
+        let semantic = batch.semantic;
         let hits = batch
             .items
             .into_iter()
             .filter_map(|item| {
+                let dense_only = item.is_dense_only();
                 let handle = item.handle?;
                 let text = item.forms.into_iter().find_map(|form| match form {
                     RenderedForm::Verbatim(text) => Some(text),
                     _ => None,
                 })?;
+                let label = if dense_only {
+                    "semantic".to_owned()
+                } else {
+                    item.label
+                };
                 Some(Hit {
                     path: handle.path.clone(),
                     start_line: item.start_line,
                     end_line: item.end_line,
                     handle,
                     text,
-                    label: item.label,
+                    label,
                     tier: item.tier,
                     line: item.line,
                 })
@@ -1918,7 +1986,7 @@ impl Engine {
             .collect();
         let counters = batch.counters;
         let freshness = batch.freshness;
-        Ok(SearchOutcome {
+        SearchOutcome {
             workspace_id: freshness.workspace_id,
             source_revision: freshness.source_revision,
             hits,
@@ -1929,7 +1997,8 @@ impl Engine {
             candidate_limit_reached: counters.candidates_full,
             truncated: counters.truncated || counters.candidates_full,
             scan_state: freshness.scan_state,
-        })
+            semantic,
+        }
     }
 
     /// Two-tier candidate selection for one store (context-v2 § Two-tier
@@ -1954,8 +2023,158 @@ impl Engine {
         if !(1..=64).contains(&limit) {
             return Err(FoundryError::InvalidArgument("limit must be 1..64".into()));
         }
-        let filter = path.map(path_filter).transpose()?;
+        // The path filter is validated before the workspace and index
+        // requirements (error precedence the extraction must not change).
+        path.map(path_filter).transpose()?;
         let workspace_id = self.require_workspace_id()?;
+        let (first, second, candidates_full) = self.collect_two_tier(query, path, control)?;
+
+        // Final read: revalidate, merge per delivery unit and cap per file over
+        // the whole candidate window, then cut to `limit`; stale and capped
+        // skips are counted past the cut.
+        let tx = self.db.begin_read()?;
+        let sources = tx.open_table(SOURCES)?;
+        let stored = tx.open_table(CHUNKS)?;
+        let mut counters = CandidateCounters {
+            candidates_full,
+            ..CandidateCounters::default()
+        };
+        let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
+            std::collections::BTreeMap::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut per_file: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        let mut kept: Vec<Candidate> = Vec::new();
+        for candidate in first.into_iter().chain(second) {
+            if !current.contains_key(&candidate.path) {
+                let meta = match sources.get(candidate.path.as_str())? {
+                    Some(raw) => Some(decode::<SourceMeta>(raw.value(), "source")?),
+                    None => None,
+                };
+                current.insert(candidate.path.clone(), meta);
+            }
+            if current[&candidate.path]
+                .as_ref()
+                .is_none_or(|meta| meta.hash != candidate.hash)
+            {
+                counters.stale += 1;
+                continue;
+            }
+            if !seen.insert(candidate.unit()) {
+                continue;
+            }
+            let count = per_file.entry(candidate.path.clone()).or_default();
+            if *count == PER_FILE_CAP {
+                counters.capped += 1;
+                continue;
+            }
+            *count += 1;
+            if kept.len() == limit {
+                counters.truncated = true;
+                continue;
+            }
+            kept.push(candidate);
+        }
+        let wanted: std::collections::BTreeSet<String> =
+            analyzed_terms(crate::syntax::code_subtokens, query)
+                .into_iter()
+                .collect();
+        let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
+            std::collections::BTreeMap::new();
+        let mut items = Vec::with_capacity(kept.len());
+        for (rank, candidate) in kept.into_iter().enumerate() {
+            let Some(Some(meta)) = current.get(&candidate.path) else {
+                continue;
+            };
+            if !verified.contains_key(&candidate.path) {
+                let source = reconstruct_verified(&stored, &candidate.path, meta)?;
+                verified.insert(candidate.path.clone(), source);
+            }
+            let body = &verified[&candidate.path].body;
+            let (from, to) = (candidate.unit_start as usize, candidate.unit_end as usize);
+            if !(from < to
+                && to <= body.len()
+                && body.is_char_boundary(from)
+                && body.is_char_boundary(to))
+            {
+                return Err(FoundryError::CorruptStore(format!(
+                    "search document unit outside {}",
+                    candidate.path
+                )));
+            }
+            let text = &body[from..to];
+            let line_of = |at: usize| {
+                body.as_bytes()[..at]
+                    .iter()
+                    .filter(|&&b| b == b'\n')
+                    .count() as u64
+                    + 1
+            };
+            let start_line = line_of(from);
+            let head = candidate.unit_head as usize;
+            if !(from <= head && head < to) {
+                return Err(FoundryError::CorruptStore(format!(
+                    "search document head outside its unit in {}",
+                    candidate.path
+                )));
+            }
+            let line = if candidate.tier == 1 {
+                line_of(head)
+            } else {
+                start_line + best_line_index(text, &wanted)
+            };
+            let label = match &candidate.qname {
+                Some(qname) => format!("{} {qname}", candidate.kind),
+                None => candidate.kind.clone(),
+            };
+            let end_line = start_line
+                + text.as_bytes()[..text.len().saturating_sub(1)]
+                    .iter()
+                    .filter(|&&b| b == b'\n')
+                    .count() as u64;
+            items.push(RankedItem {
+                tier: candidate.tier,
+                rank,
+                score: candidate.score,
+                handle: Some(SourceHandle {
+                    workspace_id: workspace_id.clone(),
+                    path: candidate.path,
+                    sha256: meta.hash.clone(),
+                    start: candidate.unit_start,
+                    end: candidate.unit_end,
+                }),
+                start_line,
+                end_line,
+                line,
+                label,
+                lang: candidate.lang,
+                semantic: None,
+                forms: vec![RenderedForm::Verbatim(text.to_owned())],
+            });
+        }
+        let freshness = self.freshness_in(&tx)?;
+        Ok(CandidateBatch {
+            freshness,
+            items,
+            counters,
+            semantic: None,
+        })
+    }
+
+    /// The two-tier candidate collection shared by the baseline and the
+    /// semantic paths (context-v2 § Two-tier query): tier 1 exact
+    /// definitions (at most 64, smallest `key_hash` kept, ordered by path
+    /// and start), tier 2 lexical (at most 256 by score, `key_hash`
+    /// breaking cutoff ties, tier-1 units removed), and whether a window
+    /// filled. No source is read here; validation happens in the callers'
+    /// final read.
+    fn collect_two_tier(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        control: &crate::Control,
+    ) -> FResult<(Vec<Candidate>, Vec<Candidate>, bool)> {
+        let filter = path.map(path_filter).transpose()?;
         let handles = self.require_search()?;
         let fields = &handles.fields;
         let restrict = |query: Box<dyn Query>| -> Box<dyn Query> {
@@ -2107,10 +2326,51 @@ impl Engine {
                 .then_with(|| a.path.cmp(&b.path))
                 .then_with(|| a.start.cmp(&b.start))
         });
+        Ok((first, second, candidates_full))
+    }
 
-        // Final read: revalidate, merge per delivery unit and cap per file over
-        // the whole candidate window, then cut to `limit`; stale and capped
-        // skips are counted past the cut.
+    /// The 009 T002 fused candidate selection: the D001 merge — tier-1
+    /// exact definitions first, then reciprocal-rank fusion (k = 60) over
+    /// the lexical top 256 and the dense top 64, ties by path then start.
+    ///
+    /// Everything is validated in ONE final read BEFORE fusion. A lexical
+    /// document whose source changed is dropped and counted stale, so it can
+    /// neither suppress nor coalesce with a current dense unit of the same
+    /// span. A dense hit expands through the serving generation's own label
+    /// map (no partition walk): each location must satisfy the request's
+    /// path filter, then is dropped and counted stale unless its recorded
+    /// source hash is the current one and its range lies inside the source.
+    /// The fused list is then merged per unit, capped per file and cut to
+    /// `limit` like the baseline. A unit the dense window retrieved renders
+    /// as neural evidence (whole unit / lexical span / preview decided by
+    /// the packer); every other candidate renders exactly as the baseline
+    /// does. The coverage word is `ready` only for a complete generation
+    /// published at this read's source revision; otherwise `partial`.
+    #[cfg(feature = "semantic")]
+    pub fn search_candidates_semantic(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+        control: &crate::Control,
+        dense: &crate::neural::query::DenseWindow,
+    ) -> FResult<CandidateBatch> {
+        use crate::neural::merge::MergeUnit;
+        if query.trim().is_empty() || query.len() > 4096 {
+            return Err(FoundryError::InvalidArgument(
+                "query must contain 1..4096 nonblank bytes".into(),
+            ));
+        }
+        if !(1..=64).contains(&limit) {
+            return Err(FoundryError::InvalidArgument("limit must be 1..64".into()));
+        }
+        // The path filter is validated before the workspace and index
+        // requirements, as in the baseline path.
+        let filter = path.map(path_filter).transpose()?;
+        let workspace_id = self.require_workspace_id()?;
+        let (first, second, candidates_full) = self.collect_two_tier(query, path, control)?;
+
+        // Final read: every candidate is validated here, before fusion.
         let tx = self.db.begin_read()?;
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
@@ -2120,29 +2380,94 @@ impl Engine {
         };
         let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
             std::collections::BTreeMap::new();
-        let mut seen = std::collections::BTreeSet::new();
-        let mut per_file: std::collections::BTreeMap<String, usize> =
-            std::collections::BTreeMap::new();
-        let mut kept: Vec<Candidate> = Vec::new();
-        for candidate in first.into_iter().chain(second) {
-            if !current.contains_key(&candidate.path) {
-                let meta = match sources.get(candidate.path.as_str())? {
+        let load = |current: &mut std::collections::BTreeMap<String, Option<SourceMeta>>,
+                    path: &str|
+         -> FResult<()> {
+            if !current.contains_key(path) {
+                let meta = match sources.get(path)? {
                     Some(raw) => Some(decode::<SourceMeta>(raw.value(), "source")?),
                     None => None,
                 };
-                current.insert(candidate.path.clone(), meta);
+                current.insert(path.to_owned(), meta);
             }
-            if current[&candidate.path]
-                .as_ref()
-                .is_none_or(|meta| meta.hash != candidate.hash)
-            {
-                counters.stale += 1;
+            Ok(())
+        };
+        // Lexical documents of the current source version only.
+        let mut fresh: [Vec<Candidate>; 2] = [Vec::new(), Vec::new()];
+        for (kept, documents) in fresh.iter_mut().zip([first, second]) {
+            for candidate in documents {
+                load(&mut current, &candidate.path)?;
+                if current[&candidate.path]
+                    .as_ref()
+                    .is_some_and(|meta| meta.hash == candidate.hash)
+                {
+                    kept.push(candidate);
+                } else {
+                    counters.stale += 1;
+                }
+            }
+        }
+        let [first, second] = fresh;
+        // Dense locations: the path restriction first, then freshness.
+        let mut dense_units: Vec<MergeUnit> = Vec::new();
+        for hit in &dense.hits {
+            for location in dense.units(hit) {
+                if filter
+                    .as_deref()
+                    .is_some_and(|filter| !within_filter(&location.path, filter))
+                {
+                    continue;
+                }
+                load(&mut current, &location.path)?;
+                let current_location =
+                    current[location.path.as_str()]
+                        .as_ref()
+                        .is_some_and(|meta| {
+                            meta.hash == location.source_sha256 && location.end <= meta.bytes as u64
+                        });
+                if !current_location {
+                    counters.stale += 1;
+                    continue;
+                }
+                dense_units.push(MergeUnit {
+                    path: location.path.clone(),
+                    start: location.start,
+                    end: location.end,
+                });
+            }
+        }
+        let unit_of = |candidate: &Candidate| MergeUnit {
+            path: candidate.path.clone(),
+            start: candidate.unit_start,
+            end: candidate.unit_end,
+        };
+        let tier1_units: Vec<MergeUnit> = first.iter().map(unit_of).collect();
+        let lexical_units: Vec<MergeUnit> = second.iter().map(unit_of).collect();
+        let fused = crate::neural::merge::fuse(&tier1_units, &lexical_units, &dense_units);
+        // The candidate carrying each lexical unit: its first (best-ranked)
+        // current document, as in the baseline.
+        let mut by_unit: std::collections::HashMap<(String, u64, u64), &Candidate> =
+            std::collections::HashMap::new();
+        for candidate in first.iter().chain(&second) {
+            by_unit.entry(candidate.unit()).or_insert(candidate);
+        }
+
+        // The baseline's merge per unit, per-file cap and cut, over the
+        // FUSED order.
+        let mut seen = std::collections::BTreeSet::new();
+        let mut per_file: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
+        struct Kept<'a> {
+            candidate: Option<&'a Candidate>,
+            unit: MergeUnit,
+            dense_rank: Option<usize>,
+        }
+        let mut kept: Vec<Kept<'_>> = Vec::new();
+        for entry in &fused {
+            if !seen.insert(&entry.unit) {
                 continue;
             }
-            if !seen.insert(candidate.unit()) {
-                continue;
-            }
-            let count = per_file.entry(candidate.path.clone()).or_default();
+            let count = per_file.entry(entry.unit.path.clone()).or_default();
             if *count == PER_FILE_CAP {
                 counters.capped += 1;
                 continue;
@@ -2152,7 +2477,13 @@ impl Engine {
                 counters.truncated = true;
                 continue;
             }
-            kept.push(candidate);
+            kept.push(Kept {
+                candidate: by_unit
+                    .get(&(entry.unit.path.clone(), entry.unit.start, entry.unit.end))
+                    .copied(),
+                unit: entry.unit.clone(),
+                dense_rank: entry.dense_rank,
+            });
         }
         let wanted: std::collections::BTreeSet<String> =
             analyzed_terms(crate::syntax::code_subtokens, query)
@@ -2161,24 +2492,24 @@ impl Engine {
         let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
             std::collections::BTreeMap::new();
         let mut items = Vec::with_capacity(kept.len());
-        for (rank, candidate) in kept.into_iter().enumerate() {
-            let Some(Some(meta)) = current.get(&candidate.path) else {
+        for (rank, kept_one) in kept.into_iter().enumerate() {
+            let Some(Some(meta)) = current.get(&kept_one.unit.path) else {
                 continue;
             };
-            if !verified.contains_key(&candidate.path) {
-                let source = reconstruct_verified(&stored, &candidate.path, meta)?;
-                verified.insert(candidate.path.clone(), source);
+            if !verified.contains_key(&kept_one.unit.path) {
+                let source = reconstruct_verified(&stored, &kept_one.unit.path, meta)?;
+                verified.insert(kept_one.unit.path.clone(), source);
             }
-            let body = &verified[&candidate.path].body;
-            let (from, to) = (candidate.unit_start as usize, candidate.unit_end as usize);
+            let body = &verified[&kept_one.unit.path].body;
+            let (from, to) = (kept_one.unit.start as usize, kept_one.unit.end as usize);
             if !(from < to
                 && to <= body.len()
                 && body.is_char_boundary(from)
                 && body.is_char_boundary(to))
             {
                 return Err(FoundryError::CorruptStore(format!(
-                    "search document unit outside {}",
-                    candidate.path
+                    "candidate unit outside {}",
+                    kept_one.unit.path
                 )));
             }
             let text = &body[from..to];
@@ -2190,51 +2521,114 @@ impl Engine {
                     + 1
             };
             let start_line = line_of(from);
-            let head = candidate.unit_head as usize;
-            if !(from <= head && head < to) {
-                return Err(FoundryError::CorruptStore(format!(
-                    "search document head outside its unit in {}",
-                    candidate.path
-                )));
-            }
-            let line = if candidate.tier == 1 {
-                line_of(head)
-            } else {
-                start_line + best_line_index(text, &wanted)
-            };
-            let label = match &candidate.qname {
-                Some(qname) => format!("{} {qname}", candidate.kind),
-                None => candidate.kind.clone(),
-            };
             let end_line = start_line
                 + text.as_bytes()[..text.len().saturating_sub(1)]
                     .iter()
                     .filter(|&&b| b == b'\n')
                     .count() as u64;
-            items.push(RankedItem {
-                tier: candidate.tier,
-                rank,
-                score: candidate.score,
-                handle: Some(SourceHandle {
-                    workspace_id: workspace_id.clone(),
-                    path: candidate.path,
-                    sha256: meta.hash.clone(),
-                    start: candidate.unit_start,
-                    end: candidate.unit_end,
-                }),
-                start_line,
-                end_line,
-                line,
-                label,
-                lang: candidate.lang,
-                forms: vec![RenderedForm::Verbatim(text.to_owned())],
-            });
+            let handle = SourceHandle {
+                workspace_id: workspace_id.clone(),
+                path: kept_one.unit.path.clone(),
+                sha256: meta.hash.clone(),
+                start: kept_one.unit.start,
+                end: kept_one.unit.end,
+            };
+            match kept_one.candidate {
+                Some(candidate) => {
+                    let head = candidate.unit_head as usize;
+                    if !(from <= head && head < to) {
+                        return Err(FoundryError::CorruptStore(format!(
+                            "search document head outside its unit in {}",
+                            kept_one.unit.path
+                        )));
+                    }
+                    let line = if candidate.tier == 1 {
+                        line_of(head)
+                    } else {
+                        start_line + best_line_index(text, &wanted)
+                    };
+                    let label = match &candidate.qname {
+                        Some(qname) => format!("{} {qname}", candidate.kind),
+                        None => candidate.kind.clone(),
+                    };
+                    items.push(RankedItem {
+                        tier: candidate.tier,
+                        rank,
+                        score: candidate.score,
+                        handle: Some(handle.clone()),
+                        start_line,
+                        end_line,
+                        line,
+                        label,
+                        lang: candidate.lang.clone(),
+                        semantic: kept_one.dense_rank.map(|_| SemanticEvidence {
+                            matched: handle.clone(),
+                            unit_body: text.to_owned(),
+                            span: None,
+                            unit_start_line: start_line,
+                            dense_only: false,
+                        }),
+                        forms: vec![RenderedForm::Verbatim(text.to_owned())],
+                    });
+                }
+                None => {
+                    // A dense-only unit: neural evidence. The selected
+                    // lexical span is the highest-ranked retrieved current
+                    // lexical span intersecting the unit, clipped to its
+                    // bounds.
+                    let span = first.iter().chain(&second).find_map(|candidate| {
+                        if candidate.path != kept_one.unit.path {
+                            return None;
+                        }
+                        let (s, e) = (candidate.unit_start, candidate.unit_end);
+                        let (clip_from, clip_to) =
+                            (s.max(kept_one.unit.start), e.min(kept_one.unit.end));
+                        (clip_from < clip_to).then(|| {
+                            (
+                                SourceHandle {
+                                    workspace_id: workspace_id.clone(),
+                                    path: kept_one.unit.path.clone(),
+                                    sha256: meta.hash.clone(),
+                                    start: clip_from,
+                                    end: clip_to,
+                                },
+                                body[clip_from as usize..clip_to as usize].to_owned(),
+                                line_of(clip_from as usize),
+                            )
+                        })
+                    });
+                    items.push(RankedItem {
+                        tier: 2,
+                        rank,
+                        score: 0.0,
+                        handle: Some(handle.clone()),
+                        start_line,
+                        end_line,
+                        line: start_line,
+                        label: String::new(),
+                        lang: crate::syntax::Lang::from_path(&kept_one.unit.path)
+                            .map(|lang| lang.tag().to_owned()),
+                        semantic: Some(SemanticEvidence {
+                            matched: handle,
+                            unit_body: text.to_owned(),
+                            span,
+                            unit_start_line: start_line,
+                            dense_only: true,
+                        }),
+                        forms: vec![RenderedForm::Verbatim(text.to_owned())],
+                    });
+                }
+            }
         }
         let freshness = self.freshness_in(&tx)?;
+        // The word describes THIS read (a context recomputes it against its
+        // own later final read).
+        let word = dense.coverage_at(freshness.source_revision);
         Ok(CandidateBatch {
             freshness,
             items,
             counters,
+            semantic: Some(word.to_owned()),
         })
     }
 
@@ -2363,7 +2757,41 @@ impl Engine {
         control: &crate::Control,
     ) -> FResult<CandidateBatch> {
         Ok(self
-            .context_candidates_inner(query, strategy, None, control)?
+            .context_candidates_inner(
+                query,
+                strategy,
+                None,
+                control,
+                #[cfg(feature = "semantic")]
+                None,
+            )?
+            .batch)
+    }
+
+    #[cfg(feature = "semantic")]
+    pub fn context_candidates_memory_semantic(
+        &self,
+        query: &str,
+        strategy: Strategy,
+        control: &crate::Control,
+        dense: &crate::neural::query::DenseWindow,
+    ) -> FResult<crate::memory::MemoryContext> {
+        let plan = self.memory_plan(query)?;
+        self.context_candidates_inner(query, strategy, Some(plan), control, Some(dense))
+    }
+
+    /// [`Self::context_candidates`] with the 009 T002 dense window fused
+    /// into the candidate ranking.
+    #[cfg(feature = "semantic")]
+    pub fn context_candidates_semantic(
+        &self,
+        query: &str,
+        strategy: Strategy,
+        control: &crate::Control,
+        dense: &crate::neural::query::DenseWindow,
+    ) -> FResult<CandidateBatch> {
+        Ok(self
+            .context_candidates_inner(query, strategy, None, control, Some(dense))?
             .batch)
     }
 
@@ -2378,7 +2806,14 @@ impl Engine {
         control: &crate::Control,
     ) -> FResult<crate::memory::MemoryContext> {
         let plan = self.memory_plan(query)?;
-        self.context_candidates_inner(query, strategy, Some(plan), control)
+        self.context_candidates_inner(
+            query,
+            strategy,
+            Some(plan),
+            control,
+            #[cfg(feature = "semantic")]
+            None,
+        )
     }
 
     fn context_candidates_inner(
@@ -2387,6 +2822,7 @@ impl Engine {
         strategy: Strategy,
         memory: Option<crate::memory::MemoryPlan>,
         control: &crate::Control,
+        #[cfg(feature = "semantic")] dense: Option<&crate::neural::query::DenseWindow>,
     ) -> FResult<crate::memory::MemoryContext> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
@@ -2397,6 +2833,14 @@ impl Engine {
             Strategy::Auto => response::strategy_for_query(query),
             explicit => explicit,
         };
+        #[cfg(feature = "semantic")]
+        let search = match dense {
+            Some(dense) => {
+                self.search_candidates_semantic(query, None, CONTEXT_UNITS, control, dense)?
+            }
+            None => self.search_candidates(query, None, CONTEXT_UNITS, control)?,
+        };
+        #[cfg(not(feature = "semantic"))]
         let search = self.search_candidates(query, None, CONTEXT_UNITS, control)?;
         control.check()?;
         let mut edges: Vec<graph::GraphEvidence> = Vec::new();
@@ -2412,6 +2856,7 @@ impl Engine {
             for item in &search.items {
                 if let Some(handle) = &item.handle
                     && seeds.len() < 3
+                    && !item.is_dense_only()
                     && !seeds.contains(&handle.path.as_str())
                 {
                     seeds.push(&handle.path);
@@ -2451,7 +2896,7 @@ impl Engine {
                     continue;
                 };
                 taken.insert((handle.path.clone(), handle.start, handle.end));
-                if spans.len() < graph::CONTEXT_GRAPH_SPANS {
+                if spans.len() < graph::CONTEXT_GRAPH_SPANS && !item.is_dense_only() {
                     spans.push((handle.path.clone(), handle.start, handle.end));
                 }
             }
@@ -2541,6 +2986,7 @@ impl Engine {
                 line: 0,
                 label: String::new(),
                 lang: None,
+                semantic: None,
                 forms: vec![RenderedForm::Line(format!(
                     "{}:{} ({}) --{}--> {}:{} ({}) [{}; provider={}@{}]",
                     edge.from.path,
@@ -2691,6 +3137,7 @@ impl Engine {
                     label: unit.label.clone(),
                     lang: crate::syntax::Lang::from_path(&unit.path)
                         .map(|lang| lang.tag().to_owned()),
+                    semantic: None,
                     forms: Vec::new(),
                 });
             }
@@ -2842,6 +3289,7 @@ impl Engine {
                 line: 1,
                 label: String::new(),
                 lang: crate::syntax::Lang::from_path(path).map(|lang| lang.tag().to_owned()),
+                semantic: None,
                 forms: vec![
                     RenderedForm::Outline(outliner.render(0..body.len(), 60, 120)),
                     RenderedForm::OutlineMin(outliner.render(0..body.len(), 0, 0)),
@@ -2887,6 +3335,16 @@ impl Engine {
             None => Vec::new(),
         };
         let freshness = self.freshness_in(&tx)?;
+        // 009 T002: the coverage word must describe THIS final read, not the
+        // earlier search read: a source committed in between moves the
+        // revision past the serving generation, so `ready` cannot carry over.
+        #[cfg(feature = "semantic")]
+        let semantic = match dense {
+            Some(dense) => Some(dense.coverage_at(freshness.source_revision).to_owned()),
+            None => search.semantic.clone(),
+        };
+        #[cfg(not(feature = "semantic"))]
+        let semantic = search.semantic.clone();
         // The first unit, then graph items, then the compiler units, then
         // the remaining units, then outlines: a fitting first unit precedes
         // graph evidence, and compiler units sit between the graph edges and
@@ -2903,6 +3361,7 @@ impl Engine {
         }
         Ok(crate::memory::MemoryContext {
             batch: CandidateBatch {
+                semantic,
                 freshness,
                 items,
                 counters,

@@ -37,6 +37,15 @@ pub enum AdapterCommand {
         /// never touched by disabling.
         #[arg(long = "no-memory")]
         no_memory: bool,
+        /// 009 T002: serve semantic evidence from this profile. ONE resident
+        /// worker starts before serving; a refused or failed start leaves
+        /// baseline results with the reason named in every response header.
+        #[arg(long = "semantic-profile", value_name = "FILE")]
+        semantic_profile: Option<PathBuf>,
+        /// Required to run the development-isolated worker (normal
+        /// admission stays closed until platform isolation acceptance).
+        #[arg(long = "development-isolation", requires = "semantic_profile")]
+        development_isolation: bool,
     },
     /// Inspect repository bootstrap; `--apply` creates/opens the store and indexes baseline source.
     Bootstrap {
@@ -169,6 +178,7 @@ fn serve_mcp(
     budget: Option<PathBuf>,
     references: Vec<String>,
     no_memory: bool,
+    semantic: Option<crate::mcp::SemanticServing>,
 ) -> AResult<()> {
     let budget = read_budget(budget.as_deref())?;
     let mut parsed = Vec::with_capacity(references.len());
@@ -182,6 +192,7 @@ fn serve_mcp(
         references,
         budget,
         no_memory,
+        semantic,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -273,6 +284,8 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             budget,
             reference,
             no_memory,
+            semantic_profile,
+            development_isolation,
         } => serve_mcp(
             store,
             root,
@@ -282,6 +295,8 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             budget,
             reference,
             no_memory,
+            semantic_profile
+                .map(|profile| crate::mcp::SemanticServing::new(profile, development_isolation)),
         )?,
         AdapterCommand::Bootstrap {
             root,

@@ -1312,8 +1312,25 @@ fn assert_outside_untouched(outside: &tempfile::TempDir) {
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 2);
 }
 
-fn one_entry() -> Vec<(String, Vec<f32>)> {
-    vec![("00".repeat(32), vec![0.5f32; provider::DIMENSIONS])]
+fn one_entry() -> Vec<index::GenerationEntry> {
+    vec![index::GenerationEntry {
+        input_key: "00".repeat(32),
+        vector: vec![0.5f32; provider::DIMENSIONS],
+        units: vec![index::UnitLocation {
+            path: "a.txt".into(),
+            start: 0,
+            end: 1,
+            source_sha256: "00".repeat(32),
+        }],
+    }]
+}
+
+/// The scope of a hand-built generation: partial, at revision 0.
+fn partial_scope() -> index::GenerationScope {
+    index::GenerationScope {
+        source_revision: 0,
+        complete: false,
+    }
 }
 
 #[test]
@@ -1342,6 +1359,7 @@ fn purge_and_publication_refuse_a_symlinked_semantic_root() {
         &env.digest(),
         "recipe",
         &one_entry(),
+        partial_scope(),
         &Control::unbounded(),
     )
     .unwrap_err();
@@ -1380,6 +1398,7 @@ fn purge_and_publication_refuse_a_symlinked_generation_directory() {
         &env.digest(),
         "recipe",
         &one_entry(),
+        partial_scope(),
         &Control::unbounded(),
     )
     .unwrap_err();
@@ -1773,6 +1792,7 @@ fn publication_is_anchored_to_the_descriptors_not_the_path() {
         &digest,
         "recipe",
         &one_entry(),
+        partial_scope(),
         &Control::unbounded(),
     )
     .unwrap();

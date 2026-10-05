@@ -14,6 +14,7 @@ use clap::{Parser, Subcommand};
 use std::{
     io::{self, BufRead, Read},
     path::PathBuf,
+    time::Instant,
 };
 
 #[derive(Parser)]
@@ -42,6 +43,13 @@ enum Command {
         /// Restrict both search tiers to one file or directory subtree.
         #[arg(long)]
         path: Option<String>,
+        /// 009 T002: fuse dense evidence from this semantic profile into
+        /// the lexical candidates. The worker loads at command start.
+        #[arg(long = "semantic-profile", value_name = "FILE")]
+        semantic_profile: Option<PathBuf>,
+        /// Required to run the development-isolated worker.
+        #[arg(long = "development-isolation", requires = "semantic_profile")]
+        development_isolation: bool,
     },
     /// Print only the token-budgeted evidence text to stdout.
     Context {
@@ -53,6 +61,13 @@ enum Command {
         /// 008: append compact `mem:` lines for validated memory hits.
         #[arg(long = "include-memory")]
         include_memory: bool,
+        /// 009 T002: fuse dense evidence from this semantic profile into
+        /// the lexical candidates. The worker loads at command start.
+        #[arg(long = "semantic-profile", value_name = "FILE")]
+        semantic_profile: Option<PathBuf>,
+        /// Required to run the development-isolated worker.
+        #[arg(long = "development-isolation", requires = "semantic_profile")]
+        development_isolation: bool,
     },
     /// Retrieve one exact span addressed by a v2 handle string
     /// (`path#start-end@sha32.ws16`), optionally narrowed to whole file lines.
@@ -323,6 +338,15 @@ fn parse_strategy(raw: &str) -> FResult<Strategy> {
     }
 }
 
+/// The `--semantic-profile FILE [--development-isolation]` flags as the
+/// launch configuration the semantic path starts from.
+fn semantic_launch(
+    profile: Option<PathBuf>,
+    development: bool,
+) -> Option<crate::mcp::SemanticServing> {
+    profile.map(|profile| crate::mcp::SemanticServing::new(profile, development))
+}
+
 /// 008 memory CLI. Mutating record inputs are one bounded JSON object on
 /// stdin (<=64 KiB, strict); get/forget/search/export take flags. Every
 /// command parses through the same strict request parser as the MCP tool.
@@ -537,10 +561,26 @@ fn run() -> AResult<()> {
             limit,
             tokens,
             path,
+            semantic_profile,
+            development_isolation,
         } => {
             check_token_budget(tokens)?;
             let engine = Engine::open_existing(&cli.store)?;
-            let outcome = engine.search_in(&query, path.as_deref(), limit)?;
+            let semantic = semantic_launch(semantic_profile, development_isolation);
+            let outcome = if let Some(launch) = semantic {
+                let slot = crate::mcp::semantic_slot(Some(launch))?;
+                let control = Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE);
+                Engine::search_outcome(crate::mcp::search_primary(
+                    &slot,
+                    &engine,
+                    &query,
+                    path.as_deref(),
+                    limit,
+                    &control,
+                )?)
+            } else {
+                engine.search_in(&query, path.as_deref(), limit)?
+            };
             let packed =
                 response::pack_search(&outcome, Budget::request(tokens), &response::stdout_bytes)?;
             print!("{}", packed.text);
@@ -558,13 +598,32 @@ fn run() -> AResult<()> {
             tokens,
             strategy,
             include_memory,
+            semantic_profile,
+            development_isolation,
         } => {
             let strategy = parse_strategy(&strategy)?;
             check_token_budget(tokens)?;
             let engine = Engine::open_existing(&cli.store)?;
             // 008: memory candidates validate in the SAME final read as the
             // source and graph items; one snapshot governs the response.
-            let (batch, memory) = if include_memory {
+            // 009 T002: with a profile the worker loads at command start
+            // (bounded by the profile's load timeout); the query ceiling
+            // then applies to the embedding call only. A refused or failed
+            // worker leaves baseline results with the reason in the header.
+            let semantic = semantic_launch(semantic_profile, development_isolation);
+            let (batch, memory) = if let Some(launch) = semantic {
+                let slot = crate::mcp::semantic_slot(Some(launch))?;
+                let control = Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE);
+                let combined = crate::mcp::context_primary(
+                    &slot,
+                    &engine,
+                    &query,
+                    strategy,
+                    &control,
+                    include_memory,
+                )?;
+                (combined.batch, combined.hits)
+            } else if include_memory {
                 let combined =
                     engine.context_candidates_memory(&query, strategy, &Control::unbounded())?;
                 (combined.batch, combined.hits)

@@ -502,7 +502,20 @@ pub struct V2Item {
     pub form: Option<String>,
     /// The fence info string.
     pub lang: Option<String>,
+    /// The 009 T002 selection of a neural evidence item, if it carries one.
+    pub neural: Option<V2Neural>,
     pub body: String,
+}
+
+/// The selection tag of a neural evidence item (context-v2 § Evidence
+/// items): `whole_unit` (no matched handle), `lexical_span` or `preview`
+/// (each with the matched unit's handle), and — for a preview — the
+/// `next:` continuation that belongs to the item, not to the response.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct V2Neural {
+    pub selection: String,
+    pub matched: Option<String>,
+    pub next: Option<String>,
 }
 
 /// A parsed context-v2 success: header segments, items and the optional
@@ -519,6 +532,8 @@ enum V2Tail {
         lines: Option<String>,
         label: Option<String>,
         form: Option<String>,
+        /// `(selection, matched handle)` of a 009 T002 neural item.
+        neural: Option<(String, Option<String>)>,
     },
     Locator {
         lines: String,
@@ -574,6 +589,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
                         label: Some(label),
                         form: None,
                         lang: None,
+                        neural: None,
                         body: String::new(),
                     });
                 }
@@ -622,6 +638,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
                 label,
                 form: None,
                 lang: None,
+                neural: None,
                 body: excerpt,
             });
             pos = after;
@@ -645,7 +662,27 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
             }
             match complete.len() {
                 1 => {
-                    let (item, end) = complete.remove(0);
+                    let (mut item, mut end) = complete.remove(0);
+                    // A context `next:` line belongs to the immediately
+                    // preceding PREVIEW (item, fence and continuation are
+                    // one rendering); a literal `next:` inside a fenced body
+                    // was consumed with the body above.
+                    if op == "context"
+                        && item
+                            .neural
+                            .as_ref()
+                            .is_some_and(|neural| neural.selection == "preview")
+                        && text[end..].starts_with("next: ")
+                    {
+                        let (continuation, line_end) = v2_line(text, end)?;
+                        let handle = continuation.strip_prefix("next: ").unwrap_or_default();
+                        crate::store::HandleRef::parse(handle)
+                            .map_err(|e| format!("malformed continuation {handle:?}: {e}"))?;
+                        if let Some(neural) = item.neural.as_mut() {
+                            neural.next = Some(handle.to_owned());
+                        }
+                        end = line_end;
+                    }
                     items.push(item);
                     pos = end;
                     continue;
@@ -674,6 +711,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
                 label: None,
                 form: None,
                 lang: None,
+                neural: None,
                 body: edge.to_owned(),
             });
             pos = after;
@@ -705,7 +743,13 @@ fn v2_fenced_item(
     tail: V2Tail,
     after: usize,
 ) -> Result<(V2Item, usize), String> {
-    let V2Tail::Fenced { lines, label, form } = tail else {
+    let V2Tail::Fenced {
+        lines,
+        label,
+        form,
+        neural,
+    } = tail
+    else {
         return Err("not a fenced item".into());
     };
     let (open, body_start) = v2_line(text, after)?;
@@ -752,6 +796,11 @@ fn v2_fenced_item(
         label,
         form,
         lang,
+        neural: neural.map(|(selection, matched)| V2Neural {
+            selection,
+            matched,
+            next: None,
+        }),
         body: body.to_owned(),
     };
     Ok((item, after_close))
@@ -793,6 +842,7 @@ fn parse_v2_tail(tail: &str) -> Option<V2Tail> {
             lines: None,
             label: None,
             form: None,
+            neural: None,
         });
     }
     let rest = tail.strip_prefix(' ')?;
@@ -806,11 +856,20 @@ fn parse_v2_tail(tail: &str) -> Option<V2Tail> {
                     return None;
                 }
                 let (last, remainder) = range_rest.split_at(more);
+                if let Some((selection, matched, label)) = v2_neural(remainder) {
+                    return Some(V2Tail::Fenced {
+                        lines: Some(format!("L{first}-{last}")),
+                        label,
+                        form: None,
+                        neural: Some((selection, matched)),
+                    });
+                }
                 let (label, form) = v2_label_and_form(remainder)?;
                 return Some(V2Tail::Fenced {
                     lines: Some(format!("L{first}-{last}")),
                     label,
                     form,
+                    neural: None,
                 });
             }
             let (label, excerpt) = match after_first.strip_prefix(": ") {
@@ -832,6 +891,7 @@ fn parse_v2_tail(tail: &str) -> Option<V2Tail> {
         lines: None,
         label,
         form,
+        neural: None,
     })
 }
 
@@ -849,6 +909,43 @@ fn v2_label_and_form(remainder: &str) -> Option<(Option<String>, Option<String>)
         }
     }
     Some((Some(rest.to_owned()), None))
+}
+
+/// The label after a tag slot: nothing, or one space then the label text.
+fn v2_label_after(after: &str) -> Option<Option<String>> {
+    if after.is_empty() {
+        Some(None)
+    } else {
+        after.strip_prefix(' ').map(|label| Some(label.to_owned()))
+    }
+}
+
+/// The 009 T002 selection tag slot right after `L<a>-<b>`: `[whole_unit]`,
+/// `[lexical_span <matched handle>]` or `[preview <matched handle>]`, then
+/// the optional label. Returns `(selection, matched handle, label)`. A
+/// matched handle is the shortest prefix before a `]` that parses as a
+/// handle, so a label ending in `[whole_unit]` stays label text.
+#[allow(clippy::type_complexity)]
+fn v2_neural(remainder: &str) -> Option<(String, Option<String>, Option<String>)> {
+    let rest = remainder.strip_prefix(' ')?;
+    if let Some(after) = rest.strip_prefix("[whole_unit]") {
+        return Some(("whole_unit".into(), None, v2_label_after(after)?));
+    }
+    for selection in ["lexical_span", "preview"] {
+        if let Some(after) = rest.strip_prefix(&format!("[{selection} ")) {
+            for (at, _) in after.match_indices(']') {
+                if crate::store::HandleRef::parse(&after[..at]).is_ok() {
+                    return Some((
+                        selection.into(),
+                        Some(after[..at].to_owned()),
+                        v2_label_after(&after[at + 1..])?,
+                    ));
+                }
+            }
+            return None;
+        }
+    }
+    None
 }
 
 /// Every reading of `line` as `<handle> L<line> in <label>`: a split after a

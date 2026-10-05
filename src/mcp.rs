@@ -167,6 +167,127 @@ pub(crate) struct Shared {
     /// `--no-memory`: the `memory` tool is absent from the catalog and
     /// `include_memory:true` is refused. Disabling never touches records.
     no_memory: bool,
+    /// 009 T002: the owner's resident query runtime, or the named fallback
+    /// word every request reports when it could not start.
+    semantic: SemanticSlot,
+}
+
+/// The owner's semantic state: `None` without `--semantic-profile`, the
+/// resident runtime, or the `fallback:<reason>` word of a refused start.
+#[cfg(feature = "semantic")]
+pub type SemanticSlot = Option<Result<Arc<crate::neural::query::QueryRuntime>, String>>;
+/// The uninhabited slot content of a build without semantics: it can never
+/// hold a runtime or a fallback word.
+#[cfg(not(feature = "semantic"))]
+#[derive(Clone, Debug)]
+pub enum NoSemantic {}
+#[cfg(not(feature = "semantic"))]
+pub type SemanticSlot = Option<NoSemantic>;
+
+/// True when this owner serves a semantic profile (started or refused).
+pub fn semantic_on(slot: &SemanticSlot) -> bool {
+    slot.is_some()
+}
+
+/// What the semantic path decided for one request against the primary root.
+#[cfg(feature = "semantic")]
+enum SemanticPlan {
+    Off,
+    Dense(crate::neural::query::DenseWindow),
+    Fallback(String),
+}
+
+/// The dense window for one request, under the request's own read deadline,
+/// or the named fallback. Never fails the request.
+#[cfg(feature = "semantic")]
+fn plan_semantic(
+    slot: &SemanticSlot,
+    engine: &Engine,
+    query: &str,
+    control: &Control,
+) -> SemanticPlan {
+    match slot {
+        None => SemanticPlan::Off,
+        Some(Err(word)) => SemanticPlan::Fallback(word.clone()),
+        Some(Ok(runtime)) => {
+            let deadline = control
+                .deadline()
+                .unwrap_or_else(|| Instant::now() + READ_DEADLINE);
+            match runtime.window(engine, query, deadline, control) {
+                Ok(window) => SemanticPlan::Dense(window),
+                Err(fallback) => SemanticPlan::Fallback(crate::neural::query::fallback_word(
+                    &fallback.to_string(),
+                )),
+            }
+        }
+    }
+}
+
+/// The primary root's search candidates with the semantic path applied.
+pub fn search_primary(
+    slot: &SemanticSlot,
+    engine: &Engine,
+    query: &str,
+    path: Option<&str>,
+    limit: usize,
+    control: &Control,
+) -> FResult<crate::store::CandidateBatch> {
+    #[cfg(feature = "semantic")]
+    match plan_semantic(slot, engine, query, control) {
+        SemanticPlan::Off => {}
+        SemanticPlan::Dense(window) => {
+            return engine.search_candidates_semantic(query, path, limit, control, &window);
+        }
+        SemanticPlan::Fallback(word) => {
+            let mut batch = engine.search_candidates(query, path, limit, control)?;
+            batch.semantic = Some(word);
+            return Ok(batch);
+        }
+    }
+    #[cfg(not(feature = "semantic"))]
+    let _ = slot;
+    engine.search_candidates(query, path, limit, control)
+}
+
+/// The primary root's context candidates (and 008 memory hits when asked)
+/// with the semantic path applied.
+pub fn context_primary(
+    slot: &SemanticSlot,
+    engine: &Engine,
+    query: &str,
+    strategy: Strategy,
+    control: &Control,
+    memory: bool,
+) -> FResult<crate::memory::MemoryContext> {
+    #[cfg(feature = "semantic")]
+    let plan = plan_semantic(slot, engine, query, control);
+    #[cfg(not(feature = "semantic"))]
+    let _ = slot;
+    #[cfg(feature = "semantic")]
+    if let SemanticPlan::Dense(window) = &plan {
+        return if memory {
+            engine.context_candidates_memory_semantic(query, strategy, control, window)
+        } else {
+            Ok(crate::memory::MemoryContext {
+                batch: engine.context_candidates_semantic(query, strategy, control, window)?,
+                hits: Vec::new(),
+            })
+        };
+    }
+    #[cfg_attr(not(feature = "semantic"), allow(unused_mut))]
+    let mut context = if memory {
+        engine.context_candidates_memory(query, strategy, control)?
+    } else {
+        crate::memory::MemoryContext {
+            batch: engine.context_candidates(query, strategy, control)?,
+            hits: Vec::new(),
+        }
+    };
+    #[cfg(feature = "semantic")]
+    if let SemanticPlan::Fallback(word) = plan {
+        context.batch.semantic = Some(word);
+    }
+    Ok(context)
 }
 
 /// A multi-root engine outcome: the merged result plus each serving root's
@@ -382,6 +503,7 @@ impl Shared {
             in_flight_engine: AtomicUsize::new(0),
             shutdown: CancellationToken::new(),
             no_memory: false,
+            semantic: SemanticSlot::default(),
         }
     }
 
@@ -1020,17 +1142,26 @@ impl FoundryMcp {
                 .search_roots(&ctx, tokens, query, path, limit, roots)
                 .await);
         }
+        let semantic = self.state.semantic.clone();
         Ok(self
             .deliver(
                 &ctx,
                 tokens,
                 "search",
                 || response::refusal_floor("search", None),
-                move |engines, _control, _budget| {
-                    engines[0]
-                        .as_ref()
-                        .expect("the primary engine is open")
-                        .search_in(&query, path.as_deref(), limit)
+                move |engines, control, _budget| {
+                    let engine = engines[0].as_ref().expect("the primary engine is open");
+                    if !semantic_on(&semantic) {
+                        return engine.search_in(&query, path.as_deref(), limit);
+                    }
+                    Ok(Engine::search_outcome(search_primary(
+                        &semantic,
+                        engine,
+                        &query,
+                        path.as_deref(),
+                        limit,
+                        control,
+                    )?))
                 },
                 response::pack_search,
             )
@@ -1123,6 +1254,7 @@ impl FoundryMcp {
                 .context_roots(&ctx, tokens, query, strategy, roots, include_memory)
                 .await);
         }
+        let semantic = self.state.semantic.clone();
         Ok(self
             .deliver(
                 &ctx,
@@ -1131,7 +1263,17 @@ impl FoundryMcp {
                 || response::refusal_floor("context", None),
                 move |engines, control, _budget| {
                     let engine = engines[0].as_ref().expect("the primary engine is open");
-                    let (batch, hits) = if include_memory {
+                    let (batch, hits) = if semantic_on(&semantic) {
+                        let combined = context_primary(
+                            &semantic,
+                            engine,
+                            &query,
+                            strategy,
+                            control,
+                            include_memory,
+                        )?;
+                        (combined.batch, combined.hits)
+                    } else if include_memory {
                         let combined =
                             engine.context_candidates_memory(&query, strategy, control)?;
                         (combined.batch, combined.hits)
@@ -2011,19 +2153,36 @@ impl FoundryMcp {
         let floor_labels = self.root_labels();
         let run_meta = Arc::clone(&meta);
         let pack_meta = Arc::clone(&meta);
+        let semantic = self.state.semantic.clone();
         self.deliver(
             ctx,
             tokens,
             "search",
             move || response::refusal_floor_roots("search", None, &floor_labels),
             move |engines, control, _budget| {
+                let engines = &*engines;
                 let (batches, facts) = collect_root_batches(
                     engines,
                     control,
                     &run_meta,
                     &serving,
                     |engine, control| {
-                        engine.search_candidates(&query, path.as_deref(), limit, control)
+                        let is_primary = std::ptr::eq(
+                            engine,
+                            engines[0].as_ref().expect("the primary engine is open"),
+                        );
+                        if is_primary && semantic_on(&semantic) {
+                            search_primary(
+                                &semantic,
+                                engine,
+                                &query,
+                                path.as_deref(),
+                                limit,
+                                control,
+                            )
+                        } else {
+                            engine.search_candidates(&query, path.as_deref(), limit, control)
+                        }
                     },
                 )?;
                 Ok(MultiOutcome {
@@ -2075,6 +2234,7 @@ impl FoundryMcp {
         let floor_labels = self.root_labels();
         let run_meta = Arc::clone(&meta);
         let pack_meta = Arc::clone(&meta);
+        let semantic = self.state.semantic.clone();
         self.deliver(
             ctx,
             tokens,
@@ -2096,12 +2256,25 @@ impl FoundryMcp {
                     &run_meta,
                     &serving,
                     |engine, control| {
-                        if primary_memory
-                            && std::ptr::eq(
+                        let is_primary = std::ptr::eq(
+                            engine,
+                            engines[0].as_ref().expect("the primary engine is open"),
+                        );
+                        // 009 T002: semantic evidence belongs to the PRIMARY
+                        // root's store only (the merged header says so).
+                        if is_primary && semantic_on(&semantic) {
+                            let combined = context_primary(
+                                &semantic,
                                 engine,
-                                engines[0].as_ref().expect("the primary engine is open"),
-                            )
-                        {
+                                &query,
+                                strategy,
+                                control,
+                                primary_memory,
+                            )?;
+                            *hits_ref = combined.hits;
+                            return Ok(combined.batch);
+                        }
+                        if primary_memory && is_primary {
                             // No catch-all: corruption fails the request
                             // (context-v2 § Failure scope); an unavailable
                             // primary is excluded by `serving` above and its
@@ -2477,6 +2650,88 @@ pub struct ServerOptions {
     pub budget: BudgetConfig,
     /// Omit the `memory` tool and refuse `include_memory` (008); records stay.
     pub no_memory: bool,
+    /// 009 T002: the semantic profile this owner serves, if any. `None`
+    /// keeps every response byte-identical to a build without semantics.
+    pub semantic: Option<SemanticServing>,
+}
+
+/// The launch-time semantic configuration (`mcp --semantic-profile FILE
+/// [--development-isolation]`).
+pub struct SemanticServing {
+    pub profile: PathBuf,
+    pub development: bool,
+    /// Tests only: build the provider here instead of launching the
+    /// supervised worker.
+    #[cfg(all(feature = "test-faults", feature = "semantic"))]
+    pub provider: Option<crate::neural::query::MakeProvider>,
+}
+
+impl SemanticServing {
+    /// The production configuration: the supervised worker.
+    pub fn new(profile: PathBuf, development: bool) -> Self {
+        Self {
+            profile,
+            development,
+            #[cfg(all(feature = "test-faults", feature = "semantic"))]
+            provider: None,
+        }
+    }
+
+    /// Tests only: serve through a caller-built provider.
+    #[cfg(all(feature = "test-faults", feature = "semantic"))]
+    pub fn with_provider(profile: PathBuf, make: crate::neural::query::MakeProvider) -> Self {
+        Self {
+            profile,
+            development: true,
+            provider: Some(make),
+        }
+    }
+}
+
+/// The refusal of a semantic profile by a build without semantic support.
+#[cfg(not(feature = "semantic"))]
+fn refuse_unsupported_semantic() -> FoundryError {
+    FoundryError::Semantic {
+        code: "semantic_unavailable",
+        message: "this build has no semantic retrieval support".into(),
+    }
+}
+
+/// Start the semantic runtime of one owner (MCP) or command (CLI): the
+/// resident worker, or the named `fallback:<reason>` word of a refused or
+/// failed start. `None` without a configured profile. Bounded by the
+/// profile's load timeout; nothing loads behind a query afterwards.
+pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
+    #[cfg(feature = "semantic")]
+    {
+        use crate::neural::query::{QueryRuntime, fallback_word};
+        let Some(launch) = launch else {
+            return Ok(None);
+        };
+        let fallback =
+            |error: crate::neural::provider::ProviderError| fallback_word(&error.to_string());
+        #[cfg(feature = "test-faults")]
+        if let Some(make) = launch.provider {
+            // Tests only: the provider is built by the caller instead of the
+            // supervised worker; everything else is the production path.
+            let started = crate::neural::profile::SemanticProfile::load(&launch.profile)
+                .map(Arc::new)
+                .and_then(|profile| QueryRuntime::start(profile, make));
+            return Ok(Some(started.map(Arc::new).map_err(fallback)));
+        }
+        Ok(Some(
+            QueryRuntime::acquire(&launch.profile, launch.development)
+                .map(Arc::new)
+                .map_err(fallback),
+        ))
+    }
+    #[cfg(not(feature = "semantic"))]
+    {
+        match launch {
+            Some(_) => Err(refuse_unsupported_semantic()),
+            None => Ok(None),
+        }
+    }
 }
 
 /// Launch-time admission and the one-time open of every root (007 §
@@ -2488,10 +2743,15 @@ pub struct ServerOptions {
 /// authoritative-only startup with coverage `repair_required`). Each
 /// reference is opened exactly once; the outcome is its coverage for the
 /// whole session, with no retries, and another live owner is never stopped.
-fn open_owner(options: ServerOptions, shutdown: CancellationToken) -> AResult<Arc<Shared>> {
+fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResult<Arc<Shared>> {
     let admitted = roots::validate_admission(&options.root, &options.references)
         .map_err(|error| AdapterError::named(error.code(), error.message()))?;
     let primary = &admitted[0];
+    let semantic_launch = options.semantic.take();
+    #[cfg(not(feature = "semantic"))]
+    if semantic_launch.is_some() {
+        return Err(refuse_unsupported_semantic().into());
+    }
     let engine = Engine::open_existing(&options.store)?;
     let bound = engine
         .workspace_id()
@@ -2520,6 +2780,11 @@ fn open_owner(options: ServerOptions, shutdown: CancellationToken) -> AResult<Ar
         meta.push(meta_of(root, coverage));
         engines.push(engine);
     }
+    // 009 T002: ONE resident worker starts here, before serving, when a
+    // semantic profile is configured; the owner never loads behind a query.
+    // A refused or failed start is the named fallback every later request
+    // reports, with baseline results intact.
+    let semantic = semantic_slot(semantic_launch)?;
     Ok(Arc::new(Shared {
         engines: Arc::new(Mutex::new(engines)),
         meta: Arc::new(meta),
@@ -2528,6 +2793,7 @@ fn open_owner(options: ServerOptions, shutdown: CancellationToken) -> AResult<Ar
         in_flight_engine: AtomicUsize::new(0),
         shutdown,
         no_memory: options.no_memory,
+        semantic,
     }))
 }
 
