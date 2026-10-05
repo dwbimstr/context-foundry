@@ -143,7 +143,7 @@ pub const KNOWLEDGE_TABLES: [&str; 11] = [
     "compiler_by_symbol",
 ];
 
-const TABLES: [&str; 13] = [
+const TABLES: [&str; 15] = [
     "sources",
     "chunks",
     "pending_index",
@@ -157,6 +157,8 @@ const TABLES: [&str; 13] = [
     "compiler_scopes",
     "compiler_occurrences",
     "compiler_by_symbol",
+    "semantic_partitions",
+    "semantic_state",
 ];
 
 pub fn snapshot(dir: &Path) -> Snapshot {
@@ -910,6 +912,63 @@ pub fn craft_v3_store(dir: &Path, root: &Path) {
     downgrade_to_v3(dir);
 }
 
+/// The three semantic tables (009 schema 5). `semantic_cache` holds binary
+/// values and is covered by [`semantic_cache_rows`], not [`snapshot`].
+pub const SEMANTIC_TABLES: [&str; 2] = ["semantic_partitions", "semantic_state"];
+
+/// Turn a closed schema-5 store into the schema-4 store 005 wrote: remove
+/// the semantic tables and mark `schema = "4"`. Every other row stays.
+pub fn downgrade_to_v4(dir: &Path) {
+    write_store(dir, |tx| {
+        tx.delete_table(TableDefinition::<&str, &str>::new("semantic_partitions"))
+            .unwrap();
+        tx.delete_table(TableDefinition::<&str, &str>::new("semantic_state"))
+            .unwrap();
+        tx.delete_table(TableDefinition::<&str, &[u8]>::new("semantic_cache"))
+            .unwrap();
+        tx.open_table(META).unwrap().insert("schema", "4").unwrap();
+    });
+}
+
+/// A schema-4 store: a freshly initialized store bound to `root`, downgraded.
+pub fn craft_v4_store(dir: &Path, root: &Path) {
+    std::fs::create_dir_all(root).unwrap();
+    drop(crate::Engine::initialize(dir, root).unwrap());
+    downgrade_to_v4(dir);
+}
+
+/// Every `semantic_cache` row of a closed store, in key order.
+pub fn semantic_cache_rows(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let db = Database::open(dir.join("knowledge.redb")).unwrap();
+    let tx = db.begin_read().unwrap();
+    let table: TableDefinition<&str, &[u8]> = TableDefinition::new("semantic_cache");
+    let cache = tx.open_table(table).unwrap();
+    cache
+        .iter()
+        .unwrap()
+        .map(|row| {
+            let (key, value) = row.unwrap();
+            (key.value().to_owned(), value.value().to_owned())
+        })
+        .collect()
+}
+
+/// Overwrite one `semantic_cache` row with arbitrary bytes (corruption).
+pub fn tamper_semantic_cache_row(dir: &Path, key: &str, bytes: &[u8]) {
+    write_store(dir, |tx| {
+        let table: TableDefinition<&str, &[u8]> = TableDefinition::new("semantic_cache");
+        tx.open_table(table).unwrap().insert(key, bytes).unwrap();
+    });
+}
+
+/// Overwrite the `semantic_state` row with arbitrary text.
+pub fn tamper_semantic_state(dir: &Path, raw: &str) {
+    write_store(dir, |tx| {
+        let table: TableDefinition<&str, &str> = TableDefinition::new("semantic_state");
+        tx.open_table(table).unwrap().insert("state", raw).unwrap();
+    });
+}
+
 /// Every row of one table of a closed store, in key order.
 pub fn table_rows(dir: &Path, table: &'static str) -> Vec<(String, String)> {
     snapshot(dir).remove(table).unwrap_or_default()
@@ -961,4 +1020,163 @@ pub fn compiler_consistency(dir: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// --- 009 semantic fixtures --------------------------------------------------
+
+/// A real `tokenizers` JSON file whose model is the GPT-2 byte alphabet with
+/// NO merges and no post-processor: every UTF-8 byte is exactly one token,
+/// so a rendered input of N bytes has exactly N ids. Deterministic and
+/// usable offline by the real `tokenizers` loader. Requires the `semantic`
+/// feature (the crate it exercises).
+#[cfg(feature = "semantic")]
+pub fn write_byte_tokenizer(dir: &Path) -> (std::path::PathBuf, String) {
+    // GPT-2 `bytes_to_unicode`: printable bytes stay, the rest shift up.
+    let mut alphabet: Vec<char> = Vec::new();
+    let printable = |b: u8| {
+        (b'\x21'..=b'\x7e').contains(&b) || (0xa1..=0xac).contains(&b) || (0xae..=0xff).contains(&b)
+    };
+    let mut bump = 0u32;
+    for byte in 0u8..=255 {
+        if printable(byte) {
+            alphabet.push(byte as char);
+        } else {
+            alphabet.push(char::from_u32(256 + bump).expect("contiguous"));
+            bump += 1;
+        }
+    }
+    let mut vocab = serde_json::Map::new();
+    for (id, token) in alphabet.into_iter().enumerate() {
+        vocab.insert(token.to_string(), serde_json::Value::from(id as u32));
+    }
+    let tokenizer = serde_json::json!({
+        "version": "1.0",
+        "truncation": null,
+        "padding": null,
+        "added_tokens": [],
+        "normalizer": null,
+        "pre_tokenizer": {
+            "type": "ByteLevel",
+            "add_prefix_space": false,
+            "trim_offsets": true,
+            "use_regex": true
+        },
+        "post_processor": null,
+        "decoder": null,
+        "model": {
+            "type": "BPE",
+            "dropout": null,
+            "unk_token": null,
+            "continuing_subword_prefix": null,
+            "end_of_word_suffix": null,
+            "fuse_unk": false,
+            "byte_fallback": false,
+            "vocab": vocab,
+            "merges": []
+        }
+    });
+    std::fs::create_dir_all(dir).unwrap();
+    let path = dir.join("tokenizer.json");
+    std::fs::write(&path, serde_json::to_vec(&tokenizer).unwrap()).unwrap();
+    let sha = crate::digest(&std::fs::read(&path).unwrap());
+    (path, sha)
+}
+
+/// A full fake model directory (the artifacts the profile names) plus the
+/// strict profile JSON naming it. `mutate` may adjust the descriptor (e.g.
+/// a different quantization) to build a second profile. Returns the profile
+/// path; the model directory is `<dir>/model`.
+#[cfg(feature = "semantic")]
+pub fn write_semantic_profile(
+    dir: &Path,
+    name: &str,
+    mutate: impl FnOnce(&mut crate::neural::provider::FunctionDescriptor),
+) -> std::path::PathBuf {
+    use crate::neural::provider::{ArtifactFile, FunctionDescriptor, RuntimeClosure};
+
+    let model_dir = dir.join("model");
+    std::fs::create_dir_all(&model_dir).unwrap();
+    let (_, tokenizer_sha) = write_byte_tokenizer(&model_dir);
+    for file in ["config.json", "model.safetensors", "nemotron3_embed_mlx.py"] {
+        std::fs::write(model_dir.join(file), format!("fixture {file}\n")).unwrap();
+    }
+    let sha_of = |file: &str| crate::digest(&std::fs::read(model_dir.join(file)).unwrap());
+    let requirements = dir.join("freeze.txt");
+    std::fs::write(&requirements, "fake==1.0\n").unwrap();
+    let requirements_sha = crate::digest(&std::fs::read(&requirements).unwrap());
+    let mut descriptor = FunctionDescriptor {
+        v: 1,
+        model: "fake-model via fixture".to_owned(),
+        artifact_files: vec![
+            ArtifactFile {
+                name: "config.json".into(),
+                sha256: sha_of("config.json"),
+            },
+            ArtifactFile {
+                name: "model.safetensors".into(),
+                sha256: sha_of("model.safetensors"),
+            },
+            ArtifactFile {
+                name: "nemotron3_embed_mlx.py".into(),
+                sha256: sha_of("nemotron3_embed_mlx.py"),
+            },
+            ArtifactFile {
+                name: "tokenizer.json".into(),
+                sha256: tokenizer_sha,
+            },
+        ],
+        quantization: "affine bits=4 group_size=64".into(),
+        tokenizer: "fake-bytes 1".into(),
+        add_special_tokens: true,
+        padding_side: "right".into(),
+        pad_id: 11,
+        adapter_revision: 1,
+        input_dtype: "int32".into(),
+        mask_dtype: "int32".into(),
+        pooling: "fake mean".into(),
+        dimensions: crate::neural::provider::DIMENSIONS as u32,
+        output: "f32".into(),
+        runtime: RuntimeClosure {
+            python: "3.12".into(),
+            mlx: "0".into(),
+            mlx_metal: "0".into(),
+            mlx_lm: "0".into(),
+            transformers: "0".into(),
+            numpy: "0".into(),
+            requirements_sha256: requirements_sha,
+        },
+        document_prefix: "passage: ".into(),
+    };
+    mutate(&mut descriptor);
+    descriptor.validate().expect("fixture descriptor validates");
+    let profile = crate::neural::profile::SemanticProfile {
+        v: 1,
+        name: name.into(),
+        model_dir: model_dir.canonicalize().unwrap(),
+        worker: crate::neural::profile::WorkerSpec {
+            bundle: dir.join("FoundryEmbed.app"),
+            executable_sha256: "0".repeat(64),
+            scratch_root: std::path::absolute(dir.join("scratch")).unwrap(),
+        },
+        runtime: crate::neural::profile::RuntimeSpec {
+            python_home: std::path::absolute("/usr").unwrap(),
+            site_packages: dir.join("site-packages"),
+            requirements: requirements.canonicalize().unwrap(),
+        },
+        descriptor,
+        memory_ceiling_bytes: 1024,
+        load_timeout_seconds: 1,
+    };
+    let path = dir.join(format!("profile-{name}.json"));
+    std::fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
+    path
+}
+
+/// Overwrite one `semantic_partitions` row of a closed store with arbitrary
+/// text (a stored mapping that bypassed acceptance validation).
+pub fn write_raw_partition(dir: &Path, path: &str, raw: &str) {
+    write_store(dir, |tx| {
+        let table: TableDefinition<&str, &str> = TableDefinition::new("semantic_partitions");
+        tx.open_table(table).unwrap().insert(path, raw).unwrap();
+    });
 }

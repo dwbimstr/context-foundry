@@ -45,9 +45,26 @@ impl Control {
         }
     }
 
+    /// A control sharing this one's cancel flag, additionally bounded by
+    /// `deadline` (the earlier of the two when this control has its own).
+    /// Cancelling either cancels both; deadline checks stay independent.
+    pub fn bounded_by(&self, deadline: Instant) -> Self {
+        Self {
+            flag: self.flag.clone(),
+            deadline: Some(self.deadline.map_or(deadline, |own| own.min(deadline))),
+            last_error: AtomicU64::new(0),
+        }
+    }
+
     /// Shared cancel flag for signal handlers and MCP session cancellation.
     pub fn cancel_flag(&self) -> Arc<AtomicBool> {
         self.flag.clone()
+    }
+
+    /// The deadline this control enforces, if any (the earlier deadline of
+    /// the chain after [`Control::bounded_by`]).
+    pub fn deadline(&self) -> Option<Instant> {
+        self.deadline
     }
 
     pub fn cancel(&self) {

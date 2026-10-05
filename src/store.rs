@@ -32,7 +32,7 @@ pub(crate) const META: TableDefinition<&str, &str> = TableDefinition::new("meta"
 pub(crate) const SEEN: TableDefinition<&str, &str> = TableDefinition::new("scan_seen");
 pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("feedback");
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
 /// Search tier 2 (lexical) examines at most this many candidates.
@@ -441,8 +441,11 @@ pub struct RepairReport {
     /// 008: memory documents rebuilt by the same drain.
     pub drained_memory: usize,
     pub reason: Option<String>,
+    /// 009: the semantic F16 generation replayed from the f32 cache by the
+    /// same repair (zero document calls); `None` without the feature or a
+    /// recorded profile.
+    pub semantic_index: Option<crate::neural::index::SemanticIndexReport>,
 }
-
 /// The Tantivy schema v2 fields (context-v2 § Search index v2).
 struct Fields {
     key: Field,
@@ -478,6 +481,12 @@ pub struct Engine {
     workspace: Option<String>,
     workspace_id: Option<String>,
     schema: u32,
+    /// The store directory, held as a descriptor opened (`O_DIRECTORY |
+    /// O_NOFOLLOW`) exactly once at bind time and kept for the Engine's
+    /// life. Semantic purge, publication and validation duplicate it (see
+    /// [`crate::neural::anchor`]) and never resolve the store pathname
+    /// again, so a substituted ancestor cannot redirect them.
+    pub(crate) semantic_dir: crate::neural::anchor::Dir,
 }
 
 impl std::fmt::Debug for Engine {
@@ -992,6 +1001,7 @@ fn initialize_tables(tx: &WriteTransaction) -> FResult<()> {
     tx.open_table(SEEN)?;
     crate::graph::init(tx)?;
     crate::graph::init_compiler(tx)?;
+    crate::neural::cache::init_tables(tx)?;
     Ok(())
 }
 
@@ -1061,15 +1071,25 @@ impl Engine {
         std::fs::create_dir_all(store_dir.join("search"))?;
         let index = Index::create_in_dir(store_dir.join("search"), search_schema())?;
         let handles = search_handles(index)?;
+        // The canonical store path, computed ONCE at bind time; the
+        // descriptor below and the stored display path both come from it and
+        // neither is ever resolved again for semantic work.
+        let canonical = store_dir.canonicalize()?;
+        // Bind the store-directory descriptor once, after the database (and
+        // its lock) is held: every later semantic operation works through a
+        // duplicate of it, never through the pathname.
+        let semantic_dir = crate::neural::anchor::Dir::open_path(&canonical)
+            .map_err(|e| crate::neural::anchor::conflict_or_io(e, "store directory"))?;
         let (workspace, workspace_id) = Self::read_binding(&db)?;
         Ok(Self {
             db,
-            directory: store_dir.canonicalize()?,
+            directory: canonical,
             search: Some(handles),
             repair_reason: None,
             workspace,
             workspace_id,
             schema: SCHEMA_VERSION,
+            semantic_dir,
         })
     }
 
@@ -1111,12 +1131,12 @@ impl Engine {
                 ));
             };
             match version.value() {
-                "1" | "2" | "3" => {
+                "1" | "2" | "3" | "4" => {
                     return Err(FoundryError::UpgradeRequired {
                         found: version.value().to_owned(),
                     });
                 }
-                "4" => 4u32,
+                "5" => 5u32,
                 other => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: other.to_owned(),
@@ -1124,8 +1144,8 @@ impl Engine {
                 }
             }
         };
-        // Confirm the schema-4 tables exist; missing authoritative tables in a
-        // schema-4 store are corruption, not something an open recreates.
+        // Confirm the schema-5 tables exist; missing authoritative tables in
+        // a schema-5 store are corruption, not something an open recreates.
         {
             let tx = db.begin_read()?;
             tx.open_table(SEEN).map_err(|e| {
@@ -1140,6 +1160,7 @@ impl Engine {
             tx.open_table(MEMORY)
                 .map_err(|e| FoundryError::CorruptStore(format!("memory table: {e}")))?;
             crate::graph::check_compiler_tables(&tx)?;
+            crate::neural::cache::check_tables(&db)?;
         }
         let (workspace, workspace_id) = Self::read_binding(&db)?;
         let marker = Self::read_marker(&db)?;
@@ -1165,14 +1186,23 @@ impl Engine {
                 }
             }
         }
+        // Bind the store-directory descriptor once, after the database (and
+        // its lock) is held. The path is canonicalized here — ONCE, at bind
+        // time — and never resolved again: every later semantic operation
+        // works through a duplicate of this descriptor, so an ancestor
+        // renamed or substituted after the bind cannot redirect it.
+        let canonical = store_dir.canonicalize()?;
+        let semantic_dir = crate::neural::anchor::Dir::open_path(&canonical)
+            .map_err(|e| crate::neural::anchor::conflict_or_io(e, "store directory"))?;
         Ok(Self {
             db,
-            directory: store_dir.canonicalize()?,
+            directory: canonical,
             search,
             repair_reason,
             workspace,
             workspace_id,
             schema,
+            semantic_dir,
         })
     }
 
@@ -1187,15 +1217,16 @@ impl Engine {
         }
     }
 
-    /// Explicit v1|v2|v3 -> v4 transaction under exclusive ownership. A v1
-    /// store first receives the v2 steps, a v1|v2 store the v3 steps, then
-    /// every store the v4 steps; all run in ONE write transaction. The v3
-    /// steps create the memory table and its never-reset revision counter
-    /// and migrate every pending key to the typed form (`source:<path>`); the
-    /// v4 steps (005) create the empty compiler-fact tables. `schema = "4"`
-    /// is published last. Sources, chunks, manual graph, feedback, memory,
-    /// scan state and pending work are preserved, so an interrupted upgrade
-    /// leaves the store wholly old or wholly v4. Only the current version is
+    /// Explicit v1|v2|v3|v4 -> v5 transaction under exclusive ownership. A
+    /// v1 store first receives the v2 steps, a v1|v2 store the v3 steps, a
+    /// v1|v2|v3 store the v4 steps, then every store the v5 steps; all run
+    /// in ONE write transaction. The v3 steps create the memory table and
+    /// its never-reset revision counter and migrate every pending key to the
+    /// typed form (`source:<path>`); the v4 steps (005) create the empty
+    /// compiler-fact tables; the v5 steps (009) create the empty semantic
+    /// tables (partitions, vector cache, state). `schema = "5"` is published
+    /// last. Every earlier table is preserved, so an interrupted upgrade
+    /// leaves the store wholly old or wholly v5. Only the current version is
     /// a target; this is a clean cutover.
     pub fn upgrade_store(store_dir: &Path, to: u32, control: &crate::Control) -> FResult<()> {
         if to != SCHEMA_VERSION {
@@ -1218,10 +1249,11 @@ impl Engine {
                         "store has no schema marker".into(),
                     ));
                 }
-                Some(v) if v.value() == "4" => return Ok(()), // already upgraded
+                Some(v) if v.value() == "5" => return Ok(()), // already upgraded
                 Some(v) if v.value() == "1" => 1u32,
                 Some(v) if v.value() == "2" => 2u32,
                 Some(v) if v.value() == "3" => 3u32,
+                Some(v) if v.value() == "4" => 4u32,
                 Some(v) => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: v.value().to_owned(),
@@ -1278,12 +1310,17 @@ impl Engine {
             }
             // The v4 steps (005): the empty compiler-fact tables. Facts
             // arrive only by an explicit `import-scip`.
-            crate::graph::init_compiler(&tx)?;
+            if from < 4 {
+                crate::graph::init_compiler(&tx)?;
+            }
+            // The v5 steps (009): the empty semantic tables. Rows arrive
+            // only by an explicit `semantic prepare`.
+            crate::neural::cache::init_tables(&tx)?;
             // Publish the schema last inside the same transaction.
             meta.insert("schema", SCHEMA_VERSION.to_string().as_str())?;
         }
         // The upgrade transaction is live and fully written but uncommitted:
-        // an exit here must leave the store wholly v1/v2/v3.
+        // an exit here must leave the store wholly v1/v2/v3/v4.
         fault!(UPGRADE_BEFORE_COMMIT, None, Some(control), "")?;
         control.check()?;
         tx.commit()?;
@@ -3287,12 +3324,27 @@ impl Engine {
             Some(control),
             ""
         )?;
+        // 009: a lexical repair also replays the semantic generation from
+        // the retained f32 cache — derived state both, zero document calls.
+        // A semantic failure is named in the report, never a rollback of the
+        // lexical repair.
+        #[cfg(feature = "semantic")]
+        let semantic_index = Some(engine.semantic_rebuild_index(control).unwrap_or_else(|e| {
+            crate::neural::index::SemanticIndexReport {
+                rebuilt: false,
+                entries: 0,
+                reason: Some(e.to_string()),
+            }
+        }));
+        #[cfg(not(feature = "semantic"))]
+        let semantic_index: Option<crate::neural::index::SemanticIndexReport> = None;
         Ok(RepairReport {
             repaired: true,
             quarantined_to,
             drained_sources: drained.0,
             drained_memory: drained.1,
             reason: None,
+            semantic_index,
         })
     }
 

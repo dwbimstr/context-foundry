@@ -79,8 +79,10 @@ bytes = "1"
 tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
 usearch = { version = "=2.26.2", optional = true }
 # 009 embedding worker only (`embed-worker`): the embedded Python runtime that
-# runs the publisher's MLX model. `foundry` never links it.
-pyo3 = { version = "=0.29.2", features = ["auto-initialize"], optional = true }
+# runs the publisher's MLX model. `foundry` never links it. No
+# `auto-initialize`: the worker starts CPython itself, from an isolated
+# `PyConfig` (site import off, explicit search path), before any attach.
+pyo3 = { version = "=0.29.2", optional = true }
 
 [features]
 default = ["semantic"]
@@ -116,6 +118,16 @@ path = "src/main.rs"
 [[bin]]
 name = "foundry-faults"
 path = "src/bin/foundry_faults.rs"
+required-features = ["test-faults"]
+
+[[bin]]
+name = "foundry-embed"
+path = "src/bin/foundry_embed.rs"
+required-features = ["embed-worker"]
+
+[[bin]]
+name = "foundry-embed-fake"
+path = "src/bin/foundry_embed_fake.rs"
 required-features = ["test-faults"]
 
 [[test]]

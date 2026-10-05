@@ -124,6 +124,11 @@ enum Command {
     },
     /// Explicit derived-index repair: durable marker, one quarantine, paged rebuild.
     RepairIndex,
+    /// 009: optional semantic retrieval — prepare, status and purge.
+    Semantic {
+        #[command(subcommand)]
+        action: SemanticAction,
+    },
     /// 008 explicit project memory: put, update, get, forget, search, export.
     Memory {
         #[command(subcommand)]
@@ -131,6 +136,33 @@ enum Command {
     },
     #[command(flatten)]
     Adapter(crate::adapter_cli::AdapterCommand),
+}
+
+#[derive(Subcommand)]
+enum SemanticAction {
+    /// Bounded preparation under exclusive ownership. The budget counts
+    /// from argument parsing; preparation resumes from committed cache
+    /// entries and commits per batch.
+    Prepare {
+        /// The bounded versioned profile naming the model, worker and
+        /// runtime, verified before any worker starts.
+        #[arg(long)]
+        profile: PathBuf,
+        /// Work budget in seconds.
+        #[arg(long)]
+        budget_seconds: u64,
+        /// Run the owner-authorized development isolation profile; never
+        /// advertised as production isolation.
+        #[arg(long)]
+        development_isolation: bool,
+    },
+    /// Metadata-only readiness: never loads the tokenizer, Python, the
+    /// model or a broken profile.
+    Status,
+    /// Offline removal of every semantic partition, cache entry and index
+    /// generation under sole ownership. Sources, graph, memory and feedback
+    /// stay; nothing repopulates.
+    Purge,
 }
 
 #[derive(Subcommand)]
@@ -416,6 +448,8 @@ pub fn main() {
 
 fn run() -> AResult<()> {
     use clap::{CommandFactory, FromArgMatches};
+    // 009: the preparation budget counts from argument parsing.
+    let semantic_started = std::time::Instant::now();
     let matches = Cli::command().get_matches();
     // Bootstrap/connect default the store to `<canonical-root>/.context-foundry`
     // unless --store was actually supplied.
@@ -423,6 +457,7 @@ fn run() -> AResult<()> {
         matches.value_source("store") != Some(clap::parser::ValueSource::DefaultValue);
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     match cli.command {
+        Command::Semantic { action } => semantic_run(&cli.store, action, semantic_started)?,
         Command::Adapter(command) => crate::adapter_cli::run(command, cli.store, store_explicit)?,
         Command::Memory { action } => memory_run(&cli.store, action)?,
         Command::Index { root } => {
@@ -680,6 +715,61 @@ fn run() -> AResult<()> {
                         .reason
                         .unwrap_or_else(|| "repair did not complete".into()),
                 )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 009 semantic CLI: prepare (semantic feature only; a lexical-only build
+/// reports `semantic_unavailable`), status and purge.
+fn semantic_run(
+    store: &std::path::Path,
+    action: SemanticAction,
+    started: std::time::Instant,
+) -> AResult<()> {
+    match action {
+        SemanticAction::Status => {
+            let engine = Engine::open_existing(store)?;
+            let status = engine.semantic_status(&live_control())?;
+            println!("{}", serde_json::to_string_pretty(&status)?);
+        }
+        SemanticAction::Purge => {
+            let engine = Engine::open_existing(store)?;
+            let report = engine.semantic_purge()?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        SemanticAction::Prepare {
+            profile,
+            budget_seconds,
+            development_isolation,
+        } => {
+            #[cfg(feature = "semantic")]
+            {
+                let control = live_control();
+                let report = crate::neural::prepare::cli_prepare(
+                    store,
+                    &profile,
+                    budget_seconds,
+                    development_isolation,
+                    started,
+                    &control,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                if let Some(error) = report.error() {
+                    return Err(error.into());
+                }
+            }
+            #[cfg(not(feature = "semantic"))]
+            {
+                let _ = (profile, budget_seconds, development_isolation, started);
+                return Err(FoundryError::Semantic {
+                    code: "semantic_unavailable",
+                    message: "this build has no semantic retrieval; rebuild with \
+                              the `semantic` feature"
+                        .into(),
+                }
                 .into());
             }
         }

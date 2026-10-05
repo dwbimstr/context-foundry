@@ -265,7 +265,7 @@ async fn stdio_lists_the_seven_tool_catalog_and_serves_it() {
         .unwrap();
     let status_json: serde_json::Value =
         serde_json::from_str(&assert_single_text_success(&status)).unwrap();
-    assert_eq!(status_json["schema"], 4);
+    assert_eq!(status_json["schema"], 5);
 
     let indexed = client
         .call_tool(CallToolRequestParams::new("index"))

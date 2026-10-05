@@ -71,6 +71,16 @@ pub enum FoundryError {
     /// A caller-named import file is missing, not a regular file or
     /// unreadable. An invalid invocation (CLI exit 2).
     ArtifactUnavailable(String),
+    /// A named 009 semantic-retrieval failure: `semantic_unavailable`,
+    /// `profile_invalid`, `isolation_unavailable`, `cache_full`,
+    /// `budget_exhausted`, `cache_corrupt` or a provider code carried from
+    /// [`crate::neural::provider::ProviderError`] (`provider_busy`,
+    /// `provider_timeout`, `provider_exited`, `provider_malformed`,
+    /// `resource_limit`, `input_too_large`). Source access stays available.
+    Semantic {
+        code: &'static str,
+        message: String,
+    },
     Internal(anyhow::Error),
 }
 /// Counts-only partial index state for bounded MCP/CLI cancellation errors.
@@ -121,6 +131,7 @@ impl FoundryError {
             Self::CorruptMemory(_) => "corrupt_memory",
             Self::Scip { code, .. } => code,
             Self::ArtifactUnavailable(_) => "artifact_unavailable",
+            Self::Semantic { code, .. } => code,
             Self::Internal(_) => "internal",
         }
     }
@@ -132,7 +143,7 @@ impl FoundryError {
                 | Self::Cancelled(_)
                 | Self::DeadlineExceeded(_)
                 | Self::RepairRequired(_)
-        )
+        ) || matches!(self, Self::Semantic { code, .. } if *code == "provider_busy")
     }
 
     /// CLI process exit codes: 2 invalid argument/unsupported version or mode,
@@ -173,7 +184,7 @@ impl FoundryError {
                 format!("unsupported store schema {found}; no automatic upgrade")
             }
             Self::UpgradeRequired { found } => {
-                format!("store schema {found} requires an explicit upgrade-store --to 4")
+                format!("store schema {found} requires an explicit upgrade-store --to 5")
             }
             Self::CorruptStore(m) => format!("authoritative store data is corrupt: {m}"),
             Self::RepairRequired(m) => format!("derived search index needs explicit repair: {m}"),
@@ -196,6 +207,7 @@ impl FoundryError {
             Self::CorruptMemory(m) => format!("memory record cannot be decoded: {m}"),
             Self::Scip { message, .. } => message.clone(),
             Self::ArtifactUnavailable(m) => format!("import file is unavailable: {m}"),
+            Self::Semantic { code, message } => format!("semantic retrieval ({code}): {message}"),
             Self::Internal(e) => format!("{e:#}"),
         }
     }
@@ -293,6 +305,17 @@ impl From<std::io::Error> for FoundryError {
 impl From<serde_json::Error> for FoundryError {
     fn from(e: serde_json::Error) -> Self {
         Self::Internal(anyhow::anyhow!(e))
+    }
+}
+
+/// 009 provider failures cross into the shared error type under their own
+/// contract codes; nothing is collapsed into `internal`.
+impl From<crate::neural::provider::ProviderError> for FoundryError {
+    fn from(e: crate::neural::provider::ProviderError) -> Self {
+        Self::Semantic {
+            code: e.code(),
+            message: e.to_string(),
+        }
     }
 }
 
