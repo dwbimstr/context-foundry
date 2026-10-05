@@ -18,8 +18,31 @@ Owner answers, 2026-10-04:
 - **LibTorch.** Download authorized and done (2.11.0 CPU, macOS arm64). tch 0.24.0 and
   `tokenizers` 0.23.2 build and run on Rust 1.90; evidence in
   [prerequisites](../../docs/review/prerequisites-2026-10-04.md).
-- **Rows.** Labels come from mechanically checked coding tasks (`task_checker`). The
-  task set is proposed for owner approval once 005 T002 provides the graph option.
+- **Rows.** Labels come from mechanically checked coding tasks (`task_checker`).
+  Approved 2026-10-04 as proposed:
+  - Corpus: rust-lang/rust 1.99.0 (`b940084d`) with the 005 T003 `library/` SCIP
+    artifact. The rights assertion is the upstream MIT OR Apache-2.0 license.
+  - Tasks: about 900, over about 400 groups.
+    - Symbols are single-definition globals under `library/{core,alloc,std}/src`,
+      chosen in SHA-256(symbol) order, excluding T003's 20 question symbols.
+    - Eight phrasings mix definition and usage intents.
+    - `task_group_id` is the defining module path.
+  - Checker: `context` runs at 2048 tokens with `--strategy search` and with
+    `--strategy graph`.
+    - Required evidence is the definition's delivery unit, or min(3, n)
+      reference-site units.
+    - Label: the strategy that delivers all of it. If both do, the one with fewer
+      delivered tokens (a tie goes to `search`). If neither does, no row is written.
+  - Rows become trainable only through the trusted operator CLI. Labeling runs after
+    005 T003's graph context lands.
+- **Decision checkpoint.** Download authorized and done 2026-10-04:
+  - Source: `convaiinnovations/laya-typed-decisions@1a793eb5`, Hub card license
+    apache-2.0, 7 files, 846,203,578 bytes.
+  - Location: `~/VSC_DEV/models/laya-typed-decisions-1a793eb5`.
+  - Verification: every file matches its LFS SHA-256 or git blob ID. `model.safetensors`
+    has SHA-256 `4fa56de7…a24e`.
+  - Fixture: its `rl_agent_config.json` carries the inherited
+    `temperature_by_options` (`choice:11+` = 0.1006) that T002 must refuse.
 - **Signing/notarization.** Decide later.
 
 ## Outcome and requirements

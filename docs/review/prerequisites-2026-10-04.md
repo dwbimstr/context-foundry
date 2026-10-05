@@ -20,6 +20,7 @@ quality or package acceptance.
 | MLX embedding artifact | `mlx-community/Nemotron-3-Embed-1B-BF16-4bit@d0408b94c50fc327b6ea37dce7409c51e020a4d8`; `model.safetensors` SHA-256 `73b06890e9d44ac792c98d38cd1d624ad4c45b5e0a4106bae6bef1ae356dd62f` and `tokenizer.json` SHA-256 `797410dfb649a5b9ba92bc4fef7dbf4022d00e73de6867c4ac199a8846439421`, both equal to the Hugging Face LFS oids; 641 MiB | `~/VSC_DEV/models/Nemotron-3-Embed-1B-BF16-4bit-d0408b94` |
 | LibTorch 2.11.0 CPU, macOS arm64 | `download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-2.11.0.zip` (redirects to download-r2); 77,607,410 B; observed SHA-256 `0edc138545c84879240cc07994f1e9a0ed35a1102ffe2b99e13f3a7b57b323e9` (no published checksum compared); `build-version` 2.11.0 | `~/VSC_DEV/vendor/libtorch-2.11.0` |
 | rust-lang/rust 1.99.0 (005 T003 corpus) | annotated tag `daa8d75b`, commit `b940084d7eb6a299eb4bfeb8e34901bc051e7ac4`; shallow clone without submodules; 62,035 tracked files | `~/VSC_DEV/corpora/rust-1.99.0` |
+| 013 decision checkpoint (owner-authorized 2026-10-04) | `convaiinnovations/laya-typed-decisions@1a793eb568e6718f15941d08f85432581df534e3`, ungated, card license apache-2.0; 7 files, 846,203,578 B, each equal to its LFS SHA-256 or git blob ID; `model.safetensors` SHA-256 `4fa56de72383a9d3efa9cfa78955733c81b9fc8067a587ca4beb82c78107a24e`, `tokenizer/tokenizer.json` `6c8aaa9a…0d30`, `encoder/config.json` `5268d24a…ae6d` (ModernBERT-large, 28 layers, hidden 1024, vocab 50,368) | `~/VSC_DEV/models/laya-typed-decisions-1a793eb5` |
 
 ## 005 T001 — jailed producer run
 
