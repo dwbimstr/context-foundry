@@ -1,0 +1,1123 @@
+{
+ "v": 1,
+ "task": "003 T004 owned model gateway",
+ "recorded": "2026-10-04",
+ "binaries": {
+  "release_foundry_sha256": "53d43b0c79c38780f0212e9d0afa4e9f054abc1986246f81546f7c85261c2662",
+  "release_test_hook_strings": {
+   "FOUNDRY_GATEWAY_TEST": 0,
+   "ctxfoundry-fault": 0,
+   "FOUNDRY_TEST_FAULT": 0
+  },
+  "omp": "omp/18.6.0 (pi-coding-agent dist/cli.js bundle)"
+ },
+ "fixture_runs": {
+  "method": "real OMP 18.6.0 through `foundry gateway-omp` (test-faults debug build) against a loopback fake upstream (Bun, pull-based SSE) via FOUNDRY_GATEWAY_TEST_UPSTREAM; throwaway HOME; synthetic key canary",
+  "r3": {
+   "s1": {
+    "name": "s1-tool",
+    "exit": 0,
+    "ms": 10236,
+    "key_canary_leaked": false,
+    "summary": {
+     "attempts": 2,
+     "cached_input_tokens": 1000,
+     "complete": 2,
+     "coverage": "whole_run_unverified",
+     "failed": 0,
+     "input_tokens": 2100,
+     "log_failed": false,
+     "output_tokens": 38,
+     "refused": {},
+     "session_id": "810071f0-fddd-49e3-9947-dbab2f2487f6",
+     "totals_overflowed": false,
+     "unknown": 0,
+     "v": 1
+    },
+    "upstream_attempts": [
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "delta",
+       "delta",
+       "tool_calls",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "delta",
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     }
+    ],
+    "receipts": [
+     {
+      "outcome": "complete",
+      "input_tokens": 1000,
+      "cached_input_tokens": 0,
+      "output_tokens": 30,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 1100,
+      "cached_input_tokens": 1000,
+      "output_tokens": 8,
+      "delivery": "delivered"
+     }
+    ]
+   },
+   "s2": {
+    "name": "s2-early",
+    "exit": 0,
+    "ms": 3852,
+    "key_canary_leaked": false,
+    "summary": {
+     "attempts": 1,
+     "cached_input_tokens": null,
+     "complete": 1,
+     "coverage": "whole_run_unverified",
+     "failed": 0,
+     "input_tokens": 500,
+     "log_failed": false,
+     "output_tokens": 2,
+     "refused": {},
+     "session_id": "3bee3f1a-d6d4-4f9c-9bf2-2e32cbe67b0a",
+     "totals_overflowed": false,
+     "unknown": 0,
+     "v": 1
+    },
+    "upstream_attempts": [
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "delta",
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": 158
+     }
+    ],
+    "receipts": [
+     {
+      "outcome": "complete",
+      "input_tokens": 500,
+      "cached_input_tokens": null,
+      "output_tokens": 2,
+      "delivery": "client_closed"
+     }
+    ]
+   },
+   "s3": {
+    "name": "s3-grace",
+    "exit": 0,
+    "ms": 4611,
+    "key_canary_leaked": false,
+    "summary": {
+     "attempts": 1,
+     "cached_input_tokens": null,
+     "complete": 0,
+     "coverage": "whole_run_unverified",
+     "failed": 0,
+     "input_tokens": null,
+     "log_failed": false,
+     "output_tokens": null,
+     "refused": {},
+     "session_id": "9b1e338f-dd8a-43e7-8990-3d0c0a237168",
+     "totals_overflowed": false,
+     "unknown": 1,
+     "v": 1
+    },
+    "upstream_attempts": [
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "delta",
+       "stop",
+       "usage"
+      ],
+      "client_cut_ms": 2684
+     }
+    ],
+    "receipts": [
+     {
+      "outcome": "unknown",
+      "input_tokens": null,
+      "cached_input_tokens": null,
+      "output_tokens": null,
+      "delivery": "client_closed"
+     }
+    ]
+   },
+   "s4": {
+    "name": "s4-empty",
+    "exit": 0,
+    "ms": 8686,
+    "key_canary_leaked": false,
+    "summary": {
+     "attempts": 12,
+     "cached_input_tokens": 0,
+     "complete": 12,
+     "coverage": "whole_run_unverified",
+     "failed": 0,
+     "input_tokens": 4800,
+     "log_failed": false,
+     "output_tokens": 0,
+     "refused": {},
+     "session_id": "4fbea743-8566-4e01-980d-8ea47269887d",
+     "totals_overflowed": false,
+     "unknown": 0,
+     "v": 1
+    },
+    "upstream_attempts": [
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     }
+    ],
+    "receipts": [
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 400,
+      "cached_input_tokens": 0,
+      "output_tokens": 0,
+      "delivery": "delivered"
+     }
+    ]
+   },
+   "s6": {
+    "name": "s6-busy",
+    "exit": 0,
+    "ms": 19949,
+    "key_canary_leaked": false,
+    "summary": {
+     "attempts": 2,
+     "cached_input_tokens": 0,
+     "complete": 2,
+     "coverage": "whole_run_unverified",
+     "failed": 0,
+     "input_tokens": 510,
+     "log_failed": false,
+     "output_tokens": 3,
+     "refused": {
+      "gateway_busy": 10
+     },
+     "session_id": "417fed3f-dad7-472a-aa9e-8db8943db21b",
+     "totals_overflowed": false,
+     "unknown": 0,
+     "v": 1
+    },
+    "upstream_attempts": [
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "stream",
+       "messages"
+      ],
+      "events_sent": [
+       "delta",
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "delta",
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": 288
+     }
+    ],
+    "receipts": [
+     {
+      "outcome": "complete",
+      "input_tokens": 10,
+      "cached_input_tokens": 0,
+      "output_tokens": 1,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 500,
+      "cached_input_tokens": null,
+      "output_tokens": 2,
+      "delivery": "client_closed"
+     }
+    ]
+   }
+  },
+  "r4_regression": {
+   "s1": {
+    "name": "s1-tool",
+    "exit": 0,
+    "ms": 6046,
+    "key_canary_leaked": false,
+    "summary": {
+     "attempts": 2,
+     "cached_input_tokens": 1000,
+     "complete": 2,
+     "coverage": "whole_run_unverified",
+     "failed": 0,
+     "input_tokens": 2100,
+     "log_failed": false,
+     "output_tokens": 38,
+     "refused": {},
+     "session_id": "90d4071e-2a6a-4531-8aa3-c687bd9eebb4",
+     "totals_overflowed": false,
+     "unknown": 0,
+     "v": 1
+    },
+    "upstream_attempts": [
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "delta",
+       "delta",
+       "tool_calls",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     },
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "delta",
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": null
+     }
+    ],
+    "receipts": [
+     {
+      "outcome": "complete",
+      "input_tokens": 1000,
+      "cached_input_tokens": 0,
+      "output_tokens": 30,
+      "delivery": "delivered"
+     },
+     {
+      "outcome": "complete",
+      "input_tokens": 1100,
+      "cached_input_tokens": 1000,
+      "output_tokens": 8,
+      "delivery": "delivered"
+     }
+    ]
+   },
+   "s2": {
+    "name": "s2-early",
+    "exit": 0,
+    "ms": 606,
+    "key_canary_leaked": false,
+    "summary": {
+     "attempts": 1,
+     "cached_input_tokens": null,
+     "complete": 1,
+     "coverage": "whole_run_unverified",
+     "failed": 0,
+     "input_tokens": 500,
+     "log_failed": false,
+     "output_tokens": 2,
+     "refused": {},
+     "session_id": "4856160b-260c-43ee-a5a6-aae648e87811",
+     "totals_overflowed": false,
+     "unknown": 0,
+     "v": 1
+    },
+    "upstream_attempts": [
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "delta",
+       "stop",
+       "usage",
+       "[DONE]"
+      ],
+      "client_cut_ms": 4
+     }
+    ],
+    "receipts": [
+     {
+      "outcome": "complete",
+      "input_tokens": 500,
+      "cached_input_tokens": null,
+      "output_tokens": 2,
+      "delivery": "client_closed"
+     }
+    ]
+   },
+   "s3": {
+    "name": "s3-grace",
+    "exit": 0,
+    "ms": 3729,
+    "key_canary_leaked": false,
+    "summary": {
+     "attempts": 1,
+     "cached_input_tokens": null,
+     "complete": 0,
+     "coverage": "whole_run_unverified",
+     "failed": 0,
+     "input_tokens": null,
+     "log_failed": false,
+     "output_tokens": null,
+     "refused": {},
+     "session_id": "d809d1f7-054f-45ae-88e9-81108f8b8d69",
+     "totals_overflowed": false,
+     "unknown": 1,
+     "v": 1
+    },
+    "upstream_attempts": [
+     {
+      "auth": "upstream-key",
+      "request_headers": [
+       "accept",
+       "authorization",
+       "content-length",
+       "content-type",
+       "host",
+       "user-agent"
+      ],
+      "request_fields": [
+       "model",
+       "messages",
+       "stream",
+       "stream_options",
+       "tools",
+       "max_tokens",
+       "reasoning_effort"
+      ],
+      "events_sent": [
+       "delta",
+       "stop",
+       "usage"
+      ],
+      "client_cut_ms": 2525
+     }
+    ],
+    "receipts": [
+     {
+      "outcome": "unknown",
+      "input_tokens": null,
+      "cached_input_tokens": null,
+      "output_tokens": null,
+      "delivery": "client_closed"
+     }
+    ]
+   },
+   "ra": {
+    "name": "r-hook",
+    "exit": 2,
+    "ms": 14,
+    "key_canary_leaked": false,
+    "summary": null,
+    "upstream_attempts": [],
+    "receipts": []
+   }
+  },
+  "findings": [
+   "s1 tool call + continuation: 2 attempts complete; gateway totals 2100/1000/38 equal OMP usage import (2 assistant messages)",
+   "s2 OMP stops reading after the trailing usage-only chunk: client closed 4-158 ms after usage, [DONE] (held 4 s upstream) never needed; receipt complete/client_closed, counts kept; cached unknown (not reported) vs host 0",
+   "s3 finish without usage: OMP aborts 2,506-2,684 ms after finish (pinned 2,500 ms grace); receipt unknown/client_closed; host records 0/0",
+   "s4 empty completions: 12 upstream attempts recorded (host recovery x stream-wrapper retries); OMP persisted no assistant message (usage_unavailable)",
+   "r1 s5 upstream HTTP 500 (body with key canary): 35 attempts in OMP's 90 s, all failed, canary never forwarded",
+   "s6 busy marker: slot held 15.3 s by another client; OMP got 10 gateway_busy refusals (counted in `refused`), no transport retry storm (6 per invocation would give ~48), then succeeded",
+   "launcher refusals with the real OMP path: profile_exists, invalid_argument (default name, --hook), profile_invalid, token_missing, gateway_unavailable; OMP never started, no upstream request, global models.yml never created"
+  ]
+ },
+ "live_runs": {
+  "authorization": "owner 2026-10-04: at most 3 runs within one 15-minute outer deadline; Z.ai GLM Coding Plan; key file read by the launcher only",
+  "upstream": "https://api.z.ai/api/coding/paas/v4",
+  "model": "glm-5.3-flash",
+  "runs_used": 2,
+  "outer_elapsed_s": 77,
+  "runs": [
+   {
+    "name": "cf-t004-live-1",
+    "exit": 0,
+    "ms": 13109,
+    "summary": {
+     "attempts": 2,
+     "cached_input_tokens": 6592,
+     "complete": 2,
+     "coverage": "whole_run_unverified",
+     "failed": 0,
+     "input_tokens": 13263,
+     "log_failed": false,
+     "output_tokens": 57,
+     "refused": {},
+     "session_id": "b76f2f86-e876-49d0-9225-703b84ac4e0d",
+     "totals_overflowed": false,
+     "unknown": 0,
+     "v": 1
+    },
+    "file_modes_while_live": {
+     "run_dir": "700",
+     "token": "600",
+     "gateway_json": "600",
+     "models": "600"
+    },
+    "receipts": [
+     {
+      "adapter_id": "foundry-gateway",
+      "cached_input_tokens": 0,
+      "input_tokens": 6602,
+      "model_id": "glm-5.3-flash",
+      "observation": {
+       "delivery": "delivered",
+       "elapsed_ms": 6569,
+       "mode": "meter",
+       "provider_request_id": "bc8d9499-5edd-43a0-8367-03a087ce0a32",
+       "provider_response_id": "202610050821133f5620823ac04dec"
+      },
+      "outcome": "complete",
+      "output_tokens": 46,
+      "request_id": "5057eb43-8dd6-4947-8a80-9f806f6203c3",
+      "session_id": "b76f2f86-e876-49d0-9225-703b84ac4e0d",
+      "v": 1
+     },
+     {
+      "adapter_id": "foundry-gateway",
+      "cached_input_tokens": 6592,
+      "input_tokens": 6661,
+      "model_id": "glm-5.3-flash",
+      "observation": {
+       "delivery": "delivered",
+       "elapsed_ms": 4436,
+       "mode": "meter",
+       "provider_request_id": "ce041cac-4a3d-42a4-bce1-e02ba396ea75",
+       "provider_response_id": "20261005082119f652eafc246645ab"
+      },
+      "outcome": "complete",
+      "output_tokens": 11,
+      "request_id": "3f7c513b-1c4c-4b81-80fe-a8e9922958d1",
+      "session_id": "b76f2f86-e876-49d0-9225-703b84ac4e0d",
+      "v": 1
+     }
+    ]
+   },
+   {
+    "name": "cf-t004-live-2",
+    "exit": 143,
+    "ms": 4147,
+    "summary": {
+     "attempts": 1,
+     "cached_input_tokens": null,
+     "complete": 0,
+     "coverage": "whole_run_unverified",
+     "failed": 0,
+     "input_tokens": null,
+     "log_failed": false,
+     "output_tokens": null,
+     "refused": {},
+     "session_id": "7a87f3c8-9679-43d9-a512-a984ddf7e6f2",
+     "totals_overflowed": false,
+     "unknown": 1,
+     "v": 1
+    },
+    "file_modes_while_live": {
+     "run_dir": "700",
+     "token": "600",
+     "gateway_json": "600",
+     "models": "600"
+    },
+    "receipts": [
+     {
+      "adapter_id": "foundry-gateway",
+      "model_id": "glm-5.3-flash",
+      "observation": {
+       "delivery": "client_closed",
+       "elapsed_ms": 3162,
+       "mode": "meter"
+      },
+      "outcome": "unknown",
+      "request_id": "0a849ee2-5e89-4b9c-860e-8416e083328c",
+      "session_id": "7a87f3c8-9679-43d9-a512-a984ddf7e6f2",
+      "v": 1
+     }
+    ]
+   }
+  ],
+  "reconciliation": {
+   "run1": {
+    "gateway": {
+     "attempts": 2,
+     "input_tokens": 13263,
+     "cached_input_tokens": 6592,
+     "output_tokens": 57
+    },
+    "omp_usage_import": {
+     "assistant_messages": 2,
+     "input_tokens": 13263,
+     "cached_input_tokens": 6592,
+     "cache_write_tokens": 0,
+     "output_tokens": 57,
+     "reasoning_tokens": 23,
+     "total_tokens": 13320,
+     "missing": {
+      "reasoning_tokens": 1
+     }
+    },
+    "equal": true,
+    "correspondence": "one upstream attempt per persisted assistant message"
+   },
+   "run2": {
+    "gateway": "1 attempt, outcome unknown, delivery client_closed after 3162 ms, no counts",
+    "omp_usage_import": "1 assistant message, all usage 0 (OMP defaults absent usage to zero)",
+    "explanation": "disconnect before terminal usage: gateway keeps usage unknown; the host's zeros are defaults, not observations; the request may still have been billed"
+   }
+  },
+  "key_leak_check": {
+   "method": "grep -rIc -F -f <key file> over the live root (configs, receipts, OMP sessions, launcher output); value never printed",
+   "text_files_scanned": 35,
+   "matches": 0,
+   "note": "binary SQLite files skipped by -I; OMP's environment never contained the key (allowlist)"
+  },
+  "cleanup": "after each run: generated models.yml, run token and gateway.json removed; receipts and OMP sessions kept"
+ }
+}

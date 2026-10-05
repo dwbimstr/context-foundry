@@ -1,11 +1,13 @@
 # Bootstrap, isolated workers and deployment
 
-Status: bootstrap/connect and both MCP transports (003 T001–T003) implemented and
-verified locally, 2026-10-01 ([validation](validation.md)); worker isolation, 005, 009,
-013 and the gateway remain proposed. The token-economics tranche (001 T004–T006, 003
-T005, 007 T001) was approved on 2026-10-03. 001 T004–T006 are locally implemented,
-accepted and committed (`5edf32c`); 003 T005 and 007 T001 were implemented and accepted
-on 2026-10-04 and committed locally (`5e99ffd`, `cc402e0`). None is released.
+Status: bootstrap/connect and both MCP transports (003 T001–T003) were implemented and
+verified locally on 2026-10-01 ([validation](validation.md)). Worker isolation, 005, 009
+and 013 remain proposed. The token-economics tranche (001 T004–T006, 003 T005, 007
+T001) was approved on 2026-10-03. 001 T004–T006 are locally implemented, accepted and
+committed (`5edf32c`). 003 T005 and 007 T001 were implemented and accepted on
+2026-10-04 and committed locally (`5e99ffd`, `cc402e0`). 008 explicit memory and the
+003 T004 owned model gateway (`foundry gateway`, `foundry gateway-omp`) were
+implemented and accepted on 2026-10-04 as well. None is released.
 This is the shared deployment boundary for 003
 adapter onboarding, 005 explicit producer execution, 009 embeddings and 013 owned
 learning — not another product, daemon or spec stage. No production installation,

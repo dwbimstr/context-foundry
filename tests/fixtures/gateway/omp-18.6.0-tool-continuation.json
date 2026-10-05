@@ -1,0 +1,138 @@
+{
+  "model": "glm-5.3-flash",
+  "messages": [
+    {
+      "role": "system",
+      "content": "system text 0"
+    },
+    {
+      "role": "system",
+      "content": "system text 1"
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "user part 2"
+        },
+        {
+          "type": "text",
+          "text": "user part 2"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "reasoning_content": "synthetic reasoning",
+      "tool_calls": [
+        {
+          "id": "call_9",
+          "type": "function",
+          "function": {
+            "name": "read",
+            "arguments": "{\"path\":\"hello.txt\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "tool text 4",
+      "tool_call_id": "call_9"
+    }
+  ],
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "read",
+        "description": "synthetic",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "i": {
+              "type": "string",
+              "description": "synthetic"
+            },
+            "path": {
+              "type": "string",
+              "description": "synthetic"
+            }
+          },
+          "required": [
+            "path",
+            "i"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "bash",
+        "description": "synthetic",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "i": {
+              "type": "string",
+              "description": "synthetic"
+            },
+            "command": {
+              "type": "string"
+            },
+            "timeout": {
+              "type": "number",
+              "description": "synthetic"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "pty": {
+              "type": "boolean"
+            },
+            "async": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string",
+              "maxLength": 48
+            },
+            "ready": {
+              "type": "object",
+              "properties": {
+                "log": {
+                  "type": "string"
+                },
+                "port": {
+                  "type": "number"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "timeout": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "command",
+            "i"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "max_tokens": 131072,
+  "reasoning_effort": "max"
+}

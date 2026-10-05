@@ -24,12 +24,12 @@ policy 2026-10-04). As of
 implemented and verified locally ([validation](validation.md)). The owner selected
 item 3 on 2026-10-03 as the current core work, ahead of the optional features; it is
 implemented locally: 001 T004–T006 are accepted and committed (`5edf32c`); 003 T005 and
-007 T001 were accepted and committed locally on 2026-10-04; none is released, and the
-[release checklist](release.md) runs only after every active spec is complete. 003 T004
-(gateway), 005, 008, 009 and 013 remain proposed; the 2026-10-03 spec pass classified
-their remaining unknowns as settled decisions, named open owned decisions (005 T002's
-`references` header segments, 009 T002's semantic-item line form) or external
-prerequisites, all listed in the portfolio. 001 D001 stays
+007 T001 were accepted and committed locally on 2026-10-04, as were 008 (explicit
+memory) and 003 T004 (the owned model gateway, verified live against Z.ai). None is
+released, and the [release checklist](release.md) runs only after every active spec
+is complete. 005, 009 and 013 remain open. The 2026-10-03 spec pass classified their
+remaining unknowns as settled decisions, owned decisions (both decided 2026-10-04) or
+external prerequisites, all listed in the portfolio. 001 D001 stays
 resolved: redb/Tantivy. Optional model choices do not reopen that decision by default.
 
 Plan 009's cache/profile/chunk lifecycle alongside 001. Nemotron 3 Embed 1B with the

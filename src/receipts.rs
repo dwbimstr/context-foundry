@@ -128,6 +128,36 @@ pub struct Observation {
     pub count_elapsed_ms: Option<u64>,
     pub provider_request_id: Option<String>,
     pub provider_response_id: Option<String>,
+    /// Gateway-only: whether the response reached the host, recorded
+    /// separately from `outcome` (a closed client never erases known counts).
+    pub delivery: Option<Delivery>,
+}
+
+/// How a gateway response was delivered to the host (gateway-only field).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    Delivered,
+    ClientClosed,
+    LocalFailure,
+}
+
+impl Delivery {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Delivery::Delivered => "delivered",
+            Delivery::ClientClosed => "client_closed",
+            Delivery::LocalFailure => "local_failure",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "delivered" => Some(Delivery::Delivered),
+            "client_closed" => Some(Delivery::ClientClosed),
+            "local_failure" => Some(Delivery::LocalFailure),
+            _ => None,
+        }
+    }
 }
 
 /// Optional means omittable, not null: an explicit null refuses.
@@ -189,12 +219,13 @@ const RECEIPT_FIELDS: [&str; 15] = [
     "observation",
 ];
 
-const OBSERVATION_FIELDS: [&str; 5] = [
+const OBSERVATION_FIELDS: [&str; 6] = [
     "mode",
     "elapsed_ms",
     "count_elapsed_ms",
     "provider_request_id",
     "provider_response_id",
+    "delivery",
 ];
 
 impl Receipt {
@@ -330,6 +361,17 @@ impl Receipt {
                     count_elapsed_ms: count_field(fields, "count_elapsed_ms")?,
                     provider_request_id: optional_id(fields, "provider_request_id")?,
                     provider_response_id: optional_id(fields, "provider_response_id")?,
+                    delivery: match optional(fields, "delivery")? {
+                        None => None,
+                        Some(Value::String(s)) => Some(Delivery::parse(s).ok_or_else(|| {
+                            invalid("`delivery` must be delivered|client_closed|local_failure")
+                        })?),
+                        Some(_) => {
+                            return Err(invalid(
+                                "`delivery` must be delivered|client_closed|local_failure",
+                            ));
+                        }
+                    },
                 })
             }
             Some(_) => return Err(invalid("`observation` must be an object")),
@@ -406,6 +448,9 @@ impl Receipt {
             }
             if let Some(value) = &observation.provider_response_id {
                 fields.insert("provider_response_id".into(), Value::from(value.clone()));
+            }
+            if let Some(value) = observation.delivery {
+                fields.insert("delivery".into(), Value::from(value.as_str()));
             }
             map.insert("observation".into(), Value::Object(fields));
         }

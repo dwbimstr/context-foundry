@@ -76,6 +76,12 @@ matching host configuration with `--http-port PORT --token-env NAME`:
   handles, and an unavailable root is named rather than silently skipped.
 - `foundry usage import --host omp|codex --session FILE`: offline counter summary of a
   host session (provider usage, tool calls and Foundry payloads); opens no store.
+- Owned model gateway (003 T004): `foundry gateway --config FILE` meters OMP 18.6.0
+  traffic to Z.ai `glm-5.3-flash`. It is a single-flight loopback forwarder that
+  validates requests against the pinned OMP request profile, forwards bytes unchanged,
+  withholds upstream error events and records per-attempt usage receipts.
+  `foundry gateway-omp` runs OMP in a fresh dedicated profile, and only the gateway
+  ever holds the Z.ai key. Meter mode only; no spend cap.
 
 ```sh
 foundry --store /tmp/foundry-demo import-graph examples/graph.json

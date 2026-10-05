@@ -40,6 +40,61 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 003 T004 owned model gateway — 2026-10-04
+
+Locally implemented and verified, **unpushed and unreleased**.
+- **Authors:** Z.ai GLM-5.3 (implementer), plus captain fixes: the flush-before-abort
+  in the response body, test-only fixes, and a Rust 1.90 clippy rewrite.
+- **Review:** cross-lab by OpenAI GPT-6.1 Sol in three rounds:
+  - BLOCK: a credential-bearing SSE error event could pass, plus 9 Majors;
+  - BLOCK: C1, M1 and M4 reopened by new counterexamples;
+  - SHIP: the reviewer replayed the counterexamples against a fresh build.
+- **Evidence:** [t004-gateway-2026-10-04.json](review/t004-gateway-2026-10-04.json).
+
+- **Request pin.** OMP 18.6.0's request profile was pinned before code by running
+  actual OMP (the `dist/cli.js` bundle, not the 18.1.11 TypeScript sources beside it)
+  against a credential-free capture endpoint; see adapter-economics § Pinned OMP 18.6.0
+  request profile. Sanitized fixtures are in `tests/fixtures/gateway/`.
+- **Gates on the integrated main tree** (with 008):
+  - source manifest `87aea7ff…07d3`;
+  - `cargo fmt --check` and `cargo clippy --all-targets -D warnings` pass;
+  - the full suite: **352 passed, 0 failed, 1 ignored**; all recovery scenarios passed;
+  - Rust 1.90.0 `check` and `clippy -D warnings` pass;
+  - `tests/gateway.rs` is 42/42 on three consecutive runs.
+- **Release binary.** `53d43b0c…2662` contains none of the test-hook strings
+  (`FOUNDRY_GATEWAY_TEST`, `ctxfoundry-fault`, `FOUNDRY_TEST_FAULT`).
+- **Real OMP 18.6.0 against a loopback fake upstream** (test build, throwaway `HOME`,
+  synthetic key canary):
+  - A tool call and its continuation reconciled exactly with `usage import`: 2 attempts,
+    2100/1000/38.
+  - OMP stopped reading 4–158 ms after the trailing usage chunk: `complete`,
+    `client_closed`, counts kept.
+  - A finish without usage was aborted by OMP at 2,506–2,684 ms (the pinned 2,500 ms
+    grace) and recorded `unknown`.
+  - Empty completions produced 12 recorded attempts while OMP persisted none.
+  - Upstream HTTP 500 produced 35 attempts in 90 s, with the canary never forwarded.
+  - With the slot held by another client, OMP took 10 `gateway_busy` refusals,
+    counted in `refused`, with no in-transport retries, then succeeded.
+  - Launcher refusals were `profile_exists`, `invalid_argument` (a `default` profile;
+    `--hook`), `profile_invalid`, `token_missing` and `gateway_unavailable`. OMP never
+    started, nothing reached the upstream, and the global `models.yml` was never
+    created.
+- **Live runs against Z.ai.** Owner-authorized for 3 runs within 15 minutes; 2 were used
+  and finished in 77 s.
+  - Run 1, a tool turn, matched `usage import` exactly: 2 attempts and 2 assistant
+    messages, input 13,263, cached 6,592, output 57.
+  - Run 2, SIGTERM 4 s in, produced one `unknown`/`client_closed` attempt with no
+    counts. OMP recorded zeros, its default for absent usage. That attempt may still
+    have been billed.
+  - While live, `run_dir` was 0700, the token 0600, `gateway.json` 0600 and
+    `models.yml` 0600. Afterwards the token and `models.yml` were removed, while
+    receipts and sessions remained.
+  - A key scan (`grep -F -f` over 35 text files) found 0 matches.
+- **Limits of this evidence.** Meter mode only. Receipts are in-memory with an optional
+  bounded log, so whole-run coverage stays unverified across crashes. A terminal-
+  generated SIGINT is documented, not tested. No savings claim follows from
+  forwarding.
+
 ## 008 explicit memory — T001 and T002, 2026-10-04
 
 Locally implemented and verified, **unpushed and unreleased**.

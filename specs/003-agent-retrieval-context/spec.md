@@ -2,9 +2,9 @@
 
 Status: T001–T003 and the optional shared owner implemented and verified locally,
 2026-10-01, including concurrent OMP 18.4.9 and Codex 0.159.2 service on one store
-([validation](../../docs/validation.md)). Not released. T004 gateway is retargeted
-(2026-10-04) to OMP on Z.ai `glm-5.3-flash`, meter only; its amended contract was
-approved on 2026-10-04 and implementation is in progress. T005
+([validation](../../docs/validation.md)). Not released. T004 gateway, retargeted
+(2026-10-04) to OMP on Z.ai `glm-5.3-flash` in meter mode only, was implemented and
+accepted on 2026-10-04 (§ T004 and validation). T005
 (token-economics adoption), approved 2026-10-03, is
 implemented and accepted locally as of 2026-10-04: catalog/instruction text (with 001
 T004), usage import and economics tests, and the operator hook (team-kit). The runbook
@@ -526,6 +526,24 @@ adds the opt-in OMP team-kit hook; this record stays instruction-only evidence.)
   acceptance of the GLM Coding Plan terms for a single-user loopback forwarder in front
   of OMP (a supported tool). Measuring provider usage alone does not need the gateway:
   T005's `usage import` reads the host's own session records.
+- **Result (2026-10-04): accepted.** Full detail is in
+  [validation](../../docs/validation.md) and the
+  [evidence](../../docs/review/t004-gateway-2026-10-04.json).
+  - **Fixture checks.** Real OMP 18.6.0 ran against a loopback fake upstream:
+    - request fields matched the pin;
+    - a tool call and its continuation reconciled exactly with `usage import`;
+    - OMP stopped early after usage, within the 2,500 ms grace;
+    - every retried attempt was recorded: 12 for empty completions, 35 for HTTP 500s;
+    - the busy marker drew 10 counted `gateway_busy` refusals and no transport retry
+      storm;
+    - the launcher refusals behaved as specified.
+  - **Live runs.** Release binary `53d43b0c…2662`. Two of the three authorized runs
+    were used, finishing in 77 s of the 15-minute window:
+    - run 1, a tool turn, reconciled exactly with `usage import`: 2 attempts, input
+      13,263, cached 6,592, output 57;
+    - run 2, a disconnect before usage, is recorded as `unknown`/`client_closed`; the
+      host's zero counts are its defaults, not observations.
+  - The key matched none of 35 text files.
 
 ### T005 — Displace grep and exploratory reads at the fewest delivered tokens
 

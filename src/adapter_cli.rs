@@ -1,7 +1,8 @@
-//! The 003 adapter commands (`mcp`, `bootstrap`, `connect`, `usage`). The core
-//! CLI flattens [`AdapterCommand`] into its one `clap` parser and hands the
-//! parsed command to [`run`]; nothing here opens a store except `mcp` and
-//! `bootstrap --apply`, through the library modules.
+//! The 003 adapter commands (`mcp`, `bootstrap`, `connect`, `usage`,
+//! `gateway`, `gateway-omp`). The core CLI flattens [`AdapterCommand`] into
+//! its one `clap` parser and hands the parsed command to [`run`]; nothing
+//! here opens a store except `mcp` and `bootstrap --apply`, through the
+//! library modules. The gateway commands never open a store.
 use crate::{FResult, FoundryError, adapter_error::AResult};
 use clap::Subcommand;
 use std::{io::Read, path::PathBuf};
@@ -76,6 +77,35 @@ pub enum AdapterCommand {
         /// (repeat for up to 8 references); recorded in the printed argv.
         #[arg(long = "reference", value_name = "ROOT=STORE")]
         reference: Vec<String>,
+    },
+    /// Foreground owned-model gateway (003 T004): a loopback-only SSE
+    /// forwarder for the pinned OMP 18.6.0 / glm-5.3-flash profile, with
+    /// usage receipts; never opens the source store.
+    Gateway {
+        /// Strict gateway config v1 JSON file (names and paths, never secrets).
+        #[arg(long)]
+        config: PathBuf,
+    },
+    /// Run OMP through the gateway in a fresh, dedicated, non-default profile.
+    GatewayOmp {
+        /// Gateway config v1 JSON file (same file as `foundry gateway`).
+        #[arg(long)]
+        config: PathBuf,
+        /// File holding the single-line upstream key; never printed or logged.
+        #[arg(long = "key-file")]
+        key_file: PathBuf,
+        /// Fresh profile name; an existing profile is refused, never overwritten.
+        #[arg(long)]
+        profile: String,
+        /// low|high|max. Explicit so OMP never runs `auto` judge side requests.
+        #[arg(long, default_value = "max", value_parser = ["low", "high", "max"])]
+        thinking: String,
+        /// OMP executable; defaults to `omp` on PATH.
+        #[arg(long)]
+        omp: Option<PathBuf>,
+        /// Extra arguments passed to OMP after `--`.
+        #[arg(last = true)]
+        omp_args: Vec<String>,
     },
     /// Offline usage-receipt tools; open no store and no provider connection.
     Usage {
@@ -349,6 +379,50 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                     "json_native": printed.json_native,
                 }))?
             );
+        }
+        AdapterCommand::Gateway { config } => {
+            #[cfg(unix)]
+            crate::gateway::run(&config)?;
+            #[cfg(not(unix))]
+            {
+                let _ = config;
+                return Err(FoundryError::PlatformUnsupported(
+                    "the model gateway needs a unix host".into(),
+                )
+                .into());
+            }
+        }
+        AdapterCommand::GatewayOmp {
+            config,
+            key_file,
+            profile,
+            thinking,
+            omp,
+            omp_args,
+        } => {
+            #[cfg(unix)]
+            {
+                // OMP's own exit status is the launcher's; cleanup already ran.
+                let code = crate::gateway_launch::run(&crate::gateway_launch::Options {
+                    config,
+                    key_file,
+                    profile,
+                    thinking,
+                    omp: omp.unwrap_or_else(|| PathBuf::from("omp")),
+                    omp_args,
+                })?;
+                if code != 0 {
+                    std::process::exit(code);
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (config, key_file, profile, thinking, omp, omp_args);
+                return Err(FoundryError::PlatformUnsupported(
+                    "the model gateway needs a unix host".into(),
+                )
+                .into());
+            }
         }
         AdapterCommand::Usage { action } => match action {
             UsageAction::Summarize { input } => println!(

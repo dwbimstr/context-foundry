@@ -1,7 +1,9 @@
 # Adapter economics contract v1
 
 Status: Delivery budgets and receipts implemented 2026-10-01 (003 T002); host-request
-mode and gateway proposed (contract proposed 2026-09-29). Delivered-token economics
+mode proposed (contract proposed 2026-09-29). The owned model gateway (§ Owned model
+gateway) was implemented and accepted 2026-10-04 (003 T004), meter mode only.
+Delivered-token economics
 (§ below) was approved 2026-10-03: 001 T004–T006 (wire, atomic allowance, catalog text,
 syntax-unit ranking and outlines) are locally implemented, accepted and committed
 (`5edf32c`), unreleased; 003 T005's usage import, economics tests and operator hook and
@@ -10,8 +12,10 @@ real-host runbook recorded in [validation](../../../docs/validation.md). Owned b
 [003](../spec.md); core packing/identity remains in [001](../../001-source-state-recovery/contracts/context-v2.md).
 This adds practical budget control, usage receipts and the owner's subsequently
 requested optional model gateway. The gateway is a narrow Rust forwarding command, not
-a fleet cost governor. Delivery allowances were exercised on a real host in 003 T003;
-no gateway integration or savings result has been executed.
+a fleet cost governor. Delivery allowances were exercised on a real host in 003 T003.
+The gateway's metering was exercised against real OMP and Z.ai in 003 T004
+([evidence](../../../docs/review/t004-gateway-2026-10-04.json)). No savings result has
+been claimed from it.
 
 ## What Foundry controls
 
@@ -110,8 +114,11 @@ Optional local receipt after an actual provider response:
 `{v:1,session_id,request_id,adapter_id,model_id,context_ids?,input_tokens?,output_tokens?,
 cached_input_tokens?,cost_microunits?,currency?,cost_basis?,ratecard_id?,outcome,
 observation?}`. Optional observation is `{mode,elapsed_ms,count_elapsed_ms?,
-provider_request_id?,provider_response_id?}`; mode delivery/host_request/meter/enforce,
+provider_request_id?,provider_response_id?,delivery?}`; mode delivery/host_request/meter/enforce,
 times nonnegative u64 milliseconds, optional provider IDs nonblank <=256 bytes.
+`delivery` (gateway only) is `delivered`, `client_closed` or `local_failure` and records
+the response's delivery to the host separately from `outcome`, which describes what
+the provider observation established; a closed client never erases known counts.
 IDs nonblank <=256 UTF-8 bytes; context_ids <=64 distinct delivery UUIDs; receipt <=16 KiB.
 Receipts omit `context_ids` until a host-request integration emits delivery IDs.
 `outcome` is `complete`, `failed` or `unknown`. Counts/cost are
@@ -427,6 +434,44 @@ top-level fields outside the pinned set with `gateway_feature_unsupported`, so h
 charges are not mislabeled as metered. T004 verifies that OMP operates inside this
 subset; a `baseUrl` setting alone is insufficient.
 
+**Pinned OMP 18.6.0 request profile** (recorded 2026-10-04). Source: the installed
+`omp/18.6.0` bundle (`pi-coding-agent/dist/cli.js`), not the 18.1.11 TypeScript
+sources installed beside it. Method: actual OMP ran in a throwaway home against a
+credential-free local capture endpoint. Sanitized shapes are in
+`tests/fixtures/gateway/omp-18.6.0-*.json`.
+
+- Wire: `POST <baseUrl>/chat/completions` with headers `accept: text/event-stream`,
+  `accept-encoding`, `authorization: Bearer <apiKey>`, `content-type:
+  application/json`, `content-length`, `host`, `connection` and `user-agent:
+  omp/18.6.0`.
+- Top-level fields: `model`, `messages`, `stream: true`, `stream_options:
+  {include_usage: true}`, `tools`, `max_tokens` and `reasoning_effort`.
+  - `max_tokens` is 131,072 on turns and 4,096 on judge side requests.
+  - `reasoning_effort` is one of `low`, `high` or `max`. `--thinking`
+    `off|minimal|low|medium` sends `low`; `high|xhigh` sends `high`; `max` and the
+    catalog default send `max`.
+  - Side requests add `temperature` and `tool_choice`.
+  - The builder can also emit `top_p`, `tool_stream: true` (zai reasoning-effort
+    dialect with tools) and `thinking: {type}`, though no capture showed them.
+  - These ten names are the whole allowlist.
+- Messages:
+  - `system`: string content.
+  - `user`: string or text-part array.
+  - `assistant`: string content (`""` beside `tool_calls`; `null` is also accepted),
+    with optional `reasoning_content` (replayed reasoning) and optional `tool_calls`.
+  - `tool`: content plus `tool_call_id`.
+- Windows: catalog `zai.glm-5.3-flash` has a 1,000,000-token context and `maxTokens`
+  131,072. Its input modalities include images, which the subset refuses.
+- Side requests: `--thinking auto` sends three judge side requests before the turn.
+  The launcher therefore passes an explicit `--thinking` level (default `max`) and
+  `PI_NO_TITLE=1`, which leaves one gateway request per model turn.
+- Usage and stopping: OMP reads top-level `usage` or `choices[0].usage`. It stops
+  reading at a choices-less chunk after finish and usage, or after a finish whose usage
+  has positive cached tokens. It aborts 2,500 ms after finish.
+- Retries: HTTP makes up to 6 attempts, with no retry after `rate_limit_type:
+  max_parallel_requests` or that marker in the body. The stream wrapper adds up to 2
+  empty-completion retries and 1 provider-error retry.
+
 **Meter mode** forwards supported requests and records actual usage; it promises no
 preflight input/session token cap. **Enforce mode** is defined but not available for
 the pinned profile: it requires a positive `max_tokens` no greater than policy and,
@@ -502,3 +547,85 @@ The learned head has no access to keys/HTTP and cannot raise limits. Model switc
 cached-answer serving, prompt rewriting and learned spend allocation are outside this
 first gateway. Preserve useful future economics goals through observed evidence; do
 not promise savings merely from installing a forwarding hop.
+
+### Implemented surface (T004, 2026-10-04)
+
+**Commands.** `src/gateway.rs` and `src/gateway_launch.rs` are unix-only.
+- `foundry gateway --config FILE` is the foreground server.
+- `foundry gateway-omp --config FILE --key-file FILE --profile NAME [--thinking low|high|max] [--omp PATH] [-- OMP_ARGS]`
+  is the launcher.
+  - `--thinking` defaults to `max`, the catalog default. It is always passed
+    explicitly, so OMP never runs `auto` and its judge side requests.
+  - `run_dir`'s parent must exist; a failed startup removes only the directory it
+    created.
+  - Test-only overrides exist only under the `test-faults` feature:
+    `FOUNDRY_GATEWAY_TEST_UPSTREAM` (plain-http loopback upstream),
+    `FOUNDRY_GATEWAY_TEST_IDLE_MS` and `FOUNDRY_GATEWAY_TEST_DEADLINE_MS`. Release
+    builds read none of them.
+
+**Local refusals and gateway errors.** Every row but the last refuses before any
+upstream send. Each carries a bounded `{"error":{"code","message"}}` body.
+
+| Condition | Status | Code |
+| --- | --- | --- |
+| `Origin` present; wrong `Host` | 403 | `gateway_forbidden_origin`; `gateway_bad_host` |
+| Missing or wrong bearer | 401 | `gateway_unauthorized` |
+| Admission closed (shutdown, log full, log write failure) | 403 | `gateway_admission_closed` |
+| 10,000 attempts already recorded | 403 | `session_full` |
+| Generation slot busy | 429 + `rate_limit_type: max_parallel_requests` | `gateway_busy` |
+| Body over 4 MiB | 413 | `request_too_large` |
+| Content encoding other than identity | 415 | `gateway_feature_unsupported` |
+| Wrong content type; malformed JSON, duplicate keys, depth over 64 or invalid UTF-8; query string; invalid `X-Foundry-Context-Ids` | 415 / 400 | `invalid_argument` |
+| Unknown path; wrong method; `Upgrade` header | 404 / 405 / 400 | `gateway_feature_unsupported` |
+| Outside the pinned subset (model, stream, fields, image parts) | 400 | `gateway_feature_unsupported` |
+| Body read deadline; attempt deadline; upstream silent before response headers (idle or deadline) | 408 / 504 | `deadline_exceeded` |
+
+403 is used for permanent local refusals because OMP 18.6.0 retries only statuses
+of 500 and above, 408 and 429.
+
+**Upstream replies.**
+- A non-success upstream status, 3xx included, is returned with the same status and a
+  gateway-owned `upstream_error` body carrying `upstream_status` and an allowlisted
+  provider request ID. Redirects are never followed.
+- A 2xx reply must be `text/event-stream` with no content encoding; anything else is a
+  502 `upstream_error`.
+- An event is forwarded unchanged only when two conditions hold:
+  - every line is blank, a `:` comment, or one of the fields `data`, `event`, `id` and
+    `retry`;
+  - if the event has data, that data is `[DONE]` or a duplicate-key-free JSON object
+    with a `choices` array. A data-less event of comments or metadata fields, such as
+    `: keep-alive`, forwards.
+  A stream-leading UTF-8 BOM is ignored for this check and forwarded as received. A
+  non-null top-level `error`, any other line or data shape, or a duplicate key ends the
+  stream with that event withheld and outcome `failed`. A local failure or timeout
+  flushes already-forwarded events, then closes the connection.
+
+**Final summary line** (stdout of `gateway`; stderr of `gateway-omp`):
+- `attempts`, plus `complete`/`failed`/`unknown`;
+- known `input_tokens`/`cached_input_tokens`/`output_tokens` totals, `null` when no
+  attempt reported a category;
+- per-code local `refused` counts;
+- `log_failed`, `totals_overflowed`, and `coverage:"whole_run_unverified"`.
+
+**Launcher refusals** (exit 2 for invocation errors, 1 otherwise; OMP never starts):
+- `invalid_argument`: a bad or `default` profile name, or a trailing OMP argument that
+  would choose credentials, routing, models, thinking or extensions. Covered:
+  `--api-key`, `--profile`, `--alias`, `--model`, `--models`, `--provider`, `--smol`,
+  `--slow`, `--plan`, `--prewalk`, `--prewalk-into`, `--plan-yolo`, `--plan-yolo-into`,
+  `--thinking`, `--config`, `--extension`/`-e`, `--hook`, `--plugin-dir`,
+  `--external-thinking` and `--service-tier`, each in both `--flag value` and
+  `--flag=value` forms.
+- `profile_exists`;
+- `profile_invalid`: the generated `models.yml` is missing or differs;
+- `token_missing`;
+- `gateway_unavailable`: no ready line, or the authenticated `/health` failed;
+- `omp_unavailable`;
+- `cancelled`.
+
+**Signals.** The launcher forwards SIGTERM and a *directed* SIGINT to OMP.
+Directed means sent by another process: `si_pid != 0` on macOS, `si_code <= 0` on
+Linux. A terminal Ctrl-C already reaches OMP through the shared foreground process
+group, so it is not forwarded a second time. After OMP exits, the launcher stops the
+gateway and removes only the generated `models.yml`, then exits with OMP's status.
+
+`session_full` is verified at unit level; the process cannot lower the 10,000 cap.

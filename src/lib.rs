@@ -33,6 +33,10 @@ pub mod control;
 pub mod error;
 #[cfg(feature = "test-faults")]
 pub mod fault;
+#[cfg(unix)]
+pub mod gateway;
+#[cfg(unix)]
+pub mod gateway_launch;
 pub mod graph;
 pub mod ingest;
 pub mod laya;

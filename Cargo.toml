@@ -56,6 +56,15 @@ futures-util = { version = "0.3", features = ["sink"] }
 axum = { version = "0.8", features = ["http1", "tokio"] }
 http = "1"
 uuid = { version = "1", features = ["v4"] }
+# 003 T004 gateway upstream client: maintained HTTP/TLS with verification on,
+# no transparent decompression, redirects or ambient proxies (set in code).
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
+# 003 T004 gateway listener: hyper 1 http1 with a manual accept loop (no
+# axum tower stack, no SSE crate; events are split on raw bytes).
+hyper = { version = "1", default-features = false, features = ["http1", "server"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio", "server"] }
+http-body-util = "0.1"
+bytes = "1"
 
 [features]
 # Named deterministic fault points for recovery tests. Never enabled by

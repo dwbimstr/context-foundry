@@ -64,6 +64,23 @@ pub mod names {
     point!(MEMORY_FORGET_BEFORE_COMMIT, "memory.forget_before_commit");
     point!(MEMORY_FORGET_AFTER_COMMIT, "memory.forget_after_commit");
     point!(ROOTS_BEFORE_ROOT, "roots.before_root");
+    point!(
+        GATEWAY_LAUNCH_AFTER_MODELS_WRITE,
+        "gateway.launch.after_models_write"
+    );
+    point!(
+        GATEWAY_LAUNCH_BEFORE_TOKEN_READ,
+        "gateway.launch.before_token_read"
+    );
+    point!(GATEWAY_LAUNCH_BEFORE_HEALTH, "gateway.launch.before_health");
+    point!(
+        GATEWAY_LAUNCH_BLOCK_AGENT_DIR,
+        "gateway.launch.block_agent_dir"
+    );
+    point!(
+        GATEWAY_LAUNCH_AFTER_MODELS_CREATE,
+        "gateway.launch.after_models_create"
+    );
 }
 
 /// What a point sees when it is reached.

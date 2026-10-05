@@ -76,6 +76,26 @@ The runtime also contains `src/unicode/LICENSE` with ICU/Unicode notices; that f
 is present and is not the missing main MIT notice. These are inventory observations,
 not a legal audit or a distribution-readiness claim. No license text was fetched.
 
+## Additions for 003 T004 (owned model gateway)
+
+New direct dependencies:
+- `reqwest` 0.13 with `default-features = false` and `rustls` + `stream`;
+- `hyper` 1 (`server`, `http1`), `hyper-util`, `http-body-util` and `bytes`, all
+  already in the lock through axum/rmcp.
+
+The upstream client runs with TLS verification on, through rustls with the aws-lc-rs
+provider and the platform verifier, and with no proxy, redirects or decompression.
+The lock grew from 300 to 344 entries, a count that includes platform-only crates.
+
+On `aarch64-apple-darwin`, 27 crates are new: mostly `MIT OR Apache-2.0`, plus ISC,
+Zlib, BSD-3-Clause, `CC0-1.0 OR MIT-0 OR Apache-2.0` and two compound expressions:
+- `ring`: `Apache-2.0 AND ISC`;
+- `aws-lc-sys`: `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND …`.
+All are permissive, but `aws-lc-sys` and `ring` carry several notices that a binary
+distribution must reproduce. `aws-lc-sys` also builds a third-party C library;
+Foundry adds no first-party C. Source: `cargo metadata --locked --filter-platform
+aarch64-apple-darwin`. This is metadata, not a legal audit.
+
 
 ## Legacy prototype and planned optional components
 
@@ -91,8 +111,8 @@ The selected third-party MLX loader was exercised through Rust PyO3, but private
 runtime distribution remains unaccepted. Record transitive libraries, notices and any VM image/kernel license
 inventory when those packages are actually selected. No weights or private data are
 redistributed by this plan; no dependency has been added merely by documenting it.
-The proposed optional gateway (003 T004, not implemented) also needs locked Rust
-HTTP/TLS/SSE client libraries and a verified provider schema/counting implementation.
-The shared MCP owner's loopback HTTP server stack does not establish that client path.
+The optional gateway (003 T004) is implemented with the locked HTTP/TLS client stack
+above. It forwards and meters only; no provider token-counting implementation exists,
+which is why `enforce` mode stays refused.
 
 Use `cargo metadata --locked` for the full transitive graph. `Cargo.lock` pins it.
