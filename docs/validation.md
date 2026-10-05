@@ -40,6 +40,31 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 013 T001 exact permitted ModernBERT examples — 2026-10-05
+
+Locally implemented and verified; no model is loaded and nothing is trained.
+- **Shape.**
+  - Store schema 6 adds `learning_feedback`, `learning_history` and `learning_datasets`. The explicit `upgrade-store --to 6` runs from v1–v5 in one transaction; every earlier table is preserved, the 009 vector cache included.
+  - `feedback v4` is operator-only. MCP offers no feedback or consent path.
+  - `learning prepare|check|compose-state`. `check` takes `--policy`, because the policy pins the tokenizer the exact re-render needs (contract amended).
+  - The renderer (`src/decision_model.rs`) matches unchanged Laya `build_sequence` @4066d5d5 on 9 pinned cases, including the 1024/1025 boundary.
+- **Authors and review.** Z.ai GLM-5.3 wrote the first version. After the owner retired GLM for erroring, Anthropic Opus 5.5 wrote both fix rounds. Cross-lab review by OpenAI GPT-6.1 Sol: REVISE (10 major, 2 minor), REVISE (one new major), then SHIP. Findings fixed:
+  - inherited contributions forgotten across rounds, now cumulative coverage plus a recorded lineage table;
+  - a rights-assertion change not detected;
+  - a split conflict hidden by the no-op path;
+  - a hand-written JSON scanner that could loop, replaced by strict serde parsing;
+  - reads before bounds checks;
+  - pathname-only output containment, now judged through descriptors;
+  - replace-on-publish;
+  - forged token arrays accepted on read-back;
+  - group ownership not checked;
+  - empty bases accepted;
+  - publication of a substituted staging source, now staged inside a held private directory with source and destination identity checks.
+  
+  A lost publication response is verified with a full read-back and adopted.
+- **Gates** (`9e1c6bc`): fmt; clippy `-D warnings`, stable and 1.90, default and `--no-default-features`; the full suite, 679 passed / 0 failed / 6 ignored, with the recovery harness passing. `learning_data` has 67 tests.
+- **Not yet done:** feedback v4 rows from the accepted labeling run (4,597 tasks, 1,088 labeled) are built with `compose-state` against the refreshed corpus store when T002 needs them.
+
 ## 009 T001 semantic preparation and supervised worker — 2026-10-05
 
 Locally implemented and verified, **unpushed and unreleased**. Development isolation

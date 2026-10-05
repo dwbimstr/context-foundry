@@ -1,7 +1,9 @@
 # 013 — Owned, isolated continuous learning
 
 Status: Proposed implementation contract v4, revised 2026-09-29 after bounded Rust
-feasibility probes. Production learning remains unimplemented. The owner selected
+feasibility probes. T001 (schema 6, `feedback v4`, `learning prepare|check|compose-state`)
+implemented and accepted locally on 2026-10-05 (see validation); fitting, serving and
+deployment (T002–T004) remain unimplemented. The owner selected
 ModernBERT with a decision head and all first-party code in Rust. Laya is a reference,
 not a deployed service. [Evidence and remaining blockers](../../docs/review/feasibility.md)
 are scoped by probe; this document does not declare a model package ready to release.
