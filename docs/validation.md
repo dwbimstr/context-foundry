@@ -141,14 +141,18 @@ Development isolation only. [Evidence](review/009-t002-2026-10-05.json).
   - Resident MCP: worker load 10.6 s, first query 314 ms, warm queries 24–32 ms.
   - The index is 34,032 bytes.
 - **Gates** (`451033b`): fmt; clippy `-D warnings` stable and 1.90, default, `--no-default-features` and `embed-worker`; full suite 720 passed. The only failure is `embed_worker::a_ready_crossing_the_deadline_inside_one_receive_slice_is_never_accepted`, a 400 ms launch-timing test that already flakes on main (1 in 6 solo binary runs; the worker's PID file is not yet written at the deadline). It passes alone.
-- **Known gaps (owner accepted 2026-10-05, not tested):**
-  - semantic evidence crowded by graph/compiler evidence;
-  - the multi-root matrix (primary-only wording, no embedding for a secondary-only request, no secondary leakage);
-  - the no-profile byte-identity matrix across CLI/MCP × search/context × single/multi-root, which was checked only on the real-run CLI context;
-  - a worker dying mid-query through `QueryRuntime`;
-  - the localized lexical-span preview;
-  - multibyte, CRLF and fence-like semantic forms;
-  - the semantic MCP byte cap and allowance accounting.
+- **Known gaps, closed 2026-10-06** (`121eba2`). The owner had accepted them on 2026-10-05; each now has a behavior test that GPT-6.1 Sol reviewed (REVISE → SHIP). No product defect was found.
+  - Semantic evidence crowded by graph/compiler evidence; dense-only hits seed no expansion.
+  - Multi-root:
+    - the wording says primary root only;
+    - a secondary-only request spends no embedding and returns the plain bytes;
+    - no secondary item leaks.
+  - The no-profile byte-identity matrix with positive hits: CLI and MCP × search and context × single and multi root.
+  - A worker dying mid-query: named `provider_exited`, then a stable named fallback.
+  - A localized lexical-span preview continues to the span's end.
+  - CRLF, multibyte and fence-like bytes stay exact in every semantic form.
+  - The MCP byte cap. It is measured at the packer with the owner's exact measure; end to end it takes 1.3 s in release, against 10 s in debug.
+  - Exact session-allowance charging, including a refused request charged 0.
 
 ## 013 T001 exact permitted ModernBERT examples — 2026-10-05
 
