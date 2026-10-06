@@ -6,6 +6,29 @@ use std::fmt;
 
 pub type FResult<T> = Result<T, FoundryError>;
 
+/// 013 learning codes that are execution or artifact failures (CLI exit 1,
+/// contract 280): output writing and ownership, and every way a training
+/// run fails once its preflight passed. Every other learning code is an
+/// invalid input or a preflight refusal (exit 2).
+pub const LEARNING_EXECUTION_CODES: [&str; 16] = [
+    "output_write",
+    "output_ownership",
+    "worker_failed",
+    "worker_timeout",
+    "memory_limit",
+    "memory_unmeasurable",
+    "cpu_limit",
+    "output_limit",
+    "nonfinite_loss",
+    "nonfinite_gradient",
+    "nonfinite_logits",
+    "nonfinite_weight",
+    "calibration_failed",
+    "artifact_invalid",
+    "checkpoint_invalid",
+    "frozen_encoder_changed",
+];
+
 /// Named failures from the 001/003 contracts. `Internal` wraps unexpected
 /// library/OS errors; everything else is a contract code.
 #[derive(Debug)]
@@ -91,8 +114,14 @@ pub enum FoundryError {
     /// staged or published directory is not the one the run built); and the
     /// state composer's
     /// `graph_unavailable` / `graph_stale` (no current compiler graph - the
-    /// caller uses deterministic routing). Diagnostics name codes and
-    /// identities, never state or dataset contents.
+    /// caller uses deterministic routing). T002 training adds the preflight
+    /// refusals `isolation_unavailable`, `profile_invalid`,
+    /// `enforcement_unavailable`, `policy_mismatch`, `contribution_changed`,
+    /// `state_invalid`, `critical_slice_empty`, `base_invalid`,
+    /// `incumbent_invalid`, `candidate_invalid`, `inherited_temperature` and
+    /// `temperature_invalid`, and the execution failures listed in
+    /// [`LEARNING_EXECUTION_CODES`]. Diagnostics name codes and identities,
+    /// never state or dataset contents.
     Learning {
         code: &'static str,
         message: String,
@@ -174,12 +203,9 @@ impl FoundryError {
             | Self::UnsupportedSchema { .. }
             | Self::UpgradeRequired { .. } => 2,
             // 013 data/preflight failures are invalid input (2); artifact
-            // writing and output ownership are execution failures (1).
-            Self::Learning { code, .. }
-                if !matches!(*code, "output_write" | "output_ownership") =>
-            {
-                2
-            }
+            // writing, output ownership and the training run's own failures
+            // are execution failures (1).
+            Self::Learning { code, .. } if !LEARNING_EXECUTION_CODES.contains(code) => 2,
             Self::StoreBusy => 3,
             Self::Cancelled(_) | Self::DeadlineExceeded(_) => 130,
             _ => 1,

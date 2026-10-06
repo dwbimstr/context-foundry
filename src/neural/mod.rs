@@ -85,6 +85,8 @@ pub mod merge;
 pub mod partition;
 #[cfg(feature = "semantic")]
 pub mod prepare;
+#[cfg(target_os = "macos")]
+pub mod probes;
 pub mod profile;
 pub mod protocol;
 pub mod provider;

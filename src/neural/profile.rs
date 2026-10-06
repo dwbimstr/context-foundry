@@ -174,8 +174,9 @@ const MAX_LOAD_TIMEOUT_SECONDS: u64 = 3600;
 /// (which resolves every symlink on it and fails closed on cycles, `ELOOP`
 /// and permission errors alike), and the missing trailing components are
 /// appended unchanged. A path that does not exist yet therefore still
-/// resolves through its existing ancestors, and nothing is guessed.
-fn resolve(path: &Path) -> Result<PathBuf, ProviderError> {
+/// resolves through its existing ancestors, and nothing is guessed. 013's
+/// learning profile judges its scratch/read-only separation with this too.
+pub(crate) fn resolve(path: &Path) -> Result<PathBuf, ProviderError> {
     match std::fs::canonicalize(path) {
         Ok(canonical) => return Ok(canonical),
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -230,7 +231,7 @@ fn resolve(path: &Path) -> Result<PathBuf, ProviderError> {
 }
 
 /// True when `inner` lies strictly below `outer` (a proper subpath).
-fn overlaps(outer: &Path, inner: &Path) -> bool {
+pub(crate) fn overlaps(outer: &Path, inner: &Path) -> bool {
     inner.starts_with(outer) && inner != outer
 }
 

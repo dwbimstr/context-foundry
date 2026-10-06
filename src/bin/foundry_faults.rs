@@ -6,6 +6,14 @@ use context_foundry::fault::{self, GlobalAction};
 
 fn main() {
     arm_from_env();
+    // 013 T002: the fake learning worker's fault hooks, for workers the CLI
+    // launches on this (the main) thread. Whitespace-separated argv.
+    #[cfg(target_os = "macos")]
+    if let Ok(args) = std::env::var("FOUNDRY_TEST_LEARN_WORKER_ARGS") {
+        context_foundry::learning::supervisor::set_test_worker_args(
+            args.split_whitespace().map(str::to_owned).collect(),
+        );
+    }
     context_foundry::cli::main();
 }
 

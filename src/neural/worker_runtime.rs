@@ -658,8 +658,9 @@ impl Engine {
 /// new close-on-exec descriptor owned by the runtime, and descriptor 1
 /// becomes a copy of stderr: a stray `print` from any library (a Python
 /// warning, a C `printf`) then lands in the supervisor's bounded stderr
-/// drain instead of corrupting a frame.
-fn take_ipc_stdout() -> io::Result<std::fs::File> {
+/// drain instead of corrupting a frame. 013's learning worker takes its
+/// frame channel private through this same function.
+pub fn take_ipc_stdout() -> io::Result<std::fs::File> {
     use std::os::fd::FromRawFd;
     let ipc = unsafe { libc::fcntl(1, libc::F_DUPFD_CLOEXEC, 3) };
     if ipc < 0 {

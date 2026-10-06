@@ -98,7 +98,22 @@ pub fn acquire_until(
 /// TMPDIR live below it. The run directory and its `tmp` are mode 0700
 /// whatever the umask, and removed after the worker is reaped.
 fn prepare_run_scratch(profile: &SemanticProfile) -> Result<PathBuf, ProviderError> {
-    let root = profile.worker.scratch_root.clone();
+    prepare_run_scratch_at(&profile.worker.scratch_root, &|| {
+        profile
+            .check_scratch_disjoint()
+            .map_err(|e| ProviderError::ProfileInvalid(e.to_string()))
+    })
+}
+
+/// [`prepare_run_scratch`] for any worker profile: `root` is its scratch
+/// root and `check_disjoint` its scratch/read-only separation check, run
+/// before anything is created and again on the root as it then exists. 013's
+/// learning worker uses exactly these rules for its own scratch root.
+pub(crate) fn prepare_run_scratch_at(
+    root: &Path,
+    check_disjoint: &dyn Fn() -> Result<(), ProviderError>,
+) -> Result<PathBuf, ProviderError> {
+    let root = root.to_path_buf();
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
     let refuse = |why: String| {
         ProviderError::IsolationUnavailable(format!("scratch root {}: {why}", root.display()))
@@ -109,9 +124,7 @@ fn prepare_run_scratch(profile: &SemanticProfile) -> Result<PathBuf, ProviderErr
     };
     // Canonical separation first, with the leaf allowed to be absent:
     // NOTHING is created inside or beside a read-only tree.
-    profile
-        .check_scratch_disjoint()
-        .map_err(|e| ProviderError::ProfileInvalid(e.to_string()))?;
+    check_disjoint()?;
     match std::fs::symlink_metadata(&root) {
         Ok(meta) => {
             if meta.file_type().is_symlink() {
@@ -142,9 +155,7 @@ fn prepare_run_scratch(profile: &SemanticProfile) -> Result<PathBuf, ProviderErr
     }
     // The launch-time recheck, on the root as it now exists, before
     // anything is created inside it.
-    profile
-        .check_scratch_disjoint()
-        .map_err(|e| ProviderError::ProfileInvalid(e.to_string()))?;
+    check_disjoint()?;
     let run = root.join(format!(
         "w-{}-{}",
         std::process::id(),
@@ -172,9 +183,30 @@ fn prepare_run_scratch(profile: &SemanticProfile) -> Result<PathBuf, ProviderErr
 /// async-signal-safe calls run between fork and exec. Public so the
 /// development isolation tests launch their probes under exactly this setup.
 pub fn child_setup(read_fd: i32) -> impl FnMut() -> std::io::Result<()> + Send + Sync + 'static {
+    child_setup_limited(read_fd, Vec::new())
+}
+
+/// [`child_setup`] plus extra hard resource limits (`(resource, value)`,
+/// soft = hard = value), set before `RLIMIT_NPROC=0`. The list is built
+/// before the fork; the child only reads it, so the setup still allocates
+/// nothing and calls only async-signal-safe functions. 013's learning
+/// supervisor adds `RLIMIT_CPU` and `RLIMIT_FSIZE` here.
+pub fn child_setup_limited(
+    read_fd: i32,
+    limits: Vec<(libc::c_int, libc::rlim_t)>,
+) -> impl FnMut() -> std::io::Result<()> + Send + Sync + 'static {
     move || {
         if unsafe { libc::setpgid(0, 0) } != 0 {
             return Err(std::io::Error::last_os_error());
+        }
+        for &(resource, value) in &limits {
+            let limit = libc::rlimit {
+                rlim_cur: value,
+                rlim_max: value,
+            };
+            if unsafe { libc::setrlimit(resource, &limit) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
         }
         let limit = libc::rlimit {
             rlim_cur: 0,
@@ -202,9 +234,10 @@ pub fn child_setup(read_fd: i32) -> impl FnMut() -> std::io::Result<()> + Send +
 
 /// Physical footprint in bytes of `pid` (`proc_pid_rusage`, flavor V0), the
 /// figure Activity Monitor reports as memory, or why it could not be read.
-/// `fault_detail` names the worker at the measurement fault point.
+/// `fault_detail` names the worker at the measurement fault point. 013's
+/// learning supervisor polls through the same function and fault point.
 #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
-fn physical_footprint(pid: u32, fault_detail: &str) -> Result<u64, String> {
+pub(crate) fn physical_footprint(pid: u32, fault_detail: &str) -> Result<u64, String> {
     neural_fault!(FOOTPRINT_MEASURE, None, fault_detail).map_err(|e| e.to_string())?;
     let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v0>() };
     let rc = unsafe {
@@ -1112,44 +1145,7 @@ impl WorkerProvider {
         if let Ok(mut slot) = self.shared.stdin.lock() {
             *slot = None;
         }
-        self.shared.signal_child(libc::SIGTERM);
-        let term_at = Instant::now();
-        let mut reaped = None;
-        while Instant::now().duration_since(term_at) < TERM_GRACE {
-            let mut guard = match self.shared.child.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            match guard.as_mut() {
-                Some(child) => match child.try_wait() {
-                    Ok(Some(status)) => {
-                        reaped = Some(status);
-                        *guard = None;
-                        break;
-                    }
-                    Ok(None) => {}
-                    Err(_) => {
-                        reaped = None;
-                        *guard = None;
-                        break;
-                    }
-                },
-                None => break,
-            }
-            drop(guard);
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        if reaped.is_none() {
-            self.shared.signal_child(libc::SIGKILL);
-            let mut guard = match self.shared.child.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            if let Some(child) = guard.as_mut() {
-                let _ = child.wait();
-                *guard = None;
-            }
-        }
+        terminate_and_reap(&self.shared.child);
         // The liveness write end survives until the worker is reaped.
         if let Ok(mut slot) = self.shared.liveness.lock() {
             *slot = None;
@@ -1167,6 +1163,59 @@ impl WorkerProvider {
             let _ = std::fs::remove_dir_all(scratch);
         }
     }
+}
+
+/// TERM, a 5 s grace polled every 50 ms, then KILL and a blocking reap,
+/// always through the child handle and only while it is unreaped, so a
+/// reused PID is never signalled. The handle is `None` afterwards. Returns
+/// the exit status when the child was reaped here. Shared by the 009
+/// shutdown and 013's learning supervisor.
+pub(crate) fn terminate_and_reap(child: &Mutex<Option<Child>>) -> Option<std::process::ExitStatus> {
+    let lock = || match child.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let signal = |signal: i32| {
+        let mut guard = lock();
+        if let Some(child) = guard.as_mut()
+            && let Ok(None) = child.try_wait()
+        {
+            unsafe { libc::kill(child.id() as libc::pid_t, signal) };
+        }
+    };
+    signal(libc::SIGTERM);
+    let term_at = Instant::now();
+    let mut reaped = None;
+    while Instant::now().duration_since(term_at) < TERM_GRACE {
+        let mut guard = lock();
+        match guard.as_mut() {
+            Some(child) => match child.try_wait() {
+                Ok(Some(status)) => {
+                    reaped = Some(status);
+                    *guard = None;
+                    break;
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    reaped = None;
+                    *guard = None;
+                    break;
+                }
+            },
+            None => break,
+        }
+        drop(guard);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if reaped.is_none() {
+        signal(libc::SIGKILL);
+        let mut guard = lock();
+        if let Some(child) = guard.as_mut() {
+            reaped = child.wait().ok();
+            *guard = None;
+        }
+    }
+    reaped
 }
 
 impl Drop for WorkerProvider {

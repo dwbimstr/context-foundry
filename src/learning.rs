@@ -373,7 +373,7 @@ impl<'de> serde::de::Visitor<'de> for StrictValue {
 /// [`StrictValue`] (no duplicate keys, bounded depth, nothing trailing),
 /// then the typed struct, whose `deny_unknown_fields` and non-optional
 /// fields refuse unknown and null members. Every failure is `code`.
-fn strict_json<T: serde::de::DeserializeOwned>(
+pub(crate) fn strict_json<T: serde::de::DeserializeOwned>(
     bytes: &[u8],
     code: &'static str,
     what: &str,
@@ -637,6 +637,26 @@ impl Engine {
         Ok(rows)
     }
 
+    /// The CURRENT stored row of one example, read in its own short
+    /// transaction: the pre-fit permission gate re-reads every intended
+    /// contribution this way. A stored row that no longer matches its key
+    /// is corruption, never data.
+    pub fn learning_current_row(&self, example_id: &str) -> FResult<Option<FeedbackRowV4>> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(LEARNING_FEEDBACK)?;
+        let Some(raw) = table.get(example_id)? else {
+            return Ok(None);
+        };
+        let row = FeedbackRowV4::parse(raw.value())
+            .map_err(|e| FoundryError::CorruptStore(format!("learning row {example_id}: {e}")))?;
+        if row.example_id() != example_id {
+            return Err(FoundryError::CorruptStore(format!(
+                "learning row {example_id} is stored under the wrong example id"
+            )));
+        }
+        Ok(Some(row))
+    }
+
     fn learning_history_index(&self, control: &Control) -> FResult<HistoryIndex> {
         let mut index = HistoryIndex::default();
         let mut after: Option<String> = None;
@@ -788,18 +808,139 @@ fn read_capped(file: File, limit: u64) -> std::io::Result<Option<Vec<u8>>> {
 // Policy
 // ---------------------------------------------------------------------------
 
-/// The run policy (v2). T001 reads recipe, seed and the pinned tokenizer
-/// identity; T002's training fields extend this file. The manifest binds
-/// the policy's exact bytes by `policy_sha256`.
+/// The run policy (v2): one file serves `prepare` and `train`. T001 reads
+/// recipe, seed and the pinned tokenizer identity; T002 adds the fitting
+/// fields (contract § Fitting, artifacts and evaluation, 158-168) and the
+/// selection policy (200-202). The dataset manifest binds the policy's
+/// exact bytes by `policy_sha256`, and training refuses a dataset prepared
+/// under any other policy.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LearningPolicy {
     pub v: u32,
     pub recipe: String,
-    /// The seed string ordering base-replay selection.
+    /// The seed string ordering base-replay selection, each epoch's training
+    /// order and the head dropout.
     pub seed: String,
     pub tokenizer: TokenizerPin,
+    /// The checkpoint the model function pins (its location is the isolation
+    /// profile's `checkpoint_dir`, which the worker is granted).
+    pub model: decision_model::CheckpointPin,
+    /// `null`: the pinned initial checkpoint is the base. Otherwise the
+    /// SHA-256 of the exact manifest bytes of the accepted candidate that
+    /// `train --base` must name.
+    pub base: Option<String>,
+    pub optimizer: OptimizerPin,
+    /// Updates in this round, 1..=1000000; each epoch visits the training
+    /// rows in seeded order until this many steps are done.
+    pub max_steps: u64,
+    /// The wall clock of the whole fitting run, 1..=7200 seconds.
+    pub wall_seconds: u64,
+    /// The worker's supervised physical-footprint ceiling, 4..=8 GiB.
+    pub memory_bytes: u64,
+    /// The worker's output ceiling (per file and in total), 128 MiB..=2 GiB.
+    pub output_bytes: u64,
+    /// LibTorch intra-op threads, 1..=4.
+    pub cpu_threads: u32,
+    /// Absolute path of the learning-worker isolation profile.
+    pub isolation_profile: PathBuf,
+    /// Requested enforcement per resource; never downgraded.
+    pub enforcement: Enforcement,
+    #[serde(default)]
+    pub selection: SelectionPolicy,
 }
+
+/// The recipe's optimizer, stated in the policy; it must equal
+/// [`decision_model::recipe`] exactly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptimizerPin {
+    pub name: String,
+    pub learning_rate: f64,
+    pub beta1: f64,
+    pub beta2: f64,
+    pub epsilon: f64,
+    pub weight_decay: f64,
+    pub clip_global_norm: f64,
+}
+
+impl OptimizerPin {
+    /// The recipe's constants.
+    pub fn recipe() -> Self {
+        use decision_model::recipe::*;
+        Self {
+            name: OPTIMIZER.to_owned(),
+            learning_rate: LEARNING_RATE,
+            beta1: BETA1,
+            beta2: BETA2,
+            epsilon: EPSILON,
+            weight_decay: WEIGHT_DECAY,
+            clip_global_norm: CLIP_GLOBAL_NORM,
+        }
+    }
+}
+
+/// An enforcement level. `hard` is a kernel limit the worker cannot exceed;
+/// `supervised` is the owner measuring and stopping the worker. A request
+/// is satisfied only by the level requested or a stronger one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Level {
+    Supervised,
+    Hard,
+}
+
+/// Requested enforcement per resource (contract 167-169).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Enforcement {
+    pub memory: Level,
+    pub cpu: Level,
+    pub output: Level,
+    pub process_count: Level,
+}
+
+/// The predeclared selection policy (contract 200-202): fractions finite
+/// in [0, 1]; defaults for the initial trial 0.8 / 0.5 / 0.9 / 0 and no
+/// critical group.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SelectionPolicy {
+    /// Accept a prediction exactly when its unrounded answer confidence is
+    /// at least this.
+    pub threshold: f64,
+    /// Accepted rows over all evaluation rows must reach this.
+    pub coverage_floor: f64,
+    /// Correct accepted rows over accepted rows must reach this.
+    pub accepted_accuracy_floor: f64,
+    /// The candidate's macro accuracy may trail either comparator by at
+    /// most this (also per critical group).
+    pub max_macro_accuracy_drop: f64,
+    /// Evaluation group IDs that must each be present and must not regress
+    /// past the drop allowance.
+    pub critical_groups: Vec<String>,
+}
+
+impl Default for SelectionPolicy {
+    fn default() -> Self {
+        Self {
+            threshold: 0.8,
+            coverage_floor: 0.5,
+            accepted_accuracy_floor: 0.9,
+            max_macro_accuracy_drop: 0.0,
+            critical_groups: Vec::new(),
+        }
+    }
+}
+
+/// Policy bounds (contract 163, 167-168).
+pub const MAX_STEPS: u64 = 1_000_000;
+pub const MAX_WALL_SECONDS: u64 = 7200;
+pub const MIN_MEMORY_BYTES: u64 = 4 << 30;
+pub const MAX_MEMORY_BYTES: u64 = 8 << 30;
+pub const MIN_OUTPUT_BYTES: u64 = 128 << 20;
+pub const MAX_OUTPUT_BYTES: u64 = 2 << 30;
+pub const MAX_CPU_THREADS: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -810,11 +951,15 @@ pub struct TokenizerPin {
     pub config_sha256: String,
 }
 
-fn hex64(value: &str) -> bool {
+pub(crate) fn hex64(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
             .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn fraction(value: f64) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
 }
 
 impl LearningPolicy {
@@ -858,7 +1003,104 @@ impl LearningPolicy {
                 ));
             }
         }
+        policy.validate_fitting()?;
         Ok((policy, crate::digest(&raw)))
+    }
+
+    /// The T002 fields: exact checkpoint pins, the recipe's optimizer, every
+    /// bound (refused, never clamped), an absolute profile path and the
+    /// selection fractions.
+    fn validate_fitting(&self) -> FResult<()> {
+        let invalid = |message: String| Err(fail("policy_invalid", message));
+        for (name, hash) in [
+            ("model.weights_sha256", &self.model.weights_sha256),
+            (
+                "model.encoder_config_sha256",
+                &self.model.encoder_config_sha256,
+            ),
+        ] {
+            if !hex64(hash) {
+                return invalid(format!("{name} must be 64 lowercase hex characters"));
+            }
+        }
+        if decision_model::safetensors::Dtype::parse(&self.model.source_dtype).is_none() {
+            return invalid(format!(
+                "model.source_dtype {:?} is not F16, BF16 or F32",
+                self.model.source_dtype
+            ));
+        }
+        if let Some(base) = &self.base
+            && !hex64(base)
+        {
+            return invalid("base must be null or a 64-hex candidate manifest SHA-256".into());
+        }
+        if self.optimizer != OptimizerPin::recipe() {
+            return invalid(format!(
+                "optimizer must be exactly the {RECIPE} recipe: {:?}",
+                OptimizerPin::recipe()
+            ));
+        }
+        let bounded = |name: &str, value: u64, low: u64, high: u64| -> FResult<()> {
+            if !(low..=high).contains(&value) {
+                return Err(fail(
+                    "policy_invalid",
+                    format!("{name} is {value}; it must be {low}..={high}"),
+                ));
+            }
+            Ok(())
+        };
+        bounded("max_steps", self.max_steps, 1, MAX_STEPS)?;
+        bounded("wall_seconds", self.wall_seconds, 1, MAX_WALL_SECONDS)?;
+        bounded(
+            "memory_bytes",
+            self.memory_bytes,
+            MIN_MEMORY_BYTES,
+            MAX_MEMORY_BYTES,
+        )?;
+        bounded(
+            "output_bytes",
+            self.output_bytes,
+            MIN_OUTPUT_BYTES,
+            MAX_OUTPUT_BYTES,
+        )?;
+        bounded(
+            "cpu_threads",
+            u64::from(self.cpu_threads),
+            1,
+            u64::from(MAX_CPU_THREADS),
+        )?;
+        if !self.isolation_profile.is_absolute()
+            || self
+                .isolation_profile
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return invalid("isolation_profile must be an absolute path without `..`".into());
+        }
+        let selection = &self.selection;
+        for (name, value) in [
+            ("threshold", selection.threshold),
+            ("coverage_floor", selection.coverage_floor),
+            ("accepted_accuracy_floor", selection.accepted_accuracy_floor),
+            ("max_macro_accuracy_drop", selection.max_macro_accuracy_drop),
+        ] {
+            if !fraction(value) {
+                return invalid(format!("selection.{name} must be finite in [0, 1]"));
+            }
+        }
+        let mut seen = BTreeSet::new();
+        if selection.critical_groups.len() > MAX_GROUPS {
+            return invalid("selection.critical_groups lists too many groups".into());
+        }
+        for group in &selection.critical_groups {
+            if group.trim().is_empty() || group.len() > 256 || !seen.insert(group.as_str()) {
+                return invalid(
+                    "selection.critical_groups must be distinct nonblank ids of at most 256 bytes"
+                        .into(),
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -954,14 +1196,30 @@ fn encode_jsonl_row<T: Serialize>(row: &T) -> FResult<String> {
 // Named fault points (test-faults only)
 // ---------------------------------------------------------------------------
 
-/// Fault points of the preparation boundary. Release builds carry no hook
-/// code and no fault-name strings.
+/// Fault points of the preparation and training boundaries. Release builds
+/// carry no hook code and no fault-name strings.
 #[cfg(feature = "test-faults")]
 pub mod fault_names {
     pub const BEFORE_HISTORY: &str = "ctxfoundry-fault/learning.before_history";
     pub const BEFORE_RENAME: &str = "ctxfoundry-fault/learning.before_rename";
     /// After the rename and the parent fsync, before the dataset is recorded.
     pub const AFTER_PUBLISH: &str = "ctxfoundry-fault/learning.after_publish";
+    /// Training: before each update is sent (detail: the step number).
+    pub const BEFORE_STEP: &str = "ctxfoundry-fault/learning.before_step";
+    /// Training: the candidate's head and manifest writes, flushes and
+    /// fsyncs. An armed point fails that operation with `ENOSPC`, exactly
+    /// as a full disk would.
+    pub const HEAD_WRITE: &str = "ctxfoundry-fault/learning.head_write";
+    pub const HEAD_FLUSH: &str = "ctxfoundry-fault/learning.head_flush";
+    pub const HEAD_FSYNC: &str = "ctxfoundry-fault/learning.head_fsync";
+    pub const MANIFEST_WRITE: &str = "ctxfoundry-fault/learning.manifest_write";
+    pub const MANIFEST_FLUSH: &str = "ctxfoundry-fault/learning.manifest_flush";
+    pub const MANIFEST_FSYNC: &str = "ctxfoundry-fault/learning.manifest_fsync";
+    /// Training: the candidate was published, before its read-back.
+    pub const CANDIDATE_PUBLISHED: &str = "ctxfoundry-fault/learning.candidate_published";
+    /// Training: a reply was received, before it is judged (detail: its
+    /// kind and the milliseconds left before the earliest stop).
+    pub const REPLY_RECEIVED: &str = "ctxfoundry-fault/learning.reply_received";
 }
 
 #[cfg(feature = "test-faults")]
@@ -979,16 +1237,44 @@ fn hit_fault(name: &str, control: &Control, detail: &str) -> FResult<()> {
 #[cfg(feature = "test-faults")]
 macro_rules! learning_fault {
     ($name:ident, $control:expr, $detail:expr) => {
-        hit_fault(fault_names::$name, $control, $detail)
+        $crate::learning::hit_fault($crate::learning::fault_names::$name, $control, $detail)
     };
 }
 
 #[cfg(not(feature = "test-faults"))]
 macro_rules! learning_fault {
     ($name:ident, $control:expr, $detail:expr) => {
-        Ok::<(), FoundryError>(())
+        Ok::<(), $crate::FoundryError>(())
     };
 }
+
+/// An I/O fault point: an armed point fails the operation with `ENOSPC`.
+#[cfg(feature = "test-faults")]
+macro_rules! learning_io_fault {
+    ($name:ident, $control:expr, $detail:expr) => {
+        $crate::learning::hit_fault($crate::learning::fault_names::$name, $control, $detail)
+            .map_err(|_| std::io::Error::from_raw_os_error(libc::ENOSPC))
+    };
+}
+
+#[cfg(not(feature = "test-faults"))]
+macro_rules! learning_io_fault {
+    ($name:ident, $control:expr, $detail:expr) => {
+        Ok::<(), std::io::Error>(())
+    };
+}
+
+// T002: fitting, calibration, evaluation and the candidate. Declared after
+// the fault macros so they reach these modules.
+pub mod candidate;
+pub mod eval;
+pub mod ipc;
+pub mod profile;
+#[cfg(target_os = "macos")]
+pub mod supervisor;
+pub mod train;
+#[cfg(target_os = "macos")]
+pub mod worker;
 
 // ---------------------------------------------------------------------------
 // Preparation
@@ -1106,10 +1392,10 @@ impl Sink {
     }
 }
 
-/// The destination of `learning prepare`, held through descriptors: its
-/// parent directory is opened ONCE, and every later create, write, rename,
-/// fsync and cleanup is relative to that descriptor, so substituting a path
-/// component afterwards cannot redirect the output.
+/// The destination of `learning prepare` and `learning train`, held through
+/// descriptors: its parent directory is opened ONCE, and every later
+/// create, write, rename, fsync and cleanup is relative to that descriptor,
+/// so substituting a path component afterwards cannot redirect the output.
 struct OutputTarget {
     parent: Dir,
     name: OsString,
@@ -1118,11 +1404,15 @@ struct OutputTarget {
 impl OutputTarget {
     /// Preflight: the output names a new directory, its parent is not (and
     /// does not lie under) the admitted source root, and the name is free —
-    /// unless it may hold this store's own earlier publication whose
-    /// response was lost (a directory whose manifest is not recorded);
-    /// [`prepare`] adopts it only when it reads back as exactly the dataset
-    /// the run produces.
-    fn open(engine: &Engine, out: &Path) -> FResult<Self> {
+    /// unless it may hold this run's own earlier publication whose response
+    /// was lost: a directory whose manifest `may_adopt` admits. The caller
+    /// adopts it only when it reads back as exactly the output the run
+    /// produces.
+    fn open(
+        engine: &Engine,
+        out: &Path,
+        may_adopt: &dyn Fn(&[u8]) -> FResult<bool>,
+    ) -> FResult<Self> {
         let name = match out.components().next_back() {
             Some(std::path::Component::Normal(name)) => name.to_owned(),
             _ => {
@@ -1171,7 +1461,7 @@ impl OutputTarget {
             .is_some()
         {
             let lost_response = match manifest_at(&parent, &name) {
-                Some(bytes) => engine.learning_dataset(&crate::digest(&bytes))?.is_none(),
+                Some(bytes) => may_adopt(&bytes)?,
                 None => false,
             };
             if !lost_response {
@@ -1271,7 +1561,8 @@ impl OutputTarget {
     }
 }
 
-/// The dataset is built as this child of the held staging directory.
+/// The output (a dataset or a candidate) is built as this child of the
+/// held staging directory.
 const STAGED: &str = "dataset";
 
 /// What publication found at the destination name.
@@ -1708,9 +1999,12 @@ pub fn prepare(
         .ok_or(FoundryError::WorkspaceUnbound)?;
     let (policy, policy_sha256) = LearningPolicy::load(policy_path)?;
     let loaded = load_renderer(&policy)?;
-    let model_function =
-        decision_model::model_function_sha256(&loaded.json_sha, &loaded.config_sha, loaded.special);
-    let target = OutputTarget::open(engine, out)?;
+    let model_function = model_function_of(&policy, &loaded);
+    let target = OutputTarget::open(engine, out, &|manifest| {
+        // A destination holding a manifest this store never recorded may be
+        // this preparation's own earlier publication (lost response).
+        Ok(engine.learning_dataset(&crate::digest(manifest))?.is_none())
+    })?;
     // The parent (base dataset) is verified BEFORE any novelty decision.
     let base = parent
         .map(|path| {
@@ -2019,6 +2313,17 @@ fn occupied_reads_back_as(
     }
 }
 
+/// The policy's model function: its tokenizer (as loaded and verified) and
+/// its checkpoint pin.
+fn model_function_of(policy: &LearningPolicy, loaded: &LoadedRenderer) -> String {
+    decision_model::model_function_sha256(
+        &loaded.json_sha,
+        &loaded.config_sha,
+        loaded.special,
+        &policy.model,
+    )
+}
+
 /// The loaded renderer plus its pinned file hashes.
 #[cfg(feature = "semantic")]
 pub struct LoadedRenderer {
@@ -2141,8 +2446,7 @@ pub fn check(manifest_path: &Path, policy_path: &Path, control: &Control) -> FRe
     control.check()?;
     let (policy, _) = LearningPolicy::load(policy_path)?;
     let loaded = load_renderer(&policy)?;
-    let function =
-        decision_model::model_function_sha256(&loaded.json_sha, &loaded.config_sha, loaded.special);
+    let function = model_function_of(&policy, &loaded);
     let opened = open_dataset(manifest_path)?;
     if function != opened.manifest.model_function_sha256 {
         return Err(fail(
@@ -2312,6 +2616,18 @@ fn verify_dataset(
     loaded: &LoadedRenderer,
     control: &Control,
 ) -> FResult<VerifiedDataset> {
+    verify_dataset_with(opened, loaded, control, &mut |_, _| {})
+}
+
+/// [`verify_dataset`], handing every data row to `keep` (with its split)
+/// once it has been verified: training reads the exact bytes it verified,
+/// in one pass, never a second copy of the files.
+fn verify_dataset_with(
+    opened: OpenedDataset,
+    loaded: &LoadedRenderer,
+    control: &Control,
+    keep: &mut dyn FnMut(&'static str, DatasetRow),
+) -> FResult<VerifiedDataset> {
     let OpenedDataset {
         dir,
         manifest,
@@ -2430,7 +2746,8 @@ fn verify_dataset(
                 ));
             }
             verify_row(&read, split, &coverage, loaded)?;
-            prior = Some(read.example_id);
+            prior = Some(read.example_id.clone());
+            keep(split, read);
             rows += 1;
             if split != "train" {
                 held_out += 1;

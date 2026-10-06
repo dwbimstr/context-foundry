@@ -5,10 +5,15 @@
 //! allocation. Token IDs travel as `u32 LE`, vectors as `f32 LE`. Every
 //! request carries an ID and the expected descriptor digest; a reply for any
 //! other ID is stale and discarded by the supervisor.
+//!
+//! The frame format is shared: 013's learning worker frames its own header
+//! type through [`read_frame_as`] / [`write_frame_as`] with the same caps and
+//! the same refusals (see [`FrameHeader`]); there is no second framing.
 use super::provider::{
     DIMENSIONS, DOCUMENT_BATCH, DOCUMENT_UNIT_TOKENS, FunctionDescriptor, SERVING_LIMIT_TOKENS,
     TokenizedInput,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
@@ -78,6 +83,26 @@ impl Header {
     }
 }
 
+/// A header type carried by the shared frame format: its protocol version,
+/// the version a frame must declare, and its payload cap. The header cap
+/// ([`MAX_HEADER_BYTES`]) is common to every protocol.
+pub trait FrameHeader: Serialize + DeserializeOwned {
+    /// The only version a frame of this type may declare.
+    const PROTOCOL: u32;
+    /// The largest payload a frame of this type may declare.
+    const MAX_PAYLOAD_BYTES: usize;
+    /// The version this header declares.
+    fn protocol(&self) -> u32;
+}
+
+impl FrameHeader for Header {
+    const PROTOCOL: u32 = PROTOCOL_VERSION;
+    const MAX_PAYLOAD_BYTES: usize = MAX_PAYLOAD_BYTES;
+    fn protocol(&self) -> u32 {
+        Header::protocol(self)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum FrameError {
     /// Clean end of stream before a frame began.
@@ -126,6 +151,12 @@ fn read_exact_vec<R: Read>(r: &mut R, len: usize, what: &str) -> Result<Vec<u8>,
 /// Read one frame, checking both caps before allocating, the protocol
 /// version and strict JSON (unknown fields refused).
 pub fn read_frame<R: Read>(r: &mut R) -> Result<(Header, Vec<u8>), FrameError> {
+    read_frame_as(r)
+}
+
+/// [`read_frame`] for any [`FrameHeader`]: the same caps (the header's own
+/// payload cap), checked before allocating, and the same refusals.
+pub fn read_frame_as<H: FrameHeader, R: Read>(r: &mut R) -> Result<(H, Vec<u8>), FrameError> {
     let header_len = read_len(r, true)? as usize;
     if header_len == 0 || header_len > MAX_HEADER_BYTES {
         return Err(FrameError::TooLarge(format!(
@@ -134,17 +165,19 @@ pub fn read_frame<R: Read>(r: &mut R) -> Result<(Header, Vec<u8>), FrameError> {
     }
     let header_bytes = read_exact_vec(r, header_len, "header")?;
     let payload_len = read_len(r, false)? as usize;
-    if payload_len > MAX_PAYLOAD_BYTES {
+    if payload_len > H::MAX_PAYLOAD_BYTES {
         return Err(FrameError::TooLarge(format!(
-            "payload of {payload_len} bytes; at most {MAX_PAYLOAD_BYTES} allowed"
+            "payload of {payload_len} bytes; at most {} allowed",
+            H::MAX_PAYLOAD_BYTES
         )));
     }
-    let header: Header = serde_json::from_slice(&header_bytes)
+    let header: H = serde_json::from_slice(&header_bytes)
         .map_err(|e| FrameError::Malformed(format!("header: {e}")))?;
-    if header.protocol() != PROTOCOL_VERSION {
+    if header.protocol() != H::PROTOCOL {
         return Err(FrameError::Malformed(format!(
-            "protocol {} is not {PROTOCOL_VERSION}",
-            header.protocol()
+            "protocol {} is not {}",
+            header.protocol(),
+            H::PROTOCOL
         )));
     }
     let payload = read_exact_vec(r, payload_len, "payload")?;
@@ -153,11 +186,20 @@ pub fn read_frame<R: Read>(r: &mut R) -> Result<(Header, Vec<u8>), FrameError> {
 
 /// Write one frame and flush. Caps are enforced on the sending side too.
 pub fn write_frame<W: Write>(w: &mut W, header: &Header, payload: &[u8]) -> io::Result<()> {
+    write_frame_as(w, header, payload)
+}
+
+/// [`write_frame`] for any [`FrameHeader`], under its own payload cap.
+pub fn write_frame_as<H: FrameHeader, W: Write>(
+    w: &mut W,
+    header: &H,
+    payload: &[u8],
+) -> io::Result<()> {
     let header_bytes = serde_json::to_vec(header).map_err(io::Error::other)?;
     if header_bytes.is_empty() || header_bytes.len() > MAX_HEADER_BYTES {
         return Err(io::Error::other("header exceeds the frame cap"));
     }
-    if payload.len() > MAX_PAYLOAD_BYTES {
+    if payload.len() > H::MAX_PAYLOAD_BYTES {
         return Err(io::Error::other("payload exceeds the frame cap"));
     }
     w.write_all(&(header_bytes.len() as u32).to_le_bytes())?;

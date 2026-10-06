@@ -132,7 +132,7 @@ enum Command {
         #[command(subcommand)]
         action: Option<FeedbackAction>,
     },
-    /// 013: prepare the exact permitted dataset and verify it read-back.
+    /// 013: prepare and check the exact permitted dataset; train a candidate.
     Learning {
         #[command(subcommand)]
         action: LearningAction,
@@ -229,6 +229,34 @@ enum LearningAction {
         /// with.
         #[arg(long)]
         policy: PathBuf,
+    },
+    /// 013 T002: fit the head on the dataset's train rows, calibrate one
+    /// temperature, evaluate against deterministic routing (and an
+    /// incumbent), and publish an immutable candidate, under exclusive
+    /// store ownership for the whole run. Exits 0 completed (eligible or
+    /// not, named), 2 invalid/preflight, 3 busy, 1 execution or artifact
+    /// failure, 130 cancelled.
+    Train {
+        /// The prepared dataset's manifest.
+        #[arg(long)]
+        input: PathBuf,
+        /// The same v2 run policy the dataset was prepared under.
+        #[arg(long)]
+        policy: PathBuf,
+        /// The candidate directory; must not exist (or hold exactly this
+        /// run's candidate) and must not sit under the source root.
+        #[arg(long)]
+        out: PathBuf,
+        /// The accepted candidate the policy pins as the base.
+        #[arg(long)]
+        base: Option<PathBuf>,
+        /// A compatible candidate to compare against on the same rows.
+        #[arg(long)]
+        incumbent: Option<PathBuf>,
+        /// Run the owner-authorized development isolation profile; never
+        /// advertised as production isolation.
+        #[arg(long = "development-isolation")]
+        development_isolation: bool,
     },
     /// Print the core's composed `state` for a query: the query, LF,
     /// `graph: <complete|partial>` from the current compiler graph, then up
@@ -870,10 +898,10 @@ fn run() -> AResult<()> {
     Ok(())
 }
 
-/// 013 operator commands. `prepare` and `check` require exclusive store
-/// ownership where they read feedback/permission; a named `no_new_data`
-/// outcome is success (exit 0), and nothing here grants MCP any consent
-/// path.
+/// 013 operator commands. `prepare` and `train` require exclusive store
+/// ownership where they read feedback/permission (`train` holds it for the
+/// whole run); a named `no_new_data` outcome is success (exit 0), and
+/// nothing here grants MCP any consent path.
 fn learning_run(store: &std::path::Path, action: LearningAction) -> AResult<()> {
     let control = live_control();
     match action {
@@ -919,6 +947,29 @@ fn learning_run(store: &std::path::Path, action: LearningAction) -> AResult<()> 
         LearningAction::Check { manifest, policy } => {
             let report = learning::check(&manifest, &policy, &control)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        LearningAction::Train {
+            input,
+            policy,
+            out,
+            base,
+            incumbent,
+            development_isolation,
+        } => {
+            let engine = Engine::open_existing(store)?;
+            let trained = learning::train::train(
+                &engine,
+                &learning::train::TrainRequest {
+                    input: &input,
+                    policy: &policy,
+                    out: &out,
+                    base: base.as_deref(),
+                    incumbent: incumbent.as_deref(),
+                    development_isolation,
+                },
+                &control,
+            )?;
+            println!("{}", serde_json::to_string(&trained)?);
         }
         LearningAction::ComposeState { query } => {
             let engine = Engine::open_existing(store)?;

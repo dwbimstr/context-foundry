@@ -51,19 +51,65 @@ fn write_policy(dir: &Path, seed: &str) -> PathBuf {
     let tokenizer = tokenizer_dir();
     let json = std::fs::read(tokenizer.join("tokenizer.json")).unwrap();
     let config = std::fs::read(tokenizer.join("tokenizer_config.json")).unwrap();
-    let policy = serde_json::json!({
+    let policy = policy_value(seed, &tokenizer, &digest_of(&json), &digest_of(&config));
+    let path = dir.join(format!("policy-{seed}.json"));
+    std::fs::write(&path, serde_json::to_string(&policy).unwrap()).unwrap();
+    path
+}
+
+/// A complete v2 policy: T001's fields plus T002's fitting and selection
+/// fields (one policy file serves prepare and train). Preparation reads no
+/// weights, so the checkpoint pin here is a placeholder identity.
+fn policy_value(
+    seed: &str,
+    tokenizer: &Path,
+    json_sha: &str,
+    config_sha: &str,
+) -> serde_json::Value {
+    serde_json::json!({
         "v": 2,
         "recipe": learning::RECIPE,
         "seed": seed,
         "tokenizer": {
             "dir": tokenizer,
-            "json_sha256": digest_of(&json),
-            "config_sha256": digest_of(&config),
+            "json_sha256": json_sha,
+            "config_sha256": config_sha,
         },
-    });
-    let path = dir.join(format!("policy-{seed}.json"));
-    std::fs::write(&path, serde_json::to_string(&policy).unwrap()).unwrap();
-    path
+        "model": {
+            "weights_sha256": "1".repeat(64),
+            "encoder_config_sha256": "2".repeat(64),
+            "source_dtype": "F16",
+        },
+        "base": null,
+        "optimizer": {
+            "name": "adamw",
+            "learning_rate": 1e-4,
+            "beta1": 0.9,
+            "beta2": 0.999,
+            "epsilon": 1e-8,
+            "weight_decay": 0.01,
+            "clip_global_norm": 1.0,
+        },
+        "max_steps": 8,
+        "wall_seconds": 600,
+        "memory_bytes": 4u64 << 30,
+        "output_bytes": 256u64 << 20,
+        "cpu_threads": 2,
+        "isolation_profile": "/private/tmp/cf-013-learn-profile.json",
+        "enforcement": {
+            "memory": "supervised",
+            "cpu": "hard",
+            "output": "hard",
+            "process_count": "hard",
+        },
+        "selection": {
+            "threshold": 0.8,
+            "coverage_floor": 0.5,
+            "accepted_accuracy_floor": 0.9,
+            "max_macro_accuracy_drop": 0.0,
+            "critical_groups": [],
+        },
+    })
 }
 
 struct Env {
@@ -800,9 +846,75 @@ fn policy_validation_is_strict() {
     bad("uppercase hash", &|v| {
         v["tokenizer"]["config_sha256"] = "A".repeat(64).into()
     });
+    // T002's fitting fields: exact pins, the recipe's optimizer, every bound
+    // refused (never clamped) one past each end, an absolute profile path.
+    bad("missing model", &|v| {
+        v.as_object_mut().unwrap().remove("model");
+    });
+    bad("short weights pin", &|v| {
+        v["model"]["weights_sha256"] = "abc".into()
+    });
+    bad("unknown dtype", &|v| {
+        v["model"]["source_dtype"] = "F64".into()
+    });
+    bad("base not a digest", &|v| v["base"] = "latest".into());
+    bad("other learning rate", &|v| {
+        v["optimizer"]["learning_rate"] = 2e-4.into()
+    });
+    bad("other optimizer", &|v| {
+        v["optimizer"]["name"] = "sgd".into()
+    });
+    bad("zero steps", &|v| v["max_steps"] = 0.into());
+    bad("too many steps", &|v| v["max_steps"] = 1_000_001.into());
+    bad("zero wall", &|v| v["wall_seconds"] = 0.into());
+    bad("wall past 7200", &|v| v["wall_seconds"] = 7201.into());
+    bad("memory below 4 GiB", &|v| {
+        v["memory_bytes"] = ((4u64 << 30) - 1).into()
+    });
+    bad("memory past 8 GiB", &|v| {
+        v["memory_bytes"] = ((8u64 << 30) + 1).into()
+    });
+    bad("output below 128 MiB", &|v| {
+        v["output_bytes"] = ((128u64 << 20) - 1).into()
+    });
+    bad("output past 2 GiB", &|v| {
+        v["output_bytes"] = ((2u64 << 30) + 1).into()
+    });
+    bad("zero threads", &|v| v["cpu_threads"] = 0.into());
+    bad("five threads", &|v| v["cpu_threads"] = 5.into());
+    bad("relative profile", &|v| {
+        v["isolation_profile"] = "profile.json".into()
+    });
+    bad("unknown enforcement", &|v| {
+        v["enforcement"]["memory"] = "soft".into()
+    });
+    bad("threshold past 1", &|v| {
+        v["selection"]["threshold"] = 1.5.into()
+    });
+    bad("duplicate critical group", &|v| {
+        v["selection"]["critical_groups"] = json!(["g", "g"])
+    });
+    let good = |name: &str, f: &dyn Fn(&mut serde_json::Value)| {
+        let mut v = base.clone();
+        f(&mut v);
+        let path = env.out("p.json");
+        std::fs::write(&path, v.to_string()).unwrap();
+        learning::LearningPolicy::load(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+    };
+    // The limits themselves are admitted, and the selection policy defaults.
+    good("one step", &|v| v["max_steps"] = 1.into());
+    good("the step limit", &|v| v["max_steps"] = 1_000_000.into());
+    good("the wall limit", &|v| v["wall_seconds"] = 7200.into());
+    good("8 GiB", &|v| v["memory_bytes"] = (8u64 << 30).into());
+    good("2 GiB output", &|v| v["output_bytes"] = (2u64 << 30).into());
+    good("four threads", &|v| v["cpu_threads"] = 4.into());
+    good("default selection", &|v| {
+        v.as_object_mut().unwrap().remove("selection");
+    });
     let (policy, sha) = learning::LearningPolicy::load(&env.policy).unwrap();
     assert_eq!(policy.recipe, learning::RECIPE);
     assert_eq!(sha, digest_of(&std::fs::read(&env.policy).unwrap()));
+    assert_eq!(policy.selection, learning::SelectionPolicy::default());
 }
 
 // ---------------------------------------------------------------------------
@@ -2085,16 +2197,12 @@ fn a_parent_from_another_workspace_or_function_is_refused() {
     config.push(b'\n');
     std::fs::write(alt.join("tokenizer_config.json"), &config).unwrap();
     let alt_policy = env.out("alt-policy.json");
-    let policy = serde_json::json!({
-        "v": 2,
-        "recipe": learning::RECIPE,
-        "seed": "seed-alpha",
-        "tokenizer": {
-            "dir": alt,
-            "json_sha256": digest_of(&std::fs::read(alt.join("tokenizer.json")).unwrap()),
-            "config_sha256": digest_of(&config),
-        },
-    });
+    let policy = policy_value(
+        "seed-alpha",
+        &alt,
+        &digest_of(&std::fs::read(alt.join("tokenizer.json")).unwrap()),
+        &digest_of(&config),
+    );
     std::fs::write(&alt_policy, policy.to_string()).unwrap();
     let first = env.out("d1");
     match env.prepare_with(&first, &alt_policy, None).unwrap() {
@@ -2290,10 +2398,12 @@ fn an_empty_resealed_base_is_refused_not_no_new_data() {
     // function and policy with four empty files: never a valid base.
     let env = Env::new();
     let tokenizer = tokenizer_dir();
+    let (policy, _) = learning::LearningPolicy::load(&env.policy).unwrap();
     let function = decision_model::model_function_sha256(
         &digest_of(&std::fs::read(tokenizer.join("tokenizer.json")).unwrap()),
         &digest_of(&std::fs::read(tokenizer.join("tokenizer_config.json")).unwrap()),
         SpecialIds::PINNED,
+        &policy.model,
     );
     let workspace_id = env.engine().workspace_id().unwrap();
     let policy_sha = digest_of(&std::fs::read(&env.policy).unwrap());

@@ -6,8 +6,9 @@ review: `src/decision_model.rs` (the one shared renderer/tokenizer path, no weig
 `src/learning.rs` (v4 rows, consent, groups and splits, fingerprints, dataset
 prepare/check, manifest, and `Engine::compose_route_state` — the one composer of the
 `state` that rows store and T003 will send) and `tests/learning_data.rs`, pinned to the
-upstream renderer's IDs by `tests/fixtures/learning/render.json`. The rest is still the
-original Rust prototype; nothing trains or launches isolated model workers yet.
+upstream renderer's IDs by `tests/fixtures/learning/render.json`. T002 (fitting,
+calibration, evaluation and the candidate; see below) is implemented locally and awaits
+review; serving, selection and rollback (T003) are not implemented.
 
 A `learning prepare` whose process died after publishing its output but before
 recording it leaves a dataset that is not yet a valid parent (`lineage_missing`).
@@ -15,6 +16,63 @@ Rerunning the same preparation adopts that output only after a full read-back �
 the same manifest bytes, then every member's length, hash, framing, grouping, floors
 and exact rendering, as `learning check` reads it — records it and completes with
 `"adopted": true`; any other existing destination stays `output_exists`, untouched.
+
+## Training a candidate (013 T002, development profile)
+
+T002 is implemented locally (acceptance pending review). The core owns everything but
+the numbers: the dataset read-back, the policy, the pre-fit permission gate, the
+seeded order, `max_steps`, the wall clock, calibration, evaluation and publication. The
+worker (`foundry-learn`, LibTorch) only loads the checkpoint, takes updates, computes
+logits, and saves and reloads the head.
+
+```sh
+foundry learning prepare --out DATASET --policy POLICY.json
+foundry learning train --input DATASET/manifest.json --policy POLICY.json \
+  --out CANDIDATE [--base BASE] [--incumbent INCUMBENT] --development-isolation
+```
+
+- **Policy.** One policy file serves `prepare` and `train`; a dataset prepared under any
+  other policy is `policy_mismatch`. Policy v2 adds these fields:
+  - `model` pins the checkpoint (weights and encoder-config SHA-256, source dtype);
+  - `base`: `null` for the pinned checkpoint, or the SHA-256 of the base candidate's
+    manifest, which `--base` must name;
+  - the recipe's AdamW constants, stated exactly;
+  - `max_steps` 1..1000000, `wall_seconds` 1..7200, `memory_bytes` 4..8 GiB,
+    `output_bytes` 128 MiB..2 GiB and `cpu_threads` 1..4;
+  - `isolation_profile`;
+  - the requested `enforcement`;
+  - `selection`: threshold, coverage floor, accepted-accuracy floor, maximum
+    macro-accuracy drop and critical groups. The defaults are 0.8, 0.5, 0.9, 0 and
+    none.
+- **Run.** Immediately before the first update, `train` re-reads the current row of
+  every contribution, new and inherited, and refuses (`contribution_changed`) if any
+  was withdrawn or had its input, label or rights changed. It holds exclusive store
+  ownership for the whole run; a concurrent owner is `store_busy`.
+- **Exits.** 0 completed: the candidate is published, eligible or not; a rejected
+  candidate is lifecycle evidence. 2 invalid or preflight, 3 busy, 1 execution or
+  artifact failure, 130 cancelled.
+- **Candidate.** Without `--development-isolation`: `isolation_unavailable`. The
+  candidate holds `manifest.json` (written last), `head.safetensors` (the trainable
+  set, float32), `evaluation.json` and `contributions.json`. It carries exactly one
+  fitted temperature on the k/20 grid, ≥ 0.5; per-option or bucket temperatures are
+  refused.
+
+**Deferred to the measurement phase** (owner directive 2026-10-05: written, not run):
+
+- the exhaustive full-reference comparison: `LIBTORCH=… CONTEXT_FOUNDRY_013_FULL_REFERENCE=…/reference-t002-full.safetensors
+  cargo test --locked --features learning-worker --test learning_worker -- --ignored exhaustive`;
+- the signed-bundle denials: build the bundle with `scripts/learn-worker-bundle.sh`, set
+  `worker.executable_sha256`, then `CF_LEARN_DEV_PROFILE=PROFILE CF_LEARN_RAW_WORKER=target/release/foundry-learn
+  cargo test --locked --test learning_worker -- --ignored dev_learn_sandbox_negative_probes`;
+- a tiny-dataset smoke on the real worker: prepare the 1,088 labeled rust-lang/rust rows with a
+  policy whose `max_steps` is 4 and `isolation_profile` names the signed profile, then
+  `/usr/bin/time -l foundry learning train --input D/manifest.json --policy P.json --out C-smoke
+  --development-isolation`;
+- the full run: the same with the accepted `max_steps` (one epoch is 209 train groups' rows)
+  and `wall_seconds` up to 7200; record wall time, peak footprint and the evaluation report;
+- timing, resource and latency figures, and parity under the signed bundle.
+
+## Scope, ownership and the loop
 
 The [decision-ecosystem source map](references/laya-decision-ecosystem.md) is the
 review entry point: immutable repository/model revisions, upstream functions/tests,

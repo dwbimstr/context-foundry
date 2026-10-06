@@ -2,8 +2,10 @@
 
 Status: Proposed implementation contract v4, revised 2026-09-29 after bounded Rust
 feasibility probes. T001 (schema 6, `feedback v4`, `learning prepare|check|compose-state`)
-implemented and accepted locally on 2026-10-05 (see validation); fitting, serving and
-deployment (T002–T004) remain unimplemented. The owner selected
+and T002 (the tch training worker, calibration, evaluation and candidates, development
+isolation only) implemented and accepted locally on 2026-10-05 (see validation). T002's
+real-data training run, exhaustive comparison and signed-bundle probes are deferred to
+the measurement phase; serving and deployment (T003–T004) remain open. The owner selected
 ModernBERT with a decision head and all first-party code in Rust. Laya is a reference,
 not a deployed service. [Evidence and remaining blockers](../../docs/review/feasibility.md)
 are scoped by probe; this document does not declare a model package ready to release.
@@ -187,6 +189,34 @@ T003's and SC-004 T004's, each passing only with that task's verification.
   Deny outside/symlink reads/writes, network, inherited secrets/FDs and child execution.
 - **Review/cutover:** a rejected candidate is valid lifecycle evidence, not quality success.
   Head mode cannot certify encoder adaptation; selected package limitations are explicit.
+- **Decisions made during implementation, 2026-10-05** (beyond the T002 brief; see
+  [learning](../../docs/learning.md) and [deployment](../../docs/deployment.md)):
+  - `model_function_sha256` covers four more things: the checkpoint's weights and
+    encoder-config SHA-256, the source dtype with its float32 upcast, the architecture
+    constants, and the trainable set. The policy pins these in its new `model` field.
+    Preparation therefore stays weight-free. T001 datasets re-prepare with a new
+    function digest.
+  - One minimal strict safetensors reader and writer serves the core and the worker,
+    not the `safetensors` crate. It keeps a new dependency out of the default build.
+    The header goes through the core's strict JSON, so a duplicate tensor name is
+    refused, and offsets must tile the data exactly.
+  - Policy `base` is `null` or the SHA-256 of the base candidate's manifest; `--base`
+    must name that candidate. A base must be eligible and trained on the input
+    dataset's parent dataset.
+  - Candidates get no store table. The candidate manifest (lineage) and
+    `contributions.json` carry the lineage. A lost-response destination is adopted only
+    with identical manifest bytes after every member validates.
+  - An incumbent is evaluated by a second worker `load` of its head; its own fitted
+    temperature applies.
+  - The frozen-encoder digest hashes each encoder tensor's name and its float32 bytes.
+  - The learning profile carries `ceilings`; a policy may not exceed them.
+  - `selection` fields default to 0.8 / 0.5 / 0.9 / 0 when omitted.
+  - serde_json's `float_roundtrip` is on, so exported probabilities parse back to the
+    same bits.
+  - 009's generic isolation probes moved to `src/neural/probes.rs`, shared by both
+    workers.
+  - The supervised output total excludes the starting heads the core stages into the
+    scratch run directory.
 
 ### T003 — Serve, select, roll back and retire the old HTTP path
 

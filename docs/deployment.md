@@ -282,6 +282,76 @@ query embeddings and document batches alike, behind one model slot:
   test and has not been run. Each publication rebuilds the generation from the cache
   under the engine slot; its cost on a large corpus is unmeasured.
 
+**013 learning worker, implemented 2026-10-05 (013 T002; development profile only).**
+Normal training admission returns `isolation_unavailable`. `foundry learning train
+--development-isolation` runs the owner-authorized development profile (spec 013,
+"Development isolation, 2026-10-05"). It is never advertised as production isolation.
+- **Build.** LibTorch stays out of the default build and of every default gate. The
+  worker needs the `learning-worker` feature and the LibTorch 2.11.0 CPU tree:
+
+  ```sh
+  export LIBTORCH=$HOME/VSC_DEV/vendor/libtorch-2.11.0/libtorch
+  cargo build --release --locked --features learning-worker --bin foundry-learn
+  # Rust 1.90 floor:
+  PATH=$HOME/.rustup/toolchains/1.90.0-aarch64-apple-darwin/bin:$PATH \
+    cargo check --locked --features learning-worker --all-targets
+  ```
+
+  `build.rs` records `$LIBTORCH/lib` as the rpath of every target it links (the
+  worker, the tests and the parity suite). Nothing depends on `DYLD_LIBRARY_PATH`,
+  which SIP strips.
+  The official LibTorch 2.11.0 macOS arm64 tree has a packaging defect. Its
+  `libtorch_cpu.dylib` loads OpenMP from `/opt/llvm-openmp/lib/libomp.dylib`, a path
+  that does not exist; the file ships in `lib/` under that install name. So the build
+  also links a symbol-free stub that makes the binary load `@rpath/libomp.dylib`
+  first, and `libtorch_cpu` then finds the runtime already loaded. The vendor tree is
+  never modified.
+- **Profile and bundle.** The learning profile (≤64 KiB, versioned, strict) reuses
+  009's worker section: bundle, executable SHA-256 and `worker.scratch_root`. It adds
+  `checkpoint_dir`, `libtorch_dir` (LibTorch's `lib`), `load_timeout_seconds` and the
+  `ceilings` it admits. `scripts/learn-worker-bundle.sh --binary target/release/foundry-learn
+  --out FoundryLearn.app --profile FILE` builds an ad-hoc-signed App Sandbox bundle:
+  - read-only grants for exactly `checkpoint_dir` and `libtorch_dir`;
+  - one read-write grant for `worker.scratch_root`;
+  - no network.
+
+  The script checks the binary's rpath names `libtorch_dir` and adds it if needed
+  before signing. It refuses a scratch root that overlaps either read-only grant. The
+  policy's `isolation_profile` names the profile file.
+- **Launch.** The 009 child setup runs before exec:
+  - its own process group;
+  - soft = hard `RLIMIT_CPU` = `wall_seconds × cpu_threads` and `RLIMIT_FSIZE` =
+    `output_bytes`;
+  - `RLIMIT_NPROC=0`;
+  - inherited descriptors closed except the liveness pipe;
+  - an `env -i`-style environment (`PATH`, `HOME` and `TMPDIR` in the scratch run
+    directory, `OMP_NUM_THREADS`).
+
+  The worker reads only its grants and writes only its run directory. The core reads
+  `head.safetensors` from there by descriptor, validates it and publishes.
+- **Enforcement matrix**, checked before launch. A policy that requests a stronger level
+  than this is refused with `enforcement_unavailable`, never run at a weaker one.
+  Requested ceilings above the profile's `ceilings` are refused the same way.
+
+  | Resource | Provided | Mechanism and named stop |
+  | --- | --- | --- |
+  | process count | hard | `RLIMIT_NPROC=0` before exec: spawn and fork fail with `EAGAIN` |
+  | output | hard | `RLIMIT_FSIZE` = `output_bytes` per file (`SIGXFSZ`/`EFBIG` → `output_limit`), plus the supervised total of the scratch run directory (`output_limit`) and the candidate's total before writing |
+  | CPU | hard | `RLIMIT_CPU` = `wall_seconds × cpu_threads` (`SIGXCPU` → `cpu_limit`); LibTorch intra-op threads = `cpu_threads`, inter-op 1; the wall clock (`worker_timeout`) |
+  | memory | supervised | physical footprint polled every 250 ms against `memory_bytes` (`memory_limit`). It fails closed: a live worker whose footprint cannot be read is stopped (`memory_unmeasurable`) |
+
+- **Shutdown and correlation.** Every stop is owner EOF, then TERM, 5 s, KILL. The
+  child is reaped before anything is reported. Every request carries a monotonic ID
+  and the loaded identity. A reply with another ID or identity, a duplicate or an
+  unsolicited frame stops the worker; its output is never used. Every receive is bounded
+  by the wall clock, the load timeout and cancellation, and a reply that crosses one of
+  them is refused, not consumed. A successful run ends with a checked completion before
+  anything is published: one last fail-closed measurement, owner EOF, the worker's own
+  clean exit, reaping, and a final check that nothing followed the last reply and that
+  no breach or resource limit was recorded. The candidate total, manifest included, is
+  held to `output_bytes` before any member is written. Owner death ends the worker
+  through 009's watcher.
+
 For every platform declare `resource_enforcement` as `hard` or `supervised`, by resource.
 OS-enforced memory/process bounds differ from supervisor RSS polling, which can overshoot.
 A job requiring hard limits refuses a merely supervised profile. 013's
