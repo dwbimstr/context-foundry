@@ -8,7 +8,7 @@ requires no model or GPU. Laya is a research reference, not the target runtime.
 
 **Status: 001, 003, 005, 007 and 008 complete; 009 T001–T003 and 013 T001–T003 accepted
 and measured (2026-10-05/06), with model workers under development isolation only. Open:
-signing, which gates packaged deployment (013 T004) and 009/013 package acceptance. Pushed to `main`; nothing released.** Reliable cited CLI context,
+the installable package (install, upgrade, rollback, uninstall) and its checks, then signing as the last step. Pushed to `main`; nothing released.** Reliable cited CLI context,
 explicit bootstrap and agent access over MCP (stdio, plus an opt-in shared owner for
 concurrent hosts) work on macOS arm64; see [validation](docs/validation.md).
 Agent task improvement and dollar savings have not been established. There is no

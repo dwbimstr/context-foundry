@@ -18,7 +18,9 @@ Owner answers, 2026-10-04:
   hash-verified that day) and pinned MLX/mlx-lm in a private venv.
 - **USearch.** 2.26.2 builds on Rust 1.90.0 with Apple clang 21 and passes an F16
   2048-d persistence/update smoke.
-- **Signing/notarization for package acceptance.** Still open.
+- **Signing/notarization, 2026-10-06.** Signing is the final step, once the package is
+  complete and working. Install, upgrade, rollback and uninstall are completed and
+  checked with ad-hoc-signed development bundles first.
 
 The semantic-item line form was decided 2026-10-04 (§ Documents, embedding units and
 returned evidence).

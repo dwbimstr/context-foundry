@@ -58,7 +58,10 @@ Owner answers, 2026-10-04:
     has SHA-256 `4fa56de7…a24e`.
   - Fixture: its `rl_agent_config.json` carries the inherited
     `temperature_by_options` (`choice:11+` = 0.1006) that T002 must refuse.
-- **Signing/notarization.** Decide later.
+- **Signing/notarization, 2026-10-06.** Signing is the final step, once the package is
+  complete and working. It is not a prerequisite for finishing the work: build, install,
+  upgrade, rollback, disable and uninstall are completed and checked with ad-hoc-signed
+  development bundles first.
 - **Development isolation, 2026-10-05.** The owner extended the 009 development-isolation
   authorization to the 013 training worker. The worker is an ad-hoc-signed App Sandbox
   bundle with zero descendants (`RLIMIT_NPROC=0`), read-only grants for the checkpoint
