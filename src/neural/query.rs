@@ -732,7 +732,10 @@ impl QueryRuntime {
     /// the supervisor marks a call abandoned before it returns, so once a
     /// claim succeeded any late call is already visible; a claim that finds
     /// one is released at once.
-    fn probe_late_call(&self, detail: &str) -> Result<(), ProviderError> {
+    fn probe_late_call(
+        &self,
+        #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))] detail: &str,
+    ) -> Result<(), ProviderError> {
         let _ = neural_fault!(SLOT_CLAIMED, None, detail);
         if self.late_call_running() {
             self.slot.free();
