@@ -17,12 +17,18 @@
 //! Printed setup never edits host files. Applying host instructions changes
 //! only a positively owned marker block: identical reapplication is
 //! idempotent, an edited/conflicting block is displayed for manual
-//! integration and never overwritten. JSON-native hosts get
+//! integration and never overwritten. `remove_owned_block` deletes exactly
+//! that block, returning the file to the bytes it had before the block was
+//! applied. JSON-native hosts get
 //! `manual_integration_required` because no byte-preserving owned-block edit
 //! exists for JSON. Printed configuration references the token environment
 //! NAME, never a secret value. Instruction-based setup establishes a
 //! preference; enforced routing would need a real host hook — none is
 //! claimed here.
+//!
+//! Every report carries [`Versions`]: the installed core, store schema and
+//! worker protocol versions, and which optional workers sit beside the
+//! running binary (deployment § Lifecycle and installation).
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -36,6 +42,10 @@ use serde::Serialize;
 
 pub const OWNED_BEGIN: &str = "# >>> context-foundry mcp (positively owned block) >>>";
 pub const OWNED_END: &str = "# <<< context-foundry mcp (positively owned block) <<<";
+/// Appended to the begin-marker line when apply had to insert the line break
+/// before the block because the file did not end with one. That break then
+/// belongs to the block, and [`remove_owned_block`] takes it back.
+pub const OWNED_SEPARATOR_FIELD: &str = " separator=added";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +76,52 @@ pub struct BootstrapReport {
     pub components: Vec<ComponentReport>,
     pub complete: bool,
     pub next_actions: Vec<String>,
+    pub versions: Versions,
+}
+
+/// What this binary is and speaks, read without loading a model or opening
+/// a store: the core version, the store schema it reads and writes, the
+/// worker protocol versions, and the optional worker executables installed
+/// beside the running binary — in the same directory (a `cargo build`
+/// target directory) or in `../libexec/` (the package layout). A worker's
+/// presence is not readiness: it still needs its signed bundle and profile.
+#[derive(Debug, Serialize)]
+pub struct Versions {
+    pub core: &'static str,
+    pub store_schema: u32,
+    pub embed_protocol: u32,
+    pub learn_protocol: u32,
+    pub predict_protocol: u32,
+    /// Canonical path of `foundry-embed`, or null when none is installed.
+    pub foundry_embed: Option<String>,
+    /// Canonical path of `foundry-learn`, or null when none is installed.
+    pub foundry_learn: Option<String>,
+}
+
+impl Versions {
+    pub fn of_running_binary() -> Self {
+        let dir = std::env::current_exe()
+            .and_then(|exe| exe.canonicalize())
+            .ok()
+            .and_then(|exe| exe.parent().map(Path::to_path_buf));
+        let beside = |name: &str| {
+            let dir = dir.as_deref()?;
+            [dir.join(name), dir.join("../libexec").join(name)]
+                .into_iter()
+                .find(|path| path.is_file())
+                .and_then(|path| path.canonicalize().ok())
+                .map(|path| path.display().to_string())
+        };
+        Versions {
+            core: env!("CARGO_PKG_VERSION"),
+            store_schema: crate::SCHEMA_VERSION,
+            embed_protocol: crate::neural::protocol::PROTOCOL_VERSION,
+            learn_protocol: crate::learning::ipc::LEARN_PROTOCOL,
+            predict_protocol: crate::learning::ipc::PREDICT_PROTOCOL,
+            foundry_embed: beside("foundry-embed"),
+            foundry_learn: beside("foundry-learn"),
+        }
+    }
 }
 
 fn canonical_root(root: &Path) -> FResult<PathBuf> {
@@ -212,6 +268,7 @@ pub fn inspect(
         components: reports,
         complete,
         next_actions,
+        versions: Versions::of_running_binary(),
     })
 }
 
@@ -342,6 +399,7 @@ pub fn apply(
         components: reports,
         complete,
         next_actions: Vec::new(),
+        versions: Versions::of_running_binary(),
     })
 }
 
@@ -703,12 +761,14 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> AResult<()> {
     Ok(written.map_err(FoundryError::from)?)
 }
 
-/// Apply the positively owned block to a host config file. Zero markers:
+/// Apply the positively owned block to a host config file. No marker text:
 /// insert (refusing when an unowned `context-foundry` entry already exists);
-/// exactly one ordered marker pair: identical text is an idempotent no-op,
-/// an edited block is displayed for manual integration; any incomplete or
-/// duplicate marker set refuses without writing. Unrelated operator bytes
-/// are preserved exactly and the write is atomic.
+/// exactly one owned block ([`owned_lines`]): identical text is an
+/// idempotent no-op, an edited block is displayed for manual integration;
+/// any other marker text refuses without writing. Unrelated operator bytes
+/// are preserved exactly and the write is atomic. A non-empty file without
+/// a final line break gets one before the block; the begin marker then
+/// carries [`OWNED_SEPARATOR_FIELD`] so removal restores the exact bytes.
 pub fn apply_owned_block(path: &Path, owned_block: &str, json_native: bool) -> AResult<()> {
     let manual = |detail: &str| AdapterError::named("manual_integration_required", detail);
     if json_native {
@@ -716,15 +776,9 @@ pub fn apply_owned_block(path: &Path, owned_block: &str, json_native: bool) -> A
             "JSON-native host configuration has no byte-preserving owned block; insert the printed object with existing authorization",
         ));
     }
-    let existing = std::fs::read(path)
-        .map_err(|e| FoundryError::InvalidArgument(format!("config file: {e}")))?;
-    if existing.len() > 1024 * 1024 {
-        return Err(FoundryError::InvalidArgument("config file exceeds 1 MiB".into()).into());
-    }
-    let begins = occurrences(&existing, OWNED_BEGIN.as_bytes());
-    let ends = occurrences(&existing, OWNED_END.as_bytes());
-    match (begins.as_slice(), ends.as_slice()) {
-        ([], []) => {
+    let existing = read_host_config(path)?;
+    match owned_lines(&existing).map_err(manual)? {
+        None => {
             if !occurrences(&existing, b"[mcp_servers.context-foundry]").is_empty() {
                 eprintln!("existing unowned entry conflicts; printed block (not applied):");
                 eprintln!("{owned_block}");
@@ -733,17 +787,27 @@ pub fn apply_owned_block(path: &Path, owned_block: &str, json_native: bool) -> A
                 ));
             }
             let mut updated = existing;
-            if !updated.is_empty() && !updated.ends_with(b"\n") {
+            if updated.is_empty() || updated.ends_with(b"\n") {
+                updated.extend_from_slice(owned_block.as_bytes());
+            } else {
                 updated.push(b'\n');
+                match owned_block.strip_prefix(OWNED_BEGIN) {
+                    Some(rest) => updated.extend_from_slice(
+                        format!("{OWNED_BEGIN}{OWNED_SEPARATOR_FIELD}{rest}").as_bytes(),
+                    ),
+                    None => updated.extend_from_slice(owned_block.as_bytes()),
+                }
             }
-            updated.extend_from_slice(owned_block.as_bytes());
             if !updated.ends_with(b"\n") {
                 updated.push(b'\n');
             }
             write_atomically(path, &updated)
         }
-        ([begin], [end]) if begin < end => {
-            let current = &existing[*begin..*end + OWNED_END.len()];
+        Some(owned) => {
+            let mut current = existing[owned.begin..owned.end].to_vec();
+            if owned.separator {
+                current.drain(OWNED_BEGIN.len()..OWNED_BEGIN.len() + OWNED_SEPARATOR_FIELD.len());
+            }
             if current == owned_block.trim_end().as_bytes() {
                 return Ok(());
             }
@@ -753,8 +817,101 @@ pub fn apply_owned_block(path: &Path, owned_block: &str, json_native: bool) -> A
                 "the existing owned block was edited; reconcile manually",
             ))
         }
-        _ => Err(manual(
-            "incomplete, duplicated or misordered owned markers; reconcile manually",
-        )),
     }
+}
+
+/// The one positively owned block of a host config, found by whole marker
+/// lines.
+struct OwnedLines {
+    /// Offset of the begin marker line.
+    begin: usize,
+    /// Offset just past the end marker (before its line break, if any).
+    end: usize,
+    /// The begin line carries [`OWNED_SEPARATOR_FIELD`].
+    separator: bool,
+}
+
+/// Find the owned block: exactly one begin line — [`OWNED_BEGIN`] alone, or
+/// followed by [`OWNED_SEPARATOR_FIELD`] — and after it exactly one end line,
+/// [`OWNED_END`] alone, each a complete line. `Ok(None)` when neither marker
+/// text occurs at all. Any other occurrence (inside a value, with other text
+/// on its line, duplicated or out of order) is refused, so only a block
+/// apply wrote is ever treated as owned.
+fn owned_lines(bytes: &[u8]) -> Result<Option<OwnedLines>, &'static str> {
+    const MALFORMED: &str =
+        "owned markers are not exactly one complete begin line and end line; reconcile manually";
+    let begins = occurrences(bytes, OWNED_BEGIN.as_bytes());
+    let ends = occurrences(bytes, OWNED_END.as_bytes());
+    let (begin, end) = match (begins.as_slice(), ends.as_slice()) {
+        ([], []) => return Ok(None),
+        ([begin], [end]) if begin < end => (*begin, *end),
+        _ => return Err(MALFORMED),
+    };
+    // The whole line starting at `at`, when `at` starts a line.
+    let line = |at: usize| {
+        let stop = bytes[at..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(bytes.len(), |n| at + n);
+        (at == 0 || bytes[at - 1] == b'\n').then_some(&bytes[at..stop])
+    };
+    let separator = match line(begin).and_then(|l| l.strip_prefix(OWNED_BEGIN.as_bytes())) {
+        Some([]) => false,
+        Some(rest) if rest == OWNED_SEPARATOR_FIELD.as_bytes() => true,
+        _ => return Err(MALFORMED),
+    };
+    if line(end) != Some(OWNED_END.as_bytes()) {
+        return Err(MALFORMED);
+    }
+    Ok(Some(OwnedLines {
+        begin,
+        end: end + OWNED_END.len(),
+        separator,
+    }))
+}
+
+/// Remove the positively owned block ([`owned_lines`]) from a host config
+/// file: the bytes from the begin marker line through the end marker and
+/// the line break that ends it, exactly what [`apply_owned_block`]
+/// appended. When the begin line records [`OWNED_SEPARATOR_FIELD`] and the
+/// block is still the end of the file, the line break apply inserted before
+/// it goes too, so the file again ends without one, exactly as before. With
+/// bytes after the block that break stays, so no operator lines are joined.
+/// A block without the field (written before it existed) keeps the break
+/// before it: nothing records whether apply inserted it. Every other byte
+/// stays; the write is atomic. Returns whether a block was removed: no
+/// marker text owns nothing and writes nothing; any other marker text
+/// refuses without writing. The removed block is echoed to stderr, so an
+/// edit made inside the markers is not lost silently.
+pub fn remove_owned_block(path: &Path) -> AResult<bool> {
+    let existing = read_host_config(path)?;
+    let Some(owned) = owned_lines(&existing)
+        .map_err(|detail| AdapterError::named("manual_integration_required", detail))?
+    else {
+        return Ok(false);
+    };
+    let mut start = owned.begin;
+    let mut stop = owned.end;
+    if existing.get(stop) == Some(&b'\n') {
+        stop += 1;
+    }
+    if owned.separator && stop == existing.len() && start > 0 && existing[start - 1] == b'\n' {
+        start -= 1;
+    }
+    eprintln!("removed owned block:");
+    eprint!("{}", String::from_utf8_lossy(&existing[owned.begin..stop]));
+    let mut updated = Vec::with_capacity(existing.len() - (stop - start));
+    updated.extend_from_slice(&existing[..start]);
+    updated.extend_from_slice(&existing[stop..]);
+    write_atomically(path, &updated)?;
+    Ok(true)
+}
+
+fn read_host_config(path: &Path) -> AResult<Vec<u8>> {
+    let existing = std::fs::read(path)
+        .map_err(|e| FoundryError::InvalidArgument(format!("config file: {e}")))?;
+    if existing.len() > 1024 * 1024 {
+        return Err(FoundryError::InvalidArgument("config file exceeds 1 MiB".into()).into());
+    }
+    Ok(existing)
 }

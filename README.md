@@ -44,6 +44,35 @@ For concurrent hosts on one repository, run one explicit shared owner and print
 matching host configuration with `--http-port PORT --token-env NAME`:
 `foundry --store DIR mcp --root ROOT --transport streamable-http --bind 127.0.0.1:PORT --auth-token-env NAME`.
 
+## Install
+
+A checkout builds an installable macOS arm64 package, and `scripts/install.sh`
+installs it into a prefix. It is not signed yet; signing is the last release step, and
+the optional worker bundles are ad-hoc-signed development bundles:
+
+```sh
+scripts/package.sh --out dist        # release build: bin/foundry, notices, PACKAGE.json
+scripts/install.sh install --package dist/context-foundry-0.1.0-macos-arm64.tar.gz --prefix ~/.local
+~/.local/bin/foundry bootstrap --root ~/src/repo   # `versions`: core, schema, protocols, workers
+scripts/install.sh upgrade --package NEWER.tar.gz --prefix ~/.local --store ~/src/repo/.context-foundry
+scripts/install.sh rollback --prefix ~/.local
+scripts/install.sh uninstall --prefix ~/.local --host-config ~/.codex/config.toml
+```
+
+Every file is checked against `PACKAGE.json` before installation. Versions sit side by
+side under `PREFIX/lib/context-foundry/`, and `PREFIX/bin/foundry` follows the current
+one. Upgrade, rollback, disable and uninstall refuse while an installed executable
+runs. Upgrade reports which stores need `foundry upgrade-store`; it never runs it.
+Uninstall removes only installed files whose hashes still match; a modified one is kept
+and reported. Every store, memory, cache, dataset, checkpoint and supplied profile stays.
+`--host-config` first removes the block `foundry connect --apply-config` wrote
+(`foundry connect --remove-config FILE`), restoring the file's prior bytes. Optional
+workers: package with `--with-semantic --semantic-profile FILE` (built with
+`PYO3_PYTHON`) or `--with-learning` (with `LIBTORCH`), then install with
+`--semantic-profile FILE` or `--learning-profile FILE` to build the signed bundles and
+installed profile copies; `disable-semantic`/`disable-learning` remove them again.
+See [deployment](docs/deployment.md#lifecycle-and-installation).
+
 ## What works
 
 - Explicit store creation, schema-6 upgrade (`upgrade-store --to 6`, from v1–v5), bounded

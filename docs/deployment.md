@@ -405,10 +405,116 @@ key only in its process and uses narrowly allowed HTTPS egress. It does not shar
 no-network/no-credential model-worker grant set. No jail helper ever receives its key.
 Limit gateway inputs and egress even when optional ML workers are disabled.
 
+Implemented 2026-10-06, unsigned; signing is the last release step and the worker
+bundles are ad-hoc-signed development bundles. `tests/install.rs` runs the lifecycle
+below with the debug binaries and the fake workers; the release-build install with the
+real bundles is measured separately.
+
+- **Package.** `scripts/package.sh --out DIR [--with-semantic --semantic-profile FILE]
+  [--with-learning]` builds `context-foundry-<version>-macos-arm64.tar.gz` from a release
+  build (or `--bin-dir DIR`). It holds `bin/foundry`, `README.md`, `LICENSE`,
+  `scripts/install.sh` and `THIRD-PARTY/`: each normal dependency's license and notice
+  files, an `INDEX.json`, and a supplied notice with canonical text for a crate that
+  ships none. `--with-semantic` adds `libexec/foundry-embed` and
+  `scripts/embed-worker-bundle.sh`; `--with-learning` adds `libexec/foundry-learn` and
+  `scripts/learn-worker-bundle.sh`. `PACKAGE.json` records the version, git commit,
+  target, every file's SHA-256, the versions the core reports and the dependency
+  identities: the `Cargo.lock` digest, pyo3 and the semantic profile's runtime closure
+  (Python, MLX, frozen-requirements SHA-256), tch, torch-sys and LibTorch 2.11.0 with
+  the build's LibTorch directory. Weights, datasets, profiles and credentials are never
+  packaged.
+- **Layout.** Under a prefix P: `P/bin/foundry` → `../lib/context-foundry/current/bin/foundry`,
+  `current` → `<version>`, one `P/lib/context-foundry/<version>/` per installed version,
+  and `installed.json` recording every owned file with its SHA-256, the directories the
+  installer created, the current and previous version and the disabled components;
+  `pending.json` exists only while a command runs or after it was interrupted.
+- **Install.** `scripts/install.sh install --package TGZ --prefix P` unpacks the
+  package into a private temporary directory and verifies every file against
+  `PACKAGE.json`: nothing missing, nothing unlisted, regular files only. This checks
+  integrity; authenticity comes with signing. `--semantic-profile FILE
+  [--semantic-extra-read DIR]...` and `--learning-profile FILE` build the ad-hoc-signed
+  bundles there too, from the packaged workers with the packaged bundle scripts. They
+  write installed profile copies with `worker.bundle` and `worker.executable_sha256`
+  filled in; these are reached at `P/lib/context-foundry/current/profiles/`. The
+  supplied profile is only read. Only then is the version placed and linked.
+- **Upgrade.** `upgrade --package TGZ --prefix P [--store DIR]...` installs the new
+  version beside the old one and rebuilds the bundles the old version had. It then
+  switches `current` atomically. It reports whether the store schema changed and
+  whether each named store needs `foundry upgrade-store`; it never runs it.
+- **Rollback.** `rollback --prefix P` switches to the previous version after checking
+  its files; repeating it switches back. A store already upgraded to a newer schema is
+  refused by the older binary itself (`unsupported_schema`).
+- **Disable.** `disable-semantic` and `disable-learning` remove only that component's
+  owned files, from every installed version. Later upgrades keep it disabled until a
+  profile option enables it again.
+- **Uninstall.** `uninstall --prefix P [--host-config FILE]...` first runs `foundry
+  connect --remove-config FILE` for each named host file. That removes exactly the
+  block `--apply-config` wrote and restores the file's prior bytes: a line break apply
+  had to insert is recorded in the begin marker (`separator=added`) and removed too.
+  A block written before that field existed keeps the line break before it. Only
+  whole marker lines count: one begin line, exactly the marker or the marker with
+  that field, and one end line, exactly the end marker. Marker text anywhere else
+  (inside a value, with other text on its line, duplicated) is refused without
+  writing, by apply too. Uninstall then removes the owned files whose hashes still
+  match; a modified one is kept and reported. It prunes only the directories the
+  installer created, deepest first, with `rmdir`, so a non-empty one stays. Stores,
+  caches, memories, datasets, checkpoints, scratch roots and supplied profiles are
+  never touched, even inside P.
+- **Refusals before any change.**
+  - A path argument that is empty, ends in `/` or holds any byte outside printable
+    ASCII (0x20–0x7E), a newline or a UTF-8 letter included, is exit 64. Such a path
+    is never reinterpreted, and `lsof` (which escapes other bytes) prints the prefix
+    verbatim for the running-owner check. A repeatable option's values stay separate
+    arguments.
+  - A symbolic link where the layout has a directory (P/bin, P/lib, the lock, the
+    versions' directories, every directory on an owned file's path), or an owned link
+    that is not exactly the installer's (`current`, `bin/foundry`), is exit 65. A
+    launcher the installer did not make is never replaced. A `current` link to a
+    version that neither `installed.json` nor `pending.json` records is refused,
+    never adopted. The directory checks run again right before each file is hashed
+    and deleted. A link swapped in after the last check (TOCTOU) is not caught.
+  - One lifecycle command runs at a time under `P/lib/context-foundry/.lock` (holder
+    pid and start time). A live holder is exit 75; a dead holder's lock is reclaimed.
+    A lock that is not a real directory is refused before it is read or removed.
+- **Running owners.** Upgrade, rollback, disable and uninstall refuse (exit 75) while
+  any process of the user runs an executable under P. Processes are found by
+  executable path (`lsof` text mappings), never by name. Upgrade checks again right
+  before its cutover. An installed owner does not take the lifecycle lock, so one that
+  starts after that last check is not seen.
+- **Interruption.** Before its first change, every mutating command writes
+  `P/lib/context-foundry/pending.json` atomically, under the lock. It holds the
+  operation, the versions switched from and to, and the target's inventory: path →
+  SHA-256 from `PACKAGE.json` and from the bundle and profile outputs. It also lists
+  every directory and temporary the command creates, the intended disabled set and
+  the SHA-256 of the `installed.json` it will commit. A switch then places the
+  target, switches `current`, makes the launcher, commits `installed.json` and
+  deletes `pending.json` last. The next command recovers from that record, under the
+  lock. It refuses (exit 75, the record kept) while an installed executable runs. It
+  also refuses (exit 65, nothing touched) unless `current` is absent where the
+  operation allows it or names exactly a recorded endpoint.
+  - If `installed.json` already has the recorded final hash, the record is
+    finalized: the links must agree, a missing launcher is made, and a target file
+    edited since is reported as kept, never undone.
+  - Otherwise, if `current` already selects the target and every inventory file has
+    its recorded hash, the switch is completed, including a missing launcher.
+  - Otherwise the switch is rolled back: the links return to the old version, and
+    only listed files whose content still matches, listed temporaries, and listed
+    directories now empty are removed. An edited file is kept and reported.
+  - An interrupted disable or uninstall is completed. Uninstall records in
+    `pending.json` when its host blocks are all removed, before it deletes binaries.
+    Host cleanup is skipped only when that record says so. Without an executable
+    installed foundry it is refused (exit 66, naming the host file) and nothing
+    changes.
+  Ownership is never inferred by hashing a live directory or matching a name.
+
 `capabilities`/bootstrap reports installed core/worker/protocol/schema versions, accepted
 isolation profiles and unknown/unavailable prerequisites without loading models. A
 profile is usable only after startup checks confirm its enforcement on this host.
 Version mismatch disables the optional worker; it cannot corrupt or upgrade the store.
+Implemented: every `foundry bootstrap` report carries `versions`: the core version,
+store schema, embed, learn and predict protocol versions, and the `foundry-embed` and
+`foundry-learn` executables found beside the running binary (its directory or
+`../libexec/`), or null.
 
 The foreground CLI/MCP owner supervises inference. Each worker accepts one active call,
 no waiting queue; one retrieval request does not overlap its embedding and policy calls.

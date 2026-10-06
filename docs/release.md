@@ -7,9 +7,12 @@ excluded. This checklist replaces spec 015; it is not another product.
 
 1. Record the selected scope, actual acceptance evidence and known limitations. Verify
    advertised integrations with their real consumer; do not make untested claims.
-2. Run the applicable full Rust checks and build/install smoke on declared platforms.
-   Include relevant restart/data-preservation checks. Reuse valid feature evidence;
-   no blanket predecessor ladder or close-time benchmark is inherited.
+2. Run the applicable full Rust checks. Build the artifact with `scripts/package.sh` and
+   run the install smoke with `scripts/install.sh` on declared platforms: install, run the
+   installed `foundry`, upgrade, rollback, disable and uninstall
+   ([lifecycle](deployment.md#lifecycle-and-installation)). Include relevant
+   restart/data-preservation checks. Reuse valid feature evidence; no blanket
+   predecessor ladder or close-time benchmark is inherited.
 3. Document compatibility, preserved user data, recovery/rollback and install/remove
    ownership. Until upgrade support exists, say so; do not silently delete feedback
    or memories to rebuild a store. A source-only preview can use fresh-store installs.

@@ -75,17 +75,29 @@ pub enum AdapterCommand {
         profile: Option<PathBuf>,
     },
     /// Print per-project host MCP configuration; never edits host files unless
-    /// `--apply-config FILE` authorizes the positively owned block.
+    /// `--apply-config FILE` authorizes the positively owned block, or
+    /// `--remove-config FILE` removes it again.
     Connect {
-        #[arg(long)]
-        host: String,
-        #[arg(long)]
-        root: PathBuf,
+        #[arg(long, required_unless_present = "remove_config")]
+        host: Option<String>,
+        #[arg(long, required_unless_present = "remove_config")]
+        root: Option<PathBuf>,
         #[arg(long = "print-config")]
         print_config: bool,
         /// Authorize inserting the owned block into this host config file.
         #[arg(long = "apply-config")]
         apply_config: Option<PathBuf>,
+        /// Remove exactly the positively owned block from this host config
+        /// file, restoring the bytes it had before `--apply-config`.
+        #[arg(
+            long = "remove-config",
+            value_name = "FILE",
+            conflicts_with_all = [
+                "host", "root", "print_config", "apply_config", "http_port",
+                "token_env", "budget", "reference",
+            ]
+        )]
+        remove_config: Option<PathBuf>,
         /// Print shared-HTTP configuration for this IPv4 loopback port.
         #[arg(long = "http-port")]
         http_port: Option<u16>,
@@ -359,14 +371,33 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             root,
             print_config,
             apply_config,
+            remove_config,
             http_port,
             token_env,
             budget,
             reference,
         } => {
+            if let Some(file) = remove_config {
+                let removed = crate::bootstrap::remove_owned_block(&file)?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "config": std::path::absolute(&file)?.display().to_string(),
+                        "removed": removed,
+                    }))?
+                );
+                return Ok(());
+            }
+            let (Some(host), Some(root)) = (host, root) else {
+                return Err(FoundryError::InvalidArgument(
+                    "connect requires --host and --root".into(),
+                )
+                .into());
+            };
             if !print_config && apply_config.is_none() {
                 return Err(FoundryError::InvalidArgument(
-                    "connect requires --print-config or --apply-config FILE".into(),
+                    "connect requires --print-config, --apply-config FILE or --remove-config FILE"
+                        .into(),
                 )
                 .into());
             }

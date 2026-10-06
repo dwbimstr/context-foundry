@@ -792,13 +792,16 @@ fn a_measurement_lost_after_the_final_save_publishes_nothing() {
     assert_eq!(reached, 1, "only the completion measured on this thread");
 }
 
-/// Arm the reply-received point so a reply of `kind` is judged only after
-/// its earliest stop passed: the hook sleeps the remaining milliseconds the
-/// point reports, plus a margin. Returns whether the hook fired.
-fn delay_past_the_stop(kind: &'static str) -> std::rc::Rc<std::cell::Cell<bool>> {
+/// Arm the reply-received point to hold a reply of `kind` until the earliest
+/// stop it was received under has passed. The point reports the
+/// milliseconds left before that stop, truncated and read just before the
+/// hook runs; the hold re-reads the monotonic clock the supervisor checks
+/// until it is 10 ms past that, so no sleep length decides the outcome.
+/// Returns whether a reply of `kind` was held.
+fn hold_past_the_stop(kind: &'static str) -> std::rc::Rc<std::cell::Cell<bool>> {
     use context_foundry::fault::{self, Action};
-    let fired = std::rc::Rc::new(std::cell::Cell::new(false));
-    let seen = std::rc::Rc::clone(&fired);
+    let held = std::rc::Rc::new(std::cell::Cell::new(false));
+    let seen = std::rc::Rc::clone(&held);
     fault::arm(
         learning::fault_names::REPLY_RECEIVED,
         0,
@@ -806,26 +809,61 @@ fn delay_past_the_stop(kind: &'static str) -> std::rc::Rc<std::cell::Cell<bool>>
             let mut parts = ctx.detail.split(' ');
             if parts.next() == Some(kind) {
                 let left: u64 = parts.next().unwrap().parse().unwrap();
-                std::thread::sleep(Duration::from_millis(left + 100));
+                let past = Instant::now() + Duration::from_millis(left + 10);
+                while Instant::now() < past {
+                    std::thread::sleep(past.saturating_duration_since(Instant::now()));
+                }
                 seen.set(true);
             }
         })),
     );
-    fired
+    held
+}
+
+/// Run `attempt` with each stop budget in turn until a reply of `kind`
+/// existed before its stop and was held past it, and return that attempt's
+/// outcome. A fixed budget also has to cover the run up to that reply, and
+/// on a loaded host the stop can come first: the reply never exists and
+/// the attempt measures the host, not the refusal. Such an attempt must
+/// still have failed closed on that same stop (`train_fails` also checks
+/// that nothing was left and the worker was reaped); it is repeated with
+/// the next, larger budget.
+fn with_the_reply_held_past_its_stop<T>(
+    kind: &'static str,
+    stop: &str,
+    budgets_seconds: &[u64],
+    mut attempt: impl FnMut(u64) -> (FoundryError, T),
+) -> (FoundryError, T) {
+    for &budget in budgets_seconds {
+        let held = hold_past_the_stop(kind);
+        let outcome = attempt(budget);
+        context_foundry::fault::disarm_all();
+        if held.get() {
+            return outcome;
+        }
+        let error = &outcome.0;
+        assert!(
+            error.code() == "worker_timeout" && error.to_string().contains(stop),
+            "no {kind} reply was held and the run failed otherwise: {error}"
+        );
+        eprintln!("the {stop} ({budget} s) passed before any {kind} reply; repeating with more");
+    }
+    panic!("no {kind} reply arrived within any {stop} budget of {budgets_seconds:?} s");
 }
 
 #[test]
 fn a_valid_final_saved_reply_after_the_wall_clock_is_refused() {
-    let env = Env::with(&Knobs {
-        wall_seconds: 15,
-        ..Knobs::default()
-    });
-    let fired = delay_past_the_stop("saved");
-    let error = env.train_fails(&[]);
-    context_foundry::fault::disarm_all();
-    assert!(
-        fired.get(),
-        "the saved reply reached the hook before the deadline"
+    let (error, ()) = with_the_reply_held_past_its_stop(
+        "saved",
+        "wall clock",
+        &[15, 30, 60, 120],
+        |wall_seconds| {
+            let env = Env::with(&Knobs {
+                wall_seconds,
+                ..Knobs::default()
+            });
+            (env.train_fails(&[]), ())
+        },
     );
     assert_eq!(error.code(), "worker_timeout", "{error}");
     assert!(error.to_string().contains("wall clock"), "{error}");
@@ -833,22 +871,24 @@ fn a_valid_final_saved_reply_after_the_wall_clock_is_refused() {
 
 #[test]
 fn a_loaded_reply_after_the_load_timeout_is_refused() {
-    let env = Env::with(&Knobs {
-        load_timeout_seconds: 3,
-        ..Knobs::default()
-    });
-    let log = env.path("requests.log");
-    let log_arg = log.display().to_string();
-    let fired = delay_past_the_stop("loaded");
-    let error = env.train_fails(&["--request-log", &log_arg]);
-    context_foundry::fault::disarm_all();
-    assert!(
-        fired.get(),
-        "the loaded reply reached the hook before the timeout"
+    let (error, requested) = with_the_reply_held_past_its_stop(
+        "loaded",
+        "load timeout",
+        &[3, 6, 12, 24, 48],
+        |load_timeout_seconds| {
+            let env = Env::with(&Knobs {
+                load_timeout_seconds,
+                ..Knobs::default()
+            });
+            let log = env.path("requests.log");
+            let log_arg = log.display().to_string();
+            let error = env.train_fails(&["--request-log", &log_arg]);
+            (error, requests(&log))
+        },
     );
     assert_eq!(error.code(), "worker_timeout", "{error}");
     assert!(error.to_string().contains("load timeout"), "{error}");
-    assert_eq!(requests(&log), ["load"], "nothing followed the late load");
+    assert_eq!(requested, ["load"], "nothing followed the late load");
 }
 
 #[test]

@@ -305,6 +305,27 @@ T003's and SC-004 T004's, each passing only with that task's verification.
   does not establish new uplift. Record resource and dependency identities.
 - **Review/cutover:** unavailable isolation blocks this learning package alone. CLI, MCP,
   graph, memory and independently accepted semantic releases continue on their own gates.
+- **Decisions made during implementation, 2026-10-06 (packaged lifecycle; see
+  [deployment](../../docs/deployment.md#lifecycle-and-installation)):** two shell
+  scripts and small Rust changes, no installer framework.
+  - `scripts/package.sh --with-learning` packages `libexec/foundry-learn` and
+    `scripts/learn-worker-bundle.sh`. `PACKAGE.json` records tch, torch-sys and LibTorch
+    2.11.0 with the build's LibTorch directory. LibTorch and the checkpoint are never
+    packaged.
+  - `scripts/install.sh install|upgrade --learning-profile FILE` builds the
+    ad-hoc-signed `FoundryLearn.app` from the installed worker. It writes an installed
+    profile copy with the bundle path and executable SHA-256 filled in. An upgrade
+    rebuilds the bundle for the new version; rollback switches back to the previous
+    version's bundle and profile.
+  - `disable-learning` removes only the learning files, from every installed version;
+    the component stays disabled across upgrades. `uninstall` removes owned files whose
+    hashes match and keeps modified ones. Checkpoints, datasets, candidates, policy
+    configs and supplied profiles are never touched.
+  - Every lifecycle change refuses while a process runs an executable under the
+    prefix, found by executable path. `foundry bootstrap` reports the learn and predict
+    protocol versions and whether `foundry-learn` is installed.
+  - `tests/install.rs` runs this around the fake worker. The release install with the
+    real bundle, the distributed (signed) profile and package acceptance remain open.
 
 SC-001–SC-004 remain unexecuted. Scratch feasibility is evidence toward D001, not
 completion of these product tasks. Remaining checks have owners and bounded exits in

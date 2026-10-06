@@ -21,6 +21,19 @@ Owner answers, 2026-10-04:
 - **Signing/notarization, 2026-10-06.** Signing is the final step, once the package is
   complete and working. Install, upgrade, rollback and uninstall are completed and
   checked with ad-hoc-signed development bundles first.
+- **Package, 2026-10-06 (implementation; see
+  [deployment](../../docs/deployment.md#lifecycle-and-installation)).**
+  `scripts/package.sh --with-semantic --semantic-profile FILE` packages
+  `libexec/foundry-embed` and `scripts/embed-worker-bundle.sh`. `PACKAGE.json` records
+  pyo3, the linked Python library and the profile's runtime closure (Python, MLX,
+  frozen-requirements SHA-256); the runtime, site-packages, model and profile are never
+  packaged. `scripts/install.sh install|upgrade --semantic-profile FILE
+  [--semantic-extra-read DIR]...` builds the ad-hoc-signed `FoundryEmbed.app` from the
+  installed worker. It writes an installed profile copy with the bundle path and
+  executable SHA-256 filled in; an upgrade rebuilds it for the new version.
+  `disable-semantic` removes only those files. Caches and stores stay through disable,
+  rollback and uninstall. Package acceptance with the real bundle remains open with
+  signing.
 
 The semantic-item line form was decided 2026-10-04 (§ Documents, embedding units and
 returned evidence).
