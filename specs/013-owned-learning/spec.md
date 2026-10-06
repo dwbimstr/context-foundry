@@ -62,6 +62,13 @@ Owner answers, 2026-10-04:
   and LibTorch, writes to scratch only, and no network. It runs only behind
   `--development-isolation` and is never advertised as production isolation. Normal
   admission stays `isolation_unavailable` until signing and package acceptance close.
+- **Measurement phase, 2026-10-05.** The owner deferred every measurement until the
+  implementable tasks were done, then decided:
+  - T004's second-round rows come from the accepted labeled set. Round 1 admits about
+    60% of each group's rows, chosen by task hash; round 2 admits the rest as new inputs
+    in old groups. This proves the repeat lifecycle; it does not establish fresh uplift.
+  - No paid enablement comparison is run. The learned router stays off by default, as
+    this spec already requires until such a comparison passes.
 
 ## Outcome and requirements
 
