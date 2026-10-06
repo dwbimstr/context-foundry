@@ -40,6 +40,27 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 013 T002 tch training worker, calibration, evaluation and candidates — 2026-10-05
+
+Development isolation only. Deferred to the measurement phase (owner, 2026-10-05), not run: training and evaluation on the real labeled rust-lang/rust rows, the exhaustive elementwise comparison against `reference-t002-full.safetensors`, and the signed-bundle negative probes. They are ignored tests and documented commands in [learning](learning.md).
+- **Shape.**
+  - Optional `learning-worker` feature (tch 0.24.0 / LibTorch 2.11.0), outside the default build. `build.rs` sets the rpath and works around LibTorch's libomp install name.
+  - The `foundry-learn` worker is a numerical engine only. The core owns read-back, the pre-fit permission gate under exclusive ownership, seeded order, `max_steps`, the clock, calibration, evaluation, candidate validation and publication.
+  - Worker IPC rides on the shared frame format with a request ID and the loaded identity. A duplicate, stale or late reply is terminal.
+  - Trainable: the head, the scorer and type-embedding row 0 only.
+  - AdamW with clip 1.0. Temperature grid 0.5–3.0. 15-bin ECE. Query-only deterministic routing as the comparator.
+  - Candidates: float32 head plus manifest, published through anchored no-replace publication. Inherited per-option temperatures and a fitted scalar below 0.5 are refused.
+  - Enforcement matrix: hard process count, output and CPU; supervised memory, failing closed.
+- **Numerical parity** with a reference generated from unchanged Laya @4066d5d5 (transformers 5.18.0, torch 2.14.1). It covers 5 cases (34 to 1024 tokens) and a 3-step AdamW sequence with two clipped steps:
+  - logits and losses exact;
+  - gradients ≤1.9e-13 absolute;
+  - post-sequence parameters ≤2.5e-10;
+  - post-sequence logits ≤2.4e-7.
+  
+  The tolerance is atol 1e-5 / rtol 1e-4.
+- **Design and review.** The captain's brief was refuted cross-lab by GPT-6 Astra (refuter-b) before implementation. Findings folded in: the pre-fit consent gate; type row 0 only; query-only comparator; IPC identity; full validation before adopt; base versus candidate temperatures; fail-closed measurement; real ENOSPC paths; no encoder cache; a clipped reference step. Anthropic Opus 5.5 implemented it. OpenAI GPT-6.1 Sol reviewed: REVISE (4 major: duplicate final reply, breach after the last reply, reply crossing a deadline, manifest outside the output total), then SHIP.
+- **Gates** (`390c282`, rebased on 009 T003): fmt; clippy `-D warnings` on stable and 1.90, default and with `learning-worker`; full suite 796 passed. The only failure was the known `embed_worker` launch-timing flake, which passed alone.
+
 ## 009 T003 progressive preparation in the MCP owner — 2026-10-05
 
 Development isolation only. The real lifecycle exercise is deferred to the measurement phase (owner, 2026-10-05) as an ignored test (`real_lifecycle_exercise_on_a_permitted_declared_corpus`).
