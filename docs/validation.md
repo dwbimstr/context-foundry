@@ -40,6 +40,23 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 009 runtime fixes after measurement — 2026-10-06
+
+Implementation only; measured in the end-of-implementation batch (owner, 2026-10-06).
+- **Why.** The 2026-10-06 measurement found two problems. During continuous preparation every query fell back with `provider_busy`. On the 60,739-file corpus, every request in the first ~12 minutes failed with engine `busy`, because back-to-back driver store steps held the engine slot.
+- **Shape** (spec 009 T003 decisions D5–D8):
+  - Batches of at most 2 inputs while foreground activity happened in the last 60 s, otherwise 8.
+  - One query may wait for this owner's document batch, up to its own ceiling.
+  - Requests wait for a driver store step, bounded by their deadline. A single FREE/DRIVER/REQUEST holder mark decides who waits.
+  - Time-bounded partition steps.
+  - Generations are built and staged without the engine slot.
+  - Status names a dead worker (`fallback:provider_exited`) instead of `ready`.
+  - Dead owners' scratch is reclaimed at launch under the launch control. It is first claimed into a non-run `.reclaim-*` quarantine and deleted only if it is the validated inode.
+  - The readiness wait never enters a receive once the deadline has passed.
+  - The `embed_worker` and `learning_worker` load-timing flakes were fixed at the root cause.
+- **Review.** Anthropic Opus 5.5 wrote it; OpenAI GPT-6.1 Sol reviewed it: REVISE (6 major, 2 minor), then REVISE (3), then SHIP. Each fix has a barrier or fault-point test.
+- **Gates** (`b1466ca`, all slices integrated): fmt; clippy `-D warnings` on stable and 1.90; full suite 858 passed, 0 failed, 8 ignored, no flake.
+
 ## Installable package — 2026-10-06
 
 Unsigned (ad-hoc-signed development bundles). Signing is the last step, by owner decision (2026-10-06).
