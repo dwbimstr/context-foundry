@@ -1575,6 +1575,8 @@ fn the_worker_refuses_a_request_for_another_candidate() {
     let manifest = json_file(&a.join("manifest.json"));
     let run = env.path("raw-run");
     std::fs::create_dir(&run).unwrap();
+    let elsewhere = env.path("raw-elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
     std::fs::copy(
         a.join("head.safetensors"),
         run.join("serve-head.safetensors"),
@@ -1592,7 +1594,12 @@ fn the_worker_refuses_a_request_for_another_candidate() {
         .arg(liveness_fd.to_string())
         .arg("--checkpoint-dir")
         .arg(&env.checkpoint)
-        .current_dir(&run)
+        .arg("--run-dir")
+        .arg(&run)
+        // Start somewhere else, as App Sandbox does (it moves a sandboxed
+        // process's working directory into its container): the worker must
+        // re-enter the named run directory to find the serve head.
+        .current_dir(&elsewhere)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

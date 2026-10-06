@@ -1238,10 +1238,14 @@ fn owner_death_ends_the_worker_within_two_seconds() {
     let env = Env::new();
     let checkpoint = env.path("checkpoint");
     let pid_file = env.path("worker.pid");
+    let run_dir = env.path("owner-death-run");
+    std::fs::create_dir(&run_dir).unwrap();
     let mut shim = Command::new(fake_exe())
         .arg("--shim")
         .arg("--checkpoint-dir")
         .arg(&checkpoint)
+        .arg("--run-dir")
+        .arg(&run_dir)
         .args(["--load-ms", "20000", "--pid-file"])
         .arg(&pid_file)
         .stdin(Stdio::piped())
@@ -1287,7 +1291,15 @@ fn owner_death_ends_the_worker_within_two_seconds() {
     while !pid_file.exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));
     }
+    // The worker really started (parsed its arguments, armed its watcher and
+    // entered its load); otherwise this test would observe an early exit.
+    assert!(pid_file.exists(), "the worker never reached its load");
     std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(
+        unsafe { libc::kill(worker as libc::pid_t, 0) },
+        0,
+        "the worker is alive inside its load before the owner dies"
+    );
     shim.kill().unwrap();
     shim.wait().unwrap();
     let killed = Instant::now();

@@ -120,6 +120,10 @@ pub struct WorkerArgs {
     pub owner_pid: u32,
     pub liveness_fd: i32,
     pub checkpoint_dir: PathBuf,
+    /// The absolute scratch run directory. App Sandbox moves a sandboxed
+    /// process's working directory into its container at start-up, so the
+    /// worker re-enters this directory itself before it touches any file.
+    pub run_dir: PathBuf,
     pub faults: ReplyFaults,
 }
 
@@ -130,6 +134,7 @@ impl WorkerArgs {
         let mut owner_pid = None;
         let mut liveness_fd = None;
         let mut checkpoint_dir = None;
+        let mut run_dir = None;
         let mut rest = Vec::new();
         let mut args = args.into_iter();
         while let Some(arg) = args.next() {
@@ -152,6 +157,9 @@ impl WorkerArgs {
                 "--checkpoint-dir" => {
                     checkpoint_dir = Some(PathBuf::from(value("--checkpoint-dir")?));
                 }
+                "--run-dir" => {
+                    run_dir = Some(PathBuf::from(value("--run-dir")?));
+                }
                 _ => rest.push(arg),
             }
         }
@@ -160,6 +168,7 @@ impl WorkerArgs {
                 owner_pid: owner_pid.ok_or("--owner-pid is required")?,
                 liveness_fd: liveness_fd.ok_or("--liveness-fd is required")?,
                 checkpoint_dir: checkpoint_dir.ok_or("--checkpoint-dir is required")?,
+                run_dir: run_dir.ok_or("--run-dir is required")?,
                 faults: ReplyFaults::default(),
             },
             rest,
@@ -203,6 +212,29 @@ fn finite(values: &[f64]) -> bool {
 /// The digest the owner expects after `save`.
 fn sha256(bytes: &[u8]) -> String {
     crate::digest(bytes)
+}
+
+/// Make `dir` (absolute, a real directory, not a link) the working
+/// directory, and confirm by device and inode that the working directory
+/// now is that directory.
+fn enter_run_dir(dir: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+    if !dir.is_absolute() {
+        return Err(format!("{} is not an absolute path", dir.display()));
+    }
+    let named = std::fs::symlink_metadata(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    if !named.is_dir() {
+        return Err(format!("{} is not a directory", dir.display()));
+    }
+    std::env::set_current_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let here = std::fs::metadata(".").map_err(|e| format!("working directory: {e}"))?;
+    if (here.dev(), here.ino()) != (named.dev(), named.ino()) {
+        return Err(format!(
+            "the working directory is not {} after entering it",
+            dir.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Write `bytes` as `head.safetensors` in the working directory (the
@@ -417,6 +449,15 @@ pub fn serve(args: WorkerArgs, backend: &mut dyn Backend) -> i32 {
             eprintln!("cannot arm owner-death watcher: {message}");
             return WATCHER_EXIT;
         }
+    }
+    // Every head the worker reads or writes is a fixed name in the run
+    // directory, opened relative to the working directory. Re-enter the
+    // run directory the supervisor named (absolute, granted read-write) and
+    // confirm the working directory IS it, so no file lands in, or is read
+    // from, the sandbox container.
+    if let Err(message) = enter_run_dir(&args.run_dir) {
+        eprintln!("cannot enter the scratch run directory: {message}");
+        return CONFIG_EXIT;
     }
     let out = match worker_runtime::take_ipc_stdout() {
         Ok(file) => file,

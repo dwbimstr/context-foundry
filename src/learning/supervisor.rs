@@ -304,6 +304,10 @@ pub(super) fn spawn(
         .arg(read_fd.to_string())
         .arg("--checkpoint-dir")
         .arg(&profile.checkpoint_dir)
+        // The worker re-enters this itself: App Sandbox moves a sandboxed
+        // process's working directory into its container at start-up.
+        .arg("--run-dir")
+        .arg(&run)
         .args(request.extra_args)
         .current_dir(&run)
         // `env -i` style: no inherited credentials, proxies or sockets.
