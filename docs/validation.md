@@ -66,6 +66,13 @@ Owner-approved after the 013 corpus analysis: (1) account for the learned router
 - **013 note.** Composed route states (query, coverage, top-3 locator lines) change under the new tier-1 order; states composed before `c3437e6` do not match serving composition, so a next round recomposes and relabels.
 - **Gates** (`24abb11` with the keyword withdrawal): fmt; clippy `-D warnings` on stable and 1.90; full suite 871 passed, 0 failed, 8 ignored.
 - **Review.** Anthropic Opus 5.5 wrote both slices; OpenAI GPT-6.1 Sol reviewed them: tier-1/lines SHIP; economics gate REVISE (1 major: the lifecycle mark was lost on failed startup and inspection), then SHIP.
+- **Compact context** (owner chose the fixed rule over a learned decision; `844796c`). When every backticked identifier with a definition has exactly one, `context` delivers that definition plus at most 8 one-line pointers and marks the header `compact`; other responses are byte-identical. Same frozen tasks (checker v2 `038182f6…53adb4` adds body/pointer and header fields; pass logic unchanged), compared per task with the pre-compact run:
+  - Applied to 14.3% of dev tasks and 7.0% of held-out tasks (half the held-out wordings are unmarked and never compact).
+  - On those rows: mean delivered tokens 2,012 → 824 (search); required evidence dev 458 → 458 (search) and 401 → 399 (graph), held-out 119 → 114 and 100 → 97. The held-out losses are usage tasks whose third reference site lay beyond the 8 pointers. Definitions arrive as bodies in 317 of 324 dev passes.
+  - All tasks: delivered tokens −8.5% (dev) and −4.1% (held-out); evidence 42.1% → 42.1% (dev search), 34.3% → 34.1% (held-out search).
+  - Arithmetic, not a host measurement: on the held-out compact rows, 5 extra misses at about one turn each (~62k tokens) against 160 × ~1,190 fewer delivered tokens (~190k) on the first delivery alone.
+  - Remaining room: among non-compact tasks, 44% (dev) and 49% (held-out) of the 2048 passes also pass at 512, and a task that fails at 2048 has no evidence to lose; only 21% (dev) and 16% (held-out) of non-compact tasks need the full budget.
+  - Gates (`844796c`): fmt; clippy `-D warnings` on stable and 1.90; full suite 877 passed, 0 failed, 8 ignored. Review: Anthropic Opus 5.5 wrote it; OpenAI GPT-6.1 Sol reviewed it: SHIP.
 
 ## 009 runtime fixes after measurement — 2026-10-06
 
