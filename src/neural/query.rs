@@ -17,12 +17,12 @@ use crate::neural::index::{
 use crate::neural::partition::TokenCount as _;
 use crate::neural::profile::SemanticProfile;
 use crate::neural::provider::{
-    self, EmbeddingProvider, ProviderError, QUERY_PREFIX, TokenizedInput,
+    self, EmbeddingProvider, LateCall, ProviderError, QUERY_PREFIX, TokenizedInput,
 };
 use crate::neural::tokenize::DocumentTokenizer;
 use crate::store::Engine;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 /// The dense candidate window (D001): the top 64 dense hits enter the fusion.
@@ -299,34 +299,99 @@ pub fn tokenize_query(
     Ok(input)
 }
 
-/// One query embedding request to the provider thread.
-struct Job {
-    input: TokenizedInput,
-    deadline: Instant,
-    reply: mpsc::Sender<Result<Vec<f32>, ProviderError>>,
+/// One job for the provider thread: a query embedding or (009 T003) one
+/// document batch of the owner's preparation driver. Both kinds share the
+/// ONE admission slot.
+enum Job {
+    Query {
+        input: TokenizedInput,
+        deadline: Instant,
+        reply: mpsc::Sender<Result<Vec<f32>, ProviderError>>,
+    },
+    Documents {
+        inputs: Vec<TokenizedInput>,
+        control: Control,
+        reply: mpsc::Sender<Result<Vec<Vec<f32>>, ProviderError>>,
+    },
+}
+
+/// One admitted document call. Waiting is sliced so the caller can notice
+/// its own stop; dropping the call discards the late reply, and the slot
+/// stays held until the provider call actually ends.
+pub struct DocumentCall {
+    answer: mpsc::Receiver<Result<Vec<Vec<f32>>, ProviderError>>,
+}
+
+impl DocumentCall {
+    /// The call's outcome if it ended within `slice`; `None` while it runs.
+    pub fn wait(&self, slice: Duration) -> Option<Result<Vec<Vec<f32>>, ProviderError>> {
+        match self.answer.recv_timeout(slice) {
+            Ok(result) => Some(result),
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
+            Err(mpsc::RecvTimeoutError::Disconnected) => Some(Err(ProviderError::WorkerExited(
+                "the provider thread ended during the document call".into(),
+            ))),
+        }
+    }
+}
+
+/// Counts a foreground query from the start of its request path until it
+/// returns, so no document batch is admitted while it is being dispatched.
+/// Registration takes the runtime's admission lock, so it and a document
+/// admission decision are one ordered decision, never interleaved.
+struct Dispatching<'a>(&'a AtomicUsize);
+
+impl<'a> Dispatching<'a> {
+    fn enter(runtime: &'a QueryRuntime) -> Self {
+        let _admission = runtime.admission();
+        runtime.dispatching.fetch_add(1, Ordering::SeqCst);
+        Self(&runtime.dispatching)
+    }
+}
+
+impl Drop for Dispatching<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// The builder of the provider, run ON the provider thread: the provider is
 /// created, used and dropped on that one thread, so it needs no `Send`
 /// bound. Dropping the runtime closes the channel, ends the thread and
-/// drops the provider (the supervised worker shuts down).
+/// drops the provider (the supervised worker shuts down);
+/// [`QueryRuntime::shutdown`] does the same and waits until it happened.
 pub type MakeProvider =
     Box<dyn FnOnce() -> Result<Box<dyn EmbeddingProvider>, ProviderError> + Send>;
 
-/// The resident query-side runtime one owner (MCP) or one command (CLI)
-/// holds: the verified profile, its exact-input tokenizer, the embedding
-/// provider (confined to its own thread, one admission slot) and the loaded
-/// dense index. The index is loaded once and kept: preparation cannot run
-/// against a serving owner, so a loaded generation cannot change under it;
-/// source edits are caught by the final read, not by the index.
+/// The resident runtime one owner (MCP) or one command (CLI) holds: the
+/// verified profile, its exact-input tokenizer, the embedding provider
+/// (confined to its own thread, ONE admission slot for queries and document
+/// batches alike) and the loaded dense index. The index is kept until the
+/// owner's preparation driver publishes a new generation and calls
+/// [`QueryRuntime::forget_index`]; source edits are caught by the final
+/// read, not by the index.
 pub struct QueryRuntime {
     pub profile: Arc<SemanticProfile>,
     tokenizer: DocumentTokenizer,
-    jobs: Mutex<mpsc::Sender<Job>>,
-    /// True from the dispatch of a query until the provider thread finished
-    /// it: a request whose caller timed out keeps the slot Busy until the
-    /// late reply is dropped, exactly like the supervised worker.
+    /// `None` once [`Self::shutdown`] closed it.
+    jobs: Mutex<Option<mpsc::Sender<Job>>>,
+    /// The provider thread, joined by [`Self::shutdown`].
+    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// True from the dispatch of a query or document batch until the
+    /// provider thread finished it: a request whose caller timed out keeps
+    /// the slot Busy until the late reply is dropped, exactly like the
+    /// supervised worker.
     busy: Arc<AtomicBool>,
+    /// Foreground queries currently in their request path.
+    dispatching: AtomicUsize,
+    /// Orders query registration and each document admission decision; it
+    /// is held for neither inference nor any wait.
+    admission: Mutex<()>,
+    /// The provider's probe of a call it already returned from that still
+    /// runs in the model (the supervised worker's abandoned query).
+    late: Option<LateCall>,
+    /// The function digest of the provider's own descriptor.
+    served_digest: String,
     index: Mutex<Option<Arc<DenseIndex>>>,
 }
 
@@ -357,15 +422,17 @@ impl QueryRuntime {
     /// provider). Blocks until the provider is built or refused.
     pub fn start(profile: Arc<SemanticProfile>, make: MakeProvider) -> Result<Self, ProviderError> {
         let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
-        let (ready_tx, ready_rx) = mpsc::channel::<Result<(), ProviderError>>();
+        let (ready_tx, ready_rx) =
+            mpsc::channel::<Result<(String, Option<LateCall>), ProviderError>>();
         let busy = Arc::new(AtomicBool::new(false));
         let thread_busy = Arc::clone(&busy);
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("foundry-query-provider".into())
             .spawn(move || {
                 let mut provider = match make() {
                     Ok(provider) => {
-                        let _ = ready_tx.send(Ok(()));
+                        let _ = ready_tx
+                            .send(Ok((provider.descriptor().digest(), provider.late_call())));
                         provider
                     }
                     Err(error) => {
@@ -373,32 +440,89 @@ impl QueryRuntime {
                         return;
                     }
                 };
+                // Free the slot BEFORE replying: a late reply nobody waits
+                // for still releases it, and only when the call really ended.
                 while let Ok(job) = jobs_rx.recv() {
-                    let result = provider.embed_query(&job.input, job.deadline);
-                    // Free the slot BEFORE replying: a late reply nobody
-                    // waits for still releases it.
-                    thread_busy.store(false, Ordering::SeqCst);
-                    let _ = job.reply.send(result);
+                    match job {
+                        Job::Query {
+                            input,
+                            deadline,
+                            reply,
+                        } => {
+                            let result = provider.embed_query(&input, deadline);
+                            thread_busy.store(false, Ordering::SeqCst);
+                            let _ = reply.send(result);
+                        }
+                        Job::Documents {
+                            inputs,
+                            control,
+                            reply,
+                        } => {
+                            let result = provider.embed_documents(&inputs, &control);
+                            thread_busy.store(false, Ordering::SeqCst);
+                            let _ = reply.send(result);
+                        }
+                    }
                 }
             })
             .map_err(|e| ProviderError::WorkerExited(format!("provider thread: {e}")))?;
-        match ready_rx.recv() {
-            Ok(Ok(())) => {}
+        let (served_digest, late) = match ready_rx.recv() {
+            Ok(Ok(ready)) => ready,
             Ok(Err(error)) => return Err(error),
             Err(_) => {
                 return Err(ProviderError::WorkerExited(
                     "the provider thread ended before it was ready".into(),
                 ));
             }
-        }
+        };
         let tokenizer = DocumentTokenizer::load(&profile)?;
         Ok(Self {
             profile,
             tokenizer,
-            jobs: Mutex::new(jobs_tx),
+            jobs: Mutex::new(Some(jobs_tx)),
+            thread: Mutex::new(Some(thread)),
             busy,
+            dispatching: AtomicUsize::new(0),
+            admission: Mutex::new(()),
+            late,
+            served_digest,
             index: Mutex::new(None),
         })
+    }
+
+    fn admission(&self) -> MutexGuard<'_, ()> {
+        self.admission
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// True while a call the provider already returned from still runs.
+    fn late_call_running(&self) -> bool {
+        self.late.as_ref().is_some_and(|late| late())
+    }
+
+    /// Hand one job to the provider thread; `false` once it is gone.
+    fn send(&self, job: Job) -> bool {
+        let jobs = self.jobs.lock().unwrap_or_else(PoisonError::into_inner);
+        jobs.as_ref().is_some_and(|jobs| jobs.send(job).is_ok())
+    }
+
+    /// Stop the runtime: no new job is accepted; the provider thread finishes
+    /// its current call, drops the provider — the supervised worker is
+    /// stopped and reaped — and is joined. Blocks until then.
+    pub fn shutdown(&self) {
+        self.jobs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let thread = self
+            .thread
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(thread) = thread {
+            let _ = thread.join();
+        }
     }
 
     /// The query embedding under the ceiling derived from the request's
@@ -406,28 +530,24 @@ impl QueryRuntime {
     /// cut-off embedding leaves the baseline fallback at least as much time
     /// as it took. The wait itself is cut at the ceiling whatever the
     /// provider does, so a stalled provider cannot hold the request past
-    /// it; the provider slot stays busy until its call really ends.
+    /// it; the provider slot stays busy until its call really ends, and a
+    /// call the provider already gave up on (its late call) keeps it busy too.
     pub fn embed(&self, query: &str, deadline: Instant) -> Result<Vec<f32>, ProviderError> {
+        let _dispatching = Dispatching::enter(self);
+        let _ = neural_fault!(QUERY_REGISTERED, None, query);
         let input = tokenize_query(&self.tokenizer, query)?;
         let now = Instant::now();
         let ceiling = now + QUERY_CEILING.min(deadline.saturating_duration_since(now) / 2);
         if Instant::now() >= ceiling {
             return Err(ProviderError::Timeout);
         }
-        if self.busy.swap(true, Ordering::SeqCst) {
-            return Err(ProviderError::Busy);
-        }
+        self.claim_slot("query")?;
         let (reply, answer) = mpsc::channel();
-        let sent = match self.jobs.lock() {
-            Ok(jobs) => jobs
-                .send(Job {
-                    input,
-                    deadline: ceiling,
-                    reply,
-                })
-                .is_ok(),
-            Err(_) => false,
-        };
+        let sent = self.send(Job::Query {
+            input,
+            deadline: ceiling,
+            reply,
+        });
         if !sent {
             self.busy.store(false, Ordering::SeqCst);
             return Err(ProviderError::WorkerExited(
@@ -446,9 +566,92 @@ impl QueryRuntime {
         }
     }
 
-    /// The validated dense index of `engine`, loaded once and kept. A store
-    /// prepared for another profile is refused by name HERE, before any
-    /// query embedding is spent.
+    /// 009 T003: admit ONE document batch (at most [`provider::DOCUMENT_BATCH`]
+    /// inputs, limits checked first) on the same slot as queries, with the
+    /// caller's `control` (its deadline and cancellation reach the provider).
+    /// Refused `Busy` — nothing is queued — while the slot is held by a call
+    /// that has not actually ended (the provider's late call included), or
+    /// while a foreground query is being dispatched. The decision is taken
+    /// under the admission lock that query registration takes too: a query
+    /// registered before it always wins.
+    pub fn dispatch_documents(
+        &self,
+        inputs: Vec<TokenizedInput>,
+        control: Control,
+    ) -> Result<DocumentCall, ProviderError> {
+        provider::check_document_batch(&inputs)?;
+        let _ = neural_fault!(DOCUMENT_ADMISSION, Some(&control), "");
+        {
+            let _admission = self.admission();
+            if self.dispatching.load(Ordering::SeqCst) > 0 {
+                return Err(ProviderError::Busy);
+            }
+            self.claim_slot("documents")?;
+        }
+        let (reply, answer) = mpsc::channel();
+        let sent = self.send(Job::Documents {
+            inputs,
+            control,
+            reply,
+        });
+        if !sent {
+            self.busy.store(false, Ordering::SeqCst);
+            return Err(ProviderError::WorkerExited(
+                "the provider thread is gone".into(),
+            ));
+        }
+        Ok(DocumentCall { answer })
+    }
+
+    /// Claim the one model slot: the outer flag FIRST, then the provider's
+    /// late call. The provider thread clears the flag only after the provider
+    /// returned, and the supervisor marks a call abandoned before it returns,
+    /// so once the claim succeeds any late call is already visible; a claim
+    /// that finds one is released at once. Nothing is created or sent on a
+    /// refusal.
+    fn claim_slot(&self, detail: &str) -> Result<(), ProviderError> {
+        if self.busy.swap(true, Ordering::SeqCst) {
+            return Err(ProviderError::Busy);
+        }
+        let _ = neural_fault!(SLOT_CLAIMED, None, detail);
+        if self.late_call_running() {
+            self.busy.store(false, Ordering::SeqCst);
+            return Err(ProviderError::Busy);
+        }
+        Ok(())
+    }
+
+    /// True while the one model slot is held by a call that has not actually
+    /// ended (the provider's late call included), or a foreground query is
+    /// being dispatched. The flag is read before the late call, in the order
+    /// the provider thread publishes them.
+    pub fn occupied(&self) -> bool {
+        self.busy.load(Ordering::SeqCst)
+            || self.dispatching.load(Ordering::SeqCst) > 0
+            || self.late_call_running()
+    }
+
+    /// The function digest of the descriptor the provider itself serves.
+    pub fn served_digest(&self) -> &str {
+        &self.served_digest
+    }
+
+    /// The profile's exact-input tokenizer (the preparation driver's too).
+    pub(crate) fn tokenizer(&self) -> &DocumentTokenizer {
+        &self.tokenizer
+    }
+
+    /// Drop the loaded dense index after a new generation was published; the
+    /// next request validates and loads the new one.
+    pub fn forget_index(&self) {
+        if let Ok(mut slot) = self.index.lock() {
+            *slot = None;
+        }
+    }
+
+    /// The validated dense index of `engine`, loaded once and kept until
+    /// [`Self::forget_index`]. A store prepared for another profile is refused
+    /// by name HERE, before any query embedding is spent.
     fn dense_index(&self, engine: &Engine, control: &Control) -> Result<Arc<DenseIndex>, Fallback> {
         let mut slot = self
             .index
@@ -472,7 +675,8 @@ impl QueryRuntime {
     /// profile), then the query embedding under its ceiling, then the top
     /// [`DENSE_WINDOW`]. `Err` is the named fallback; it never fails the
     /// call. The hits' unit locations are revalidated in the candidate
-    /// assembly's final read.
+    /// assembly's final read. The whole request path counts as a foreground
+    /// query being dispatched: no document batch is admitted meanwhile.
     pub fn window(
         &self,
         engine: &Engine,
@@ -480,6 +684,7 @@ impl QueryRuntime {
         deadline: Instant,
         control: &Control,
     ) -> Result<DenseWindow, Fallback> {
+        let _dispatching = Dispatching::enter(self);
         let generation = self.dense_index(engine, control)?;
         let vector = self.embed(query, deadline)?;
         control.check()?;

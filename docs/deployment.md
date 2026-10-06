@@ -241,6 +241,47 @@ the development profile, which works as follows:
   A SIGSTOPped worker cannot exit itself; package acceptance needs an OS-level
   guardian.
 
+**Progressive preparation in the MCP owner (009 T003).** An owner started with
+`mcp --semantic-profile FILE --development-isolation` runs ONE resident worker for
+query embeddings and document batches alike, behind one model slot:
+- **Control.** `index {semantic: "prepare"}` starts, or resumes, preparation of the
+  primary root and returns at once; `index {semantic: "pause"}` admits no new batch.
+  With `semantic`, `index` does nothing else; combined with `root` or `scip` it is
+  `invalid_argument`. Without a profile, or after a refused start, the answer is
+  `semantic_unavailable` with the fallback reason. Startup never resumes preparation.
+- **Foreground first.** Each store step (partition up to 8 sources, select one batch
+  of at most 8 missing inputs, commit, publish) takes the engine slot only while no
+  foreground operation is in flight. A request arriving during such a step gets the
+  usual retryable `busy`. The model call holds no engine slot and no transaction.
+- **One model call.** A query while a document batch runs gets baseline results with
+  `fallback:provider_busy`. A batch is admitted only while the slot is free and no
+  query is being dispatched; a refused admission pauses preparation with
+  `provider_busy`, keeping committed work. A query the worker abandoned at its
+  deadline holds the slot until its late reply arrives. A `prepare` while an earlier
+  call still holds the slot (for example after a client timeout) is refused
+  `provider_busy` before anything starts. Nothing is queued.
+- **Stops.** `pause` admits no new batch and lets the in-flight batch finish and
+  commit. Owner exit or EOF discards the uncommitted batch, also one waiting for the
+  engine slot; the owner releases its store only after the worker is stopped and
+  reaped. Each document call has 60 s
+  plus the supervisor's 30 s in-flight grace; expiry pauses with `provider_timeout`. A
+  failed, malformed or wrong-function reply pauses with its provider code and
+  publishes nothing from that batch. Completion is `stopped` with no reason. There
+  are no hidden retries, job journal, leases or watcher; `prepare` resumes.
+- **Publication.** Committed coverage is republished from the cache after the first
+  batch, then whenever the vectors not yet published reach the size of the last
+  published generation, and at every stop except exit. Context and search use the
+  coverage that has arrived and say `partial` or `ready`.
+- **Status.** `status` adds a `semantic` object: the metadata-only census of
+  `semantic status`, the live state (`running`, `paused`, `stopped`), `reason`, the
+  last error, the last provider observation with its time, and the resident `runtime`
+  (`ready` or its `fallback:` word). The census gets half the read deadline; when that
+  runs out, the object names `census: deadline_exceeded` with the committed state row.
+- **Limits.** The real lifecycle on a declared corpus (cold preparation, partial and
+  steady queries, edit catch-up, restart) is written as an ignored measurement-phase
+  test and has not been run. Each publication rebuilds the generation from the cache
+  under the engine slot; its cost on a large corpus is unmeasured.
+
 For every platform declare `resource_enforcement` as `hard` or `supervised`, by resource.
 OS-enforced memory/process bounds differ from supervisor RSS polling, which can overshoot.
 A job requiring hard limits refuses a merely supervised profile. 013's

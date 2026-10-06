@@ -22,7 +22,8 @@
 //! exist the totals are unknown and never "empty"/"ready"; `empty` requires
 //! every admitted source to carry a current completed zero-unit partition
 //! (or no admitted sources at all). A persisted `running` state is a dead
-//! owner's leftover and reads as `stopped` (interrupted).
+//! owner's leftover and reads as `stopped` (interrupted); the MCP owner's
+//! `status` overlays its own live driver state (009 T003).
 use crate::control::Control;
 use crate::error::FResult;
 use crate::neural::cache::{self, CacheProbe, DEFAULT_CACHE_CAP_BYTES};

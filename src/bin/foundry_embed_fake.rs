@@ -97,6 +97,11 @@ fn main() {
             if hooks.slow_ms > 0 {
                 worker_runtime::sleep_ms(hooks.slow_ms);
             }
+            if let Some(path) = &hooks.hold_file {
+                while std::path::Path::new(path).exists() {
+                    worker_runtime::sleep_ms(5);
+                }
+            }
             let vectors: Vec<Vec<f32>> = job
                 .inputs
                 .iter()

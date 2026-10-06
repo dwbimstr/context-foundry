@@ -45,6 +45,11 @@
 //!   error inside one bounded `isError:true` result (fixed ASCII message
 //!   <=256 bytes, no samples, <=1024 bytes total); failure samples go once
 //!   to bounded stderr, never tool errors.
+//! * 009 T003: `index {semantic: "prepare" | "pause"}` controls the owner's
+//!   one background preparation driver (primary root only). Its store steps
+//!   take the engine slot only while no foreground operation is in flight;
+//!   model inference holds no slot and no transaction. With a semantic
+//!   profile, `status` adds a `semantic` object.
 
 use std::{
     collections::HashMap,
@@ -168,8 +173,13 @@ pub(crate) struct Shared {
     /// `include_memory:true` is refused. Disabling never touches records.
     no_memory: bool,
     /// 009 T002: the owner's resident query runtime, or the named fallback
-    /// word every request reports when it could not start.
+    /// word every request reports when it could not start. 009 T003: the
+    /// same runtime embeds the preparation driver's document batches.
     semantic: SemanticSlot,
+    /// 009 T003: the owner's one background preparation driver (primary
+    /// root only), started by `index {semantic: "prepare"}`, never at startup.
+    #[cfg(feature = "semantic")]
+    preparation: Arc<crate::neural::driver::Preparation>,
 }
 
 /// The owner's semantic state: `None` without `--semantic-profile`, the
@@ -504,6 +514,8 @@ impl Shared {
             shutdown: CancellationToken::new(),
             no_memory: false,
             semantic: SemanticSlot::default(),
+            #[cfg(feature = "semantic")]
+            preparation: Arc::default(),
         }
     }
 
@@ -515,6 +527,75 @@ impl Shared {
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
+    }
+
+    /// 009 T003: after shutdown cancelled it and the foreground operations
+    /// drained, the preparation driver records its stop (committed work kept,
+    /// the uncommitted batch discarded) under the free engine slot.
+    async fn wait_preparation_idle(&self, bound: Duration) {
+        #[cfg(feature = "semantic")]
+        {
+            let start = Instant::now();
+            while !self.preparation.idle() && start.elapsed() <= bound {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        }
+        #[cfg(not(feature = "semantic"))]
+        let _ = bound;
+    }
+
+    /// Owner shutdown, shared by both transports: cancel what runs, wait for
+    /// the current engine transaction (bounded above the maximum index
+    /// timeout), let the preparation driver record its stop, then stop the
+    /// resident worker and wait until it is stopped and reaped (009 T003).
+    /// Only after that may the owner release its store or report done.
+    async fn shut_down(&self) {
+        self.cancel_active();
+        self.wait_engine_idle(SHUTDOWN_ENGINE_WAIT).await;
+        self.wait_preparation_idle(SHUTDOWN_ENGINE_WAIT).await;
+        #[cfg(feature = "semantic")]
+        if let Some(Ok(runtime)) = &self.semantic {
+            // The supervised stop path: a call still running ends (bounded by
+            // the supervisor's in-flight grace), then the worker is stopped
+            // and reaped, and the provider thread is joined.
+            let runtime = Arc::clone(runtime);
+            let _ = tokio::time::timeout(
+                SHUTDOWN_ENGINE_WAIT,
+                tokio::task::spawn_blocking(move || runtime.shutdown()),
+            )
+            .await;
+        }
+    }
+}
+
+/// 009 T003: the preparation driver's access to the owner. A store step runs
+/// under the one engine slot, taken only while no foreground operation is in
+/// flight, so foreground operations go first.
+#[cfg(feature = "semantic")]
+impl crate::neural::driver::Owner for Shared {
+    fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        match self.engines.try_lock() {
+            Ok(engines) => match engines.first().and_then(Option::as_ref) {
+                Some(engine) => {
+                    step(engine);
+                    Ok(true)
+                }
+                None => Err(FoundryError::Internal(anyhow::anyhow!(
+                    "the primary engine is not open"
+                ))),
+            },
+            Err(std::sync::TryLockError::WouldBlock) => Ok(false),
+            Err(std::sync::TryLockError::Poisoned(_)) => Err(FoundryError::Internal(
+                anyhow::anyhow!("engine state was poisoned by an earlier panic"),
+            )),
+        }
+    }
+
+    fn closing(&self) -> bool {
+        self.shutdown.is_cancelled()
     }
 }
 
@@ -1419,7 +1500,7 @@ impl FoundryMcp {
     #[tool(
         name = "index",
         description = "Re-index after edits: the bound repo, or an admitted reference root via `root`.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"},"scip":{"type":"object","additionalProperties":false,"required":["index_file","snapshot_file"],"properties":{"index_file":{"type":"string"},"snapshot_file":{"type":"string"}}}}}"#),
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"},"scip":{"type":"object","additionalProperties":false,"required":["index_file","snapshot_file"],"properties":{"index_file":{"type":"string"},"snapshot_file":{"type":"string"}}},"semantic":{"enum":["prepare","pause"]}}}"#),
         // `index` writes only Foundry's own store for the bound root; it
         // never modifies workspace files, and re-indexing converges.
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
@@ -1429,8 +1510,48 @@ impl FoundryMcp {
         ctx: RequestContext<RoleServer>,
         arguments: JsonObject,
     ) -> Result<CallToolResult, ErrorData> {
-        if let Err(e) = unknown_fields(&arguments, &["timeout_ms", "root", "scip"]) {
+        if let Err(e) = unknown_fields(&arguments, &["timeout_ms", "root", "scip", "semantic"]) {
             return Ok(foundry_error_result(&e));
+        }
+        // 009 T003: `semantic` starts/resumes or pauses the owner's
+        // progressive preparation, and `index` then does ONLY that.
+        match arguments.get("semantic") {
+            None => {}
+            Some(serde_json::Value::String(action))
+                if matches!(action.as_str(), "prepare" | "pause") =>
+            {
+                if arguments.contains_key("root") || arguments.contains_key("scip") {
+                    return Ok(error_result(
+                        "invalid_argument",
+                        "`semantic` cannot be combined with `root` or `scip`",
+                        false,
+                    ));
+                }
+                if let Err(e) = optional_u64(
+                    &arguments,
+                    "timeout_ms",
+                    INDEX_TIMEOUT_MS,
+                    INDEX_TIMEOUT_RANGE.0,
+                    INDEX_TIMEOUT_RANGE.1,
+                ) {
+                    return Ok(foundry_error_result(&e));
+                }
+                return Ok(self.index_semantic(&ctx, action == "prepare").await);
+            }
+            Some(serde_json::Value::Null) => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "optional argument `semantic` must be omitted, not null",
+                    false,
+                ));
+            }
+            Some(_) => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "argument `semantic` must be \"prepare\" or \"pause\"",
+                    false,
+                ));
+            }
         }
         // `root` re-indexes one admitted alias through its own store
         // (default `primary`), validated before dispatch: a root whose
@@ -1772,17 +1893,36 @@ impl FoundryMcp {
         }
         let meta = Arc::clone(&self.state.meta);
         let multi = meta.len() > 1;
+        // 009 T003: an owner serving a semantic profile adds the `semantic`
+        // object (committed metadata plus its live driver state); without a
+        // profile the status is unchanged.
+        let semantic = self.state.semantic.clone();
+        #[cfg(feature = "semantic")]
+        let preparation = Arc::clone(&self.state.preparation);
         let outcome = match run_engine_op(
             &self.state,
             Instant::now() + READ_DEADLINE,
             Some(ctx.ct.clone()),
             Self::admission_guard(&ctx),
-            move |engines, _| {
-                let status = engines[0]
-                    .as_ref()
-                    .expect("the primary engine is open")
-                    .status()?;
+            move |engines, control| {
+                let primary = engines[0].as_ref().expect("the primary engine is open");
+                let status = primary.status()?;
                 let mut value = serde_json::to_value(&status).unwrap_or(serde_json::Value::Null);
+                #[cfg(feature = "semantic")]
+                if let Some(slot) = &semantic {
+                    let runtime = match slot {
+                        Ok(_) => "ready",
+                        Err(word) => word.as_str(),
+                    };
+                    value["semantic"] = crate::neural::driver::status_object(
+                        primary,
+                        preparation.live(),
+                        runtime,
+                        control,
+                    )?;
+                }
+                #[cfg(not(feature = "semantic"))]
+                let _ = (&semantic, control);
                 if multi {
                     // 007: every admitted root, with nulls where a store
                     // could not be opened.
@@ -1954,6 +2094,78 @@ impl FoundryMcp {
                 result
             }
             Err(e) => foundry_error_result(&e),
+        }
+    }
+
+    /// 009 T003: `index {semantic: "prepare" | "pause"}` controls the owner's
+    /// progressive preparation of the primary root and returns at once with
+    /// the resulting state and reason. `prepare` starts or resumes the
+    /// driver; while an earlier model call still occupies the runtime slot it
+    /// is refused `provider_busy` before anything is allocated. `pause`
+    /// admits no new batch. Without a semantic profile, or after a refused
+    /// start, the answer is `semantic_unavailable` with the fallback reason.
+    async fn index_semantic(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        prepare: bool,
+    ) -> CallToolResult {
+        #[cfg(feature = "semantic")]
+        {
+            let unavailable = |message: String| {
+                foundry_error_result(&FoundryError::Semantic {
+                    code: "semantic_unavailable",
+                    message,
+                })
+            };
+            let runtime = match &self.state.semantic {
+                Some(Ok(runtime)) => Arc::clone(runtime),
+                Some(Err(word)) => {
+                    return unavailable(format!("the semantic runtime did not start ({word})"));
+                }
+                None => {
+                    return unavailable(
+                        "this owner serves no semantic profile; start it with --semantic-profile"
+                            .into(),
+                    );
+                }
+            };
+            let preparation = Arc::clone(&self.state.preparation);
+            if prepare {
+                let owner: Arc<dyn crate::neural::driver::Owner> = self.state.clone();
+                if let Err(e) = preparation.prepare(owner, runtime) {
+                    return foundry_error_result(&e);
+                }
+            } else {
+                preparation.pause();
+            }
+            let value = match preparation.live() {
+                Some(live) => crate::neural::driver::brief(Some(live), None),
+                // No driver: the committed row, read like any other status.
+                None => match run_engine_op(
+                    &self.state,
+                    Instant::now() + READ_DEADLINE,
+                    Some(ctx.ct.clone()),
+                    Self::admission_guard(ctx),
+                    |engines, _| {
+                        let row = engines[0]
+                            .as_ref()
+                            .expect("the primary engine is open")
+                            .semantic_state()?;
+                        Ok(crate::neural::driver::brief(None, row.as_ref()))
+                    },
+                )
+                .await
+                {
+                    Ok(value) => value,
+                    Err(e) => return foundry_error_result(&e),
+                },
+            };
+            text_result(response::compact_json(&value))
+        }
+        #[cfg(not(feature = "semantic"))]
+        {
+            let _ = (ctx, prepare);
+            foundry_error_result(&refuse_unsupported_semantic())
         }
     }
 }
@@ -2466,6 +2678,17 @@ impl ServerHandler for FoundryMcp {
 // before the transport sink.
 
 pub async fn serve_stdio(options: ServerOptions) -> AResult<()> {
+    serve_streams(options, tokio::io::stdin(), tokio::io::stdout()).await
+}
+
+/// The stdio transport over one inbound and one outbound byte stream: the
+/// process's stdin/stdout in production, an in-process pipe in tests. EOF on
+/// `input` ends the session exactly as stdin EOF does.
+pub async fn serve_streams<R, W>(options: ServerOptions, input: R, output: W) -> AResult<()>
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+    W: tokio::io::AsyncWrite + Send + Unpin + 'static,
+{
     // The delivery-only capability is validated before any store is opened.
     options.budget.require_delivery()?;
     // 007 launch-time admission (refused before serving) and the one-time
@@ -2476,7 +2699,7 @@ pub async fn serve_stdio(options: ServerOptions) -> AResult<()> {
     let permits = Arc::new(tokio::sync::Semaphore::new(MAX_HANDLER_ADMISSION));
     let eof_state = Arc::clone(&state);
     let read = FramedRead::new(
-        tokio::io::stdin(),
+        input,
         JsonRpcMessageCodec::<RxJsonRpcMessage<RoleServer>>::new_with_max_length(MAX_INBOUND_BYTES),
     )
     .scan(permits, |permits, item| {
@@ -2496,23 +2719,30 @@ pub async fn serve_stdio(options: ServerOptions) -> AResult<()> {
     // The encoder side carries no size bound: only INCOMING frames are
     // limited to 64 KiB; outputs follow the 256 KiB result cap.
     let write = FramedWrite::new(
-        tokio::io::stdout(),
+        output,
         JsonRpcMessageCodec::<TxJsonRpcMessage<RoleServer>>::default(),
     );
 
     let running = match server.serve((write, read)).await {
         Ok(running) => running,
-        // EOF/closed before initialization is a clean exit, not a failure.
-        Err(rmcp::service::ServerInitializeError::ConnectionClosed(_)) => return Ok(()),
-        Err(e) => return Err(FoundryError::Internal(e.into()).into()),
+        // EOF/closed before initialization is a clean exit, not a failure;
+        // the resident worker is still stopped before the store is released.
+        Err(rmcp::service::ServerInitializeError::ConnectionClosed(_)) => {
+            state.shut_down().await;
+            return Ok(());
+        }
+        Err(e) => {
+            state.shut_down().await;
+            return Err(FoundryError::Internal(e.into()).into());
+        }
     };
     // Serve until the transport closes (EOF/disconnect). Only THEN stop
-    // admission, request cancellation of anything still running, and wait
-    // for the current engine transaction (bounded above the maximum index
-    // timeout) before exiting.
+    // admission, request cancellation of anything still running, wait for
+    // the current engine transaction (bounded above the maximum index
+    // timeout), for the preparation driver to record its stop, and for the
+    // resident worker to be stopped and reaped, before exiting.
     let quit = running.waiting().await;
-    state.cancel_active();
-    state.wait_engine_idle(SHUTDOWN_ENGINE_WAIT).await;
+    state.shut_down().await;
     quit.map_err(|e| FoundryError::Internal(e.into()))?;
     Ok(())
 }
@@ -2783,7 +3013,8 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
     // 009 T002: ONE resident worker starts here, before serving, when a
     // semantic profile is configured; the owner never loads behind a query.
     // A refused or failed start is the named fallback every later request
-    // reports, with baseline results intact.
+    // reports, with baseline results intact. 009 T003: startup never resumes
+    // preparation; only `index {semantic: "prepare"}` starts the driver.
     let semantic = semantic_slot(semantic_launch)?;
     Ok(Arc::new(Shared {
         engines: Arc::new(Mutex::new(engines)),
@@ -2794,6 +3025,8 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         shutdown,
         no_memory: options.no_memory,
         semantic,
+        #[cfg(feature = "semantic")]
+        preparation: Arc::default(),
     }))
 }
 
@@ -3081,10 +3314,11 @@ pub async fn serve_http(options: ServerOptions, http: HttpOptions) -> AResult<Ht
             .await;
         // Shared-owner shutdown: cancel active operations and SDK sessions;
         // exit waits for the current engine transaction (bounded above the
-        // maximum index timeout); in-flight replies can be lost. `done`
-        // fires only after that wait so a foreground owner can exit.
-        serve_state.cancel_active();
-        serve_state.wait_engine_idle(SHUTDOWN_ENGINE_WAIT).await;
+        // maximum index timeout), for the preparation driver to record its
+        // stop and for the resident worker to be stopped and reaped;
+        // in-flight replies can be lost. `done` fires only after those waits
+        // so a foreground owner can exit.
+        serve_state.shut_down().await;
         let _ = done_tx.send(());
     });
     Ok(HttpServe {
@@ -3521,5 +3755,553 @@ mod tests {
             shared.reserve_effective("s", 32768).unwrap(),
             (960, BudgetLimiter::Session)
         );
+    }
+
+    /// 009 T003 in-crate fixture: twelve single-unit notes, indexed, and an
+    /// owner whose resident runtime `make` builds from the profile's
+    /// document function.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn semantic_owner(
+        dir: &Path,
+        make: impl FnOnce(
+            crate::neural::provider::FunctionDescriptor,
+        ) -> crate::neural::query::MakeProvider,
+    ) -> Arc<Shared> {
+        let root = dir.join("workspace");
+        std::fs::create_dir_all(&root).unwrap();
+        for n in 0..12 {
+            std::fs::write(
+                root.join(format!("note{n:02}.md")),
+                format!("# Note {n}\n\nbody of note {n}\n"),
+            )
+            .unwrap();
+        }
+        let mut engine = Engine::initialize(&dir.join("store"), &root).unwrap();
+        engine.index(&root, &Control::unbounded()).unwrap();
+        let profile_path = crate::testkit::write_semantic_profile(dir, "probe", |_| {});
+        let descriptor = crate::neural::profile::SemanticProfile::load(&profile_path)
+            .unwrap()
+            .descriptor;
+        let mut shared = Shared::single_root(engine, root, BudgetConfig::default());
+        shared.semantic = semantic_slot(Some(SemanticServing::with_provider(
+            profile_path,
+            make(descriptor),
+        )))
+        .unwrap();
+        Arc::new(shared)
+    }
+
+    /// `index {semantic: "prepare"}` on the in-crate owner.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn start_preparation(shared: &Arc<Shared>) -> FResult<()> {
+        start_preparation_as(shared, shared.clone())
+    }
+
+    /// [`start_preparation`] with the driver talking to `owner`.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn start_preparation_as(
+        shared: &Arc<Shared>,
+        owner: Arc<dyn crate::neural::driver::Owner>,
+    ) -> FResult<()> {
+        let Some(Ok(runtime)) = shared.semantic.clone() else {
+            panic!("the runtime starts");
+        };
+        shared.preparation.prepare(owner, runtime)
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn wait_until(what: &str, done: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !done() {
+            assert!(Instant::now() < deadline, "never {what}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// The driver's view of the in-crate owner, for the review interleavings:
+    /// it counts refused engine-slot attempts and can hold the driver right
+    /// before an admission decision.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    struct Watched {
+        inner: Arc<Shared>,
+        refused: AtomicUsize,
+        /// `(reached, go)`: report the next admission, then wait for `go`.
+        before_admission:
+            Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    impl Watched {
+        fn new(inner: &Arc<Shared>) -> Arc<Self> {
+            Arc::new(Self {
+                inner: Arc::clone(inner),
+                refused: AtomicUsize::new(0),
+                before_admission: Mutex::new(None),
+            })
+        }
+
+        fn refused(&self) -> usize {
+            self.refused.load(Ordering::SeqCst)
+        }
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    impl crate::neural::driver::Owner for Watched {
+        fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
+            let ran = crate::neural::driver::Owner::try_primary(&*self.inner, step)?;
+            if !ran {
+                self.refused.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(ran)
+        }
+
+        fn closing(&self) -> bool {
+            crate::neural::driver::Owner::closing(&*self.inner)
+        }
+
+        fn admitting(&self) {
+            let gate = self.before_admission.lock().unwrap().take();
+            if let Some((reached, go)) = gate {
+                let _ = reached.send(());
+                let _ = go.recv();
+            }
+        }
+    }
+
+    /// A provider whose document calls wait until `open` and are counted;
+    /// dropping it (the worker going away) is recorded.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[derive(Clone, Default)]
+    struct Gate {
+        open: Arc<std::sync::atomic::AtomicBool>,
+        entered: Arc<AtomicUsize>,
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    impl Gate {
+        fn entered(&self) -> usize {
+            self.entered.load(Ordering::SeqCst)
+        }
+        fn dropped(&self) -> bool {
+            self.dropped.load(Ordering::SeqCst)
+        }
+        fn open(&self) {
+            self.open.store(true, Ordering::SeqCst);
+        }
+        fn maker(
+            &self,
+            descriptor: crate::neural::provider::FunctionDescriptor,
+        ) -> crate::neural::query::MakeProvider {
+            let gate = self.clone();
+            Box::new(move || {
+                Ok(Box::new(Gated { descriptor, gate })
+                    as Box<dyn crate::neural::provider::EmbeddingProvider>)
+            })
+        }
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    struct Gated {
+        descriptor: crate::neural::provider::FunctionDescriptor,
+        gate: Gate,
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    impl Drop for Gated {
+        fn drop(&mut self) {
+            self.gate.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    impl crate::neural::provider::EmbeddingProvider for Gated {
+        fn descriptor(&self) -> &crate::neural::provider::FunctionDescriptor {
+            &self.descriptor
+        }
+        fn embed_documents(
+            &mut self,
+            batch: &[crate::neural::provider::TokenizedInput],
+            _control: &Control,
+        ) -> Result<Vec<Vec<f32>>, crate::neural::provider::ProviderError> {
+            self.gate.entered.fetch_add(1, Ordering::SeqCst);
+            while !self.gate.open.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Ok(batch.iter().map(|_| unit_vector()).collect())
+        }
+        fn embed_query(
+            &mut self,
+            _input: &crate::neural::provider::TokenizedInput,
+            _deadline: Instant,
+        ) -> Result<Vec<f32>, crate::neural::provider::ProviderError> {
+            Ok(unit_vector())
+        }
+    }
+
+    /// The state row and cache-row count of the in-crate owner's store.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn stopped_state(shared: &Shared) -> (crate::neural::cache::SemanticState, u64) {
+        let engines = shared.engines.lock().unwrap();
+        let engine = engines[0].as_ref().unwrap();
+        (
+            engine.semantic_state().unwrap().unwrap(),
+            engine.semantic_cache_totals().unwrap().0,
+        )
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn wait_idle(shared: &Shared) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !shared.preparation.idle() {
+            assert!(Instant::now() < deadline, "the driver never stopped");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn unit_vector() -> Vec<f32> {
+        let mut vector = vec![0f32; crate::neural::provider::DIMENSIONS];
+        vector[0] = 1.0;
+        vector
+    }
+
+    /// 009 T003 acceptance 1, the probe half: INSIDE every document call of
+    /// the owner's preparation driver no engine operation is counted
+    /// (`in_flight_engine` is 0), the one engine slot can be taken, and a
+    /// source write commits — inference holds no slot and no transaction.
+    /// The write moves the source revision, so the driver walks again and
+    /// prepares the new source too before it stops complete.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn inference_holds_no_engine_slot_and_no_transaction() {
+        use crate::neural::provider::{
+            EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput,
+        };
+        use std::sync::{OnceLock, Weak};
+
+        /// One probe per document call: (in_flight_engine, slot free, a
+        /// source write committed within 10 s).
+        type Probes = Arc<Mutex<Vec<(usize, bool, bool)>>>;
+        struct Probing {
+            descriptor: FunctionDescriptor,
+            owner: Arc<OnceLock<Weak<Shared>>>,
+            probes: Probes,
+        }
+        impl EmbeddingProvider for Probing {
+            fn descriptor(&self) -> &FunctionDescriptor {
+                &self.descriptor
+            }
+            fn embed_documents(
+                &mut self,
+                batch: &[TokenizedInput],
+                _control: &Control,
+            ) -> Result<Vec<Vec<f32>>, ProviderError> {
+                let shared = self
+                    .owner
+                    .get()
+                    .and_then(Weak::upgrade)
+                    .expect("the owner is live");
+                let in_flight = shared.in_flight_engine.load(Ordering::SeqCst);
+                let slot_free = shared.engines.try_lock().is_ok();
+                // The first call writes a source from another thread: it can
+                // commit only if the driver holds no slot and no transaction.
+                let wrote = if self.probes.lock().unwrap().is_empty() {
+                    let (done, written) = std::sync::mpsc::channel();
+                    let writer = Arc::clone(&shared);
+                    std::thread::spawn(move || {
+                        let engines = writer.engines.lock().unwrap();
+                        let result = engines[0]
+                            .as_ref()
+                            .unwrap()
+                            .replace_source("added.md", "# Added\n\nwritten during inference\n");
+                        let _ = done.send(result.is_ok());
+                    });
+                    written
+                        .recv_timeout(Duration::from_secs(10))
+                        .unwrap_or(false)
+                } else {
+                    true
+                };
+                self.probes
+                    .lock()
+                    .unwrap()
+                    .push((in_flight, slot_free, wrote));
+                Ok(batch.iter().map(|_| unit_vector()).collect())
+            }
+            fn embed_query(
+                &mut self,
+                _input: &TokenizedInput,
+                _deadline: Instant,
+            ) -> Result<Vec<f32>, ProviderError> {
+                Ok(unit_vector())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let owner: Arc<OnceLock<Weak<Shared>>> = Arc::new(OnceLock::new());
+        let probes: Probes = Arc::default();
+        let shared = semantic_owner(dir.path(), |descriptor| {
+            let (owner, probes) = (Arc::clone(&owner), Arc::clone(&probes));
+            Box::new(move || {
+                Ok(Box::new(Probing {
+                    descriptor,
+                    owner,
+                    probes,
+                }) as Box<dyn EmbeddingProvider>)
+            })
+        });
+        owner.set(Arc::downgrade(&shared)).unwrap();
+        start_preparation(&shared).unwrap();
+        wait_idle(&shared);
+        let probes = probes.lock().unwrap().clone();
+        // 13 single-unit sources (the 12 notes and the one written during the
+        // first call): two batches in the first pass, one in the second.
+        assert_eq!(probes.len(), 3, "{probes:?}");
+        assert!(
+            probes
+                .iter()
+                .all(|&(in_flight, free, wrote)| in_flight == 0 && free && wrote),
+            "{probes:?}"
+        );
+        let engines = shared.engines.lock().unwrap();
+        let engine = engines[0].as_ref().unwrap();
+        let state = engine.semantic_state().unwrap().unwrap();
+        assert_eq!(state.state, "stopped", "{state:?}");
+        assert!(state.last_error.is_none(), "{state:?}");
+        let status = engine.semantic_status(&Control::unbounded()).unwrap();
+        assert_eq!(status.sources, 13, "{status:?}");
+        assert_eq!(status.unpartitioned_sources, 0, "{status:?}");
+        assert_eq!(status.missing_units, 0, "{status:?}");
+        assert_eq!(status.searchable_current_units, 13, "{status:?}");
+    }
+
+    /// 009 T003: a document batch is never queued behind a model call. A
+    /// query whose caller already timed out still holds the runtime slot when
+    /// the driver admits its first batch: preparation pauses `provider_busy`
+    /// with no document call. While that call runs an explicit `prepare` is
+    /// refused before anything starts; once it really ended, `prepare`
+    /// proceeds.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn a_refused_document_admission_pauses_with_provider_busy_and_queues_nothing() {
+        use crate::neural::provider::{
+            EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput,
+        };
+        use std::sync::atomic::{AtomicBool, AtomicU64};
+
+        /// Queries wait until `open`; document calls are counted.
+        struct Stalling {
+            descriptor: FunctionDescriptor,
+            open: Arc<AtomicBool>,
+            documents: Arc<AtomicU64>,
+        }
+        impl EmbeddingProvider for Stalling {
+            fn descriptor(&self) -> &FunctionDescriptor {
+                &self.descriptor
+            }
+            fn embed_documents(
+                &mut self,
+                batch: &[TokenizedInput],
+                _control: &Control,
+            ) -> Result<Vec<Vec<f32>>, ProviderError> {
+                self.documents.fetch_add(1, Ordering::SeqCst);
+                Ok(batch.iter().map(|_| unit_vector()).collect())
+            }
+            fn embed_query(
+                &mut self,
+                _input: &TokenizedInput,
+                _deadline: Instant,
+            ) -> Result<Vec<f32>, ProviderError> {
+                while !self.open.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(unit_vector())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let open = Arc::new(AtomicBool::new(false));
+        let documents = Arc::new(AtomicU64::new(0));
+        let shared = semantic_owner(dir.path(), |descriptor| {
+            let (open, documents) = (Arc::clone(&open), Arc::clone(&documents));
+            Box::new(move || {
+                Ok(Box::new(Stalling {
+                    descriptor,
+                    open,
+                    documents,
+                }) as Box<dyn EmbeddingProvider>)
+            })
+        });
+        let Some(Ok(runtime)) = shared.semantic.clone() else {
+            panic!("the runtime starts");
+        };
+        // A foreground operation is in flight, so the driver's first store
+        // step waits; meanwhile that operation's query takes the model slot.
+        shared.in_flight_engine.fetch_add(1, Ordering::SeqCst);
+        start_preparation(&shared).unwrap();
+        let query = {
+            let runtime = Arc::clone(&runtime);
+            std::thread::spawn(move || {
+                runtime.embed("a stalled query", Instant::now() + Duration::from_secs(60))
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !runtime.occupied() {
+            assert!(Instant::now() < deadline, "the query never took the slot");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        shared.in_flight_engine.fetch_sub(1, Ordering::SeqCst);
+        wait_idle(&shared);
+        let state = {
+            let engines = shared.engines.lock().unwrap();
+            engines[0]
+                .as_ref()
+                .unwrap()
+                .semantic_state()
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(state.state, "paused", "{state:?}");
+        assert_eq!(
+            state.last_error.as_ref().map(|error| error.code.as_str()),
+            Some("provider_busy"),
+            "{state:?}"
+        );
+        assert_eq!(documents.load(Ordering::SeqCst), 0, "nothing was queued");
+
+        // The caller gave up at its ceiling; the call itself runs on.
+        assert_eq!(query.join().unwrap(), Err(ProviderError::Timeout));
+        assert!(runtime.occupied());
+        let refused = start_preparation(&shared).unwrap_err();
+        assert_eq!(refused.code(), "provider_busy");
+        assert!(shared.preparation.idle(), "no driver was started");
+
+        open.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while runtime.occupied() {
+            assert!(Instant::now() < deadline, "the old call never ended");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        start_preparation(&shared).unwrap();
+        wait_idle(&shared);
+        let engines = shared.engines.lock().unwrap();
+        let state = engines[0]
+            .as_ref()
+            .unwrap()
+            .semantic_state()
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.state, "stopped", "{state:?}");
+        assert_eq!(state.committed_units, 12, "{state:?}");
+        assert_eq!(documents.load(Ordering::SeqCst), 2);
+    }
+
+    /// Review M2: a batch that came back from the model and waits for the
+    /// engine slot behind a foreground operation when EOF arrives is still
+    /// uncommitted, so it is discarded: no cache transaction starts after
+    /// shutdown, and the run stops `cancelled`.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn eof_while_a_returned_batch_waits_for_the_engine_slot_discards_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        let shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let watched = Watched::new(&shared);
+        start_preparation_as(&shared, watched.clone()).unwrap();
+        wait_until("the first call started", || gate.entered() == 1);
+        // A foreground operation is in flight: the returned batch must wait.
+        shared.in_flight_engine.fetch_add(1, Ordering::SeqCst);
+        let refused = watched.refused();
+        gate.open();
+        // Barrier: the driver holds the returned batch and was refused the
+        // slot (its next store step after the call is the commit).
+        wait_until("the returned batch waits for the slot", || {
+            watched.refused() > refused
+        });
+        shared.shutdown.cancel();
+        shared.in_flight_engine.fetch_sub(1, Ordering::SeqCst);
+        wait_idle(&shared);
+        let (state, cache_rows) = stopped_state(&shared);
+        assert_eq!(state.state, "paused", "{state:?}");
+        assert_eq!(
+            state.last_error.as_ref().map(|error| error.code.as_str()),
+            Some("cancelled"),
+            "{state:?}"
+        );
+        assert_eq!(state.committed_units, 0, "{state:?}");
+        assert_eq!(cache_rows, 0, "no cache transaction after EOF");
+    }
+
+    /// Review M3: owner shutdown completes only after the resident worker is
+    /// gone. With a document call still running in the provider, shutdown
+    /// stays pending after the driver recorded its stop; once the call ends,
+    /// the provider is dropped (the supervised stop and reap) before shutdown
+    /// returns, and only then may the owner release its store.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn shutdown_returns_only_after_the_resident_worker_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        let shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        start_preparation(&shared).unwrap();
+        wait_until("the call started", || gate.entered() == 1);
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let shutdown = runtime.spawn({
+            let shared = Arc::clone(&shared);
+            async move { shared.shut_down().await }
+        });
+        // Barrier: the driver saw the shutdown, discarded the call and
+        // recorded its stop; the worker still runs that call.
+        wait_idle(&shared);
+        assert!(!gate.dropped(), "the call still runs in the worker");
+        assert!(!shutdown.is_finished(), "shutdown waits for the worker");
+        gate.open();
+        runtime.block_on(shutdown).unwrap();
+        assert!(gate.dropped(), "the worker is gone before shutdown returns");
+        let (state, _) = stopped_state(&shared);
+        assert_eq!(
+            state.last_error.as_ref().map(|error| error.code.as_str()),
+            Some("cancelled"),
+            "{state:?}"
+        );
+        assert_eq!(state.committed_units, 0, "{state:?}");
+    }
+
+    /// Review M5: a pause that lands after a batch was selected but before
+    /// its admission admits no batch: the final stop check, the admission
+    /// and the in-call mark are one decision under the lock `pause` takes.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn a_pause_between_selection_and_admission_admits_no_new_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        gate.open();
+        let shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let watched = Watched::new(&shared);
+        let (reached_tx, reached_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel();
+        *watched.before_admission.lock().unwrap() = Some((reached_tx, go_rx));
+        start_preparation_as(&shared, watched.clone()).unwrap();
+        // Barrier: the first batch is selected and not yet admitted.
+        reached_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("a batch was selected");
+        shared.preparation.pause();
+        go_tx.send(()).unwrap();
+        wait_idle(&shared);
+        assert_eq!(gate.entered(), 0, "no batch was admitted after the pause");
+        let (state, cache_rows) = stopped_state(&shared);
+        assert_eq!(state.state, "paused", "{state:?}");
+        assert_eq!(
+            state.last_error.as_ref().map(|error| error.code.as_str()),
+            Some("paused"),
+            "{state:?}"
+        );
+        assert_eq!(cache_rows, 0, "{state:?}");
     }
 }

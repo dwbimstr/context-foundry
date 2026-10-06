@@ -737,6 +737,59 @@ T003's, each passing only with that task's verification.
 - **Review/cutover:** name foreground stalls and missing proof; model failure cannot
   wedge the source worker. Remove any blocking preparation path from the MCP engine
   slot. Explicit index events are sufficient; watchers are not required by this task.
+- **Decisions made during implementation, 2026-10-05:**
+  - *One worker, one slot (D1).* The MCP owner's resident runtime is the only model
+    worker. It runs query embeddings and document batches of at most 8 inputs, one
+    call at a time, behind one busy flag that clears only when the provider call
+    really ends; a late reply is dropped but holds the slot until then. A query the
+    supervised worker abandoned at its deadline counts as holding the slot until its
+    late reply really arrives; every admission claims the slot before it checks for
+    that late call, and releases a claim that finds one. A query while the slot is
+    held gets `provider_busy` and baseline results. A document batch is admitted
+    only while the slot is free and no foreground query is being dispatched; query
+    registration and that admission are one decision under a short lock never held
+    during inference. Otherwise preparation pauses with `provider_busy`, keeps
+    committed work and queues nothing.
+  - *Shared steps (D2).* The CLI run and the MCP driver call the same functions in
+    `neural::prepare`: partition a page of sources, select the next batch of
+    missing inputs, validate and commit a batch, publish, and record the run's
+    start and stop in the state row. Vectors are keyed by exact input, so a late
+    result for an edited or deleted source may enter the cache, but eligibility is
+    always recomputed from current sources. The CLI keeps exclusive ownership and
+    its budget and publication reserve.
+  - *The driver (D3).* One background thread per owner prepares the primary root
+    only. Every store step takes the engine slot only while no foreground operation
+    is in flight and gives it back; inference holds no slot and no transaction. A
+    request arriving during a store step gets the usual retryable `busy`. Pause
+    admits no new batch (the final stop check and the admission are one decision
+    under the lock pause takes) and lets the in-flight batch commit; owner exit or
+    EOF discards the uncommitted batch, also one that waits for the engine slot,
+    and shutdown completes only after the worker is stopped and reaped, before the
+    owner releases its store; each document call has 60 s plus the
+    supervisor's in-flight grace, and expiry pauses with `provider_timeout`; a
+    failed, malformed or wrong-function reply stops by name without publishing that
+    batch; completion is `stopped` with no reason. A pass that saw the source
+    revision change walks again. Publication happens at most once per committed
+    batch: after the first, then when the vectors not yet published reach the size
+    of the last published generation, and at every stop except exit, so partial
+    coverage arrives early and rebuild work stays linear. There are no hidden
+    retries, job journal, leases, retry queue or watcher, and startup never resumes.
+  - *Control and status (D4).* `index` gains `semantic: "prepare" | "pause"` and then
+    does nothing else; combined with `root` or `scip` it is `invalid_argument`.
+    `prepare` starts or resumes and returns at once with the state and reason; it is
+    refused `provider_busy` while an earlier call still holds the slot, before
+    anything starts. Without a profile, or after a refused start, it is
+    `semantic_unavailable` with the fallback reason. `status` adds a `semantic`
+    object: T001's metadata-only census, the live state over the committed row, the
+    reason, the last error, the provider observation with its time and the resident
+    runtime word. The census gets half the read deadline and is named
+    `deadline_exceeded` instead of failing status. The catalog grew from 977 to 986
+    o200k tokens without changing any description.
+  - *Measurement deferred (owner, 2026-10-05).* The real lifecycle exercise on a
+    permitted declared corpus is the ignored test
+    `real_lifecycle_exercise_on_a_permitted_declared_corpus` in
+    `tests/neural_retrieval.rs`, with its run budget and bounds declared in it. It
+    has not been run; no timing or real-model result is claimed.
 
 D001's model choice and chosen values are settled; executing their checks, the cache
 schema, the open semantic-item line form and isolated Rust-bridge integration remain

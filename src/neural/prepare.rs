@@ -25,7 +25,15 @@
 //! the cache per batch (the committed counts move in the same transaction). A
 //! stop caused by the budget is reported as `budget_exhausted` whatever the
 //! provider returned. Startup never resumes preparation: only this explicit
-//! command does.
+//! command (or the MCP owner's explicit `index {semantic: "prepare"}`) does.
+//!
+//! 009 T003: the steps are shared with the MCP owner's background driver
+//! ([`super::driver`]), which composes the SAME functions between its own
+//! engine-slot holds: [`Steps::partition_page`], [`Steps::select_batch`],
+//! [`commit_batch`], [`publish`], [`begin`] and [`finalize`]. Only the
+//! ownership around them differs: the CLI holds the store exclusively and
+//! calls the provider directly under its budget; the driver takes the
+//! owner's engine slot per step and embeds through the resident runtime.
 //!
 //! The provider comes through the [`Acquire`] seam (slice B's supervised
 //! worker); whenever no accepted isolation profile admits model execution it
@@ -119,13 +127,13 @@ impl PrepareReport {
 }
 
 /// How a run stopped.
-enum Stop {
+pub(crate) enum Stop {
     Complete,
     Partial { code: &'static str, message: String },
 }
 
 impl Stop {
-    fn partial(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn partial(code: &'static str, message: impl Into<String>) -> Self {
         Self::Partial {
             code,
             message: message.into(),
@@ -277,13 +285,7 @@ pub fn run(
         publication_reserve_seconds: reserve.as_secs(),
         ..PrepareReport::default()
     };
-    let mut state = engine.semantic_state()?.unwrap_or_default();
-    state.profile_name = Some(profile.name.clone());
-    state.function_digest = Some(function_digest.clone());
-    state.recipe_id = Some(recipe.clone());
-    state.state = "running".into();
-    state.last_error = None;
-    engine.semantic_set_state(&state)?;
+    begin(&engine, &report)?;
 
     let outcome = inner(
         &engine,
@@ -302,13 +304,46 @@ pub fn run(
     // with the named reason when partial. The committed counts already moved
     // with each batch commit; startup never resumes, only an explicit prepare
     // does.
+    report.elapsed_ms = options
+        .started
+        .elapsed()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    finalize(&engine, &mut report, &outcome)?;
+    match outcome {
+        Ok(_) => Ok(report),
+        Err(e) => Err(e),
+    }
+}
+
+/// Record a run's start in the state row: the profile identity, `running`
+/// and no error.
+pub(crate) fn begin(engine: &Engine, report: &PrepareReport) -> FResult<()> {
+    let mut state = engine.semantic_state()?.unwrap_or_default();
+    state.profile_name = Some(report.profile.clone());
+    state.function_digest = Some(report.function_digest.clone());
+    state.recipe_id = Some(report.recipe_id.clone());
+    state.state = "running".into();
+    state.last_error = None;
+    engine.semantic_set_state(&state)
+}
+
+/// Finalize the state row for a run's outcome: `stopped` when complete,
+/// `paused` with the named reason otherwise, the provider observation the
+/// run made, and the cache totals; the report gets the same facts.
+pub(crate) fn finalize(
+    engine: &Engine,
+    report: &mut PrepareReport,
+    outcome: &Result<Stop, FoundryError>,
+) -> FResult<()> {
     let mut final_state = engine.semantic_state()?.unwrap_or_default();
-    final_state.profile_name = Some(profile.name.clone());
-    final_state.function_digest = Some(function_digest.clone());
-    final_state.recipe_id = Some(recipe.clone());
+    final_state.profile_name = Some(report.profile.clone());
+    final_state.function_digest = Some(report.function_digest.clone());
+    final_state.recipe_id = Some(report.recipe_id.clone());
     let (totals_rows, totals_bytes) = engine.semantic_cache_totals()?;
     final_state.cache_bytes = totals_bytes;
-    let (state_name, reason) = match &outcome {
+    let (state_name, reason) = match outcome {
         Ok(Stop::Complete) => ("stopped", None),
         Ok(Stop::Partial { code, message }) => ("paused", Some((*code, message.clone()))),
         Err(e) => ("paused", Some((lifetime_code(e.code()), e.to_string()))),
@@ -333,8 +368,8 @@ pub fn run(
             state: observed.to_owned(),
             code: report.provider_code.map(str::to_owned),
             observed_at_unix: unix_now(),
-            profile: profile.name.clone(),
-            function_digest: function_digest.clone(),
+            profile: report.profile.clone(),
+            function_digest: report.function_digest.clone(),
         });
     }
     report.state = state_name;
@@ -344,21 +379,11 @@ pub fn run(
     }
     report.cache_entries = totals_rows;
     report.cache_bytes = totals_bytes;
-    report.elapsed_ms = options
-        .started
-        .elapsed()
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX);
-    engine.semantic_set_state(&final_state)?;
-    match outcome {
-        Ok(_) => Ok(report),
-        Err(e) => Err(e),
-    }
+    engine.semantic_set_state(&final_state)
 }
 
 /// Semantic stop codes that can persist in the state row.
-fn lifetime_code(code: &str) -> &'static str {
+pub(crate) fn lifetime_code(code: &str) -> &'static str {
     const KNOWN: &[&str] = &[
         "budget_exhausted",
         "cache_full",
@@ -438,7 +463,7 @@ fn provider_stop(error: ProviderError, control: &Control) -> Stop {
 /// generation from the cache; otherwise only pending (uncovered) coverage is
 /// published. The outcome is recorded in the report — a publication that
 /// cannot finish is a named stop with its reason, never swallowed.
-fn publish(
+pub(crate) fn publish(
     engine: &Engine,
     control: &Control,
     budget: u64,
@@ -556,48 +581,22 @@ fn inner(
         return Ok(stop);
     }
 
+    let steps = Steps {
+        engine,
+        tokenizer: &tokenizer,
+        recipe,
+        function_digest,
+    };
     // --- Partition pass: current sources, pages of 128, commit per source.
     let mut after: Option<String> = None;
     loop {
-        if let Some(stop) = halt(control, budget) {
-            return Ok(stop);
+        match steps.partition_page(&mut after, usize::MAX, control, report, &mut || {
+            halt(control, budget)
+        })? {
+            Progress::More => {}
+            Progress::Done => break,
+            Progress::Halted(stop) => return Ok(stop),
         }
-        let page = cache::source_page(&engine.db, after.as_deref())?;
-        if page.is_empty() {
-            break;
-        }
-        for (path, meta) in &page {
-            report.sources += 1;
-            if let Some(existing) = engine.semantic_partition(path)?
-                && cache::partition_is_current(&existing, meta, recipe, function_digest)
-            {
-                report.reused_partitions += 1;
-                continue;
-            }
-            if let Some(stop) = halt(control, budget) {
-                return Ok(stop);
-            }
-            let body = engine.semantic_source_body(path, meta)?;
-            let lang = Lang::from_path(path);
-            let units = partition::partition(&body, lang, function_digest, &tokenizer)?;
-            let record = PartitionRecord {
-                source_hash: meta.hash.clone(),
-                recipe_id: recipe.to_owned(),
-                function_digest: function_digest.to_owned(),
-                units: units
-                    .iter()
-                    .map(|unit| PartitionUnit {
-                        start: unit.start,
-                        end: unit.end,
-                        input_key: unit.input_key.clone(),
-                    })
-                    .collect(),
-            };
-            engine.semantic_record_partition(path, &record)?;
-            report.partitioned_sources += 1;
-            prepare_fault!(PARTITION_AFTER_COMMIT, Some(control), path)?;
-        }
-        after = page.last().map(|(path, _)| path.clone());
     }
 
     // --- Pending publication: committed coverage from earlier runs becomes
@@ -611,114 +610,56 @@ fn inner(
     // per batch. Admission checks the run control AND the publication
     // reserve immediately before every batch, and the control after every
     // flush.
-    let mut resolved_keys: HashSet<String> = HashSet::new();
-    let mut pending: Vec<(String, Vec<u32>)> = Vec::with_capacity(DOCUMENT_BATCH);
+    let mut walk = Walk::default();
+    let mut batch = Batch::default();
     let mut committed: u64 = 0;
     let mut stop: Option<Stop> = None;
-    let mut after: Option<String> = None;
-    'embed: loop {
-        if let Some(halted) = halt(control, budget) {
-            stop = Some(halted);
-            break 'embed;
-        }
-        let page = cache::source_page(&engine.db, after.as_deref())?;
-        if page.is_empty() {
-            break 'embed;
-        }
-        for (path, meta) in &page {
-            let Some(record) = engine.semantic_partition(path)? else {
-                continue;
+    loop {
+        let end =
+            match steps.select_batch(&mut walk, &mut batch, usize::MAX, report, &mut || {
+                halt(control, budget)
+            })? {
+                Selected::Full => false,
+                Selected::End => true,
+                Selected::Yield => continue,
+                Selected::Halted(halted) => {
+                    stop = Some(halted);
+                    break;
+                }
             };
-            if !cache::partition_is_current(&record, meta, recipe, function_digest) {
-                continue;
-            }
-            let body = engine.semantic_source_body(path, meta)?;
-            for unit in &record.units {
-                report.eligible_units += 1;
-                if !resolved_keys.insert(unit.input_key.clone()) {
-                    // Identical rendered inputs share this run's result.
-                    report.reused_cached_units += 1;
-                    continue;
-                }
-                // The lookup that USES a vector decodes it: a same-length
-                // nonfinite (or otherwise tampered) row is disabled by name
-                // here and replaced by a fresh embedding below.
-                let needed = match engine.semantic_cache_lookup(&unit.input_key, function_digest)? {
-                    CacheLookup::Hit(_) => false,
-                    CacheLookup::Corrupt(_) => {
-                        report.corrupt_cache_rows += 1;
-                        true
-                    }
-                    CacheLookup::Miss => true,
-                };
-                if needed {
-                    let text = body.get(unit.start..unit.end).ok_or_else(|| {
-                        FoundryError::CorruptStore(format!(
-                            "semantic partition of {path}: {}..{} is not a valid slice",
-                            unit.start, unit.end
-                        ))
-                    })?;
-                    let rendered = provider::render_document(text);
-                    let ids = tokenizer.encode(&rendered)?.ids;
-                    pending.push((unit.input_key.clone(), ids));
-                } else {
-                    report.reused_cached_units += 1;
-                }
-                if pending.len() == DOCUMENT_BATCH {
-                    if let Some(halted) = admit(control, budget, deadline, reserve) {
-                        stop = Some(halted);
-                        break 'embed;
-                    }
-                    match flush_batch(
-                        engine,
-                        provider.as_mut(),
-                        &pending,
-                        function_digest,
-                        options.cache_cap_bytes,
-                        control,
-                        report,
-                    ) {
-                        Ok(()) => committed += pending.len() as u64,
-                        Err(StopOrError::Stop(partial)) => {
-                            stop = Some(partial);
-                            break 'embed;
-                        }
-                        Err(StopOrError::Error(error)) => return Err(error),
-                    }
-                    pending.clear();
-                    if let Some(halted) = halt(control, budget) {
-                        stop = Some(halted);
-                        break 'embed;
-                    }
-                }
-            }
+        if batch.is_empty() {
+            break;
         }
-        after = page.last().map(|(path, _)| path.clone());
-    }
-    if stop.is_none() && !pending.is_empty() {
         if let Some(halted) = admit(control, budget, deadline, reserve) {
             stop = Some(halted);
-        } else {
-            match flush_batch(
-                engine,
-                provider.as_mut(),
-                &pending,
-                function_digest,
-                options.cache_cap_bytes,
-                control,
-                report,
-            ) {
-                Ok(()) => {
-                    committed += pending.len() as u64;
-                    pending.clear();
-                    // The short final batch gets the same post-flush check
-                    // as a full one: a budget that expired during the call
-                    // is reported, never silently swallowed as success.
-                    stop = halt(control, budget);
-                }
-                Err(StopOrError::Stop(partial)) => stop = Some(partial),
-                Err(StopOrError::Error(error)) => return Err(error),
+            break;
+        }
+        let size = batch.len() as u64;
+        match flush_batch(
+            engine,
+            provider.as_mut(),
+            std::mem::take(&mut batch),
+            function_digest,
+            options.cache_cap_bytes,
+            control,
+            report,
+        ) {
+            Ok(()) => committed += size,
+            Err(StopOrError::Stop(partial)) => {
+                stop = Some(partial);
+                break;
             }
+            Err(StopOrError::Error(error)) => return Err(error),
+        }
+        // Every batch, the short final one included, gets the post-flush
+        // check: a budget that expired during the call is reported, never
+        // silently swallowed as success.
+        if let Some(halted) = halt(control, budget) {
+            stop = Some(halted);
+            break;
+        }
+        if end {
+            break;
         }
     }
     report.embedded_units = committed;
@@ -735,58 +676,54 @@ fn inner(
     if committed > 0 && !cancelled {
         match publish(engine, control, budget, report, true)? {
             None => {}
-            Some(published_stop) => {
-                stop = Some(match (stop, published_stop) {
-                    (
-                        Some(Stop::Partial { code, message }),
-                        Stop::Partial {
-                            message: publication,
-                            ..
-                        },
-                    ) => Stop::Partial {
-                        code,
-                        message: format!("{message}; {publication}"),
-                    },
-                    (_, published_stop) => published_stop,
-                });
-            }
+            Some(published_stop) => stop = Some(merge_publication(stop, published_stop)),
         }
     }
     Ok(stop.unwrap_or(Stop::Complete))
 }
 
+/// A stop that comes with a publication that could not finish: the run's own
+/// reason is kept and the publication's is appended; a run that had no stop
+/// takes the publication's.
+pub(crate) fn merge_publication(stop: Option<Stop>, published: Stop) -> Stop {
+    match (stop, published) {
+        (
+            Some(Stop::Partial { code, message }),
+            Stop::Partial {
+                message: publication,
+                ..
+            },
+        ) => Stop::Partial {
+            code,
+            message: format!("{message}; {publication}"),
+        },
+        (_, published) => published,
+    }
+}
+
 /// Marker to route stop-vs-error out of a batch flush.
-enum StopOrError {
+pub(crate) enum StopOrError {
     Stop(Stop),
     Error(FoundryError),
 }
 
-/// Embed and commit one batch: limits checked before any model work, vectors
-/// validated before the cache commit, the cache commit before any
-/// publication. The run control crosses the seam unchanged; the supervisor
-/// owns any in-flight grace.
+/// The CLI's batch: one direct document call, then the shared validation and
+/// commit. Limits are checked before any model work. The run control crosses
+/// the seam unchanged; the supervisor owns any in-flight grace.
 fn flush_batch(
     engine: &Engine,
     provider: &mut dyn EmbeddingProvider,
-    batch: &[(String, Vec<u32>)],
+    batch: Batch,
     function_digest: &str,
     cap_bytes: u64,
     control: &Control,
     report: &mut PrepareReport,
 ) -> Result<(), StopOrError> {
-    let inputs: Vec<TokenizedInput> = batch
-        .iter()
-        .map(|(_, ids)| TokenizedInput { ids: ids.clone() })
-        .collect();
-    if let Err(e) = provider::check_document_batch(&inputs) {
+    if let Err(e) = provider::check_document_batch(&batch.inputs) {
         return Err(StopOrError::Error(FoundryError::from(e)));
     }
-    report.document_calls += 1;
-    report.input_tokens += inputs
-        .iter()
-        .map(|input| input.ids.len() as u64)
-        .sum::<u64>();
-    let vectors = match provider.embed_documents(&inputs, control) {
+    count_document_call(report, &batch.inputs);
+    let vectors = match provider.embed_documents(&batch.inputs, control) {
         Ok(vectors) => vectors,
         Err(e) => {
             let stop = provider_stop(e, control);
@@ -799,7 +736,50 @@ fn flush_batch(
             return Err(StopOrError::Stop(stop));
         }
     };
-    if vectors.len() != batch.len() {
+    commit_batch(
+        engine,
+        batch.keys,
+        vectors,
+        function_digest,
+        cap_bytes,
+        control,
+        report,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Shared steps (009 T003): the CLI above and the MCP driver compose these.
+// ---------------------------------------------------------------------------
+
+/// Count one admitted document call and its exact input tokens.
+pub(crate) fn count_document_call(report: &mut PrepareReport, inputs: &[TokenizedInput]) {
+    report.document_calls += 1;
+    report.input_tokens += inputs
+        .iter()
+        .map(|input| input.ids.len() as u64)
+        .sum::<u64>();
+}
+
+/// Validate and commit one batch's vectors: one vector per input, each of
+/// the exact dimension with finite values, then ONE cache transaction (the
+/// committed counts move with it), before any publication. A malformed
+/// reply commits nothing and stops `provider_malformed`; the disk cap stops
+/// `cache_full` without evicting. Vectors are keyed by exact rendered input:
+/// a late result for a source edited or deleted since its selection may
+/// populate the cache, but eligibility is always recomputed from the
+/// CURRENT sources, so it never restores stale eligibility. (`control`
+/// reaches only the test-faults commit points.)
+#[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
+pub(crate) fn commit_batch(
+    engine: &Engine,
+    keys: Vec<String>,
+    vectors: Vec<Vec<f32>>,
+    function_digest: &str,
+    cap_bytes: u64,
+    control: &Control,
+    report: &mut PrepareReport,
+) -> Result<(), StopOrError> {
+    if vectors.len() != keys.len() {
         report.provider_state = Some("failed");
         report.provider_code = Some("provider_malformed");
         return Err(StopOrError::Stop(Stop::partial(
@@ -807,7 +787,7 @@ fn flush_batch(
             format!(
                 "the provider returned {} vectors for {} inputs",
                 vectors.len(),
-                batch.len()
+                keys.len()
             ),
         )));
     }
@@ -822,13 +802,13 @@ fn flush_batch(
             )));
         }
     }
-    let entries: Vec<(String, Vec<f32>)> = batch
-        .iter()
-        .zip(vectors)
-        .map(|((key, _), vector)| (key.clone(), vector))
-        .collect();
-    prepare_fault!(CACHE_BEFORE_COMMIT, Some(control), &batch.len().to_string())
-        .map_err(StopOrError::Error)?;
+    let entries: Vec<(String, Vec<f32>)> = keys.into_iter().zip(vectors).collect();
+    prepare_fault!(
+        CACHE_BEFORE_COMMIT,
+        Some(control),
+        &entries.len().to_string()
+    )
+    .map_err(StopOrError::Error)?;
     if let Err(e) = engine.semantic_cache_commit(&entries, function_digest, cap_bytes) {
         return Err(match e.code() {
             "cache_full" => StopOrError::Stop(Stop::partial(
@@ -839,7 +819,218 @@ fn flush_batch(
         });
     }
     // Commit-adjacent fault point: an exit here leaves the batch committed.
-    prepare_fault!(CACHE_AFTER_COMMIT, Some(control), &batch.len().to_string())
-        .map_err(StopOrError::Error)?;
+    prepare_fault!(
+        CACHE_AFTER_COMMIT,
+        Some(control),
+        &entries.len().to_string()
+    )
+    .map_err(StopOrError::Error)?;
     Ok(())
+}
+
+/// The fixed inputs of one run's store steps. The CLI builds it once; the
+/// MCP driver builds it inside each engine-slot hold.
+pub(crate) struct Steps<'a> {
+    pub engine: &'a Engine,
+    pub tokenizer: &'a DocumentTokenizer,
+    pub recipe: &'a str,
+    pub function_digest: &'a str,
+}
+
+/// What one partition step did.
+pub(crate) enum Progress {
+    /// Sources remain after `after`.
+    More,
+    /// Every current source has been examined.
+    Done,
+    Halted(Stop),
+}
+
+/// What one selection step did to the caller's [`Batch`].
+pub(crate) enum Selected {
+    /// The batch holds [`DOCUMENT_BATCH`] inputs; the walk continues after it.
+    Full,
+    /// The step examined its source bound; the walk (and the batch) continue.
+    Yield,
+    /// The walk is over; the batch (possibly empty) is the last one.
+    End,
+    Halted(Stop),
+}
+
+/// The embed walk's position: every source up to `after` is done, `partial`
+/// is the source in progress (path, the source hash its units belong to,
+/// the next unit), and `seen` holds the input keys this run already
+/// resolved — identical rendered inputs share one result.
+#[derive(Default)]
+pub(crate) struct Walk {
+    after: Option<String>,
+    partial: Option<(String, String, usize)>,
+    seen: HashSet<String>,
+}
+
+/// One document batch being formed: cache keys and the exact model inputs.
+#[derive(Default)]
+pub(crate) struct Batch {
+    pub keys: Vec<String>,
+    pub inputs: Vec<TokenizedInput>,
+}
+
+impl Batch {
+    pub(crate) fn len(&self) -> usize {
+        self.keys.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+}
+
+impl Steps<'_> {
+    /// Partition the current sources after `after`, one page at most, until
+    /// `max_new` partitions were written: each source without a current
+    /// partition is partitioned from its committed body and its mapping
+    /// accepted in its own transaction. `halt` is asked before the page and
+    /// before every source that needs work. (`control` reaches only the
+    /// test-faults point after each partition commit.)
+    #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
+    pub(crate) fn partition_page(
+        &self,
+        after: &mut Option<String>,
+        max_new: usize,
+        control: &Control,
+        report: &mut PrepareReport,
+        halt: &mut dyn FnMut() -> Option<Stop>,
+    ) -> FResult<Progress> {
+        if let Some(stop) = halt() {
+            return Ok(Progress::Halted(stop));
+        }
+        let page = cache::source_page(&self.engine.db, after.as_deref())?;
+        if page.is_empty() {
+            return Ok(Progress::Done);
+        }
+        let mut written = 0usize;
+        for (path, meta) in &page {
+            if written == max_new {
+                return Ok(Progress::More);
+            }
+            report.sources += 1;
+            if let Some(existing) = self.engine.semantic_partition(path)?
+                && cache::partition_is_current(&existing, meta, self.recipe, self.function_digest)
+            {
+                report.reused_partitions += 1;
+                *after = Some(path.clone());
+                continue;
+            }
+            if let Some(stop) = halt() {
+                return Ok(Progress::Halted(stop));
+            }
+            let body = self.engine.semantic_source_body(path, meta)?;
+            let lang = Lang::from_path(path);
+            let units = partition::partition(&body, lang, self.function_digest, self.tokenizer)?;
+            let record = PartitionRecord {
+                source_hash: meta.hash.clone(),
+                recipe_id: self.recipe.to_owned(),
+                function_digest: self.function_digest.to_owned(),
+                units: units
+                    .iter()
+                    .map(|unit| PartitionUnit {
+                        start: unit.start,
+                        end: unit.end,
+                        input_key: unit.input_key.clone(),
+                    })
+                    .collect(),
+            };
+            self.engine.semantic_record_partition(path, &record)?;
+            report.partitioned_sources += 1;
+            written += 1;
+            *after = Some(path.clone());
+            prepare_fault!(PARTITION_AFTER_COMMIT, Some(control), path)?;
+        }
+        Ok(Progress::More)
+    }
+
+    /// Add the next missing inputs to `batch`: the walk visits the units of
+    /// every source with a CURRENT partition in path order, skips inputs this
+    /// run resolved or the cache holds valid, and renders and tokenizes each
+    /// missing one, until the batch holds [`DOCUMENT_BATCH`] inputs, the walk
+    /// ends, or `max_sources` sources were examined. Pages are read fresh at
+    /// every step; a source whose version changed since the walk paused in it
+    /// restarts at its first unit. `halt` is asked before every page.
+    pub(crate) fn select_batch(
+        &self,
+        walk: &mut Walk,
+        batch: &mut Batch,
+        max_sources: usize,
+        report: &mut PrepareReport,
+        halt: &mut dyn FnMut() -> Option<Stop>,
+    ) -> FResult<Selected> {
+        let mut examined = 0usize;
+        loop {
+            if let Some(stop) = halt() {
+                return Ok(Selected::Halted(stop));
+            }
+            let page = cache::source_page(&self.engine.db, walk.after.as_deref())?;
+            if page.is_empty() {
+                return Ok(Selected::End);
+            }
+            for (path, meta) in &page {
+                if examined == max_sources {
+                    return Ok(Selected::Yield);
+                }
+                examined += 1;
+                let first = match walk.partial.take() {
+                    Some((partial, hash, next)) if partial == *path && hash == meta.hash => next,
+                    _ => 0,
+                };
+                if let Some(record) = self.engine.semantic_partition(path)?
+                    && cache::partition_is_current(&record, meta, self.recipe, self.function_digest)
+                    && first < record.units.len()
+                {
+                    let body = self.engine.semantic_source_body(path, meta)?;
+                    for (index, unit) in record.units.iter().enumerate().skip(first) {
+                        report.eligible_units += 1;
+                        if !walk.seen.insert(unit.input_key.clone()) {
+                            // Identical rendered inputs share this run's result.
+                            report.reused_cached_units += 1;
+                            continue;
+                        }
+                        // The lookup that USES a vector decodes it: a
+                        // same-length nonfinite (or otherwise tampered) row is
+                        // disabled by name here and replaced by a fresh
+                        // embedding.
+                        let needed = match self
+                            .engine
+                            .semantic_cache_lookup(&unit.input_key, self.function_digest)?
+                        {
+                            CacheLookup::Hit(_) => false,
+                            CacheLookup::Corrupt(_) => {
+                                report.corrupt_cache_rows += 1;
+                                true
+                            }
+                            CacheLookup::Miss => true,
+                        };
+                        if !needed {
+                            report.reused_cached_units += 1;
+                            continue;
+                        }
+                        let text = body.get(unit.start..unit.end).ok_or_else(|| {
+                            FoundryError::CorruptStore(format!(
+                                "semantic partition of {path}: {}..{} is not a valid slice",
+                                unit.start, unit.end
+                            ))
+                        })?;
+                        let rendered = provider::render_document(text);
+                        let ids = self.tokenizer.encode(&rendered)?.ids;
+                        batch.keys.push(unit.input_key.clone());
+                        batch.inputs.push(TokenizedInput { ids });
+                        if batch.len() == DOCUMENT_BATCH {
+                            walk.partial = Some((path.clone(), meta.hash.clone(), index + 1));
+                            return Ok(Selected::Full);
+                        }
+                    }
+                }
+                walk.after = Some(path.clone());
+            }
+        }
+    }
 }

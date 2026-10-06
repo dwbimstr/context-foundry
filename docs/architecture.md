@@ -312,6 +312,10 @@ its input copies once for hashing and both parsing passes, with bounded scratch 
 serving writer, from explicitly staged artifacts; agents can refresh graph facts
 without stopping that owner or trying a competing CLI writer. Foundry does not run the
 compiler or infer new source roots.
+009 T003 uses the same tool: `index {semantic: "prepare" | "pause"}` controls the
+serving owner's background preparation of its primary root (one driver, one resident
+model worker, store steps under the engine slot, inference outside it), and `status`
+reports it in a `semantic` object; there is no separate preparation tool.
 
 Exact paths and identifiers take precedence on locator queries. Lexical retrieval
 is always available. Neural preparation/reuse is now an active proposed workflow

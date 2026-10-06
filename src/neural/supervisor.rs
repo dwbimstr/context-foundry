@@ -10,8 +10,8 @@
 use super::profile::{SemanticProfile, control_stop, hash_regular_file_until};
 use super::protocol::{self, Header, Purpose};
 use super::provider::{
-    EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput, check_document_batch,
-    check_query,
+    EmbeddingProvider, FunctionDescriptor, LateCall, ProviderError, TokenizedInput,
+    check_document_batch, check_query,
 };
 use super::worker_runtime;
 use crate::control::Control;
@@ -1217,6 +1217,14 @@ impl EmbeddingProvider for WorkerProvider {
             )));
         }
         Ok(vectors.remove(0))
+    }
+
+    /// The abandoned handoff: a query whose caller gave up at its deadline
+    /// still runs in the worker until its late reply arrives and is
+    /// discarded.
+    fn late_call(&self) -> Option<LateCall> {
+        let shared = Arc::clone(&self.shared);
+        Some(Arc::new(move || shared.abandoned()))
     }
 }
 

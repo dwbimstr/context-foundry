@@ -421,6 +421,286 @@ fn query_past_its_deadline_times_out_promptly_and_the_slot_stays_busy_until_the_
     assert_eq!(provider.worker_pid(), Some(pid), "still the same worker");
 }
 
+/// 009 T003 review M1: the resident runtime over the supervised worker
+/// counts the supervisor's abandoned query as an occupied slot until its late
+/// reply really arrives, although the provider call returned `Timeout` at
+/// the ceiling. A query and an explicit `prepare` are refused `provider_busy`
+/// (before anything starts) until the worker released the call. Barrier: the
+/// fake worker holds the query while the hold file exists.
+#[cfg(feature = "semantic")]
+#[test]
+fn an_abandoned_query_keeps_the_runtime_slot_and_refuses_prepare_until_its_late_reply() {
+    use context_foundry::neural::driver::{Owner, Preparation};
+    use context_foundry::neural::provider::{FunctionDescriptor, LateCall};
+    use context_foundry::neural::query::QueryRuntime;
+    use std::sync::Arc;
+
+    /// The supervised fake worker under the runtime profile's function.
+    struct Relabeled {
+        worker: WorkerProvider,
+        descriptor: FunctionDescriptor,
+    }
+    impl EmbeddingProvider for Relabeled {
+        fn descriptor(&self) -> &FunctionDescriptor {
+            &self.descriptor
+        }
+        fn embed_documents(
+            &mut self,
+            batch: &[TokenizedInput],
+            control: &context_foundry::Control,
+        ) -> Result<Vec<Vec<f32>>, ProviderError> {
+            self.worker.embed_documents(batch, control)
+        }
+        fn embed_query(
+            &mut self,
+            input: &TokenizedInput,
+            deadline: Instant,
+        ) -> Result<Vec<f32>, ProviderError> {
+            self.worker.embed_query(input, deadline)
+        }
+        fn late_call(&self) -> Option<LateCall> {
+            self.worker.late_call()
+        }
+    }
+    /// An owner with no store: `prepare` is decided before any store step.
+    struct NoStore;
+    impl Owner for NoStore {
+        fn try_primary(
+            &self,
+            _step: &mut dyn FnMut(&context_foundry::Engine),
+        ) -> context_foundry::FResult<bool> {
+            Err(context_foundry::FoundryError::InvalidArgument(
+                "this test owner has no store".into(),
+            ))
+        }
+        fn closing(&self) -> bool {
+            false
+        }
+    }
+    let wait_until = |what: &str, done: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !done() {
+            assert!(Instant::now() < deadline, "never {what}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (bundle, sha) = fake_bundle(dir.path());
+    let worker_profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+    let runtime_profile = Arc::new(
+        SemanticProfile::load(&context_foundry::testkit::write_semantic_profile(
+            &dir.path().join("runtime"),
+            "runtime",
+            |_| {},
+        ))
+        .expect("the runtime profile"),
+    );
+    let hold = dir.path().join("hold");
+    let phases = dir.path().join("phases");
+    std::fs::write(&hold, b"").expect("hold file");
+    let hooks = vec![
+        "--hold-file".to_owned(),
+        hold.display().to_string(),
+        "--phase-file".to_owned(),
+        phases.display().to_string(),
+    ];
+    let descriptor = runtime_profile.descriptor.clone();
+    let runtime = Arc::new(
+        QueryRuntime::start(
+            Arc::clone(&runtime_profile),
+            Box::new(move || {
+                let worker = WorkerProvider::launch(&worker_profile, hooks)?;
+                Ok(Box::new(Relabeled { worker, descriptor }) as Box<dyn EmbeddingProvider>)
+            }),
+        )
+        .expect("the runtime starts"),
+    );
+
+    // The caller gives up at the ceiling while the worker still runs the
+    // call: the supervisor keeps the abandoned handoff.
+    assert_eq!(
+        runtime.embed("twilight onset", Instant::now() + Duration::from_secs(30)),
+        Err(ProviderError::Timeout)
+    );
+    wait_until("the worker runs the abandoned query", &|| {
+        std::fs::read_to_string(&phases)
+            .unwrap_or_default()
+            .lines()
+            .any(|phase| phase == "call")
+    });
+    assert!(runtime.occupied(), "the late call holds the slot");
+    assert_eq!(
+        runtime.embed("dusk", Instant::now() + Duration::from_secs(30)),
+        Err(ProviderError::Busy)
+    );
+    let preparation = Arc::new(Preparation::default());
+    let refused = preparation
+        .prepare(Arc::new(NoStore), Arc::clone(&runtime))
+        .expect_err("prepare is refused while the late call runs");
+    assert_eq!(refused.code(), "provider_busy");
+    assert!(preparation.idle(), "nothing was started");
+
+    // The worker finishes; the late reply is discarded and the slot frees.
+    std::fs::remove_file(&hold).expect("release the call");
+    wait_until("the late reply arrived", &|| !runtime.occupied());
+    preparation
+        .prepare(Arc::new(NoStore), Arc::clone(&runtime))
+        .expect("prepare proceeds once the late call ended");
+    wait_until("the driver stopped", &|| preparation.idle());
+    runtime.shutdown();
+}
+
+/// 009 T003 review M6: both admission paths claim the model slot BEFORE they
+/// look for the provider's late call. Barrier (`semantic.slot_claimed`):
+/// right after a claim, an older call on the same supervised worker is
+/// driven past its ceiling while the fake worker holds it (`--hold-file`),
+/// so the supervisor marks it abandoned. Each admission then finds that late
+/// call, releases its claim and is refused `Busy`; no job reaches the
+/// provider thread.
+#[cfg(feature = "semantic")]
+#[test]
+fn an_admission_that_claimed_the_slot_still_refuses_a_call_abandoned_meanwhile() {
+    use context_foundry::fault::{self, Action};
+    use context_foundry::neural::fault_names::SLOT_CLAIMED;
+    use context_foundry::neural::provider::{FunctionDescriptor, LateCall};
+    use context_foundry::neural::query::QueryRuntime;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    /// The supervised fake worker, shared so the test can drive an older call
+    /// on it directly; calls that come through the runtime are counted.
+    struct Direct {
+        worker: Arc<Mutex<WorkerProvider>>,
+        descriptor: FunctionDescriptor,
+        jobs: Arc<AtomicUsize>,
+    }
+    impl EmbeddingProvider for Direct {
+        fn descriptor(&self) -> &FunctionDescriptor {
+            &self.descriptor
+        }
+        fn embed_documents(
+            &mut self,
+            batch: &[TokenizedInput],
+            control: &context_foundry::Control,
+        ) -> Result<Vec<Vec<f32>>, ProviderError> {
+            self.jobs.fetch_add(1, Ordering::SeqCst);
+            self.worker.lock().unwrap().embed_documents(batch, control)
+        }
+        fn embed_query(
+            &mut self,
+            input: &TokenizedInput,
+            deadline: Instant,
+        ) -> Result<Vec<f32>, ProviderError> {
+            self.jobs.fetch_add(1, Ordering::SeqCst);
+            self.worker.lock().unwrap().embed_query(input, deadline)
+        }
+        fn late_call(&self) -> Option<LateCall> {
+            self.worker.lock().unwrap().late_call()
+        }
+    }
+    let wait_until = |what: &str, done: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !done() {
+            assert!(Instant::now() < deadline, "never {what}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (bundle, sha) = fake_bundle(dir.path());
+    let worker_profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+    let runtime_profile = Arc::new(
+        SemanticProfile::load(&context_foundry::testkit::write_semantic_profile(
+            &dir.path().join("runtime"),
+            "runtime",
+            |_| {},
+        ))
+        .expect("the runtime profile"),
+    );
+    let hold = dir.path().join("hold");
+    let log = dir.path().join("requests.log");
+    let worker = Arc::new(Mutex::new(
+        launch(
+            &worker_profile,
+            &[
+                "--hold-file",
+                &hold.display().to_string(),
+                "--request-log",
+                &log.display().to_string(),
+            ],
+        )
+        .expect("acquire"),
+    ));
+    let jobs = Arc::new(AtomicUsize::new(0));
+    let runtime = QueryRuntime::start(Arc::clone(&runtime_profile), {
+        let (worker, jobs) = (Arc::clone(&worker), Arc::clone(&jobs));
+        let descriptor = runtime_profile.descriptor.clone();
+        Box::new(move || {
+            Ok(Box::new(Direct {
+                worker,
+                descriptor,
+                jobs,
+            }) as Box<dyn EmbeddingProvider>)
+        })
+    })
+    .expect("the runtime starts");
+
+    // At the barrier: an older call on the same worker, past its 200 ms
+    // ceiling while the worker holds it, so the supervisor abandons it.
+    let hits = Arc::new(AtomicUsize::new(0));
+    {
+        let (older, hits) = (Arc::clone(&worker), Arc::clone(&hits));
+        fault::arm(
+            SLOT_CLAIMED,
+            0,
+            Action::Call(Box::new(move |_| {
+                hits.fetch_add(1, Ordering::SeqCst);
+                let abandoned = older
+                    .lock()
+                    .unwrap()
+                    .embed_query(&input(&[7]), Instant::now() + Duration::from_millis(200));
+                assert_eq!(abandoned, Err(ProviderError::Timeout));
+            })),
+        );
+    }
+
+    // The document path.
+    std::fs::write(&hold, b"").expect("hold file");
+    assert!(!runtime.occupied(), "the slot is free before the claim");
+    let refused = runtime.dispatch_documents(
+        vec![input(&[1, 2, 3])],
+        context_foundry::Control::unbounded(),
+    );
+    assert!(
+        matches!(refused, Err(ProviderError::Busy)),
+        "the claim must find the late call"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    assert_eq!(jobs.load(Ordering::SeqCst), 0, "no job was sent");
+    assert!(runtime.occupied(), "the late call holds the slot");
+    std::fs::remove_file(&hold).expect("release the older call");
+    wait_until("the late reply arrived", &|| !runtime.occupied());
+
+    // The query path, at the same barrier.
+    std::fs::write(&hold, b"").expect("hold file");
+    assert_eq!(
+        runtime.embed("dusk", Instant::now() + Duration::from_secs(30)),
+        Err(ProviderError::Busy)
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 2);
+    assert_eq!(jobs.load(Ordering::SeqCst), 0, "no job was sent");
+    std::fs::remove_file(&hold).expect("release the older call");
+    wait_until("the late reply arrived", &|| !runtime.occupied());
+
+    assert_eq!(
+        request_ids(&log),
+        vec![1, 2],
+        "only the two older calls reached the worker"
+    );
+    runtime.shutdown();
+}
+
 #[test]
 fn in_flight_call_gets_30s_grace_then_the_worker_is_stopped() {
     let dir = tempfile::tempdir().expect("tempdir");

@@ -365,8 +365,9 @@ impl Engine {
 
     /// The state row; `None` before the first preparation or after a purge.
     /// A persisted `running` can only be a dead owner's leftover (preparation
-    /// holds the store exclusively), so it reads back as `stopped` with an
-    /// `interrupted` last error — never as `running`.
+    /// runs only inside the store's one owner: an exclusive CLI command, or
+    /// the MCP owner, which overlays its own live driver state), so it reads
+    /// back as `stopped` with an `interrupted` last error — never as `running`.
     pub fn semantic_state(&self) -> FResult<Option<SemanticState>> {
         let tx = self.db.begin_read()?;
         let table = tx.open_table(STATE)?;

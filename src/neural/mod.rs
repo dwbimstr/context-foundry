@@ -8,6 +8,8 @@
 //! `status` are compiled in every build so semantic rows survive a build
 //! without the `semantic` feature; `tokenize`, `prepare` and the `index`
 //! build path carry the pinned `tokenizers` and `usearch` dependencies.
+//! T003: `driver`, the MCP owner's progressive preparation over the same
+//! steps as `prepare`.
 
 /// Named fault points shared by the cache and the index (test-faults only;
 /// release builds carry no hook code and no fault-name strings).
@@ -32,6 +34,13 @@ pub mod fault_names {
     point!(FOOTPRINT_MEASURE, "supervisor.footprint_measure");
     // Every read of one stored partition row (tests count them).
     point!(PARTITION_READ, "semantic.partition_read");
+    // 009 T003 admission: a document admission has begun (before its one
+    // decision under the admission lock); a foreground query has registered
+    // (before it claims the model slot); either path has claimed the slot
+    // and not yet checked the provider's late call.
+    point!(DOCUMENT_ADMISSION, "semantic.document_admission");
+    point!(QUERY_REGISTERED, "semantic.query_registered");
+    point!(SLOT_CLAIMED, "semantic.slot_claimed");
 }
 
 /// The fault hook entry (test-faults only).
@@ -67,6 +76,8 @@ macro_rules! neural_fault {
 
 pub mod anchor;
 pub mod cache;
+#[cfg(feature = "semantic")]
+pub mod driver;
 #[cfg(all(feature = "test-faults", feature = "semantic"))]
 pub mod fake;
 pub mod index;

@@ -242,6 +242,9 @@ pub struct Hooks {
     pub request_log: Option<String>,
     /// Answer the first N `embed` requests `busy` without running them.
     pub busy_count: u32,
+    /// Hold every call, once it entered its compute phase, while the named
+    /// file exists: a test releases the call by removing the file.
+    pub hold_file: Option<String>,
 }
 
 /// Reply corruption modes used by [`Hooks`].
@@ -314,6 +317,9 @@ impl Hooks {
                 }
                 "--request-log" => {
                     hooks.request_log = Some(value(&mut i, "--request-log", rest)?);
+                }
+                "--hold-file" => {
+                    hooks.hold_file = Some(value(&mut i, "--hold-file", rest)?);
                 }
                 "--busy-count" => {
                     hooks.busy_count = value(&mut i, "--busy-count", rest)?

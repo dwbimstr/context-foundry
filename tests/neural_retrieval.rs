@@ -10,6 +10,12 @@
 //! assertions exact, and it is NOT a retrieval-quality result — the actual
 //! model runs the same fixture through the production binary and records
 //! its own evidence. Every provider call is counted.
+//!
+//! 009 T003 acceptance (SC-003), at the end: progressive preparation inside
+//! the MCP owner over the stdio transport (and the shared HTTP owner), with
+//! a provider the tests gate, fail and count call by call. The real
+//! lifecycle exercise on a permitted declared corpus is the ignored
+//! measurement-phase test there; it is written, not run.
 #![cfg(feature = "semantic")]
 
 use context_foundry::config::BudgetConfig;
@@ -37,6 +43,7 @@ use rmcp::{
 use std::collections::BTreeSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -2513,4 +2520,1398 @@ fn a_source_committed_before_the_final_read_makes_the_context_word_partial() {
         answer.item(DUSK_PATH).is_some(),
         "prepared evidence still serves"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 009 T003: progressive preparation inside the MCP owner. The owner serves
+// over the stdio transport itself (`mcp::serve_streams`, which `serve_stdio`
+// runs on the process's stdin/stdout) on an in-process pipe, so the test
+// provider can be gated, failed and counted call by call; the concept
+// provider above computes every vector.
+// ---------------------------------------------------------------------------
+
+/// How one document call fails.
+#[derive(Clone, Debug)]
+enum Failure {
+    Error(ProviderError),
+    /// The first vector comes back one component short.
+    Short,
+}
+
+/// Document-call controls shared with the owner's provider: a gate the test
+/// opens call by call, one failing call, and concurrency and drop probes.
+#[derive(Clone, Default)]
+struct Hold {
+    gated: Arc<AtomicBool>,
+    /// Document calls that started (held or not).
+    entered: Arc<AtomicU64>,
+    released: Arc<AtomicU64>,
+    /// Model calls of either kind inside the provider now, and at most.
+    in_call: Arc<AtomicU64>,
+    max_in_call: Arc<AtomicU64>,
+    failure: Arc<Mutex<Option<(u64, Failure)>>>,
+    /// The provider was dropped: the worker is gone.
+    dropped: Arc<AtomicBool>,
+    /// A held document call saw its control cancelled (owner shutdown).
+    cancel_seen: Arc<AtomicBool>,
+}
+
+impl Hold {
+    /// Every document call waits for its own release.
+    fn gated() -> Self {
+        let hold = Self::default();
+        hold.gated.store(true, Ordering::SeqCst);
+        hold
+    }
+    fn entered(&self) -> u64 {
+        self.entered.load(Ordering::SeqCst)
+    }
+    /// Let the next held document call finish.
+    fn release(&self) {
+        self.released.fetch_add(1, Ordering::SeqCst);
+    }
+    /// Hold no further document call.
+    fn open(&self) {
+        self.gated.store(false, Ordering::SeqCst);
+    }
+    /// The `call`-th document call (1-based) fails.
+    fn fail(&self, call: u64, failure: Failure) {
+        *self.failure.lock().unwrap() = Some((call, failure));
+    }
+    fn max_in_call(&self) -> u64 {
+        self.max_in_call.load(Ordering::SeqCst)
+    }
+    fn dropped(&self) -> bool {
+        self.dropped.load(Ordering::SeqCst)
+    }
+    fn call(&self) -> InCall<'_> {
+        let now = self.in_call.fetch_add(1, Ordering::SeqCst) + 1;
+        self.max_in_call.fetch_max(now, Ordering::SeqCst);
+        InCall(self)
+    }
+    /// Wait until `count` document calls started.
+    async fn wait_entered(&self, count: u64) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while self.entered() < count {
+            assert!(
+                Instant::now() < deadline,
+                "only {} document calls started",
+                self.entered()
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+}
+
+struct InCall<'a>(&'a Hold);
+
+impl Drop for InCall<'_> {
+    fn drop(&mut self) {
+        self.0.in_call.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// The owner's provider: the concept embedding under a [`Hold`], claiming
+/// `claimed` as its document function.
+struct HeldProvider {
+    inner: ConceptProvider,
+    claimed: FunctionDescriptor,
+    hold: Hold,
+}
+
+impl Drop for HeldProvider {
+    fn drop(&mut self) {
+        self.hold.dropped.store(true, Ordering::SeqCst);
+    }
+}
+
+impl EmbeddingProvider for HeldProvider {
+    fn descriptor(&self) -> &FunctionDescriptor {
+        &self.claimed
+    }
+
+    fn embed_documents(
+        &mut self,
+        batch: &[TokenizedInput],
+        control: &Control,
+    ) -> Result<Vec<Vec<f32>>, ProviderError> {
+        let _call = self.hold.call();
+        let call = self.hold.entered.fetch_add(1, Ordering::SeqCst) + 1;
+        while self.hold.gated.load(Ordering::SeqCst)
+            && self.hold.released.load(Ordering::SeqCst) < call
+        {
+            if control.is_cancelled() {
+                self.hold.cancel_seen.store(true, Ordering::SeqCst);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let failure = self
+            .hold
+            .failure
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|(at, _)| *at == call);
+        match failure {
+            Some((_, Failure::Error(error))) => Err(error),
+            Some((_, Failure::Short)) => {
+                let mut vectors = self.inner.embed_documents(batch, control)?;
+                vectors[0].pop();
+                Ok(vectors)
+            }
+            None => self.inner.embed_documents(batch, control),
+        }
+    }
+
+    fn embed_query(
+        &mut self,
+        input: &TokenizedInput,
+        deadline: Instant,
+    ) -> Result<Vec<f32>, ProviderError> {
+        let _call = self.hold.call();
+        self.inner.embed_query(input, deadline)
+    }
+}
+
+/// One MCP owner and its SDK client. `server` is the in-process stdio
+/// owner's task; the shared HTTP owner has none.
+struct Served {
+    client: rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    server: Option<tokio::task::JoinHandle<context_foundry::adapter_error::AResult<()>>>,
+}
+
+impl Corpus {
+    /// The owner's semantic configuration: the concept provider under `hold`.
+    fn held(&self, hold: &Hold) -> SemanticServing {
+        self.held_as(hold, self.profile.descriptor.clone())
+    }
+
+    /// [`Self::held`], the provider claiming `claimed` as its function.
+    fn held_as(&self, hold: &Hold, claimed: FunctionDescriptor) -> SemanticServing {
+        let (descriptor, probe, hold) = (
+            self.profile.descriptor.clone(),
+            self.probe.clone(),
+            hold.clone(),
+        );
+        SemanticServing::with_provider(
+            self.profile_path.clone(),
+            Box::new(move || {
+                Ok(Box::new(HeldProvider {
+                    inner: ConceptProvider { descriptor, probe },
+                    claimed,
+                    hold,
+                }) as Box<dyn EmbeddingProvider>)
+            }),
+        )
+    }
+
+    /// This corpus's MCP owner over the stdio transport; it opens the store.
+    async fn serve_stdio(&mut self, semantic: Option<SemanticServing>) -> Served {
+        self.engine = None;
+        let (client_io, server_io) = tokio::io::duplex(1 << 20);
+        let (input, output) = tokio::io::split(server_io);
+        let server = tokio::spawn(mcp::serve_streams(
+            ServerOptions {
+                store: self.store.clone(),
+                root: self.root.clone(),
+                references: Vec::new(),
+                no_memory: false,
+                semantic,
+                budget: BudgetConfig::default(),
+            },
+            input,
+            output,
+        ));
+        let client = ().serve(client_io).await.unwrap();
+        Served {
+            client,
+            server: Some(server),
+        }
+    }
+
+    /// Reopen the store once the owner released it.
+    async fn reopen(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match Engine::open_existing(&self.store) {
+                Ok(engine) => {
+                    self.engine = Some(engine);
+                    return;
+                }
+                Err(error) => {
+                    assert_eq!(error.code(), "store_busy", "{error}");
+                    assert!(Instant::now() < deadline, "the owner kept the store");
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            }
+        }
+    }
+
+    /// Write a workspace file; the owner learns of it through `index`.
+    fn write(&self, path: &str, content: &str) {
+        let path = self.root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+}
+
+impl Served {
+    /// One tool call: `(is_error, text)`.
+    async fn raw(&self, tool: &'static str, arguments: serde_json::Value) -> (bool, String) {
+        let mut params = CallToolRequestParams::new(tool);
+        if let Some(object) = arguments.as_object().filter(|object| !object.is_empty()) {
+            params = params.with_arguments(object.clone());
+        }
+        let result = self.client.call_tool(params).await.unwrap();
+        let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
+            panic!("one text block: {result:?}");
+        };
+        (result.is_error == Some(true), text.text.to_string())
+    }
+
+    /// A successful tool result. The adapter's retryable `busy` (the
+    /// driver's brief store steps hold the engine slot) is retried.
+    async fn ok(&self, tool: &'static str, arguments: serde_json::Value) -> String {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let (error, text) = self.raw(tool, arguments.clone()).await;
+            if !error {
+                return text;
+            }
+            assert!(
+                text.contains(r#""code":"busy""#) && Instant::now() < deadline,
+                "{tool}: {text}"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn status(&self) -> serde_json::Value {
+        serde_json::from_str(&self.ok("status", serde_json::json!({})).await).unwrap()
+    }
+
+    /// The `semantic` object of `status`.
+    async fn semantic(&self) -> serde_json::Value {
+        self.status().await["semantic"].clone()
+    }
+
+    /// Poll `status` until `done` holds of its `semantic` object.
+    async fn until(
+        &self,
+        what: &str,
+        done: impl Fn(&serde_json::Value) -> bool,
+    ) -> serde_json::Value {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let semantic = self.semantic().await;
+            if done(&semantic) {
+                return semantic;
+            }
+            assert!(Instant::now() < deadline, "never {what}: {semantic}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    async fn stopped(&self) -> serde_json::Value {
+        self.until("stopped", |semantic| semantic["state"] == "stopped")
+            .await
+    }
+
+    /// `index {semantic: action}`: `(is_error, reply)`.
+    async fn semantic_action(&self, action: &str) -> (bool, serde_json::Value) {
+        let (error, text) = self
+            .raw("index", serde_json::json!({ "semantic": action }))
+            .await;
+        (error, serde_json::from_str(&text).unwrap())
+    }
+
+    /// Start or resume preparation: the reply says it runs.
+    async fn prepare(&self) {
+        let (error, reply) = self.semantic_action("prepare").await;
+        assert!(!error, "{reply}");
+        assert_eq!(
+            reply,
+            serde_json::json!({"semantic": {"state": "running", "reason": null}})
+        );
+    }
+
+    async fn context(&self, query: &str) -> V2Response {
+        let text = self
+            .ok(
+                "context",
+                serde_json::json!({"query": query, "tokens": BUDGET}),
+            )
+            .await;
+        parse_v2(&text).unwrap()
+    }
+
+    async fn search(&self, query: &str) -> V2Response {
+        let text = self
+            .ok("search", serde_json::json!({"query": query, "limit": 10}))
+            .await;
+        parse_v2(&text).unwrap()
+    }
+
+    /// `index` of the primary root: a source write.
+    async fn index(&self) -> serde_json::Value {
+        serde_json::from_str(&self.ok("index", serde_json::json!({})).await).unwrap()
+    }
+
+    /// EOF: the client closes its end, and the stdio owner exits.
+    async fn close(self) {
+        self.client.cancel().await.unwrap();
+        if let Some(server) = self.server {
+            tokio::time::timeout(Duration::from_secs(30), server)
+                .await
+                .expect("the owner exits after EOF")
+                .expect("the owner task")
+                .expect("a clean exit");
+        }
+    }
+}
+
+fn starts_with(parsed: &V2Response, prefix: &str) -> bool {
+    header_word(parsed).is_some_and(|word| word.starts_with(prefix))
+}
+
+/// Acceptance 1: while a slow document call is in flight, search, context,
+/// status and a source `index` (a write that commits) all complete. The
+/// probe INSIDE the provider call (`in_flight_engine` 0, the slot free, a
+/// write committed) is `mcp::tests::inference_holds_no_engine_slot_and_no_transaction`.
+/// The write moved the revision behind the walk, so the driver walks again
+/// and prepares the new file before it stops complete.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_slow_document_call_leaves_source_status_and_index_operations_serviceable() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::gated();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    hold.wait_entered(1).await;
+
+    let before = served.status().await;
+    assert_eq!(before["semantic"]["state"], "running", "{before}");
+    let search = served.search("parse_record").await;
+    assert!(!search.items.is_empty());
+    let context = served.context("shift lead rota").await;
+    assert!(!context.items.is_empty());
+    assert!(starts_with(&context, "fallback:"), "{:?}", context.header);
+    corpus.write(
+        "docs/added.md",
+        "# Added\n\nThe kiln was fired twice this week.\n",
+    );
+    served.index().await;
+    let after = served.status().await;
+    assert!(
+        after["source_revision"].as_u64() > before["source_revision"].as_u64(),
+        "the write committed: {before} -> {after}"
+    );
+    // All of that while the first document call was still held.
+    assert_eq!(hold.entered(), 1);
+    assert_eq!(corpus.probe.document_calls(), 0);
+
+    hold.open();
+    hold.release();
+    let done = served.stopped().await;
+    assert_eq!(done["reason"], serde_json::Value::Null, "{done}");
+    assert_eq!(done["sources"], 7, "{done}");
+    assert_eq!(done["unpartitioned_sources"], 0, "{done}");
+    assert_eq!(done["missing_units"], 0, "{done}");
+    assert!(item_of(&served.search("kiln").await, "docs/added.md").is_some());
+    served.close().await;
+}
+
+/// Acceptance 2: baseline context while preparing, semantic evidence once
+/// coverage arrives (`partial`, then `ready`), a fresh baseline after an
+/// indexed edit, then preparation of ONLY the edited input.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn context_is_baseline_while_preparing_then_partial_then_ready_and_an_edit_reembeds_only_itself()
+ {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::gated();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    hold.wait_entered(1).await;
+    let baseline = served.context(DUSK_QUERY).await;
+    assert!(starts_with(&baseline, "fallback:"), "{:?}", baseline.header);
+    assert!(baseline.items.iter().all(|item| item.neural.is_none()));
+
+    // Pause: the batch in flight (the dusk document is first in path order)
+    // is committed and published, and nothing more.
+    let (error, reply) = served.semantic_action("pause").await;
+    assert!(!error, "{reply}");
+    hold.release();
+    let paused = served
+        .until("the first batch searchable", |semantic| {
+            semantic["searchable_current_units"] == 8
+        })
+        .await;
+    assert_eq!(paused["state"], "paused", "{paused}");
+    let partial = served.context(DUSK_QUERY).await;
+    assert_eq!(header_word(&partial), Some("partial"));
+    assert!(
+        item_of(&partial, DUSK_PATH).is_some_and(|item| item.neural.is_some()),
+        "semantic evidence from the partial coverage"
+    );
+
+    hold.open();
+    served.prepare().await;
+    let done = served.stopped().await;
+    assert_eq!(done["missing_units"], 0, "{done}");
+    let ready = served.context(DUSK_QUERY).await;
+    assert_eq!(header_word(&ready), Some("ready"));
+    let item = item_of(&ready, DUSK_PATH).expect("dense evidence");
+    assert_eq!(item.neural.as_ref().unwrap().selection, "whole_unit");
+
+    // An indexed edit: a fresh baseline at once, then only its input.
+    let (calls, inputs) = (
+        corpus.probe.document_calls(),
+        corpus.probe.document_inputs(),
+    );
+    let edited = format!(
+        "{}\nKiln inspection moves to Thursday.\n",
+        corpus.source("docs/schedule.md")
+    );
+    corpus.write("docs/schedule.md", &edited);
+    served.index().await;
+    assert_eq!(
+        header_word(&served.context(DUSK_QUERY).await),
+        Some("partial")
+    );
+    assert!(
+        item_of(&served.search("kiln").await, "docs/schedule.md").is_some(),
+        "the edit is served at once"
+    );
+    served.prepare().await;
+    served.stopped().await;
+    assert_eq!(corpus.probe.document_calls() - calls, 1);
+    assert_eq!(
+        corpus.probe.document_inputs() - inputs,
+        1,
+        "only the edited input"
+    );
+    assert_eq!(
+        header_word(&served.context(DUSK_QUERY).await),
+        Some("ready")
+    );
+    served.close().await;
+}
+
+/// Acceptance 3: pause admits no new batch; the batch in flight finishes and
+/// is committed and published; an explicit prepare resumes from it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pause_admits_no_new_batch_and_commits_the_batch_in_flight() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::gated();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    hold.wait_entered(1).await;
+    let (error, reply) = served.semantic_action("pause").await;
+    assert!(!error, "{reply}");
+    assert_eq!(
+        reply,
+        serde_json::json!({"semantic": {"state": "paused", "reason": "paused"}})
+    );
+    hold.open();
+    hold.release();
+    let paused = served
+        .until("the batch in flight committed", |semantic| {
+            semantic["committed_units"] == 8 && semantic["searchable_current_units"] == 8
+        })
+        .await;
+    assert_eq!(paused["state"], "paused", "{paused}");
+    assert_eq!(paused["reason"], "paused", "{paused}");
+    // The gate is open, yet no new batch starts.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(hold.entered(), 1);
+    assert_eq!(corpus.probe.document_calls(), 1);
+    let still = served.semantic().await;
+    assert_eq!(still["committed_units"], 8, "{still}");
+    assert!(still["missing_units"].as_u64().unwrap() > 0, "{still}");
+
+    served.prepare().await;
+    let done = served.stopped().await;
+    assert_eq!(done["missing_units"], 0, "{done}");
+    assert_eq!(done["reason"], serde_json::Value::Null, "{done}");
+    assert_eq!(
+        done["cache"]["entries"].as_u64(),
+        Some(corpus.probe.document_inputs()),
+        "no input was embedded twice: {done}"
+    );
+    served.close().await;
+}
+
+/// Acceptance 4 (fixed after review M3): EOF in the middle of a batch keeps
+/// the commits, discards the uncommitted call and never leaves `running`;
+/// the owner keeps its store until the worker is stopped, so no replacement
+/// owner can open the store while the worker still runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn eof_mid_batch_keeps_commits_discards_the_call_and_stops_the_worker() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::gated();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    hold.release();
+    hold.wait_entered(2).await;
+    assert_eq!(served.semantic().await["committed_units"], 8);
+
+    // EOF while the second call is held in the provider.
+    let closing = tokio::spawn(served.close());
+    // Barrier: the owner's shutdown reached the driver, which cancelled the
+    // call it abandons. The worker still runs that call, so the owner keeps
+    // its store and is not done.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !hold.cancel_seen.load(Ordering::SeqCst) {
+        assert!(
+            Instant::now() < deadline,
+            "the shutdown never reached the call"
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    match Engine::open_existing(&corpus.store) {
+        Err(error) => assert_eq!(error.code(), "store_busy", "{error}"),
+        Ok(_) => panic!("a replacement owner opened the store while the worker ran"),
+    }
+    assert!(!hold.dropped(), "the call still runs");
+    assert!(!closing.is_finished(), "the owner waits for its worker");
+    // The call ends; its late reply is discarded; the worker goes, then the
+    // owner exits.
+    hold.open();
+    closing.await.unwrap();
+    assert!(
+        hold.dropped(),
+        "the worker was gone before the owner exited"
+    );
+    assert_eq!(corpus.probe.document_calls(), 2);
+
+    corpus.reopen().await;
+    let state = corpus.engine().semantic_state().unwrap().unwrap();
+    assert_eq!(state.state, "paused", "never `running`: {state:?}");
+    assert_eq!(state.last_error.as_ref().unwrap().code, "cancelled");
+    assert_eq!(state.committed_units, 8);
+    corpus.engine = None;
+    assert_eq!(
+        testkit::semantic_cache_rows(&corpus.store).len(),
+        8,
+        "the uncommitted batch was discarded"
+    );
+}
+
+/// Acceptance 5: the full handoff under concurrent queries: never more than
+/// one outstanding model call of either kind. Barrier: the first document
+/// call is held while a query arrives; the query is refused `provider_busy`
+/// with baseline results and nothing is queued. Queries then run beside the
+/// remaining batches; a refused document admission pauses by name
+/// (`provider_busy`) and an explicit prepare resumes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn one_model_call_is_ever_outstanding_across_queries_and_document_batches() {
+    // Prepared by the CLI, so queries embed whenever the slot is free; the
+    // fillers, indexed by the owner, are the preparation work.
+    let mut corpus = Corpus::new(&[]);
+    for (path, text) in fillers(24) {
+        corpus.write(&path, &text);
+    }
+    corpus.probe.pause_documents(Duration::from_millis(30));
+    let hold = Hold::gated();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.index().await;
+    let (queries_before, documents_before) =
+        (corpus.probe.query_calls(), corpus.probe.document_calls());
+    served.prepare().await;
+    hold.wait_entered(1).await;
+    let busy = served.context("refund timing").await;
+    assert!(
+        starts_with(&busy, "fallback:provider_busy"),
+        "{:?}",
+        busy.header
+    );
+    assert!(!busy.items.is_empty(), "baseline retrieval still works");
+    assert_eq!(
+        corpus.probe.query_calls(),
+        queries_before,
+        "nothing was queued"
+    );
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let queries: Vec<_> = (0..2)
+        .map(|n| {
+            let (peer, stop) = (served.client.peer().clone(), Arc::clone(&stop));
+            tokio::spawn(async move {
+                let mut busy = 0u64;
+                while !stop.load(Ordering::SeqCst) {
+                    let arguments = serde_json::json!({"query": format!("refund timing {n}"), "tokens": BUDGET});
+                    let result = peer
+                        .call_tool(
+                            CallToolRequestParams::new("context")
+                                .with_arguments(arguments.as_object().unwrap().clone()),
+                        )
+                        .await
+                        .unwrap();
+                    let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
+                        panic!("one text block");
+                    };
+                    if text.text.contains("semantic:fallback:provider_busy") {
+                        busy += 1;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                busy
+            })
+        })
+        .collect();
+    hold.open();
+    hold.release();
+    let mut refusals = 0u64;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let semantic = served.semantic().await;
+        if semantic["state"] == "stopped" {
+            break;
+        }
+        if semantic["state"] == "paused" {
+            assert_eq!(semantic["reason"], "provider_busy", "{semantic}");
+            refusals += 1;
+            // May itself be refused while a query holds the slot.
+            let _ = served.semantic_action("prepare").await;
+        }
+        assert!(Instant::now() < deadline, "{semantic}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    stop.store(true, Ordering::SeqCst);
+    let mut busy_queries = 0;
+    for query in queries {
+        busy_queries += query.await.unwrap();
+    }
+    assert_eq!(
+        header_word(&served.context("refund timing").await),
+        Some("ready")
+    );
+    assert!(
+        corpus.probe.query_calls() > queries_before,
+        "queries reached the model"
+    );
+    assert!(
+        corpus.probe.document_calls() > documents_before,
+        "document batches ran"
+    );
+    // Finish without load.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let semantic = served.semantic().await;
+        if semantic["state"] == "stopped" {
+            assert_eq!(semantic["missing_units"], 0, "{semantic}");
+            break;
+        }
+        if semantic["state"] == "paused" {
+            let _ = served.semantic_action("prepare").await;
+        }
+        assert!(Instant::now() < deadline, "{semantic}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(hold.max_in_call(), 1, "two model calls were outstanding");
+    record(
+        "t003-handoff",
+        serde_json::json!({"busy_queries": busy_queries, "busy_admissions": refusals}),
+    );
+    served.close().await;
+}
+
+/// Acceptance 6: another writer — CLI preparation or indexing against the
+/// owner's store — is `store_busy` while the owner prepares.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_second_writer_is_store_busy_while_the_owner_prepares() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::gated();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    hold.wait_entered(1).await;
+    let profile = corpus.profile_path.display().to_string();
+    let root = corpus.root.display().to_string();
+    for arguments in [
+        vec![
+            "semantic",
+            "prepare",
+            "--profile",
+            profile.as_str(),
+            "--budget-seconds",
+            "5",
+        ],
+        vec!["index", root.as_str()],
+    ] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_foundry"))
+            .arg("--store")
+            .arg(&corpus.store)
+            .args(&arguments)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{arguments:?}");
+        assert!(stderr.contains("store_busy"), "{arguments:?}: {stderr}");
+    }
+    assert_eq!(hold.entered(), 1, "the owner's preparation went on");
+    hold.open();
+    hold.release();
+    assert_eq!(served.stopped().await["missing_units"], 0);
+    served.close().await;
+}
+
+/// Acceptance 7: a result that arrives after its source was deleted may
+/// populate the cache, but the deleted source is never eligible or served.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_late_result_after_deletion_may_be_cached_but_its_source_is_never_eligible_or_served() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let dusk_key = provider::input_key(
+        &corpus.digest(),
+        &provider::render_document(&corpus.source(DUSK_PATH)),
+    );
+    let hold = Hold::gated();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    // The first batch holds the dusk input; delete its source meanwhile.
+    hold.wait_entered(1).await;
+    std::fs::remove_file(corpus.root.join(DUSK_PATH)).unwrap();
+    served.index().await;
+    hold.open();
+    hold.release();
+    let done = served.stopped().await;
+    assert_eq!(done["sources"], 5, "{done}");
+    assert_eq!(done["missing_units"], 0, "{done}");
+    assert!(
+        done["cache"]["orphan_entries"].as_u64().unwrap() >= 1,
+        "the late result is retained, not eligible: {done}"
+    );
+    let context = served.context(DUSK_QUERY).await;
+    assert_eq!(header_word(&context), Some("ready"));
+    assert!(item_of(&context, DUSK_PATH).is_none());
+    assert!(item_of(&served.search(DUSK_QUERY).await, DUSK_PATH).is_none());
+    served.close().await;
+    corpus.reopen().await;
+    corpus.engine = None;
+    assert!(
+        testkit::semantic_cache_rows(&corpus.store)
+            .iter()
+            .any(|(key, _)| *key == dusk_key),
+        "the cache holds the late result"
+    );
+}
+
+/// Acceptance 8: a restarted owner never resumes — a dead owner's `running`
+/// reads back stopped/interrupted and nothing runs until told — and an
+/// explicit prepare over unchanged sources makes ZERO document calls.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restarted_owner_never_resumes_and_an_unchanged_prepare_makes_zero_document_calls() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::default();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    let first = served.stopped().await;
+    let calls = corpus.probe.document_calls();
+    assert!(calls > 0);
+    served.close().await;
+
+    // A dead owner's leftover row says `running`.
+    corpus.reopen().await;
+    let mut state = corpus.engine().semantic_state().unwrap().unwrap();
+    state.state = "running".into();
+    corpus.engine().semantic_set_state(&state).unwrap();
+
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    let restarted = served.semantic().await;
+    assert_eq!(restarted["state"], "stopped", "{restarted}");
+    assert_eq!(restarted["reason"], "interrupted", "{restarted}");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(corpus.probe.document_calls(), calls, "startup resumed work");
+    assert_eq!(served.semantic().await["state"], "stopped");
+
+    served.prepare().await;
+    let again = served.stopped().await;
+    assert_eq!(again["reason"], serde_json::Value::Null, "{again}");
+    assert_eq!(
+        corpus.probe.document_calls(),
+        calls,
+        "an unchanged prepare makes zero document calls"
+    );
+    assert_eq!(
+        again["searchable_current_units"],
+        first["searchable_current_units"]
+    );
+    served.close().await;
+}
+
+/// Acceptance 9: server inference outlives the client's timeout (a stalled
+/// query); the next query gets baseline with `provider_busy`, an explicit
+/// prepare is refused `provider_busy` and queues nothing; once the old call
+/// really ends, prepare proceeds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn server_inference_outliving_a_client_timeout_keeps_the_slot_for_queries_and_prepare() {
+    let mut corpus = Corpus::new(&[]);
+    let documents = corpus.probe.document_calls();
+    corpus.probe.set(QueryMode::Sleep(Duration::from_secs(3)));
+    let hold = Hold::default();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    let timed_out = served.context(DUSK_QUERY).await;
+    assert!(
+        starts_with(&timed_out, "fallback:provider_timeout"),
+        "{:?}",
+        timed_out.header
+    );
+    let busy = served.context("shift lead rota").await;
+    assert!(
+        starts_with(&busy, "fallback:provider_busy"),
+        "{:?}",
+        busy.header
+    );
+    assert!(!busy.items.is_empty(), "baseline retrieval still works");
+    let (error, refused) = served.semantic_action("prepare").await;
+    assert!(error, "{refused}");
+    assert_eq!(refused["code"], "provider_busy", "{refused}");
+    assert_eq!(refused["retryable"], true, "{refused}");
+    assert_eq!(
+        served.semantic().await["state"],
+        "stopped",
+        "nothing started"
+    );
+    assert_eq!(corpus.probe.query_calls(), 1, "no second query was queued");
+    assert_eq!(
+        corpus.probe.document_calls(),
+        documents,
+        "no job was queued"
+    );
+
+    corpus.probe.set(QueryMode::Answer);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let (error, reply) = served.semantic_action("prepare").await;
+        if !error {
+            assert_eq!(reply["semantic"]["state"], "running", "{reply}");
+            break;
+        }
+        assert_eq!(reply["code"], "provider_busy", "{reply}");
+        assert!(Instant::now() < deadline, "the old call never ended");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(served.stopped().await["reason"], serde_json::Value::Null);
+    assert_eq!(
+        corpus.probe.document_calls(),
+        documents,
+        "nothing was missing"
+    );
+    assert_eq!(
+        header_word(&served.context(DUSK_QUERY).await),
+        Some("ready")
+    );
+    served.close().await;
+}
+
+/// Acceptance 10: another store's preparation leaves this one's rows and
+/// cache unchanged, and a path mention in a query starts no work.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn another_stores_preparation_leaves_this_store_unchanged_and_a_path_mention_starts_no_work()
+{
+    let mut a = Corpus::new(&[]);
+    let a_state = serde_json::to_value(a.engine().semantic_state().unwrap()).unwrap();
+    a.engine = None;
+    let a_cache = testkit::semantic_cache_rows(&a.store);
+    let a_calls = a.probe.document_calls();
+    let mut b = Corpus::unprepared(&[]);
+    let (hold_a, hold_b) = (Hold::default(), Hold::default());
+    let (semantic_a, semantic_b) = (a.held(&hold_a), b.held(&hold_b));
+    let served_a = a.serve_stdio(Some(semantic_a)).await;
+    let served_b = b.serve_stdio(Some(semantic_b)).await;
+    served_b.prepare().await;
+    for query in [
+        format!("{DUSK_PATH} twilight"),
+        format!("{} dusk", b.root.join(DUSK_PATH).display()),
+    ] {
+        assert!(!served_a.context(&query).await.items.is_empty());
+    }
+    assert_eq!(served_b.stopped().await["missing_units"], 0);
+    let status_a = served_a.semantic().await;
+    assert_eq!(status_a["state"], "stopped", "{status_a}");
+    assert_eq!(a.probe.document_calls(), a_calls, "no work in A");
+    served_a.close().await;
+    served_b.close().await;
+    a.reopen().await;
+    assert_eq!(
+        serde_json::to_value(a.engine().semantic_state().unwrap()).unwrap(),
+        a_state
+    );
+    a.engine = None;
+    assert_eq!(testkit::semantic_cache_rows(&a.store), a_cache);
+    b.reopen().await;
+    b.engine = None;
+    assert!(!testkit::semantic_cache_rows(&b.store).is_empty());
+}
+
+/// Acceptance 11: model failures — worker death, a malformed reply, a
+/// timeout, a worker computing another function — stop preparation by
+/// name, publish nothing from the failed batch, and never wedge foreground
+/// operations; an explicit prepare resumes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn model_failures_stop_preparation_by_name_and_never_wedge_foreground_operations() {
+    // Worker death on the second call: the first batch stays committed and
+    // searchable; search, context, status and index keep working.
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::default();
+    hold.fail(
+        2,
+        Failure::Error(ProviderError::WorkerExited("the worker was killed".into())),
+    );
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    let died = served
+        .until("stopped by the dead worker", |semantic| {
+            semantic["state"] == "paused"
+        })
+        .await;
+    assert_eq!(died["reason"], "provider_exited", "{died}");
+    assert_eq!(died["provider"]["state"], "failed", "{died}");
+    assert_eq!(died["provider"]["code"], "provider_exited", "{died}");
+    assert!(died["provider"]["observed_at_unix"].as_u64().is_some());
+    assert_eq!(died["committed_units"], 8, "{died}");
+    assert_eq!(died["searchable_current_units"], 8, "{died}");
+    assert!(!served.search("parse_record").await.items.is_empty());
+    assert_eq!(
+        header_word(&served.context(DUSK_QUERY).await),
+        Some("partial")
+    );
+    served.index().await;
+    served.prepare().await;
+    assert_eq!(served.stopped().await["missing_units"], 0);
+    served.close().await;
+
+    // A malformed reply: that batch commits and publishes nothing.
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::default();
+    hold.fail(1, Failure::Short);
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    let malformed = served
+        .until("stopped by the malformed reply", |semantic| {
+            semantic["state"] == "paused"
+        })
+        .await;
+    assert_eq!(malformed["reason"], "provider_malformed", "{malformed}");
+    assert_eq!(malformed["committed_units"], 0, "{malformed}");
+    assert_eq!(malformed["index"]["available"], false, "{malformed}");
+    assert!(starts_with(&served.context(DUSK_QUERY).await, "fallback:"));
+    served.close().await;
+
+    // A provider timeout is a named, resumable stop.
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::default();
+    hold.fail(1, Failure::Error(ProviderError::Timeout));
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    let timed_out = served
+        .until("stopped by the timeout", |semantic| {
+            semantic["state"] == "paused"
+        })
+        .await;
+    assert_eq!(timed_out["reason"], "provider_timeout", "{timed_out}");
+    served.prepare().await;
+    assert_eq!(served.stopped().await["missing_units"], 0);
+    served.close().await;
+
+    // A worker computing another document function makes no call at all.
+    let mut corpus = Corpus::unprepared(&[]);
+    let mut other = corpus.profile.descriptor.clone();
+    other.quantization = "affine bits=8".into();
+    let hold = Hold::default();
+    let semantic = corpus.held_as(&hold, other);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    served.prepare().await;
+    let wrong = served
+        .until("stopped by the wrong function", |semantic| {
+            semantic["state"] == "paused"
+        })
+        .await;
+    assert_eq!(wrong["reason"], "provider_malformed", "{wrong}");
+    assert_eq!(hold.entered(), 0);
+    assert!(!served.search("parse_record").await.items.is_empty());
+    served.close().await;
+}
+
+/// `index {semantic}` validates its arguments before anything starts, and
+/// an owner without a runtime refuses it by name with the fallback reason.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn index_semantic_validates_its_arguments_and_names_a_missing_runtime() {
+    let mut corpus = Corpus::new(&[]);
+    let calls = corpus.probe.document_calls();
+    let hold = Hold::default();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    for arguments in [
+        serde_json::json!({"semantic": "prepare", "root": "primary"}),
+        serde_json::json!({"semantic": "pause", "scip": {"index_file": "a", "snapshot_file": "b"}}),
+        serde_json::json!({"semantic": "resume"}),
+        serde_json::json!({"semantic": null}),
+        serde_json::json!({"semantic": "prepare", "timeout_ms": 0}),
+    ] {
+        let (error, text) = served.raw("index", arguments.clone()).await;
+        assert!(error, "{arguments}: {text}");
+        let reply: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(reply["code"], "invalid_argument", "{arguments}: {text}");
+    }
+    // A pause with nothing running answers from the committed row.
+    let (error, reply) = served.semantic_action("pause").await;
+    assert!(!error, "{reply}");
+    assert_eq!(
+        reply,
+        serde_json::json!({"semantic": {"state": "stopped", "reason": null}})
+    );
+    let semantic = served.semantic().await;
+    assert_eq!(semantic["runtime"], "ready", "{semantic}");
+    assert_eq!(semantic["missing_units"], 0, "{semantic}");
+    assert_eq!(corpus.probe.document_calls(), calls);
+    served.close().await;
+
+    // No semantic profile: refused by name; the status is unchanged.
+    let served = corpus.serve_stdio(None).await;
+    let (error, reply) = served.semantic_action("prepare").await;
+    assert!(error, "{reply}");
+    assert_eq!(reply["code"], "semantic_unavailable", "{reply}");
+    assert!(served.status().await.get("semantic").is_none());
+    served.close().await;
+
+    // A refused start: refused by name with the fallback reason.
+    let refused = SemanticServing::with_provider(
+        corpus.profile_path.clone(),
+        Box::new(|| {
+            Err(ProviderError::IsolationUnavailable(
+                "the fixture refuses".into(),
+            ))
+        }),
+    );
+    let served = corpus.serve_stdio(Some(refused)).await;
+    let (error, reply) = served.semantic_action("prepare").await;
+    assert!(error, "{reply}");
+    assert_eq!(reply["code"], "semantic_unavailable", "{reply}");
+    assert!(
+        reply["message"]
+            .as_str()
+            .unwrap()
+            .contains("isolation_unavailable"),
+        "{reply}"
+    );
+    let semantic = served.semantic().await;
+    assert!(
+        semantic["runtime"]
+            .as_str()
+            .unwrap()
+            .starts_with("fallback:isolation_unavailable"),
+        "{semantic}"
+    );
+    assert_eq!(semantic["state"], "stopped", "{semantic}");
+    served.close().await;
+}
+
+/// The shared HTTP owner prepares progressively through the same driver.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_shared_http_owner_prepares_progressively_too() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::default();
+    let semantic = corpus.held(&hold);
+    let (client, shutdown) = serve(&mut corpus, semantic).await;
+    let served = Served {
+        client,
+        server: None,
+    };
+    served.prepare().await;
+    let done = served.stopped().await;
+    assert_eq!(done["missing_units"], 0, "{done}");
+    assert_eq!(
+        header_word(&served.context(DUSK_QUERY).await),
+        Some("ready")
+    );
+    served.close().await;
+    shutdown.cancel();
+}
+
+/// 009 T003's real lifecycle exercise — MEASUREMENT PHASE: written, not run
+/// (owner directive 2026-10-05). The production `foundry mcp` over real
+/// stdio, with the development-isolated worker and the actual model, on a
+/// permitted declared corpus: cold preparation, a useful partial query,
+/// steady queries, edit catch-up and restart, each with committed-unit
+/// counts (the model's document inputs) and timestamps.
+///
+/// Inputs, all required; nothing is downloaded or installed:
+/// - `CF_T003_PROFILE`: the verified development profile;
+/// - `CF_T003_CORPUS`: the permitted declared corpus root (copied; the
+///   original is never modified);
+/// - `CF_T003_QUERY`: a vocabulary-gap question about that corpus;
+/// - `CF_T003_EDIT`: a corpus-relative file the exercise edits in its copy;
+/// - `CF_T003_RECORD_DIR`: where the timeline is written.
+///
+/// Run budget and bounds, declared before any run:
+/// - the whole exercise: at most 30 minutes, cold preparation included;
+/// - every query: answered within the 5 s read deadline, never an error;
+/// - the partial query, during preparation: `partial` (or a named
+///   `fallback:` word) with baseline results;
+/// - steady queries after completion: `ready`;
+/// - edit catch-up: at least one and at most the edited file's units are
+///   committed, then `ready`;
+/// - restart: the owner does not resume, and an unchanged `prepare`
+///   commits zero units.
+///
+/// Command: `CF_T003_PROFILE=… CF_T003_CORPUS=… CF_T003_QUERY=… CF_T003_EDIT=…
+/// CF_T003_RECORD_DIR=… cargo test --test neural_retrieval
+/// real_lifecycle_exercise -- --ignored --nocapture`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "measurement phase: the actual model on a permitted declared corpus (owner directive 2026-10-05)"]
+async fn real_lifecycle_exercise_on_a_permitted_declared_corpus() {
+    const RUN_BUDGET: Duration = Duration::from_secs(30 * 60);
+
+    let input = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is required"));
+    let profile = PathBuf::from(input("CF_T003_PROFILE"));
+    let query = input("CF_T003_QUERY");
+    let edit = input("CF_T003_EDIT");
+    let record_dir = PathBuf::from(input("CF_T003_RECORD_DIR"));
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path().join("corpus");
+    copy_tree(Path::new(&input("CF_T003_CORPUS")), &root);
+    let store = work.path().join("store");
+    let bin = env!("CARGO_BIN_EXE_foundry");
+    let indexed = std::process::Command::new(bin)
+        .arg("--store")
+        .arg(&store)
+        .arg("index")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(indexed.status.success(), "{indexed:?}");
+
+    let started = Instant::now();
+    let mut timeline: Vec<serde_json::Value> = Vec::new();
+    let mut mark = |event: &str, detail: serde_json::Value| {
+        timeline.push(serde_json::json!({
+            "t_ms": started.elapsed().as_millis() as u64,
+            "event": event,
+            "detail": detail,
+        }));
+    };
+    /// The production owner over real stdio; a previous owner may still be
+    /// releasing the store.
+    async fn owner(bin: &str, store: &Path, root: &Path, profile: &Path) -> Served {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while let Err(error) = Engine::open_existing(store) {
+            assert_eq!(error.code(), "store_busy", "{error}");
+            assert!(Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let mut command = tokio::process::Command::new(bin);
+        command
+            .arg("--store")
+            .arg(store)
+            .arg("mcp")
+            .arg("--root")
+            .arg(root)
+            .arg("--semantic-profile")
+            .arg(profile)
+            .arg("--development-isolation")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit());
+        Served {
+            client:
+                ().serve(rmcp::transport::TokioChildProcess::new(command).unwrap())
+                    .await
+                    .unwrap(),
+            server: None,
+        }
+    }
+    // One timed query: (elapsed, header word, item count).
+    async fn timed(served: &Served, query: &str) -> (Duration, Option<String>, usize) {
+        let started = Instant::now();
+        let parsed = served.context(query).await;
+        (
+            started.elapsed(),
+            header_word(&parsed).map(str::to_owned),
+            parsed.items.len(),
+        )
+    }
+    let committed = |semantic: &serde_json::Value| semantic["committed_units"].as_u64().unwrap();
+
+    // Cold preparation, with one useful partial query on the way.
+    let served = owner(bin, &store, &root, &profile).await;
+    served.prepare().await;
+    mark("prepare", serde_json::json!({}));
+    let mut partial_asked = false;
+    loop {
+        let semantic = served.semantic().await;
+        mark("status", semantic.clone());
+        if !partial_asked && semantic["searchable_current_units"].as_u64().unwrap_or(0) > 0 {
+            let (elapsed, word, items) = timed(&served, &query).await;
+            assert!(elapsed <= mcp::READ_DEADLINE, "{elapsed:?}");
+            assert!(items > 0);
+            assert!(
+                word.as_deref()
+                    .is_some_and(|word| word == "partial" || word.starts_with("fallback:")),
+                "{word:?}"
+            );
+            mark(
+                "partial_query",
+                serde_json::json!({"ms": elapsed.as_millis() as u64, "word": word}),
+            );
+            partial_asked = true;
+        }
+        if semantic["state"] != "running" {
+            assert_eq!(semantic["state"], "stopped", "{semantic}");
+            break;
+        }
+        assert!(
+            started.elapsed() < RUN_BUDGET,
+            "cold preparation overran the budget"
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+
+    // Steady queries.
+    for _ in 0..5 {
+        let (elapsed, word, _) = timed(&served, &query).await;
+        assert!(elapsed <= mcp::READ_DEADLINE, "{elapsed:?}");
+        assert_eq!(word.as_deref(), Some("ready"));
+        mark(
+            "steady_query",
+            serde_json::json!({"ms": elapsed.as_millis() as u64}),
+        );
+    }
+
+    // Edit catch-up.
+    let before = committed(&served.semantic().await);
+    let edited_path = root.join(&edit);
+    let mut edited = std::fs::read_to_string(&edited_path).unwrap();
+    edited.push_str("\nLifecycle exercise edit.\n");
+    std::fs::write(&edited_path, edited).unwrap();
+    served.index().await;
+    let (elapsed, word, _) = timed(&served, &query).await;
+    mark(
+        "fresh_baseline_query",
+        serde_json::json!({"ms": elapsed.as_millis() as u64, "word": word}),
+    );
+    served.prepare().await;
+    let caught_up = served
+        .until("caught up", |semantic| semantic["state"] != "running")
+        .await;
+    assert_eq!(caught_up["state"], "stopped", "{caught_up}");
+    let embedded = committed(&caught_up) - before;
+    assert!(embedded >= 1, "the edit was embedded");
+    mark(
+        "edit_catch_up",
+        serde_json::json!({"embedded_units": embedded}),
+    );
+    assert_eq!(timed(&served, &query).await.1.as_deref(), Some("ready"));
+    served.close().await;
+
+    // Restart: nothing resumes; an unchanged prepare commits nothing.
+    let served = owner(bin, &store, &root, &profile).await;
+    let restarted = served.semantic().await;
+    assert_eq!(restarted["state"], "stopped", "{restarted}");
+    let before = committed(&restarted);
+    served.prepare().await;
+    let again = served
+        .until("restart prepared", |semantic| {
+            semantic["state"] != "running"
+        })
+        .await;
+    assert_eq!(
+        committed(&again),
+        before,
+        "an unchanged restart embedded something"
+    );
+    mark("restart", serde_json::json!({"embedded_units": 0}));
+    served.close().await;
+    assert!(
+        started.elapsed() < RUN_BUDGET,
+        "the exercise overran its budget"
+    );
+
+    std::fs::create_dir_all(&record_dir).unwrap();
+    std::fs::write(
+        record_dir.join("t003-lifecycle.json"),
+        serde_json::to_string_pretty(&timeline).unwrap(),
+    )
+    .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// 009 T003 review round 1: the admission interleaving, at its barriers. The
+// supervised-worker case (M1) is in tests/embed_worker.rs: a worker launch
+// forks, and a fork can briefly hold another test's store lock here.
+// ---------------------------------------------------------------------------
+
+/// Review M4: a foreground query that registers while a document admission
+/// is under way wins the model slot. Barriers: the admission is held at its
+/// start (`semantic.document_admission`) until the query registered, and the
+/// query is held right after registering, before it claims the slot
+/// (`semantic.query_registered`). The admission is refused, nothing is
+/// queued, and the query embeds instead of falling back `provider_busy`.
+#[test]
+fn a_query_registered_during_a_document_admission_wins_the_model_slot() {
+    use context_foundry::neural::fault_names::{DOCUMENT_ADMISSION, QUERY_REGISTERED};
+    type Query = std::thread::JoinHandle<Result<Vec<f32>, ProviderError>>;
+    let corpus = Corpus::new(&[]);
+    let runtime = Arc::new(corpus.runtime());
+    let documents = corpus.probe.document_calls();
+    let (registered_tx, registered_rx) = std::sync::mpsc::channel::<()>();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let query: Arc<Mutex<Option<Query>>> = Arc::default();
+    let start = Mutex::new(Some((registered_tx, go_rx)));
+    let (for_query, handle) = (Arc::clone(&runtime), Arc::clone(&query));
+    fault::arm(
+        DOCUMENT_ADMISSION,
+        0,
+        Action::Call(Box::new(move |_| {
+            let Some((registered, go)) = start.lock().unwrap().take() else {
+                return;
+            };
+            let runtime = Arc::clone(&for_query);
+            *handle.lock().unwrap() = Some(std::thread::spawn(move || {
+                fault::arm(
+                    QUERY_REGISTERED,
+                    0,
+                    Action::Call(Box::new(move |_| {
+                        let _ = registered.send(());
+                        let _ = go.recv();
+                    })),
+                );
+                runtime.embed(DUSK_QUERY, Instant::now() + Duration::from_secs(30))
+            }));
+            registered_rx.recv().unwrap();
+        })),
+    );
+    let input = TokenizedInput {
+        ids: "passage: dusk".bytes().map(u32::from).collect(),
+    };
+    let refused = runtime.dispatch_documents(vec![input.clone()], Control::unbounded());
+    assert!(
+        matches!(refused, Err(ProviderError::Busy)),
+        "the registered query must win"
+    );
+    go_tx.send(()).unwrap();
+    let embedded = query.lock().unwrap().take().unwrap().join().unwrap();
+    assert!(embedded.is_ok(), "the query embeds: {embedded:?}");
+    assert_eq!(corpus.probe.document_calls(), documents, "nothing queued");
+    // Once the query ended, a document batch is admitted again.
+    let call = runtime
+        .dispatch_documents(vec![input], Control::unbounded())
+        .expect("admitted once the slot is free");
+    assert!(
+        call.wait(Duration::from_secs(10))
+            .expect("the call ends")
+            .is_ok()
+    );
+    assert_eq!(corpus.probe.document_calls(), documents + 1);
 }

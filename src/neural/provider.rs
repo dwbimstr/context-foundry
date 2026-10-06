@@ -237,6 +237,10 @@ pub fn validate_vector(vector: &[f32]) -> Result<(), ProviderError> {
     Ok(())
 }
 
+/// A thread-safe probe of a call the provider already returned from that
+/// still runs in the model (see [`EmbeddingProvider::late_call`]).
+pub type LateCall = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// One embedding function behind one admission slot. Implementations: the
 /// supervised worker (`WorkerProvider`) and a deterministic test provider.
 pub trait EmbeddingProvider {
@@ -255,6 +259,14 @@ pub trait EmbeddingProvider {
         input: &TokenizedInput,
         deadline: Instant,
     ) -> Result<Vec<f32>, ProviderError>;
+    /// 009 T003: a probe that stays true while a call this provider already
+    /// returned from still runs in the model: a query abandoned at its
+    /// deadline whose late reply has not arrived. The resident runtime counts
+    /// it as an occupied slot. Providers whose calls end when they return
+    /// have none.
+    fn late_call(&self) -> Option<LateCall> {
+        None
+    }
 }
 
 /// Pre-call limits shared by every provider: batch size, per-input length

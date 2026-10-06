@@ -104,6 +104,14 @@ matching host configuration with `--http-port PORT --token-env NAME`:
   acceptance close it runs only with `--development-isolation`, in an ad-hoc App
   Sandbox worker; otherwise it is `isolation_unavailable`. Semantic search delivery is
   009 T002.
+- Progressive semantic preparation (009 T003): an MCP owner started with
+  `--semantic-profile` prepares its primary root in the background after
+  `index {semantic: "prepare"}` and stops admitting batches after
+  `index {semantic: "pause"}`. Source, search, context and `status` keep working
+  meanwhile; context uses the coverage that has arrived and says `partial` or
+  `ready`. Queries and document batches share the one resident worker and one
+  model slot, and nothing is queued behind it. `status` adds a `semantic` object.
+  Startup never resumes preparation.
 - `foundry usage import --host omp|codex --session FILE`: offline counter summary of a
   host session (provider usage, tool calls and Foundry payloads); opens no store.
 - Owned model gateway (003 T004): `foundry gateway --config FILE` meters OMP 18.6.0
