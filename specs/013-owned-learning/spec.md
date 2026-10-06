@@ -11,8 +11,9 @@ checks, sandboxed serving and the exhaustive numerical comparison. The learned r
 stays off by default. T004's packaged deployment (install, upgrade, disable, uninstall,
 the distributed profile) and package acceptance need signing. The owner selected
 ModernBERT with a decision head and all first-party code in Rust. Laya is a reference,
-not a deployed service. [Evidence and remaining blockers](../../docs/review/feasibility.md)
-are scoped by probe; this document does not declare a model package ready to release.
+stays off by default. T004's install, upgrade, rollback, disable and uninstall are
+implemented with ad-hoc-signed bundles (2026-10-06); its signed distributed profile and
+package acceptance wait for signing. The owner selected
 Spec-pass decisions recorded 2026-10-03 in [contract v4](contracts/learning-loop.md):
 the core-composed `state` (query, graph coverage and top-3 lexical locator lines)
 within the 1024-token total, float16 checkpoint tensors upcast to float32 at load, a
