@@ -3930,6 +3930,13 @@ async fn every_tool_refuses_bad_arguments_with_invalid_argument_and_no_mutation(
         ("lines spaced", serde_json::json!("1 - 2")),
         ("lines null", serde_json::json!(null)),
         ("lines numeric", serde_json::json!(1)),
+        ("lines array 0", serde_json::json!([0])),
+        ("lines array leading zero", serde_json::json!(["01"])),
+        ("lines array empty", serde_json::json!([])),
+        ("lines array three", serde_json::json!([1, 2, 3])),
+        ("lines array fraction", serde_json::json!([1.5])),
+        ("lines array negative", serde_json::json!([-1])),
+        ("lines array of strings", serde_json::json!(["1", "2"])),
     ] {
         add(
             label,
@@ -3985,7 +3992,7 @@ async fn every_tool_refuses_bad_arguments_with_invalid_argument_and_no_mutation(
         );
     }
     assert_eq!(
-        total, 92,
+        total, 99,
         "the matrix size is pinned so a dropped case is noticed"
     );
 
@@ -3996,6 +4003,8 @@ async fn every_tool_refuses_bad_arguments_with_invalid_argument_and_no_mutation(
     lines_past["lines"] = serde_json::json!("999");
     let mut lines_inverted = with(path, end, &valid.sha32, &valid.ws16);
     lines_inverted["lines"] = serde_json::json!("3-2");
+    let mut array_inverted = with(path, end, &valid.sha32, &valid.ws16);
+    array_inverted["lines"] = serde_json::json!([3, 2]);
     for (label, arguments, expected) in [
         (
             "foreign workspace",
@@ -4019,6 +4028,7 @@ async fn every_tool_refuses_bad_arguments_with_invalid_argument_and_no_mutation(
         ),
         ("lines past the file", lines_past, "invalid_range"),
         ("inverted lines", lines_inverted, "invalid_range"),
+        ("inverted lines array", array_inverted, "invalid_range"),
     ] {
         let result = call_with(&client, "retrieve", Some(arguments)).await;
         let (code, _) = bounded_error(&result);
@@ -4038,6 +4048,61 @@ async fn every_tool_refuses_bad_arguments_with_invalid_argument_and_no_mutation(
         before,
         "no refused request mutated revision, source count or pending work"
     );
+    client.cancel().await.unwrap();
+}
+
+/// MCP `lines` also takes `[A]` / `[A,B]`, exactly as `"A"` / `"A-B"`: the
+/// same delivered text, and the same refusal for values the string form
+/// refuses (0, reversed, malformed).
+#[tokio::test]
+async fn retrieve_lines_take_an_integer_array_exactly_like_the_string() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("workspace");
+    let store = fixture.path().join("store");
+    write_fixture(&root, 1);
+    bootstrap_apply(&store, &root);
+    let client = stdio_client(&store, &root).await;
+    let search = call_with(
+        &client,
+        "search",
+        Some(serde_json::json!({"query": "parse_record_0000"})),
+    )
+    .await;
+    let handle = hit_handle(&assert_single_text_success(&search), None);
+    let hit = context_foundry::store::HandleRef::parse(&handle).unwrap();
+    // The whole four-line file: every selection below names its lines.
+    let len = std::fs::read(root.join(&hit.path)).unwrap().len();
+    let whole = format!("{}#0-{len}@{}.{}", hit.path, hit.sha32, hit.ws16);
+    for (string, array, refusal) in [
+        ("2", serde_json::json!([2]), None),
+        ("2-3", serde_json::json!([2, 3]), None),
+        ("0", serde_json::json!([0]), Some("invalid_argument")),
+        ("3-2", serde_json::json!([3, 2]), Some("invalid_range")),
+        (
+            "1-2-3",
+            serde_json::json!([1, 2, 3]),
+            Some("invalid_argument"),
+        ),
+        ("1.5", serde_json::json!([1.5]), Some("invalid_argument")),
+    ] {
+        let mut texts = Vec::new();
+        for lines in [serde_json::json!(string), array.clone()] {
+            let result = call_with(
+                &client,
+                "retrieve",
+                Some(serde_json::json!({"handle": whole, "lines": lines})),
+            )
+            .await;
+            match refusal {
+                None => {
+                    assert_single_text_success(&result);
+                }
+                Some(code) => assert_eq!(bounded_error(&result).0, code, "{lines}"),
+            }
+            texts.push(text_of(&result));
+        }
+        assert_eq!(texts[0], texts[1], "{string} and {array}");
+    }
     client.cancel().await.unwrap();
 }
 

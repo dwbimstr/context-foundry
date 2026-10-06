@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
-use tantivy::collector::TopDocs;
+use tantivy::collector::{Count, TopDocs};
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery};
 use tantivy::schema::{
     FAST, Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
@@ -42,6 +42,9 @@ const CANDIDATE_LIMIT: usize = 256;
 pub(crate) const MEMORY_CANDIDATE_WINDOW: usize = CANDIDATE_LIMIT;
 /// Search tier 1 (exact definitions) keeps at most this many documents.
 const TIER1_LIMIT: usize = 64;
+/// Search tier 1 ranks at most this many distinct identifier runs: the first
+/// by appearance in the query.
+const TIER1_RUNS: usize = 32;
 /// At most this many hits per file survive materialization.
 const PER_FILE_CAP: usize = 4;
 /// Context draws at most this many delivery units from the ranking.
@@ -262,11 +265,12 @@ impl LineSelection {
     /// Lines are LF-delimited: CR stays with its line, an unterminated last line
     /// ends at EOF, a trailing LF opens no line and an empty source has none;
     /// lines past the end select nothing. `A > B`, an empty selection or an
-    /// empty intersection is `invalid_range`. Line edges follow an LF or touch
-    /// 0/EOF, so the result keeps the handle's UTF-8 boundaries.
+    /// empty intersection is `invalid_range`, naming the lines the handle
+    /// covers. Line edges follow an LF or touch 0/EOF, so the result keeps the
+    /// handle's UTF-8 boundaries.
     fn clip(self, body: &[u8], start: usize, end: usize) -> FResult<(usize, usize)> {
         if self.first > self.last {
-            return Err(FoundryError::InvalidRange);
+            return Err(self.selects_nothing(body, start, end));
         }
         let mut offset = 0;
         let mut selected: Option<(usize, usize)> = None;
@@ -281,12 +285,35 @@ impl LineSelection {
             }
             offset = next;
         }
-        let (from, to) = selected.ok_or(FoundryError::InvalidRange)?;
+        let Some((from, to)) = selected else {
+            return Err(self.selects_nothing(body, start, end));
+        };
         let (from, to) = (from.max(start), to.min(end));
         if from >= to {
-            return Err(FoundryError::InvalidRange);
+            return Err(self.selects_nothing(body, start, end));
         }
         Ok((from, to))
+    }
+
+    /// The `invalid_range` refusal of a selection with nothing in
+    /// `[start, end)`: it names the lines that range covers, since a handle's
+    /// `#start-end` is easily mistaken for line numbers.
+    fn selects_nothing(self, body: &[u8], start: usize, end: usize) -> FoundryError {
+        let line_at = |at: usize| body[..at].iter().filter(|&&b| b == b'\n').count() + 1;
+        let covers = match (start < end).then(|| (line_at(start), line_at(end - 1))) {
+            None => "no lines".to_owned(),
+            Some((first, last)) if first == last => format!("line {first}"),
+            Some((first, last)) => format!("lines {first}-{last}"),
+        };
+        let selection = if self.first == self.last {
+            self.first.to_string()
+        } else {
+            format!("{}-{}", self.first, self.last)
+        };
+        FoundryError::EmptyLineSelection(format!(
+            "lines {selection} select nothing in this handle, which covers {covers}; \
+             a handle's #start-end is a byte range"
+        ))
     }
 }
 
@@ -820,6 +847,62 @@ fn analyzed_terms(split: fn(&str) -> Vec<(usize, usize)>, text: &str) -> Vec<Str
         .into_iter()
         .map(|token| token.text)
         .collect()
+}
+
+/// The query's tier-1 runs (context-v2 § Two-tier query): the identifier
+/// runs inside its backtick code spans when it has any, otherwise all of
+/// them; lowercased, deduplicated, at most [`TIER1_RUNS`] by first
+/// appearance. A run of N backticks opens a span that the next run of exactly
+/// N backticks closes; an opener without such a closer is literal text.
+fn tier1_runs(query: &str) -> Vec<String> {
+    let bytes = query.as_bytes();
+    let mut ticks: Vec<(usize, usize)> = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let start = at;
+        while at < bytes.len() && bytes[at] == b'`' {
+            at += 1;
+        }
+        if at == start {
+            at += 1;
+        } else {
+            ticks.push((start, at));
+        }
+    }
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut open = 0;
+    while open < ticks.len() {
+        let (from, to) = ticks[open];
+        let closer = ticks[open + 1..]
+            .iter()
+            .position(|&(start, end)| end - start == to - from);
+        match closer {
+            Some(offset) => {
+                spans.push((to, ticks[open + 1 + offset].0));
+                open += offset + 2;
+            }
+            None => open += 1,
+        }
+    }
+    let all = crate::syntax::identifier_runs(query);
+    let marked: Vec<(usize, usize)> = all
+        .iter()
+        .copied()
+        .filter(|&(from, to)| spans.iter().any(|&(start, end)| start <= from && to <= end))
+        .collect();
+    let chosen = if marked.is_empty() { all } else { marked };
+    let mut runs: Vec<String> = Vec::new();
+    for (from, to) in chosen {
+        let run = query[from..to].to_lowercase();
+        if runs.contains(&run) {
+            continue;
+        }
+        if runs.len() == TIER1_RUNS {
+            break;
+        }
+        runs.push(run);
+    }
+    runs
 }
 
 /// Registers the schema v2 tokenizers (they are per index instance, never
@@ -2007,8 +2090,9 @@ impl Engine {
 
     /// Two-tier candidate selection for one store (context-v2 § Two-tier
     /// query, § Hit materialization). Tier 1 is exact definitions (at most
-    /// 64, smallest `key_hash` kept, ordered by path and start); tier 2 is
-    /// lexical (at most 256 by score, `key_hash` breaking cutoff ties).
+    /// 64, the most specific tier-1 run first, smallest `key_hash` kept per
+    /// run, ordered by path and start within it); tier 2 is lexical (at most
+    /// 256 by score, `key_hash` breaking cutoff ties).
     /// `path` restricts both tiers to a file or directory subtree. Candidates
     /// are revalidated in one final read transaction, merged per delivery
     /// unit, capped at 4 per file and cut to `limit`.
@@ -2168,11 +2252,12 @@ impl Engine {
 
     /// The two-tier candidate collection shared by the baseline and the
     /// semantic paths (context-v2 § Two-tier query): tier 1 exact
-    /// definitions (at most 64, smallest `key_hash` kept, ordered by path
-    /// and start), tier 2 lexical (at most 256 by score, `key_hash`
-    /// breaking cutoff ties, tier-1 units removed), and whether a window
-    /// filled. No source is read here; validation happens in the callers'
-    /// final read.
+    /// definitions of the query's tier-1 runs (at most 64; runs by
+    /// specificity, each contributing its smallest-`key_hash` definitions to
+    /// the slots left, ordered by path and start within the run), tier 2
+    /// lexical (at most 256 by score, `key_hash` breaking cutoff ties, tier-1
+    /// units removed), and whether a window filled. No source is read here;
+    /// validation happens in the callers' final read.
     fn collect_two_tier(
         &self,
         query: &str,
@@ -2210,35 +2295,49 @@ impl Engine {
             Box::new(TermQuery::new(Term::from_field_text(field, text), option))
         };
         let searcher = handles.reader.searcher();
-        let mut runs: Vec<String> = crate::syntax::identifier_runs(query)
-            .into_iter()
-            .map(|(from, to)| query[from..to].to_lowercase())
-            .collect();
-        runs.sort();
-        runs.dedup();
-        let tier1: Vec<(Score, tantivy::DocAddress)> = if runs.is_empty() {
-            Vec::new()
-        } else {
-            let union = BooleanQuery::union(
-                runs.iter()
-                    .map(|run| term(fields.def_name, run, IndexRecordOption::Basic))
-                    .collect(),
-            );
-            let collector =
-                TopDocs::with_limit(TIER1_LIMIT).tweak_score(|reader: &SegmentReader| {
-                    let key_hash = reader
-                        .fast_fields()
-                        .u64("key_hash")
-                        .expect("schema v2 fast field")
-                        .first_or_default_col(0);
-                    move |doc: DocId, _score: Score| Reverse(key_hash.get_val(doc))
-                });
-            searcher
-                .search(restrict(Box::new(union)).as_ref(), &collector)?
+        // Tier 1: one exact count and the 64 smallest-`key_hash` definitions
+        // per run, under the same restriction as the documents it keeps.
+        let definitions = (
+            Count,
+            TopDocs::with_limit(TIER1_LIMIT).tweak_score(|reader: &SegmentReader| {
+                let key_hash = reader
+                    .fast_fields()
+                    .u64("key_hash")
+                    .expect("schema v2 fast field")
+                    .first_or_default_col(0);
+                move |doc: DocId, _score: Score| Reverse(key_hash.get_val(doc))
+            }),
+        );
+        let mut runs: Vec<(usize, String, Vec<tantivy::DocAddress>)> = Vec::new();
+        for run in tier1_runs(query) {
+            let (count, top) = searcher.search(
+                restrict(term(fields.def_name, &run, IndexRecordOption::Basic)).as_ref(),
+                &definitions,
+            )?;
+            if count > 0 {
+                let top = top.into_iter().map(|(_, address)| address).collect();
+                runs.push((count, run, top));
+            }
+        }
+        // Specificity: fewer definitions first, then run text. Each run fills
+        // the slots left; a document already kept stays under its earlier run.
+        runs.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        let defined: usize = runs.iter().map(|(count, ..)| count).sum();
+        let mut kept: Vec<tantivy::DocAddress> = Vec::new();
+        let mut tier1: Vec<Vec<tantivy::DocAddress>> = Vec::new();
+        for (_, _, top) in runs {
+            let room = TIER1_LIMIT - kept.len();
+            if room == 0 {
+                break;
+            }
+            let group: Vec<tantivy::DocAddress> = top
                 .into_iter()
-                .map(|(_, address)| (0.0, address))
-                .collect()
-        };
+                .filter(|address| !kept.contains(address))
+                .take(room)
+                .collect();
+            kept.extend(&group);
+            tier1.push(group);
+        }
         let mut clauses: Vec<Box<dyn Query>> = Vec::new();
         for part in query.split_whitespace() {
             let terms = analyzed_terms(crate::syntax::code_subtokens, part);
@@ -2282,7 +2381,10 @@ impl Engine {
             .into_iter()
             .map(|((score, _), address)| (score, address))
             .collect();
-        let candidates_full = tier1.len() >= TIER1_LIMIT || tier2.len() >= CANDIDATE_LIMIT;
+        // A window filled: tier 1's 64 slots with definitions left over, or
+        // tier 2's limit.
+        let candidates_full =
+            (kept.len() == TIER1_LIMIT && defined > TIER1_LIMIT) || tier2.len() >= CANDIDATE_LIMIT;
         control.check()?;
 
         let read = |tier: u8, score: Score, address| -> FResult<Candidate> {
@@ -2312,11 +2414,15 @@ impl Engine {
                 qname: text(fields.qname),
             })
         };
-        let mut first: Vec<Candidate> = tier1
-            .into_iter()
-            .map(|(score, address)| read(1, score, address))
-            .collect::<FResult<_>>()?;
-        first.sort_by(|a, b| a.path.cmp(&b.path).then(a.start.cmp(&b.start)));
+        let mut first: Vec<Candidate> = Vec::with_capacity(kept.len());
+        for group in tier1 {
+            let mut run: Vec<Candidate> = group
+                .into_iter()
+                .map(|address| read(1, 0.0, address))
+                .collect::<FResult<_>>()?;
+            run.sort_by(|a, b| a.path.cmp(&b.path).then(a.start.cmp(&b.start)));
+            first.extend(run);
+        }
         let units: std::collections::BTreeSet<_> = first.iter().map(Candidate::unit).collect();
         let mut second: Vec<Candidate> = Vec::new();
         for (score, address) in tier2 {

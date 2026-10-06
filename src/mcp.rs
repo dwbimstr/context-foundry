@@ -1077,6 +1077,18 @@ fn optional_str<'a>(args: &'a JsonObject, key: &str) -> FResult<Option<&'a str>>
     }
 }
 
+/// Retrieve `lines` (context-v2 § Inputs): the string `"A"`/`"A-B"` or an
+/// array. An array joins its JSON elements with `-`, so `[A]`/`[A,B]` of
+/// integers become exactly `"A"`/`"A-B"` and every other array fails the
+/// string's own validation, at the same stage and with the same error.
+fn optional_lines(args: &JsonObject) -> FResult<Option<String>> {
+    let Some(serde_json::Value::Array(items)) = args.get("lines") else {
+        return Ok(optional_str(args, "lines")?.map(str::to_owned));
+    };
+    let parts: Vec<String> = items.iter().map(serde_json::Value::to_string).collect();
+    Ok(Some(parts.join("-")))
+}
+
 /// A staged import name (005 T003): 1..128 ASCII characters from
 /// `[A-Za-z0-9._-]`, and neither `.` nor `..`, so the entry is always a
 /// direct child of `<store>/imports` and never a path.
@@ -1546,7 +1558,7 @@ impl FoundryMcp {
     #[tool(
         name = "retrieve",
         description = r#"Read exact indexed source for a handle. `lines` narrows to a line range; `view:"outline"` returns a skeleton with elided line ranges. Stale handles are rejected."#,
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["handle"],"properties":{"handle":{"type":"string","maxLength":4200},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":2048},"lines":{"type":"string","pattern":"^[1-9][0-9]*(-[1-9][0-9]*)?$"},"view":{"type":"string","enum":["text","outline"],"default":"text"}}}"#),
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["handle"],"properties":{"handle":{"type":"string","maxLength":4200},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":2048},"lines":{"type":["string","array"],"pattern":"^[1-9][0-9]*(-[1-9][0-9]*)?$","items":{"type":"integer"}},"view":{"type":"string","enum":["text","outline"],"default":"text"}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn retrieve(
@@ -1575,7 +1587,7 @@ impl FoundryMcp {
                 ));
             }
         };
-        let lines = match optional_str(&arguments, "lines") {
+        let lines = match optional_lines(&arguments) {
             Ok(lines) => lines,
             Err(e) => return Ok(foundry_error_result(&e)),
         };
@@ -1583,9 +1595,13 @@ impl FoundryMcp {
         // a malformed handle or `lines` is `invalid_argument` even while the
         // single engine slot is held by another request. Workspace,
         // existence, digest and range stay in the authoritative read.
-        let parsed = match HandleRef::parse(handle)
-            .and_then(|parsed| lines.map(LineSelection::parse).transpose().map(|_| parsed))
-        {
+        let parsed = match HandleRef::parse(handle).and_then(|parsed| {
+            lines
+                .as_deref()
+                .map(LineSelection::parse)
+                .transpose()
+                .map(|_| parsed)
+        }) {
             Ok(parsed) => parsed,
             Err(e) => return Ok(foundry_error_result(&e)),
         };
@@ -1605,7 +1621,7 @@ impl FoundryMcp {
             }
             Err(e) => return Ok(foundry_error_result(&e)),
         };
-        let (handle, lines) = (handle.to_owned(), lines.map(str::to_owned));
+        let handle = handle.to_owned();
         // A multi-root owner resolves the root by the handle's `ws16` before
         // dispatch (007 § Multi-root identity): unknown is `wrong_workspace`,
         // a known root without an open engine is `root_unavailable`.

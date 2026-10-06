@@ -4,7 +4,10 @@ Status: approved 2026-10-03 (token-economics spec pass). **001 T004–T006 are l
 implemented, accepted at the reviewer's SHIP and committed in `5edf32c`; unreleased.**
 007 T001 (multi-root) and the T005 leading-run amendment are implemented and accepted
 locally on 2026-10-04 and committed (`cc402e0`, `bd1d890`). The 2026-10-04 amendments below record owner
-decisions and implemented details from T005/T006 review.
+decisions and implemented details from T005/T006 review. The 2026-10-06 amendment
+(owner-approved after the 013 corpus analysis) changes tier-1 run selection and order,
+adds five route keywords, accepts an MCP `lines` array and makes the empty `lines`
+refusal name the handle's lines.
 It replaces [v1](context-v1.md), whose JSON wire is historical at
 `6bb81e6`, and carries forward every still-valid v1 rule. Source/CLI owner:
 [001](../spec.md); MCP adapter owner:
@@ -21,6 +24,7 @@ implementing MCP. Limits are selected engineering bounds, not measured capacity 
 | Syntax units, search index v2, two-tier ranking, `path` filter, locator labels; leading-run units and head line (schema `"3"`) | 001 T005 | Locally implemented and accepted (r3 SHIP; leading-run amendment delta SHIP 2026-10-04, committed in `bd1d890`); unreleased |
 | Outlines, forms ladder, candidate seam, retrieve `view` | 001 T006 | Locally implemented and accepted (r3 SHIP); unreleased |
 | Multi-root identity, `roots`/`root`, per-root header | 007 T001 | Locally implemented and accepted 2026-10-04 (delta SHIP), committed in `cc402e0`; unreleased |
+| Tier-1 marked runs and specificity order, route keywords, MCP `lines` array, empty-selection message (2026-10-06 amendment) | 001 (amendment) | Implemented locally 2026-10-06; awaiting gates and review; unreleased |
 | `foundry references` header segments 12–14, `next: after=<path>#<start>-<end>` cursor; MCP `references`, `index.scip`, compiler graph context | 005 T002, T003 | Locally implemented and accepted (CLI 2026-10-04; MCP and graph context 2026-10-05); unreleased |
 
 ## Identity and reference validation
@@ -149,12 +153,19 @@ owning spec states its line form, and its output counts in the same budget.
 `invalid_argument`.
 
 `lines` is `"A"` or `"A-B"`: 1-based absolute file line numbers in decimal without
-leading zeros; a malformed value or 0 is `invalid_argument`. Lines are LF-delimited: a
+leading zeros; a malformed value or 0 is `invalid_argument`. MCP also accepts a JSON
+array, read as its elements joined with `-` (2026-10-06): `[A]` is `"A"` and `[A,B]` is
+`"A-B"` with the string's validation and errors (`[0]` refuses as `"0"`, `[5,3]` as
+`"5-3"`), and any other array (three elements, a non-integer) is malformed, at the
+same stage. The CLI is unchanged. Lines are LF-delimited: a
 CR before LF belongs to its line, an unterminated last line ends at EOF, a trailing LF
 creates no extra line and an empty file has no lines. The selected whole lines (lines
 past the end of the file select nothing) are intersected with the handle's range,
 never widening it. A > B, an empty intersection or any line of an empty file is
-`invalid_range`. The returned item's handle names the intersection.
+`invalid_range`; its message names the lines the handle's range covers and that a
+handle's `#start-end` is a byte range (2026-10-06), for example `lines 650-1459 select
+nothing in this handle, which covers lines 176-205; a handle's #start-end is a byte
+range`. The returned item's handle names the intersection.
 
 CLI: `foundry --store DIR search QUERY [--limit N] [--tokens N] [--path P]`,
 `context QUERY [--tokens N] [--strategy S]` and `retrieve --handle H [--tokens N]
@@ -201,9 +212,9 @@ segments appear only when not at their default:
 7. `omitted:<n>` when packing dropped constructed candidates;
 8. `capped:<n>` when the per-file cap skipped hits;
 9. `stale:<n>` when the final read dropped stale source or graph candidates;
-10. `candidates:full` when a candidate window filled: search tier 1 at 64, tier 2 at
-    256, or a context graph examination window (32 rows per seed and direction) that
-    filled exactly or was truncated;
+10. `candidates:full` when a candidate window filled: search tier 1's 64 slots with
+    definitions left over, tier 2 at 256, or a context graph examination window (32
+    rows per seed and direction) that filled exactly or was truncated;
 11. `graph:<ok|graph_unavailable|graph_stale|graph_invalid>` when the strategy
     resolved to graph;
 12. `examined:<n>`: `foundry references` only, always present. Counts the graph records
@@ -496,24 +507,38 @@ hits reconstruct verified source from `CHUNKS`.
 
 ### Two-tier query
 
-The query's identifier runs are its maximal `[A-Za-z_$][A-Za-z0-9_$]*` runs.
+The query's identifier runs are its maximal `[A-Za-z_$][A-Za-z0-9_$]*` runs. A run is
+marked when it lies inside a backtick code span. Scanning left to right, a maximal run
+of N backticks opens a span that the next maximal run of exactly N backticks closes
+(backtick runs of other lengths between them are span text); an opener with no such
+closer is literal text, and scanning resumes after it.
 
-**Tier 1, exact definitions:** documents whose `def_name` equals any identifier run.
-When more than 64 match, keep the 64 with the smallest `key_hash`
-(`TopDocs::with_limit(64).tweak_score(|reader| move |doc, _| Reverse(key_hash))`), then
-order them by path, start.
+**Tier 1, exact definitions** (amended 2026-10-06): the tier-1 runs are the marked runs
+when the query has at least one, otherwise all runs, lowercased and deduplicated; only
+the first 32 distinct runs by first appearance are used. Each run's count is the exact
+number of its definitions (documents whose `def_name` equals the run) under tier 1's
+own restriction (memory documents excluded, the `path` filter's `dir` term). Runs are
+ordered by count ascending, then run text ascending. Walking that order, each run
+contributes its definitions, smallest `key_hash` first
+(`TopDocs::with_limit(64).tweak_score(|reader| move |doc, _| Reverse(key_hash))`), up to
+the slots remaining of 64; a document matching several runs counts once, under its
+earliest run. Tier 1 is ordered by run, then path, start. Cause: every English word of
+a query (`find`, `of`, `callers`) matched its own definitions, and the old 64-document
+cut ordered by path buried or evicted the intended identifier.
 
 **Tier 2, lexical:** the union of, per whitespace-separated query part, a `body` phrase
-(when the part has at least 2 subtokens) or term; each identifier run as an `ident`
-term (boost 3); and the trimmed query as an exact `path` term (boost 100). Select with
+(when the part has at least 2 subtokens) or term; each identifier run, marked or not,
+as an `ident` term (boost 3); and the trimmed query as an exact `path` term (boost
+100). Select with
 `TopDocs::with_limit(256).tweak_score(|reader| move |doc, score| (score, Reverse(key_hash)))`
 so cutoff ties do not depend on segment order. Skip documents whose delivery unit is
 already in tier 1.
 
 Final order: tier 1, then tier 2 by score descending, path ascending, start ascending.
 The `path` input adds a must-term on `dir` to both tiers. `candidates:full` reports that
-either window filled. Scores may legitimately change when index statistics change
-(refresh, repair); determinism holds per index state.
+a window filled: tier 1's 64 slots with definitions left over, or tier 2 at 256. Scores
+may legitimately change when index statistics change (refresh, repair); determinism
+holds per index state.
 
 ### Hit materialization
 
@@ -659,9 +684,11 @@ v1's `following_chunks` candidates are removed.
 
 For `auto`, ASCII-lowercase the query and tokenize maximal runs of ASCII letters,
 digits or `_`. Any whole token in `{calls,caller,callers,depends,impact,dependency,
-dependencies,reference,references,usage,usages}` selects graph, otherwise search. This
-replaces the prototype's substring rule: `preferences` and `calls_tracker` are not
-graph keywords, while a question about references can use 005's supported relation.
+dependencies,reference,references,referenced,usage,usages,uses,used,break,breaks}`
+selects graph, otherwise search (`referenced`, `uses`, `used`, `break` and `breaks`
+added 2026-10-06). This replaces the prototype's substring rule: `preferences` and
+`calls_tracker` are not graph keywords, while a question about references can use
+005's supported relation.
 The owned policy can replace that choice only under 013's identity/threshold contract.
 Explicit search or graph never invokes the policy. Graph without eligible edges still
 returns source results and a graph coverage reason in the header. No claim that this

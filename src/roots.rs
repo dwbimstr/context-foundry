@@ -322,7 +322,9 @@ fn summed_counters(batches: &[RootBatch]) -> CandidateCounters {
 
 /// The merged delivery-unit order over every root's batch:
 ///
-/// 1. tier-1 items from all roots first, by root order, then path, then start;
+/// 1. tier-1 items from all roots first, by root order, then in each root's
+///    own tier-1 order (context-v2 § Two-tier query: most specific run first,
+///    then path, start within a run);
 /// 2. tier-2 items by reciprocal-rank fusion `1/(60 + rank)`, where `rank` is
 ///    the item's 1-based position in its root's tier-2 list; ties break by
 ///    root order, path, start.
@@ -363,12 +365,6 @@ fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
             }
         }
     }
-    tier1.sort_by(|a, b| {
-        a.root
-            .cmp(&b.root)
-            .then_with(|| a.path.cmp(b.path))
-            .then_with(|| a.start.cmp(&b.start))
-    });
     tier2.sort_by(|a, b| {
         b.rrf
             .total_cmp(&a.rrf)
@@ -728,6 +724,23 @@ mod tests {
         );
         assert_eq!(cut.hits.len(), 1);
         assert!(cut.truncated);
+    }
+
+    #[test]
+    fn merged_units_keep_each_roots_own_tier_one_order() {
+        // Each root ranks its most specific run first, not by path; the
+        // merge keeps that order inside each root, roots in admission order.
+        let first = RootBatch {
+            alias: "primary".to_owned(),
+            batch: batch(vec![unit(1, "src/z.rs", 0), unit(1, "src/a.rs", 0)]),
+        };
+        let second = RootBatch {
+            alias: "ref1".to_owned(),
+            batch: batch(vec![unit(1, "src/y.rs", 0), unit(1, "src/b.rs", 0)]),
+        };
+        let merged = merge_search(&[first, second], 10);
+        let paths: Vec<&str> = merged.hits.iter().map(|hit| hit.path.as_str()).collect();
+        assert_eq!(paths, vec!["src/z.rs", "src/a.rs", "src/y.rs", "src/b.rs"]);
     }
 
     #[test]

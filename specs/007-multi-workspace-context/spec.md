@@ -90,7 +90,8 @@ each batch is already revalidated in that root's final read transaction.
 
 `src/roots.rs::merge` orders the batches:
 
-1. tier-1 items from all roots first, by root order, then path, then start;
+1. tier-1 items from all roots first, by root order, then in each root's own tier-1
+   order (context-v2 § Two-tier query; amended 2026-10-06, replacing path, start);
 2. then tier-2 items by reciprocal-rank fusion `1/(60 + rank)`, where `rank` is the
    item's 1-based position in its root's tier-2 list; ties break by root order
    (primary, then command-line order), path, start.

@@ -888,6 +888,61 @@ fn v2_retrieve_lines_intersects_absolute_file_lines_with_the_handle() {
     assert_eq!(refused(&handle("closed.txt", 0, 99), "1"), "invalid_range");
 }
 
+/// A `lines` selection with nothing inside the handle names the lines the
+/// handle covers: an agent that copied `#start-end` as line numbers must not
+/// read a byte-range error. Genuine byte-range errors keep their own.
+#[test]
+fn an_empty_line_selection_names_the_lines_its_handle_covers() {
+    const BODY: &str = "one\ntwo\nthree\nfour\nfive\nsix\n";
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (_store, engine) = setup(&root);
+    engine.replace_source("six.txt", BODY).unwrap();
+    engine.replace_source("empty.txt", "").unwrap();
+    let workspace = engine.workspace_id().unwrap();
+    let handle = |path: &str, body: &str, start: usize, end: usize| {
+        SourceHandle {
+            workspace_id: workspace.clone(),
+            path: path.into(),
+            sha256: digest(body.as_bytes()),
+            start: start as u64,
+            end: end as u64,
+        }
+        .to_v2()
+    };
+    let (three, five) = (BODY.find("three").unwrap(), BODY.find("five").unwrap());
+    // Lines 3-4 as a byte range: lines past it, past the file or reversed.
+    for (raw, lines, covers) in [
+        (handle("six.txt", BODY, three, five), "5-6", "lines 3-4"),
+        (handle("six.txt", BODY, three, five), "9", "lines 3-4"),
+        (handle("six.txt", BODY, three, five), "4-3", "lines 3-4"),
+        (handle("six.txt", BODY, five, five + 3), "1", "line 5"),
+        (handle("empty.txt", "", 0, 0), "1", "no lines"),
+    ] {
+        let err = engine.retrieve(&raw, Some(lines), 2048).unwrap_err();
+        assert_eq!(
+            (code(&err), err.exit_code(), err.retryable()),
+            ("invalid_range", 2, false),
+            "{raw} lines {lines}"
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains(&format!("covers {covers};")),
+            "{raw} lines {lines}: {message}"
+        );
+        assert!(
+            message.contains("#start-end is a byte range"),
+            "{raw} lines {lines}: {message}"
+        );
+    }
+    // A byte range outside the source is still reported as one.
+    let err = engine
+        .retrieve(&handle("six.txt", BODY, 0, 99), None, 2048)
+        .unwrap_err();
+    assert_eq!(code(&err), "invalid_range");
+    assert!(!err.to_string().contains("covers"), "{err}");
+}
+
 #[test]
 fn retrieve_prefix_fitting_respects_budgets_and_utf8() {
     let fixture = tempfile::tempdir().unwrap();
@@ -973,6 +1028,34 @@ fn auto_strategy_uses_whole_keywords_not_substrings() {
         response::strategy_for_query("callers! of main"),
         Strategy::Graph
     );
+    // 2026-10-06: usage and breakage questions are graph questions too.
+    for query in [
+        "what uses parse_record",
+        "where is sleep_ms used",
+        "what breaks if parse_record changes",
+        "does this BREAK anything",
+        "where is Engine referenced",
+    ] {
+        assert_eq!(
+            response::strategy_for_query(query),
+            Strategy::Graph,
+            "{query}"
+        );
+    }
+    // The whole-token rule still holds for them.
+    for query in [
+        "find unused imports",
+        "find reused_buffer",
+        "set a breakpoint",
+        "breaks_tracker",
+        "dereferenced pointer",
+    ] {
+        assert_eq!(
+            response::strategy_for_query(query),
+            Strategy::Search,
+            "{query}"
+        );
+    }
 }
 
 #[test]
@@ -1448,6 +1531,186 @@ fn tier_one_keeps_the_64_definitions_with_the_smallest_key_hash() {
         "16 tier-2 hits survive past the limit"
     );
     assert_eq!(batch.counters.capped, 0);
+}
+
+/// The 013 corpus defect: an English word of the query (`find`) has more than
+/// 64 definitions and the intended identifier sorts last by path. A
+/// backtick-marked run alone feeds tier 1; unmarked runs are ranked by how
+/// few definitions they have. Search and context share that ranking.
+#[test]
+fn tier_one_puts_the_marked_or_most_specific_run_before_a_common_word() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (_store, mut engine) = setup(&root);
+    for i in 0..70 {
+        engine
+            .replace_source(&format!("f{i:02}.rs"), "fn find() {}\n")
+            .unwrap();
+    }
+    engine
+        .replace_source("z/sleep.rs", "fn sleep_ms() {}\n")
+        .unwrap();
+    drain(&mut engine);
+    let first = |batch: &context_foundry::store::CandidateBatch| {
+        let item = &batch.items[0];
+        (item.tier, source(item).path.clone(), item.label.clone())
+    };
+    let sleep_ms = (1, "z/sleep.rs".to_owned(), "fn sleep_ms".to_owned());
+    let tier_one = |batch: &context_foundry::store::CandidateBatch| -> Vec<String> {
+        batch
+            .items
+            .iter()
+            .filter(|item| item.tier == 1)
+            .map(|item| item.label.clone())
+            .collect()
+    };
+
+    // Marked runs only: the unmarked word's definitions are not tier 1. A
+    // double-backtick span marks too.
+    for query in ["find `sleep_ms`", "``sleep_ms`` find"] {
+        let batch = engine
+            .search_candidates(query, None, 64, &Control::unbounded())
+            .unwrap();
+        assert_eq!(first(&batch), sleep_ms, "{query}");
+        assert_eq!(tier_one(&batch), ["fn sleep_ms"], "{query}");
+    }
+    let context = engine
+        .context_candidates("find `sleep_ms`", Strategy::Search, &Control::unbounded())
+        .unwrap();
+    assert_eq!(first(&context), sleep_ms, "the first context unit");
+
+    // Unmarked (an unclosed backtick is literal): 1 definition before 70, then
+    // `find` fills the 63 slots left, with definitions left over.
+    for query in ["find sleep_ms", "sleep_ms `find"] {
+        let batch = engine
+            .search_candidates(query, None, 64, &Control::unbounded())
+            .unwrap();
+        assert_eq!(first(&batch), sleep_ms, "{query}");
+        let labels = tier_one(&batch);
+        assert_eq!(labels.len(), 64, "{query}");
+        assert!(
+            labels[1..].iter().all(|label| label == "fn find"),
+            "{query}"
+        );
+        assert!(batch.counters.candidates_full, "{query}");
+    }
+}
+
+/// Runs with equally many definitions order by run text (not query order or
+/// path); the count obeys the `path` filter, so a run common elsewhere but
+/// rare in the subtree comes first there.
+#[test]
+fn tier_one_breaks_count_ties_by_run_text_and_counts_within_the_path_filter() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (_store, mut engine) = setup(&root);
+    engine
+        .replace_source("ties/a.rs", "fn beta_tie() {}\n")
+        .unwrap();
+    engine
+        .replace_source("ties/b.rs", "fn alpha_tie() {}\n")
+        .unwrap();
+    // `wide`: 6 definitions, 1 under `app/`; `narrow`: 2, both under `app/`.
+    for i in 0..5 {
+        engine
+            .replace_source(&format!("other/w{i}.rs"), "fn wide() {}\n")
+            .unwrap();
+    }
+    engine
+        .replace_source("app/wide.rs", "fn wide() {}\n")
+        .unwrap();
+    for i in 0..2 {
+        engine
+            .replace_source(&format!("app/narrow{i}.rs"), "fn narrow() {}\n")
+            .unwrap();
+    }
+    drain(&mut engine);
+    let control = Control::unbounded();
+    let tier_one = |query: &str, path: Option<&str>| -> Vec<(String, String)> {
+        engine
+            .search_candidates(query, path, 64, &control)
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| item.tier == 1)
+            .map(|item| (item.label.clone(), source(item).path.clone()))
+            .collect()
+    };
+    let unit = |label: &str, path: &str| (label.to_owned(), path.to_owned());
+    assert_eq!(
+        tier_one("beta_tie alpha_tie", None),
+        [
+            unit("fn alpha_tie", "ties/b.rs"),
+            unit("fn beta_tie", "ties/a.rs"),
+        ]
+    );
+    let everywhere = tier_one("wide narrow", None);
+    assert_eq!(everywhere.len(), 8);
+    assert_eq!(
+        everywhere[..3],
+        [
+            unit("fn narrow", "app/narrow0.rs"),
+            unit("fn narrow", "app/narrow1.rs"),
+            unit("fn wide", "app/wide.rs"),
+        ]
+    );
+    assert_eq!(
+        tier_one("wide narrow", Some("app")),
+        [
+            unit("fn wide", "app/wide.rs"),
+            unit("fn narrow", "app/narrow0.rs"),
+            unit("fn narrow", "app/narrow1.rs"),
+        ]
+    );
+}
+
+/// Tier 1 ranks the first 32 distinct runs only (a repeat uses no slot), and
+/// reports a full window only when definitions are left over after 64.
+#[test]
+fn tier_one_bounds_its_runs_and_fills_only_with_definitions_left_over() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (_store, mut engine) = setup(&root);
+    for i in 0..64 {
+        engine
+            .replace_source(&format!("d{i:02}.rs"), "fn edge_def() {}\n")
+            .unwrap();
+    }
+    drain(&mut engine);
+    let tier_one = |engine: &Engine, query: &str| {
+        let batch = engine
+            .search_candidates(query, None, 64, &Control::unbounded())
+            .unwrap();
+        let count = batch.items.iter().filter(|item| item.tier == 1).count();
+        (count, batch.counters.candidates_full)
+    };
+    let filler = |n: usize| -> String {
+        (0..n)
+            .map(|i| format!("w{i:02}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    assert_eq!(tier_one(&engine, "edge_def"), (64, false), "exactly 64");
+    assert_eq!(
+        tier_one(&engine, &format!("edge_def {}", filler(32))).0,
+        64,
+        "the first 32 distinct runs are ranked"
+    );
+    assert_eq!(
+        tier_one(&engine, &format!("{} edge_def", filler(32))).0,
+        0,
+        "the 33rd distinct run is not ranked"
+    );
+    assert_eq!(
+        tier_one(&engine, &format!("{} w00 edge_def", filler(31))).0,
+        64,
+        "a repeated run is the same run"
+    );
+    engine
+        .replace_source("d64.rs", "fn edge_def() {}\n")
+        .unwrap();
+    drain(&mut engine);
+    assert_eq!(tier_one(&engine, "edge_def"), (64, true), "65 overflow");
 }
 
 #[test]

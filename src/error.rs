@@ -40,6 +40,10 @@ pub enum FoundryError {
     NotFound,
     StaleHandle,
     InvalidRange,
+    /// Retrieve `lines` selects nothing within the handle's range (reversed,
+    /// past the file or outside the handle): `invalid_range`, with a message
+    /// naming the lines the handle covers (context-v2 § Inputs).
+    EmptyLineSelection(String),
     CorruptSource(String),
     BudgetTooSmall {
         minimum_tokens: usize,
@@ -154,7 +158,7 @@ impl FoundryError {
             Self::WorkspaceUnbound => "workspace_unbound",
             Self::NotFound => "not_found",
             Self::StaleHandle => "stale_handle",
-            Self::InvalidRange => "invalid_range",
+            Self::InvalidRange | Self::EmptyLineSelection(_) => "invalid_range",
             Self::CorruptSource(_) => "corrupt_source",
             Self::BudgetTooSmall { .. } => "budget_too_small",
             Self::StoreNotFound => "store_not_found",
@@ -202,6 +206,7 @@ impl FoundryError {
             Self::InvalidArgument(_)
             | Self::UnsupportedMode(_)
             | Self::InvalidRange
+            | Self::EmptyLineSelection(_)
             | Self::ArtifactUnavailable(_)
             | Self::UnsupportedSchema { .. }
             | Self::UpgradeRequired { .. } => 2,
@@ -226,6 +231,7 @@ impl FoundryError {
             Self::InvalidRange => {
                 "byte range is outside the source or not on UTF-8 boundaries".into()
             }
+            Self::EmptyLineSelection(m) => m.clone(),
             Self::CorruptSource(m) => format!("stored source chunks are inconsistent: {m}"),
             Self::BudgetTooSmall { minimum_tokens } => {
                 format!("token budget cannot fit the response envelope; minimum {minimum_tokens}")
