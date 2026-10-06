@@ -40,6 +40,38 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## Measurement phase — 2026-10-06
+
+The owner deferred every measurement until the implementable spec tasks were done (2026-10-05). All runs used release builds and the development bundles; nothing ran under production isolation. Evidence: [009 T003 lifecycle](review/009-t003-lifecycle-2026-10-06.json), [013 rounds](review/013-measurement-2026-10-06.json).
+
+- **009 T003 real lifecycle** (Nemotron 4-bit, production `foundry mcp`, this repository as the corpus: 193 sources, 2,099 units). It passed its predeclared bounds in 872 s:
+  - cold preparation took about 845 s (about 2.5 units/s);
+  - the query during preparation got baseline results with `fallback:provider_busy`, because continuous preparation keeps the one model slot nearly always busy;
+  - steady queries took 1.25 s for the first (index load), then 184–215 ms;
+  - after an edit, baseline `partial` came back in 195 ms; catch-up embedded exactly 1 unit; restart embedded 0.
+- **013 rows.** 1,088 labeled tasks were composed into states by the core in 52 s.
+  - 32 rows were recorded `allow_training:false`. 27 composed states recur across groups (the same symbol name in different modules yields the same query and locators), and one state carried conflicting labels. The contract refuses both as `duplicate_conflict`.
+  - Rounds follow the owner's split: 770 rows in round 1, 318 in round 2.
+- **Defect found and fixed.** The first sandboxed training run failed: App Sandbox moves the worker's working directory into its container, so the relative `head.safetensors` was written there.
+  - The supervisor now passes `--run-dir`; the worker re-enters it and confirms it by device and inode.
+  - A regression test starts the worker elsewhere.
+  - Fake-worker tests could not see this; it is the reason the sandboxed run is in this phase.
+- **013 round 1** (555 train, 124 calibration, 71 evaluation rows): 569 steps in 195 s, worker peak RSS 2.3 GB, temperature 3.0 (the grid's upper edge). Coverage 0.56 and accepted accuracy 0.90 (36/40), so it is eligible. Fallback-inclusive accuracy was 60/71 against 59/71 for deterministic routing, a one-row difference. Eligibility permits a trial; it is not an improvement claim.
+- **013 round 2** (306 new plus 217 replay train rows; the evaluation reuses round 1's held-out groups): 434 steps in 200 s, 2.6 GB. Not eligible: accepted accuracy 0.8625 is below 0.9. It equals the incumbent (84/101) against 83/101 for baseline. This is a valid rejected candidate; the incumbent stays.
+- **013 lifecycle (T004 verification items):**
+  - represented input → `no_new_data`;
+  - withdrawing an inherited contributor → `base_permission_changed` at prepare and `contribution_changed` before any update at train;
+  - owner SIGKILL during training → worker gone in 41 ms, no candidate, incumbent unchanged;
+  - select writes a config for round 1 and refuses round 2 (`candidate_ineligible`) and any overwrite;
+  - rollback is restarting without the config.
+  - Limitation: a killed owner's scratch run directory (100 MB staged base head) is not reclaimed by later runs.
+- **013 serving.**
+  - Resident MCP owner with the selected candidate: start 13.2 s, first routed call 1.3 s, steady 265–435 ms, against 66–160 ms without a policy.
+  - A CLI call with `--policy-config` pays the model load each time (about 8.6–9 s).
+  - The learned router stays off by default. The owner declined the paid enablement comparison.
+- **013 numerics.** The exhaustive comparison holds for every element of the full gradients (34- and 1024-token cases) and of the post-sequence parameters, within atol 1e-5 / rtol 1e-4. The signed-bundle negative probes pass.
+- **Not measured:** packaged install/upgrade/disable/uninstall and the distributed profile (013 T004, 009/013 package acceptance) need signing. The aggregate 009+013 residency was not run as a joint test; observed peaks were about 2.6 GB for the training worker, and the 009 worker's ceiling is 3 GiB.
+
 ## 013 T003 serve, select, roll back and retire the legacy HTTP path — 2026-10-05
 
 Development isolation only. Deferred to the measurement phase (owner, 2026-10-05), not run: the enablement comparison (the same checked tasks with `foundry usage import`), the aggregate 009+013 residency test, and latency figures. The learned policy stays off by default until that comparison passes.

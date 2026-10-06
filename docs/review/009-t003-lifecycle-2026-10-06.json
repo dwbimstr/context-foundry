@@ -1,0 +1,254 @@
+{
+ "task": "009 T003 real lifecycle exercise (measurement phase)",
+ "date": "2026-10-06",
+ "commit": "437048f",
+ "binary": "release build at that commit; test real_lifecycle_exercise_on_a_permitted_declared_corpus (cargo test --release, --ignored)",
+ "worker": "Nemotron-3-Embed-1B 4-bit, development bundle rebuilt from that commit (exe sha256 a94f3633\u2026f3c1), --development-isolation",
+ "corpus": "this repository at that commit (git archive): 193 sources, 2099 eligible units",
+ "query": "how does the tool keep expensive model work after a restart",
+ "edit": "docs/architecture.md",
+ "predeclared_bounds": "whole exercise <= 30 min; every query within the 5 s read deadline; partial query `partial` or named fallback with baseline; steady `ready`; edit commits >=1 unit; restart commits 0",
+ "result": "passed (872 s)",
+ "events": [
+  {
+   "detail": {},
+   "event": "prepare",
+   "t_ms": 8711
+  },
+  {
+   "detail": {
+    "ms": 212,
+    "word": "fallback:provider_busy"
+   },
+   "event": "partial_query",
+   "t_ms": 27393
+  },
+  {
+   "detail": {
+    "ms": 1254
+   },
+   "event": "steady_query",
+   "t_ms": 855297
+  },
+  {
+   "detail": {
+    "ms": 203
+   },
+   "event": "steady_query",
+   "t_ms": 855500
+  },
+  {
+   "detail": {
+    "ms": 200
+   },
+   "event": "steady_query",
+   "t_ms": 855701
+  },
+  {
+   "detail": {
+    "ms": 184
+   },
+   "event": "steady_query",
+   "t_ms": 855885
+  },
+  {
+   "detail": {
+    "ms": 215
+   },
+   "event": "steady_query",
+   "t_ms": 856101
+  },
+  {
+   "detail": {
+    "ms": 195,
+    "word": "partial"
+   },
+   "event": "fresh_baseline_query",
+   "t_ms": 856527
+  },
+  {
+   "detail": {
+    "embedded_units": 1
+   },
+   "event": "edit_catch_up",
+   "t_ms": 858932
+  },
+  {
+   "detail": {
+    "embedded_units": 0
+   },
+   "event": "restart",
+   "t_ms": 869036
+  }
+ ],
+ "status_samples": [
+  {
+   "t_ms": 23147,
+   "state": "running",
+   "reason": null,
+   "committed_units": 0,
+   "searchable_current_units": 0,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 73569,
+   "state": "running",
+   "reason": null,
+   "committed_units": 128,
+   "searchable_current_units": 129,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 123813,
+   "state": "running",
+   "reason": null,
+   "committed_units": 248,
+   "searchable_current_units": 129,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 174077,
+   "state": "running",
+   "reason": null,
+   "committed_units": 376,
+   "searchable_current_units": 257,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 224377,
+   "state": "running",
+   "reason": null,
+   "committed_units": 504,
+   "searchable_current_units": 257,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 274758,
+   "state": "running",
+   "reason": null,
+   "committed_units": 632,
+   "searchable_current_units": 513,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 325075,
+   "state": "running",
+   "reason": null,
+   "committed_units": 760,
+   "searchable_current_units": 513,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 375411,
+   "state": "running",
+   "reason": null,
+   "committed_units": 888,
+   "searchable_current_units": 513,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 425778,
+   "state": "running",
+   "reason": null,
+   "committed_units": 1016,
+   "searchable_current_units": 513,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 476356,
+   "state": "running",
+   "reason": null,
+   "committed_units": 1144,
+   "searchable_current_units": 1025,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 526936,
+   "state": "running",
+   "reason": null,
+   "committed_units": 1264,
+   "searchable_current_units": 1025,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 577614,
+   "state": "running",
+   "reason": null,
+   "committed_units": 1392,
+   "searchable_current_units": 1025,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 628283,
+   "state": "running",
+   "reason": null,
+   "committed_units": 1520,
+   "searchable_current_units": 1025,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 679033,
+   "state": "running",
+   "reason": null,
+   "committed_units": 1648,
+   "searchable_current_units": 1025,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 730086,
+   "state": "running",
+   "reason": null,
+   "committed_units": 1776,
+   "searchable_current_units": 1025,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 780698,
+   "state": "running",
+   "reason": null,
+   "committed_units": 1904,
+   "searchable_current_units": 1025,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 831354,
+   "state": "running",
+   "reason": null,
+   "committed_units": 2032,
+   "searchable_current_units": 1025,
+   "eligible_units": 2099,
+   "source_revision": 193
+  },
+  {
+   "t_ms": 854039,
+   "state": "stopped",
+   "reason": null,
+   "committed_units": 2091,
+   "searchable_current_units": 2099,
+   "eligible_units": 2099,
+   "source_revision": 193
+  }
+ ],
+ "observations": [
+  "cold preparation of 2099 units took ~845 s after the first prepare call (about 2.5 units/s), with publication lagging commits by the doubling rule",
+  "the partial query during preparation got baseline results with fallback:provider_busy (212 ms): with continuous preparation the single model slot is nearly always occupied by a document batch",
+  "steady queries: first 1254 ms (index load), then 184-215 ms",
+  "after an indexed edit: baseline with `partial` in 195 ms; catch-up embedded exactly 1 unit; restart embedded 0"
+ ]
+}

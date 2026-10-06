@@ -4,9 +4,12 @@ Status: Proposed implementation contract v4, revised 2026-09-29 after bounded Ru
 feasibility probes. T001 (schema 6, `feedback v4`, `learning prepare|check|compose-state`)
 and T002 (the tch training worker, calibration, evaluation and candidates) and T003
 (serving, selection, rollback and retirement of the legacy HTTP path) implemented and
-accepted locally on 2026-10-05, development isolation only (see validation). Real-data
-training, the enablement comparison and the T004 second round and deployment are
-deferred to the measurement and packaging phase. The owner selected
+accepted locally on 2026-10-05, development isolation only (see validation). The
+measurement phase (2026-10-06) ran real training on the labeled rows in two rounds:
+round 1 eligible, round 2 a valid rejected candidate. It also ran T004's repeat-lifecycle
+checks, sandboxed serving and the exhaustive numerical comparison. The learned router
+stays off by default. T004's packaged deployment (install, upgrade, disable, uninstall,
+the distributed profile) and package acceptance need signing. The owner selected
 ModernBERT with a decision head and all first-party code in Rust. Laya is a reference,
 not a deployed service. [Evidence and remaining blockers](../../docs/review/feasibility.md)
 are scoped by probe; this document does not declare a model package ready to release.

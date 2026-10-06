@@ -1,0 +1,231 @@
+{
+ "task": "013 T002/T003/T004 measurement phase",
+ "date": "2026-10-06",
+ "binary": "release build of main 437048f plus the sandbox run-directory fix (this commit)",
+ "worker": "foundry-learn, ad-hoc-signed App Sandbox development bundle, --development-isolation; LibTorch 2.11.0 CPU, 4 threads",
+ "corpus_store": "rust-lang/rust 1.99.0 refreshed 005 T003 store (revision 60741), APFS clone upgraded to schema 6",
+ "rows": {
+  "labeled": 1088,
+  "groups": 268,
+  "compose_state_seconds": 52.1,
+  "round_split": "per group, tasks ordered by SHA-256(task_id): first ceil(0.6 n) round 1, rest round 2 (owner decision 2026-10-05)",
+  "round1": 770,
+  "round2": 318,
+  "withdrawn_duplicates": 32,
+  "duplicate_note": "27 composed states recur across groups (same symbol name in different modules, e.g. from_le_bytes in f16 and f64, share the query and top-3 locator lines) and 1 state carries conflicting labels; the contract refuses these as duplicate_conflict. All but the first occurrence of each, and both sides of the conflicting one, were recorded with allow_training:false through the operator CLI."
+ },
+ "defect_found": "the first sandboxed training run failed with artifact_invalid: App Sandbox moves the worker's working directory into its container, so the relative head.safetensors landed in ~/Library/Containers/org.context-foundry.learn.dev/Data. Fixed: the supervisor passes --run-dir and the worker re-enters it, confirmed by device and inode.",
+ "round1": {
+  "dataset": {
+   "rows": 750,
+   "train": 555,
+   "calibration": 124,
+   "evaluation": 71,
+   "groups": 264,
+   "prepare_seconds": 0.26
+  },
+  "training": {
+   "steps": 569,
+   "wall_seconds": 194.8,
+   "worker_max_rss_bytes": 2303524864,
+   "eligible": true,
+   "candidate": "0d667b70\u202610fb"
+  },
+  "evaluation": {
+   "temperature": 3.0,
+   "rows": 71,
+   "accepted": 40,
+   "accepted_correct": 36,
+   "coverage": 0.5633802816901409,
+   "accepted_accuracy": 0.9,
+   "fallback_inclusive": {
+    "correct": 60,
+    "rows": 71,
+    "accuracy": 0.8450704225352113,
+    "macro_accuracy": 0.837991718426501
+   },
+   "baseline": {
+    "correct": 59,
+    "rows": 71,
+    "accuracy": 0.8309859154929577,
+    "macro_accuracy": 0.8162525879917185
+   },
+   "incumbent": null,
+   "eligibility": {
+    "eligible": true,
+    "reasons": []
+   },
+   "mean_nll": 0.4034198747594333,
+   "ece": 0.06269186074778564,
+   "errors": 0
+  }
+ },
+ "round2": {
+  "dataset": {
+   "new_rows": 306,
+   "replay_rows": 217,
+   "train": 434,
+   "calibration": 183,
+   "evaluation": 101,
+   "note": "evaluation includes round 1's held-out groups: no fresh-uplift claim"
+  },
+  "training": {
+   "steps": 434,
+   "wall_seconds": 200.3,
+   "worker_max_rss_bytes": 2602762240,
+   "base": "round 1 candidate",
+   "incumbent": "round 1 candidate",
+   "eligible": false,
+   "candidate": "c565cf81\u2026896e"
+  },
+  "evaluation": {
+   "temperature": 3.0,
+   "rows": 101,
+   "accepted": 80,
+   "accepted_correct": 69,
+   "coverage": 0.7920792079207921,
+   "accepted_accuracy": 0.8625,
+   "fallback_inclusive": {
+    "correct": 84,
+    "rows": 101,
+    "accuracy": 0.8316831683168316,
+    "macro_accuracy": 0.818541165165879
+   },
+   "baseline": {
+    "correct": 83,
+    "rows": 101,
+    "accuracy": 0.8217821782178217,
+    "macro_accuracy": 0.7968020347310965
+   },
+   "incumbent": {
+    "correct": 84,
+    "rows": 101,
+    "accuracy": 0.8316831683168316,
+    "macro_accuracy": 0.818541165165879
+   },
+   "eligibility": {
+    "eligible": false,
+    "reasons": [
+     "accepted accuracy 0.8625 is below the floor 0.9"
+    ]
+   },
+   "mean_nll": 0.42217572171537027,
+   "ece": 0.05701429201300135,
+   "errors": 0
+  }
+ },
+ "lifecycle": {
+  "represented_input": "prepare with the round-2 parent and nothing new: no_new_data, no output",
+  "withdrawal": "withdrawing one inherited round-1 contributor (store clone): prepare refuses base_permission_changed; train refuses contribution_changed before any update",
+  "interruption": "owner SIGKILL 30 s into a round-2 training run: worker gone 41 ms later; no candidate or partial published; incumbent manifest unchanged",
+  "interruption_limitation": "the dead owner's scratch run directory (100 MB staged base head) is not reclaimed by later runs; removed by hand",
+  "select": "round 1 selected (config written); round 2 refused candidate_ineligible; selecting onto an existing config refused output_exists",
+  "rollback": "starting without a config gives deterministic routing (no route segment)"
+ },
+ "serving": {
+  "cli_with_policy_seconds": [
+   9.05,
+   8.59
+  ],
+  "cli_note": "each CLI invocation pays the worker start and model load",
+  "mcp_resident": {
+   "config": "/private/tmp/cf-measure/013/config1.json",
+   "initialize_ms": 13191.2,
+   "calls": [
+    {
+     "query": "who calls `Vec::push`",
+     "ms": 1299.6,
+     "route": [
+      "route:policy"
+     ]
+    },
+    {
+     "query": "where is `algebraic_add` defined",
+     "ms": 435.2,
+     "route": [
+      "route:policy"
+     ]
+    },
+    {
+     "query": "show the implementation of `to_ascii_lowercase`",
+     "ms": 426.1,
+     "route": [
+      "route:policy"
+     ]
+    },
+    {
+     "query": "what uses `Option::unwrap`",
+     "ms": 389.1,
+     "route": [
+      "route:policy"
+     ]
+    },
+    {
+     "query": "explain `from_le_bytes`",
+     "ms": 297.5,
+     "route": [
+      "route:policy"
+     ]
+    },
+    {
+     "query": "who calls `Vec::push`",
+     "ms": 264.5,
+     "route": [
+      "route:policy"
+     ]
+    }
+   ],
+   "policy_status": {
+    "busy": false,
+    "candidate": "0d667b704244c224a51db49b6dbb5d3ff83bc024e216d2cfb0253d513fb510fb",
+    "consecutive_timeouts": 0,
+    "state": "enabled",
+    "threshold": 0.8
+   }
+  },
+  "mcp_baseline": {
+   "config": null,
+   "initialize_ms": 19.0,
+   "calls": [
+    {
+     "query": "who calls `Vec::push`",
+     "ms": 160.7,
+     "route": []
+    },
+    {
+     "query": "where is `algebraic_add` defined",
+     "ms": 66.1,
+     "route": []
+    },
+    {
+     "query": "show the implementation of `to_ascii_lowercase`",
+     "ms": 91.4,
+     "route": []
+    },
+    {
+     "query": "what uses `Option::unwrap`",
+     "ms": 96.1,
+     "route": []
+    },
+    {
+     "query": "explain `from_le_bytes`",
+     "ms": 95.6,
+     "route": []
+    },
+    {
+     "query": "who calls `Vec::push`",
+     "ms": 112.2,
+     "route": []
+    }
+   ],
+   "policy_status": {
+    "state": "disabled"
+   }
+  }
+ },
+ "parity": {
+  "exhaustive": "every element of the full gradients (34- and 1024-token cases) and the post-sequence parameters within atol 1e-5 / rtol 1e-4 (16 s, release)",
+  "signed_bundle_negative_probes": "pass (dev_learn_sandbox_negative_probes, 2.4 s)"
+ },
+ "interpretation": "Round 1 is eligible by the predeclared floors on 71 held-out rows (+1 row over deterministic routing); that permits a trial, not an improvement claim. Round 2 is a valid rejected candidate. The fitted temperature sits at the grid's upper edge (3.0). The learned router stays off by default (owner decision: no paid enablement comparison)."
+}
