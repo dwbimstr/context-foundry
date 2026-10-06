@@ -9,13 +9,20 @@
 //!
 //! - every store step takes the owner's ONE engine slot, and only while no
 //!   foreground operation is in flight, and gives it back before the next
-//!   step; a foreground operation arriving during such a brief step gets the
-//!   adapter's usual retryable `busy`;
+//!   step; a foreground operation arriving during such a step waits for it
+//!   (the owner's `take_engine_slot`), so steps are kept short: a partition
+//!   step and each step of a publication end at their first boundary after
+//!   [`STEP_TIME`], and the generation itself is built with the slot free;
 //! - the model call runs on the owner's ONE resident worker
 //!   ([`QueryRuntime`]) with NO engine slot and NO transaction held. Its
 //!   admission is refused, never queued, while that slot is occupied or a
 //!   foreground query is being dispatched, and the refusal pauses
-//!   preparation with `provider_busy`.
+//!   preparation with `provider_busy`;
+//! - while the owner served a foreground operation in the last
+//!   [`FOREGROUND_WINDOW`] ([`Preparation::foreground`]), a selected batch
+//!   is embedded at most [`FOREGROUND_BATCH`] inputs per call, so a query
+//!   that finds the model busy with a batch waits for a short one
+//!   ([`QueryRuntime::embed`]).
 //!
 //! Publication happens at most once per committed batch: after a commit
 //! that brings the vectors not yet published up to the size of the last
@@ -44,11 +51,14 @@
 use crate::control::Control;
 use crate::error::{FResult, FoundryError};
 use crate::neural::cache::{self, DEFAULT_CACHE_CAP_BYTES, SemanticState};
+use crate::neural::index::{
+    self, GenerationError, MappingWalk, Publication, validate_generation_with,
+};
 use crate::neural::partition;
 use crate::neural::prepare::{
     self, Batch, PrepareReport, Progress, Selected, Steps, Stop, StopOrError, Walk,
 };
-use crate::neural::provider::{DOCUMENT_BATCH, ProviderError};
+use crate::neural::provider::{DOCUMENT_BATCH, ProviderError, TokenizedInput};
 use crate::neural::query::QueryRuntime;
 use crate::store::Engine;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -65,6 +75,17 @@ const SOURCES_PER_STEP: usize = cache::PAGE;
 /// How long the driver waits before looking again for a free engine slot,
 /// and the slice of its wait on a running document call.
 const POLL: Duration = Duration::from_millis(10);
+/// The largest document batch admitted while the owner serves foreground
+/// operations (009 T003, captain decision 2026-10-06).
+pub const FOREGROUND_BATCH: usize = 2;
+/// How long after a foreground operation batches stay at
+/// [`FOREGROUND_BATCH`]; afterwards they are [`DOCUMENT_BATCH`] again.
+pub const FOREGROUND_WINDOW: Duration = Duration::from_secs(60);
+/// The engine-slot time one partition or publication step aims at (009
+/// T003, captain decision 2026-10-06): the step ends at its first boundary
+/// after it (a source, a page of sources, a cached vector), so a foreground
+/// operation that finds the slot held by the driver waits about this long.
+const STEP_TIME: Duration = Duration::from_millis(100);
 
 const PAUSED: &str = "preparation was paused on request; committed work stays and \
                       `index {semantic: \"prepare\"}` resumes";
@@ -81,6 +102,10 @@ pub trait Owner: Send + Sync {
     /// admission.
     #[cfg(feature = "test-faults")]
     fn admitting(&self) {}
+    /// Test seam: the driver is inside a publication's staging work, its
+    /// index built in memory and not yet serialized, with no engine slot held.
+    #[cfg(feature = "test-faults")]
+    fn staging(&self) {}
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,9 +136,12 @@ pub enum Live {
 
 /// The owner's preparation control: at most one driver thread and its
 /// phase. Lock order: the engine slot, then this state; request handlers
-/// take only this state.
+/// take only this state. The foreground mark has its own lock, held for
+/// nothing else.
 pub struct Preparation {
     state: Mutex<State>,
+    /// When the owner last started a foreground operation.
+    foreground: Mutex<Option<Instant>>,
 }
 
 impl Default for Preparation {
@@ -123,6 +151,7 @@ impl Default for Preparation {
                 phase: Phase::Idle,
                 in_call: false,
             }),
+            foreground: Mutex::new(None),
         }
     }
 }
@@ -130,6 +159,26 @@ impl Default for Preparation {
 impl Preparation {
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// 009 T003: the owner calls this for every MCP request it serves
+    /// (search, context, retrieve, index, status, memory, references). For
+    /// the next [`FOREGROUND_WINDOW`] the driver embeds at most
+    /// [`FOREGROUND_BATCH`] inputs per document call.
+    pub fn foreground(&self) {
+        *self
+            .foreground
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
+    }
+
+    /// The document batch size to admit at `now`.
+    fn batch_limit(&self, now: Instant) -> usize {
+        let last = *self
+            .foreground
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        batch_limit(last, now)
     }
 
     /// `index {semantic: "prepare"}`: start the driver, or resume a pausing
@@ -209,6 +258,15 @@ impl Preparation {
     }
 }
 
+/// [`FOREGROUND_BATCH`] while the last foreground operation started less
+/// than [`FOREGROUND_WINDOW`] before `now`, else [`DOCUMENT_BATCH`].
+fn batch_limit(last_foreground: Option<Instant>, now: Instant) -> usize {
+    match last_foreground {
+        Some(at) if now.saturating_duration_since(at) < FOREGROUND_WINDOW => FOREGROUND_BATCH,
+        _ => DOCUMENT_BATCH,
+    }
+}
+
 /// The driver thread: one run per start or explicit resume.
 fn drive(owner: &dyn Owner, runtime: &QueryRuntime, preparation: &Preparation) {
     let control = Control::unbounded();
@@ -249,6 +307,14 @@ fn cancelled() -> Stop {
 
 fn paused() -> Stop {
     Stop::partial("paused", PAUSED)
+}
+
+/// Why the driver's publication did not finish: the owner can never run a
+/// store step again, or a step failed (recorded as the publication's named
+/// stop).
+enum Failed {
+    Owner(FoundryError),
+    Step(FoundryError),
 }
 
 /// One run of the driver: the profile identity, its report and the
@@ -367,6 +433,7 @@ impl<'a> Run<'a> {
                 .partition_page(
                     &mut after,
                     PARTITIONS_PER_STEP,
+                    Some(Instant::now() + STEP_TIME),
                     control,
                     report,
                     &mut || owner.closing().then(cancelled),
@@ -380,59 +447,66 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// Select batches of up to [`DOCUMENT_BATCH`] inputs and embed them. A
+    /// batch admitted smaller (foreground activity) keeps its remaining
+    /// inputs, in walk order, for the next admission; the walk resumes only
+    /// once fewer inputs remain than the current batch size.
     fn embed_pass(&mut self) -> FResult<Option<Stop>> {
         let mut walk = Walk::default();
         let mut batch = Batch::default();
+        let mut end = false;
         loop {
             if let Some(stop) = self.requested_stop() {
                 return Ok(Some(stop));
             }
-            let (owner, runtime) = (self.owner, self.runtime);
-            let (recipe, digest, report) = (&self.recipe, &self.digest, &mut self.report);
-            let selected = hold(owner, |engine| {
-                Steps {
-                    engine,
-                    tokenizer: runtime.tokenizer(),
-                    recipe,
-                    function_digest: digest,
+            if !end && batch.len() < self.preparation.batch_limit(Instant::now()) {
+                let (owner, runtime) = (self.owner, self.runtime);
+                let (recipe, digest, report) = (&self.recipe, &self.digest, &mut self.report);
+                let selected = hold(owner, |engine| {
+                    Steps {
+                        engine,
+                        tokenizer: runtime.tokenizer(),
+                        recipe,
+                        function_digest: digest,
+                    }
+                    .select_batch(
+                        &mut walk,
+                        &mut batch,
+                        SOURCES_PER_STEP,
+                        report,
+                        &mut || owner.closing().then(cancelled),
+                    )
+                })?;
+                match selected {
+                    Selected::Full => {}
+                    Selected::End => end = true,
+                    Selected::Yield => continue,
+                    Selected::Halted(stop) => return Ok(Some(stop)),
                 }
-                .select_batch(
-                    &mut walk,
-                    &mut batch,
-                    SOURCES_PER_STEP,
-                    report,
-                    &mut || owner.closing().then(cancelled),
-                )
-            })?;
-            let end = match selected {
-                Selected::Full => false,
-                Selected::End => true,
-                Selected::Yield => continue,
-                Selected::Halted(stop) => return Ok(Some(stop)),
-            };
+            }
             if !batch.is_empty()
-                && let Some(stop) = self.embed(std::mem::take(&mut batch))?
+                && let Some(stop) = self.embed(&mut batch)?
             {
                 return Ok(Some(stop));
             }
-            if end {
+            if end && batch.is_empty() {
                 return Ok(None);
             }
         }
     }
 
-    /// One batch. The final stop check, the admission on the runtime slot
-    /// and the in-call mark are ONE decision under the preparation-state lock
-    /// that `pause` takes, released before any wait on inference; the call
-    /// runs with no engine slot or transaction held; validation and commit
-    /// run under the slot.
-    fn embed(&mut self, batch: Batch) -> FResult<Option<Stop>> {
-        let Batch { keys, inputs } = batch;
-        let tokens: u64 = inputs.iter().map(|input| input.ids.len() as u64).sum();
+    /// One admission: the first inputs of `batch`, as many as the batch size
+    /// allows at the admission decision; the rest stay in `batch`. The final
+    /// stop check, the size, the admission on the runtime slot and the
+    /// in-call mark are ONE decision under the preparation-state lock that
+    /// `pause` takes, released before any wait on inference; the call runs
+    /// with no engine slot or transaction held; validation and commit run
+    /// under the slot.
+    fn embed(&mut self, batch: &mut Batch) -> FResult<Option<Stop>> {
         #[cfg(feature = "test-faults")]
         self.owner.admitting();
         let preparation = self.preparation;
-        let call = {
+        let (keys, tokens, call) = {
             let mut state = preparation.lock();
             if self.owner.closing() {
                 self.control.cancel();
@@ -441,13 +515,17 @@ impl<'a> Run<'a> {
             if state.phase == Phase::Pausing {
                 return Ok(Some(paused()));
             }
+            let size = batch.len().min(preparation.batch_limit(Instant::now()));
+            let keys: Vec<String> = batch.keys.drain(..size).collect();
+            let inputs: Vec<TokenizedInput> = batch.inputs.drain(..size).collect();
+            let tokens: u64 = inputs.iter().map(|input| input.ids.len() as u64).sum();
             let job = self
                 .control
                 .bounded_by(Instant::now() + DOCUMENT_CALL_TIMEOUT);
             match self.runtime.dispatch_documents(inputs, job) {
                 Ok(call) => {
                     state.in_call = true;
-                    call
+                    (keys, tokens, call)
                 }
                 Err(error) => {
                     drop(state);
@@ -536,15 +614,12 @@ impl<'a> Run<'a> {
     /// cache; otherwise only pending coverage), then drop the runtime's
     /// loaded index so the next request loads the new generation.
     fn publish(&mut self, rebuild: bool) -> FResult<Option<Stop>> {
-        let owner = self.owner;
-        let (control, report) = (self.control, &mut self.report);
-        let stop = hold(owner, |engine| {
-            // A run its owner is shutting down publishes nothing more.
-            if owner.closing() {
-                control.cancel();
-            }
-            prepare::publish(engine, control, 0, report, rebuild)
-        })?;
+        let outcome = match self.generation(rebuild) {
+            Ok(publication) => Ok(publication),
+            Err(Failed::Step(error)) => Err(error),
+            Err(Failed::Owner(error)) => return Err(error),
+        };
+        let stop = prepare::record_publication(outcome, 0, &mut self.report);
         if stop.is_none() {
             if self.report.index_published {
                 self.runtime.forget_index();
@@ -553,6 +628,83 @@ impl<'a> Run<'a> {
             self.unpublished = 0;
         }
         Ok(stop)
+    }
+
+    /// The publication itself, the CLI's `Engine::semantic_rebuild_index` /
+    /// `semantic_publish_pending` in short steps (009 T003, captain decision
+    /// 2026-10-06): the mapping a page of sources per step and the cached
+    /// vectors a chunk per step, each step ending at its first boundary after
+    /// [`STEP_TIME`]; the existing generation is validated and the new one
+    /// built and staged with the engine slot free; the slot is taken again
+    /// only to publish the staged set. Sources edited between the steps make
+    /// the mapping incomplete, never wrong: locations revalidate per request.
+    fn generation(&self, rebuild: bool) -> Result<Publication, Failed> {
+        let control = self.control;
+        let Some((digest, recipe, store, mut walk)) = self.step(|engine| {
+            let Some((digest, recipe)) = engine.semantic_identity()? else {
+                return Ok(None);
+            };
+            let walk = MappingWalk::start(engine, &digest, &recipe)?;
+            Ok(Some((digest, recipe, engine.semantic_anchor()?, walk)))
+        })?
+        else {
+            return Ok(Publication::Nothing);
+        };
+        while !self.step(|engine| walk.step(engine, control, Some(Instant::now() + STEP_TIME)))? {}
+        let mapping = self.step(|engine| walk.finish(engine))?;
+        if !rebuild {
+            if mapping.units.is_empty() {
+                return Ok(Publication::Nothing);
+            }
+            // Current means the same keys, unit locations, coverage AND
+            // source revision.
+            match validate_generation_with(&store, &digest, &recipe, control) {
+                Ok(generation) if mapping.published_by(&generation) => {
+                    return Ok(Publication::Current(generation.manifest.count));
+                }
+                Err(GenerationError::Interrupted(error)) => return Err(Failed::Step(error)),
+                _ => {}
+            }
+        }
+        let mut scope = mapping.scope;
+        let mut keys = mapping.units.into_iter();
+        let mut entries = Vec::with_capacity(keys.len());
+        while !self.step(|engine| {
+            index::lookup_entries(
+                engine,
+                &mut keys,
+                &digest,
+                &mut scope,
+                &mut entries,
+                control,
+                Some(Instant::now() + STEP_TIME),
+            )
+        })? {}
+        #[cfg(feature = "test-faults")]
+        let built = || self.owner.staging();
+        #[cfg(not(feature = "test-faults"))]
+        let built = || {};
+        let staged =
+            index::stage_generation(&store, &digest, &recipe, &entries, scope, control, &built)
+                .map_err(Failed::Step)?;
+        drop(entries);
+        let count = self.step(|_| staged.publish(control))?;
+        Ok(Publication::Rebuilt(count))
+    }
+
+    /// One short store step of a publication under the engine slot. A run
+    /// whose owner is shutting down publishes nothing more: its control is
+    /// cancelled before the step.
+    fn step<T>(&self, step: impl FnOnce(&Engine) -> FResult<T>) -> Result<T, Failed> {
+        let (owner, control) = (self.owner, self.control);
+        hold(owner, |engine| {
+            if owner.closing() {
+                control.cancel();
+            }
+            Ok(step(engine))
+        })
+        .map_err(Failed::Owner)?
+        .map_err(Failed::Step)
     }
 
     /// Record the stop: committed coverage is published first (except on
@@ -669,4 +821,143 @@ fn overlay(value: &mut serde_json::Value, live: Option<Live>) {
         }
     }
     value["reason"] = value["last_error"]["code"].clone();
+}
+
+#[cfg(all(test, feature = "test-faults"))]
+mod tests {
+    //! 009 T003, captain decision 2026-10-06: document batches are at most
+    //! [`FOREGROUND_BATCH`] inputs while the owner serves foreground
+    //! operations and [`DOCUMENT_BATCH`] otherwise.
+    use super::*;
+    use crate::neural::profile::SemanticProfile;
+    use crate::neural::provider::{DIMENSIONS, EmbeddingProvider, FunctionDescriptor};
+
+    /// An owner of one engine with no foreground operation in flight.
+    struct Quiet(Mutex<Engine>);
+
+    impl Owner for Quiet {
+        fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
+            step(&self.0.lock().unwrap_or_else(PoisonError::into_inner));
+            Ok(true)
+        }
+        fn closing(&self) -> bool {
+            false
+        }
+    }
+
+    /// Records the size of every document batch. With `foreground`, every
+    /// call also marks a foreground operation, as a request the owner served
+    /// meanwhile would, so the window never lapses during the run.
+    struct Sizes {
+        descriptor: FunctionDescriptor,
+        sizes: Arc<Mutex<Vec<usize>>>,
+        foreground: Option<Arc<Preparation>>,
+    }
+
+    impl EmbeddingProvider for Sizes {
+        fn descriptor(&self) -> &FunctionDescriptor {
+            &self.descriptor
+        }
+        fn embed_documents(
+            &mut self,
+            batch: &[TokenizedInput],
+            _control: &Control,
+        ) -> Result<Vec<Vec<f32>>, ProviderError> {
+            self.sizes.lock().unwrap().push(batch.len());
+            if let Some(preparation) = &self.foreground {
+                preparation.foreground();
+            }
+            let mut vector = vec![0f32; DIMENSIONS];
+            vector[0] = 1.0;
+            Ok(vec![vector; batch.len()])
+        }
+        fn embed_query(
+            &mut self,
+            _input: &TokenizedInput,
+            _deadline: Instant,
+        ) -> Result<Vec<f32>, ProviderError> {
+            unreachable!("preparation embeds no query")
+        }
+    }
+
+    /// Prepare twelve single-unit notes to completion; the sizes of the
+    /// document batches, in order.
+    fn batch_sizes(foreground: bool) -> Vec<usize> {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("workspace");
+        std::fs::create_dir_all(&root).unwrap();
+        for n in 0..12 {
+            std::fs::write(
+                root.join(format!("note{n:02}.md")),
+                format!("# Note {n}\n\nbody of note {n}\n"),
+            )
+            .unwrap();
+        }
+        let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+        engine.index(&root, &Control::unbounded()).unwrap();
+        let path = crate::testkit::write_semantic_profile(dir.path(), "sizes", |_| {});
+        let profile = Arc::new(SemanticProfile::load(&path).unwrap());
+        let preparation = Arc::new(Preparation::default());
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let provider = Sizes {
+            descriptor: profile.descriptor.clone(),
+            sizes: Arc::clone(&sizes),
+            foreground: foreground.then(|| Arc::clone(&preparation)),
+        };
+        let runtime = Arc::new(
+            QueryRuntime::start(
+                profile,
+                Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+            )
+            .unwrap(),
+        );
+        if foreground {
+            preparation.foreground();
+        }
+        let owner = Arc::new(Quiet(Mutex::new(engine)));
+        preparation
+            .prepare(Arc::clone(&owner) as Arc<dyn Owner>, Arc::clone(&runtime))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !preparation.idle() {
+            assert!(Instant::now() < deadline, "the driver never stopped");
+            std::thread::sleep(POLL);
+        }
+        runtime.shutdown();
+        let state = owner.0.lock().unwrap().semantic_state().unwrap().unwrap();
+        assert_eq!(state.state, "stopped", "{state:?}");
+        assert!(state.last_error.is_none(), "{state:?}");
+        assert_eq!(state.committed_units, 12, "{state:?}");
+        sizes.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn document_batches_are_small_while_the_owner_serves_foreground_operations() {
+        assert_eq!(batch_sizes(false), [8, 4], "no foreground operation");
+        assert_eq!(
+            batch_sizes(true),
+            [FOREGROUND_BATCH; 6],
+            "a foreground operation within the window"
+        );
+    }
+
+    #[test]
+    fn the_foreground_window_ends_sixty_seconds_after_the_last_operation() {
+        let at = Instant::now();
+        assert_eq!(batch_limit(None, at), DOCUMENT_BATCH);
+        assert_eq!(batch_limit(Some(at), at), FOREGROUND_BATCH);
+        assert_eq!(
+            batch_limit(Some(at), at + Duration::from_secs(59)),
+            FOREGROUND_BATCH
+        );
+        assert_eq!(
+            batch_limit(Some(at), at + FOREGROUND_WINDOW),
+            DOCUMENT_BATCH
+        );
+        // A mark taken after the admission read the clock is recent.
+        assert_eq!(
+            batch_limit(Some(at + Duration::from_secs(1)), at),
+            FOREGROUND_BATCH
+        );
+    }
 }

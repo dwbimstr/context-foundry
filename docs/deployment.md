@@ -241,6 +241,19 @@ the development profile, which works as follows:
   A SIGSTOPped worker cannot exit itself; package acceptance needs an OS-level
   guardian.
 
+  A killed owner cannot remove its scratch run directory. The next 009 or 013
+  launch under the same scratch root removes each run directory whose owner pid is
+  no process: only a real directory owned by this user and named exactly
+  `w-<pid>-<nanos>`, through the root's descriptor and without following links.
+  Each one is first claimed into a quarantine name, `.reclaim-<pid>-<nanos>`, and
+  removed only if it is the directory that was validated; anything else that took
+  its name gets the name back. Reclamation runs under the launch's control (its
+  deadline and cancellation), checked before every filesystem step, and the worker
+  starts only if the control still allows it. A claimed tree whose removal stopped,
+  or a directory whose name could not be given back, stays under its `.reclaim-`
+  name and is reported on stderr. No launch removes it; remove it by hand.
+  Everything else under the root stays.
+
 **Progressive preparation in the MCP owner (009 T003).** An owner started with
 `mcp --semantic-profile FILE --development-isolation` runs ONE resident worker for
 query embeddings and document batches alike, behind one model slot:
@@ -249,17 +262,34 @@ query embeddings and document batches alike, behind one model slot:
   With `semantic`, `index` does nothing else; combined with `root` or `scip` it is
   `invalid_argument`. Without a profile, or after a refused start, the answer is
   `semantic_unavailable` with the fallback reason. Startup never resumes preparation.
-- **Foreground first.** Each store step (partition up to 8 sources, select one batch
-  of at most 8 missing inputs, commit, publish) takes the engine slot only while no
-  foreground operation is in flight. A request arriving during such a step gets the
-  usual retryable `busy`. The model call holds no engine slot and no transaction.
-- **One model call.** A query while a document batch runs gets baseline results with
-  `fallback:provider_busy`. A batch is admitted only while the slot is free and no
-  query is being dispatched; a refused admission pauses preparation with
+- **Foreground first.** Each store step (partition up to 8 sources and at most about
+  100 ms, select one batch of at most 8 missing inputs, commit, one short publication
+  step) takes the engine slot only while no foreground operation is in flight. A
+  request arriving during such a step waits for it, bounded by its own deadline; a
+  request finding the slot held by another request still gets the usual retryable
+  `busy`. The request tells them apart by one mark the holder sets while it holds
+  the slot; a slot being taken or released has no mark and is looked at again, so a
+  slot a step just released is taken, never refused. No new step starts while a
+  request waits, and a request whose deadline or cancellation landed meanwhile
+  stops right after it took the slot, before its operation starts. A publication
+  builds and stages the generation with the slot free and takes it again only to
+  rename the staged files into place. The model call holds no engine slot and no
+  transaction.
+- **One model call.** The worker runs one call at a time and keeps no queue. A query
+  that finds a document batch running may wait for that batch to end, up to its own
+  ceiling (min(1500 ms, half the remaining read deadline)), and then gets the model.
+  Only one query waits, and no new batch is admitted while it does. Any other query
+  meanwhile, a query while another query runs, a query whose ceiling ends first, and
+  a query beside a call the worker abandoned at its deadline get baseline results
+  with `fallback:provider_busy`. The wait counts against the request, which keeps
+  its engine slot meanwhile, so another request gets the usual retryable `busy`.
+  While the owner served any request in the last 60 s, each document call carries at
+  most 2 inputs; otherwise up to 8. A batch is admitted only while the slot is free
+  and no query is being dispatched; a refused admission pauses preparation with
   `provider_busy`, keeping committed work. A query the worker abandoned at its
   deadline holds the slot until its late reply arrives. A `prepare` while an earlier
   call still holds the slot (for example after a client timeout) is refused
-  `provider_busy` before anything starts. Nothing is queued.
+  `provider_busy` before anything starts.
 - **Stops.** `pause` admits no new batch and lets the in-flight batch finish and
   commit. Owner exit or EOF discards the uncommitted batch, also one waiting for the
   engine slot; the owner releases its store only after the worker is stopped and
@@ -274,9 +304,12 @@ query embeddings and document batches alike, behind one model slot:
   coverage that has arrived and say `partial` or `ready`.
 - **Status.** `status` adds a `semantic` object: the metadata-only census of
   `semantic status`, the live state (`running`, `paused`, `stopped`), `reason`, the
-  last error, the last provider observation with its time, and the resident `runtime`
-  (`ready` or its `fallback:` word). The census gets half the read deadline; when that
-  runs out, the object names `census: deadline_exceeded` with the committed state row.
+  last error, the last provider observation with its time, and the resident
+  `runtime`: `ready`, the start's `fallback:` word after a refused start, or
+  `fallback:provider_exited` / `fallback:resource_limit` after a model call returned
+  that failure and no call has succeeded since, read without calling the model.
+  The census gets half the read deadline; when that runs out, the object names
+  `census: deadline_exceeded` with the committed state row.
 - **Limits.** The real lifecycle on a declared corpus (cold preparation, partial and
   steady queries, edit catch-up, restart) is written as an ignored measurement-phase
   test and has not been run. Each publication rebuilds the generation from the cache

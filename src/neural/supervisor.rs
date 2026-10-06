@@ -7,6 +7,7 @@
 //! and source access stays untouched. Shutdown is close-stdin, TERM, a 5 s
 //! grace, KILL and reap through the child handle; ownership is released only
 //! after the process is gone, and no replacement starts before that.
+use super::anchor::{Dir, Kind};
 use super::profile::{SemanticProfile, control_stop, hash_regular_file_until};
 use super::protocol::{self, Header, Purpose};
 use super::provider::{
@@ -15,6 +16,7 @@ use super::provider::{
 };
 use super::worker_runtime;
 use crate::control::Control;
+use std::ffi::OsStr;
 use std::io::{BufReader, Read};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
@@ -64,6 +66,30 @@ pub fn set_launch_wait_slice(slice: Duration) {
 #[cfg(feature = "test-faults")]
 static LAUNCH_WAIT_SLICE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Named fault points of the launch (test-faults only; release builds carry
+/// no hook code and no fault-name strings).
+#[cfg(feature = "test-faults")]
+pub mod fault_names {
+    /// Scratch reclamation validated one dead run directory (the detail is
+    /// its name) and has not claimed it yet.
+    pub const SCRATCH_RECLAIM_VALIDATED: &str =
+        "ctxfoundry-fault/supervisor.scratch_reclaim_validated";
+    /// Scratch reclamation claimed a validated dead run under its quarantine
+    /// name (the detail is the run's name) and has not yet checked that the
+    /// claimed entry is the validated directory.
+    pub const SCRATCH_RECLAIM_CLAIMED: &str = "ctxfoundry-fault/supervisor.scratch_reclaim_claimed";
+    /// One step of a reclamation listing is about to run: a name read or a
+    /// kind check. The detail is `root` for the scratch root's listing and
+    /// `run` for a listing inside a claimed run tree.
+    pub const SCRATCH_RECLAIM_ENTRY: &str = "ctxfoundry-fault/supervisor.scratch_reclaim_entry";
+    /// The readiness wait passed its control check and has not computed its
+    /// receive slice yet.
+    pub const READY_SLICE: &str = "ctxfoundry-fault/supervisor.ready_slice";
+    /// The readiness receive is entered with time left before the
+    /// acquisition's bound (the detail is the receive slice in ms).
+    pub const READY_RECEIVE_ENTERED: &str = "ctxfoundry-fault/supervisor.ready_receive_entered";
+}
+
 /// The seam the preparation path calls. Normal admission stays closed until
 /// platform isolation acceptance; `development` runs the script-built,
 /// ad-hoc-signed profile under the owner's explicit authorization.
@@ -96,22 +122,34 @@ pub fn acquire_until(
 /// root that is a symlink, not a directory, owned by another user or
 /// writable by group or others is refused, because the worker's HOME and
 /// TMPDIR live below it. The run directory and its `tmp` are mode 0700
-/// whatever the umask, and removed after the worker is reaped.
-fn prepare_run_scratch(profile: &SemanticProfile) -> Result<PathBuf, ProviderError> {
-    prepare_run_scratch_at(&profile.worker.scratch_root, &|| {
-        profile
-            .check_scratch_disjoint()
-            .map_err(|e| ProviderError::ProfileInvalid(e.to_string()))
-    })
+/// whatever the umask, and removed after the worker is reaped; run
+/// directories that dead owners left behind are reclaimed first
+/// ([`reclaim_dead_runs`]).
+fn prepare_run_scratch(
+    profile: &SemanticProfile,
+    control: &Control,
+) -> Result<PathBuf, ProviderError> {
+    prepare_run_scratch_at(
+        &profile.worker.scratch_root,
+        &|| {
+            profile
+                .check_scratch_disjoint()
+                .map_err(|e| ProviderError::ProfileInvalid(e.to_string()))
+        },
+        control,
+    )
 }
 
 /// [`prepare_run_scratch`] for any worker profile: `root` is its scratch
 /// root and `check_disjoint` its scratch/read-only separation check, run
 /// before anything is created and again on the root as it then exists. 013's
 /// learning worker uses exactly these rules for its own scratch root.
+/// `control` is the launch's: reclamation stops at it, and a stopped launch
+/// creates no run directory.
 pub(crate) fn prepare_run_scratch_at(
     root: &Path,
     check_disjoint: &dyn Fn() -> Result<(), ProviderError>,
+    control: &Control,
 ) -> Result<PathBuf, ProviderError> {
     let root = root.to_path_buf();
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
@@ -156,6 +194,10 @@ pub(crate) fn prepare_run_scratch_at(
     // The launch-time recheck, on the root as it now exists, before
     // anything is created inside it.
     check_disjoint()?;
+    reclaim_dead_runs(&root, control);
+    if let Some(stop) = control_stop(control) {
+        return Err(stop);
+    }
     let run = root.join(format!(
         "w-{}-{}",
         std::process::id(),
@@ -173,6 +215,207 @@ pub(crate) fn prepare_run_scratch_at(
     }
     // Sandbox grants name physical paths, so the worker gets the canonical one.
     Ok(std::fs::canonicalize(&run).unwrap_or(run))
+}
+
+/// Remove the run directories that dead owners left under the scratch
+/// `root`: an owner killed by SIGKILL never removes its own, and 013's holds
+/// the staged base head. Only an entry that is a real directory (a symlink
+/// is never followed), owned by this uid, named exactly `w-<pid>-<nanos>`
+/// as [`prepare_run_scratch_at`] names it, and whose pid is no process at
+/// all is a candidate. Nothing else under the root is touched.
+///
+/// A candidate is opened `O_NOFOLLOW` and validated on that descriptor, then
+/// CLAIMED by a no-replace rename, through the root's descriptor ([`Dir`]),
+/// to a fresh quarantine name `.reclaim-<this pid>-<nanos>` ([`claim_name`]).
+/// That name is outside the run namespace, so no reclamation ever takes it as
+/// a candidate: only the pass that made the claim removes it, and only when
+/// the claimed entry is the very directory that was validated, through its
+/// own descriptors. Anything else that took the candidate's name meanwhile
+/// gets that name back untouched; when the name was taken again, it stays
+/// under the quarantine name and is reported, never removed. A claimed tree
+/// whose removal stops (the launch `control` stopped, an error, or the
+/// process died) also stays there: leaking it is the price of never removing
+/// a directory that was not validated. Every listing runs under `control`
+/// ([`entries_under`]), which is checked before each filesystem step, and a
+/// stop leaves the rest for a later launch.
+fn reclaim_dead_runs(root: &Path, control: &Control) {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(anchor) = Dir::open_path(root) else {
+        return;
+    };
+    let Ok(entries) = entries_under(&anchor, control, "root") else {
+        return;
+    };
+    let uid = unsafe { libc::geteuid() };
+    for (name, kind) in entries {
+        if control_stop(control).is_some() {
+            return;
+        }
+        if kind != Kind::Dir {
+            continue;
+        }
+        let Some(pid) = run_owner_pid(&name) else {
+            continue;
+        };
+        if process_exists(pid) {
+            continue;
+        }
+        let Ok(Some(run)) = anchor.open_dir(&name) else {
+            continue;
+        };
+        let Ok(identity) = run.identity() else {
+            continue;
+        };
+        // The owner is read from the very inode held open.
+        let owned = std::fs::symlink_metadata(root.join(&name))
+            .is_ok_and(|meta| meta.uid() == uid && (meta.dev(), meta.ino()) == identity);
+        if !owned {
+            continue;
+        }
+        #[cfg(feature = "test-faults")]
+        let _ = crate::neural::hit_fault(
+            fault_names::SCRATCH_RECLAIM_VALIDATED,
+            Some(control),
+            &name.to_string_lossy(),
+        );
+        if control_stop(control).is_some() {
+            return;
+        }
+        let claimed = claim_name();
+        if anchor
+            .rename_noreplace_into(&name, &anchor, &claimed)
+            .is_err()
+        {
+            continue;
+        }
+        #[cfg(feature = "test-faults")]
+        let _ = crate::neural::hit_fault(
+            fault_names::SCRATCH_RECLAIM_CLAIMED,
+            Some(control),
+            &name.to_string_lossy(),
+        );
+        let names_run = |dir: &Dir| {
+            dir.open_dir(&claimed)
+                .ok()
+                .flatten()
+                .and_then(|claimed| claimed.identity().ok())
+                == Some(identity)
+        };
+        if !names_run(&anchor) {
+            if anchor
+                .rename_noreplace_into(&claimed, &anchor, &name)
+                .is_err()
+            {
+                left_behind(
+                    root,
+                    &claimed,
+                    "not the validated directory, and its name was taken again",
+                );
+            }
+            continue;
+        }
+        if remove_contents(&run, control, 0).is_err() {
+            left_behind(root, &claimed, "its removal stopped");
+            continue;
+        }
+        drop(run);
+        if !(names_run(&anchor) && anchor.remove_dir(&claimed).is_ok()) {
+            left_behind(root, &claimed, "it could not be removed");
+        }
+    }
+}
+
+/// The entries of `dir`, a scratch root or a directory inside a claimed run
+/// tree (`scope` at the fault point: `root` or `run`), listed under the
+/// launch's `control`: it is checked before every name read and every kind
+/// check ([`Dir::entries_while`]), and a stop is an `Interrupted` error.
+#[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
+fn entries_under(
+    dir: &Dir,
+    control: &Control,
+    scope: &str,
+) -> std::io::Result<Vec<(std::ffi::OsString, Kind)>> {
+    dir.entries_while(|| {
+        #[cfg(feature = "test-faults")]
+        let _ = crate::neural::hit_fault(fault_names::SCRATCH_RECLAIM_ENTRY, Some(control), scope);
+        control_stop(control).is_none()
+    })
+}
+
+/// Report an entry reclamation leaves under its quarantine name. No later
+/// reclamation removes it; the owner of the scratch root may.
+fn left_behind(root: &Path, claimed: &str, why: &str) {
+    eprintln!(
+        "foundry: scratch reclamation left {} ({why}); no later launch removes it",
+        root.join(claimed).display()
+    );
+}
+
+/// How deep a reclaimed tree is walked; anything deeper stays.
+const RECLAIM_DEPTH: usize = 64;
+
+/// Empty `dir` through descriptors: files and symlinks are unlinked (a
+/// link's target is never touched), directories are emptied through their
+/// own `O_NOFOLLOW` descriptors and then removed. Stops at `control`, which
+/// is also checked at every step of every listing.
+fn remove_contents(dir: &Dir, control: &Control, depth: usize) -> std::io::Result<()> {
+    if depth > RECLAIM_DEPTH {
+        return Err(std::io::Error::other("the scratch tree is too deep"));
+    }
+    for (entry, kind) in entries_under(dir, control, "run")? {
+        if control_stop(control).is_some() {
+            return Err(std::io::ErrorKind::Interrupted.into());
+        }
+        if kind == Kind::Dir {
+            if let Some(child) = dir.open_dir(&entry)? {
+                remove_contents(&child, control, depth + 1)?;
+            }
+            dir.remove_dir(&entry)?;
+        } else {
+            dir.remove_tree(&entry)?;
+        }
+    }
+    Ok(())
+}
+
+/// A fresh quarantine name of this process for a claimed dead run:
+/// `.reclaim-<this pid>-<nanos>`, the nanos made unique within the process.
+/// It is never a run-directory name ([`run_owner_pid`] matches only
+/// `w-<pid>-<nanos>`), so no later reclamation takes it, whoever claimed it.
+fn claim_name() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let unique = nanos.saturating_add(u128::from(NEXT.fetch_add(1, Ordering::Relaxed)));
+    format!(".reclaim-{}-{unique}", std::process::id())
+}
+
+/// The owner pid of a run directory named exactly as
+/// [`prepare_run_scratch_at`] names it, `w-<pid>-<nanos>` (plain decimals
+/// without a leading zero, pid above 0); `None` for any other name.
+fn run_owner_pid(name: &OsStr) -> Option<libc::pid_t> {
+    let (pid, nanos) = name.to_str()?.strip_prefix("w-")?.split_once('-')?;
+    let decimal = |digits: &str| {
+        !digits.is_empty()
+            && digits.bytes().all(|b| b.is_ascii_digit())
+            && (digits == "0" || !digits.starts_with('0'))
+    };
+    if !decimal(pid) || !decimal(nanos) || nanos.parse::<u128>().is_err() {
+        return None;
+    }
+    pid.parse::<libc::pid_t>().ok().filter(|&pid| pid > 0)
+}
+
+/// False only when no process has `pid` (`kill(pid, 0)` fails with
+/// `ESRCH`): another user's process (`EPERM`) and an unreaped one count.
+fn process_exists(pid: libc::pid_t) -> bool {
+    // SAFETY: signal 0 sends nothing; it checks existence and permission.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 /// The child's pre-exec setup: own process group, soft and hard
@@ -515,7 +758,7 @@ impl WorkerProvider {
 
         // The worker's private scratch is a per-run directory under exactly
         // the profile's scratch root, which the signed bundle grants.
-        let scratch_dir = prepare_run_scratch(profile)?;
+        let scratch_dir = prepare_run_scratch(profile, control)?;
         let (liveness_reader, liveness_writer) = std::io::pipe().map_err(|e| {
             let _ = std::fs::remove_dir_all(&scratch_dir);
             ProviderError::IsolationUnavailable(format!("liveness pipe: {e}"))
@@ -561,6 +804,12 @@ impl WorkerProvider {
         // SAFETY: `child_setup` calls only async-signal-safe functions
         // between fork and exec and takes no lock or allocation.
         unsafe { command.pre_exec(child_setup(read_fd)) };
+        // The caller's stop is checked again right before the worker starts:
+        // scratch preparation (and its reclamation of dead runs) took time.
+        if let Some(stop) = control_stop(control) {
+            let _ = std::fs::remove_dir_all(&scratch_dir);
+            return Err(stop);
+        }
         let mut child = command.spawn().map_err(|e| {
             let _ = std::fs::remove_dir_all(&scratch_dir);
             ProviderError::ProfileInvalid(format!("launch {}: {e}", executable.display()))
@@ -791,9 +1040,28 @@ impl WorkerProvider {
                 stopped = Some(stop);
                 break None;
             }
-            let slice = bound_deadline
-                .and_then(|at| at.checked_duration_since(Instant::now()))
-                .map_or(launch_slice, |left| left.min(launch_slice));
+            #[cfg(feature = "test-faults")]
+            let _ = crate::neural::hit_fault(fault_names::READY_SLICE, Some(control), "");
+            // No bound waits a whole slice; a bound that passed since the
+            // check above leaves none.
+            let slice = match bound_deadline {
+                None => launch_slice,
+                Some(at) => at
+                    .saturating_duration_since(Instant::now())
+                    .min(launch_slice),
+            };
+            if slice.is_zero() {
+                // No receive is entered without time left: the control is
+                // read again and names the stop.
+                stopped = control_stop(control);
+                break None;
+            }
+            #[cfg(feature = "test-faults")]
+            let _ = crate::neural::hit_fault(
+                fault_names::READY_RECEIVE_ENTERED,
+                Some(control),
+                &slice.as_millis().to_string(),
+            );
             match launch_rx.recv_timeout(slice) {
                 Ok(event) => break Some(event),
                 Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -1285,5 +1553,39 @@ fn protocol_kind(header: &Header) -> &'static str {
         Header::Vectors { .. } => "vectors",
         Header::Busy { .. } => "busy",
         Header::Error { .. } => "error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Only the exact name [`prepare_run_scratch_at`] gives a run directory
+    /// carries an owner pid; nothing else under a scratch root is ever
+    /// reclaimed.
+    #[test]
+    fn only_exact_run_directory_names_carry_an_owner_pid() {
+        let pid = |name: &str| run_owner_pid(OsStr::new(name));
+        assert_eq!(pid("w-4242-1759730000000000000"), Some(4242));
+        assert_eq!(pid("w-1-0"), Some(1));
+        for foreign in [
+            "w-0-1",
+            "w-04242-1",
+            "w-4242-01",
+            "w-4242",
+            "w-4242-",
+            "w--1",
+            "w-4242-1-2",
+            "w-+4242-1",
+            "w-4242-1x",
+            "w-4242-1 ",
+            "W-4242-1",
+            "x-4242-1",
+            "w-99999999999-1",
+            "tmp",
+            "",
+        ] {
+            assert_eq!(pid(foreign), None, "{foreign:?}");
+        }
     }
 }

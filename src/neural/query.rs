@@ -21,8 +21,8 @@ use crate::neural::provider::{
 };
 use crate::neural::tokenize::DocumentTokenizer;
 use crate::store::Engine;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
 /// The dense candidate window (D001): the top 64 dense hits enter the fusion.
@@ -315,6 +315,67 @@ enum Job {
     },
 }
 
+/// Who holds the one model slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Holder {
+    Query,
+    /// One document batch of this owner's preparation driver.
+    Documents,
+}
+
+/// The ONE model slot, shared with the provider thread.
+#[derive(Default)]
+struct Slot {
+    state: Mutex<SlotState>,
+    /// Signalled whenever the slot is freed.
+    freed: Condvar,
+}
+
+#[derive(Default)]
+struct SlotState {
+    /// Set from the dispatch of a query or document batch until the
+    /// provider thread finished it: a request whose caller timed out keeps
+    /// the slot until its late reply is dropped, exactly like the supervised
+    /// worker.
+    holder: Option<Holder>,
+    /// 009 T003: one query waits for the document batch holding the slot
+    /// to end. The slot is promised to it: every other query and every
+    /// document admission is refused meanwhile.
+    waiter: bool,
+    /// The last terminal failure a provider call returned (the worker
+    /// exited or was stopped at its memory ceiling), cleared by a later
+    /// call that succeeded: the status word, read without a model call.
+    failure: Option<&'static str>,
+}
+
+impl Slot {
+    fn lock(&self) -> MutexGuard<'_, SlotState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Free the slot after a provider call ended with `outcome`, and wake the
+    /// waiting query, if any.
+    fn free_after<T>(&self, outcome: &Result<T, ProviderError>) {
+        let mut state = self.lock();
+        state.holder = None;
+        match outcome {
+            Ok(_) => state.failure = None,
+            Err(error @ (ProviderError::WorkerExited(_) | ProviderError::ResourceLimit(_))) => {
+                state.failure = Some(error.code());
+            }
+            Err(_) => {}
+        }
+        drop(state);
+        self.freed.notify_all();
+    }
+
+    /// Free the slot claimed for a call that never reached the provider.
+    fn free(&self) {
+        self.lock().holder = None;
+        self.freed.notify_all();
+    }
+}
+
 /// One admitted document call. Waiting is sliced so the caller can notice
 /// its own stop; dropping the call discards the late reply, and the slot
 /// stays held until the provider call actually ends.
@@ -377,11 +438,9 @@ pub struct QueryRuntime {
     jobs: Mutex<Option<mpsc::Sender<Job>>>,
     /// The provider thread, joined by [`Self::shutdown`].
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
-    /// True from the dispatch of a query or document batch until the
-    /// provider thread finished it: a request whose caller timed out keeps
-    /// the slot Busy until the late reply is dropped, exactly like the
-    /// supervised worker.
-    busy: Arc<AtomicBool>,
+    /// The one model slot for queries and document batches; the provider
+    /// thread frees it only when the provider call really ended.
+    slot: Arc<Slot>,
     /// Foreground queries currently in their request path.
     dispatching: AtomicUsize,
     /// Orders query registration and each document admission decision; it
@@ -424,8 +483,8 @@ impl QueryRuntime {
         let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
         let (ready_tx, ready_rx) =
             mpsc::channel::<Result<(String, Option<LateCall>), ProviderError>>();
-        let busy = Arc::new(AtomicBool::new(false));
-        let thread_busy = Arc::clone(&busy);
+        let slot = Arc::new(Slot::default());
+        let thread_slot = Arc::clone(&slot);
         let thread = std::thread::Builder::new()
             .name("foundry-query-provider".into())
             .spawn(move || {
@@ -450,7 +509,7 @@ impl QueryRuntime {
                             reply,
                         } => {
                             let result = provider.embed_query(&input, deadline);
-                            thread_busy.store(false, Ordering::SeqCst);
+                            thread_slot.free_after(&result);
                             let _ = reply.send(result);
                         }
                         Job::Documents {
@@ -459,7 +518,7 @@ impl QueryRuntime {
                             reply,
                         } => {
                             let result = provider.embed_documents(&inputs, &control);
-                            thread_busy.store(false, Ordering::SeqCst);
+                            thread_slot.free_after(&result);
                             let _ = reply.send(result);
                         }
                     }
@@ -481,7 +540,7 @@ impl QueryRuntime {
             tokenizer,
             jobs: Mutex::new(Some(jobs_tx)),
             thread: Mutex::new(Some(thread)),
-            busy,
+            slot,
             dispatching: AtomicUsize::new(0),
             admission: Mutex::new(()),
             late,
@@ -532,6 +591,9 @@ impl QueryRuntime {
     /// provider does, so a stalled provider cannot hold the request past
     /// it; the provider slot stays busy until its call really ends, and a
     /// call the provider already gave up on (its late call) keeps it busy too.
+    /// 009 T003: a slot held by this owner's document batch is waited for,
+    /// by one query at a time, up to that same ceiling
+    /// ([`Self::claim_query_slot`]).
     pub fn embed(&self, query: &str, deadline: Instant) -> Result<Vec<f32>, ProviderError> {
         let _dispatching = Dispatching::enter(self);
         let _ = neural_fault!(QUERY_REGISTERED, None, query);
@@ -541,7 +603,7 @@ impl QueryRuntime {
         if Instant::now() >= ceiling {
             return Err(ProviderError::Timeout);
         }
-        self.claim_slot("query")?;
+        self.claim_query_slot(ceiling)?;
         let (reply, answer) = mpsc::channel();
         let sent = self.send(Job::Query {
             input,
@@ -549,7 +611,7 @@ impl QueryRuntime {
             reply,
         });
         if !sent {
-            self.busy.store(false, Ordering::SeqCst);
+            self.slot.free();
             return Err(ProviderError::WorkerExited(
                 "the provider thread is gone".into(),
             ));
@@ -570,10 +632,11 @@ impl QueryRuntime {
     /// inputs, limits checked first) on the same slot as queries, with the
     /// caller's `control` (its deadline and cancellation reach the provider).
     /// Refused `Busy` — nothing is queued — while the slot is held by a call
-    /// that has not actually ended (the provider's late call included), or
-    /// while a foreground query is being dispatched. The decision is taken
-    /// under the admission lock that query registration takes too: a query
-    /// registered before it always wins.
+    /// that has not actually ended (the provider's late call included), is
+    /// promised to a query waiting for it, or while a foreground query is
+    /// being dispatched. The decision is taken under the admission lock that
+    /// query registration takes too: a query registered before it always
+    /// wins.
     pub fn dispatch_documents(
         &self,
         inputs: Vec<TokenizedInput>,
@@ -586,7 +649,7 @@ impl QueryRuntime {
             if self.dispatching.load(Ordering::SeqCst) > 0 {
                 return Err(ProviderError::Busy);
             }
-            self.claim_slot("documents")?;
+            self.claim_document_slot()?;
         }
         let (reply, answer) = mpsc::channel();
         let sent = self.send(Job::Documents {
@@ -595,7 +658,7 @@ impl QueryRuntime {
             reply,
         });
         if !sent {
-            self.busy.store(false, Ordering::SeqCst);
+            self.slot.free();
             return Err(ProviderError::WorkerExited(
                 "the provider thread is gone".into(),
             ));
@@ -603,19 +666,76 @@ impl QueryRuntime {
         Ok(DocumentCall { answer })
     }
 
-    /// Claim the one model slot: the outer flag FIRST, then the provider's
-    /// late call. The provider thread clears the flag only after the provider
-    /// returned, and the supervisor marks a call abandoned before it returns,
-    /// so once the claim succeeds any late call is already visible; a claim
-    /// that finds one is released at once. Nothing is created or sent on a
-    /// refusal.
-    fn claim_slot(&self, detail: &str) -> Result<(), ProviderError> {
-        if self.busy.swap(true, Ordering::SeqCst) {
-            return Err(ProviderError::Busy);
+    /// Claim a free slot for a document batch, never waiting: the slot
+    /// FIRST, then the provider's late call ([`Self::probe_late_call`]). A
+    /// slot that is held, or promised to a waiting query, is `Busy`.
+    /// Nothing is created or sent on a refusal.
+    fn claim_document_slot(&self) -> Result<(), ProviderError> {
+        {
+            let mut slot = self.slot.lock();
+            if slot.holder.is_some() || slot.waiter {
+                return Err(ProviderError::Busy);
+            }
+            slot.holder = Some(Holder::Documents);
         }
+        self.probe_late_call("documents")
+    }
+
+    /// Claim the slot for a query, then probe the provider's late call. A
+    /// free slot is claimed at once. 009 T003: a slot held by this owner's
+    /// document batch may be waited for until `ceiling`, by ONE query at a
+    /// time. The batch's end frees the slot under the lock the waiter
+    /// claims it under, and while it waits every other query and every
+    /// document admission is refused, so nothing is admitted in between. A
+    /// ceiling that ends first is `Busy`, as is a slot held by a query or
+    /// already promised to a waiter. The worker still runs one call and
+    /// queues none: this wait is the owner's, bounded by the request's own
+    /// ceiling.
+    fn claim_query_slot(&self, ceiling: Instant) -> Result<(), ProviderError> {
+        {
+            let mut slot = self.slot.lock();
+            match (slot.holder, slot.waiter) {
+                (None, false) => {}
+                (Some(Holder::Documents), false) => {
+                    slot.waiter = true;
+                    // The ceiling is read again after every reacquisition and
+                    // right before the claim: a batch that ended after the
+                    // ceiling, while this waiter was still reacquiring the
+                    // lock, is never claimed.
+                    loop {
+                        let left = ceiling.saturating_duration_since(Instant::now());
+                        if left.is_zero() {
+                            slot.waiter = false;
+                            return Err(ProviderError::Busy);
+                        }
+                        if slot.holder.is_none() {
+                            break;
+                        }
+                        slot = self
+                            .slot
+                            .freed
+                            .wait_timeout(slot, left)
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .0;
+                    }
+                    slot.waiter = false;
+                }
+                _ => return Err(ProviderError::Busy),
+            }
+            slot.holder = Some(Holder::Query);
+        }
+        self.probe_late_call("query")
+    }
+
+    /// The second half of every claim: the provider's late call. The
+    /// provider thread frees the slot only after the provider returned, and
+    /// the supervisor marks a call abandoned before it returns, so once a
+    /// claim succeeded any late call is already visible; a claim that finds
+    /// one is released at once.
+    fn probe_late_call(&self, detail: &str) -> Result<(), ProviderError> {
         let _ = neural_fault!(SLOT_CLAIMED, None, detail);
         if self.late_call_running() {
-            self.busy.store(false, Ordering::SeqCst);
+            self.slot.free();
             return Err(ProviderError::Busy);
         }
         Ok(())
@@ -623,12 +743,22 @@ impl QueryRuntime {
 
     /// True while the one model slot is held by a call that has not actually
     /// ended (the provider's late call included), or a foreground query is
-    /// being dispatched. The flag is read before the late call, in the order
+    /// being dispatched. The slot is read before the late call, in the order
     /// the provider thread publishes them.
     pub fn occupied(&self) -> bool {
-        self.busy.load(Ordering::SeqCst)
-            || self.dispatching.load(Ordering::SeqCst) > 0
-            || self.late_call_running()
+        let held = self.slot.lock().holder.is_some();
+        held || self.dispatching.load(Ordering::SeqCst) > 0 || self.late_call_running()
+    }
+
+    /// The resident runtime's status word, read without a model call:
+    /// `ready`, or `fallback:<code>` after a provider call returned a
+    /// terminal failure (`provider_exited`, `resource_limit`) and no call has
+    /// succeeded since.
+    pub fn status_word(&self) -> String {
+        match self.slot.lock().failure {
+            None => "ready".to_owned(),
+            Some(code) => fallback_word(code),
+        }
     }
 
     /// The function digest of the descriptor the provider itself serves.
@@ -696,5 +826,316 @@ impl QueryRuntime {
     /// against the store's state row.
     pub fn function_digest(&self) -> String {
         self.profile.descriptor.digest()
+    }
+}
+
+#[cfg(all(test, feature = "test-faults"))]
+mod tests {
+    //! 009 T003, captain decision 2026-10-06: a query that finds the slot
+    //! held by this owner's document batch waits for it, bounded by its own
+    //! ceiling. Barriers: the provider reports every call it enters and
+    //! holds it until the test releases it; the waiting query is read from
+    //! the slot itself.
+    use super::*;
+    use crate::neural::provider::{DIMENSIONS, FunctionDescriptor};
+    use std::sync::atomic::AtomicBool;
+
+    fn unit_vector() -> Vec<f32> {
+        let mut vector = vec![0f32; DIMENSIONS];
+        vector[0] = 1.0;
+        vector
+    }
+
+    fn one_input() -> Vec<TokenizedInput> {
+        vec![TokenizedInput { ids: vec![1, 2, 3] }]
+    }
+
+    /// Every document call, and every query while `hold_queries`, reports
+    /// that it entered and then waits for one release. Queries are counted;
+    /// `late` is the provider's late-call probe.
+    struct Gated {
+        descriptor: FunctionDescriptor,
+        entered: mpsc::Sender<&'static str>,
+        release: mpsc::Receiver<()>,
+        hold_queries: bool,
+        queries: Arc<AtomicUsize>,
+        late: Arc<AtomicBool>,
+    }
+
+    impl EmbeddingProvider for Gated {
+        fn descriptor(&self) -> &FunctionDescriptor {
+            &self.descriptor
+        }
+        fn embed_documents(
+            &mut self,
+            batch: &[TokenizedInput],
+            _control: &Control,
+        ) -> Result<Vec<Vec<f32>>, ProviderError> {
+            let _ = self.entered.send("documents");
+            let _ = self.release.recv();
+            Ok(batch.iter().map(|_| unit_vector()).collect())
+        }
+        fn embed_query(
+            &mut self,
+            _input: &TokenizedInput,
+            _deadline: Instant,
+        ) -> Result<Vec<f32>, ProviderError> {
+            self.queries.fetch_add(1, Ordering::SeqCst);
+            if self.hold_queries {
+                let _ = self.entered.send("query");
+                let _ = self.release.recv();
+            }
+            Ok(unit_vector())
+        }
+        fn late_call(&self) -> Option<LateCall> {
+            let late = Arc::clone(&self.late);
+            Some(Arc::new(move || late.load(Ordering::SeqCst)))
+        }
+    }
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        runtime: Arc<QueryRuntime>,
+        entered: mpsc::Receiver<&'static str>,
+        release: mpsc::Sender<()>,
+        queries: Arc<AtomicUsize>,
+        late: Arc<AtomicBool>,
+    }
+
+    impl Fixture {
+        fn new(hold_queries: bool) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let path = crate::testkit::write_semantic_profile(dir.path(), "wait", |_| {});
+            let profile = Arc::new(SemanticProfile::load(&path).unwrap());
+            let (entered_tx, entered) = mpsc::channel();
+            let (release, release_rx) = mpsc::channel();
+            let queries = Arc::new(AtomicUsize::new(0));
+            let late = Arc::new(AtomicBool::new(false));
+            let gated = Gated {
+                descriptor: profile.descriptor.clone(),
+                entered: entered_tx,
+                release: release_rx,
+                hold_queries,
+                queries: Arc::clone(&queries),
+                late: Arc::clone(&late),
+            };
+            let runtime = QueryRuntime::start(
+                profile,
+                Box::new(move || Ok(Box::new(gated) as Box<dyn EmbeddingProvider>)),
+            )
+            .unwrap();
+            Self {
+                _dir: dir,
+                runtime: Arc::new(runtime),
+                entered,
+                release,
+                queries,
+                late,
+            }
+        }
+
+        /// The next call the provider entered.
+        fn entered(&self) -> &'static str {
+            self.entered
+                .recv_timeout(Duration::from_secs(30))
+                .expect("the provider entered a call")
+        }
+
+        /// Admit one document batch and wait until the provider runs it.
+        fn batch_in_flight(&self) -> DocumentCall {
+            let call = self
+                .runtime
+                .dispatch_documents(one_input(), Control::unbounded())
+                .expect("the slot is free");
+            assert_eq!(self.entered(), "documents");
+            call
+        }
+
+        /// One query on its own thread; its read deadline is 60 s away, so
+        /// its ceiling is the full 1500 ms.
+        fn query(&self) -> std::thread::JoinHandle<Result<Vec<f32>, ProviderError>> {
+            let runtime = Arc::clone(&self.runtime);
+            std::thread::spawn(move || {
+                runtime.embed("dusk", Instant::now() + Duration::from_secs(60))
+            })
+        }
+
+        /// A query on this thread that must be refused before its own
+        /// ceiling: a waiting query returns only once its ceiling ended.
+        fn refused_at_once(&self, query: &str) {
+            let started = Instant::now();
+            let result = self
+                .runtime
+                .embed(query, Instant::now() + Duration::from_secs(60));
+            assert_eq!(result, Err(ProviderError::Busy));
+            assert!(
+                started.elapsed() < QUERY_CEILING,
+                "{query}: refused only after {:?}, so it waited",
+                started.elapsed()
+            );
+        }
+
+        fn waiting(&self) -> bool {
+            self.runtime.slot.lock().waiter
+        }
+
+        /// Barrier: a query waits for the document batch.
+        fn until_waiting(&self) {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !self.waiting() {
+                assert!(Instant::now() < deadline, "no query ever waited");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+
+        fn documents_done(call: &DocumentCall) {
+            match call.wait(Duration::from_secs(30)) {
+                Some(Ok(vectors)) => assert_eq!(vectors.len(), 1),
+                Some(Err(error)) => panic!("the document call failed: {error}"),
+                None => panic!("the document call never ended"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_query_waits_for_the_document_batch_and_gets_the_model() {
+        let fixture = Fixture::new(false);
+        let call = fixture.batch_in_flight();
+        let query = fixture.query();
+        fixture.until_waiting();
+        assert_eq!(fixture.queries.load(Ordering::SeqCst), 0);
+        fixture.release.send(()).unwrap();
+        assert_eq!(
+            query.join().unwrap(),
+            Ok(unit_vector()),
+            "the query got the model once the batch ended"
+        );
+        Fixture::documents_done(&call);
+        assert_eq!(fixture.queries.load(Ordering::SeqCst), 1);
+        assert!(!fixture.waiting());
+        assert!(!fixture.runtime.occupied());
+    }
+
+    /// The query's ceiling ends while the batch still runs: `provider_busy`,
+    /// which the request path serves as baseline results
+    /// (`fallback:provider_busy`); the model never saw the query and the
+    /// batch ends normally.
+    #[test]
+    fn a_query_whose_ceiling_ends_first_gets_provider_busy() {
+        let fixture = Fixture::new(false);
+        let call = fixture.batch_in_flight();
+        // A 200 ms read deadline: a 100 ms ceiling.
+        let result = fixture
+            .runtime
+            .embed("dusk", Instant::now() + Duration::from_millis(200));
+        assert_eq!(result, Err(ProviderError::Busy));
+        assert_eq!(Fallback::from(ProviderError::Busy).code, "provider_busy");
+        assert!(!fixture.waiting(), "the query no longer waits");
+        fixture.release.send(()).unwrap();
+        Fixture::documents_done(&call);
+        assert_eq!(fixture.queries.load(Ordering::SeqCst), 0);
+        assert!(!fixture.runtime.occupied());
+    }
+
+    /// At most one query waits: a second one is `provider_busy` at once
+    /// while the first still waits. A slot held by a query, or by the
+    /// provider's late call, is `provider_busy` at once too.
+    #[test]
+    fn only_one_query_waits_and_any_other_holder_refuses_at_once() {
+        let fixture = Fixture::new(true);
+        let call = fixture.batch_in_flight();
+        let first = fixture.query();
+        fixture.until_waiting();
+        fixture.refused_at_once("a second query");
+        assert!(fixture.waiting(), "the first query still waits");
+
+        // The batch ends; the waiter's query now holds the slot.
+        fixture.release.send(()).unwrap();
+        Fixture::documents_done(&call);
+        assert_eq!(fixture.entered(), "query");
+        fixture.refused_at_once("a query while a query runs");
+        fixture.release.send(()).unwrap();
+        assert_eq!(first.join().unwrap(), Ok(unit_vector()));
+
+        // A call the provider abandoned still runs in the model.
+        fixture.late.store(true, Ordering::SeqCst);
+        fixture.refused_at_once("a query beside a late call");
+        fixture.late.store(false, Ordering::SeqCst);
+        assert_eq!(fixture.queries.load(Ordering::SeqCst), 1);
+        assert!(!fixture.runtime.occupied());
+    }
+
+    /// Review M4: the batch ends AFTER the waiter's ceiling but before the
+    /// waiter reacquires the slot lock. Barrier: the test holds the slot lock
+    /// while the ceiling passes, frees the slot under it and only then lets
+    /// the waiter reacquire. The waiter must not claim the freed slot: it
+    /// returns `provider_busy`, no query job is sent and the promise is
+    /// withdrawn.
+    #[test]
+    fn a_batch_ending_after_the_ceiling_is_never_claimed_by_the_waiter() {
+        let fixture = Fixture::new(false);
+        let call = fixture.batch_in_flight();
+        let query = {
+            let runtime = Arc::clone(&fixture.runtime);
+            // A 400 ms read deadline: a 200 ms ceiling.
+            std::thread::spawn(move || {
+                runtime.embed("dusk", Instant::now() + Duration::from_millis(400))
+            })
+        };
+        fixture.until_waiting();
+        {
+            let mut slot = fixture.runtime.slot.lock();
+            std::thread::sleep(Duration::from_millis(400));
+            assert!(slot.waiter, "the waiter cannot reacquire meanwhile");
+            slot.holder = None;
+            fixture.runtime.slot.freed.notify_all();
+        }
+        assert_eq!(query.join().unwrap(), Err(ProviderError::Busy));
+        {
+            let slot = fixture.runtime.slot.lock();
+            assert!(!slot.waiter, "the promise was withdrawn");
+            assert_eq!(slot.holder, None, "the waiter claimed nothing");
+        }
+        fixture.release.send(()).unwrap();
+        Fixture::documents_done(&call);
+        assert_eq!(fixture.queries.load(Ordering::SeqCst), 0, "no query job");
+    }
+
+    /// While a query waits, no document batch is admitted: neither while the
+    /// batch it waits for runs nor once that batch ended and the waiter took
+    /// the slot. Only after the query returned is the next batch admitted.
+    #[test]
+    fn no_document_batch_is_admitted_while_a_query_waits() {
+        let fixture = Fixture::new(true);
+        let first = fixture.batch_in_flight();
+        let query = fixture.query();
+        fixture.until_waiting();
+        assert!(matches!(
+            fixture
+                .runtime
+                .dispatch_documents(one_input(), Control::unbounded()),
+            Err(ProviderError::Busy)
+        ));
+        fixture.release.send(()).unwrap();
+        // The batch ended (its reply follows the slot's release); the query
+        // is still in its request path, so nothing is admitted.
+        Fixture::documents_done(&first);
+        assert!(matches!(
+            fixture
+                .runtime
+                .dispatch_documents(one_input(), Control::unbounded()),
+            Err(ProviderError::Busy)
+        ));
+        assert_eq!(fixture.entered(), "query");
+        fixture.release.send(()).unwrap();
+        assert_eq!(query.join().unwrap(), Ok(unit_vector()));
+        let next = fixture
+            .runtime
+            .dispatch_documents(one_input(), Control::unbounded())
+            .expect("admitted once the query returned");
+        assert_eq!(fixture.entered(), "documents");
+        fixture.release.send(()).unwrap();
+        Fixture::documents_done(&next);
+        assert_eq!(fixture.queries.load(Ordering::SeqCst), 1);
     }
 }

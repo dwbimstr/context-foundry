@@ -158,6 +158,19 @@ impl Dir {
 
     /// Every entry (excluding `.` and `..`) with its no-follow kind.
     pub fn entries(&self) -> io::Result<Vec<(OsString, Kind)>> {
+        self.entries_while(|| true)
+    }
+
+    /// [`Self::entries`] with a checkpoint before every filesystem step:
+    /// `proceed` runs before each `readdir` of the listing and before each
+    /// `fstatat` of a listed name, and the first `false` ends the walk with an
+    /// `Interrupted` error. A stop is noticed within one step, however large
+    /// the directory; the names are still all read before any is looked at,
+    /// so a caller that removes entries never removes during the listing.
+    pub fn entries_while(
+        &self,
+        mut proceed: impl FnMut() -> bool,
+    ) -> io::Result<Vec<(OsString, Kind)>> {
         // SAFETY: fcntl(F_DUPFD_CLOEXEC) duplicates a live descriptor; the
         // duplicate belongs to the DIR stream and is closed by closedir.
         let dup = cvt(unsafe { libc::fcntl(self.raw(), libc::F_DUPFD_CLOEXEC, 0) })?;
@@ -173,12 +186,15 @@ impl Dir {
         // offset, so rewind before listing.
         unsafe { libc::rewinddir(stream) };
         let mut names: Vec<Vec<u8>> = Vec::new();
-        loop {
+        let listed = loop {
+            if !proceed() {
+                break false;
+            }
             // SAFETY: readdir(3) on a live stream; the returned entry is valid
             // until the next call and its name is NUL-terminated.
             let entry = unsafe { libc::readdir(stream) };
             if entry.is_null() {
-                break;
+                break true;
             }
             // SAFETY: see above.
             let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }
@@ -187,11 +203,17 @@ impl Dir {
             if name != b"." && name != b".." {
                 names.push(name);
             }
-        }
+        };
         // SAFETY: the stream is live and closed exactly once.
         unsafe { libc::closedir(stream) };
+        if !listed {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
         let mut out = Vec::with_capacity(names.len());
         for name in names {
+            if !proceed() {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
             let name = OsString::from_vec(name);
             // An entry that vanished since the listing is simply gone.
             if let Some(kind) = self.kind_of(&name)? {
@@ -533,5 +555,40 @@ mod tests {
         );
         assert!(!std::path::Path::new("/nonexistent/target").exists());
         dir.sync_all().unwrap();
+    }
+
+    /// Review M5 (009 scratch reclamation): every step of a listing is a
+    /// checkpoint. Refusing step `k`, for each `k` from the first name read to
+    /// the last kind check, ends the walk at once with `Interrupted`.
+    #[test]
+    fn a_listing_stops_at_the_first_refused_step_of_either_pass() {
+        const FILES: usize = 20;
+        let scratch = tempfile::tempdir().unwrap();
+        for n in 0..FILES {
+            std::fs::write(scratch.path().join(format!("f{n}")), b"x").unwrap();
+        }
+        let dir = Dir::open_path(scratch.path()).unwrap();
+        let mut steps = 0;
+        let all = dir
+            .entries_while(|| {
+                steps += 1;
+                true
+            })
+            .unwrap();
+        assert_eq!(all.len(), FILES);
+        assert!(all.iter().all(|(_, kind)| *kind == Kind::File));
+        // FILES names and the end of the listing read, then FILES kinds.
+        assert!(steps > 2 * FILES, "{steps} steps");
+        for refused in 0..steps {
+            let mut taken = 0;
+            let error = dir
+                .entries_while(|| {
+                    taken += 1;
+                    taken <= refused
+                })
+                .expect_err("the refused step ends the listing");
+            assert_eq!(error.kind(), io::ErrorKind::Interrupted, "step {refused}");
+            assert_eq!(taken, refused + 1, "no step runs after the refusal");
+        }
     }
 }

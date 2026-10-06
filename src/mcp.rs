@@ -166,6 +166,14 @@ pub(crate) struct Shared {
     /// `session_context_tokens` is configured.
     sessions: Mutex<HashMap<String, u64>>,
     in_flight_engine: AtomicUsize,
+    /// Who holds the one engine slot ([`SLOT_FREE`], [`SLOT_DRIVER`],
+    /// [`SLOT_REQUEST`]): marked right after the slot is taken and cleared
+    /// right before it is released ([`SlotGuard`]). A foreground request that
+    /// finds the slot taken classifies its holder by this one observation
+    /// ([`take_engine_slot`]).
+    slot_holder: std::sync::atomic::AtomicU8,
+    #[cfg(test)]
+    slot_hooks: SlotHooks,
     /// Owner-level shutdown: set on EOF/owner shutdown; active operations
     /// stop at their next cooperative checkpoint.
     shutdown: CancellationToken,
@@ -539,6 +547,9 @@ impl Shared {
             budget,
             sessions: Mutex::new(HashMap::new()),
             in_flight_engine: AtomicUsize::new(0),
+            slot_holder: std::sync::atomic::AtomicU8::new(SLOT_FREE),
+            #[cfg(test)]
+            slot_hooks: SlotHooks::default(),
             shutdown: CancellationToken::new(),
             no_memory: false,
             semantic: SemanticSlot::default(),
@@ -599,32 +610,114 @@ impl Shared {
 
 /// 009 T003: the preparation driver's access to the owner. A store step runs
 /// under the one engine slot, taken only while no foreground operation is in
-/// flight, so foreground operations go first.
+/// flight, so foreground operations go first; one arriving during the step
+/// waits for it ([`take_engine_slot`]).
 #[cfg(feature = "semantic")]
 impl crate::neural::driver::Owner for Shared {
     fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
         if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
             return Ok(false);
         }
-        match self.engines.try_lock() {
-            Ok(engines) => match engines.first().and_then(Option::as_ref) {
-                Some(engine) => {
-                    step(engine);
-                    Ok(true)
-                }
-                None => Err(FoundryError::Internal(anyhow::anyhow!(
-                    "the primary engine is not open"
-                ))),
-            },
-            Err(std::sync::TryLockError::WouldBlock) => Ok(false),
-            Err(std::sync::TryLockError::Poisoned(_)) => Err(FoundryError::Internal(
-                anyhow::anyhow!("engine state was poisoned by an earlier panic"),
-            )),
+        let engines = match self.engines.try_lock() {
+            Ok(engines) => SlotGuard::mark(engines, &self.slot_holder, SLOT_DRIVER),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(FoundryError::Internal(anyhow::anyhow!(
+                    "engine state was poisoned by an earlier panic"
+                )));
+            }
+        };
+        // An operation counted before the slot was taken goes first; one
+        // counted from here on waits for this step.
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
         }
+        let Some(engine) = engines.first().and_then(Option::as_ref) else {
+            return Err(FoundryError::Internal(anyhow::anyhow!(
+                "the primary engine is not open"
+            )));
+        };
+        step(engine);
+        Ok(true)
     }
 
     fn closing(&self) -> bool {
         self.shutdown.is_cancelled()
+    }
+}
+
+/// [`Shared::slot_holder`]: nobody, or the slot is being taken or released.
+const SLOT_FREE: u8 = 0;
+/// [`Shared::slot_holder`]: one store step of the preparation driver.
+const SLOT_DRIVER: u8 = 1;
+/// [`Shared::slot_holder`]: a foreground request.
+const SLOT_REQUEST: u8 = 2;
+
+/// The one engine slot taken, marked with its holder until released. The
+/// mark is cleared in `drop` before the mutex guard (a field) is dropped.
+struct SlotGuard<'a> {
+    engines: std::sync::MutexGuard<'a, Vec<Option<Engine>>>,
+    holder: &'a std::sync::atomic::AtomicU8,
+}
+
+impl<'a> SlotGuard<'a> {
+    fn mark(
+        engines: std::sync::MutexGuard<'a, Vec<Option<Engine>>>,
+        holder: &'a std::sync::atomic::AtomicU8,
+        who: u8,
+    ) -> Self {
+        holder.store(who, Ordering::SeqCst);
+        Self { engines, holder }
+    }
+}
+
+impl std::ops::Deref for SlotGuard<'_> {
+    type Target = Vec<Option<Engine>>;
+    fn deref(&self) -> &Self::Target {
+        &self.engines
+    }
+}
+
+impl std::ops::DerefMut for SlotGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.engines
+    }
+}
+
+impl Drop for SlotGuard<'_> {
+    fn drop(&mut self) {
+        self.holder.store(SLOT_FREE, Ordering::SeqCst);
+    }
+}
+
+/// Test seams of the engine-slot handoff, each run once: `contended` right
+/// after a request found the slot taken, before it classifies the holder;
+/// `acquired` right after it took the slot, before its stop check.
+#[cfg(test)]
+#[derive(Default)]
+struct SlotHooks {
+    contended: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    acquired: Mutex<Option<AcquiredHook>>,
+}
+
+/// The `acquired` seam: runs with the request's control.
+#[cfg(test)]
+type AcquiredHook = Box<dyn FnOnce(&Control) + Send>;
+
+#[cfg(test)]
+impl SlotHooks {
+    fn contended(&self) {
+        let hook = self.contended.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
+    fn acquired(&self, control: &Control) {
+        let hook = self.acquired.lock().unwrap().take();
+        if let Some(hook) = hook {
+            hook(control);
+        }
     }
 }
 
@@ -729,29 +822,21 @@ where
         let control = Control::with_deadline(deadline);
         register_hub.register(control.cancel_flag());
         shared.in_flight_engine.fetch_add(1, Ordering::SeqCst);
-        let engines = Arc::clone(&shared.engines);
+        let slot_shared = Arc::clone(&shared);
         let joined = tokio::task::spawn_blocking(move || {
-            // Admission is a try-lock: a concurrent operation returns busy,
-            // it never waits. The guard (the one engine slot, spanning every
-            // root of this owner) is held until this closure returns.
-            match engines.try_lock() {
-                Ok(mut engines_guard) => {
-                    let out = f(&mut engines_guard, &control);
-                    let out = match out {
-                        Ok(value) if check_after => control.check().map(|()| value),
-                        other => other,
-                    }
-                    .map_err(OpError::Core);
-                    drop(engines_guard);
-                    out
-                }
-                Err(std::sync::TryLockError::WouldBlock) => Err(OpError::Busy),
-                Err(std::sync::TryLockError::Poisoned(_)) => {
-                    Err(OpError::Core(FoundryError::Internal(anyhow::anyhow!(
-                        "engine state was poisoned by an earlier panic"
-                    ))))
-                }
+            // Admission: zero queue behind another operation; the
+            // preparation driver's short store step is waited for. The guard
+            // (the one engine slot, spanning every root of this owner) is
+            // held until this closure returns.
+            let mut engines_guard = take_engine_slot(&slot_shared, &control)?;
+            let out = f(&mut engines_guard, &control);
+            let out = match out {
+                Ok(value) if check_after => control.check().map(|()| value),
+                other => other,
             }
+            .map_err(OpError::Core);
+            drop(engines_guard);
+            out
         })
         .await;
         // Counter and permit release strictly after the engine call returned.
@@ -781,6 +866,51 @@ where
             Err(e) => Err(OpError::Core(FoundryError::Internal(e.into()))),
         }
     })
+}
+
+/// Take the one engine slot for a foreground operation. A slot another
+/// operation holds is the adapter's zero-queue `busy` at once. 009 T003
+/// (captain decision 2026-10-06): a slot the preparation driver holds for one
+/// short store step is waited for, until the operation's own `control` stops
+/// it (its deadline or a cancellation, reported as such). No new store step
+/// starts meanwhile: the operation is already counted in `in_flight_engine`,
+/// which the driver checks again after it took the slot. The holder is
+/// classified by ONE observation of its mark; a slot being taken or released
+/// (no mark) is looked at again, so a slot the driver just released is taken,
+/// never refused. An operation whose control stopped while it waited never
+/// starts: the control is checked right after the slot was taken.
+fn take_engine_slot<'a>(shared: &'a Shared, control: &Control) -> Result<SlotGuard<'a>, OpError> {
+    loop {
+        match shared.engines.try_lock() {
+            Ok(engines) => {
+                let slot = SlotGuard::mark(engines, &shared.slot_holder, SLOT_REQUEST);
+                #[cfg(test)]
+                shared.slot_hooks.acquired(control);
+                control.check()?;
+                return Ok(slot);
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                #[cfg(test)]
+                shared.slot_hooks.contended();
+                match shared.slot_holder.load(Ordering::SeqCst) {
+                    SLOT_REQUEST => return Err(OpError::Busy),
+                    SLOT_DRIVER => {
+                        control.check()?;
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    _ => {
+                        control.check()?;
+                        std::thread::yield_now();
+                    }
+                }
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(OpError::Core(FoundryError::Internal(anyhow::anyhow!(
+                    "engine state was poisoned by an earlier panic"
+                ))));
+            }
+        }
+    }
 }
 
 async fn cancel_signal(owner: CancellationToken, peer: CancellationToken) {
@@ -1944,14 +2074,16 @@ impl FoundryMcp {
                 let mut value = serde_json::to_value(&status).unwrap_or(serde_json::Value::Null);
                 #[cfg(feature = "semantic")]
                 if let Some(slot) = &semantic {
+                    // The resident runtime's word, from its last observed
+                    // call outcome; status never calls the model.
                     let runtime = match slot {
-                        Ok(_) => "ready",
-                        Err(word) => word.as_str(),
+                        Ok(runtime) => runtime.status_word(),
+                        Err(word) => word.clone(),
                     };
                     value["semantic"] = crate::neural::driver::status_object(
                         primary,
                         preparation.live(),
-                        runtime,
+                        &runtime,
                         control,
                     )?;
                 }
@@ -2691,6 +2823,21 @@ impl FoundryMcp {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for FoundryMcp {
+    /// 009 T003: every served tool call — search, context, retrieve,
+    /// index (its `semantic` prepare and pause included), status, memory,
+    /// references — is foreground activity for the preparation driver's
+    /// batch size, marked before the tool runs.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+        #[cfg(feature = "semantic")]
+        self.state.preparation.foreground();
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router.call(tcc).await
+    }
+
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(INIT_INSTRUCTIONS)
@@ -3075,6 +3222,9 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         budget: options.budget,
         sessions: Mutex::new(HashMap::new()),
         in_flight_engine: AtomicUsize::new(0),
+        slot_holder: std::sync::atomic::AtomicU8::new(SLOT_FREE),
+        #[cfg(test)]
+        slot_hooks: SlotHooks::default(),
         shutdown,
         no_memory: options.no_memory,
         semantic,
@@ -3873,15 +4023,43 @@ mod tests {
     }
 
     /// The driver's view of the in-crate owner, for the review interleavings:
-    /// it counts refused engine-slot attempts and can hold the driver right
-    /// before an admission decision.
+    /// it counts the store steps it ran and the refused engine-slot attempts,
+    /// and can hold the driver right before an admission decision, inside a
+    /// store step (the engine slot held) or before it stages a generation.
     #[cfg(all(feature = "semantic", feature = "test-faults"))]
     struct Watched {
         inner: Arc<Shared>,
         refused: AtomicUsize,
+        /// Store steps begun under the engine slot.
+        steps: AtomicUsize,
         /// `(reached, go)`: report the next admission, then wait for `go`.
         before_admission:
             Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+        /// The same, at the end of the next store step, the slot still held.
+        hold_step: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+        /// The same, before the next generation is staged.
+        before_staging: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    }
+
+    /// Report reaching an armed barrier, then wait for its `go`; once.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn pass(barrier: &Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>) {
+        let armed = barrier.lock().unwrap().take();
+        if let Some((reached, go)) = armed {
+            let _ = reached.send(());
+            let _ = go.recv();
+        }
+    }
+
+    /// Arm `barrier`: its `reached` receiver and `go` sender.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn arm(
+        barrier: &Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (reached_tx, reached_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel();
+        *barrier.lock().unwrap() = Some((reached_tx, go_rx));
+        (reached_rx, go_tx)
     }
 
     #[cfg(all(feature = "semantic", feature = "test-faults"))]
@@ -3890,19 +4068,30 @@ mod tests {
             Arc::new(Self {
                 inner: Arc::clone(inner),
                 refused: AtomicUsize::new(0),
+                steps: AtomicUsize::new(0),
                 before_admission: Mutex::new(None),
+                hold_step: Mutex::new(None),
+                before_staging: Mutex::new(None),
             })
         }
 
         fn refused(&self) -> usize {
             self.refused.load(Ordering::SeqCst)
         }
+
+        fn steps(&self) -> usize {
+            self.steps.load(Ordering::SeqCst)
+        }
     }
 
     #[cfg(all(feature = "semantic", feature = "test-faults"))]
     impl crate::neural::driver::Owner for Watched {
         fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
-            let ran = crate::neural::driver::Owner::try_primary(&*self.inner, step)?;
+            let ran = crate::neural::driver::Owner::try_primary(&*self.inner, &mut |engine| {
+                self.steps.fetch_add(1, Ordering::SeqCst);
+                step(engine);
+                pass(&self.hold_step);
+            })?;
             if !ran {
                 self.refused.fetch_add(1, Ordering::SeqCst);
             }
@@ -3919,6 +4108,10 @@ mod tests {
                 let _ = reached.send(());
                 let _ = go.recv();
             }
+        }
+
+        fn staging(&self) {
+            pass(&self.before_staging);
         }
     }
 
@@ -4357,5 +4550,391 @@ mod tests {
             "{state:?}"
         );
         assert_eq!(cache_rows, 0, "{state:?}");
+    }
+
+    /// A two-thread runtime for driving engine operations from a test.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn op_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// 009 T003, captain decision 2026-10-06 (measured: every query during
+    /// cold partitioning of a large store failed `busy`): a foreground
+    /// operation that finds the engine slot held by a driver store step
+    /// waits for that step, bounded by its own deadline, and succeeds after
+    /// it; no new store step starts while it waits. Barrier: the driver
+    /// holds the slot at the end of a store step until `go`.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn a_foreground_operation_waits_for_the_drivers_store_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        gate.open();
+        let shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let watched = Watched::new(&shared);
+        let (reached, go) = arm(&watched.hold_step);
+        start_preparation_as(&shared, watched.clone()).unwrap();
+        reached
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the driver holds the slot in a store step");
+        let held_at = watched.steps();
+        let runtime = op_runtime();
+
+        // A deadline that ends during the step bounds the wait by itself.
+        let started = Instant::now();
+        let expired = runtime.block_on(async {
+            run_engine_op(
+                &shared,
+                Instant::now() + Duration::from_millis(100),
+                None,
+                None,
+                |_, _| Ok(()),
+            )
+            .await
+        });
+        assert!(
+            matches!(&expired, Err(OpError::Core(error)) if error.code() == "deadline_exceeded"),
+            "{expired:?}"
+        );
+        assert!(started.elapsed() >= Duration::from_millis(100), "it waited");
+
+        let op = runtime.spawn({
+            let (shared, watched) = (Arc::clone(&shared), Arc::clone(&watched));
+            async move {
+                run_engine_op(
+                    &shared,
+                    Instant::now() + READ_DEADLINE,
+                    None,
+                    None,
+                    move |_, _| Ok(watched.steps()),
+                )
+                .await
+            }
+        });
+        wait_until("the operation is counted", || {
+            shared.in_flight_engine.load(Ordering::SeqCst) == 1
+        });
+        assert!(!op.is_finished(), "the operation waits for the step");
+        go.send(()).unwrap();
+        let ran_at = runtime
+            .block_on(op)
+            .unwrap()
+            .expect("the operation ran once the step ended");
+        assert_eq!(ran_at, held_at, "no store step started while it waited");
+        wait_idle(&shared);
+        let (state, cache_rows) = stopped_state(&shared);
+        assert_eq!(state.state, "stopped", "{state:?}");
+        assert_eq!(state.committed_units, 12, "{state:?}");
+        assert_eq!(cache_rows, 12);
+    }
+
+    /// The adapter's zero-queue rule is unchanged for a slot another
+    /// foreground operation holds: `busy` at once, no wait.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn a_slot_another_operation_holds_is_still_busy_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        let shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let runtime = op_runtime();
+        // Held exactly as a foreground request holds it: marked.
+        let held = SlotGuard::mark(
+            shared.engines.lock().unwrap(),
+            &shared.slot_holder,
+            SLOT_REQUEST,
+        );
+        let started = Instant::now();
+        let refused = runtime.block_on(async {
+            run_engine_op(
+                &shared,
+                Instant::now() + Duration::from_secs(60),
+                None,
+                None,
+                |_, _| Ok(()),
+            )
+            .await
+        });
+        assert!(matches!(refused, Err(OpError::Busy)), "{refused:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "refused without waiting for its deadline"
+        );
+        drop(held);
+    }
+
+    /// 009 T003, captain decision 2026-10-06: publication holds the engine
+    /// slot only to read its input in short steps and for the final swap; the
+    /// generation is built and staged with the slot free, so a foreground
+    /// operation runs meanwhile. Barrier: the driver stops before staging
+    /// its first generation until `go`.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn a_generation_is_built_with_the_engine_slot_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        gate.open();
+        let shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let watched = Watched::new(&shared);
+        let (reached, go) = arm(&watched.before_staging);
+        start_preparation_as(&shared, watched.clone()).unwrap();
+        reached
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the driver is about to stage a generation");
+        assert_eq!(shared.in_flight_engine.load(Ordering::SeqCst), 0);
+        assert!(
+            shared.engines.try_lock().is_ok(),
+            "no engine slot is held while the generation is built"
+        );
+        let runtime = op_runtime();
+        let before = runtime
+            .block_on(async {
+                run_engine_op(
+                    &shared,
+                    Instant::now() + READ_DEADLINE,
+                    None,
+                    None,
+                    |engines, control| {
+                        engines[0]
+                            .as_ref()
+                            .expect("the primary engine")
+                            .semantic_status(control)
+                    },
+                )
+                .await
+            })
+            .expect("a foreground operation runs during the build");
+        assert!(!before.index.available, "nothing is published yet");
+        go.send(()).unwrap();
+        wait_idle(&shared);
+        let (state, _) = stopped_state(&shared);
+        assert_eq!(state.state, "stopped", "{state:?}");
+        let engines = shared.engines.lock().unwrap();
+        let status = engines[0]
+            .as_ref()
+            .unwrap()
+            .semantic_status(&Control::unbounded())
+            .unwrap();
+        assert!(status.index.available, "{status:?}");
+        assert_eq!(status.searchable_current_units, 12, "{status:?}");
+    }
+
+    /// Review M2: the driver's step ends between a request's failed probe of
+    /// the slot and its classification of the holder. Barrier: the
+    /// `contended` seam holds the request right after its probe failed until
+    /// the driver released the slot. The request takes the freed slot; it is
+    /// never refused `busy`.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn a_slot_the_driver_releases_during_classification_is_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        gate.open();
+        let shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let watched = Watched::new(&shared);
+        let (step_reached, step_go) = arm(&watched.hold_step);
+        let (probed_tx, probed_rx) = std::sync::mpsc::channel::<()>();
+        let (classify_tx, classify_rx) = std::sync::mpsc::channel::<()>();
+        *shared.slot_hooks.contended.lock().unwrap() = Some(Box::new(move || {
+            let _ = probed_tx.send(());
+            let _ = classify_rx.recv();
+        }));
+        start_preparation_as(&shared, watched.clone()).unwrap();
+        step_reached
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the driver holds the slot in a store step");
+        let runtime = op_runtime();
+        let op = runtime.spawn({
+            let shared = Arc::clone(&shared);
+            async move {
+                run_engine_op(
+                    &shared,
+                    Instant::now() + READ_DEADLINE,
+                    None,
+                    None,
+                    |_, _| Ok(()),
+                )
+                .await
+            }
+        });
+        probed_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the request found the slot taken");
+        step_go.send(()).unwrap();
+        wait_until("the driver released the slot", || {
+            shared.slot_holder.load(Ordering::SeqCst) == SLOT_FREE
+                && shared.engines.try_lock().is_ok()
+        });
+        classify_tx.send(()).unwrap();
+        let ran = runtime.block_on(op).unwrap();
+        assert!(ran.is_ok(), "the freed slot was taken: {ran:?}");
+        wait_idle(&shared);
+    }
+
+    /// Review M3: a write whose request is cancelled at the handoff — after
+    /// it waited and took the engine slot, before the operation starts —
+    /// never starts. Barrier: the `acquired` seam cancels the request's
+    /// control right after the slot was taken. The memory put commits
+    /// nothing and the request reports the cancellation.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn a_write_cancelled_at_the_slot_handoff_commits_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        let shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let workspace_id = shared.engines.lock().unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .workspace_id()
+            .unwrap();
+        *shared.slot_hooks.acquired.lock().unwrap() =
+            Some(Box::new(|control: &Control| control.cancel()));
+        let input = crate::memory::PutInput {
+            fields: crate::memory::RecordFields {
+                id: "handoff".into(),
+                text: "written after the cancellation".into(),
+                author: "tests".into(),
+                provenance: "tests".into(),
+                source_links: Vec::new(),
+            },
+            workspace_id: workspace_id.clone(),
+        };
+        let runtime = op_runtime();
+        let put = runtime.block_on(async {
+            run_op(
+                &shared,
+                Instant::now() + READ_DEADLINE,
+                None,
+                None,
+                false,
+                move |engines, _| {
+                    engines[0]
+                        .as_ref()
+                        .expect("the primary engine")
+                        .memory_put(&input)
+                },
+            )
+            .await
+        });
+        assert!(
+            matches!(&put, Err(OpError::Core(error)) if error.code() == "cancelled"),
+            "{put:?}"
+        );
+        let engines = shared.engines.lock().unwrap();
+        assert!(matches!(
+            engines[0]
+                .as_ref()
+                .unwrap()
+                .memory_get("handoff", &workspace_id),
+            Err(FoundryError::NotFound)
+        ));
+    }
+
+    /// Review M1: `index {semantic: "prepare"}` as the owner's FIRST request
+    /// counts as foreground activity: the first document call it starts
+    /// carries at most [`FOREGROUND_BATCH`] inputs, with no other request
+    /// before or after it. Served over the stdio transport on an in-process
+    /// pipe, so the request passes the real tool boundary.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn a_first_semantic_prepare_counts_as_foreground_activity() {
+        use crate::neural::driver::FOREGROUND_BATCH;
+        use crate::neural::provider::{
+            EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput,
+        };
+
+        struct Sizes {
+            descriptor: FunctionDescriptor,
+            sizes: Arc<Mutex<Vec<usize>>>,
+        }
+        impl EmbeddingProvider for Sizes {
+            fn descriptor(&self) -> &FunctionDescriptor {
+                &self.descriptor
+            }
+            fn embed_documents(
+                &mut self,
+                batch: &[TokenizedInput],
+                _control: &Control,
+            ) -> Result<Vec<Vec<f32>>, ProviderError> {
+                self.sizes.lock().unwrap().push(batch.len());
+                Ok(batch.iter().map(|_| unit_vector()).collect())
+            }
+            fn embed_query(
+                &mut self,
+                _input: &TokenizedInput,
+                _deadline: Instant,
+            ) -> Result<Vec<f32>, ProviderError> {
+                Ok(unit_vector())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("workspace");
+        std::fs::create_dir_all(&root).unwrap();
+        for n in 0..12 {
+            std::fs::write(
+                root.join(format!("note{n:02}.md")),
+                format!("# Note {n}\n\nbody of note {n}\n"),
+            )
+            .unwrap();
+        }
+        let store = dir.path().join("store");
+        Engine::initialize(&store, &root)
+            .unwrap()
+            .index(&root, &Control::unbounded())
+            .unwrap();
+        let profile_path = crate::testkit::write_semantic_profile(dir.path(), "probe", |_| {});
+        let descriptor = crate::neural::profile::SemanticProfile::load(&profile_path)
+            .unwrap()
+            .descriptor;
+        let sizes: Arc<Mutex<Vec<usize>>> = Arc::default();
+        let semantic = SemanticServing::with_provider(profile_path, {
+            let sizes = Arc::clone(&sizes);
+            Box::new(
+                move || Ok(Box::new(Sizes { descriptor, sizes }) as Box<dyn EmbeddingProvider>),
+            )
+        });
+        op_runtime().block_on(async {
+            let (client_io, server_io) = tokio::io::duplex(1 << 20);
+            let (input, output) = tokio::io::split(server_io);
+            let server = tokio::spawn(serve_streams(
+                ServerOptions {
+                    store,
+                    root,
+                    references: Vec::new(),
+                    no_memory: false,
+                    semantic: Some(semantic),
+                    policy: None,
+                    budget: BudgetConfig::default(),
+                },
+                input,
+                output,
+            ));
+            let client = ().serve(client_io).await.unwrap();
+            let arguments = serde_json::json!({"semantic": "prepare"});
+            let reply = client
+                .call_tool(
+                    rmcp::model::CallToolRequestParams::new("index")
+                        .with_arguments(arguments.as_object().unwrap().clone()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(reply.is_error, Some(false), "{reply:?}");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while sizes.lock().unwrap().is_empty() {
+                assert!(Instant::now() < deadline, "no document call started");
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            let first = sizes.lock().unwrap()[0];
+            assert!(
+                first <= FOREGROUND_BATCH,
+                "the first document call carried {first} inputs"
+            );
+            client.cancel().await.unwrap();
+            let _ = server.await;
+        });
     }
 }

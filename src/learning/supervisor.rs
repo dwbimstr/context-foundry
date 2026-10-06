@@ -274,9 +274,11 @@ pub(super) fn spawn(
             ),
         ));
     }
-    let run = prepare_run_scratch_at(&profile.worker.scratch_root, &|| {
-        profile.check_scratch_disjoint()
-    })
+    let run = prepare_run_scratch_at(
+        &profile.worker.scratch_root,
+        &|| profile.check_scratch_disjoint(),
+        control,
+    )
     .map_err(provider_error)?;
     let scratch = match Dir::open_path(&run) {
         Ok(dir) => dir,
@@ -327,6 +329,12 @@ pub(super) fn spawn(
     // SAFETY: the setup calls only async-signal-safe functions between
     // fork and exec and allocates nothing there.
     unsafe { command.pre_exec(child_setup_limited(read_fd, hard)) };
+    // The caller's stop is checked again right before the worker starts:
+    // scratch preparation (and its reclamation of dead runs) took time.
+    if let Err(stop) = control.check() {
+        let _ = std::fs::remove_dir_all(&run);
+        return Err(stop);
+    }
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {

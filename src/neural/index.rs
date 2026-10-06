@@ -32,6 +32,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "semantic")]
+use std::time::Instant;
 
 pub const SEMANTIC_DIR: &str = "semantic";
 pub const INDEX_FILE: &str = "index.usearch";
@@ -144,7 +146,7 @@ pub struct CurrentMapping {
 #[cfg(feature = "semantic")]
 impl CurrentMapping {
     /// True when `generation` publishes exactly this mapping and scope.
-    fn published_by(&self, generation: &Generation) -> bool {
+    pub(crate) fn published_by(&self, generation: &Generation) -> bool {
         let manifest = &generation.manifest;
         manifest.source_revision == self.scope.source_revision
             && manifest.coverage == self.scope.coverage()
@@ -505,70 +507,13 @@ impl Engine {
         function_digest: &str,
         recipe_id: &str,
     ) -> FResult<CurrentMapping> {
-        let source_revision = self.source_revision()?;
-        let mut complete = true;
-        let mut units: std::collections::BTreeMap<String, Vec<UnitLocation>> =
-            std::collections::BTreeMap::new();
-        // One cache probe per distinct key: true when its vector is current.
-        let mut probed: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
-        let mut after: Option<String> = None;
-        loop {
-            control.check()?;
-            let page = cache::source_page(&self.db, after.as_deref())?;
-            if page.is_empty() {
-                break;
-            }
-            for (path, meta) in &page {
-                let Some(record) = self.semantic_partition(path)?.filter(|record| {
-                    cache::partition_is_current(record, meta, recipe_id, function_digest)
-                }) else {
-                    complete = false;
-                    continue;
-                };
-                for unit in &record.units {
-                    let cached = match probed.get(&unit.input_key) {
-                        Some(&cached) => cached,
-                        None => {
-                            let cached = self
-                                .semantic_cache_probe(&unit.input_key, function_digest)?
-                                == CacheProbe::Current;
-                            probed.insert(unit.input_key.clone(), cached);
-                            cached
-                        }
-                    };
-                    if !cached {
-                        complete = false;
-                        continue;
-                    }
-                    units
-                        .entry(unit.input_key.clone())
-                        .or_default()
-                        .push(UnitLocation {
-                            path: path.clone(),
-                            start: unit.start as u64,
-                            end: unit.end as u64,
-                            source_sha256: record.source_hash.clone(),
-                        });
-                }
-            }
-            after = page.last().map(|(path, _)| path.clone());
-        }
-        // A source change during the paged walk leaves a mixed mapping: its
-        // locations still revalidate per request, but it is never complete.
-        if self.source_revision()? != source_revision {
-            complete = false;
-        }
-        Ok(CurrentMapping {
-            units,
-            scope: GenerationScope {
-                source_revision,
-                complete,
-            },
-        })
+        let mut walk = MappingWalk::start(self, function_digest, recipe_id)?;
+        while !walk.step(self, control, None)? {}
+        walk.finish(self)
     }
 
     /// The recorded profile digest and recipe, if a profile was prepared.
-    fn semantic_identity(&self) -> FResult<Option<(String, String)>> {
+    pub(crate) fn semantic_identity(&self) -> FResult<Option<(String, String)>> {
         Ok(self
             .semantic_state()?
             .and_then(|state| Some((state.function_digest?, state.recipe_id?))))
@@ -607,20 +552,17 @@ impl Engine {
         control: &Control,
     ) -> FResult<usize> {
         let mut scope = mapping.scope;
-        let mut entries: Vec<GenerationEntry> = Vec::with_capacity(mapping.units.len());
-        for (ordinal, (input_key, units)) in mapping.units.into_iter().enumerate() {
-            if ordinal % 64 == 0 {
-                control.check()?;
-            }
-            match self.semantic_cache_lookup(&input_key, digest)? {
-                CacheLookup::Hit(vector) => entries.push(GenerationEntry {
-                    input_key,
-                    vector,
-                    units,
-                }),
-                CacheLookup::Corrupt(_) | CacheLookup::Miss => scope.complete = false,
-            }
-        }
+        let mut keys = mapping.units.into_iter();
+        let mut entries: Vec<GenerationEntry> = Vec::with_capacity(keys.len());
+        lookup_entries(
+            self,
+            &mut keys,
+            digest,
+            &mut scope,
+            &mut entries,
+            control,
+            None,
+        )?;
         let store = self.semantic_anchor()?;
         build_generation(&store, digest, recipe, &entries, scope, control)
     }
@@ -652,16 +594,146 @@ impl Engine {
     }
 }
 
+/// [`Engine::semantic_current_mapping`] read a page of sources at a time, so
+/// the MCP owner's preparation driver reads it in short engine-slot steps
+/// (009 T003, captain decision 2026-10-06). A source change between the
+/// steps leaves the mapping incomplete, exactly as one during a single walk
+/// does.
+#[cfg(feature = "semantic")]
+pub(crate) struct MappingWalk {
+    digest: String,
+    recipe: String,
+    source_revision: u64,
+    complete: bool,
+    units: std::collections::BTreeMap<String, Vec<UnitLocation>>,
+    /// One cache probe per distinct key: true when its vector is current.
+    probed: std::collections::HashMap<String, bool>,
+    after: Option<String>,
+}
+
+#[cfg(feature = "semantic")]
+impl MappingWalk {
+    pub(crate) fn start(engine: &Engine, function_digest: &str, recipe_id: &str) -> FResult<Self> {
+        Ok(Self {
+            digest: function_digest.to_owned(),
+            recipe: recipe_id.to_owned(),
+            source_revision: engine.source_revision()?,
+            complete: true,
+            units: std::collections::BTreeMap::new(),
+            probed: std::collections::HashMap::new(),
+            after: None,
+        })
+    }
+
+    /// Walk pages of sources until the walk ends (`true`), or until `until`
+    /// passed once a page was read (`false`: call again).
+    pub(crate) fn step(
+        &mut self,
+        engine: &Engine,
+        control: &Control,
+        until: Option<Instant>,
+    ) -> FResult<bool> {
+        loop {
+            control.check()?;
+            let page = cache::source_page(&engine.db, self.after.as_deref())?;
+            if page.is_empty() {
+                return Ok(true);
+            }
+            for (path, meta) in &page {
+                let Some(record) = engine.semantic_partition(path)?.filter(|record| {
+                    cache::partition_is_current(record, meta, &self.recipe, &self.digest)
+                }) else {
+                    self.complete = false;
+                    continue;
+                };
+                for unit in &record.units {
+                    let cached = match self.probed.get(&unit.input_key) {
+                        Some(&cached) => cached,
+                        None => {
+                            let cached = engine
+                                .semantic_cache_probe(&unit.input_key, &self.digest)?
+                                == CacheProbe::Current;
+                            self.probed.insert(unit.input_key.clone(), cached);
+                            cached
+                        }
+                    };
+                    if !cached {
+                        self.complete = false;
+                        continue;
+                    }
+                    self.units
+                        .entry(unit.input_key.clone())
+                        .or_default()
+                        .push(UnitLocation {
+                            path: path.clone(),
+                            start: unit.start as u64,
+                            end: unit.end as u64,
+                            source_sha256: record.source_hash.clone(),
+                        });
+                }
+            }
+            self.after = page.last().map(|(path, _)| path.clone());
+            if until.is_some_and(|until| Instant::now() >= until) {
+                return Ok(false);
+            }
+        }
+    }
+
+    /// The mapping and its scope. A source change during the paged walk
+    /// leaves a mixed mapping: its locations still revalidate per request,
+    /// but it is never complete.
+    pub(crate) fn finish(self, engine: &Engine) -> FResult<CurrentMapping> {
+        let complete = self.complete && engine.source_revision()? == self.source_revision;
+        Ok(CurrentMapping {
+            units: self.units,
+            scope: GenerationScope {
+                source_revision: self.source_revision,
+                complete,
+            },
+        })
+    }
+}
+
+/// Decode the cached vectors of the next mapping `keys` into `entries`,
+/// until the keys end (`true`), or until `until` passed once a key was read
+/// (`false`: call again). A key whose cached row no longer decodes is
+/// excluded by name and leaves the generation partial: its units are not
+/// searchable there.
+#[cfg(feature = "semantic")]
+pub(crate) fn lookup_entries(
+    engine: &Engine,
+    keys: &mut impl Iterator<Item = (String, Vec<UnitLocation>)>,
+    function_digest: &str,
+    scope: &mut GenerationScope,
+    entries: &mut Vec<GenerationEntry>,
+    control: &Control,
+    until: Option<Instant>,
+) -> FResult<bool> {
+    let mut read = 0usize;
+    loop {
+        if read > 0 && until.is_some_and(|until| Instant::now() >= until) {
+            return Ok(false);
+        }
+        let Some((input_key, units)) = keys.next() else {
+            return Ok(true);
+        };
+        if read.is_multiple_of(64) {
+            control.check()?;
+        }
+        read += 1;
+        match engine.semantic_cache_lookup(&input_key, function_digest)? {
+            CacheLookup::Hit(vector) => entries.push(GenerationEntry {
+                input_key,
+                vector,
+                units,
+            }),
+            CacheLookup::Corrupt(_) | CacheLookup::Miss => scope.complete = false,
+        }
+    }
+}
+
 /// Build one generation and publish it as a validated set, entirely through
-/// descriptors. `store` is a duplicate of the Engine's bound store-directory
-/// descriptor; `semantic/` and the digest directory are opened (or made with
-/// `mkdirat`) under it without following links; USearch serializes to a
-/// buffer and the bytes are written through the descriptor, so no library
-/// call resolves a pathname. Publication order: index file and label map
-/// first (from a private temporary directory, by `renameat` on the same
-/// descriptors), the manifest LAST — a crash mid-publication leaves a
-/// mismatched pair, which validation refuses and the next rebuild repairs
-/// from cache.
+/// descriptors: [`stage_generation`], then [`Staged::publish`].
 #[cfg(feature = "semantic")]
 pub fn build_generation(
     store: &Dir,
@@ -671,9 +743,92 @@ pub fn build_generation(
     scope: GenerationScope,
     control: &Control,
 ) -> FResult<usize> {
+    stage_generation(
+        store,
+        function_digest,
+        recipe_id,
+        entries,
+        scope,
+        control,
+        &|| {},
+    )?
+    .publish(control)
+}
+
+#[cfg(feature = "semantic")]
+fn io_error(what: &'static str) -> impl Fn(std::io::Error) -> FoundryError {
+    move |e| conflict_or_io(e, what)
+}
+
+/// A generation built and written into its private build directory beside
+/// the published set, not yet published. Dropping it unpublished removes the
+/// build directory.
+#[cfg(feature = "semantic")]
+pub(crate) struct Staged {
+    generation: Dir,
+    build: Dir,
+    build_name: String,
+    count: usize,
+    pending: bool,
+}
+
+#[cfg(feature = "semantic")]
+impl Staged {
+    /// Publish the staged set: index file and label map first, the manifest
+    /// LAST — a crash mid-publication leaves a mismatched pair, which
+    /// validation refuses and the next rebuild repairs from cache.
+    /// Cancellation is honored up to the first rename; the three renames
+    /// are the publication itself and run to completion. The entry count.
+    pub(crate) fn publish(mut self, control: &Control) -> FResult<usize> {
+        control.check()?;
+        for (file, what) in [
+            (INDEX_FILE, "index file"),
+            (LABELS_FILE, "label map"),
+            (MANIFEST_FILE, "generation manifest"),
+        ] {
+            self.build
+                .rename_into(file, &self.generation, file)
+                .map_err(io_error(what))?;
+        }
+        self.pending = false;
+        self.generation
+            .remove_tree(&self.build_name)
+            .map_err(io_error("build directory"))?;
+        Ok(self.count)
+    }
+}
+
+#[cfg(feature = "semantic")]
+impl Drop for Staged {
+    fn drop(&mut self) {
+        if self.pending {
+            let _ = self.generation.remove_tree(&self.build_name);
+        }
+    }
+}
+
+/// Build one generation and write it, unpublished, into a private build
+/// directory beside the published set. `store` is a duplicate of the
+/// Engine's bound store-directory descriptor; `semantic/` and the digest
+/// directory are opened (or made with `mkdirat`) under it without following
+/// links; USearch serializes to a buffer and the bytes are written through
+/// the descriptor, so no library call resolves a pathname. Needs no engine:
+/// the MCP owner's driver runs it with the engine slot free and takes the
+/// slot only for [`Staged::publish`]. `built` runs once the index is built
+/// in memory, before it is serialized (the driver's test seam).
+#[cfg(feature = "semantic")]
+pub(crate) fn stage_generation(
+    store: &Dir,
+    function_digest: &str,
+    recipe_id: &str,
+    entries: &[GenerationEntry],
+    scope: GenerationScope,
+    control: &Control,
+    built: &dyn Fn(),
+) -> FResult<Staged> {
     use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
-    let io = |what: &'static str| move |e: std::io::Error| conflict_or_io(e, what);
+    let io = io_error;
     // Confine the destination before any work or write; keep the descriptors.
     let generation = open_generation_dir(store, function_digest, true)?
         .ok_or_else(|| FoundryError::RepairPathConflict("generation directory vanished".into()))?;
@@ -733,6 +888,7 @@ pub fn build_generation(
             .add(ordinal as u64, vector.as_slice())
             .map_err(|e| unavailable_index("add", &e))?;
     }
+    built();
     // Serialize to memory: no library call touches a pathname.
     let mut buffer = vec![0u8; index.serialized_length()];
     index
@@ -757,44 +913,43 @@ pub fn build_generation(
     let manifest_bytes = serde_json::to_vec(&manifest).map_err(FoundryError::from)?;
     control.check()?;
 
-    let tmp_name = format!(".building-{}", std::process::id());
-    let tmp_name = tmp_name.as_str();
+    let build_name = format!(".building-{}", std::process::id());
     if generation
-        .kind_of(tmp_name)
+        .kind_of(&build_name)
         .map_err(io("build directory"))?
         .is_some()
     {
         generation
-            .remove_tree(tmp_name)
+            .remove_tree(&build_name)
             .map_err(io("build directory"))?;
     }
     generation
-        .create_dir(tmp_name)
+        .create_dir(&build_name)
         .map_err(io("build directory"))?;
-    let tmp = generation
-        .open_dir(tmp_name)
+    let build = generation
+        .open_dir(&build_name)
         .map_err(io("build directory"))?
         .ok_or_else(|| FoundryError::RepairPathConflict("build directory vanished".into()))?;
-    tmp.write_new(INDEX_FILE, &buffer)
+    let staged = Staged {
+        generation,
+        build,
+        build_name,
+        count: sorted.len(),
+        pending: true,
+    };
+    staged
+        .build
+        .write_new(INDEX_FILE, &buffer)
         .map_err(io("index file"))?;
-    tmp.write_new(LABELS_FILE, &labels_bytes)
+    staged
+        .build
+        .write_new(LABELS_FILE, &labels_bytes)
         .map_err(io("label map"))?;
-    tmp.write_new(MANIFEST_FILE, &manifest_bytes)
+    staged
+        .build
+        .write_new(MANIFEST_FILE, &manifest_bytes)
         .map_err(io("generation manifest"))?;
-    // Cancellation is honored up to here; the three renames below are the
-    // publication itself and run to completion.
-    control.check()?;
-    tmp.rename_into(INDEX_FILE, &generation, INDEX_FILE)
-        .map_err(io("index file"))?;
-    tmp.rename_into(LABELS_FILE, &generation, LABELS_FILE)
-        .map_err(io("label map"))?;
-    tmp.rename_into(MANIFEST_FILE, &generation, MANIFEST_FILE)
-        .map_err(io("generation manifest"))?;
-    drop(tmp);
-    generation
-        .remove_tree(tmp_name)
-        .map_err(io("build directory"))?;
-    Ok(sorted.len())
+    Ok(staged)
 }
 
 #[cfg(test)]

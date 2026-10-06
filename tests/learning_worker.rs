@@ -1352,6 +1352,45 @@ fn owner_death_ends_the_worker_within_two_seconds() {
     }
 }
 
+/// Measured 2026-10-06: an owner killed during training leaves its scratch
+/// run directory (the staged base head) behind. The next run under the same
+/// scratch root reclaims a run directory whose owner pid is no process and
+/// keeps a live owner's; its own run directory goes when it ends.
+#[test]
+fn a_training_run_reclaims_the_scratch_run_directory_of_a_dead_owner() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new();
+    std::fs::create_dir_all(&env.scratch_root).unwrap();
+    std::fs::set_permissions(&env.scratch_root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut exited = Command::new("/usr/bin/true").spawn().unwrap();
+    let dead = exited.id();
+    exited.wait().unwrap();
+    let mut live = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+    let dead_run = env
+        .scratch_root
+        .join(format!("w-{dead}-1759730000000000000"));
+    std::fs::create_dir_all(dead_run.join("tmp")).unwrap();
+    std::fs::write(dead_run.join("head.safetensors"), vec![0u8; 1 << 20]).unwrap();
+    let live_run = format!("w-{}-1759730000000000000", live.id());
+    std::fs::create_dir(env.scratch_root.join(&live_run)).unwrap();
+    env.train_ok("candidate");
+    let left: Vec<String> = std::fs::read_dir(&env.scratch_root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    let _ = live.kill();
+    let _ = live.wait();
+    assert!(
+        !dead_run.exists(),
+        "the dead owner's run directory was reclaimed"
+    );
+    assert_eq!(
+        left,
+        [live_run],
+        "only the live owner's run directory stays"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // (c) The real upstream temperatures are refused
 // ---------------------------------------------------------------------------

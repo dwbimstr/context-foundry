@@ -762,7 +762,8 @@ T003's, each passing only with that task's verification.
     supervised worker abandoned at its deadline counts as holding the slot until its
     late reply really arrives; every admission claims the slot before it checks for
     that late call, and releases a claim that finds one. A query while the slot is
-    held gets `provider_busy` and baseline results. A document batch is admitted
+    held gets `provider_busy` and baseline results (amended 2026-10-06: one query may
+    wait for a document batch, see D5). A document batch is admitted
     only while the slot is free and no foreground query is being dispatched; query
     registration and that admission are one decision under a short lock never held
     during inference. Otherwise preparation pauses with `provider_busy`, keeps
@@ -777,7 +778,8 @@ T003's, each passing only with that task's verification.
   - *The driver (D3).* One background thread per owner prepares the primary root
     only. Every store step takes the engine slot only while no foreground operation
     is in flight and gives it back; inference holds no slot and no transaction. A
-    request arriving during a store step gets the usual retryable `busy`. Pause
+    request arriving during a store step gets the usual retryable `busy` (amended
+    2026-10-06: it waits for the step, see D7). Pause
     admits no new batch (the final stop check and the admission are one decision
     under the lock pause takes) and lets the in-flight batch commit; owner exit or
     EOF discards the uncommitted batch, also one that waits for the engine slot,
@@ -807,6 +809,73 @@ T003's, each passing only with that task's verification.
     `real_lifecycle_exercise_on_a_permitted_declared_corpus` in
     `tests/neural_retrieval.rs`, with its run budget and bounds declared in it. It
     has not been run; no timing or real-model result is claimed.
+- **Decisions after the measurement phase, 2026-10-06 (captain):**
+  - *Queries during preparation (D5).* Measured: back-to-back batches of 8 inputs
+    (about 3.2 s each with the real model) kept the one slot busy, so every query
+    during preparation got `fallback:provider_busy`. Two changes. First, the owner
+    records the time of every tool call it serves (search, context, retrieve,
+    index — its `semantic` prepare and pause included — status, memory,
+    references) at the tool boundary, before the tool runs, and while one arrived in
+    the last 60 s each document call carries at most 2 inputs; otherwise up to 8.
+    The driver reads that
+    time when it admits a call, and a selected batch of 8 is then embedded 2 at a
+    time. Second, a query that finds the slot held by a document batch of this
+    owner's driver may wait for that batch to end, up to its own ceiling (min(1500
+    ms, half the remaining read deadline)). Only one query waits: any other query
+    gets `provider_busy` at once, and while a query waits the driver admits no new
+    batch. A slot held by another query or by an abandoned late call still gives
+    `provider_busy` at once, and a query whose ceiling ends first gets
+    `provider_busy` and baseline results. The waiting query reads its ceiling again
+    after every wake and right before it claims the slot, so a batch that ended after
+    the ceiling is never claimed. The worker still runs one call and keeps
+    no queue; the wait is in the owner and bounded by the request's deadline. Every
+    admission still claims the slot before it checks for a late call, under the
+    same admission lock.
+  - *Dead owners' scratch (D6).* Measured: an owner killed by SIGKILL left its
+    scratch run directory (`w-<pid>-<nanos>`, 100 MB for 013) and later runs never
+    removed it. Every 009 and 013 launch now first removes, under its profile's
+    scratch root, each run directory whose pid is no process. Only real directories
+    owned by this user and named exactly that way are removed; nothing else under
+    the root is touched. A candidate is validated on its own `O_NOFOLLOW`
+    descriptor, then claimed by a no-replace rename through the root's descriptor to
+    a fresh quarantine name of the live reclaiming process, `.reclaim-<pid>-<nanos>`.
+    That name is outside the run namespace, so no reclamation ever takes it as a
+    candidate. Only the pass that made the claim removes the tree, through
+    descriptors, and only if the claimed entry is the validated directory; anything
+    that took its name meanwhile gets the name back untouched. When that name was
+    taken again, the entry stays under its quarantine name and is reported on
+    stderr, never removed. Reclamation runs under the launch's control, checked
+    before every name read and every kind check of every listing, and stops at it,
+    leaving the rest for a later launch; the launch checks the control again right
+    before it starts the worker. *Leak for safety (amended 2026-10-06, review M6):* a
+    claimed tree whose removal stops (the launch's control stopped, an error, or the
+    reclaiming process died) stays under its `.reclaim-` name for good, reported when
+    the process lives to report it. A later launch cannot tell it from a directory
+    someone else put there, so nothing removes it automatically; the owner of the
+    scratch root removes it by hand. That trades a leak for never removing a
+    directory that was not validated.
+  - *Foreground requests during store steps (D7).* Measured: on a 60,739-file store
+    every context query during the first ~12 minutes of cold partitioning failed
+    `busy`, because back-to-back partition steps and whole-generation rebuilds held
+    the engine slot. A foreground request that finds the slot held by a driver store
+    step now waits for that step, bounded by its own deadline (and cancellation); a
+    slot held by another foreground operation is still `busy` at once. While a
+    request waits the driver starts no new step: it re-checks the in-flight count
+    after it took the slot. The request classifies the slot's holder by one mark set
+    while the slot is held, so a slot the driver just released is taken, never
+    refused; and it checks its own control right after it took the slot, so a
+    request stopped while it waited never starts its operation. Steps are short: a
+    partition step ends after 8 sources
+    or at its first source boundary after 100 ms. A publication reads its mapping a
+    page of sources per step and its cached vectors a chunk per step (each ending at
+    its first boundary after 100 ms), validates the old generation and builds and
+    stages the new one with the slot free, and takes the slot again only for the
+    final renames.
+  - *Runtime word after a worker failure (D8).* `status` reported the resident
+    runtime `ready` after its worker died. The runtime now keeps the last terminal
+    failure a model call returned (`provider_exited`, `resource_limit`), cleared by a
+    later call that succeeds, and `status` names it as `fallback:<code>` without
+    calling the model.
 
 D001's model choice and chosen values are settled; executing their checks, the cache
 schema, the open semantic-item line form and isolated Rust-bridge integration remain

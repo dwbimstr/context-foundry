@@ -2248,52 +2248,668 @@ fn an_unsafe_scratch_root_is_refused_before_anything_starts() {
     assert!(!dir.path().join("missing-parent").exists());
 }
 
+/// A SIGKILLed owner never removes its scratch run directory; the next
+/// launch under the same scratch root reclaims it (009 and 013 share the
+/// rule). Only a real directory named exactly `w-<pid>-<nanos>` whose pid
+/// is no process goes, contents and all; a live owner's run, any other
+/// name, a regular file and a symlink (and its target) stay untouched.
+#[test]
+fn a_launch_reclaims_run_directories_of_dead_owners_and_nothing_else() {
+    use std::collections::BTreeSet;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (bundle, sha) = fake_bundle(dir.path());
+    let profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+    let root = profile.worker.scratch_root.clone();
+    std::fs::create_dir(&root).expect("scratch root");
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    // A pid that names no process: a child that exited and was reaped.
+    let mut exited = Command::new("/usr/bin/true").spawn().expect("spawn");
+    let dead = exited.id();
+    exited.wait().expect("reap");
+    // A live owner other than this process.
+    let mut live = Command::new("/bin/sleep").arg("60").spawn().expect("spawn");
+    let dead_run = root.join(format!("w-{dead}-1759730000000000000"));
+    std::fs::create_dir_all(dead_run.join("tmp/nested")).expect("dead run");
+    std::fs::write(dead_run.join("head.safetensors"), vec![0u8; 1 << 20]).expect("staged head");
+    std::fs::write(dead_run.join("tmp/nested/file"), b"x").expect("nested file");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir(&outside).expect("outside");
+    std::fs::write(outside.join("kept"), b"kept").expect("outside file");
+    let kept_dirs = [
+        format!("w-{}-1759730000000000000", live.id()),
+        format!("w-{}-1", std::process::id()),
+        format!("w-{dead}"),
+        format!("w-{dead}-1-2"),
+        format!("w-0{dead}-1"),
+        format!("w-{dead}-1x"),
+        format!("x-{dead}-1"),
+    ];
+    for name in &kept_dirs {
+        std::fs::create_dir(root.join(name)).expect("kept directory");
+        std::fs::write(root.join(name).join("file"), b"kept").expect("kept file");
+    }
+    let file = format!("w-{dead}-2");
+    std::fs::write(root.join(&file), b"a regular file").expect("regular file");
+    let link = format!("w-{dead}-3");
+    symlink(&outside, root.join(&link)).expect("symlink");
+    let names = || -> BTreeSet<String> {
+        std::fs::read_dir(&root)
+            .expect("scratch root")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .into_string()
+                    .expect("UTF-8")
+            })
+            .collect()
+    };
+    let planted = names();
+
+    let provider = launch(&profile, &[]).expect("acquire");
+    let during = names();
+    drop(provider);
+    let after = names();
+    let _ = live.kill();
+    let _ = live.wait();
+
+    assert!(
+        !dead_run.exists(),
+        "the dead owner's run directory was reclaimed"
+    );
+    let mut expected = planted.clone();
+    expected.remove(&format!("w-{dead}-1759730000000000000"));
+    assert_eq!(after, expected, "nothing else under the root was touched");
+    assert_eq!(
+        during.difference(&expected).count(),
+        1,
+        "the launch's own run directory: {during:?}"
+    );
+    for name in &kept_dirs {
+        assert_eq!(
+            std::fs::read(root.join(name).join("file")).expect("kept file"),
+            b"kept"
+        );
+    }
+    assert_eq!(
+        std::fs::read(root.join(&file)).expect("regular file"),
+        b"a regular file"
+    );
+    assert!(
+        std::fs::symlink_metadata(root.join(&link))
+            .expect("symlink")
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read(outside.join("kept")).expect("the link's target"),
+        b"kept"
+    );
+}
+
+/// A dead owner's run directory under the scratch root of `profile`, with
+/// one file inside; returns its path. The pid is a reaped child's.
+fn plant_dead_run(profile: &SemanticProfile, nanos: u64) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let root = &profile.worker.scratch_root;
+    if !root.exists() {
+        std::fs::create_dir(root).expect("scratch root");
+        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    }
+    let mut exited = Command::new("/usr/bin/true").spawn().expect("spawn");
+    let dead = exited.id();
+    exited.wait().expect("reap");
+    let run = root.join(format!("w-{dead}-{nanos}"));
+    std::fs::create_dir_all(run.join("tmp")).expect("dead run");
+    std::fs::write(run.join("head.safetensors"), b"staged").expect("staged head");
+    run
+}
+
+/// Review M5: reclamation runs under the launch's control. Barrier: the
+/// `supervisor.scratch_reclaim_validated` fault point cancels the launch
+/// right after the first dead run was validated. Nothing more is claimed or
+/// removed, no run directory is created and no worker is started: the dead
+/// runs stay for a later launch.
+#[test]
+fn a_launch_stopped_during_reclamation_leaves_the_rest_and_starts_nothing() {
+    use context_foundry::fault::{self, Action};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (bundle, sha) = fake_bundle(dir.path());
+    let profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+    let first = plant_dead_run(&profile, 1);
+    let second = plant_dead_run(&profile, 2);
+    let pid_file = dir.path().join("worker.pid");
+    fault::arm(
+        supervisor::fault_names::SCRATCH_RECLAIM_VALIDATED,
+        0,
+        Action::Cancel,
+    );
+    let error = refused(
+        launch(&profile, &["--pid-file", &pid_file.display().to_string()]),
+        "a launch cancelled during reclamation",
+    );
+    fault::disarm_all();
+    assert!(matches!(error, ProviderError::Cancelled), "got {error:?}");
+    assert!(!pid_file.exists(), "no worker was started");
+    assert!(
+        first.join("head.safetensors").exists(),
+        "nothing was removed"
+    );
+    assert!(
+        second.join("head.safetensors").exists(),
+        "nothing was removed"
+    );
+    assert_eq!(
+        std::fs::read_dir(&profile.worker.scratch_root)
+            .expect("scratch root")
+            .count(),
+        2,
+        "no run directory was created"
+    );
+}
+
+/// The names under `profile`'s scratch root, sorted.
+fn scratch_names(profile: &SemanticProfile) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(&profile.worker.scratch_root)
+        .expect("scratch root")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .into_string()
+                .expect("UTF-8")
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// Review M5, round 3: the scratch root's listing runs under the launch's
+/// control step by step, not only between candidates. Barrier: the
+/// `supervisor.scratch_reclaim_entry` fault point cancels the launch at one
+/// step of that listing (32 entries), once while its names are read and
+/// once while their kinds are checked. The listing ends at that very step,
+/// nothing is claimed or removed, no run directory is created and no worker
+/// is started.
+#[test]
+fn a_launch_cancelled_while_listing_the_scratch_root_stops_at_that_step() {
+    use context_foundry::fault::{self, Action};
+    const OTHERS: usize = 30;
+    // The names pass reads 32 names and the end of the listing (plus `.`
+    // and `..`); the kinds pass follows with 32 checks.
+    for (pass, step) in [("names", 1), ("kinds", 2 * OTHERS)] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bundle, sha) = fake_bundle(dir.path());
+        let profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+        let runs = [plant_dead_run(&profile, 1), plant_dead_run(&profile, 2)];
+        for n in 0..OTHERS {
+            let other = profile.worker.scratch_root.join(format!("other-{n}"));
+            std::fs::write(other, b"kept").expect("another entry");
+        }
+        let planted = scratch_names(&profile);
+        let pid_file = dir.path().join("worker.pid");
+        fault::arm(
+            supervisor::fault_names::SCRATCH_RECLAIM_ENTRY,
+            step,
+            Action::Cancel,
+        );
+        let error = refused(
+            launch(&profile, &["--pid-file", &pid_file.display().to_string()]),
+            "a launch cancelled while listing the scratch root",
+        );
+        let steps = fault::reached(supervisor::fault_names::SCRATCH_RECLAIM_ENTRY);
+        fault::disarm_all();
+        assert!(
+            matches!(error, ProviderError::Cancelled),
+            "{pass}: got {error:?}"
+        );
+        assert_eq!(
+            steps,
+            step + 1,
+            "{pass}: no step ran after the cancelled one"
+        );
+        assert!(!pid_file.exists(), "{pass}: no worker was started");
+        for run in &runs {
+            assert_eq!(
+                std::fs::read(run.join("head.safetensors")).expect("the dead run"),
+                b"staged",
+                "{pass}: nothing was claimed or removed"
+            );
+        }
+        assert_eq!(
+            scratch_names(&profile),
+            planted,
+            "{pass}: no run directory was created"
+        );
+    }
+}
+
+/// Review M5, round 3: a claimed dead run's tree is listed under the
+/// launch's control too. Barrier: the `supervisor.scratch_reclaim_entry`
+/// fault point cancels the launch at one step of the claimed tree's listing
+/// (scope `run`, 32 entries), once while its names are read and once while
+/// their kinds are checked. The listing ends at that very step, nothing in
+/// the tree is removed and no worker is started. Review M6: the claimed tree
+/// stays under its quarantine name `.reclaim-<pid>-<nanos>`, never under a
+/// run name, and a later launch leaves it alone.
+#[test]
+fn a_launch_cancelled_while_listing_a_claimed_run_stops_at_that_step() {
+    use context_foundry::fault::{self, Action, Ctx};
+    use std::{cell::Cell, rc::Rc};
+    const FILES: usize = 30;
+    for (pass, step) in [("names", 1), ("kinds", 2 * FILES)] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bundle, sha) = fake_bundle(dir.path());
+        let profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+        // `tmp`, `head.safetensors` and FILES files.
+        let run = plant_dead_run(&profile, 1);
+        for n in 0..FILES {
+            std::fs::write(run.join(format!("file-{n}")), b"kept").expect("a run file");
+        }
+        let pid_file = dir.path().join("worker.pid");
+        let seen = Rc::new(Cell::new(0usize));
+        fault::arm(
+            supervisor::fault_names::SCRATCH_RECLAIM_ENTRY,
+            0,
+            Action::Call(Box::new({
+                let seen = Rc::clone(&seen);
+                move |ctx: &Ctx<'_>| {
+                    if ctx.detail != "run" {
+                        return;
+                    }
+                    if seen.get() == step {
+                        ctx.control.expect("the launch's control").cancel();
+                    }
+                    seen.set(seen.get() + 1);
+                }
+            })),
+        );
+        let error = refused(
+            launch(&profile, &["--pid-file", &pid_file.display().to_string()]),
+            "a launch cancelled while listing a claimed run",
+        );
+        fault::disarm_all();
+        assert!(
+            matches!(error, ProviderError::Cancelled),
+            "{pass}: got {error:?}"
+        );
+        assert_eq!(
+            seen.get(),
+            step + 1,
+            "{pass}: no step ran after the cancelled one"
+        );
+        assert!(!pid_file.exists(), "{pass}: no worker was started");
+        assert!(!run.exists(), "{pass}: the dead run was claimed");
+        let names = scratch_names(&profile);
+        let [claimed] = names.as_slice() else {
+            panic!("{pass}: only the claimed tree: {names:?}");
+        };
+        assert!(
+            claimed.starts_with(&format!(".reclaim-{}-", std::process::id())),
+            "{pass}: {claimed}"
+        );
+        let claimed = profile.worker.scratch_root.join(claimed);
+        let intact = || {
+            std::fs::read_dir(&claimed)
+                .expect("the claimed tree")
+                .count()
+                == FILES + 2
+                && std::fs::read(claimed.join("head.safetensors")).expect("staged head")
+                    == b"staged"
+        };
+        assert!(intact(), "{pass}: nothing in the claimed tree was removed");
+        drop(launch(&profile, &[]).expect("a later launch"));
+        assert_eq!(
+            scratch_names(&profile),
+            names,
+            "{pass}: the later launch left the quarantined tree"
+        );
+        assert!(
+            intact(),
+            "{pass}: the later launch left the quarantined tree"
+        );
+    }
+}
+
+/// Review M6: the dead run that passed validation is replaced, under its
+/// name, by an empty foreign directory before it is claimed. Barrier: the
+/// `supervisor.scratch_reclaim_validated` fault point moves the validated
+/// directory out of the root and puts the foreign one in its place. The
+/// claim finds another inode than the validated one and gives the name back:
+/// the foreign directory survives, and the moved original is untouched.
+#[test]
+fn a_dead_run_replaced_after_validation_is_never_removed() {
+    use context_foundry::fault::{self, Action};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (bundle, sha) = fake_bundle(dir.path());
+    let profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+    let run = plant_dead_run(&profile, 1);
+    let moved = dir.path().join("moved-away");
+    fault::arm(
+        supervisor::fault_names::SCRATCH_RECLAIM_VALIDATED,
+        0,
+        Action::Call(Box::new({
+            let (run, moved) = (run.clone(), moved.clone());
+            move |_| {
+                std::fs::rename(&run, &moved).expect("move the validated run away");
+                std::fs::create_dir(&run).expect("the foreign replacement");
+            }
+        })),
+    );
+    let provider = launch(&profile, &[]);
+    fault::disarm_all();
+    drop(provider.expect("acquire"));
+    assert!(run.is_dir(), "the foreign replacement survived");
+    assert_eq!(
+        std::fs::read_dir(&run).expect("replacement").count(),
+        0,
+        "the foreign replacement is untouched"
+    );
+    assert_eq!(
+        std::fs::read(moved.join("head.safetensors")).expect("the moved original"),
+        b"staged",
+        "the moved original is untouched"
+    );
+    let names: Vec<_> = std::fs::read_dir(&profile.worker.scratch_root)
+        .expect("scratch root")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(names, [run.file_name().unwrap()], "{names:?}");
+}
+
+/// Review M6, round 3: as above, but once the claim moved the foreign
+/// directory (with data) to its quarantine name, the run's name is taken
+/// again, so the claim cannot be given back. Barriers: the
+/// `supervisor.scratch_reclaim_validated` fault point swaps the validated run
+/// for the foreign directory; `supervisor.scratch_reclaim_claimed` puts a new
+/// directory under the run's name. The foreign directory stays, with its
+/// data, under `.reclaim-<pid>-<nanos>`, outside the run namespace: a later
+/// launch leaves it alone, and so it does a `.reclaim-` entry whose claiming
+/// process is gone (planted with a dead pid). That later launch does reclaim
+/// the directory under the dead run's name.
+#[test]
+fn a_claim_that_cannot_be_given_back_is_never_removed() {
+    use context_foundry::fault::{self, Action};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (bundle, sha) = fake_bundle(dir.path());
+    let profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+    let root = profile.worker.scratch_root.clone();
+    let run = plant_dead_run(&profile, 1);
+    let moved = dir.path().join("moved-away");
+    fault::arm(
+        supervisor::fault_names::SCRATCH_RECLAIM_VALIDATED,
+        0,
+        Action::Call(Box::new({
+            let (run, moved) = (run.clone(), moved.clone());
+            move |_| {
+                std::fs::rename(&run, &moved).expect("move the validated run away");
+                std::fs::create_dir(&run).expect("the foreign replacement");
+                std::fs::write(run.join("data"), b"foreign").expect("the foreign data");
+            }
+        })),
+    );
+    fault::arm(
+        supervisor::fault_names::SCRATCH_RECLAIM_CLAIMED,
+        0,
+        Action::Call(Box::new({
+            let run = run.clone();
+            move |_| std::fs::create_dir(&run).expect("the run's name taken again")
+        })),
+    );
+    let provider = launch(&profile, &[]);
+    fault::disarm_all();
+    drop(provider.expect("acquire"));
+    let names = scratch_names(&profile);
+    let [held, taken] = names.as_slice() else {
+        panic!("the quarantined foreign directory and the run's name: {names:?}");
+    };
+    assert!(
+        held.starts_with(&format!(".reclaim-{}-", std::process::id())),
+        "{names:?}"
+    );
+    assert_eq!(root.join(taken), run, "{names:?}");
+    assert_eq!(
+        std::fs::read(root.join(held).join("data")).expect("the foreign data"),
+        b"foreign"
+    );
+    // The claiming process is gone: a dead pid's quarantine entry.
+    let mut exited = Command::new("/usr/bin/true").spawn().expect("spawn");
+    let dead = exited.id();
+    exited.wait().expect("reap");
+    let orphan = format!(".reclaim-{dead}-1");
+    std::fs::create_dir(root.join(&orphan)).expect("an orphaned claim");
+    std::fs::write(root.join(&orphan).join("data"), b"orphan").expect("its data");
+
+    drop(launch(&profile, &[]).expect("a later launch"));
+    assert!(
+        !run.exists(),
+        "the later launch reclaimed what held the dead run's name"
+    );
+    let mut kept = vec![held.clone(), orphan.clone()];
+    kept.sort();
+    assert_eq!(scratch_names(&profile), kept);
+    assert_eq!(
+        std::fs::read(root.join(held).join("data")).expect("the foreign data"),
+        b"foreign"
+    );
+    assert_eq!(
+        std::fs::read(root.join(&orphan).join("data")).expect("the orphan's data"),
+        b"orphan"
+    );
+    assert_eq!(
+        std::fs::read(moved.join("head.safetensors")).expect("the moved original"),
+        b"staged",
+        "the moved original is untouched"
+    );
+}
+
+/// Gaps review M3: the resident worker dies during a query. The query
+/// falls back by name (`fallback:provider_exited`), and the owner's status
+/// names that failure as its runtime word without calling the model.
+/// Barrier: the fake worker reports its `call` phase and holds the call
+/// (`--hold-file`) until it is killed.
+#[cfg(feature = "semantic")]
+#[test]
+fn a_worker_dying_during_a_query_is_named_by_the_owners_status() {
+    use context_foundry::neural::provider::{FunctionDescriptor, LateCall};
+    use context_foundry::neural::query::{Fallback, QueryRuntime, fallback_word};
+    use std::sync::Arc;
+
+    struct Relabeled {
+        worker: WorkerProvider,
+        descriptor: FunctionDescriptor,
+    }
+    impl EmbeddingProvider for Relabeled {
+        fn descriptor(&self) -> &FunctionDescriptor {
+            &self.descriptor
+        }
+        fn embed_documents(
+            &mut self,
+            batch: &[TokenizedInput],
+            control: &context_foundry::Control,
+        ) -> Result<Vec<Vec<f32>>, ProviderError> {
+            self.worker.embed_documents(batch, control)
+        }
+        fn embed_query(
+            &mut self,
+            input: &TokenizedInput,
+            deadline: Instant,
+        ) -> Result<Vec<f32>, ProviderError> {
+            self.worker.embed_query(input, deadline)
+        }
+        fn late_call(&self) -> Option<LateCall> {
+            self.worker.late_call()
+        }
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (bundle, sha) = fake_bundle(dir.path());
+    let worker_profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+    let runtime_profile = Arc::new(
+        SemanticProfile::load(&context_foundry::testkit::write_semantic_profile(
+            &dir.path().join("runtime"),
+            "runtime",
+            |_| {},
+        ))
+        .expect("the runtime profile"),
+    );
+    let (hold, phases, pid_file) = (
+        dir.path().join("hold"),
+        dir.path().join("phases"),
+        dir.path().join("worker.pid"),
+    );
+    std::fs::write(&hold, b"").expect("hold file");
+    let hooks = vec![
+        "--hold-file".to_owned(),
+        hold.display().to_string(),
+        "--phase-file".to_owned(),
+        phases.display().to_string(),
+        "--pid-file".to_owned(),
+        pid_file.display().to_string(),
+    ];
+    let descriptor = runtime_profile.descriptor.clone();
+    let runtime = Arc::new(
+        QueryRuntime::start(
+            Arc::clone(&runtime_profile),
+            Box::new(move || {
+                let worker = WorkerProvider::launch(&worker_profile, hooks)?;
+                Ok(Box::new(Relabeled { worker, descriptor }) as Box<dyn EmbeddingProvider>)
+            }),
+        )
+        .expect("the runtime starts"),
+    );
+    assert_eq!(runtime.status_word(), "ready");
+    let query = {
+        let runtime = Arc::clone(&runtime);
+        std::thread::spawn(move || {
+            runtime.embed("twilight onset", Instant::now() + Duration::from_secs(30))
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !std::fs::read_to_string(&phases)
+        .unwrap_or_default()
+        .lines()
+        .any(|phase| phase == "call")
+    {
+        assert!(Instant::now() < deadline, "the worker never ran the query");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let pid: i32 = std::fs::read_to_string(&pid_file)
+        .expect("worker pid")
+        .trim()
+        .parse()
+        .expect("pid");
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+    let error = query
+        .join()
+        .unwrap()
+        .expect_err("the query fails with the worker");
+    assert!(
+        matches!(error, ProviderError::WorkerExited(_)),
+        "got {error:?}"
+    );
+    assert!(
+        fallback_word(&Fallback::from(error).to_string()).starts_with("fallback:provider_exited"),
+        "the request's named fallback"
+    );
+    assert_eq!(runtime.status_word(), "fallback:provider_exited");
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir(&workspace).expect("workspace");
+    let engine =
+        context_foundry::Engine::initialize(&dir.path().join("store"), &workspace).expect("store");
+    let status = context_foundry::neural::driver::status_object(
+        &engine,
+        None,
+        &runtime.status_word(),
+        &context_foundry::Control::unbounded(),
+    )
+    .expect("status");
+    assert_eq!(status["runtime"], "fallback:provider_exited", "{status}");
+    runtime.shutdown();
+}
+
 /// Serializes tests that widen the readiness receive slice (or assert
 /// launch promptness against it), so the process-wide override cannot land
 /// in another test's launch.
 static LAUNCH_TIMING_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// The readiness receive is capped by the BOUNDED control (the earlier of
+/// the caller's deadline and the profile's 60 s load bound): the
+/// acquisition wakes at the caller's deadline, not at the worker's ready
+/// (500 ms after the deadline at the earliest) and not at the end of the
+/// 30 s receive slice, and that ready is never accepted.
+///
+/// The claim needs the deadline to land INSIDE that receive, with the
+/// worker started. The same deadline also covers the verification before
+/// the spawn: the profile, its artifacts and the SHA-256 of the 5 MB debug
+/// fake, measured 2026-10-06 at 200-260 ms unloaded and past 400 ms under a
+/// parallel suite. Only an attempt whose launch ENTERED the readiness
+/// receive with time left (the `supervisor.ready_receive_entered` fault
+/// point) and whose worker wrote its PID proves the claim; any other attempt
+/// proves nothing about the receive, and the next one gives the start four
+/// times the headroom. Every attempt must still time out with nothing
+/// accepted.
 #[test]
 fn a_ready_crossing_the_deadline_inside_one_receive_slice_is_never_accepted() {
     let _guard = LAUNCH_TIMING_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let dir = tempfile::tempdir().expect("tempdir");
-    let (bundle, sha) = fake_bundle(dir.path());
-    let profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
-    let pid_file = dir.path().join("worker.pid");
-    // A readiness receive slice far wider than the acquisition's deadline:
-    // the receive cap comes from the BOUNDED control (the earlier of the
-    // caller's 400 ms deadline and the profile's 60 s load bound), so the
-    // call must WAKE at the deadline -- not at the ready (which the worker
-    // delivers at ~900 ms) and not at the end of the 5 s slice.
-    supervisor::set_launch_wait_slice(Duration::from_secs(5));
-    let control =
-        context_foundry::Control::with_deadline(Instant::now() + Duration::from_millis(400));
-    let started = Instant::now();
-    let error = refused(
-        WorkerProvider::launch_until(
-            &profile,
-            vec![
-                "--load-ms".into(),
-                "900".into(),
-                "--pid-file".into(),
-                pid_file.display().to_string(),
-            ],
-            &control,
-        ),
-        "a ready past the deadline",
-    );
-    supervisor::set_launch_wait_slice(Duration::ZERO);
-    assert!(matches!(error, ProviderError::Timeout), "got {error:?}");
+    use context_foundry::fault::{self, Action};
+    use std::{cell::Cell, rc::Rc};
+    let mut reached_the_receive = false;
+    for deadline in [400, 1600, 6400].map(Duration::from_millis) {
+        let entered = Rc::new(Cell::new(false));
+        fault::arm(
+            supervisor::fault_names::READY_RECEIVE_ENTERED,
+            0,
+            Action::Call(Box::new({
+                let entered = Rc::clone(&entered);
+                move |_| entered.set(true)
+            })),
+        );
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bundle, sha) = fake_bundle(dir.path());
+        let profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+        let pid_file = dir.path().join("worker.pid");
+        let load = deadline + Duration::from_millis(500);
+        supervisor::set_launch_wait_slice(Duration::from_secs(30));
+        let control = context_foundry::Control::with_deadline(Instant::now() + deadline);
+        let started = Instant::now();
+        let error = refused(
+            WorkerProvider::launch_until(
+                &profile,
+                vec![
+                    "--load-ms".into(),
+                    load.as_millis().to_string(),
+                    "--pid-file".into(),
+                    pid_file.display().to_string(),
+                ],
+                &control,
+            ),
+            "a ready past the deadline",
+        );
+        let took = started.elapsed();
+        supervisor::set_launch_wait_slice(Duration::ZERO);
+        fault::disarm_all();
+        assert!(matches!(error, ProviderError::Timeout), "got {error:?}");
+        if !entered.get() || !pid_file.exists() {
+            continue;
+        }
+        assert!(
+            took + Duration::from_millis(50) >= deadline
+                && took <= deadline + Duration::from_millis(300),
+            "the acquisition must wake at its {deadline:?} deadline, took {took:?} \
+             (the ready comes {load:?} after the worker's start, the slice ends at 30 s)"
+        );
+        assert_worker_reaped(&pid_file);
+        reached_the_receive = true;
+        break;
+    }
     assert!(
-        started.elapsed() >= Duration::from_millis(350)
-            && started.elapsed() <= Duration::from_millis(700),
-        "the acquisition must wake at the 400 ms deadline, took {:?} \
-         (slice end would be 5 s, the ready ~900 ms)",
-        started.elapsed()
+        reached_the_receive,
+        "no attempt started the worker before its deadline, the last one 6.4 s"
     );
-    assert_worker_reaped(&pid_file);
 }
 
 #[test]
@@ -2339,6 +2955,93 @@ fn a_ready_crossing_a_cancellation_inside_one_receive_slice_is_discarded() {
         "a ready consumed after the caller cancelled must not be accepted: {error:?}"
     );
     assert_worker_reaped(&pid_file);
+}
+
+/// Review M7: the acquisition's deadline passes between the readiness
+/// wait's control check and its receive-slice computation. Barrier: the
+/// `supervisor.ready_slice` fault point holds the launch there, after the
+/// worker wrote its PID, until the deadline has passed. The slice is then
+/// zero: the acquisition times out at once, never enters the receive (30 s
+/// slice; the worker's ready would come only after 60 s) and reaps the
+/// worker. An attempt whose launch stopped before the readiness wait (its
+/// verification overran the deadline under load) never reaches the fault
+/// point and proves nothing; the next one gives the start four times the
+/// headroom.
+#[test]
+fn a_deadline_passing_before_the_receive_slice_enters_no_receive() {
+    let _guard = LAUNCH_TIMING_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    use context_foundry::fault::{self, Action, Ctx};
+    let mut crossed = false;
+    for deadline in [400, 1600, 6400].map(Duration::from_millis) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (bundle, sha) = fake_bundle(dir.path());
+        let profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
+        let pid_file = dir.path().join("worker.pid");
+        fault::arm(
+            supervisor::fault_names::READY_SLICE,
+            0,
+            Action::Call(Box::new({
+                let pid_file = pid_file.clone();
+                move |ctx: &Ctx<'_>| {
+                    let at = ctx
+                        .control
+                        .and_then(context_foundry::Control::deadline)
+                        .expect("the acquisition's bound");
+                    let give_up = Instant::now() + Duration::from_secs(20);
+                    while !pid_file.exists() && Instant::now() < give_up {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    while Instant::now() < at {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                }
+            })),
+        );
+        supervisor::set_launch_wait_slice(Duration::from_secs(30));
+        let control = context_foundry::Control::with_deadline(Instant::now() + deadline);
+        let started = Instant::now();
+        let error = refused(
+            WorkerProvider::launch_until(
+                &profile,
+                vec![
+                    "--load-ms".into(),
+                    "60000".into(),
+                    "--pid-file".into(),
+                    pid_file.display().to_string(),
+                ],
+                &control,
+            ),
+            "a deadline passing before the receive slice",
+        );
+        let took = started.elapsed();
+        supervisor::set_launch_wait_slice(Duration::ZERO);
+        let held = fault::reached(supervisor::fault_names::READY_SLICE);
+        let received = fault::reached(supervisor::fault_names::READY_RECEIVE_ENTERED);
+        fault::disarm_all();
+        assert!(matches!(error, ProviderError::Timeout), "got {error:?}");
+        if held == 0 {
+            continue;
+        }
+        assert_eq!(held, 1, "one pass of the readiness wait");
+        assert_eq!(
+            received, 0,
+            "no receive is entered once the deadline passed"
+        );
+        assert!(
+            took < Duration::from_secs(20),
+            "the acquisition ends at its {deadline:?} deadline, not at the 30 s slice: \
+             took {took:?}"
+        );
+        assert_worker_reaped(&pid_file);
+        crossed = true;
+        break;
+    }
+    assert!(
+        crossed,
+        "no attempt reached the readiness wait before its deadline, the last one 6.4 s"
+    );
 }
 
 #[test]

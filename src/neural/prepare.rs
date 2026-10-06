@@ -482,7 +482,23 @@ pub(crate) fn publish(
     } else {
         engine.semantic_publish_pending(control)
     };
-    let stop = match outcome {
+    let stop = record_publication(outcome, budget, report);
+    if stop.is_none() {
+        prepare_fault!(AFTER_PUBLISH, Some(control), "")?;
+    }
+    Ok(stop)
+}
+
+/// Record a publication's outcome in the report: published with its entry
+/// count, nothing to publish, or a named stop (the budget, cancellation, a
+/// failure) with its reason — never swallowed. The CLI's [`publish`] and the
+/// MCP owner's chunked publication (`super::driver`) share it.
+pub(crate) fn record_publication(
+    outcome: FResult<Publication>,
+    budget: u64,
+    report: &mut PrepareReport,
+) -> Option<Stop> {
+    match outcome {
         Ok(Publication::Nothing) => None,
         Ok(Publication::Current(entries) | Publication::Rebuilt(entries)) => {
             report.index_published = true;
@@ -514,11 +530,7 @@ pub(crate) fn publish(
                 format!("generation publication failed: {why}"),
             ))
         }
-    };
-    if stop.is_none() {
-        prepare_fault!(AFTER_PUBLISH, Some(control), "")?;
     }
-    Ok(stop)
 }
 
 /// The bounded work: verification, partition pass, pending publication,
@@ -590,7 +602,7 @@ fn inner(
     // --- Partition pass: current sources, pages of 128, commit per source.
     let mut after: Option<String> = None;
     loop {
-        match steps.partition_page(&mut after, usize::MAX, control, report, &mut || {
+        match steps.partition_page(&mut after, usize::MAX, None, control, report, &mut || {
             halt(control, budget)
         })? {
             Progress::More => {}
@@ -887,16 +899,19 @@ impl Batch {
 
 impl Steps<'_> {
     /// Partition the current sources after `after`, one page at most, until
-    /// `max_new` partitions were written: each source without a current
-    /// partition is partitioned from its committed body and its mapping
-    /// accepted in its own transaction. `halt` is asked before the page and
-    /// before every source that needs work. (`control` reaches only the
-    /// test-faults point after each partition commit.)
+    /// `max_new` partitions were written or, once at least one source was
+    /// examined, `until` passed (009 T003: the MCP owner's driver keeps each
+    /// engine-slot step short): each source without a current partition is
+    /// partitioned from its committed body and its mapping accepted in its
+    /// own transaction. `halt` is asked before the page and before every
+    /// source that needs work. (`control` reaches only the test-faults point
+    /// after each partition commit.)
     #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
     pub(crate) fn partition_page(
         &self,
         after: &mut Option<String>,
         max_new: usize,
+        until: Option<Instant>,
         control: &Control,
         report: &mut PrepareReport,
         halt: &mut dyn FnMut() -> Option<Stop>,
@@ -909,8 +924,10 @@ impl Steps<'_> {
             return Ok(Progress::Done);
         }
         let mut written = 0usize;
-        for (path, meta) in &page {
-            if written == max_new {
+        for (examined, (path, meta)) in page.iter().enumerate() {
+            if written == max_new
+                || (examined > 0 && until.is_some_and(|until| Instant::now() >= until))
+            {
                 return Ok(Progress::More);
             }
             report.sources += 1;
@@ -1032,5 +1049,62 @@ impl Steps<'_> {
                 walk.after = Some(path.clone());
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "test-faults"))]
+mod tests {
+    use super::*;
+
+    /// 009 T003, captain decision 2026-10-06: a partition step stops at its
+    /// time bound once it examined a source, and at its count bound without
+    /// one. The injected bound has already passed, so each step writes
+    /// exactly one partition.
+    #[test]
+    fn a_partition_step_stops_at_its_time_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("workspace");
+        std::fs::create_dir_all(&root).unwrap();
+        for n in 0..12 {
+            std::fs::write(
+                root.join(format!("note{n:02}.md")),
+                format!("# Note {n}\n\nbody of note {n}\n"),
+            )
+            .unwrap();
+        }
+        let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+        engine.index(&root, &Control::unbounded()).unwrap();
+        let path = crate::testkit::write_semantic_profile(dir.path(), "steps", |_| {});
+        let profile = SemanticProfile::load(&path).unwrap();
+        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+        let digest = profile.descriptor.digest();
+        let recipe = partition::recipe_id(&profile.descriptor.tokenizer);
+        let steps = Steps {
+            engine: &engine,
+            tokenizer: &tokenizer,
+            recipe: &recipe,
+            function_digest: &digest,
+        };
+        let control = Control::unbounded();
+        let mut report = PrepareReport::default();
+        let mut after = None;
+        let mut step = |until: Option<Instant>, report: &mut PrepareReport| {
+            steps
+                .partition_page(&mut after, 8, until, &control, report, &mut || None)
+                .unwrap()
+        };
+        for written in 1..=3 {
+            assert!(matches!(
+                step(Some(Instant::now()), &mut report),
+                Progress::More
+            ));
+            assert_eq!(report.partitioned_sources, written, "one source per step");
+        }
+        assert!(matches!(step(None, &mut report), Progress::More));
+        assert_eq!(report.partitioned_sources, 11, "the count bound: 8 more");
+        assert!(matches!(step(None, &mut report), Progress::More));
+        assert_eq!(report.partitioned_sources, 12);
+        assert!(matches!(step(None, &mut report), Progress::Done));
+        assert_eq!(report.sources, 12, "every source examined once");
     }
 }
