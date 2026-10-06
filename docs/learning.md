@@ -1,14 +1,18 @@
 # Owned continuous learning
 
-Status: Proposed, 2026-09-29. [013](../specs/013-owned-learning/spec.md) owns the
-design and acceptance. T001 (exact permitted examples) is implemented and awaits
-review: `src/decision_model.rs` (the one shared renderer/tokenizer path, no weights),
-`src/learning.rs` (v4 rows, consent, groups and splits, fingerprints, dataset
-prepare/check, manifest, and `Engine::compose_route_state` — the one composer of the
-`state` that rows store and T003 will send) and `tests/learning_data.rs`, pinned to the
-upstream renderer's IDs by `tests/fixtures/learning/render.json`. T002 (fitting,
-calibration, evaluation and the candidate; see below) is accepted. T003 (serving,
-selection and rollback; see below) is implemented locally and awaits review.
+Status, 2026-10-05: [013](../specs/013-owned-learning/spec.md) owns the design and
+acceptance. T001 (exact permitted examples), T002 (fitting, calibration, evaluation and
+the candidate) and T003 (serving, selection and rollback) are implemented and accepted
+locally, with the model worker under development isolation only. The code:
+- `src/decision_model.rs`: the one shared renderer/tokenizer path, plus the tch model
+  behind `learning-worker`;
+- `src/learning.rs`: v4 rows, consent, groups and splits, fingerprints, dataset
+  prepare/check, the manifest, `Engine::compose_route_state`, and the training and
+  serving workflow;
+- `src/policy.rs`: config, routing and selection.
+
+T004 (a second round and deployment) and every real-data measurement are deferred to the
+measurement and packaging phase.
 
 A `learning prepare` whose process died after publishing its output but before
 recording it leaves a dataset that is not yet a valid parent (`lineage_missing`).
@@ -19,7 +23,7 @@ and exact rendering, as `learning check` reads it — records it and completes w
 
 ## Training a candidate (013 T002, development profile)
 
-T002 is implemented locally (acceptance pending review). The core owns everything but
+T002 is accepted (2026-10-05). The core owns everything but
 the numbers: the dataset read-back, the policy, the pre-fit permission gate, the
 seeded order, `max_steps`, the wall clock, calibration, evaluation and publication. The
 worker (`foundry-learn`, LibTorch) only loads the checkpoint, takes updates, computes

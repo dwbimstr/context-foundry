@@ -40,6 +40,19 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 013 T003 serve, select, roll back and retire the legacy HTTP path — 2026-10-05
+
+Development isolation only. Deferred to the measurement phase (owner, 2026-10-05), not run: the enablement comparison (the same checked tasks with `foundry usage import`), the aggregate 009+013 residency test, and latency figures. The learned policy stays off by default until that comparison passes.
+- **Shape.**
+  - `src/policy.rs`: config v2 validated at owner startup. An invalid config is `policy_config_invalid`, with baseline retrieval intact.
+  - `learning select`: validates the candidate and writes a new config by no-replace publication. Rollback is starting with the prior config or none.
+  - Serving: `foundry-learn` loads the candidate and answers contract IPC-v2 requests over the shared frame. The core validates the reply and thresholds the unrounded maximum probability.
+  - Slot: one prediction, no waiting. The wait is min(2 s, half the remaining read deadline); below 50 ms the model is skipped. A request is on time only if its reply is published to the core before the ceiling. Three consecutive timeouts, or any malformed, wrong-identity or dead reply, terminate the worker and make the policy unavailable.
+  - Routing: only for `auto` with a current graph, after the 009 merge and before graph expansion. The `route:` header segment (context-v2 amendment) appears only when a policy is configured; otherwise output is byte-identical.
+  - `src/laya.rs` and its HTTP client are deleted. Legacy feedback/export is unchanged. `--laya-port` is refused with migration guidance.
+- **Review.** Anthropic Opus 5.5 implemented it; OpenAI GPT-6.1 Sol reviewed it. Round 1, REVISE (3 major): a late reply granting a route and resetting the count; a policy timeout consuming the whole read deadline; evaluation rows' rights not checked at selection. Round 2, REVISE: an on-time reply could still be counted as a timeout. That was resolved by one publication-based linearization point per request, a captain decision recorded in the contract. Round 3, SHIP. Real prediction parity against T002's evaluation probabilities: 21 rows, bit-exact (release build).
+- **Gates** (`5585a6e`): fmt; clippy `-D warnings` on stable and 1.90 (default, `--no-default-features`, `learning-worker`); full suite 820 passed, 0 failed, 8 ignored.
+
 ## 013 T002 tch training worker, calibration, evaluation and candidates — 2026-10-05
 
 Development isolation only. Deferred to the measurement phase (owner, 2026-10-05), not run: training and evaluation on the real labeled rust-lang/rust rows, the exhaustive elementwise comparison against `reference-t002-full.safetensors`, and the signed-bundle negative probes. They are ignored tests and documented commands in [learning](learning.md).
