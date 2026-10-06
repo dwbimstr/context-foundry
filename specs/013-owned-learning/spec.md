@@ -8,7 +8,10 @@ accepted locally on 2026-10-05, development isolation only (see validation). The
 measurement phase (2026-10-06) ran real training on the labeled rows in two rounds:
 round 1 eligible, round 2 a valid rejected candidate. It also ran T004's repeat-lifecycle
 checks, sandboxed serving and the exhaustive numerical comparison. The learned router
-stays off by default. T004's install, upgrade, rollback, disable and uninstall are
+stays off by default; its economics (one changed route of 71, identical evidence) are in
+[validation](../../docs/validation.md). The 2026-10-06 tier-1 amendment (context-v2)
+changes composed states, so a next round recomposes and relabels its rows. T004's
+install, upgrade, rollback, disable and uninstall are
 implemented with ad-hoc-signed bundles (2026-10-06); its signed distributed profile and
 package acceptance wait for signing. The owner selected
 ModernBERT with a decision head and all first-party code in Rust. Laya is a reference,

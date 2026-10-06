@@ -6,8 +6,9 @@ implemented, accepted at the reviewer's SHIP and committed in `5edf32c`; unrelea
 locally on 2026-10-04 and committed (`cc402e0`, `bd1d890`). The 2026-10-04 amendments below record owner
 decisions and implemented details from T005/T006 review. The 2026-10-06 amendment
 (owner-approved after the 013 corpus analysis) changes tier-1 run selection and order,
-adds five route keywords, accepts an MCP `lines` array and makes the empty `lines`
-refusal name the handle's lines.
+accepts an MCP `lines` array and makes the empty `lines` refusal name the handle's
+lines; five proposed route keywords were measured and withdrawn (§ Context candidates
+and routing).
 It replaces [v1](context-v1.md), whose JSON wire is historical at
 `6bb81e6`, and carries forward every still-valid v1 rule. Source/CLI owner:
 [001](../spec.md); MCP adapter owner:
@@ -24,7 +25,7 @@ implementing MCP. Limits are selected engineering bounds, not measured capacity 
 | Syntax units, search index v2, two-tier ranking, `path` filter, locator labels; leading-run units and head line (schema `"3"`) | 001 T005 | Locally implemented and accepted (r3 SHIP; leading-run amendment delta SHIP 2026-10-04, committed in `bd1d890`); unreleased |
 | Outlines, forms ladder, candidate seam, retrieve `view` | 001 T006 | Locally implemented and accepted (r3 SHIP); unreleased |
 | Multi-root identity, `roots`/`root`, per-root header | 007 T001 | Locally implemented and accepted 2026-10-04 (delta SHIP), committed in `cc402e0`; unreleased |
-| Tier-1 marked runs and specificity order, route keywords, MCP `lines` array, empty-selection message (2026-10-06 amendment) | 001 (amendment) | Implemented locally 2026-10-06; awaiting gates and review; unreleased |
+| Tier-1 marked runs and specificity order, MCP `lines` array, empty-selection message (2026-10-06 amendment) | 001 (amendment) | Accepted locally 2026-10-06 (cross-lab SHIP; gates green), committed in `c3437e6`; route keywords withdrawn after measurement; unreleased |
 | `foundry references` header segments 12–14, `next: after=<path>#<start>-<end>` cursor; MCP `references`, `index.scip`, compiler graph context | 005 T002, T003 | Locally implemented and accepted (CLI 2026-10-04; MCP and graph context 2026-10-05); unreleased |
 
 ## Identity and reference validation
@@ -684,11 +685,14 @@ v1's `following_chunks` candidates are removed.
 
 For `auto`, ASCII-lowercase the query and tokenize maximal runs of ASCII letters,
 digits or `_`. Any whole token in `{calls,caller,callers,depends,impact,dependency,
-dependencies,reference,references,referenced,usage,usages,uses,used,break,breaks}`
-selects graph, otherwise search (`referenced`, `uses`, `used`, `break` and `breaks`
-added 2026-10-06). This replaces the prototype's substring rule: `preferences` and
-`calls_tracker` are not graph keywords, while a question about references can use
-005's supported relation.
+dependencies,reference,references,usage,usages}` selects graph, otherwise search. This
+replaces the prototype's substring rule: `preferences` and `calls_tracker` are not
+graph keywords, while a question about references can use 005's supported relation.
+Adding `uses`, `used`, `break`, `breaks` and `referenced` was tried and withdrawn on
+2026-10-06: after the tier-1 amendment, routing those questions to graph lowered the
+delivered required evidence on the rust-lang/rust checker tasks (dev 40.6% to 38.0%,
+held-out wordings 34.5% to 34.2%), because graph context places path-seeded neighbors,
+not the queried symbol's references ([validation](../../../docs/validation.md)).
 The owned policy can replace that choice only under 013's identity/threshold contract.
 Explicit search or graph never invokes the policy. Graph without eligible edges still
 returns source results and a graph coverage reason in the header. No claim that this

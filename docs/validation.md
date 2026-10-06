@@ -40,6 +40,33 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## Learned-router economics and tier-1 ranking — 2026-10-06
+
+Owner-approved after the 013 corpus analysis: (1) account for the learned router by economics, (2) fix the deterministic retrieval causes first, (3) decide a second learned decision from the rerun. Offline arithmetic and deterministic `context` runs only: no model call, no timing claim.
+- **Router counterfactual** (recorded round-1/round-2 evaluation cases joined with each row's task-checker evidence; no new runs). Round 1, 71 held-out rows: deterministic routing and the served router both delivered the required evidence on 64 rows (143,142 vs 143,136 delivered tokens); the label would deliver 71. The router changed one route, on a row where both strategies passed. All 7 deterministic misses chose `search` where `graph` was needed (mostly "what would break if `X` changed"); the model chose `search` on all 7. Round 2 (101 rows): the same single change, 92 both ways. Label accuracy rose 59 → 60/71 without any evidence gain.
+- **Enablement gate** (013 contract amendment, `24abb11`). Evaluation reports `economics` (evidence and delivered tokens for baseline, routed and label; changed, gained and lost routes). `learning select` and owner startup require `gained > lost` (`economics_unknown`, `candidate_no_benefit`); token-only savings never enable. `learning select --lifecycle-check` is the visible, status-marked override for T004/D001 package acceptance only. Round 1 would be refused.
+- **Tier-1 cause and fix** (context-v2 amendment, `c3437e6`). Tier 1 matched every identifier run of a query, English words included (`find`, `is`, `of`), kept a key_hash-arbitrary 64 and sorted them by path: `find \`sleep_ms\`` returned `fn find` definitions and never `fn sleep_ms`; `callers of \`sleep_ms\`` seeded graph expansion from `fn of`. Tier 1 now uses backtick-marked runs when present, ranks runs by exact filtered definition count and fills its 64 slots per run. Also accepted: the MCP `lines` array form and an empty-selection refusal naming the handle's lines. tools/list measures 995 of the 1000-token ceiling.
+- **Rerun protocol.** `econ_check.py` (SHA-256 `fafba7ee…ac2ac2`, frozen 19:35Z before any fix) regenerates the 4,597 labeling tasks exactly and adds 2,284 held-out tasks in eight wordings never used for development (four marked, four unmarked). `context` at 2048 tokens, `search` and `graph`, on a schema-6 copy of the rust-lang/rust 1.99.0 store. The baseline binary (`77bf120`) reproduced every labeling-run pass flag and search token count.
+
+| Required evidence delivered | search | graph | either | `auto` |
+| --- | ---: | ---: | ---: | ---: |
+| Dev 4,597, before | 22.2% | 13.0% | 23.7% | 22.2% |
+| Dev 4,597, after | 42.1% | 23.1% | 44.1% | 40.6% |
+| Held-out 2,284, before | 30.1% | 16.2% | 32.2% | 30.1% |
+| Held-out 2,284, after | 34.3% | 17.6% | 36.5% | 34.5% |
+
+- **Per task** (search / graph): dev gained 930 / 566 and lost 16 / 99; held-out gained 155 / 101 and lost 59 / 70. Paired dev wordings now match: "find `X`" 12.5% → 53.2%, "where is `X` defined" 42.7% → 53.0%.
+- **Route keywords withdrawn.** Adding `uses`, `used`, `break`, `breaks` and `referenced` lowered `auto` evidence after the fix (dev 40.6% → 38.0%, held-out 34.5% → 34.2%): graph context places path-seeded neighbors, not the queried symbol's references, and delivered less than search for every usage wording except held-out unmarked "callers of X". The shipped list is unchanged.
+- **Residual causes.**
+  - Ambiguous names: definitions whose name has more than 64 library definitions pass 7% (dev) and 2% (held-out); unique names pass 77% and 71%. The query does not say which definition is meant.
+  - Unmarked queries rank English words by the same specificity rule: held-out "where is X defined" fell 43.6% → 38.6%, while marked wordings rose.
+  - Usage questions: at most 37.8% even for the best wording; `context` is not a reference listing.
+  - Tokens: every response still fills the budget (mean 2,014–2,019 of 2,048).
+- **Compact sufficiency** (`search` at 512 tokens, same tasks, fix binary). 56% of dev and 58% of held-out definition passes at 2048 also pass at 512 (46% / 38% for usage), at about 480 instead of 2,015 delivered tokens; three tasks passed only at 512. A compact decision saving about 1,530 delivered tokens must be weighed against a miss costing about one agent turn (12.4–13k tokens per OMP request, 003 T005 root cause).
+- **013 note.** Composed route states (query, coverage, top-3 locator lines) change under the new tier-1 order; states composed before `c3437e6` do not match serving composition, so a next round recomposes and relabels.
+- **Gates** (`24abb11` with the keyword withdrawal): fmt; clippy `-D warnings` on stable and 1.90; full suite 871 passed, 0 failed, 8 ignored.
+- **Review.** Anthropic Opus 5.5 wrote both slices; OpenAI GPT-6.1 Sol reviewed them: tier-1/lines SHIP; economics gate REVISE (1 major: the lifecycle mark was lost on failed startup and inspection), then SHIP.
+
 ## 009 runtime fixes after measurement — 2026-10-06
 
 Implementation only; measured in the end-of-implementation batch (owner, 2026-10-06).
@@ -127,7 +154,7 @@ The owner deferred every measurement until the implementable spec tasks were don
 
 ## 013 T003 serve, select, roll back and retire the legacy HTTP path — 2026-10-05
 
-Development isolation only. Deferred to the measurement phase (owner, 2026-10-05), not run: the enablement comparison (the same checked tasks with `foundry usage import`), the aggregate 009+013 residency test, and latency figures. The learned policy stays off by default until that comparison passes.
+Development isolation only. Deferred to the measurement phase (owner, 2026-10-05), not run: the enablement comparison (the same checked tasks with `foundry usage import`), the aggregate 009+013 residency test, and latency figures. The learned policy stays off by default. (Superseded 2026-10-06: enablement now requires the economics gate above.)
 - **Shape.**
   - `src/policy.rs`: config v2 validated at owner startup. An invalid config is `policy_config_invalid`, with baseline retrieval intact.
   - `learning select`: validates the candidate and writes a new config by no-replace publication. Rollback is starting with the prior config or none.

@@ -6,9 +6,10 @@ verified on 2026-10-01 (owner-approved scope: 001 + 003 first implementation). T
 cross-lab reviewer's SHIP on 2026-10-04 and committed in `5edf32c`. D001 remains
 resolved below. Evidence, review provenance and accepted limitations:
 [validation](../../docs/validation.md). The 2026-10-06 amendment (tier-1 marked runs
-and specificity order, five route keywords, an MCP `lines` array, an empty-`lines`
-refusal naming the handle's lines; [context v2](contracts/context-v2.md)) is
-implemented locally and awaits gates and review.
+and specificity order, an MCP `lines` array, an empty-`lines` refusal naming the
+handle's lines; [context v2](contracts/context-v2.md)) was accepted locally at the
+cross-lab SHIP and committed (`c3437e6`); its proposed route keywords were measured and
+withdrawn.
 
 ## Outcome and baseline
 

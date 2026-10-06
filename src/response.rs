@@ -63,7 +63,7 @@ pub fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
-const GRAPH_KEYWORDS: [&str; 16] = [
+const GRAPH_KEYWORDS: [&str; 11] = [
     "calls",
     "caller",
     "callers",
@@ -73,13 +73,8 @@ const GRAPH_KEYWORDS: [&str; 16] = [
     "dependencies",
     "reference",
     "references",
-    "referenced",
     "usage",
     "usages",
-    "uses",
-    "used",
-    "break",
-    "breaks",
 ];
 
 /// The context retrieval strategy: `auto` routes (deterministically, or by

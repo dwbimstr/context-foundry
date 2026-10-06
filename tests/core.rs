@@ -1028,34 +1028,6 @@ fn auto_strategy_uses_whole_keywords_not_substrings() {
         response::strategy_for_query("callers! of main"),
         Strategy::Graph
     );
-    // 2026-10-06: usage and breakage questions are graph questions too.
-    for query in [
-        "what uses parse_record",
-        "where is sleep_ms used",
-        "what breaks if parse_record changes",
-        "does this BREAK anything",
-        "where is Engine referenced",
-    ] {
-        assert_eq!(
-            response::strategy_for_query(query),
-            Strategy::Graph,
-            "{query}"
-        );
-    }
-    // The whole-token rule still holds for them.
-    for query in [
-        "find unused imports",
-        "find reused_buffer",
-        "set a breakpoint",
-        "breaks_tracker",
-        "dereferenced pointer",
-    ] {
-        assert_eq!(
-            response::strategy_for_query(query),
-            Strategy::Search,
-            "{query}"
-        );
-    }
 }
 
 #[test]
