@@ -90,6 +90,12 @@ fn main() {
         while let Some(job) = engine.next_job() {
             // The admitted call has entered the worker's compute phase.
             worker_runtime::mark_phase("call");
+            if hooks.die_in_call {
+                // SAFETY: kill(2) on this very process; nothing runs after.
+                unsafe {
+                    libc::kill(libc::getpid(), libc::SIGKILL);
+                }
+            }
             if hooks.alloc_call_mb > 0 {
                 held.push(worker_runtime::allocate_touching(hooks.alloc_call_mb));
                 std::hint::black_box(&held);

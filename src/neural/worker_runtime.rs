@@ -245,6 +245,9 @@ pub struct Hooks {
     /// Hold every call, once it entered its compute phase, while the named
     /// file exists: a test releases the call by removing the file.
     pub hold_file: Option<String>,
+    /// Kill this process (SIGKILL to itself) as soon as a call entered its
+    /// compute phase: a worker dying mid-call, independent of any timing.
+    pub die_in_call: bool,
 }
 
 /// Reply corruption modes used by [`Hooks`].
@@ -308,6 +311,7 @@ impl Hooks {
                 "--ignore-eof" => hooks.ignore_eof = true,
                 "--ready-mutate" => hooks.ready_mutate = true,
                 "--stdout-block" => hooks.stdout_block = true,
+                "--die-in-call" => hooks.die_in_call = true,
                 "--stray-stdout" => hooks.stray_stdout = true,
                 "--pid-file" => {
                     hooks.pid_file = Some(value(&mut i, "--pid-file", rest)?);

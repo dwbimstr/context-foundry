@@ -2454,6 +2454,11 @@ fn a_failed_footprint_measurement_of_a_live_worker_stops_it_with_resource_limit(
     use context_foundry::fault::GlobalAction;
     use context_foundry::neural::fault_names::FOOTPRINT_MEASURE;
     use context_foundry::neural::supervisor::WorkerProvider;
+    // Never beside the other supervised-worker test: the arming below is
+    // process-wide.
+    let _worker = SUPERVISED_WORKERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut corpus = Corpus::unprepared(&[]);
     let work = tempfile::tempdir().unwrap();
     let worker_profile = fake_worker_profile(work.path());
@@ -2558,6 +2563,8 @@ struct Hold {
     dropped: Arc<AtomicBool>,
     /// A held document call saw its control cancelled (owner shutdown).
     cancel_seen: Arc<AtomicBool>,
+    /// The input count of each document call, in call order.
+    batches: Arc<Mutex<Vec<u64>>>,
 }
 
 impl Hold {
@@ -2569,6 +2576,11 @@ impl Hold {
     }
     fn entered(&self) -> u64 {
         self.entered.load(Ordering::SeqCst)
+    }
+    /// The input count of the `call`-th document call (1-based): the batch
+    /// size the driver chose, smaller while foreground requests are recent.
+    fn batch(&self, call: usize) -> u64 {
+        self.batches.lock().unwrap()[call - 1]
     }
     /// Let the next held document call finish.
     fn release(&self) {
@@ -2640,6 +2652,7 @@ impl EmbeddingProvider for HeldProvider {
         control: &Control,
     ) -> Result<Vec<Vec<f32>>, ProviderError> {
         let _call = self.hold.call();
+        self.hold.batches.lock().unwrap().push(batch.len() as u64);
         let call = self.hold.entered.fetch_add(1, Ordering::SeqCst) + 1;
         while self.hold.gated.load(Ordering::SeqCst)
             && self.hold.released.load(Ordering::SeqCst) < call
@@ -2947,9 +2960,10 @@ async fn context_is_baseline_while_preparing_then_partial_then_ready_and_an_edit
     let (error, reply) = served.semantic_action("pause").await;
     assert!(!error, "{reply}");
     hold.release();
+    let first = hold.batch(1);
     let paused = served
         .until("the first batch searchable", |semantic| {
-            semantic["searchable_current_units"] == 8
+            semantic["searchable_current_units"] == first
         })
         .await;
     assert_eq!(paused["state"], "paused", "{paused}");
@@ -3021,9 +3035,10 @@ async fn pause_admits_no_new_batch_and_commits_the_batch_in_flight() {
     );
     hold.open();
     hold.release();
+    let first = hold.batch(1);
     let paused = served
         .until("the batch in flight committed", |semantic| {
-            semantic["committed_units"] == 8 && semantic["searchable_current_units"] == 8
+            semantic["committed_units"] == first && semantic["searchable_current_units"] == first
         })
         .await;
     assert_eq!(paused["state"], "paused", "{paused}");
@@ -3033,7 +3048,7 @@ async fn pause_admits_no_new_batch_and_commits_the_batch_in_flight() {
     assert_eq!(hold.entered(), 1);
     assert_eq!(corpus.probe.document_calls(), 1);
     let still = served.semantic().await;
-    assert_eq!(still["committed_units"], 8, "{still}");
+    assert_eq!(still["committed_units"], first, "{still}");
     assert!(still["missing_units"].as_u64().unwrap() > 0, "{still}");
 
     served.prepare().await;
@@ -3061,7 +3076,8 @@ async fn eof_mid_batch_keeps_commits_discards_the_call_and_stops_the_worker() {
     served.prepare().await;
     hold.release();
     hold.wait_entered(2).await;
-    assert_eq!(served.semantic().await["committed_units"], 8);
+    let first = hold.batch(1);
+    assert_eq!(served.semantic().await["committed_units"], first);
 
     // EOF while the second call is held in the provider.
     let closing = tokio::spawn(served.close());
@@ -3096,11 +3112,11 @@ async fn eof_mid_batch_keeps_commits_discards_the_call_and_stops_the_worker() {
     let state = corpus.engine().semantic_state().unwrap().unwrap();
     assert_eq!(state.state, "paused", "never `running`: {state:?}");
     assert_eq!(state.last_error.as_ref().unwrap().code, "cancelled");
-    assert_eq!(state.committed_units, 8);
+    assert_eq!(state.committed_units, first);
     corpus.engine = None;
     assert_eq!(
         testkit::semantic_cache_rows(&corpus.store).len(),
-        8,
+        first as usize,
         "the uncommitted batch was discarded"
     );
 }
@@ -3483,8 +3499,9 @@ async fn model_failures_stop_preparation_by_name_and_never_wedge_foreground_oper
     assert_eq!(died["provider"]["state"], "failed", "{died}");
     assert_eq!(died["provider"]["code"], "provider_exited", "{died}");
     assert!(died["provider"]["observed_at_unix"].as_u64().is_some());
-    assert_eq!(died["committed_units"], 8, "{died}");
-    assert_eq!(died["searchable_current_units"], 8, "{died}");
+    let first = hold.batch(1);
+    assert_eq!(died["committed_units"], first, "{died}");
+    assert_eq!(died["searchable_current_units"], first, "{died}");
     assert!(!served.search("parse_record").await.items.is_empty());
     assert_eq!(
         header_word(&served.context(DUSK_QUERY).await),
@@ -3919,4 +3936,1378 @@ fn a_query_registered_during_a_document_admission_wins_the_model_slot() {
             .is_ok()
     );
     assert_eq!(corpus.probe.document_calls(), documents + 1);
+}
+
+// ---------------------------------------------------------------------------
+// 009 T002 accepted gaps, closed 2026-10-06 (docs/validation.md, 009 T002
+// "Known gaps"): semantic evidence crowded by graph and compiler evidence,
+// the localized lexical-span preview, multibyte/CRLF/fence-like forms, the
+// semantic MCP byte cap and allowance accounting, the multi-root matrix,
+// the no-profile byte-identity matrix with positive hits, and a worker
+// dying mid-query.
+// ---------------------------------------------------------------------------
+
+impl Corpus {
+    /// A context request through the production decision path under an
+    /// explicit strategy.
+    fn context_as(
+        &self,
+        slot: &SemanticSlot,
+        query: &str,
+        strategy: Strategy,
+        tokens: usize,
+    ) -> Answer {
+        let combined = mcp::context_primary(
+            slot,
+            None,
+            self.engine(),
+            query,
+            strategy,
+            &Self::control(),
+            false,
+        )
+        .expect("context candidates");
+        Answer::of(combined.batch, tokens)
+    }
+
+    /// Every indexed workspace file as `(path, sha256)`, sorted by path.
+    fn indexed_inputs(&self) -> Vec<(String, String)> {
+        fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(root, &path, out);
+                } else {
+                    let relative = path.strip_prefix(root).unwrap();
+                    out.push(relative.to_str().unwrap().to_owned());
+                }
+            }
+        }
+        let mut paths = Vec::new();
+        walk(&self.root, &self.root, &mut paths);
+        paths.sort();
+        paths
+            .into_iter()
+            .filter_map(|path| {
+                let meta = self.engine().source(&path).unwrap()?;
+                Some((path, meta.hash))
+            })
+            .collect()
+    }
+}
+
+fn owned(sources: &[(&str, &str)]) -> Vec<(String, String)> {
+    sources
+        .iter()
+        .map(|(path, text)| ((*path).to_owned(), (*text).to_owned()))
+        .collect()
+}
+
+/// Two seeds for 005's graph context. `host_seed` (a lexical hit) calls
+/// `target_fn`, which `caller_a` calls too; the evening unit (sundown
+/// concepts, no query word) calls `lantern_mark`, which `lantern_user` calls
+/// too. Each referring file holds a second function, so the delivery unit
+/// enclosing the reference is narrower than the file's embedding unit and an
+/// expansion delivers it as its own compiler item.
+const GRAPH_SOURCES: [(&str, &str); 6] = [
+    (
+        "src/host.rs",
+        "pub fn host_seed() { crate::target_fn(); }\n",
+    ),
+    ("src/target.rs", "pub fn target_fn() {}\n"),
+    (
+        "src/caller.rs",
+        "pub fn caller_a() { crate::target_fn(); }\n\npub fn caller_spare() -> u8 {\n    1\n}\n",
+    ),
+    (
+        "src/evening.rs",
+        "/// Sundown glow at dusk: amber horizon, nightfall.\npub fn evening_bell() {\n    crate::lantern_mark();\n}\n",
+    ),
+    ("src/lantern.rs", "pub fn lantern_mark() {}\n"),
+    (
+        "src/lantern_user.rs",
+        "pub fn lantern_user() { crate::lantern_mark(); }\n\npub fn lantern_spare() -> u8 {\n    2\n}\n",
+    ),
+];
+const TARGET_SYMBOL: &str = "rust-analyzer cargo gaps 0.1.0 target_fn().";
+const LANTERN_SYMBOL: &str = "rust-analyzer cargo gaps 0.1.0 lantern_mark().";
+
+fn graph_source(path: &str) -> &'static str {
+    GRAPH_SOURCES
+        .iter()
+        .find(|(candidate, _)| *candidate == path)
+        .map(|(_, text)| *text)
+        .expect("a graph fixture source")
+}
+
+/// One UTF-8 SCIP occurrence of `symbol` on the first line of `path` that
+/// holds `needle`.
+fn scip_occurrence(
+    path: &str,
+    needle: &str,
+    symbol: &str,
+    definition: bool,
+) -> scip::types::Occurrence {
+    let (line, column) = graph_source(path)
+        .lines()
+        .enumerate()
+        .find_map(|(line, text)| text.find(needle).map(|column| (line, column)))
+        .expect("the needle is in the source");
+    let mut occurrence = scip::types::Occurrence::new();
+    occurrence.range = vec![line as i32, column as i32, (column + needle.len()) as i32];
+    occurrence.symbol = symbol.to_owned();
+    occurrence.symbol_roles = i32::from(definition);
+    occurrence
+}
+
+fn scip_document(path: &str, occurrences: Vec<scip::types::Occurrence>) -> scip::types::Document {
+    let mut document = scip::types::Document::new();
+    document.relative_path = path.to_owned();
+    document.language = "rust".to_owned();
+    document.position_encoding = protobuf::EnumOrUnknown::new(
+        scip::types::PositionEncoding::UTF8CodeUnitOffsetFromLineStart,
+    );
+    document.occurrences = occurrences;
+    document
+}
+
+impl Corpus {
+    /// 005 compiler facts (a SCIP artifact bound to the store as indexed
+    /// now) and one manual `calls` edge from each seed.
+    fn import_graphs(&self) {
+        use context_foundry::graph::{Edge, Endpoint, GraphBundle};
+        let mut index = scip::types::Index::new();
+        index.documents = vec![
+            scip_document(
+                "src/host.rs",
+                vec![scip_occurrence(
+                    "src/host.rs",
+                    "target_fn",
+                    TARGET_SYMBOL,
+                    false,
+                )],
+            ),
+            scip_document(
+                "src/target.rs",
+                vec![scip_occurrence(
+                    "src/target.rs",
+                    "target_fn",
+                    TARGET_SYMBOL,
+                    true,
+                )],
+            ),
+            scip_document(
+                "src/caller.rs",
+                vec![scip_occurrence(
+                    "src/caller.rs",
+                    "target_fn",
+                    TARGET_SYMBOL,
+                    false,
+                )],
+            ),
+            scip_document(
+                "src/evening.rs",
+                vec![scip_occurrence(
+                    "src/evening.rs",
+                    "lantern_mark",
+                    LANTERN_SYMBOL,
+                    false,
+                )],
+            ),
+            scip_document(
+                "src/lantern.rs",
+                vec![scip_occurrence(
+                    "src/lantern.rs",
+                    "lantern_mark",
+                    LANTERN_SYMBOL,
+                    true,
+                )],
+            ),
+            scip_document(
+                "src/lantern_user.rs",
+                vec![scip_occurrence(
+                    "src/lantern_user.rs",
+                    "lantern_mark",
+                    LANTERN_SYMBOL,
+                    false,
+                )],
+            ),
+        ];
+        let artifact = protobuf::Message::write_to_bytes(&index).unwrap();
+        let engine = self.engine();
+        let inputs: Vec<serde_json::Value> = self
+            .indexed_inputs()
+            .into_iter()
+            .map(|(path, sha256)| serde_json::json!({"path": path, "sha256": sha256}))
+            .collect();
+        let manifest = serde_json::json!({
+            "v": 1,
+            "workspace_id": engine.workspace_id().unwrap(),
+            "source_revision": engine.source_revision().unwrap(),
+            "producer": {
+                "name": "rust-analyzer",
+                "release_tag": "2026-08-31",
+                "commit": "f8996691e991a4dc3c6f135e0fc04fc5561e4e9a",
+                "version_output": "test-producer 1.0",
+                "binary_sha256": context_foundry::digest(b"test-producer-binary"),
+            },
+            "invocation": "test-producer scip <snapshot> --output index.scip",
+            "config": "gaps",
+            "artifact_sha256": context_foundry::digest(&artifact),
+            "inputs": inputs,
+        });
+        let index_path = self.dir.path().join("gaps-index.scip");
+        let manifest_path = self.dir.path().join("gaps-manifest.json");
+        std::fs::write(&index_path, &artifact).unwrap();
+        std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        engine
+            .import_scip(&index_path, &manifest_path, &Control::unbounded())
+            .expect("the compiler graph imports");
+        let endpoint = |path: &str, line: usize, symbol: &str| Endpoint {
+            path: path.to_owned(),
+            line,
+            symbol: symbol.to_owned(),
+            hash: context_foundry::digest(graph_source(path).as_bytes()),
+        };
+        let calls = |from: Endpoint, to: Endpoint| Edge {
+            from,
+            to,
+            kind: "calls".into(),
+            evidence: "manual".into(),
+        };
+        engine
+            .import_graph(&GraphBundle {
+                provider: "gaps".into(),
+                revision: "r1".into(),
+                edges: vec![
+                    calls(
+                        endpoint("src/host.rs", 1, "host_seed"),
+                        endpoint("src/target.rs", 1, "target_fn"),
+                    ),
+                    calls(
+                        endpoint("src/evening.rs", 2, "evening_bell"),
+                        endpoint("src/lantern.rs", 1, "lantern_mark"),
+                    ),
+                ],
+            })
+            .expect("the manual edges import");
+    }
+}
+
+/// The paths of a batch's 005 compiler units.
+fn compiler_paths(batch: &CandidateBatch) -> Vec<String> {
+    batch
+        .items
+        .iter()
+        .filter(|item| item.tier == context_foundry::store::TIER_COMPILER)
+        .filter_map(|item| item.handle.as_ref().map(|handle| handle.path.clone()))
+        .collect()
+}
+
+/// The delivered `edge` lines, without their `edge ` prefix.
+fn edges_of(parsed: &V2Response) -> Vec<String> {
+    parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == testkit::V2Kind::Edge)
+        .map(|item| item.body.clone())
+        .collect()
+}
+
+/// Gap 1: semantic evidence crowded by GRAPH and COMPILER evidence
+/// (`strategy: graph` with a 005 compiler graph and manual edges present)
+/// is still delivered whole inside the normal budget, and a dense-only hit
+/// ranked where a seed is taken seeds neither expansion. The control shows
+/// the very same unit seeding both once it is a lexical hit.
+#[test]
+fn dense_only_hits_seed_no_graph_or_compiler_expansion_and_survive_that_crowding() {
+    use context_foundry::store::{RankedItem, TIER_COMPILER, TIER_OUTLINE};
+    let corpus = Corpus::new(&owned(&GRAPH_SOURCES));
+    corpus.import_graphs();
+    let slot = corpus.slot();
+
+    // Control: `evening_bell` names the evening unit lexically.
+    let seeded = corpus.context_as(&slot, "evening_bell", Strategy::Graph, BUDGET);
+    assert_eq!(seeded.batch.counters.graph, Some("ok"));
+    assert!(
+        compiler_paths(&seeded.batch)
+            .iter()
+            .any(|path| path == "src/lantern_user.rs"),
+        "a lexical seed expands through the compiler graph: {:?}",
+        compiler_paths(&seeded.batch)
+    );
+    assert!(
+        edges_of(&seeded.parsed)
+            .iter()
+            .any(|edge| edge
+                .starts_with("src/evening.rs:2 (evening_bell) --calls--> src/lantern.rs:1")),
+        "a lexical seed expands through the manual graph:\n{}",
+        seeded.packed.text
+    );
+
+    // Crowded: `host_seed` is the only lexical hit; the evening unit follows
+    // it on concepts alone, inside the first three units both expansions
+    // seed from.
+    let answer = corpus.context_as(&slot, "host_seed twilight", Strategy::Graph, BUDGET);
+    let path_of = |item: &RankedItem| item.handle.as_ref().unwrap().path.clone();
+    let units: Vec<&RankedItem> = answer
+        .batch
+        .items
+        .iter()
+        .filter(|item| {
+            item.handle.is_some() && item.tier != TIER_COMPILER && item.tier != TIER_OUTLINE
+        })
+        .collect();
+    assert_eq!(path_of(units[0]), "src/host.rs");
+    let evening = units
+        .iter()
+        .position(|item| path_of(item) == "src/evening.rs")
+        .expect("the evening unit is a candidate");
+    assert!(
+        evening < 3,
+        "the evening unit ranks at a seed position: {evening}"
+    );
+    assert!(units[evening].is_dense_only());
+    // Neither expansion followed it; both followed the lexical seed.
+    assert_eq!(answer.batch.counters.graph, Some("ok"));
+    assert_eq!(compiler_paths(&answer.batch), ["src/caller.rs"]);
+    let edges = edges_of(&answer.parsed);
+    assert_eq!(edges.len(), 1, "{edges:?}");
+    assert!(
+        edges[0].starts_with("src/host.rs:1 (host_seed) --calls--> src/target.rs:1"),
+        "{edges:?}"
+    );
+
+    // The delivered response: the edge and the compiler unit are placed
+    // ahead of the dense evidence, which is still delivered whole within the
+    // normal budget.
+    assert!(answer.packed.tokens <= BUDGET);
+    assert!(
+        answer
+            .parsed
+            .header
+            .iter()
+            .any(|segment| segment == "graph:ok"),
+        "{:?}",
+        answer.parsed.header
+    );
+    assert_eq!(answer.word(), Some("ready"));
+    let at = |found: &dyn Fn(&V2Item) -> bool| {
+        answer
+            .parsed
+            .items
+            .iter()
+            .position(found)
+            .unwrap_or_else(|| panic!("not delivered:\n{}", answer.packed.text))
+    };
+    let edge = at(&|item| item.kind == testkit::V2Kind::Edge);
+    let compiler = at(&|item| {
+        item.neural.is_none()
+            && !item.handle.is_empty()
+            && span_of(&item.handle).0 == "src/caller.rs"
+    });
+    let whole = |path: &'static str| {
+        move |item: &V2Item| {
+            !item.handle.is_empty()
+                && span_of(&item.handle).0 == path
+                && item
+                    .neural
+                    .as_ref()
+                    .is_some_and(|neural| neural.selection == "whole_unit")
+        }
+    };
+    let evening = at(&whole("src/evening.rs"));
+    let dusk = at(&whole(DUSK_PATH));
+    assert!(
+        edge < compiler && compiler < evening && compiler < dusk,
+        "{edge} {compiler} {evening} {dusk}:\n{}",
+        answer.packed.text
+    );
+    assert_eq!(
+        answer.parsed.items[dusk].body,
+        corpus.source(DUSK_PATH),
+        "the crowded dense unit is delivered whole"
+    );
+}
+
+const QUOKKA_PATH: &str = "docs/quokka.md";
+
+/// Three sections that the greedy partition joins into ONE embedding unit;
+/// only the middle one says `quokka`, so the lexical hit localizes the unit
+/// to a span that ends well before the unit does.
+fn quokka_doc() -> String {
+    [
+        "## Alpha shelf\n\n",
+        "The alpha shelf holds spare cables, two label printers and a box of\n",
+        "fuses. Nothing on it is urgent and nothing on it moves often.\n\n",
+        "## Bravo shelf\n\n",
+        "The quokka enclosure log starts on this shelf. Keepers write the\n",
+        "feeding times, the water checks and the weight of every animal in\n",
+        "the green binder, then initial the page before the evening round.\n",
+        "Visitors may read the binder but never write in it, and a torn page\n",
+        "is copied into the spare binder the same day. The vet signs the\n",
+        "monthly summary on the last page, and the summary is photographed\n",
+        "and filed with the shelf inventory before the binder is closed.\n\n",
+        "## Charlie shelf\n\n",
+        "The charlie shelf holds the visitor badges and the spare radio\n",
+        "batteries, counted every Friday afternoon by the lead on duty.\n",
+    ]
+    .concat()
+}
+
+/// Gap 5: an oversized LOCALIZED lexical span. When neither the dense unit
+/// nor its lexical span fits, the preview is a prefix of the SPAN, and its
+/// continuation ends at the span's end, never at the larger unit's end.
+#[test]
+fn an_oversized_localized_span_previews_the_span_and_continues_to_the_span_end() {
+    let corpus = Corpus::new(&[(QUOKKA_PATH.to_owned(), quokka_doc())]);
+    let slot = corpus.slot();
+    let content = corpus.source(QUOKKA_PATH);
+    let whole = corpus.context(&slot, "quokka", BUDGET);
+    let evidence = whole
+        .batch
+        .items
+        .iter()
+        .filter_map(|item| item.semantic.as_ref())
+        .find(|evidence| evidence.matched.path == QUOKKA_PATH && evidence.span.is_some())
+        .expect("a dense unit localized by the lexical hit");
+    let unit = evidence.matched.clone();
+    let (span, _, _) = evidence.span.clone().unwrap();
+    // The geometry the case needs: the unit is the whole document, the span
+    // its middle section, ending before the unit does.
+    let hit = content.find("quokka").unwrap() as u64;
+    let charlie = content.find("## Charlie").unwrap() as u64;
+    assert_eq!((unit.start, unit.end), (0, content.len() as u64));
+    assert!(
+        span.start <= hit && hit < span.end && span.end <= charlie,
+        "{}..{} holds {hit} and stops before {charlie}",
+        span.start,
+        span.end
+    );
+    assert!(span.end < unit.end);
+    let unit_handle = unit.to_v2();
+    // The sweep packs this document's candidates only (the dense unit and
+    // the lexical section), through the production packer: quick, and no
+    // unrelated candidate decides which rung fits.
+    let mut batch = whole.batch.clone();
+    batch.items.retain(|item| {
+        item.handle
+            .as_ref()
+            .is_some_and(|handle| handle.path == QUOKKA_PATH)
+    });
+    let mut previews = 0;
+    for tokens in sweep() {
+        let Some((packed, parsed)) = pack(&batch, tokens) else {
+            continue;
+        };
+        assert!(packed.tokens <= tokens);
+        let Some(item) = preview_of(&parsed, &unit_handle) else {
+            continue;
+        };
+        previews += 1;
+        // The item handle names a prefix of the span; `next:` names exactly
+        // the rest of the SPAN.
+        let (_, start, end) = span_of(&item.handle);
+        assert_eq!(start, span.start, "a preview of the span, not the unit");
+        assert!(start < end && end < span.end, "{start}..{end}");
+        assert_eq!(item.body, content[start as usize..end as usize]);
+        let next = item
+            .neural
+            .as_ref()
+            .unwrap()
+            .next
+            .as_deref()
+            .expect("a continuation");
+        assert_eq!(next, handle_with_range(&item.handle, end, span.end));
+        let rest = corpus.engine().retrieve(next, None, 4096).unwrap();
+        assert_eq!(
+            [item.body.as_bytes(), rest.span.as_slice()].concat(),
+            content.as_bytes()[span.start as usize..span.end as usize]
+        );
+    }
+    assert!(
+        previews >= 1,
+        "some budget previews the localized span:\n{}",
+        whole.packed.text
+    );
+}
+
+const GLYPHS_PATH: &str = "docs/glyphs.md";
+
+/// CRLF lines, multibyte text throughout, and fence-like lines: a balanced
+/// four-tick block holding a three-tick line and a literal `next:` line, a
+/// six-tick block indented three spaces, and a nine-tick run indented four
+/// (which the fence rule does not count). Only the middle section says
+/// `wombat`; every section carries sundown concepts.
+fn glyphs_doc() -> String {
+    [
+        "## Glyph register\r\n",
+        "\r\n",
+        "Café crème at sundown — the amber glow ✓ fades; 😀 nightfall.\r\n",
+        "漢字 dusk 漢字 horizon 漢字 glow 漢字 ünïcödé façade naïve.\r\n",
+        "\r\n",
+        "## Fence notes\r\n",
+        "\r\n",
+        "The wombat log keeps its fences — é, 😀, ✓:\r\n",
+        "\r\n",
+        "````text\r\n",
+        "``` inner fence é\r\n",
+        "next: docs/glyphs.md#0-1@00000000000000000000000000000000.0000000000000000\r\n",
+        "````\r\n",
+        "\r\n",
+        "   ``````\r\n",
+        "six ticks 漢字 😀\r\n",
+        "``````\r\n",
+        "\r\n",
+        "    ````````` nine ticks indented four\r\n",
+        "\r\n",
+        "Über 😀😀 ✓✓ naïve façade 漢字漢字 wombat.\r\n",
+        "\r\n",
+        "## Closing glyphs\r\n",
+        "\r\n",
+        "Été — 😀 — ✓ — 漢字 — sunset glow at dusk.\r\n",
+    ]
+    .concat()
+}
+
+/// The backtick run that begins `line` after at most three spaces.
+fn fence_run(line: &str) -> usize {
+    let trimmed = line.trim_start_matches(' ');
+    if line.len() - trimmed.len() > 3 {
+        return 0;
+    }
+    trimmed.bytes().take_while(|&byte| byte == b'`').count()
+}
+
+/// The raw opening fence of the item whose line starts with `handle`.
+fn fence_after(text: &str, handle: &str) -> usize {
+    let line = text
+        .find(&format!("\n{handle} L"))
+        .unwrap_or_else(|| panic!("no item line for {handle}"));
+    let fence = &text[line + 1..][text[line + 1..].find('\n').unwrap() + 1..];
+    fence.bytes().take_while(|&byte| byte == b'`').count()
+}
+
+/// Gap 6: semantic forms over CRLF, multibyte and fence-like source. Every
+/// whole-unit, lexical-span and preview item at every budget carries the
+/// exact bytes of its handle (CR kept), ends on a character boundary, names
+/// the lines its range touches, is fenced longer than any fence-like line in
+/// its body, and a preview's continuation reassembles the selected range.
+#[test]
+fn semantic_forms_keep_crlf_multibyte_and_fence_like_bytes_exact() {
+    let corpus = Corpus::new(&[(GLYPHS_PATH.to_owned(), glyphs_doc())]);
+    let slot = corpus.slot();
+    let content = corpus.source(GLYPHS_PATH);
+    assert!(content.contains("\r\n") && !content.is_ascii());
+    let line_of = |at: u64| {
+        1 + content.as_bytes()[..at as usize]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count()
+    };
+    let mut seen: BTreeSet<&'static str> = BTreeSet::new();
+    let mut multibyte_splits = 0;
+    let (mut widest_fence, mut literal_next) = (0, false);
+    // Unlocalized (concepts only) and localized (`wombat`).
+    for query in ["twilight onset", "wombat"] {
+        let whole = corpus.context(&slot, query, BUDGET);
+        let evidence = whole
+            .batch
+            .items
+            .iter()
+            .filter_map(|item| item.semantic.as_ref())
+            .find(|evidence| evidence.matched.path == GLYPHS_PATH)
+            .unwrap_or_else(|| panic!("{query}: the glyph unit is dense evidence"));
+        let unit = evidence.matched.clone();
+        let span = evidence.span.as_ref().map(|(span, _, _)| span.clone());
+        assert_eq!(span.is_some(), query == "wombat", "{query}");
+        // A preview continues to the end of the selected range.
+        let selected_end = span.as_ref().map_or(unit.end, |span| span.end);
+        let unit_handle = unit.to_v2();
+        // This document's candidates only, as in the localized-span case.
+        let mut batch = whole.batch.clone();
+        batch.items.retain(|item| {
+            item.handle
+                .as_ref()
+                .is_some_and(|handle| handle.path == GLYPHS_PATH)
+        });
+        for tokens in sweep().chain([BUDGET]) {
+            let Some((packed, parsed)) = pack(&batch, tokens) else {
+                continue;
+            };
+            assert!(packed.tokens <= tokens);
+            for item in &parsed.items {
+                let Some(neural) = item.neural.as_ref() else {
+                    continue;
+                };
+                let (path, start, end) = span_of(&item.handle);
+                if path != GLYPHS_PATH {
+                    continue;
+                }
+                let selection: &'static str = match neural.selection.as_str() {
+                    "whole_unit" => {
+                        assert_eq!((start, end), (unit.start, unit.end));
+                        "whole_unit"
+                    }
+                    "lexical_span" => {
+                        let span = span.as_ref().expect("a span only when localized");
+                        assert_eq!((start, end), (span.start, span.end));
+                        assert_eq!(neural.matched.as_deref(), Some(unit_handle.as_str()));
+                        "lexical_span"
+                    }
+                    "preview" => {
+                        assert_eq!(neural.matched.as_deref(), Some(unit_handle.as_str()));
+                        let base = span.as_ref().map_or(unit.start, |span| span.start);
+                        assert_eq!(start, base, "{query}");
+                        let next = neural.next.as_deref().expect("a continuation");
+                        assert_eq!(next, handle_with_range(&item.handle, end, selected_end));
+                        let rest = corpus.engine().retrieve(next, None, 4096).unwrap();
+                        assert_eq!(
+                            [item.body.as_bytes(), rest.span.as_slice()].concat(),
+                            content.as_bytes()[base as usize..selected_end as usize]
+                        );
+                        let bytes = content.as_bytes();
+                        if !bytes[end as usize - 1].is_ascii() || !bytes[end as usize].is_ascii() {
+                            multibyte_splits += 1;
+                        }
+                        "preview"
+                    }
+                    other => panic!("unknown selection {other}"),
+                };
+                seen.insert(selection);
+                // Exact bytes (CR kept) on character boundaries.
+                assert!(content.is_char_boundary(start as usize));
+                assert!(content.is_char_boundary(end as usize));
+                assert_eq!(item.body, content[start as usize..end as usize]);
+                // The lines the range touches, counted by LF.
+                assert_eq!(
+                    item.lines.as_deref(),
+                    Some(format!("L{}-{}", line_of(start), line_of(end - 1)).as_str()),
+                    "{}",
+                    item.handle
+                );
+                // The fence outruns every fence-like body line.
+                let longest = item.body.split('\n').map(fence_run).max().unwrap_or(0);
+                let fence = fence_after(&packed.text, &item.handle);
+                assert_eq!(fence, 3.max(longest + 1), "{}", item.handle);
+                widest_fence = widest_fence.max(fence);
+                literal_next |= item.body.contains("\r\nnext: docs/glyphs.md#0-1@");
+            }
+        }
+    }
+    assert_eq!(
+        seen,
+        BTreeSet::from(["whole_unit", "lexical_span", "preview"]),
+        "every form was exercised"
+    );
+    assert!(
+        multibyte_splits >= 1,
+        "some preview split retreated to a multibyte boundary"
+    );
+    assert_eq!(
+        widest_fence, 7,
+        "a delivered body held the six-tick fence-like line"
+    );
+    assert!(
+        literal_next,
+        "a literal `next:` body line stayed body content"
+    );
+}
+
+// --- The MCP owner: byte cap, allowance, multi-root, byte identity --------
+
+/// One in-process MCP owner over the stdio transport (a duplex pipe), with
+/// the given references, semantic configuration and budget policy. It opens
+/// every store itself.
+async fn owner_with(
+    store: &Path,
+    root: &Path,
+    references: Vec<context_foundry::roots::ReferenceSpec>,
+    semantic: Option<SemanticServing>,
+    budget: BudgetConfig,
+) -> Served {
+    let (client_io, server_io) = tokio::io::duplex(1 << 21);
+    let (input, output) = tokio::io::split(server_io);
+    let server = tokio::spawn(mcp::serve_streams(
+        ServerOptions {
+            store: store.to_path_buf(),
+            root: root.to_path_buf(),
+            references,
+            no_memory: false,
+            semantic,
+            policy: None,
+            budget,
+        },
+        input,
+        output,
+    ));
+    let client = ().serve(client_io).await.unwrap();
+    Served {
+        client,
+        server: Some(server),
+    }
+}
+
+impl Corpus {
+    /// This corpus's concept provider as an owner's semantic configuration.
+    fn serving(&self) -> SemanticServing {
+        SemanticServing::with_provider(
+            self.profile_path.clone(),
+            maker(self.profile.descriptor.clone(), self.probe.clone()),
+        )
+    }
+
+    /// This corpus as a `--reference ROOT=STORE` admission.
+    fn reference(&self) -> context_foundry::roots::ReferenceSpec {
+        context_foundry::roots::ReferenceSpec {
+            root: self.root.clone(),
+            store: self.store.clone(),
+        }
+    }
+
+    /// The `ws16` this store's handles carry.
+    fn ws16(&self) -> String {
+        self.engine().workspace_id().unwrap()[..16].to_owned()
+    }
+}
+
+/// The `ws16` of a v2 handle `path#start-end@sha32.ws16`.
+fn ws16_of(handle: &str) -> &str {
+    handle.rsplit_once('.').expect("a handle identity").1
+}
+
+fn budget_of(policy: serde_json::Value) -> BudgetConfig {
+    BudgetConfig::from_object(&policy).expect("a valid budget policy")
+}
+
+/// The bytes the MCP boundary measures for a success text: the typed
+/// `CallToolResult` the owner emits (one text block, `resultType` cleared),
+/// serialized.
+fn emitted_len(text: &str) -> usize {
+    let mut result = rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
+        text.to_owned(),
+    )]);
+    result.result_type = None;
+    serde_json::to_string(&result).unwrap().len()
+}
+
+/// The header's one `semantic:` segment and the text without it.
+fn split_semantic_word(text: &str) -> (String, String) {
+    let (header, body) = text.split_once('\n').expect("a header line");
+    let segments: Vec<&str> = header.split(" · ").collect();
+    let words: Vec<&str> = segments
+        .iter()
+        .copied()
+        .filter(|segment| segment.starts_with("semantic:"))
+        .collect();
+    assert_eq!(words.len(), 1, "one semantic segment: {header}");
+    let rest: Vec<&str> = segments
+        .into_iter()
+        .filter(|segment| !segment.starts_with("semantic:"))
+        .collect();
+    (words[0].to_owned(), format!("{}\n{body}", rest.join(" · ")))
+}
+
+/// The `semantic:` word of a v2 text, if its header carries one.
+fn word_of(text: &str) -> Option<String> {
+    header_word(&parse_v2(text).unwrap()).map(str::to_owned)
+}
+
+/// Tab-heavy functions: about 16 source bytes per o200k token, but every
+/// tab and line feed doubles under JSON escaping.
+fn tab_functions() -> Vec<(String, String)> {
+    let body = format!("{}\n", "\t".repeat(200)).repeat(230);
+    ["a", "b", "c"]
+        .iter()
+        .map(|name| {
+            (
+                format!("src/tabs_{name}.rs"),
+                format!("pub fn tabfill_{name}() -> &'static str {{\n    r\"\n{body}\"\n}}\n"),
+            )
+        })
+        .collect()
+}
+
+/// Gap 6 (MCP byte cap): a semantic context at the 32768-token maximum whose
+/// stdout measure delivers a result that serializes past 256 KiB. Packed
+/// against the MCP measure — the typed result the owner emits, escaped and
+/// serialized, as [`emitted_len`] reproduces it — the very same candidates
+/// stay within the cap, every form measured with its selection tag, and the
+/// result still carries the semantic word and the dense evidence. The owner
+/// runs exactly this packing (`response::pack_context` with its emitted
+/// measure) under its 5 s read deadline, which a debug build cannot meet for
+/// a quarter-megabyte result, so the packing is driven directly here.
+#[test]
+fn a_semantic_context_packed_for_mcp_is_capped_on_its_serialized_bytes() {
+    const QUERY: &str = "tabfill twilight onset";
+    let corpus = Corpus::new(&tab_functions());
+    let slot = corpus.slot();
+    let batch = mcp::context_primary(
+        &slot,
+        None,
+        corpus.engine(),
+        QUERY,
+        Strategy::Auto,
+        &Corpus::control(),
+        false,
+    )
+    .unwrap()
+    .batch;
+    let budget = Budget::request(32768);
+    let stdout = response::pack_context(&batch, budget, &response::stdout_bytes).unwrap();
+    assert!(
+        emitted_len(&stdout.text) > mcp::OUTPUT_BYTE_CAP,
+        "the cap binds: {} serialized bytes",
+        emitted_len(&stdout.text)
+    );
+    let measured = response::pack_context(&batch, budget, &emitted_len).unwrap();
+    assert!(
+        emitted_len(&measured.text) <= mcp::OUTPUT_BYTE_CAP,
+        "{} serialized bytes",
+        emitted_len(&measured.text)
+    );
+    assert!(measured.tokens <= 32768);
+    assert!(
+        measured.text.len() < stdout.text.len(),
+        "the cap, not the token budget, shortened the result"
+    );
+    let parsed = parse_v2(&measured.text).unwrap();
+    assert_eq!(header_word(&parsed), Some("ready"));
+    let dusk = item_of(&parsed, DUSK_PATH).expect("the dense evidence is delivered");
+    assert_eq!(dusk.neural.as_ref().unwrap().selection, "whole_unit");
+    assert!(
+        parsed
+            .items
+            .iter()
+            .filter(|item| item.neural.is_some())
+            .count()
+            > 1,
+        "{:?}",
+        parsed.header
+    );
+    for item in parsed.items.iter().filter(|item| item.form.is_none()) {
+        let (path, start, end) = span_of(&item.handle);
+        assert_eq!(
+            item.body.as_bytes(),
+            &corpus.source(&path).as_bytes()[start as usize..end as usize],
+            "{}",
+            item.handle
+        );
+    }
+}
+
+/// Gap 6 (MCP allowance): semantic deliveries are charged exactly the tokens
+/// counted on their emitted text (the `semantic:` word and the selection
+/// tags included), and a refused semantic request is charged nothing: the
+/// delivery right after the refusal MUST succeed with exactly the uncharged
+/// rest as its session budget, and so must every later one until the
+/// allowance is exhausted by name.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn semantic_deliveries_charge_the_session_allowance_exactly_their_counted_tokens() {
+    const ALLOWANCE: usize = 2600;
+    let mut corpus = Corpus::new(&[]);
+    let semantic = corpus.serving();
+    corpus.engine = None;
+    let served = owner_with(
+        &corpus.store,
+        &corpus.root,
+        Vec::new(),
+        Some(semantic),
+        budget_of(serde_json::json!({
+            "v": 1, "max_context_tokens": 2048, "session_context_tokens": ALLOWANCE
+        })),
+    )
+    .await;
+    let ask = |tokens: usize| serde_json::json!({"query": DUSK_QUERY, "tokens": tokens});
+    let first = served.ok("context", ask(BUDGET)).await;
+    let parsed = parse_v2(&first).unwrap();
+    assert_eq!(header_word(&parsed), Some("ready"));
+    assert!(parsed.header.iter().any(|segment| segment == "budget:2048"));
+    let dusk = item_of(&parsed, DUSK_PATH).expect("dense evidence");
+    assert_eq!(dusk.neural.as_ref().unwrap().selection, "whole_unit");
+    let charged = response::count_tokens(&first);
+    assert!(
+        charged > ALLOWANCE - BUDGET,
+        "the next request is allowance-limited ({charged} charged)"
+    );
+    // A semantic request that cannot fit even its header is refused and
+    // charged nothing.
+    let (refused, refusal) = served.raw("context", ask(1)).await;
+    assert!(
+        refused && refusal.contains(r#""code":"budget_too_small""#),
+        "{refusal}"
+    );
+    // The refusal charged nothing: the next semantic request is delivered,
+    // limited by exactly the allowance the first delivery left.
+    let mut remaining = ALLOWANCE - charged;
+    let (error, text) = served.raw("context", ask(BUDGET)).await;
+    assert!(!error, "the refusal charged nothing: {text}");
+    let mut delivered = charged;
+    let mut text = text;
+    let exhausted = loop {
+        let parsed = parse_v2(&text).unwrap();
+        assert!(
+            parsed
+                .header
+                .contains(&format!("budget:{remaining}(session)")),
+            "exactly the uncharged rest remains ({remaining}): {:?}",
+            parsed.header
+        );
+        assert_eq!(header_word(&parsed), Some("ready"));
+        let tokens = response::count_tokens(&text);
+        assert!(tokens <= remaining);
+        delivered += tokens;
+        remaining -= tokens;
+        let (error, next) = served.raw("context", ask(BUDGET)).await;
+        if error {
+            break next;
+        }
+        text = next;
+    };
+    assert!(
+        exhausted.contains(r#""code":"budget_exhausted""#),
+        "{exhausted}"
+    );
+    assert!(delivered <= ALLOWANCE);
+    // The refusal charged nothing either: the same refusal again.
+    let (error, again) = served.raw("context", ask(BUDGET)).await;
+    assert!(
+        error && again.contains(r#""code":"budget_exhausted""#),
+        "{again}"
+    );
+    served.close().await;
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Op {
+    Search,
+    Context,
+}
+
+impl Op {
+    fn tool(self) -> &'static str {
+        match self {
+            Op::Search => "search",
+            Op::Context => "context",
+        }
+    }
+
+    /// Budgets wide enough that no candidate is omitted, so a header word
+    /// cannot change which items fit.
+    fn tokens(self) -> usize {
+        match self {
+            Op::Search => 4000,
+            Op::Context => 8000,
+        }
+    }
+
+    fn arguments(self, query: &str, roots: Option<&[&str]>) -> serde_json::Value {
+        let mut arguments = match self {
+            Op::Search => serde_json::json!({"query": query, "limit": 10, "tokens": self.tokens()}),
+            Op::Context => serde_json::json!({"query": query, "tokens": self.tokens()}),
+        };
+        if let Some(roots) = roots {
+            arguments["roots"] = serde_json::json!(roots);
+        }
+        arguments
+    }
+}
+
+/// The plain baseline a build without semantics serves for one single-root
+/// request: the lexical engine path and the packer.
+fn plain_single(engine: &Engine, op: Op, query: &str) -> String {
+    let budget = Budget::request(op.tokens());
+    match op {
+        Op::Search => response::pack_search(
+            &engine.search_in(query, None, 10).unwrap(),
+            budget,
+            &response::stdout_bytes,
+        ),
+        Op::Context => response::pack_context(
+            &engine
+                .context_candidates(query, Strategy::Auto, &Control::unbounded())
+                .unwrap(),
+            budget,
+            &response::stdout_bytes,
+        ),
+    }
+    .unwrap()
+    .text
+}
+
+/// The same for the listed roots of a multi-root owner: each root's
+/// lexical batch, the 007 merge and the per-root header segments.
+fn plain_roots(
+    roots: &[(&context_foundry::roots::AdmittedRoot, &Engine)],
+    op: Op,
+    query: &str,
+) -> String {
+    use context_foundry::roots::{RootBatch, merge_context, merge_search};
+    let unbounded = Control::unbounded();
+    let mut batches = Vec::new();
+    let mut headers = Vec::new();
+    for (root, engine) in roots {
+        let batch = match op {
+            Op::Search => engine.search_candidates(query, None, 10, &unbounded),
+            Op::Context => engine.context_candidates(query, Strategy::Auto, &unbounded),
+        }
+        .unwrap();
+        headers.push(response::RootHeader {
+            alias: root.alias.clone(),
+            label: root.label.clone(),
+            serving: Some((
+                batch.freshness.source_revision,
+                batch.freshness.scan_state.clone(),
+                batch.freshness.pending_sources,
+            )),
+            coverage: None,
+        });
+        batches.push(RootBatch {
+            alias: root.alias.clone(),
+            batch,
+        });
+    }
+    let budget = Budget::request(op.tokens());
+    match op {
+        Op::Search => response::pack_search_roots(
+            &merge_search(&batches, 10),
+            &headers,
+            budget,
+            &response::stdout_bytes,
+        ),
+        Op::Context => response::pack_context_roots(
+            &merge_context(&batches),
+            &headers,
+            budget,
+            &response::stdout_bytes,
+        ),
+    }
+    .unwrap()
+    .text
+}
+
+/// One `foundry` CLI request's stdout.
+fn cli_text(store: &Path, op: Op, query: &str, profile: Option<&Path>) -> String {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_foundry"));
+    command.arg("--store").arg(store);
+    let tokens = op.tokens().to_string();
+    match op {
+        Op::Search => command.args(["search", query, "--limit", "10", "--tokens", &tokens]),
+        Op::Context => command.args(["context", query, "--tokens", &tokens]),
+    };
+    if let Some(profile) = profile {
+        command.arg("--semantic-profile").arg(profile);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// Gap 3: the no-profile byte-identity matrix WITH positive hits. On this
+/// build, which has semantics, a command or owner without a profile serves
+/// exactly the plain baseline: CLI search and context, MCP search and
+/// context, single- and multi-root. A profile configured but not usable for
+/// the store (the CLI without development isolation; an MCP runtime over an
+/// unprepared store) changes the bytes by its one documented header word
+/// only, and the unprepared store spends no embedding.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn without_a_usable_profile_cli_and_mcp_answers_are_the_plain_baseline_byte_for_byte() {
+    let mut primary = Corpus::unprepared(&[]);
+    let mut secondary = Corpus::unprepared(&[]);
+    let admitted =
+        context_foundry::roots::validate_admission(&primary.root, &[secondary.reference()])
+            .unwrap();
+    let mut cases = Vec::new();
+    for query in ["parse_record", "shift lead rota", "fire lane"] {
+        for op in [Op::Search, Op::Context] {
+            let single = plain_single(primary.engine(), op, query);
+            let multi = plain_roots(
+                &[
+                    (&admitted[0], primary.engine()),
+                    (&admitted[1], secondary.engine()),
+                ],
+                op,
+                query,
+            );
+            for text in [&single, &multi] {
+                let parsed = parse_v2(text).unwrap();
+                assert!(!parsed.items.is_empty(), "positive hits: {op:?} {query}");
+                assert!(
+                    !parsed
+                        .header
+                        .iter()
+                        .any(|segment| segment.starts_with("omitted:")),
+                    "{op:?} {query}: {:?}",
+                    parsed.header
+                );
+            }
+            cases.push((op, query, single, multi));
+        }
+    }
+    primary.engine = None;
+    secondary.engine = None;
+
+    // The CLI (single-root).
+    for (op, query, single, _) in &cases {
+        assert_eq!(
+            &cli_text(&primary.store, *op, query, None),
+            single,
+            "CLI {op:?} {query}"
+        );
+        let configured = cli_text(&primary.store, *op, query, Some(&primary.profile_path));
+        let (word, rest) = split_semantic_word(&configured);
+        assert!(word.starts_with("semantic:fallback:"), "{word}");
+        assert_eq!(&rest, single, "CLI with a profile, {op:?} {query}");
+    }
+
+    // MCP, single- and multi-root, without and with the profile.
+    for multi in [false, true] {
+        for profiled in [false, true] {
+            let references = if multi {
+                vec![secondary.reference()]
+            } else {
+                Vec::new()
+            };
+            let served = owner_with(
+                &primary.store,
+                &primary.root,
+                references,
+                profiled.then(|| primary.serving()),
+                budget_of(serde_json::json!({"v": 1, "max_context_tokens": 8192})),
+            )
+            .await;
+            for (op, query, single, multi_text) in &cases {
+                let want = if multi { multi_text } else { single };
+                let text = served.ok(op.tool(), op.arguments(query, None)).await;
+                if profiled {
+                    let (word, rest) = split_semantic_word(&text);
+                    assert!(
+                        word.starts_with("semantic:fallback:semantic_unprepared"),
+                        "{word}"
+                    );
+                    assert_eq!(word.ends_with("; primary root only"), multi, "{word}");
+                    assert_eq!(&rest, want, "MCP multi={multi} profiled {op:?} {query}");
+                } else {
+                    assert_eq!(&text, want, "MCP multi={multi} {op:?} {query}");
+                }
+            }
+            served.close().await;
+        }
+    }
+    assert_eq!(
+        primary.probe.query_calls(),
+        0,
+        "an unprepared store is refused before any embedding"
+    );
+}
+
+/// Gap 2: the multi-root matrix. Both roots are prepared for the SAME
+/// profile, so any secondary-root use of the runtime would show. The header
+/// word covers the primary root only and says so whenever another root
+/// serves; no secondary item is ever dense evidence (the secondary's own
+/// prepared dusk unit never appears); a secondary-only request spends no
+/// embedding and is the plain baseline byte for byte.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn semantic_evidence_stays_primary_only_in_a_multi_root_owner() {
+    const QUERY: &str = "parse_record twilight onset";
+    let mut primary = Corpus::new(&[]);
+    let mut secondary = Corpus::new(&[]);
+    assert!(
+        secondary.report.index_published,
+        "the secondary store is prepared too"
+    );
+    let (primary_ws, secondary_ws) = (primary.ws16(), secondary.ws16());
+    let admitted =
+        context_foundry::roots::validate_admission(&primary.root, &[secondary.reference()])
+            .unwrap();
+    let secondary_alias = admitted[1].alias.clone();
+    let plain: Vec<(Op, String)> = [Op::Search, Op::Context]
+        .into_iter()
+        .map(|op| {
+            (
+                op,
+                plain_roots(&[(&admitted[1], secondary.engine())], op, QUERY),
+            )
+        })
+        .collect();
+    primary.engine = None;
+    secondary.engine = None;
+    let served = owner_with(
+        &primary.store,
+        &primary.root,
+        vec![secondary.reference()],
+        Some(primary.serving()),
+        budget_of(serde_json::json!({"v": 1, "max_context_tokens": 8192})),
+    )
+    .await;
+
+    // Both roots serve: one embedding, for the primary; the word says so.
+    for op in [Op::Search, Op::Context] {
+        let before = primary.probe.query_calls();
+        let text = served.ok(op.tool(), op.arguments(QUERY, None)).await;
+        assert_eq!(primary.probe.query_calls(), before + 1, "{op:?}");
+        assert_eq!(
+            word_of(&text).as_deref(),
+            Some("ready; primary root only"),
+            "{op:?}"
+        );
+        let (mut dense, mut secondary_items) = (0, 0);
+        for item in parse_v2(&text).unwrap().items {
+            if item.handle.is_empty() {
+                continue;
+            }
+            let semantic = item.neural.is_some() || item.label.as_deref() == Some("semantic");
+            if ws16_of(&item.handle) == secondary_ws {
+                secondary_items += 1;
+                assert!(
+                    !semantic,
+                    "a secondary item is dense evidence: {}",
+                    item.handle
+                );
+                assert_ne!(span_of(&item.handle).0, DUSK_PATH, "{op:?}");
+            } else {
+                assert_eq!(ws16_of(&item.handle), primary_ws);
+                dense += usize::from(semantic);
+            }
+        }
+        assert!(dense > 0, "{op:?}: the primary's dense evidence:\n{text}");
+        assert!(
+            secondary_items > 0,
+            "{op:?}: the secondary's lexical hits:\n{text}"
+        );
+    }
+    // The primary alone, and a selection listing the secondary first.
+    let text = served
+        .ok("context", Op::Context.arguments(QUERY, Some(&["primary"])))
+        .await;
+    assert_eq!(word_of(&text).as_deref(), Some("ready"));
+    let text = served
+        .ok(
+            "context",
+            Op::Context.arguments(QUERY, Some(&[secondary_alias.as_str(), "primary"])),
+        )
+        .await;
+    assert_eq!(word_of(&text).as_deref(), Some("ready; primary root only"));
+    // The secondary alone: no embedding, no word, the plain bytes.
+    let before = primary.probe.query_calls();
+    for (op, plain) in &plain {
+        let text = served
+            .ok(
+                op.tool(),
+                op.arguments(QUERY, Some(&[secondary_alias.as_str()])),
+            )
+            .await;
+        assert_eq!(&text, plain, "{op:?}");
+        assert_eq!(word_of(&text), None);
+    }
+    assert_eq!(
+        primary.probe.query_calls(),
+        before,
+        "a secondary-only request spends no embedding"
+    );
+    served.close().await;
+}
+
+// --- A worker dying mid-query ----------------------------------------------
+
+/// The tests in this binary that run a supervised worker serialize here: the
+/// footprint test arms the measurement fault process-wide.
+#[cfg(target_os = "macos")]
+static SUPERVISED_WORKERS: Mutex<()> = Mutex::new(());
+
+/// Gap 4: the supervised worker dies in the middle of a query embedding,
+/// through `QueryRuntime`. The fake worker kills itself (`--die-in-call`)
+/// once the query entered its compute phase, which it records first
+/// (`--phase-file`): no helper thread races the 1500 ms query ceiling. The
+/// request falls back by name (`provider_exited`, never a timeout) with the
+/// baseline intact; the runtime then stays in that named unavailable
+/// state — every later request falls back the same way, nothing restarts
+/// behind a query — and the dead worker (its `--pid-file` PID) was reaped.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_worker_dying_mid_query_falls_back_by_name_and_stays_named_unavailable() {
+    use context_foundry::neural::supervisor::WorkerProvider;
+    let _worker = SUPERVISED_WORKERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let corpus = Corpus::new(&[]);
+    let work = tempfile::tempdir().unwrap();
+    let worker_profile = fake_worker_profile(work.path());
+    let pid_file = work.path().join("worker.pid");
+    let phase_file = work.path().join("worker.phase");
+    let hooks: Vec<String> = [
+        "--pid-file",
+        pid_file.to_str().unwrap(),
+        "--phase-file",
+        phase_file.to_str().unwrap(),
+        "--die-in-call",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    let descriptor = corpus.profile.descriptor.clone();
+    let slot = mcp::semantic_slot(Some(SemanticServing::with_provider(
+        corpus.profile_path.clone(),
+        Box::new(move || {
+            let worker = WorkerProvider::launch(&worker_profile, hooks)?;
+            Ok(Box::new(Relabeled { worker, descriptor }) as Box<dyn EmbeddingProvider>)
+        }),
+    )))
+    .unwrap();
+    assert!(matches!(slot, Some(Ok(_))), "the worker started");
+    let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let baseline = corpus.baseline(DUSK_QUERY, BUDGET);
+    let died = corpus.context(&slot, DUSK_QUERY, BUDGET);
+    assert_eq!(
+        std::fs::read_to_string(&phase_file).unwrap().lines().last(),
+        Some("call"),
+        "the worker died inside the query call"
+    );
+    let (word, rest) = split_semantic_word(&died.packed.text);
+    assert!(
+        word.starts_with("semantic:fallback:provider_exited"),
+        "{word}"
+    );
+    assert_eq!(rest, baseline.packed.text, "the baseline is intact");
+    // The named unavailable state: every later request, context or search.
+    for _ in 0..2 {
+        let later = corpus.context(&slot, DUSK_QUERY, BUDGET);
+        let (word, rest) = split_semantic_word(&later.packed.text);
+        assert!(
+            word.starts_with("semantic:fallback:provider_exited"),
+            "{word}"
+        );
+        assert_eq!(rest, baseline.packed.text);
+        let search = corpus.search(&slot, DUSK_QUERY, 10);
+        assert!(
+            search
+                .word()
+                .is_some_and(|word| word.starts_with("fallback:provider_exited")),
+            "{:?}",
+            search.word()
+        );
+    }
+    // The dead worker was reaped, not left a zombie behind the runtime.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        // SAFETY: signal 0 only probes whether the PID still exists.
+        let gone = unsafe { libc::kill(pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        if gone {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the dead worker was never reaped"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
