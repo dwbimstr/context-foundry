@@ -40,6 +40,18 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 009 T003 progressive preparation in the MCP owner — 2026-10-05
+
+Development isolation only. The real lifecycle exercise is deferred to the measurement phase (owner, 2026-10-05) as an ignored test (`real_lifecycle_exercise_on_a_permitted_declared_corpus`).
+- **Shape:**
+  - The resident `QueryRuntime` is the one model worker for query embeddings and document batches of up to 8, behind one slot. Admission claims the slot, then checks for an abandoned late call; a query being dispatched wins over a document admission. A refused document admission pauses preparation with `provider_busy`. Nothing is queued.
+  - The shared preparation steps in prepare.rs serve both the CLI and the MCP driver.
+  - The driver takes the engine slot only to select and to commit. Inference holds no slot and no transaction.
+  - `index {semantic: prepare|pause}` controls preparation; `status` reports a `semantic` object. The catalog is 986 o200k tokens, within the 1000 limit.
+  - Shutdown joins the provider, so the worker is reaped before the store is released.
+- **Authors and review.** Anthropic Opus 5.5 wrote it; cross-lab review by OpenAI GPT-6.1 Sol. The review went REVISE (5 major: hidden late-query occupancy, commit after EOF, ownership released before the worker was gone, an admission race, pause racing admission), then REVISE (the active-to-abandoned transition), then SHIP. Each fix has a deterministic barrier test.
+- **Gates** (`75cd840`): fmt; clippy `-D warnings` on stable and 1.90 (default, `--no-default-features` and `embed-worker`); full suite 742 passed, 0 failed, 7 ignored.
+
 ## 009 T002 semantic context within the existing budget — 2026-10-05
 
 Development isolation only. [Evidence](review/009-t002-2026-10-05.json).

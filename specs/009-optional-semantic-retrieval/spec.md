@@ -1,8 +1,10 @@
 # 009 — Neural context that becomes useful and stays prepared
 
-Status: T001 (preparation, cache, index and the supervised development worker) and T002
-(semantic context within the existing budget) implemented and accepted locally on
-2026-10-05, under development isolation only (see validation); T003 open. D001 recorded 2026-09-29; its chosen values were
+Status: T001 (preparation, cache, index and the supervised development worker), T002
+(semantic context within the existing budget) and T003 (progressive preparation in the
+MCP owner) implemented and accepted locally on 2026-10-05, under development isolation
+only (see validation). T003's real lifecycle exercise is deferred to the measurement
+phase; package acceptance needs signing. D001 recorded 2026-09-29; its chosen values were
 recorded 2026-10-03 (below). Reactivated for planning by the owner's preparation-cost
 concern. Dependencies:
 001; 003 for preparation during agent use. Implementation requires D001 below. Beyond
