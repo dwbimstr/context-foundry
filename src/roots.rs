@@ -14,8 +14,8 @@
 
 use crate::FoundryError;
 use crate::store::{
-    CandidateBatch, CandidateCounters, Hit, RankedItem, RenderedForm, SearchOutcome, TIER_COMPILER,
-    TIER_GRAPH, TIER_OUTLINE,
+    CandidateBatch, CandidateCounters, Hit, MarkedRun, RankedItem, RenderedForm, SearchOutcome,
+    TIER_COMPILER, TIER_GRAPH, TIER_OUTLINE,
 };
 use std::path::{Path, PathBuf};
 
@@ -320,6 +320,24 @@ fn summed_counters(batches: &[RootBatch]) -> CandidateCounters {
     counters
 }
 
+/// Each marked tier-1 run's definitions summed over the merged roots
+/// (context-v2 § Compact context): a name defined once in each of two roots
+/// is not unique, so the merged response is not compact for it.
+fn summed_marked(batches: &[RootBatch]) -> Vec<MarkedRun> {
+    let mut marked: Vec<MarkedRun> = Vec::new();
+    for root in batches {
+        for run in &root.batch.marked {
+            match marked.iter_mut().find(|known| known.run == run.run) {
+                Some(known) => {
+                    known.definitions = known.definitions.saturating_add(run.definitions);
+                }
+                None => marked.push(run.clone()),
+            }
+        }
+    }
+    marked
+}
+
 /// The merged delivery-unit order over every root's batch:
 ///
 /// 1. tier-1 items from all roots first, by root order, then in each root's
@@ -456,8 +474,9 @@ pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
 /// remaining merged units and the outlines of the first
 /// [`CONTEXT_OUTLINES`] distinct (root, path) files. The lexical units and the
 /// compiler units share ONE [`CONTEXT_UNITS`] bound across all roots, so the
-/// lexical tail yields; a cut sets `candidates_full`. Counters are summed
-/// across roots; graph takes the worst coverage.
+/// lexical tail yields; a cut sets `candidates_full`. Counters and the marked
+/// runs' definition counts are summed across roots; graph takes the worst
+/// coverage.
 pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
     let merged = merged_units(batches);
     let mut units: Vec<RankedItem> = merged
@@ -557,6 +576,7 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
         // 013 T003: the policy routes the PRIMARY root only (its store
         // composes the state), with the same scope suffix as semantics.
         route: primary_word(batches[0].batch.route.as_ref(), batches.len()),
+        marked: summed_marked(batches),
     }
 }
 
@@ -623,6 +643,7 @@ mod tests {
             counters: CandidateCounters::default(),
             semantic: None,
             route: None,
+            marked: Vec::new(),
         }
     }
 

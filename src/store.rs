@@ -440,6 +440,17 @@ pub struct CandidateCounters {
     pub graph: Option<&'static str>,
 }
 
+/// One marked (backticked) tier-1 run of the query and the exact number of
+/// its definitions under tier 1's own restriction (context-v2 § Two-tier
+/// query, § Compact context). A multi-root merge sums each run's count over
+/// the roots it merges.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MarkedRun {
+    /// The lowercased run.
+    pub run: String,
+    pub definitions: u64,
+}
+
 /// The ordered candidates of one store, revalidated in its final read.
 #[derive(Clone, Debug)]
 pub struct CandidateBatch {
@@ -453,6 +464,22 @@ pub struct CandidateBatch {
     /// only when a context's `auto` strategy was routed with a configured
     /// policy; `None` keeps the baseline header byte-for-byte.
     pub route: Option<String>,
+    /// The query's marked tier-1 runs with their exact definition counts, in
+    /// order of first appearance; empty when the query marks no run. Search
+    /// ignores them; context packing applies [`Self::compact`].
+    pub marked: Vec<MarkedRun>,
+}
+
+impl CandidateBatch {
+    /// The compact-context rule (context-v2 § Compact context): at least one
+    /// marked run has exactly one definition and no marked run has more. A
+    /// marked run without definitions neither triggers nor blocks it; an
+    /// unmarked query is never compact. When it holds, every tier-1 item of
+    /// the batch is a unique definition, at most one per marked run.
+    pub fn compact(&self) -> bool {
+        self.marked.iter().any(|run| run.definitions == 1)
+            && self.marked.iter().all(|run| run.definitions <= 1)
+    }
 }
 
 /// The `outline` and `outline-min` renderings of a retrieve range
@@ -849,12 +876,13 @@ fn analyzed_terms(split: fn(&str) -> Vec<(usize, usize)>, text: &str) -> Vec<Str
         .collect()
 }
 
-/// The query's tier-1 runs (context-v2 § Two-tier query): the identifier
-/// runs inside its backtick code spans when it has any, otherwise all of
-/// them; lowercased, deduplicated, at most [`TIER1_RUNS`] by first
-/// appearance. A run of N backticks opens a span that the next run of exactly
-/// N backticks closes; an opener without such a closer is literal text.
-fn tier1_runs(query: &str) -> Vec<String> {
+/// The query's tier-1 runs (context-v2 § Two-tier query) and whether they are
+/// marked: the identifier runs inside its backtick code spans when it has
+/// any, otherwise all of them; lowercased, deduplicated, at most
+/// [`TIER1_RUNS`] by first appearance. A run of N backticks opens a span that
+/// the next run of exactly N backticks closes; an opener without such a
+/// closer is literal text.
+fn tier1_runs(query: &str) -> (Vec<String>, bool) {
     let bytes = query.as_bytes();
     let mut ticks: Vec<(usize, usize)> = Vec::new();
     let mut at = 0;
@@ -890,7 +918,8 @@ fn tier1_runs(query: &str) -> Vec<String> {
         .copied()
         .filter(|&(from, to)| spans.iter().any(|&(start, end)| start <= from && to <= end))
         .collect();
-    let chosen = if marked.is_empty() { all } else { marked };
+    let is_marked = !marked.is_empty();
+    let chosen = if is_marked { marked } else { all };
     let mut runs: Vec<String> = Vec::new();
     for (from, to) in chosen {
         let run = query[from..to].to_lowercase();
@@ -902,7 +931,7 @@ fn tier1_runs(query: &str) -> Vec<String> {
         }
         runs.push(run);
     }
-    runs
+    (runs, is_marked)
 }
 
 /// Registers the schema v2 tokenizers (they are per index instance, never
@@ -1125,6 +1154,17 @@ impl Candidate {
     fn unit(&self) -> (String, u64, u64) {
         (self.path.clone(), self.unit_start, self.unit_end)
     }
+}
+
+/// The two-tier collection of one query, before revalidation.
+struct TwoTier {
+    first: Vec<Candidate>,
+    second: Vec<Candidate>,
+    /// A tier window filled.
+    candidates_full: bool,
+    /// The marked runs' exact definition counts (empty for an unmarked
+    /// query).
+    marked: Vec<MarkedRun>,
 }
 
 /// Write schema last in the initializing transaction.
@@ -2115,7 +2155,12 @@ impl Engine {
         // requirements (error precedence the extraction must not change).
         path.map(path_filter).transpose()?;
         let workspace_id = self.require_workspace_id()?;
-        let (first, second, candidates_full) = self.collect_two_tier(query, path, control)?;
+        let TwoTier {
+            first,
+            second,
+            candidates_full,
+            marked,
+        } = self.collect_two_tier(query, path, control)?;
 
         // Final read: revalidate, merge per delivery unit and cap per file over
         // the whole candidate window, then cut to `limit`; stale and capped
@@ -2247,6 +2292,7 @@ impl Engine {
             counters,
             semantic: None,
             route: None,
+            marked,
         })
     }
 
@@ -2256,14 +2302,15 @@ impl Engine {
     /// specificity, each contributing its smallest-`key_hash` definitions to
     /// the slots left, ordered by path and start within the run), tier 2
     /// lexical (at most 256 by score, `key_hash` breaking cutoff ties, tier-1
-    /// units removed), and whether a window filled. No source is read here;
-    /// validation happens in the callers' final read.
+    /// units removed), whether a window filled, and each marked run's exact
+    /// count (§ Compact context). No source is read here; validation happens
+    /// in the callers' final read.
     fn collect_two_tier(
         &self,
         query: &str,
         path: Option<&str>,
         control: &crate::Control,
-    ) -> FResult<(Vec<Candidate>, Vec<Candidate>, bool)> {
+    ) -> FResult<TwoTier> {
         let filter = path.map(path_filter).transpose()?;
         let handles = self.require_search()?;
         let fields = &handles.fields;
@@ -2308,12 +2355,21 @@ impl Engine {
                 move |doc: DocId, _score: Score| Reverse(key_hash.get_val(doc))
             }),
         );
+        let (selected, is_marked) = tier1_runs(query);
+        let mut marked: Vec<MarkedRun> = Vec::new();
         let mut runs: Vec<(usize, String, Vec<tantivy::DocAddress>)> = Vec::new();
-        for run in tier1_runs(query) {
+        for run in selected {
             let (count, top) = searcher.search(
                 restrict(term(fields.def_name, &run, IndexRecordOption::Basic)).as_ref(),
                 &definitions,
             )?;
+            // The compact rule reads the same exact, restricted count.
+            if is_marked {
+                marked.push(MarkedRun {
+                    run: run.clone(),
+                    definitions: count as u64,
+                });
+            }
             if count > 0 {
                 let top = top.into_iter().map(|(_, address)| address).collect();
                 runs.push((count, run, top));
@@ -2437,7 +2493,12 @@ impl Engine {
                 .then_with(|| a.path.cmp(&b.path))
                 .then_with(|| a.start.cmp(&b.start))
         });
-        Ok((first, second, candidates_full))
+        Ok(TwoTier {
+            first,
+            second,
+            candidates_full,
+            marked,
+        })
     }
 
     /// The 009 T002 fused candidate selection: the D001 merge — tier-1
@@ -2479,7 +2540,12 @@ impl Engine {
         // requirements, as in the baseline path.
         let filter = path.map(path_filter).transpose()?;
         let workspace_id = self.require_workspace_id()?;
-        let (first, second, candidates_full) = self.collect_two_tier(query, path, control)?;
+        let TwoTier {
+            first,
+            second,
+            candidates_full,
+            marked,
+        } = self.collect_two_tier(query, path, control)?;
 
         // Final read: every candidate is validated here, before fusion.
         let tx = self.db.begin_read()?;
@@ -2741,6 +2807,7 @@ impl Engine {
             counters,
             semantic: Some(word.to_owned()),
             route: None,
+            marked,
         })
     }
 
@@ -3515,6 +3582,10 @@ impl Engine {
                 freshness,
                 items,
                 counters,
+                // The packer decides compactness from these counts
+                // (context-v2 § Compact context); ranking, routing and graph
+                // expansion above never read them.
+                marked: search.marked,
             },
             hits,
         })

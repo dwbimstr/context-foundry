@@ -2165,3 +2165,330 @@ fn a_documented_definition_owns_its_doc_and_tier_one_names_its_definition() {
         "the doc's words find the documented unit, not the preceding block"
     );
 }
+
+// --- Compact context (context-v2 § Compact context, 2026-10-06) -----------
+
+use context_foundry::response::{RootHeader, stdout_bytes};
+use context_foundry::roots::{RootBatch, merge_context};
+use context_foundry::store::{CandidateBatch, TIER_OUTLINE};
+use context_foundry::testkit::{V2Kind, V2Response};
+
+/// `fn sleep_ms`, defined once with its doc, alone in its file (so that file
+/// has no outline).
+const CLOCK: &str = "/// Sleeps for `ms` milliseconds.\npub fn sleep_ms(ms: u64) {\n    let micros = ms * 1000;\n    std::thread::sleep(std::time::Duration::from_micros(micros));\n}\n";
+
+/// The `i`th caller of `sleep_ms`: one unit calling it, then a second
+/// function, so the caller's file has an outline.
+fn caller_source(i: usize) -> String {
+    format!("fn w{i}() {{\n    sleep_ms({i});\n}}\nfn x{i}() {{}}\n")
+}
+
+/// `sleep_ms` defined once and called from twelve files; `alpha_one` and
+/// `beta_two` defined once and called together from `both`; `retry_twice`
+/// defined twice and `gamma_three` three times.
+fn compact_fixture(root: &Path) -> (tempfile::TempDir, Engine) {
+    let (store, mut engine) = setup(root);
+    engine.replace_source("src/clock.rs", CLOCK).unwrap();
+    for i in 0..12 {
+        engine
+            .replace_source(&format!("src/use{i:02}.rs"), &caller_source(i))
+            .unwrap();
+    }
+    for (path, body) in [
+        ("src/alpha.rs", "fn alpha_one() {}\n"),
+        ("src/beta.rs", "fn beta_two() {}\n"),
+        ("src/both.rs", "fn both() { alpha_one(); beta_two(); }\n"),
+        ("src/retry/a.rs", "fn retry_twice() {}\n"),
+        ("src/retry/b.rs", "fn retry_twice() {}\n"),
+        ("src/gamma/a.rs", "fn gamma_three() {}\n"),
+        ("src/gamma/b.rs", "fn gamma_three() {}\n"),
+        ("src/gamma/c.rs", "fn gamma_three() {}\n"),
+    ] {
+        engine.replace_source(path, body).unwrap();
+    }
+    drain(&mut engine);
+    (store, engine)
+}
+
+/// One context at 2048 tokens: its candidate batch, packed text and parse.
+fn context_of(
+    engine: &Engine,
+    query: &str,
+    strategy: Strategy,
+) -> (CandidateBatch, response::PackedText, V2Response) {
+    let batch = engine
+        .context_candidates(query, strategy, &Control::unbounded())
+        .unwrap();
+    let packed =
+        response::pack_context(&batch, Budget::request(2048), &response::stdout_bytes).unwrap();
+    let parsed = parse_v2(&packed.text).unwrap_or_else(|e| panic!("{e}\n{}", packed.text));
+    (batch, packed, parsed)
+}
+
+/// The pre-amendment rendering of a batch: without its marked counts the
+/// compact rule cannot apply.
+fn packed_without_marks(batch: &CandidateBatch) -> String {
+    let mut plain = batch.clone();
+    plain.marked.clear();
+    response::pack_context(&plain, Budget::request(2048), &response::stdout_bytes)
+        .unwrap()
+        .text
+}
+
+fn says_compact(parsed: &V2Response) -> bool {
+    parsed.header.iter().any(|segment| segment == "compact")
+}
+
+fn kinds(parsed: &V2Response) -> Vec<V2Kind> {
+    parsed.items.iter().map(|item| item.kind).collect()
+}
+
+/// A query whose one marked name has exactly one definition gets that
+/// definition verbatim, then the next 8 candidates in context order as one
+/// locator line each; file outlines and the rest are omitted and counted,
+/// and the answer costs fewer tokens than the same question unmarked.
+#[test]
+fn a_unique_marked_definition_packs_compact_with_at_most_eight_pointers() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, engine) = compact_fixture(&fixture.path().join("ws"));
+    let (batch, packed, parsed) = context_of(&engine, "find `sleep_ms`", Strategy::Search);
+    assert!(batch.compact());
+    let header = packed.text.lines().next().unwrap();
+    assert!(says_compact(&parsed), "{header}");
+    assert!(response::count_tokens(header) <= 40, "{header}");
+
+    let definition = &parsed.items[0];
+    let unit = source(&batch.items[0]);
+    assert_eq!(definition.kind, V2Kind::Source);
+    assert_eq!(definition.handle, unit.to_v2());
+    assert_eq!(definition.label.as_deref(), Some("fn sleep_ms"));
+    assert_eq!(definition.form, None);
+    let bytes = &CLOCK[unit.start as usize..unit.end as usize];
+    assert_eq!(definition.body, bytes);
+
+    // The pointers: the first 8 candidates past the definition, outlines
+    // skipped, each a locator line quoting its best line.
+    let pointed: Vec<String> = batch
+        .items
+        .iter()
+        .filter(|item| item.tier != 1 && item.tier != TIER_OUTLINE)
+        .take(8)
+        .map(|item| source(item).to_v2())
+        .collect();
+    let pointers = &parsed.items[1..];
+    assert_eq!(pointers.len(), 8);
+    assert_eq!(pointed.len(), 8);
+    for (pointer, handle) in pointers.iter().zip(&pointed) {
+        assert_eq!(pointer.kind, V2Kind::Locator);
+        assert_eq!(&pointer.handle, handle);
+        assert!(pointer.body.starts_with("sleep_ms("), "{pointer:?}");
+    }
+
+    // Four more callers and the two caller-file outlines are omitted.
+    assert!(batch.items.iter().any(|item| item.tier == TIER_OUTLINE));
+    assert_eq!(packed.omitted, batch.items.len() - 9);
+    let omitted = format!("omitted:{}", packed.omitted);
+    assert!(parsed.header.contains(&omitted), "{header}");
+
+    // The same question unmarked fills the budget as before.
+    let (plain_batch, plain, _) = context_of(&engine, "find sleep_ms", Strategy::Search);
+    assert!(!plain_batch.compact());
+    assert!(!plain.text.lines().next().unwrap().contains("compact"));
+    let (compact, full) = (packed.tokens, plain.tokens);
+    assert!(compact < full, "{compact} vs {full}");
+}
+
+/// Compact exactly when some marked run has one definition and none has
+/// more; a marked run without definitions neither triggers nor blocks it,
+/// and an unmarked query never is. Every other response is the
+/// pre-amendment rendering, byte for byte.
+#[test]
+fn the_compact_rule_reads_every_marked_run_count() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, engine) = compact_fixture(&fixture.path().join("ws"));
+    // Each query and the unique definitions it delivers, which arrive in
+    // tier-1 order (equal counts order by run text).
+    let cases = [
+        ("`alpha_one`", 1),
+        ("`beta_two` and `alpha_one`", 2),
+        ("`alpha_one` `no_such_name`", 1),
+        ("`no_such_name`", 0),
+        ("`retry_twice`", 0),
+        ("`alpha_one` `gamma_three`", 0),
+        ("alpha_one", 0),
+    ];
+    let labels = ["fn alpha_one", "fn beta_two"];
+    for (query, unique) in cases {
+        let (batch, packed, parsed) = context_of(&engine, query, Strategy::Search);
+        let compact = unique > 0;
+        assert_eq!(batch.compact(), compact, "{query}");
+        assert_eq!(says_compact(&parsed), compact, "{query}");
+        if compact {
+            // The definitions, then `both`, the one other candidate, as a
+            // pointer.
+            let mut want = vec![V2Kind::Source; unique];
+            want.push(V2Kind::Locator);
+            assert_eq!(kinds(&parsed), want, "{query}");
+            for (item, label) in parsed.items.iter().zip(&labels[..unique]) {
+                assert_eq!(item.label.as_deref(), Some(*label), "{query}");
+                assert_eq!(item.form, None, "{query}");
+            }
+        } else {
+            assert_eq!(packed.text, packed_without_marks(&batch), "{query}");
+            assert!(!kinds(&parsed).contains(&V2Kind::Locator), "{query}");
+        }
+    }
+}
+
+/// Under the graph strategy the edge lines follow the definition as
+/// pointers, inside the eight.
+#[test]
+fn a_compact_graph_context_points_with_its_edge_lines() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, engine) = compact_fixture(&fixture.path().join("ws"));
+    let bundle = GraphBundle {
+        provider: "fixture".into(),
+        revision: "r1".into(),
+        edges: vec![Edge {
+            from: endpoint("src/use00.rs", &caller_source(0)),
+            to: endpoint("src/clock.rs", CLOCK),
+            kind: "calls".into(),
+            evidence: "manual".into(),
+        }],
+    };
+    engine.import_graph(&bundle).unwrap();
+    let (batch, _, parsed) = context_of(&engine, "find `sleep_ms`", Strategy::Graph);
+    assert_eq!(batch.counters.graph, Some("ok"));
+    assert!(says_compact(&parsed));
+    let mut want = vec![V2Kind::Source, V2Kind::Edge];
+    want.resize(1 + 8, V2Kind::Locator);
+    assert_eq!(kinds(&parsed), want);
+    assert!(parsed.items[1].body.contains("--calls--> src/clock.rs"));
+}
+
+/// A definition too large to fit verbatim takes its signature form exactly
+/// as an unmarked context delivers it; a budget below the header refuses.
+#[test]
+fn a_compact_definition_keeps_the_ladder_and_the_refusal() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (_store, mut engine) = setup(&root);
+    let lets: String = (0..200)
+        .map(|j| format!("    let v{j} = a + {j};\n"))
+        .collect();
+    engine
+        .replace_source(
+            "huge.rs",
+            &format!("pub fn huge_unit(a: u8) -> u8 {{\n{lets}    a\n}}\n"),
+        )
+        .unwrap();
+    drain(&mut engine);
+    let control = Control::unbounded();
+    let pack = |query: &str, tokens: usize| {
+        let batch = engine
+            .context_candidates(query, Strategy::Search, &control)
+            .unwrap();
+        response::pack_context(&batch, Budget::request(tokens), &response::stdout_bytes)
+    };
+    let compact = parse_v2(&pack("`huge_unit`", 256).unwrap().text).unwrap();
+    let plain = parse_v2(&pack("huge_unit", 256).unwrap().text).unwrap();
+    assert!(says_compact(&compact));
+    assert!(!says_compact(&plain));
+    assert_eq!(compact.items, plain.items);
+    assert_eq!(compact.items[0].form.as_deref(), Some("signature"));
+    let refused = pack("`huge_unit`", 1).unwrap_err();
+    assert_eq!(code(&refused), "budget_too_small");
+}
+
+/// The rule reads tier 1's exact count, so the `path` filter that restricts
+/// tier 1 also decides which definitions count.
+#[test]
+fn the_path_filter_decides_which_definitions_count() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (_store, mut engine) = setup(&root);
+    for path in ["app/wide.rs", "other/wide.rs"] {
+        engine.replace_source(path, "fn wide() {}\n").unwrap();
+    }
+    drain(&mut engine);
+    let control = Control::unbounded();
+    let batch = |query: &str, filter: Option<&str>| {
+        engine
+            .search_candidates(query, filter, 10, &control)
+            .unwrap()
+    };
+    let counts = |path: Option<&str>| -> Vec<u64> {
+        let marked = batch("`wide` `absent`", path).marked;
+        marked.iter().map(|run| run.definitions).collect()
+    };
+    assert_eq!(counts(None), [2, 0]);
+    assert_eq!(counts(Some("app")), [1, 0]);
+    assert!(!batch("`wide`", None).compact());
+    assert!(batch("`wide`", Some("app")).compact());
+    assert!(!batch("wide", Some("app")).compact(), "unmarked");
+}
+
+/// Context over the 007 merge of `roots`: the merged batch's compactness and
+/// the packed response, parsed.
+fn merged_context(roots: &[(&str, Engine)], query: &str) -> (bool, V2Response) {
+    let control = Control::unbounded();
+    let mut batches = Vec::new();
+    let mut headers = Vec::new();
+    for (alias, engine) in roots {
+        let batch = engine
+            .context_candidates(query, Strategy::Search, &control)
+            .unwrap();
+        let revision = batch.freshness.source_revision;
+        headers.push(RootHeader {
+            alias: (*alias).to_owned(),
+            label: (*alias).to_owned(),
+            serving: Some((revision, "complete".to_owned(), 0)),
+            coverage: None,
+        });
+        batches.push(RootBatch {
+            alias: (*alias).to_owned(),
+            batch,
+        });
+    }
+    let merged = merge_context(&batches);
+    let budget = Budget::request(2048);
+    let packed = response::pack_context_roots(&merged, &headers, budget, &stdout_bytes);
+    let text = packed.unwrap().text;
+    (merged.compact(), parse_v2(&text).unwrap())
+}
+
+/// A multi-root run's count is summed over the merged roots: a name defined
+/// once in each of two roots is not unique, while one defined in a single
+/// root is.
+#[test]
+fn multi_root_compactness_sums_each_marked_run_over_the_roots() {
+    let fixture = tempfile::tempdir().unwrap();
+    let mut stores = Vec::new();
+    let mut roots = Vec::new();
+    for (alias, body) in [
+        ("primary", "fn shared_name() {}\n\nfn only_here() {}\n"),
+        ("ref1", "fn shared_name() {}\n"),
+    ] {
+        let (store, mut engine) = setup(&fixture.path().join(alias));
+        engine.replace_source("src/lib.rs", body).unwrap();
+        drain(&mut engine);
+        stores.push(store);
+        roots.push((alias, engine));
+    }
+    let control = Control::unbounded();
+    for (alias, engine) in &roots {
+        let alone = engine
+            .context_candidates("`shared_name`", Strategy::Search, &control)
+            .unwrap();
+        assert!(alone.compact(), "{alias} alone defines it once");
+    }
+    let (compact, parsed) = merged_context(&roots, "`shared_name`");
+    assert!(!compact);
+    assert!(!says_compact(&parsed));
+    assert_eq!(kinds(&parsed)[..2], [V2Kind::Source, V2Kind::Source]);
+
+    let (compact, parsed) = merged_context(&roots, "`only_here`");
+    assert!(compact);
+    assert!(says_compact(&parsed));
+    assert_eq!(parsed.items[0].label.as_deref(), Some("fn only_here"));
+}

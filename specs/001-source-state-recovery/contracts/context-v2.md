@@ -8,7 +8,9 @@ decisions and implemented details from T005/T006 review. The 2026-10-06 amendmen
 (owner-approved after the 013 corpus analysis) changes tier-1 run selection and order,
 accepts an MCP `lines` array and makes the empty `lines` refusal name the handle's
 lines; five proposed route keywords were measured and withdrawn (§ Context candidates
-and routing).
+and routing). A second owner-approved 2026-10-06 amendment adds compact context
+(§ Compact context): a context whose marked identifiers each have exactly one
+definition returns them plus at most 8 one-line pointers instead of filling its budget.
 It replaces [v1](context-v1.md), whose JSON wire is historical at
 `6bb81e6`, and carries forward every still-valid v1 rule. Source/CLI owner:
 [001](../spec.md); MCP adapter owner:
@@ -26,6 +28,7 @@ implementing MCP. Limits are selected engineering bounds, not measured capacity 
 | Outlines, forms ladder, candidate seam, retrieve `view` | 001 T006 | Locally implemented and accepted (r3 SHIP); unreleased |
 | Multi-root identity, `roots`/`root`, per-root header | 007 T001 | Locally implemented and accepted 2026-10-04 (delta SHIP), committed in `cc402e0`; unreleased |
 | Tier-1 marked runs and specificity order, MCP `lines` array, empty-selection message (2026-10-06 amendment) | 001 (amendment) | Accepted locally 2026-10-06 (cross-lab SHIP; gates green), committed in `c3437e6`; route keywords withdrawn after measurement; unreleased |
+| Compact context: trigger, content, `compact` header segment, multi-root count sum (2026-10-06 amendment) | 001 (amendment) | Implemented locally 2026-10-06; awaiting gates and cross-lab review; unreleased |
 | `foundry references` header segments 12–14, `next: after=<path>#<start>-<end>` cursor; MCP `references`, `index.scip`, compiler graph context | 005 T002, T003 | Locally implemented and accepted (CLI 2026-10-04; MCP and graph context 2026-10-05); unreleased |
 
 ## Identity and reference validation
@@ -250,6 +253,11 @@ the policy routes the primary root only and its word carries `; primary root onl
 when other roots serve, as `semantic:` does. Budget-refusal hints do not reserve room
 for it (the hint header's worst-case numbers dominate).
 
+Header segment amendment, 2026-10-06 (compact context): a context packed under
+§ Compact context adds the bare segment `compact` last, after `route:` when present.
+Every other response is byte-identical to its rendering before this amendment.
+Budget-refusal hints do not reserve room for it, as for `route:`.
+
 Removed from v1: `format_version`, `tokenizer`, `boundary`, `budget_satisfied`,
 `indexed_snapshot`, `candidate_limit`, per-item `workspace_id`, `strategy` (except the
 graph segment), `context_id` and `budget_scope`. No delivery ID is emitted: this
@@ -323,7 +331,10 @@ multi-root owner and `<text>` is the existing edge rendering
 `<from path>:<line> (<symbol>) --<kind>--> <to path>:<line> (<symbol>) [<evidence>; provider=<provider>@<revision>]`.
 Graph items follow the first source item (§ Context candidates). Retrieve's text view
 ends with `next: <handle>` while bytes of the requested range remain. An empty search
-or context result is the header alone.
+or context result is the header alone. A compact context (§ Compact context, amended
+2026-10-06) follows its definitions with one-line pointers: search locator lines
+(§ Search locator lines) and `edge` lines; `testkit::parse_v2` accepts a locator line in
+a context only when its header carries `compact`.
 
 ~~~text
 foundry context · r6 · budget:2048 · shown:3 · omitted:1
@@ -355,7 +366,9 @@ Search shows one line per hit, without fences:
 The handle covers the hit's delivery unit (§ Search documents), `L<line>` is its best
 line (§ Hit materialization) and `<excerpt>` is that line without its LF or CRLF
 terminator and leading whitespace, cut at a UTF-8 boundary to at most 160 bytes with
-`…` appended when cut.
+`…` appended when cut. A compact context's pointer to a source item is the same line,
+from the same renderer (2026-10-06): the item's delivery-unit handle, best line, label
+(`semantic` for a dense-only unit, as in search) and excerpt.
 
 ### Single-line fields
 
@@ -518,7 +531,8 @@ closer is literal text, and scanning resumes after it.
 when the query has at least one, otherwise all runs, lowercased and deduplicated; only
 the first 32 distinct runs by first appearance are used. Each run's count is the exact
 number of its definitions (documents whose `def_name` equals the run) under tier 1's
-own restriction (memory documents excluded, the `path` filter's `dir` term). Runs are
+own restriction (memory documents excluded, the `path` filter's `dir` term); each
+marked run's count, zero included, also decides § Compact context. Runs are
 ordered by count ascending, then run text ascending. Walking that order, each run
 contributes its definitions, smallest `key_hash` first
 (`TopDocs::with_limit(64).tweak_score(|reader| move |doc, _| Reverse(key_hash))`), up to
@@ -660,6 +674,11 @@ query, strategy, control) -> FResult<CandidateBatch>` and settles the shared typ
 - `CandidateCounters { stale, capped, candidates_full, truncated, graph }`, where
   `graph` is `ok`, `graph_unavailable`, `graph_stale` or `graph_invalid` when the
   strategy resolved to graph.
+- `CandidateBatch::marked` (2026-10-06): one `MarkedRun { run, definitions }` per marked
+  tier-1 run of the query, in order of first appearance, carrying tier 1's exact count
+  under its own restriction (§ Two-tier query); empty for an unmarked query. Search
+  ignores it. A 007 merge sums each run's count over the merged roots, and
+  `CandidateBatch::compact()` is the § Compact context trigger the packer applies.
 
 The `tokens` range (1..32768) is validated at the boundaries — CLI before opening the
 store, MCP in its argument parser — so `context_candidates` takes no budget.
@@ -682,6 +701,10 @@ Context candidates, in order:
    outline equal to its text; an unmapped extension has none.
 
 v1's `following_chunks` candidates are removed.
+
+Compact selection (§ Compact context, 2026-10-06) happens at packing, over this already
+ordered list; this order, routing, graph expansion and 013's state composition do not
+change.
 
 For `auto`, ASCII-lowercase the query and tokenize maximal runs of ASCII letters,
 digits or `_`. Any whole token in `{calls,caller,callers,depends,impact,dependency,
@@ -722,13 +745,62 @@ whole response, with the header updated for that inclusion — fits both the tok
 budget and the byte cap; otherwise omit the candidate and count it. After the pass,
 render the final header; if the final rendering no longer fits, remove the last-added
 items, counting them as omitted, until it fits. A fitting first unit precedes graph
-items: the graph-first starvation rule. Search packs its locator lines the same way.
+items: the graph-first starvation rule. Search packs its locator lines the same way, and
+a compact context (§ Compact context) its compact selection.
 
 Source bytes are never rewritten or summarized. The only non-verbatim forms are the
 deterministic outlines above, which keep every shown line verbatim and mark each elided
 range explicitly. If even the header cannot fit, return `budget_too_small` with the
 existing sufficient-budget hint; no success is over budget, and the hint is not
 advertised as a mathematical token minimum.
+
+### Compact context
+
+Amended 2026-10-06 (owner-approved). Without this rule every `context` fills its budget:
+on the rust-lang/rust checker tasks responses averaged about 2,015 of 2,048 o200k tokens
+even when the answer was one small definition. An agent host re-sends every delivered
+token on each later turn, while a missed answer costs about one extra turn (about
+12.4–13k tokens); a measured run at a 512-token budget kept 56–58% of the definition
+successes at about 480 tokens. The owner chose a deterministic rule first.
+
+**Trigger.** A `context` (CLI and MCP, every strategy, single- or multi-root) is compact
+when its query has at least one marked tier-1 run (§ Two-tier query), at least one
+marked run has exactly one definition, and no marked run has more than one. The counts
+are tier 1's exact counts under its own restriction: memory documents excluded and,
+where the caller passes one, the `path` filter's `dir` term (`context` itself takes no
+`path`). They count search documents, so a definition split into several (a container's
+residual pieces, a region over 8192 bytes) is never unique. A marked run without
+definitions neither triggers nor blocks the rule; an unmarked query is never compact.
+In a multi-root owner ([007](../../007-multi-workspace-context/spec.md)) a run's count
+is the sum over the roots the response merges, so a name defined once in each of two
+roots is not unique. `search` and `retrieve` are unchanged.
+
+**Content.** The ladder (§ Ladder packing) runs over this selection of the already
+ordered batch:
+
+1. the unique definitions — the batch's tier-1 items, which under the trigger are at
+   most one per marked run — in tier-1 order (the merged tier-1 order in a multi-root
+   owner), each in its first form that fits, as for any candidate (verbatim, else
+   signature; a neural item keeps the 009 ladder);
+2. then at most 8 further candidates in context order (§ Context candidates and
+   routing: graph items and compiler units, then the remaining lexical or semantic
+   units), each as one line: a source item as its search locator line (§ Search locator
+   lines), a graph item as its `edge` line. File outlines are skipped.
+
+Every other candidate — the file outlines and everything past the eighth pointer — is
+omitted and counted in `omitted:<n>`. The budget stays an upper bound: a candidate that
+does not fit is omitted, a budget below the header is `budget_too_small`, and compact
+mode never adds candidates to fill the budget. A definition the final read drops is
+counted in `stale:<n>` as before, and the response stays compact. Opt-in 008 memory
+lines follow the pointers under their existing rule.
+
+**Header.** A compact response's header ends with the bare segment `compact` (§ Header
+line); every other response is byte-identical to its rendering before this amendment.
+
+**Order of operations.** Selection happens at packing, over the already ordered batch:
+ranking, routing, graph expansion and 013's state composition are unchanged. The batch
+carries each marked run's count (`CandidateBatch::marked`, § Candidate seam); 007
+merges batches, summing those counts, and never packed responses.
 
 ### Retrieve views
 

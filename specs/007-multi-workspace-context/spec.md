@@ -101,6 +101,9 @@ and 3 outlines in total: graph items follow the first merged unit, in root order
 the outlines are those of the first three distinct (root, path) files among the merged
 units. One effective budget, one reservation and one charge cover the whole response;
 packing is the v2 ladder over the merged list, never a merge of packed responses.
+Compact context (context-v2 § Compact context, amended 2026-10-06) sums each marked
+run's definition count over the merged roots before applying its rule, so a name
+defined once in each of two roots is not unique; the merged batch carries the sums.
 
 Selected roots that cannot serve appear in the header with their coverage. If none can
 serve, the request fails with `roots_unavailable`, whose message lists each root's

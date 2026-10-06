@@ -480,7 +480,8 @@ pub fn pending_value(dir: &Path, key: &str) -> Option<String> {
 pub enum V2Kind {
     /// An item line followed by a fenced body (context and retrieve).
     Source,
-    /// A search locator line, `<handle> L<line>[ <label>]: <excerpt>`.
+    /// A search locator line, `<handle> L<line>[ <label>]: <excerpt>` (also a
+    /// compact context's pointer to a source item).
     Locator,
     /// A graph item line, `edge <text>`.
     Edge,
@@ -544,7 +545,8 @@ enum V2Tail {
 
 /// Strict context-v2 parser for tests. Every line ends with LF; line 1 is the
 /// ` · `-joined header naming the operation, which fixes the item grammar:
-/// search has locator lines only; context has fenced items and `edge` lines;
+/// search has locator lines only; context has fenced items and `edge` lines,
+/// plus locator lines when its header carries the `compact` segment;
 /// retrieve has fenced items and may end with `next: <handle>` (a valid
 /// handle). Item lines take precedence because a path may itself begin with
 /// `edge ` or `next: ` (a fenced item is recognized by the opening fence that
@@ -571,6 +573,9 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
         return Err(format!("not a v2 header: {header:?}"));
     };
     let header: Vec<String> = header.split(" · ").map(str::to_owned).collect();
+    // A compact context (context-v2 § Compact context) points with search
+    // locator lines after its definitions; any other context refuses them.
+    let compact = op == "context" && header.iter().any(|segment| segment == "compact");
     let mut items = Vec::new();
     let mut next = None;
     while pos < text.len() {
@@ -700,6 +705,36 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
             next = Some(handle.to_owned());
             pos = after;
             continue;
+        }
+        if compact {
+            let mut readings = v2_splits(line, true);
+            match readings.len() {
+                0 => {}
+                1 => {
+                    let (handle, tail) = readings.remove(0);
+                    let V2Tail::Locator {
+                        lines,
+                        label,
+                        excerpt,
+                    } = tail
+                    else {
+                        return Err(format!("not a locator: {line:?}"));
+                    };
+                    items.push(V2Item {
+                        kind: V2Kind::Locator,
+                        handle: handle.to_owned(),
+                        lines: Some(lines),
+                        label,
+                        form: None,
+                        lang: None,
+                        neural: None,
+                        body: excerpt,
+                    });
+                    pos = after;
+                    continue;
+                }
+                n => return Err(format!("ambiguous item line ({n} readings): {line:?}")),
+            }
         }
         if op == "context"
             && let Some(edge) = line.strip_prefix("edge ")

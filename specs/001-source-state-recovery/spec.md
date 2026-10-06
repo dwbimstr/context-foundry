@@ -9,7 +9,10 @@ resolved below. Evidence, review provenance and accepted limitations:
 and specificity order, an MCP `lines` array, an empty-`lines` refusal naming the
 handle's lines; [context v2](contracts/context-v2.md)) was accepted locally at the
 cross-lab SHIP and committed (`c3437e6`); its proposed route keywords were measured and
-withdrawn.
+withdrawn. A second owner-approved 2026-10-06 amendment, compact context (a context
+whose marked identifiers each have exactly one definition returns them plus at most 8
+one-line pointers; [context v2](contracts/context-v2.md#compact-context)), is
+implemented locally and awaits gates and cross-lab review; unreleased.
 
 ## Outcome and baseline
 

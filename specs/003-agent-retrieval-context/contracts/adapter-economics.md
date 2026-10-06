@@ -159,7 +159,11 @@ T004–T006 (wire, ranking, outlines), 003 T005 (catalog, hook, usage import, ev
 and 007 T001 (multi-root). The wire rules belong to the
 [shared context contract v2](../../001-source-state-recovery/contracts/context-v2.md);
 this section owns the allowance rule above, the catalog ceiling, usage import, payload
-measurement, targets and claim labels.
+measurement, targets and claim labels. On 2026-10-06 the owner added compact context
+(v2 § Compact context): a context whose marked identifiers each have exactly one
+definition returns those definitions and at most 8 one-line pointers instead of filling
+its budget, because hosts re-send every delivered token on each later turn while a
+missed answer costs about one extra turn.
 
 ### Evidence behind the rules
 

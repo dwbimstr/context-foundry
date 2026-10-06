@@ -7,8 +7,8 @@
 use crate::error::{FResult, FoundryError};
 use crate::graph::ReferencesOutcome;
 use crate::store::{
-    CandidateBatch, HandleRef, Hit, OutlineOutcome, RankedItem, RenderedForm, RetrieveOutcome,
-    SearchOutcome, SourceHandle,
+    CandidateBatch, HandleRef, OutlineOutcome, RankedItem, RenderedForm, RetrieveOutcome,
+    SearchOutcome, SourceHandle, TIER_OUTLINE,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -280,6 +280,9 @@ struct HeaderV2<'a> {
     /// only when a configured policy routed an `auto` context; `None` keeps
     /// the baseline header byte-for-byte.
     route: Option<&'a str>,
+    /// The bare `compact` segment: a context packed under the compact rule
+    /// (context-v2 § Compact context); `false` keeps the header unchanged.
+    compact: bool,
 }
 
 impl HeaderV2<'_> {
@@ -337,6 +340,9 @@ impl HeaderV2<'_> {
         }
         if let Some(route) = self.route {
             segments.push(format!("route:{}", single_line(route)));
+        }
+        if self.compact {
+            segments.push("compact".into());
         }
         let mut line = segments.join(" · ");
         line.push('\n');
@@ -463,10 +469,15 @@ fn ranked_forms(item: &RankedItem) -> Vec<RenderedChoice> {
             RenderedForm::Outline(body) | RenderedForm::OutlineMin(body) => {
                 (source(Some("[outline]"), body), None)
             }
-            RenderedForm::Line(text) => (format!("edge {}\n", single_line(text)), None),
+            RenderedForm::Line(text) => (edge_line(text), None),
         })
         .filter(|(rendered, _)| !rendered.is_empty())
         .collect()
+}
+
+/// A graph item's one line, `edge <text>` (context-v2 § Evidence items).
+fn edge_line(text: &str) -> String {
+    format!("edge {}\n", single_line(text))
 }
 
 /// One semantic item line (009 T002): the selection tag sits immediately
@@ -667,6 +678,9 @@ fn refusal_floor_impl(
         graph: (op == "context").then_some("graph_unavailable"),
         semantic: None,
         route: None,
+        // Like `route:`, the hint reserves no room for `compact`: the
+        // worst-case numbers above dominate it.
+        compact: false,
     };
     let item = handle.map_or_else(String::new, |handle| {
         let widest = HandleRef {
@@ -873,6 +887,7 @@ fn pack_retrieve_impl(
         graph: None,
         semantic: None,
         route: None,
+        compact: false,
     };
     let render = |length: usize, shown: usize, limited_by: BudgetLimiter| {
         let split = out.requested.start + length as u64;
@@ -960,6 +975,7 @@ fn pack_retrieve_outline_impl(
         graph: None,
         semantic: None,
         route: None,
+        compact: false,
     };
     let handle = out.requested.to_v2();
     let lines = (out.requested.start < out.requested.end).then_some((out.start_line, out.end_line));
@@ -1021,8 +1037,10 @@ pub fn outline_refusal_floor() -> usize {
 }
 
 /// v2 context: the batch's candidates in order (the first unit, graph items,
-/// the remaining units, file outlines), ladder-packed over their forms.
-/// Without memory this is byte-identical to the pre-008 rendering.
+/// the remaining units, file outlines), ladder-packed over their forms; a
+/// batch under the compact rule packs its compact selection instead
+/// (context-v2 § Compact context). Without memory this is byte-identical to
+/// the pre-008 rendering.
 pub fn pack_context(
     batch: &CandidateBatch,
     budget: Budget,
@@ -1070,6 +1088,10 @@ pub fn pack_context_roots_with_memory(
     pack_context_impl(batch, Some(roots), &tail, budget, boundary)
 }
 
+/// At most this many one-line pointers follow a compact context's
+/// definitions (context-v2 § Compact context).
+const COMPACT_POINTERS: usize = 8;
+
 fn pack_context_impl(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
@@ -1077,11 +1099,19 @@ fn pack_context_impl(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    let (items, identities): (Vec<Vec<String>>, Vec<Vec<Option<String>>>) = batch
-        .items
-        .iter()
-        .map(|item| semantic_forms(item).into_iter().unzip())
-        .unzip();
+    let compact = batch.compact();
+    let (items, identities): (Vec<Vec<String>>, Vec<Vec<Option<String>>>) = if compact {
+        compact_choices(&batch.items)
+            .into_iter()
+            .map(|forms| forms.into_iter().unzip())
+            .unzip()
+    } else {
+        batch
+            .items
+            .iter()
+            .map(|item| semantic_forms(item).into_iter().unzip())
+            .unzip()
+    };
     let f = &batch.freshness;
     let header = HeaderV2 {
         op: "context",
@@ -1096,6 +1126,7 @@ fn pack_context_impl(
         graph: batch.counters.graph,
         semantic: batch.semantic.as_deref(),
         route: batch.route.as_deref(),
+        compact,
     };
     // 001 § Deduplication: a neural candidate can deliver a full identity a
     // lexical candidate also names (a dense unit's lexical span equal to a
@@ -1108,6 +1139,59 @@ fn pack_context_impl(
         .any(|item| item.semantic.is_some())
         .then_some(identities.as_slice());
     pack(&items, tail, &header, budget, BYTE_CAP, boundary, claims)
+}
+
+/// The compact selection (context-v2 § Compact context) over the batch's
+/// already ordered candidates: the unique marked definitions — the batch's
+/// tier-1 items, at most one per marked run when the rule holds — in their
+/// usual ladder forms, then at most [`COMPACT_POINTERS`] further candidates
+/// in batch order, each as one line: a source item as its search locator
+/// line, a graph item as its edge line. File outlines and every candidate
+/// past the pointers get no form, so the ladder counts them as omitted
+/// exactly like a candidate that fits no form; they come first, so every
+/// trial header already carries their count.
+fn compact_choices(items: &[RankedItem]) -> Vec<Vec<RenderedChoice>> {
+    let mut definitions: Vec<Vec<RenderedChoice>> = Vec::new();
+    let mut pointers: Vec<Vec<RenderedChoice>> = Vec::new();
+    let mut skipped = 0usize;
+    for item in items {
+        if item.tier == 1 {
+            definitions.push(semantic_forms(item));
+        } else if item.tier != TIER_OUTLINE && pointers.len() < COMPACT_POINTERS {
+            let line = pointer_line(item).map(|text| (text, None));
+            pointers.push(line.into_iter().collect());
+        } else {
+            skipped += 1;
+        }
+    }
+    let mut choices: Vec<Vec<RenderedChoice>> = Vec::with_capacity(items.len());
+    choices.resize_with(skipped, Vec::new);
+    choices.append(&mut definitions);
+    choices.append(&mut pointers);
+    choices
+}
+
+/// One compact pointer: a source item's search locator line (a dense-only
+/// unit labeled `semantic`, as search labels it) or a graph item's edge
+/// line; `None` for an item with nothing to point with (no verbatim bytes).
+fn pointer_line(item: &RankedItem) -> Option<String> {
+    let Some(handle) = &item.handle else {
+        return item.forms.iter().find_map(|form| match form {
+            RenderedForm::Line(text) => Some(edge_line(text)),
+            _ => None,
+        });
+    };
+    let text = item.forms.iter().find_map(|form| match form {
+        RenderedForm::Verbatim(text) => Some(text.as_str()),
+        _ => None,
+    })?;
+    let label = if item.is_dense_only() {
+        "semantic"
+    } else {
+        item.label.as_str()
+    };
+    let quote = excerpt(text, item.start_line, item.line);
+    Some(locator(handle, item.line, label, &quote))
 }
 
 /// v2 search: one locator line per hit, `<handle> L<line> <label>:
@@ -1141,13 +1225,8 @@ fn pack_search_impl(
         .hits
         .iter()
         .map(|hit| {
-            vec![format!(
-                "{} L{} {}: {}\n",
-                hit.handle.to_v2(),
-                hit.line,
-                single_line(&hit.label),
-                excerpt(hit)
-            )]
+            let quote = excerpt(&hit.text, hit.start_line, hit.line);
+            vec![locator(&hit.handle, hit.line, &hit.label, &quote)]
         })
         .collect();
     let header = HeaderV2 {
@@ -1163,6 +1242,7 @@ fn pack_search_impl(
         graph: None,
         semantic: outcome.semantic.as_deref(),
         route: None,
+        compact: false,
     };
     pack(&items, &[], &header, budget, BYTE_CAP, boundary, None)
 }
@@ -1195,6 +1275,7 @@ pub fn pack_memory_search(
         graph: None,
         semantic: None,
         route: None,
+        compact: false,
     };
     pack(&items, &[], &header, budget, BYTE_CAP, boundary, None)
 }
@@ -1221,12 +1302,22 @@ pub fn memory_line(hit: &crate::memory::MemoryHit) -> String {
 
 const EXCERPT_BYTES: usize = 160;
 
-/// The hit's best line without its LF or CRLF terminator and leading
-/// whitespace, cut at a UTF-8 boundary to at most 160 bytes with `…` appended
-/// when cut, single-line.
-fn excerpt(hit: &Hit) -> String {
-    let index = hit.line.saturating_sub(hit.start_line) as usize;
-    let line = hit.text.split_inclusive('\n').nth(index).unwrap_or("");
+/// One search locator line (context-v2 § Search locator lines),
+/// `<handle> L<best> <label>: <excerpt>`, where `best` is the delivery
+/// unit's best line and `quote` its [`excerpt`]. Search hits and compact
+/// context pointers share it.
+fn locator(handle: &SourceHandle, best: u64, label: &str, quote: &str) -> String {
+    let label = single_line(label);
+    format!("{} L{best} {label}: {quote}\n", handle.to_v2())
+}
+
+/// The best line of a delivery unit's `text`, whose first line is
+/// `start_line`, without its LF or CRLF terminator and leading whitespace,
+/// cut at a UTF-8 boundary to at most 160 bytes with `…` appended when cut,
+/// single-line.
+fn excerpt(text: &str, start_line: u64, best: u64) -> String {
+    let index = best.saturating_sub(start_line) as usize;
+    let line = text.split_inclusive('\n').nth(index).unwrap_or("");
     let line = line
         .strip_suffix('\n')
         .map_or(line, |l| l.strip_suffix('\r').unwrap_or(l))
