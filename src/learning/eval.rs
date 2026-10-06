@@ -16,7 +16,13 @@
 //!   differences, mean NLL and 15-bin ECE with denominators and error
 //!   counts, and eligibility against the predeclared selection policy.
 //!   Eligibility permits a trial; it is not an improvement claim.
-use super::{SelectionPolicy, fail};
+//! * Economics (contract § Fitting, artifacts and evaluation, 2026-10-06):
+//!   only when every evaluation row carries task-checker evidence for both
+//!   options ([`option_evidence`]), the evidence and delivered tokens of
+//!   deterministic routing, the fallback-inclusive route and the label, and
+//!   the changed routes that gained or lost evidence. `learning select`
+//!   gates on it; label accuracy is not task benefit.
+use super::{FeedbackRowV4, SelectionPolicy, fail, strict_json};
 use crate::error::FResult;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -173,6 +179,48 @@ pub struct CaseInput {
     /// The example's permission identity (consent plus rights assertion) at
     /// preparation, so selection can require it unchanged (013 T003).
     pub permission_sha256: String,
+    /// The row's economics evidence in row option order, if it carries any
+    /// ([`option_evidence`]).
+    pub evidence: Option<[OptionEvidence; 2]>,
+}
+
+/// One option's task-checker outcome on an evaluation row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OptionEvidence {
+    /// The option delivered all of the task's required evidence.
+    pub pass: bool,
+    /// Tokens the option's response delivered.
+    pub tokens: u64,
+}
+
+/// A row's economics evidence in row option order (contract § Feedback and
+/// permission, 2026-10-06): only a `task_checker` row whose `label_evidence`
+/// is one strict JSON object (no duplicate keys) holding, for EACH of the
+/// row's option IDs, a member object with a boolean `pass` and an integer
+/// `tokens` that fits u64. Other members are ignored. Any other row simply
+/// carries none; nothing is refused and training is unaffected.
+pub fn option_evidence(row: &FeedbackRowV4) -> Option<[OptionEvidence; 2]> {
+    let [first, second] = row.option_ids.as_slice() else {
+        return None;
+    };
+    if row.label_source != "task_checker" {
+        return None;
+    }
+    let value: serde_json::Value = strict_json(
+        row.label_evidence.as_bytes(),
+        "row_invalid",
+        "label evidence",
+    )
+    .ok()?;
+    let object = value.as_object()?;
+    let option = |id: &str| {
+        let member = object.get(id)?.as_object()?;
+        Some(OptionEvidence {
+            pass: member.get("pass")?.as_bool()?,
+            tokens: member.get("tokens")?.as_u64()?,
+        })
+    };
+    Some([option(first.as_str())?, option(second.as_str())?])
 }
 
 /// A reported case: no raw state, only identities, labels and the model's
@@ -258,6 +306,52 @@ pub struct Eligibility {
     pub reasons: Vec<String>,
 }
 
+/// One arm of the economics comparison over the evaluation rows.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Arm {
+    /// Rows whose arm option passed.
+    pub evidence: usize,
+    /// The arm options' delivered tokens, summed (checked, never wrapped).
+    pub delivered_tokens: u64,
+}
+
+impl Arm {
+    fn add(&mut self, option: OptionEvidence, arm: &str) -> FResult<()> {
+        self.evidence += usize::from(option.pass);
+        self.delivered_tokens = self
+            .delivered_tokens
+            .checked_add(option.tokens)
+            .ok_or_else(|| {
+                fail(
+                    "economics_overflow",
+                    format!("the {arm} arm's delivered tokens exceed {}", u64::MAX),
+                )
+            })?;
+        Ok(())
+    }
+}
+
+/// What routing delivers on the evaluation rows by their task-checker
+/// evidence (contract § Fitting, artifacts and evaluation, 2026-10-06).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Economics {
+    pub rows: usize,
+    /// Deterministic routing's option.
+    pub baseline: Arm,
+    /// The fallback-inclusive routed option.
+    pub routed: Arm,
+    /// The labeled option.
+    pub oracle: Arm,
+    /// Rows routed to another option than deterministic routing's.
+    pub changed_routes: usize,
+    /// Changed rows whose routed option passes and baseline option does not.
+    pub gained: usize,
+    /// Changed rows whose baseline option passes and routed option does not.
+    pub lost: usize,
+}
+
 /// The evaluation report a candidate carries.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -277,6 +371,10 @@ pub struct Report {
     pub groups: Vec<GroupPair>,
     pub diagnostics: Diagnostics,
     pub eligibility: Eligibility,
+    /// `None` unless every evaluation row carries economics evidence; reports
+    /// written before 2026-10-06 lack the member and read back as `None`.
+    #[serde(default)]
+    pub economics: Option<Economics>,
     pub cases: Vec<CaseRow>,
 }
 
@@ -342,6 +440,52 @@ fn comparator(cases: &[CaseInput], correct: &[bool]) -> (Comparator, BTreeMap<St
     )
 }
 
+/// A row's `[baseline, routed, oracle]` option evidence, if it carries
+/// economics evidence for the options it is routed between.
+fn arms(case: &CaseInput, routed: &str) -> Option<[OptionEvidence; 3]> {
+    let evidence = case.evidence?;
+    let of = |option: &str| {
+        let index = case.option_ids.iter().position(|id| id == option)?;
+        Some(evidence[index])
+    };
+    Some([
+        of(case.baseline.as_str())?,
+        of(routed)?,
+        of(case.expected.as_str())?,
+    ])
+}
+
+/// The economics of the reported routes (`rows`, in `cases` order): `None`
+/// unless EVERY case carries economics evidence; a token sum past u64 is
+/// `economics_overflow`.
+fn economics(cases: &[CaseInput], rows: &[CaseRow]) -> FResult<Option<Economics>> {
+    if !cases
+        .iter()
+        .zip(rows)
+        .all(|(case, row)| arms(case, &row.routed).is_some())
+    {
+        return Ok(None);
+    }
+    let mut economics = Economics {
+        rows: cases.len(),
+        ..Economics::default()
+    };
+    for (case, row) in cases.iter().zip(rows) {
+        let Some([baseline, routed, oracle]) = arms(case, &row.routed) else {
+            unreachable!("every case carries economics evidence");
+        };
+        economics.baseline.add(baseline, "baseline")?;
+        economics.routed.add(routed, "routed")?;
+        economics.oracle.add(oracle, "oracle")?;
+        if row.routed != case.baseline {
+            economics.changed_routes += 1;
+            economics.gained += usize::from(routed.pass && !baseline.pass);
+            economics.lost += usize::from(baseline.pass && !routed.pass);
+        }
+    }
+    Ok(Some(economics))
+}
+
 fn ece_bin(confidence: f64) -> usize {
     (0..ECE_BINS)
         .find(|b| confidence <= (*b + 1) as f64 / ECE_BINS as f64)
@@ -350,14 +494,16 @@ fn ece_bin(confidence: f64) -> usize {
 
 /// Evaluate the candidate's `outputs` on `cases` (same order) at
 /// `temperature` against deterministic routing and, when requested, the
-/// incumbent; judge eligibility by `selection`.
+/// incumbent; judge eligibility by `selection`; add the economics when every
+/// case carries evidence (`economics_overflow` refuses a token sum past
+/// u64).
 pub fn evaluate(
     cases: &[CaseInput],
     outputs: &[Output],
     temperature: f64,
     incumbent: Option<Incumbent<'_>>,
     selection: &SelectionPolicy,
-) -> Report {
+) -> FResult<Report> {
     assert_eq!(cases.len(), outputs.len(), "one output per evaluation row");
     let threshold = selection.threshold;
     let mut rows = Vec::with_capacity(cases.len());
@@ -521,7 +667,8 @@ pub fn evaluate(
             }
         }
     }
-    Report {
+    let economics = economics(cases, &rows)?;
+    Ok(Report {
         temperature,
         selection: selection.clone(),
         rows: cases.len(),
@@ -538,8 +685,9 @@ pub fn evaluate(
             eligible: reasons.is_empty(),
             reasons,
         },
+        economics,
         cases: rows,
-    }
+    })
 }
 
 /// The query part of a composed state (contract § Exact input and
@@ -687,6 +835,23 @@ mod tests {
             expected: expected.to_owned(),
             baseline: baseline.to_owned(),
             permission_sha256: "p".repeat(64),
+            evidence: None,
+        }
+    }
+
+    /// A case in group `g` with checker evidence, `(pass, tokens)` for
+    /// search and graph.
+    fn checked(
+        id: &str,
+        expected: &str,
+        baseline: &str,
+        search: (bool, u64),
+        graph: (bool, u64),
+    ) -> CaseInput {
+        let of = |(pass, tokens): (bool, u64)| OptionEvidence { pass, tokens };
+        CaseInput {
+            evidence: Some([of(search), of(graph)]),
+            ..case(id, "g", expected, baseline)
         }
     }
 
@@ -715,7 +880,7 @@ mod tests {
             Output::Unavailable,
         ];
         let selection = SelectionPolicy::default();
-        let report = evaluate(&cases, &outputs, 1.0, None, &selection);
+        let report = evaluate(&cases, &outputs, 1.0, None, &selection).unwrap();
         assert_eq!(report.rows, 5);
         assert_eq!(report.accepted, 2);
         assert_eq!(report.accepted_correct, 1);
@@ -776,7 +941,7 @@ mod tests {
             case("e2", "g2", "graph", "graph"),
         ];
         let outputs = vec![logits_for(0.6), logits_for(0.6)];
-        let report = evaluate(&cases, &outputs, 1.0, None, &SelectionPolicy::default());
+        let report = evaluate(&cases, &outputs, 1.0, None, &SelectionPolicy::default()).unwrap();
         assert_eq!(report.accepted, 0);
         assert_eq!(report.accepted_accuracy, None);
         assert!(!report.eligibility.eligible);
@@ -798,7 +963,8 @@ mod tests {
                 temperature: 1.0,
             }),
             &SelectionPolicy::default(),
-        );
+        )
+        .unwrap();
         let g2 = report.groups.iter().find(|g| g.group_id == "g2").unwrap();
         assert_eq!(g2.candidate, 0.0);
         assert_eq!(g2.incumbent, Some(1.0));
@@ -823,7 +989,7 @@ mod tests {
             critical_groups: vec!["g1".to_owned()],
             ..SelectionPolicy::default()
         };
-        let report = evaluate(&cases, &outputs, 1.0, None, &selection);
+        let report = evaluate(&cases, &outputs, 1.0, None, &selection).unwrap();
         assert!(report.eligibility.eligible, "{:?}", report.eligibility);
         assert_eq!(report.coverage, 1.0);
         assert_eq!(report.baseline.accuracy, 0.0);
@@ -834,7 +1000,7 @@ mod tests {
         let cases_right: Vec<CaseInput> = (0..4)
             .map(|i| case(&format!("e{i}"), &format!("g{}", i % 2), "graph", "graph"))
             .collect();
-        let report = evaluate(&cases_right, &regress, 1.0, None, &selection);
+        let report = evaluate(&cases_right, &regress, 1.0, None, &selection).unwrap();
         assert!(
             report
                 .eligibility
@@ -842,6 +1008,165 @@ mod tests {
                 .iter()
                 .any(|r| r.contains("critical group g1"))
         );
+    }
+
+    #[test]
+    fn economics_need_evidence_on_every_row_and_count_each_arm() {
+        // Threshold 0.8: `logits_for(0.1)` accepts graph at 0.9 and
+        // `logits_for(0.6)` abstains.
+        let mut cases = vec![
+            // Changed to graph, which alone passes: gained.
+            checked("e1", "graph", "search", (false, 2000), (true, 1500)),
+            // Changed to graph, which fails where search passes: lost.
+            checked("e2", "search", "search", (true, 1000), (false, 2048)),
+            // Changed to graph and both pass: fewer tokens, neither gained nor lost.
+            checked("e3", "graph", "search", (true, 1800), (true, 1200)),
+            // Accepted graph agrees with the baseline: unchanged.
+            checked("e4", "search", "graph", (true, 900), (true, 1000)),
+            // Abstains to the baseline: unchanged although graph would pass.
+            checked("e5", "graph", "search", (false, 2048), (true, 700)),
+            // An unavailable model routes the baseline: unchanged.
+            checked("e6", "search", "graph", (true, 500), (false, 2048)),
+        ];
+        let outputs = vec![
+            logits_for(0.1),
+            logits_for(0.1),
+            logits_for(0.1),
+            logits_for(0.1),
+            logits_for(0.6),
+            Output::Unavailable,
+        ];
+        let selection = SelectionPolicy::default();
+        let report = evaluate(&cases, &outputs, 1.0, None, &selection).unwrap();
+        let routed: Vec<&str> = report.cases.iter().map(|c| c.routed.as_str()).collect();
+        assert_eq!(
+            routed,
+            ["graph", "graph", "graph", "graph", "search", "graph"]
+        );
+        assert_eq!(
+            report.economics,
+            Some(Economics {
+                rows: 6,
+                baseline: Arm {
+                    evidence: 3,
+                    delivered_tokens: 9896,
+                },
+                routed: Arm {
+                    evidence: 3,
+                    delivered_tokens: 9844,
+                },
+                oracle: Arm {
+                    evidence: 6,
+                    delivered_tokens: 5800,
+                },
+                changed_routes: 3,
+                gained: 1,
+                lost: 1,
+            })
+        );
+        // One row without evidence: no economics at all.
+        cases[5].evidence = None;
+        let report = evaluate(&cases, &outputs, 1.0, None, &selection).unwrap();
+        assert_eq!(report.economics, None);
+    }
+
+    #[test]
+    fn delivered_tokens_are_a_checked_sum() {
+        let mut cases = vec![
+            checked("e1", "search", "search", (true, u64::MAX - 1), (true, 0)),
+            checked("e2", "search", "search", (true, 1), (true, 0)),
+        ];
+        let outputs = vec![Output::Unavailable; 2];
+        let selection = SelectionPolicy::default();
+        let report = evaluate(&cases, &outputs, 1.0, None, &selection).unwrap();
+        let economics = report.economics.unwrap();
+        assert_eq!(economics.baseline.delivered_tokens, u64::MAX);
+        // One token more is a named error, never a wrapped sum.
+        cases[1] = checked("e2", "search", "search", (true, 2), (true, 0));
+        let error = evaluate(&cases, &outputs, 1.0, None, &selection).unwrap_err();
+        assert_eq!(error.code(), "economics_overflow");
+        // Without evidence on every row there are no economics to sum.
+        cases[0].evidence = None;
+        let report = evaluate(&cases, &outputs, 1.0, None, &selection).unwrap();
+        assert_eq!(report.economics, None);
+    }
+
+    #[test]
+    fn a_report_written_before_economics_reads_back_without_them() {
+        let cases = vec![checked("e1", "search", "search", (true, 10), (false, 20))];
+        let report = evaluate(
+            &cases,
+            &[logits_for(0.9)],
+            1.0,
+            None,
+            &SelectionPolicy::default(),
+        )
+        .unwrap();
+        assert!(report.economics.is_some());
+        let mut value = serde_json::to_value(&report).unwrap();
+        let object = value.as_object_mut().unwrap();
+        assert!(object.remove("economics").is_some());
+        let old = serde_json::to_vec(&value).unwrap();
+        let back: Report = strict_json(&old, "candidate_invalid", "evaluation report").unwrap();
+        assert_eq!(back.economics, None);
+        assert_eq!(
+            back,
+            Report {
+                economics: None,
+                ..report
+            }
+        );
+    }
+
+    #[test]
+    fn only_task_checker_json_with_both_options_carries_economics_evidence() {
+        const ORDER: [&str; 2] = ["search", "graph"];
+        let row = |source: &str, evidence: &str, order: [&str; 2]| FeedbackRowV4 {
+            task_id: "t".into(),
+            task_group_id: "g".into(),
+            family: crate::decision_model::FAMILY.into(),
+            state: "q\ngraph: complete".into(),
+            option_ids: order.map(String::from).to_vec(),
+            correct_option_id: "search".into(),
+            label_source: source.into(),
+            label_evidence: evidence.into(),
+            rights_ref: "r".into(),
+            allow_training: true,
+        };
+        let checker = |evidence: &str| option_evidence(&row("task_checker", evidence, ORDER));
+        // The 013 labeling run's shape: other members are ignored.
+        let labeled = r#"{"checker":"task-checker-v1","revision":60741,"intent":"definition","search":{"pass":true,"tokens":2047,"digest":"aa"},"graph":{"pass":false,"tokens":2035,"digest":"bb"},"required":["library/core/src/char/methods.rs",28433,28437]}"#;
+        let search = OptionEvidence {
+            pass: true,
+            tokens: 2047,
+        };
+        let graph = OptionEvidence {
+            pass: false,
+            tokens: 2035,
+        };
+        assert_eq!(checker(labeled), Some([search, graph]));
+        // Row option order, whatever the member order.
+        assert_eq!(
+            option_evidence(&row("task_checker", labeled, ["graph", "search"])),
+            Some([graph, search])
+        );
+        assert_eq!(option_evidence(&row("operator", labeled, ORDER)), None);
+        let max = r#"{"search":{"pass":true,"tokens":18446744073709551615},"graph":{"pass":false,"tokens":0}}"#;
+        assert_eq!(checker(max).map(|e| e[0].tokens), Some(u64::MAX));
+        for evidence in [
+            "evidence for t",
+            "[]",
+            r#"{"search":{"pass":true,"tokens":1}}"#,
+            r#"{"search":{"pass":true,"tokens":1},"graph":true}"#,
+            r#"{"search":{"pass":true,"tokens":1},"graph":{"pass":true}}"#,
+            r#"{"search":{"pass":true,"tokens":1},"graph":{"pass":"true","tokens":1}}"#,
+            r#"{"search":{"pass":true,"tokens":1},"graph":{"pass":true,"tokens":-1}}"#,
+            r#"{"search":{"pass":true,"tokens":1},"graph":{"pass":true,"tokens":1.5}}"#,
+            r#"{"search":{"pass":true,"tokens":1},"graph":{"pass":true,"tokens":18446744073709551616}}"#,
+            r#"{"search":{"pass":true,"tokens":1},"graph":{"pass":true,"tokens":1},"graph":{"pass":false,"tokens":1}}"#,
+        ] {
+            assert_eq!(checker(evidence), None, "{evidence}");
+        }
     }
 
     #[test]

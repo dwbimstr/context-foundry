@@ -10,8 +10,10 @@
 //! for the same rows.
 //!
 //! Deferred to the measurement phase (owner directive 2026-10-05): the
-//! usage-import comparison that gates enablement, the combined 009+013
-//! residency test and any real latency figure (`docs/learning.md`).
+//! combined 009+013 residency test and any real latency figure
+//! (`docs/learning.md`). Enablement is the offline economics gate that
+//! `learning select` enforces and owner startup re-checks (contract,
+//! 2026-10-06), tested here.
 #![cfg(all(feature = "semantic", target_os = "macos"))]
 use context_foundry::learning::{self, train};
 use context_foundry::policy::{self, Policy, PolicyServing};
@@ -99,11 +101,36 @@ fn row(task: &str, group: &str, label: &str, state: &str) -> serde_json::Value {
         "state": state,
         "option_ids": ["search", "graph"],
         "correct_option_id": label,
-        "label_source": "operator",
-        "label_evidence": format!("evidence for {task}"),
+        "label_source": "task_checker",
+        "label_evidence": checked(label),
         "rights_ref": "rights-checked",
         "allow_training": true,
     })
+}
+
+/// Task-checker evidence as the 013 labeling run writes it: `(pass,
+/// tokens)` for search and graph.
+fn evidence(search: (bool, u64), graph: (bool, u64)) -> String {
+    json!({
+        "checker": "task-checker-v1",
+        "search": {"pass": search.0, "tokens": search.1},
+        "graph": {"pass": graph.0, "tokens": graph.1},
+    })
+    .to_string()
+}
+
+/// The fixture's evidence, by the checker's labeling rule: a `graph` task is
+/// delivered by graph alone, a `search` task by both, search with fewer
+/// tokens. Deterministic routing sends every fixture query to search, so
+/// routing a task to graph never loses evidence and gains it on `graph`
+/// tasks: a candidate that routes any `graph` task there passes the
+/// economics gate.
+fn checked(label: &str) -> String {
+    if label == "graph" {
+        evidence((false, 2048), (true, 1900))
+    } else {
+        evidence((true, 1500), (true, 1700))
+    }
 }
 
 fn occurrence(range: &[i32], symbol: &str, roles: i32) -> Occurrence {
@@ -312,6 +339,7 @@ impl Env {
                 candidate,
                 isolation_profile: &self.profile,
                 out: &out,
+                lifecycle_check: false,
             },
             &Control::unbounded(),
         )
@@ -325,6 +353,39 @@ impl Env {
             .select(&candidate, &format!("policy-config-{seed}.json"))
             .expect("the candidate is selected");
         (candidate, config)
+    }
+
+    /// Re-record every evaluation row (`e*` tasks) with `checked(label)` as
+    /// its checker evidence: the same examples, labels and permissions.
+    fn reevidence(&self, checked: impl Fn(&str) -> String) {
+        let engine = self.engine();
+        for mut row in rows() {
+            let label = row["correct_option_id"].as_str().unwrap().to_owned();
+            if row["task_id"].as_str().unwrap().starts_with('e') {
+                row["label_evidence"] = checked(&label).into();
+                let (_, status) = engine.record_learning_feedback(&row.to_string()).unwrap();
+                assert_ne!(status, "created", "the same example");
+            }
+        }
+    }
+
+    /// A hand-written enabled config pinning `candidate` exactly as `select`
+    /// would write it, without `select`'s refusals.
+    fn pin(&self, candidate: &Path, name: &str) -> PathBuf {
+        let manifest = json_file(&candidate.join("manifest.json"));
+        let config = json!({
+            "v": 2,
+            "enabled": true,
+            "candidate_path": candidate,
+            "candidate_sha256": manifest_sha(candidate),
+            "model_function_sha256": manifest["model_function_sha256"],
+            "report_sha256": digest_of(&read(&candidate.join("evaluation.json"))),
+            "threshold": self.threshold,
+            "isolation_profile": self.profile,
+        });
+        let path = self.path(name);
+        std::fs::write(&path, config.to_string()).unwrap();
+        path
     }
 
     /// Start a policy from `config` with the fake worker's `hooks`.
@@ -569,6 +630,11 @@ fn manifest_sha(candidate: &Path) -> String {
     digest_of(&read(&candidate.join("manifest.json")))
 }
 
+/// The candidate's evaluation-report `economics` (`null` when absent).
+fn economics(candidate: &Path) -> serde_json::Value {
+    json_file(&candidate.join("evaluation.json"))["economics"].clone()
+}
+
 fn error_code(out: &Output) -> String {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let error: serde_json::Value = serde_json::from_str(stderr.trim())
@@ -594,6 +660,14 @@ fn select_writes_new_configs_refuses_overwrite_and_restart_rolls_back() {
         manifest_sha(&b),
         "two candidate identities"
     );
+    // The fixture's checker evidence: routing a task to graph never loses
+    // evidence and gains it on `graph` tasks, so both pass the gate.
+    for candidate in [&a, &b] {
+        let report = economics(candidate);
+        assert_eq!(report["rows"], 21, "{report}");
+        assert_eq!(report["lost"], 0, "{report}");
+        assert!(report["gained"].as_u64().unwrap() > 0, "{report}");
+    }
     let before = testkit::snapshot(&env.store);
     let cache_before = testkit::semantic_cache_rows(&env.store);
 
@@ -634,6 +708,9 @@ fn select_writes_new_configs_refuses_overwrite_and_restart_rolls_back() {
     );
     assert_eq!(config["threshold"], 0.6);
     assert_eq!(config["isolation_profile"], path_arg(&env.profile));
+    // A normal selection carries no lifecycle mark, in the config or the output.
+    assert_eq!(config.get("lifecycle_check"), None, "{config}");
+    assert_eq!(selected.get("lifecycle_check"), None, "{selected}");
 
     // Never overwritten, by the library or the CLI (exit 2), and nothing
     // partial is left behind.
@@ -736,6 +813,169 @@ fn select_refuses_an_ineligible_candidate_and_withdrawn_consent() {
     let error = env.select(&eligible, "never.json").unwrap_err();
     assert_eq!(error.code(), "contribution_changed", "{error}");
     assert!(!env.path("never.json").exists());
+}
+
+/// The offline economics gate (contract, 2026-10-06), after every other
+/// check: a candidate whose report has no economics (one evaluation row
+/// without checker evidence) is `economics_unknown`; one without a net
+/// evidence gain is `candidate_no_benefit`, whether routing gains evidence on
+/// some tasks and loses it on more, or changes only delivered tokens (round
+/// 1's shape: changed routes, gained 0, lost 0, fewer tokens). The CLI exits
+/// 2 and nothing is written. The net-gain success is
+/// `select_writes_new_configs_refuses_overwrite_and_restart_rolls_back`.
+#[test]
+fn select_requires_a_net_evidence_gain_over_deterministic_routing() {
+    let refused = |env: &Env, candidate: &Path, code: &str| {
+        let error = env.select(candidate, "never.json").unwrap_err();
+        assert_eq!(error.code(), code, "{error}");
+        assert!(!env.path("never.json").exists(), "no config was written");
+        error.to_string()
+    };
+
+    // One evaluation row without checker evidence: no economics at all.
+    let env = Env::new(0.6);
+    let mut plain = rows()
+        .into_iter()
+        .find(|row| row["task_id"] == "e0")
+        .unwrap();
+    plain["label_source"] = "operator".into();
+    plain["label_evidence"] = "evidence for e0".into();
+    env.engine()
+        .record_learning_feedback(&plain.to_string())
+        .unwrap();
+    let unknown = env.candidate("seed-a", Selection::lenient(0.6));
+    assert_eq!(economics(&unknown), serde_json::Value::Null);
+    refused(&env, &unknown, "economics_unknown");
+
+    // Only the labeled option delivers each task: routing to graph gains the
+    // `graph` tasks it moves and loses the `search` ones, more of them.
+    env.reevidence(|label| {
+        if label == "graph" {
+            evidence((false, 2048), (true, 1900))
+        } else {
+            evidence((true, 1500), (false, 2048))
+        }
+    });
+    let net_loss = env.candidate("seed-b", Selection::lenient(0.6));
+    let report = economics(&net_loss);
+    assert!(report["gained"].as_u64().unwrap() > 0, "{report}");
+    refused(&env, &net_loss, "candidate_no_benefit");
+
+    // Both options deliver every task, the labeled one with fewer tokens:
+    // routing changes routes and delivered tokens, never evidence.
+    let round_one = Env::new(0.6);
+    round_one.reevidence(|label| {
+        if label == "graph" {
+            evidence((true, 2000), (true, 1000))
+        } else {
+            evidence((true, 1500), (true, 1510))
+        }
+    });
+    let tokens_only = round_one.candidate("seed-a", Selection::lenient(0.6));
+    let report = economics(&tokens_only);
+    let tokens = |arm: &str| report[arm]["delivered_tokens"].as_u64().unwrap();
+    assert!(report["changed_routes"].as_u64().unwrap() > 0, "{report}");
+    assert!(tokens("routed") < tokens("baseline"), "{report}");
+    let message = refused(&round_one, &tokens_only, "candidate_no_benefit");
+    assert!(message.contains("gained 0, lost 0"), "{message}");
+    let never = round_one.path("never.json");
+    let out = round_one.cli(&[
+        "learning",
+        "select",
+        "--candidate",
+        &path_arg(&tokens_only),
+        "--isolation-profile",
+        &path_arg(&round_one.profile),
+        "--out",
+        &path_arg(&never),
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(error_code(&out), "candidate_no_benefit");
+    assert!(!never.exists());
+}
+
+/// `--lifecycle-check` (lifecycle and package verification only, 013 T004 and
+/// D001) selects an otherwise valid candidate that fails the economics gate
+/// and marks the config; every status of that parsed config carries the mark
+/// (served, a failed start, an inspection that verifies or fails), so it is
+/// never mistaken for enablement. The mark is accepted only as `true`, and a
+/// config that does not parse carries none.
+#[test]
+fn lifecycle_check_selects_and_serves_a_no_benefit_candidate_visibly() {
+    let env = Env::new(0.6);
+    // Round 1's shape: both options deliver every task.
+    env.reevidence(|label| {
+        if label == "graph" {
+            evidence((true, 2000), (true, 1000))
+        } else {
+            evidence((true, 1500), (true, 1510))
+        }
+    });
+    let candidate = env.candidate("seed-a", Selection::lenient(0.6));
+    let config = env.path("lifecycle.json");
+    let out = env.cli(&[
+        "learning",
+        "select",
+        "--candidate",
+        &path_arg(&candidate),
+        "--isolation-profile",
+        &path_arg(&env.profile),
+        "--out",
+        &path_arg(&config),
+        "--lifecycle-check",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let selected: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(selected["lifecycle_check"], true, "{selected}");
+    let written = json_file(&config);
+    assert_eq!(written["lifecycle_check"], true, "{written}");
+
+    let served = env.start(&config, &[]);
+    let status = served.status();
+    assert_eq!(status["state"], "enabled", "{status}");
+    assert_eq!(status["lifecycle_check"], true, "{status}");
+    drop(served);
+
+    // A failed start keeps the mark: no development isolation.
+    let mut launch = PolicyServing::with_worker_args(config.clone(), Vec::new());
+    launch.development = false;
+    let status = Policy::start(Some(launch), Some(&env.workspace_id)).status();
+    assert_eq!(status["reason"], "isolation_unavailable", "{status}");
+    assert_eq!(status["lifecycle_check"], true, "{status}");
+
+    // Inspection marks both outcomes: verified, and failed verification (an
+    // isolation profile that is gone).
+    let status = Policy::inspect(&config, Some(&env.workspace_id));
+    assert_eq!(status["state"], "enabled", "{status}");
+    assert_eq!(status["lifecycle_check"], true, "{status}");
+    let mut gone = written.clone();
+    gone["isolation_profile"] = json!(env.path("no-such-profile.json"));
+    let path = env.path("gone.json");
+    std::fs::write(&path, gone.to_string()).unwrap();
+    let status = Policy::inspect(&path, Some(&env.workspace_id));
+    assert_eq!(status["reason"], "policy_config_invalid", "{status}");
+    assert_eq!(status["lifecycle_check"], true, "{status}");
+
+    // The mark exists only as `true`; a config that does not parse has none.
+    for value in [
+        json!(false),
+        json!("true"),
+        json!(1),
+        serde_json::Value::Null,
+    ] {
+        let mut edited = written.clone();
+        edited["lifecycle_check"] = value;
+        let path = env.path("edited.json");
+        std::fs::write(&path, edited.to_string()).unwrap();
+        let status = env.start(&path, &[]).status();
+        assert_eq!(status["state"], "unavailable", "{edited}: {status}");
+        assert_eq!(status["reason"], "policy_config_invalid", "{status}");
+        assert_eq!(status.get("lifecycle_check"), None, "{status}");
+    }
 }
 
 /// Changing ONLY an evaluated example's rights assertion (same task, state,
@@ -1559,6 +1799,61 @@ fn invalid_configs_and_failed_starts_keep_deterministic_routing() {
     );
 }
 
+/// Owner startup re-checks the economics gate as it re-checks eligibility: a
+/// hand-written config naming a candidate without a net evidence gain, or one
+/// whose report has no economics, is `policy_config_invalid` naming the cause
+/// (and the counts); the policy is unavailable and routing stays
+/// deterministic.
+#[test]
+fn startup_refuses_a_config_naming_a_candidate_without_a_net_evidence_gain() {
+    let env = Env::new(0.6);
+    // Both options deliver every task: routing gains no evidence.
+    env.reevidence(|label| {
+        if label == "graph" {
+            evidence((true, 2000), (true, 1000))
+        } else {
+            evidence((true, 1500), (true, 1510))
+        }
+    });
+    let no_benefit = env.candidate("seed-a", Selection::lenient(0.6));
+    // One evaluation row without checker evidence: no economics.
+    let mut plain = rows()
+        .into_iter()
+        .find(|row| row["task_id"] == "e0")
+        .unwrap();
+    plain["label_source"] = "operator".into();
+    plain["label_evidence"] = "evidence for e0".into();
+    env.engine()
+        .record_learning_feedback(&plain.to_string())
+        .unwrap();
+    let unknown = env.candidate("seed-b", Selection::lenient(0.6));
+    let engine = env.engine();
+    for (candidate, cause, named) in [
+        (&no_benefit, "candidate_no_benefit", "gained 0, lost 0"),
+        (&unknown, "economics_unknown", "no economics"),
+    ] {
+        let served = env.start(&env.pin(candidate, &format!("{cause}.json")), &[]);
+        let status = served.status();
+        assert_eq!(status["state"], "unavailable", "{status}");
+        assert_eq!(status["reason"], "policy_config_invalid", "{status}");
+        let detail = status["detail"].as_str().unwrap();
+        assert!(detail.contains(cause), "{status}");
+        assert!(detail.contains(named), "{status}");
+        let text = context(
+            &engine,
+            Some(&served),
+            SEARCH_QUERY,
+            Strategy::Auto,
+            Duration::from_secs(5),
+        );
+        assert_eq!(
+            route(&text).as_deref(),
+            Some("fallback:policy_unavailable"),
+            "{text}"
+        );
+    }
+}
+
 /// The worker cross-checks every request against the candidate it loaded:
 /// a request naming another candidate gets no reply, and the worker ends.
 #[test]
@@ -1918,6 +2213,8 @@ async fn the_mcp_owner_serves_routes_reports_and_rolls_back_by_restart() {
 mod real {
     use super::*;
     use context_foundry::decision_model::{self, SpecialIds};
+    use context_foundry::learning::candidate::{HEAD, open};
+    use context_foundry::learning::profile::LearnProfile;
     use context_foundry::learning::serve::{PolicyWorker, ServeLaunch};
 
     /// The served function is the evaluated function: a candidate T002
@@ -1929,29 +2226,32 @@ mod real {
     fn served_probabilities_equal_the_evaluation_probabilities() {
         let env = Env::with(Worker::Real, 2, 0.0);
         let candidate = env.candidate("seed-a", Selection::lenient(0.0));
-        let config = env
-            .select(&candidate, "policy-config.json")
-            .expect("selected");
-        let enabled = match policy::PolicyConfig::load(&config).unwrap() {
-            policy::PolicyConfig::Enabled(enabled) => enabled,
-            other => panic!("{other:?}"),
-        };
-        let verified =
-            policy::verify_config(&enabled, Some(&env.workspace_id), &Control::unbounded())
-                .unwrap();
-        let manifest = &verified.candidate.manifest;
+        // Parity is about the served function, not enablement: whether the
+        // real model's routes over this fixture gain evidence (the economics
+        // gate `select` and owner startup enforce) is not what this test
+        // fixes, so it reads the candidate and the profile back itself, as
+        // `verify_config` does.
+        let control = Control::unbounded();
+        let (dir, verified) = open(&candidate, "candidate_invalid", &control).unwrap();
+        let profile = LearnProfile::load(&env.profile).unwrap();
+        let manifest = &verified.manifest;
+        let head = manifest
+            .files
+            .iter()
+            .find(|file| file.name == HEAD)
+            .expect("the manifest binds the head");
         let worker = PolicyWorker::start(
             ServeLaunch {
-                profile: &verified.profile,
+                profile: &profile,
                 checkpoint: &manifest.encoder.checkpoint,
                 model_function_sha256: &manifest.model_function_sha256,
-                candidate_sha256: &verified.candidate.manifest_sha256,
+                candidate_sha256: &verified.manifest_sha256,
                 temperature: manifest.temperature,
-                candidate: &verified.dir,
-                head_sha256: &verified.head_sha256,
+                candidate: &dir,
+                head_sha256: &head.sha256,
                 extra_args: Vec::new(),
             },
-            &Control::unbounded(),
+            &control,
         )
         .expect("the real worker loads the candidate");
         let renderer = decision_model::Renderer::load(
@@ -1973,7 +2273,7 @@ mod real {
                     )
                 })
                 .collect();
-        let report = &verified.candidate.report;
+        let report = &verified.report;
         assert!(!report.cases.is_empty());
         let mut worst = 0f64;
         for case in &report.cases {

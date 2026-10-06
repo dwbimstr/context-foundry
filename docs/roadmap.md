@@ -47,8 +47,9 @@ broader encoder adaptation and typed decisions retain their explicit acceptance.
 The [source-to-contract map](references/laya-decision-ecosystem.md) preserves the
 decision ecosystem beyond the first search/graph consumer. [Feasibility](review/feasibility.md)
 proves selected model/gradient boundaries; complete recipe and installed-profile
-acceptance remain open. Learning stays disabled in normal retrieval until a
-usage-import comparison shows equal correctness and lower total provider tokens. Laya
+acceptance remain open. Learning stays disabled in normal retrieval; since 2026-10-06 a
+candidate is selectable only with a net evidence gain over deterministic routing (a
+visible `--lifecycle-check` selection is package verification, not enablement). Laya
 is a research reference only. The [deployment contract](deployment.md) follows each
 advertised feature through installation, shutdown, upgrade, rollback and uninstall;
 libkrun is conditional infrastructure, needed only where an isolation profile requires it.

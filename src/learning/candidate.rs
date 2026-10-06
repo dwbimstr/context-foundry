@@ -609,6 +609,7 @@ mod tests {
             expected: "search".into(),
             baseline: "search".into(),
             permission_sha256: "p".repeat(64),
+            evidence: None,
         }];
         let report = eval::evaluate(
             &cases,
@@ -616,7 +617,8 @@ mod tests {
             1.0,
             None,
             &super::super::SelectionPolicy::default(),
-        );
+        )
+        .unwrap();
         let pin = decision_model::CheckpointPin {
             weights_sha256: "1".repeat(64),
             encoder_config_sha256: "2".repeat(64),

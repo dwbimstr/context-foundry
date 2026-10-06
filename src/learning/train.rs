@@ -21,11 +21,13 @@
 //! 4. drives `max_steps` updates over seeded epochs within the wall clock;
 //!    checks the frozen encoder's digest before and after;
 //! 5. fits the temperature on calibration rows only, evaluates the
-//!    candidate against deterministic routing and the incumbent, saves and
-//!    reload-checks the head, validates it by descriptor, and publishes the
-//!    candidate through the anchored no-replace path, adopting an occupied
-//!    destination only after validating all of it; then reads the published
-//!    candidate back and requires identical calibrated probabilities.
+//!    candidate against deterministic routing and the incumbent (with its
+//!    economics when every evaluation row carries task-checker evidence),
+//!    saves and reload-checks the head, validates it by descriptor, and
+//!    publishes the candidate through the anchored no-replace path, adopting
+//!    an occupied destination only after validating all of it; then reads the
+//!    published candidate back and requires identical calibrated
+//!    probabilities.
 //!
 //! Any failure stops and reaps the worker first; nothing partial is ever
 //! eligible or published.
@@ -85,9 +87,12 @@ struct Row {
     markers: [u32; 2],
     /// Evaluation rows only: deterministic routing's choice.
     baseline: Option<&'static str>,
+    /// Evaluation rows only: the row's economics evidence, if it carries any.
+    evidence: Option<[eval::OptionEvidence; 2]>,
 }
 
 fn row_of(row: super::DatasetRow, baseline: Option<&'static str>) -> Row {
+    let evidence = baseline.and_then(|_| eval::option_evidence(&row.feedback));
     let option_ids = [
         row.feedback.option_ids[0].clone(),
         row.feedback.option_ids[1].clone(),
@@ -110,6 +115,7 @@ fn row_of(row: super::DatasetRow, baseline: Option<&'static str>) -> Row {
         ids: row.token_ids,
         markers: [row.markers[0] as u32, row.markers[1] as u32],
         baseline,
+        evidence,
     }
 }
 
@@ -679,6 +685,7 @@ fn cases_of(rows: &[Row]) -> Vec<CaseInput> {
             expected: row.expected.clone(),
             baseline: row.baseline.unwrap_or("search").to_owned(),
             permission_sha256: row.contribution.permission_sha256.clone(),
+            evidence: row.evidence,
         })
         .collect()
 }
@@ -722,7 +729,7 @@ fn publish(
                 temperature: verified.manifest.temperature,
             }),
         &policy.selection,
-    );
+    )?;
     let inherited_fitting = base
         .map(|(_, verified)| lineage_union(&verified.contributions.fitting))
         .unwrap_or_default();

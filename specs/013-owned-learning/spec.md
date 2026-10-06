@@ -19,7 +19,8 @@ the core-composed `state` (query, graph coverage and top-3 lexical locator lines
 within the 1024-token total, float16 checkpoint tensors upcast to float32 at load, a
 per-request timeout fallback with the policy disabled after three consecutive
 prediction timeouts, refusal of inherited per-option temperatures or a fitted
-temperature below 0.5, and enablement only after a usage-import comparison. External
+temperature below 0.5, and enablement only after a usage-import comparison (replaced
+2026-10-06 by `learning select`'s offline economics gate, T003). External
 prerequisites (owner): approved labeled rows, the LibTorch package,
 signing/notarization and an aggregate residency run.
 
@@ -75,7 +76,7 @@ Owner answers, 2026-10-04:
     60% of each group's rows, chosen by task hash; round 2 admits the rest as new inputs
     in old groups. This proves the repeat lifecycle; it does not establish fresh uplift.
   - No paid enablement comparison is run. The learned router stays off by default, as
-    this spec already requires until such a comparison passes.
+    this spec requires (T003's enablement rule, revised 2026-10-06).
 
 ## Outcome and requirements
 
@@ -101,9 +102,9 @@ or larger token budgets. Nemotron remains the independent retrieval model.
 [Contract v4](contracts/learning-loop.md) owns exact schemas, rendering, tensors,
 training, bounds and errors. It replaces v3 entirely; history retains superseded details.
 Dependencies: 001 for source/schema ownership; 003 for MCP feedback, bounded serving
-and the usage import that gates enablement; 005 for graph usefulness. Neither
-tokenized learning inputs nor policy inference depend on 009 query vectors. Explicit
-strategies and unavailable graph bypass policy.
+and the usage import an owner-authorized paid comparison reads; 005 for graph
+usefulness. Neither tokenized learning inputs nor policy inference depend on 009 query
+vectors. Explicit strategies and unavailable graph bypass policy.
 
 ## Decision ecosystem and review traceability
 
@@ -254,10 +255,20 @@ T003's and SC-004 T004's, each passing only with that task's verification.
   Verify exact-threshold acceptance, below-threshold abstention before rounding,
   entropy/answer-probability distinction, option-probability consistency and stable
   tie handling. Malformed distribution/legacy ambiguous confidence cannot grant a route.
-  A real adapter comparison on the same checked tasks, with provider usage read by
-  003's `foundry usage import`, checks task correctness, latency and total provider
-  tokens. The policy may be enabled only when correctness is equal and total provider
-  tokens are lower; otherwise default policy stays off.
+  Enablement (revised 2026-10-06): default policy stays off. `learning select` refuses a
+  candidate whose evaluation report has no `economics` (`economics_unknown`) or whose
+  routed option gains required evidence on no more evaluation tasks than it loses
+  (`candidate_no_benefit`), and owner startup re-checks it (`policy_config_invalid`
+  naming the cause); token savings at equal evidence never enable. A paid adapter
+  comparison, when the owner authorizes one, runs only the evaluation tasks whose routed
+  option differs from baseline, reads provider usage with 003's `foundry usage import`,
+  and counts preparation/training, context tokens and provider usage separately; no
+  money-savings claim without usage/pricing
+  ([contract](contracts/learning-loop.md#fitting-artifacts-and-evaluation)).
+  `learning select --lifecycle-check` (2026-10-06) waives only that gate and marks the
+  config and `status` `"lifecycle_check": true`; it exists solely for lifecycle and
+  package verification (T004, D001), is not enablement and must not ship as a default
+  config.
 - **Review/cutover:** reject removed option with migration guidance, no host config rewrite.
   Rollback restores prior supported binary/config, not two simultaneous model paths.
 - **Decisions made during implementation, 2026-10-05** (see [learning](../../docs/learning.md#serving-selection-and-rollback-013-t003),
@@ -290,6 +301,15 @@ T003's and SC-004 T004's, each passing only with that task's verification.
   - Review round 1: every evaluated example's `permission_sha256` is part of its case in
     the manifest-bound `evaluation.json` (a T002 report format change), and selection
     requires it unchanged (`contribution_changed`).
+  - Economics gate, 2026-10-06, from offline analysis of the recorded labeling data: the
+    round-1 candidate changed 1 of 71 held-out routes, delivered the same evidence as
+    deterministic routing (64 of 71) and saved 6 tokens. `evaluation.json` gains
+    `economics` from the evaluation rows' task-checker evidence (a T002 report format
+    change; earlier reports read back with none). `select` and owner startup require a
+    net evidence gain (`economics_unknown`, `candidate_no_benefit`; at startup inside
+    `policy_config_invalid`). The explicit `--lifecycle-check` override, which is visible
+    in the config and in `status`, keeps T004/D001 package acceptance able to exercise a
+    selected adapter without weakening the default.
 
 ### T004 — Repeat and deploy without growing an orchestration platform
 

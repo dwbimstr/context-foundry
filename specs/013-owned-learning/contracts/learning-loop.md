@@ -2,7 +2,8 @@
 
 Proposed implementation contract, 2026-09-29; spec-pass decisions recorded 2026-10-03
 (state composition, float16 loading, timeout handling, calibration refusal and the
-enablement rule). Replaces the vector-only v3 contract;
+enablement rule, replaced 2026-10-06 by the offline economics gate). Replaces the
+vector-only v3 contract;
 Git history retains it. Owned by [013](../spec.md). This is ModernBERT with a decision
 head. Nemotron embeddings, Laya services and the historical `eval.public.jsonl` are
 not inputs. [Feasibility evidence](../../../docs/review/feasibility.md) distinguishes
@@ -95,6 +96,15 @@ rights nonblank <=1024 bytes; whole row <=24 KiB. Reject unknown/null/duplicate 
 invalid types and oversized data before mutation. Evidence/rights references are opaque
 assertions, not instructions to open paths or URLs. Clicks/model predictions do not
 supply correctness labels. All state content needs the asserted training rights.
+
+Amendment 2026-10-06 (economics evidence): `label_evidence` stays opaque except that a
+`task_checker` row whose evidence parses as one strict JSON object (no duplicate keys)
+holding, for EACH of the row's two option IDs, a member object with a boolean `pass`
+(the option delivered all required evidence) and a non-negative integer `tokens` that
+fits u64 (the tokens it delivered) carries economics evidence; other members are
+ignored. The 013 labeling run's rows (`{"checker":"task-checker-v1",…,"search":{"pass":…,
+"tokens":…,"digest":…},"graph":{…},…}`) qualify. Any other row carries none: nothing is
+refused and training is unaffected.
 
 Example ID is SHA256(compact JSON `[task_id,input_sha256]`). Correction of that ID
 replaces label/consent transactionally; same input is idempotent. Used groups never
@@ -218,11 +228,40 @@ invalidates candidate eligibility. Report mean negative log likelihood and 15-bi
 as diagnostics on valid predictions (first bin [0,1/15], then (lo,hi]); give denominators
 and error counts. These diagnostics do not add a separate slow release gate.
 
-Normal policy stays off. It may be enabled only after a comparison on the same checked
-agent tasks, with provider usage from 003's `foundry usage import`, shows equal task
-correctness and lower total provider tokens with the policy than without it. Count
-preparation/training, context bytes/tokens and actual provider usage separately, and
-report added latency. Do not claim money savings when usage/pricing is unknown.
+Amendment 2026-10-06 (economics): the report also carries `economics`, present only when
+EVERY evaluation row carries economics evidence, otherwise `null` (a report written
+before this amendment lacks it and reads as `null`): `{rows,baseline,routed,oracle,
+changed_routes,gained,lost}`. Per row, `baseline` is deterministic routing's option,
+`routed` the fallback-inclusive routed option and `oracle` the labeled option. Each arm
+is `{evidence,delivered_tokens}`: the rows whose arm option passed and the checked sum of
+its tokens (overflow is `economics_overflow`, never wraparound). `changed_routes` counts
+rows whose routed option differs from baseline; `gained` the changed rows where routed
+passes and baseline does not; `lost` the reverse.
+
+Normal policy stays off. Enablement rule, revised 2026-10-06: after its other checks,
+`learning select` refuses a candidate whose report has no `economics`
+(`economics_unknown`) or whose `gained <= lost` (`candidate_no_benefit`, naming the
+counts; offline, the 2026-10-06 round-1 candidate had routed evidence 64 of 71 vs
+baseline 64, changed 1, gained 0, lost 0, 6 tokens fewer); exit 2, nothing written.
+Owner startup re-checks the gate, as it re-checks eligibility: a config naming a
+candidate that fails it is `policy_config_invalid` naming the cause and the counts.
+Override, 2026-10-06: `learning select --lifecycle-check` selects an otherwise valid
+candidate that fails the gate (every other check still applies) and writes
+`"lifecycle_check": true` (accepted only as `true`; absent otherwise); startup then
+skips that gate alone, and every `status` of the parsed config (serving, failed start or
+`status --policy-config`) carries the mark. It exists solely for lifecycle and
+package verification (013 T004, D001); it is not enablement and must not ship as a
+default config.
+Label accuracy is not task benefit, and token savings at equal evidence never enable:
+an evidence miss costs the agent about one extra turn, at 12.4–13.0k provider tokens of
+fixed prefix and task prompt per OMP request ([validation](../../../docs/validation.md),
+003 T005 cost root cause), while per-response token deltas are tens of tokens and the
+router adds about 200–300 ms per routed request (validation, 013 serving). A paid
+comparison, when the owner authorizes one, uses only the evaluation tasks whose routed
+option differs from baseline: on agreeing rows the policy delivers the same evidence
+(the response differs only by its `route:` header word), so paid runs there measure
+nothing about the decision. Count preparation/training, context tokens and provider
+usage separately; claim no money savings without usage/pricing.
 
 Candidate contains schema-4 manifest, head.safetensors, exact base encoder/tokenizer
 identities, recipe, calibration, contribution IDs and evaluation report. Head is float32;
@@ -268,7 +307,10 @@ must equal the one the candidate's report was evaluated at. `learning select --c
 DIR --isolation-profile FILE --out CONFIG` refuses an ineligible candidate
 (`candidate_ineligible`; no override flag) and any withdrawn or changed contribution,
 evaluated examples included: each evaluation case carries its example's
-`permission_sha256` in the manifest-bound report (`contribution_changed`). The serving
+`permission_sha256` in the manifest-bound report (`contribution_changed`). Since
+2026-10-06 select and startup validation also enforce the economics gate (§ Fitting,
+artifacts and evaluation: `economics_unknown`, `candidate_no_benefit`), which only a
+`--lifecycle-check` config (`"lifecycle_check": true`) waives. The serving
 worker is T002's `foundry-learn`, loaded once by a
 `serve` message (the candidate's head, evaluation mode, its fitted scalar); the core
 renders the state with the candidate's pinned tokenizer from the profile's

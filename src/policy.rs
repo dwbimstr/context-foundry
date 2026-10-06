@@ -6,13 +6,22 @@
 //!   the candidate's path and manifest SHA-256, the model function, the
 //!   evaluation report's SHA-256, the threshold the candidate was evaluated
 //!   at and the learning isolation profile. It is validated once at owner
-//!   startup ([`Policy::start`]); an invalid config is `policy_config_invalid`
-//!   and baseline retrieval still starts. There is no ambient latest
-//!   directory, no automatic promotion and no live threshold edit.
+//!   startup ([`Policy::start`]), eligibility and the economics gate
+//!   included; an invalid config is `policy_config_invalid` and baseline
+//!   retrieval still starts. There is no ambient latest directory, no
+//!   automatic promotion and no live threshold edit. A `--lifecycle-check`
+//!   selection carries `"lifecycle_check": true` (present only as `true`):
+//!   startup skips ONLY the economics gate and every `status` of it, served
+//!   or not, shows the mark. It exists solely for lifecycle and package
+//!   verification (013 T004, D001); it is not enablement and never a shipped
+//!   default config.
 //! * **Selection** ([`select`]) reads a candidate back under T002's rules,
-//!   requires its eligibility and the CURRENT consent of every example it
-//!   was fitted, calibrated and evaluated on, and writes a NEW config by
-//!   anchored no-replace publication; it never overwrites. The operator
+//!   requires its eligibility, the CURRENT consent of every example it was
+//!   fitted, calibrated and evaluated on, and the offline economics gate
+//!   (its report's routed option gains required evidence on more evaluation
+//!   tasks than it loses: `economics_unknown`, `candidate_no_benefit`;
+//!   `--lifecycle-check` overrides that gate alone), and writes a NEW config
+//!   by anchored no-replace publication; it never overwrites. The operator
 //!   installs it with `--policy-config FILE` and a restart. Rollback is a
 //!   restart with the prior config file, or with none. One model path at a
 //!   time: an owner serves exactly the config it started with.
@@ -79,6 +88,12 @@ pub struct EnabledConfig {
     pub threshold: f64,
     /// The learning-worker isolation profile, absolute.
     pub isolation_profile: PathBuf,
+    /// `true` only when `learning select --lifecycle-check` wrote the config,
+    /// absent otherwise: startup then skips ONLY the economics gate. Solely
+    /// for lifecycle and package verification (013 T004, D001); never
+    /// enablement and never a shipped default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lifecycle_check: bool,
 }
 
 /// A disabled config: exactly `{"v":2,"enabled":false}`.
@@ -150,6 +165,15 @@ impl PolicyConfig {
                 Ok(Self::Disabled)
             }
             Some(serde_json::Value::Bool(true)) => {
+                if value
+                    .get("lifecycle_check")
+                    .is_some_and(|flag| *flag != serde_json::Value::Bool(true))
+                {
+                    return Err(fail(
+                        CONFIG_INVALID,
+                        "policy config `lifecycle_check` may only be present as true",
+                    ));
+                }
                 let config: EnabledConfig = serde_json::from_value(value).map_err(shape)?;
                 version(config.v)?;
                 config.validate()?;
@@ -218,12 +242,48 @@ pub struct Verified {
     pub head_sha256: String,
 }
 
+/// The offline economics gate (contract § Fitting, artifacts and evaluation,
+/// 2026-10-06): the candidate's routed option must deliver the required
+/// evidence on more evaluation tasks than deterministic routing; token
+/// savings at equal evidence never enable. A refusal names its code
+/// (`economics_unknown` or `candidate_no_benefit`) and the counts.
+fn economics_gate(verified: &VerifiedCandidate) -> Result<(), (&'static str, String)> {
+    let Some(economics) = &verified.report.economics else {
+        return Err((
+            "economics_unknown",
+            "the candidate's evaluation report has no economics: not every evaluation row \
+             carries task-checker evidence for both options"
+                .to_owned(),
+        ));
+    };
+    if economics.gained <= economics.lost {
+        return Err((
+            "candidate_no_benefit",
+            format!(
+                "routed evidence {} of {} vs baseline {} (delivered tokens {} vs {}); changed \
+                 {}, gained {}, lost {}: no net evidence gain over deterministic routing, and \
+                 token savings alone never enable",
+                economics.routed.evidence,
+                economics.rows,
+                economics.baseline.evidence,
+                economics.routed.delivered_tokens,
+                economics.baseline.delivered_tokens,
+                economics.changed_routes,
+                economics.gained,
+                economics.lost
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Validate an enabled config against the candidate it pins: the complete
 /// T002 read-back (temperature refusals included), the manifest SHA-256,
 /// the model function (pinned, and recomputed from the manifest's
-/// identities), the report SHA-256, eligibility, the exact threshold the
-/// candidate was evaluated at, this workspace and the isolation profile.
-/// Every refusal is `policy_config_invalid` naming its cause.
+/// identities), the report SHA-256, eligibility, the economics gate (skipped,
+/// alone, for a `lifecycle_check` config), the exact threshold the candidate
+/// was evaluated at, this workspace and the isolation profile. Every refusal
+/// is `policy_config_invalid` naming its cause.
 pub fn verify_config(
     config: &EnabledConfig,
     workspace_id: Option<&str>,
@@ -259,6 +319,9 @@ pub fn verify_config(
     }
     if !manifest.eligible || !verified.report.eligibility.eligible {
         return Err(invalid("the candidate is not eligible".into()));
+    }
+    if !config.lifecycle_check {
+        economics_gate(&verified).map_err(|(code, why)| invalid(format!("{code}: {why}")))?;
     }
     if verified.report.selection.threshold != config.threshold {
         return Err(invalid(format!(
@@ -411,11 +474,16 @@ pub fn validate_reply(
 // Selection
 // ---------------------------------------------------------------------------
 
-/// `learning select --candidate DIR --isolation-profile FILE --out CONFIG`.
+/// `learning select --candidate DIR --isolation-profile FILE --out CONFIG
+/// [--lifecycle-check]`.
 pub struct SelectRequest<'a> {
     pub candidate: &'a Path,
     pub isolation_profile: &'a Path,
     pub out: &'a Path,
+    /// Lifecycle and package verification only (013 T004, D001): select an
+    /// otherwise valid candidate that fails the economics gate, and mark the
+    /// config `"lifecycle_check": true`. Never enablement.
+    pub lifecycle_check: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -424,6 +492,9 @@ pub struct Selected {
     pub config: PathBuf,
     pub candidate_sha256: String,
     pub threshold: f64,
+    /// Present only as `true`, for a `--lifecycle-check` selection.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub lifecycle_check: bool,
 }
 
 /// Every example the candidate was fitted, calibrated or evaluated on must
@@ -490,8 +561,11 @@ fn check_current_consent(
 
 /// Select an eligible candidate: read it back completely, require this
 /// workspace, its model-function identity, eligibility and the current
-/// consent of its examples, load the isolation profile, then publish a NEW
-/// config naming them. Never overwrites (`output_exists`).
+/// consent of its examples, load the isolation profile, require a net
+/// evidence gain over deterministic routing (contract § Fitting, artifacts
+/// and evaluation, 2026-10-06; `lifecycle_check` waives that gate alone and
+/// marks the config), then publish a NEW config naming them. Never overwrites
+/// (`output_exists`).
 pub fn select(
     engine: &Engine,
     request: &SelectRequest<'_>,
@@ -539,6 +613,10 @@ pub fn select(
         )
     })?;
     LearnProfile::load(&isolation_profile)?;
+    if !request.lifecycle_check {
+        economics_gate(&verified)
+            .map_err(|(code, why)| fail(code, format!("{why}; nothing was selected")))?;
+    }
     let config = EnabledConfig {
         v: CONFIG_VERSION,
         enabled: true,
@@ -553,6 +631,7 @@ pub fn select(
         })?,
         threshold: verified.report.selection.threshold,
         isolation_profile,
+        lifecycle_check: request.lifecycle_check,
     };
     let mut bytes = serde_json::to_vec_pretty(&config).map_err(FoundryError::from)?;
     bytes.push(b'\n');
@@ -568,6 +647,7 @@ pub fn select(
         config: request.out.to_path_buf(),
         candidate_sha256: config.candidate_sha256,
         threshold: config.threshold,
+        lifecycle_check: config.lifecycle_check,
     })
 }
 
@@ -697,6 +777,8 @@ enum State {
         reason: &'static str,
         detail: String,
         candidate: Option<String>,
+        /// The config parsed as a `--lifecycle-check` selection.
+        lifecycle_check: bool,
     },
     #[cfg(all(target_os = "macos", feature = "semantic"))]
     Serving(Box<Serving>),
@@ -708,12 +790,23 @@ enum State {
 struct Serving {
     candidate: String,
     threshold: f64,
+    /// The config is a `--lifecycle-check` selection: status says so.
+    lifecycle_check: bool,
     renderer: decision_model::Renderer,
     worker: crate::learning::serve::PolicyWorker,
 }
 
 fn bounded(detail: &str) -> String {
     detail.chars().take(DETAIL_MAX_CHARS).collect()
+}
+
+/// A parsed `lifecycle_check` config's status says so in every state,
+/// enabled or not, so it can never be mistaken for normal enablement.
+fn marked(mut status: serde_json::Value, lifecycle_check: bool) -> serde_json::Value {
+    if lifecycle_check {
+        status["lifecycle_check"] = serde_json::Value::Bool(true);
+    }
+    status
 }
 
 fn fallback(strategy: Strategy, reason: &str) -> FResult<(Strategy, String)> {
@@ -727,12 +820,18 @@ impl Policy {
         Self { state: State::Off }
     }
 
-    fn unavailable(reason: &'static str, detail: String, candidate: Option<String>) -> Self {
+    fn unavailable(
+        reason: &'static str,
+        detail: String,
+        candidate: Option<String>,
+        lifecycle_check: bool,
+    ) -> Self {
         Self {
             state: State::Unavailable {
                 reason,
                 detail,
                 candidate,
+                lifecycle_check,
             },
         }
     }
@@ -748,12 +847,20 @@ impl Policy {
         let config = match PolicyConfig::load(&launch.config) {
             Ok(PolicyConfig::Disabled) => return Self::off(),
             Ok(PolicyConfig::Enabled(config)) => config,
-            Err(e) => return Self::unavailable(CONFIG_INVALID, e.to_string(), None),
+            Err(e) => return Self::unavailable(CONFIG_INVALID, e.to_string(), None, false),
         };
         let candidate = Some(config.candidate_sha256.clone());
+        let lifecycle_check = config.lifecycle_check;
         let verified = match verify_config(&config, workspace_id, &Control::unbounded()) {
             Ok(verified) => verified,
-            Err(e) => return Self::unavailable(CONFIG_INVALID, e.to_string(), candidate),
+            Err(e) => {
+                return Self::unavailable(
+                    CONFIG_INVALID,
+                    e.to_string(),
+                    candidate,
+                    lifecycle_check,
+                );
+            }
         };
         if !launch.development {
             return Self::unavailable(
@@ -762,6 +869,7 @@ impl Policy {
                  package acceptance close; it is never production isolation"
                     .into(),
                 candidate,
+                lifecycle_check,
             );
         }
         #[cfg(feature = "test-faults")]
@@ -774,7 +882,7 @@ impl Policy {
                 Ok(serving) => Self {
                     state: State::Serving(Box::new(serving)),
                 },
-                Err(e) => Self::unavailable(e.code(), e.to_string(), candidate),
+                Err(e) => Self::unavailable(e.code(), e.to_string(), candidate, lifecycle_check),
             }
         }
         #[cfg(not(all(target_os = "macos", feature = "semantic")))]
@@ -786,12 +894,14 @@ impl Policy {
                     "this build has no learning renderer; rebuild with the `semantic` feature"
                         .into(),
                     candidate,
+                    lifecycle_check,
                 )
             } else {
                 Self::unavailable(
                     "isolation_unavailable",
                     "the learning worker's isolation profile targets macOS".into(),
                     candidate,
+                    lifecycle_check,
                 )
             }
         }
@@ -827,7 +937,8 @@ impl Policy {
 
     /// The `status` object: `disabled`, `enabled` (candidate, threshold,
     /// consecutive timeouts, whether the slot is occupied) or `unavailable`
-    /// with its reason.
+    /// with its reason; any state of a parsed `lifecycle_check` config adds
+    /// `"lifecycle_check": true`.
     pub fn status(&self) -> serde_json::Value {
         match &self.state {
             State::Off => serde_json::json!({"state": "disabled"}),
@@ -835,17 +946,21 @@ impl Policy {
                 reason,
                 detail,
                 candidate,
-            } => serde_json::json!({
-                "state": "unavailable",
-                "reason": reason,
-                "detail": bounded(detail),
-                "candidate": candidate,
-                "consecutive_timeouts": 0,
-            }),
+                lifecycle_check,
+            } => marked(
+                serde_json::json!({
+                    "state": "unavailable",
+                    "reason": reason,
+                    "detail": bounded(detail),
+                    "candidate": candidate,
+                    "consecutive_timeouts": 0,
+                }),
+                *lifecycle_check,
+            ),
             #[cfg(all(target_os = "macos", feature = "semantic"))]
             State::Serving(serving) => {
                 let worker = serving.worker.state();
-                match worker.terminal {
+                let status = match worker.terminal {
                     Some((reason, detail)) => serde_json::json!({
                         "state": "unavailable",
                         "reason": reason,
@@ -860,14 +975,16 @@ impl Policy {
                         "consecutive_timeouts": worker.consecutive_timeouts,
                         "busy": worker.busy,
                     }),
-                }
+                };
+                marked(status, serving.lifecycle_check)
             }
         }
     }
 
     /// CLI `status --policy-config FILE`: the config validated exactly as an
     /// owner validates it at startup, without starting a worker (a CLI
-    /// command has no resident worker, so it has no timeouts).
+    /// command has no resident worker, so it has no timeouts). A parsed
+    /// `lifecycle_check` config is marked whether it verifies or not.
     pub fn inspect(config: &Path, workspace_id: Option<&str>) -> serde_json::Value {
         let unavailable = |detail: String, candidate: Option<&str>| {
             serde_json::json!({
@@ -882,16 +999,18 @@ impl Policy {
             Err(e) => unavailable(e.to_string(), None),
             Ok(PolicyConfig::Disabled) => serde_json::json!({"state": "disabled"}),
             Ok(PolicyConfig::Enabled(enabled)) => {
-                match verify_config(&enabled, workspace_id, &Control::unbounded()) {
+                let candidate = Some(enabled.candidate_sha256.as_str());
+                let status = match verify_config(&enabled, workspace_id, &Control::unbounded()) {
                     Ok(_) => serde_json::json!({
                         "state": "enabled",
-                        "candidate": enabled.candidate_sha256,
+                        "candidate": candidate,
                         "threshold": enabled.threshold,
                         "consecutive_timeouts": 0,
                         "resident": false,
                     }),
-                    Err(e) => unavailable(e.to_string(), Some(&enabled.candidate_sha256)),
-                }
+                    Err(e) => unavailable(e.to_string(), candidate),
+                };
+                marked(status, enabled.lifecycle_check)
             }
         }
     }
@@ -927,6 +1046,7 @@ impl Serving {
         Ok(Self {
             candidate: verified.candidate.manifest_sha256.clone(),
             threshold: verified.config.threshold,
+            lifecycle_check: verified.config.lifecycle_check,
             renderer: loaded.renderer,
             worker,
         })

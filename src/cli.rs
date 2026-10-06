@@ -289,8 +289,10 @@ enum LearningAction {
     },
     /// 013 T003: validate a published candidate (full read-back, identity,
     /// report digest, the fitted scalar and no inherited temperature,
-    /// eligibility, and the CURRENT consent of every example it used) and
-    /// write a NEW config v2 file naming it; an existing file is never
+    /// eligibility, the CURRENT consent of every example it used, and a net
+    /// task-checker evidence gain over deterministic routing: the economics
+    /// gate, `economics_unknown` / `candidate_no_benefit`) and write a NEW
+    /// config v2 file naming it; an existing file is never
     /// overwritten (`output_exists`). Install it with `mcp --policy-config
     /// FILE` (or `context --policy-config FILE`) and a restart; roll back by
     /// restarting with the prior file or none. Exits 0 selected, 2 invalid
@@ -304,6 +306,12 @@ enum LearningAction {
         /// The new config file.
         #[arg(long)]
         out: PathBuf,
+        /// Lifecycle and package verification only (013 T004, D001): select an
+        /// otherwise valid candidate that fails the economics gate. The config
+        /// records `"lifecycle_check": true`; it is not enablement and must
+        /// never ship as a default config.
+        #[arg(long = "lifecycle-check")]
+        lifecycle_check: bool,
     },
 }
 
@@ -1075,6 +1083,7 @@ fn learning_run(store: &std::path::Path, action: LearningAction) -> AResult<()> 
             candidate,
             isolation_profile,
             out,
+            lifecycle_check,
         } => {
             let engine = Engine::open_existing(store)?;
             let selected = crate::policy::select(
@@ -1083,6 +1092,7 @@ fn learning_run(store: &std::path::Path, action: LearningAction) -> AResult<()> 
                     candidate: &candidate,
                     isolation_profile: &isolation_profile,
                     out: &out,
+                    lifecycle_check,
                 },
                 &control,
             )?;

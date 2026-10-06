@@ -60,6 +60,14 @@ foundry learning train --input DATASET/manifest.json --policy POLICY.json \
   set, float32), `evaluation.json` and `contributions.json`. It carries exactly one
   fitted temperature on the k/20 grid, ≥ 0.5; per-option or bucket temperatures are
   refused.
+- **Economics** (2026-10-06). `evaluation.json` carries `economics` when every
+  evaluation row is a `task_checker` row whose `label_evidence` is a strict JSON object
+  (no duplicate keys) giving, for both option IDs, `{"pass": bool, "tokens": u64}` (the
+  labeling run's rows do; other members are ignored): per arm — `baseline`
+  (deterministic routing), `routed` (fallback-inclusive) and `oracle` (the label) — the
+  rows whose option passed and the tokens it delivered, plus `changed_routes`, `gained`
+  and `lost`. Otherwise it is `null`; reports written earlier read the same way. A token
+  sum past u64 is `economics_overflow`.
 
 **Deferred to the measurement phase** (owner directive 2026-10-05: written, not run):
 
@@ -89,8 +97,16 @@ foundry status --policy-config POLICY-1.json   # validates without starting a wo
   scalar ≥ 0.5 on the grid, no inherited temperature), requires this workspace, its
   model-function identity, eligibility (`candidate_ineligible`; there is no override)
   and the CURRENT consent of every fitted, calibrated and evaluated example
-  (`contribution_changed`). It writes a NEW config v2 by no-replace publication and
-  never overwrites (`output_exists`). Exits 0 selected, 2 refused, 3 busy, 1 write.
+  (`contribution_changed`), then the offline economics gate: the report must carry
+  `economics` (`economics_unknown`) and routing must gain required evidence on more
+  evaluation tasks than it loses (`candidate_no_benefit`, naming the counts). Token
+  savings at equal evidence never enable. It writes a NEW config v2 by no-replace
+  publication and never overwrites (`output_exists`). Exits 0 selected, 2 refused, 3
+  busy, 1 write. `--lifecycle-check` (2026-10-06) waives only the economics gate, for
+  lifecycle and package verification alone (013 T004, D001): the config gains
+  `"lifecycle_check": true`, startup skips that gate alone and every `status` of that
+  config (serving, a failed start, `status --policy-config`) shows the mark. It is not
+  enablement and must not ship as a default config.
 - **Serve.** The owner validates the config once at startup and loads the SAME
   `foundry-learn` worker with the candidate (≤ 30 s, outside requests). Only `auto`
   contexts with a current graph scope consult it, after the semantic merge and before
@@ -106,17 +122,32 @@ foundry status --policy-config POLICY-1.json   # validates without starting a wo
   `unavailable` with its reason). Without a config, or with `{"v":2,"enabled":false}`,
   output is byte-identical to before.
 - **Fail closed.** An invalid config, a missing isolation flag or a failed start leaves
-  the owner serving deterministically with the reason in `status`. A malformed or
-  wrong-identity reply, a dead worker, or three consecutive timeouts end the worker;
-  the policy stays unavailable until restart. There is no restart loop.
+  the owner serving deterministically with the reason in `status`. Startup re-checks the
+  candidate's identities, eligibility and the economics gate; a config naming a candidate
+  that fails the gate (one written before the gate, or by hand) is
+  `policy_config_invalid`, with `economics_unknown` or `candidate_no_benefit` and the
+  counts in the detail; only a `"lifecycle_check": true` config skips that gate (see
+  Select). A malformed or wrong-identity reply, a dead worker, or three consecutive
+  timeouts end the worker; the policy stays unavailable until restart. There is no
+  restart loop.
 - **Rollback.** Restart with the prior config file, or with none. Select, serving and
   rollback write nothing to the store; source, memory, graph, feedback and the semantic
   cache are untouched. One owner serves exactly one config.
 
+**Enablement** (revised 2026-10-06): normal policy stays off; `learning select` enforces
+the economics gate above and owner startup re-checks it; a `--lifecycle-check` config is
+lifecycle verification, never enablement. A paid comparison, when the owner authorizes
+one, runs only the evaluation tasks whose routed option differs from baseline — on
+agreeing rows the policy delivers the same evidence and the response differs only by its
+`route:` header word — with provider usage read by
+`foundry usage import --host omp|codex --session FILE`.
+Preparation/training, context tokens and provider usage are counted separately; no
+money-savings claim without usage/pricing. The rationale: an evidence miss costs the
+agent about one extra turn (12.4–13.0k provider tokens of fixed prefix per OMP request,
+[validation](validation.md)), while per-response token deltas are tens of tokens and the
+router adds about 200–300 ms per routed request.
+
 **Deferred to the measurement phase** (owner directive 2026-10-05: written, not run):
-the enablement gate — the same checked agent tasks with and without the policy, read by
-`foundry usage import --host omp|codex --session FILE`, comparing task correctness,
-latency and total provider tokens (enable only on equal correctness and lower tokens);
 the combined 009+013 residency run (`mcp --semantic-profile S --policy-config P
 --development-isolation` under `/usr/bin/time -l`, both workers loaded, the summed
 peak footprint against deployment's aggregate budget); and real-checkpoint prediction

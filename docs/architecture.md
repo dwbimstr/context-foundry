@@ -348,9 +348,12 @@ narrow:
 
 Owned training remains a repeated isolated batch workflow with ModernBERT decision
 inputs, independent of 009 query vectors. Semantic preparation and the baseline
-release do not depend on training. Normal learned routing stays off until a usage-import
-comparison on checked tasks shows equal correctness and lower total provider tokens
-(013); classifier-label eligibility alone is not that evidence.
+release do not depend on training. Normal learned routing stays off; since 2026-10-06
+`learning select` accepts, and owner startup serves, a candidate only when its routed
+option gains required task-checker evidence over deterministic routing on more
+evaluation tasks than it loses (013); classifier-label eligibility and token savings
+alone are not that evidence. The visible `--lifecycle-check` override exists only for
+lifecycle and package verification and is not enablement.
 Explicit strategy requests and unavailable/stale graph skip the router entirely.
 A future reranker belongs inside 009 only if a bounded candidate set already contains
 the required passages but ordering loses them after ordinary defects are corrected.
@@ -536,9 +539,9 @@ Scratch parity does not establish complete training or package acceptance.
 Grouped permitted examples and reusable features feed an isolated offline training
 worker. Calibration/evaluation are held out. New rows in existing training groups are
 new work; invalidated base contributions refuse before a no-op decision. Immutable
-artifacts support explicit selection/restart and rollback. Normal inference stays off
-until a usage-import comparison on checked tasks shows equal correctness and lower
-total provider tokens. Hard token/permission rules stay outside
+artifacts support explicit selection/restart and rollback. Normal inference stays off;
+selection requires a net evidence gain over deterministic routing on the checked
+evaluation tasks (2026-10-06). Hard token/permission rules stay outside
 the learned model. [Contract v4](../specs/013-owned-learning/contracts/learning-loop.md)
 replaces the vector-only design with exact joint inputs, tokenization, head fitting,
 limits and private IPC; old proposals remain in Git history.
