@@ -1,0 +1,180 @@
+{
+ "task": "009 T002",
+ "date": "2026-10-05",
+ "commit": "451033b",
+ "binary": "release build of that tree",
+ "worker": "production development bundle FoundryEmbedFinal.app (exe sha256 3cb10e27\u2026c2c9), Nemotron-3-Embed-1B 4-bit, --development-isolation",
+ "fixture": "tests/fixtures/semantic-retrieval; frozen evidence spans from tests/neural_retrieval.rs",
+ "scope": "end-to-end acceptance evidence on the frozen vocabulary-gap fixture; not a retrieval-quality benchmark",
+ "index_file_bytes": 34032,
+ "generation": {
+  "v": 2,
+  "count": 8,
+  "coverage": "complete"
+ },
+ "stdout_tokens_semantic": [
+  2023,
+  2023,
+  1947
+ ],
+ "stdout_tokens_baseline": [
+  16,
+  16,
+  16
+ ],
+ "cases": [
+  {
+   "query": "twilight onset",
+   "path": "docs/dusk.md",
+   "evidence": [
+    0,
+    320
+   ],
+   "baseline_has_evidence": false,
+   "semantic_exit": 0,
+   "semantic_ms_with_worker_start": 7761.9,
+   "semantic_header": "foundry context \u00b7 r6 \u00b7 budget:2048 \u00b7 shown:6 \u00b7 omitted:3 \u00b7 semantic:ready",
+   "semantic_has_evidence": true,
+   "noprofile_byte_identical": true
+  },
+  {
+   "query": "refund timing",
+   "path": "docs/ledger.md",
+   "evidence": [
+    5522,
+    5740
+   ],
+   "baseline_has_evidence": false,
+   "semantic_exit": 0,
+   "semantic_ms_with_worker_start": 6692.9,
+   "semantic_header": "foundry context \u00b7 r6 \u00b7 budget:2048 \u00b7 shown:6 \u00b7 omitted:3 \u00b7 semantic:ready",
+   "semantic_has_evidence": true,
+   "noprofile_byte_identical": true
+  },
+  {
+   "query": "retry backoff",
+   "path": "src/widgets.rs",
+   "evidence": [
+    517,
+    809
+   ],
+   "baseline_has_evidence": false,
+   "semantic_exit": 0,
+   "semantic_ms_with_worker_start": 7001.6,
+   "semantic_header": "foundry context \u00b7 r6 \u00b7 budget:2048 \u00b7 shown:5 \u00b7 omitted:5 \u00b7 semantic:ready",
+   "semantic_has_evidence": true,
+   "noprofile_byte_identical": true
+  }
+ ],
+ "prepare": {
+  "profile": "nemotron-3-embed-1b-4bit-dev",
+  "function_digest": "5e0e9cb83beff0a1ef0f8c81fb0fa08d84b568af6c946aaeafcca0af51d09559",
+  "recipe_id": "nemotron-units-v1+tokenizers 0.23.2 onig",
+  "sources": 6,
+  "partitioned_sources": 6,
+  "reused_partitions": 0,
+  "eligible_units": 8,
+  "embedded_units": 8,
+  "reused_cached_units": 0,
+  "missing_units": 0,
+  "document_calls": 1,
+  "input_tokens": 2969,
+  "corrupt_cache_rows": 0,
+  "cache_entries": 8,
+  "cache_bytes": 66048,
+  "index_published": true,
+  "index_entries": 8,
+  "index_reason": null,
+  "provider_state": "ready",
+  "provider_code": null,
+  "publication_reserve_seconds": 60,
+  "state": "stopped",
+  "reason_code": null,
+  "partial": false,
+  "budget_seconds": 600,
+  "elapsed_ms": 14802
+ },
+ "prepare_edit": {
+  "profile": "nemotron-3-embed-1b-4bit-dev",
+  "function_digest": "5e0e9cb83beff0a1ef0f8c81fb0fa08d84b568af6c946aaeafcca0af51d09559",
+  "recipe_id": "nemotron-units-v1+tokenizers 0.23.2 onig",
+  "sources": 6,
+  "partitioned_sources": 1,
+  "reused_partitions": 5,
+  "eligible_units": 8,
+  "embedded_units": 1,
+  "reused_cached_units": 7,
+  "missing_units": 0,
+  "document_calls": 1,
+  "input_tokens": 140,
+  "corrupt_cache_rows": 0,
+  "cache_entries": 9,
+  "cache_bytes": 74304,
+  "index_published": true,
+  "index_entries": 8,
+  "index_reason": null,
+  "provider_state": "ready",
+  "provider_code": null,
+  "publication_reserve_seconds": 60,
+  "state": "stopped",
+  "reason_code": null,
+  "partial": false,
+  "budget_seconds": 600,
+  "elapsed_ms": 9610
+ },
+ "mismatch": {
+  "exit": 0,
+  "header": "foundry context \u00b7 r6 \u00b7 budget:2048 \u00b7 shown:0 \u00b7 semantic:fallback:profile_invalid: document prefix must be `passage: `",
+  "stderr": "{\"omitted\":0,\"stdout_tokens\":32,\"strategy\":\"search\",\"tokenizer\":\"o200k_base\"}\n"
+ },
+ "after_delete": {
+  "exit": 0,
+  "mentions_deleted": false,
+  "header": "foundry context \u00b7 r8 \u00b7 budget:2048 \u00b7 shown:5 \u00b7 omitted:4 \u00b7 stale:1 \u00b7 semantic:partial"
+ },
+ "mcp_initialize_ms": 10588.0,
+ "mcp_calls": [
+  {
+   "query": "refund timing",
+   "ms": 313.5,
+   "header": "foundry context \u00b7 r8 \u00b7 budget:2048 \u00b7 shown:5 \u00b7 omitted:3 \u00b7 stale:1 \u00b7 semantic:partial",
+   "has_evidence": true,
+   "error": null
+  },
+  {
+   "query": "retry backoff",
+   "ms": 23.8,
+   "header": "foundry context \u00b7 r8 \u00b7 budget:2048 \u00b7 shown:5 \u00b7 omitted:4 \u00b7 stale:1 \u00b7 semantic:partial",
+   "has_evidence": true,
+   "error": null
+  },
+  {
+   "query": "refund timing",
+   "ms": 24.9,
+   "header": "foundry context \u00b7 r8 \u00b7 budget:2048 \u00b7 shown:5 \u00b7 omitted:3 \u00b7 stale:1 \u00b7 semantic:partial",
+   "has_evidence": true,
+   "error": null
+  },
+  {
+   "query": "retry backoff",
+   "ms": 25.3,
+   "header": "foundry context \u00b7 r8 \u00b7 budget:2048 \u00b7 shown:5 \u00b7 omitted:4 \u00b7 stale:1 \u00b7 semantic:partial",
+   "has_evidence": true,
+   "error": null
+  },
+  {
+   "query": "refund timing",
+   "ms": 31.5,
+   "header": "foundry context \u00b7 r8 \u00b7 budget:2048 \u00b7 shown:5 \u00b7 omitted:3 \u00b7 stale:1 \u00b7 semantic:partial",
+   "has_evidence": true,
+   "error": null
+  },
+  {
+   "query": "retry backoff",
+   "ms": 27.9,
+   "header": "foundry context \u00b7 r8 \u00b7 budget:2048 \u00b7 shown:5 \u00b7 omitted:4 \u00b7 stale:1 \u00b7 semantic:partial",
+   "has_evidence": true,
+   "error": null
+  }
+ ]
+}

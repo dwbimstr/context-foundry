@@ -40,6 +40,38 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 009 T002 semantic context within the existing budget — 2026-10-05
+
+Development isolation only. [Evidence](review/009-t002-2026-10-05.json).
+- **Shape.**
+  - D001 merge: exact definitions first, then RRF k=60 over the lexical top 256 and dense top 64. Each arm votes once per delivery unit.
+  - Stale lexical documents are dropped in the final read before fusion.
+  - Dense-only hits never seed graph or compiler expansion.
+  - The `semantic:<word>` header segment and the whole/lexical-span/preview forms ladder; neural batches deduplicate by full identity.
+  - Generation format v2: the label map carries unit locations plus `source_revision` and `coverage`, so no request walks partitions. A v1 generation is unavailable by name and republished from the cache with zero document calls.
+  - The index bytes restored are the bytes that were hash-verified.
+  - `ready` only when the generation is complete at the response's own final-read revision.
+  - The query embedding waits min(1500 ms, half the remaining deadline). A failed footprint measurement of a live worker stops it like a breach.
+  - MCP starts one resident worker (`mcp --semantic-profile FILE --development-isolation`); the CLI takes the same flags.
+- **Authors and review.** Z.ai GLM-5.3 wrote the first version; after the owner retired GLM, Anthropic Opus 5.5 completed it and wrote both fix rounds. Cross-lab review by OpenAI GPT-6.1 Sol: REVISE (8 major), then REVISE (one residual coverage case), then SHIP. Each fix has a dedicated test.
+- **Real model** (Nemotron-3-Embed-1B 4-bit, production development bundle):
+  - All three frozen vocabulary-gap spans are delivered at 2048 tokens (2,023 / 2,023 / 1,947 tokens); the lexical baseline delivers none of them.
+  - No-profile output is byte-identical.
+  - Preparation: 8 units, 1 document call, 2,969 input tokens. A one-file edit embeds 1 unit (140 tokens) and reuses 7.
+  - After a delete without re-preparation: `stale:1`, `semantic:partial`, and the deleted source is never served.
+  - A profile mismatch falls back by name.
+  - Resident MCP: worker load 10.6 s, first query 314 ms, warm queries 24–32 ms.
+  - The index is 34,032 bytes.
+- **Gates** (`451033b`): fmt; clippy `-D warnings` stable and 1.90, default, `--no-default-features` and `embed-worker`; full suite 720 passed. The only failure is `embed_worker::a_ready_crossing_the_deadline_inside_one_receive_slice_is_never_accepted`, a 400 ms launch-timing test that already flakes on main (1 in 6 solo binary runs; the worker's PID file is not yet written at the deadline). It passes alone.
+- **Known gaps (owner accepted 2026-10-05, not tested):**
+  - semantic evidence crowded by graph/compiler evidence;
+  - the multi-root matrix (primary-only wording, no embedding for a secondary-only request, no secondary leakage);
+  - the no-profile byte-identity matrix across CLI/MCP × search/context × single/multi-root, which was checked only on the real-run CLI context;
+  - a worker dying mid-query through `QueryRuntime`;
+  - the localized lexical-span preview;
+  - multibyte, CRLF and fence-like semantic forms;
+  - the semantic MCP byte cap and allowance accounting.
+
 ## 013 T001 exact permitted ModernBERT examples — 2026-10-05
 
 Locally implemented and verified; no model is loaded and nothing is trained.
@@ -67,7 +99,7 @@ Locally implemented and verified; no model is loaded and nothing is trained.
 
 ## 009 T001 semantic preparation and supervised worker — 2026-10-05
 
-Locally implemented and verified, **unpushed and unreleased**. Development isolation
+Locally implemented and verified, **pushed 2026-10-05, unreleased**. Development isolation
 only; normal admission stays `isolation_unavailable` until signing/notarization and
 package acceptance. [Evidence](review/009-t001-2026-10-05.json).
 - **Authors and shape.** Z.ai GLM-5.3 wrote two slices; the captain wrote the shared
@@ -194,7 +226,7 @@ passed, with no failed check (50 checks).
 
 ## 005 T003 agent surface — MCP `references`, `index {scip}`, graph context, 2026-10-05
 
-Locally implemented and verified, **unpushed and unreleased**. The measured
+Locally implemented and verified, **pushed 2026-10-05, unreleased**. The measured
 large-workspace run is recorded separately.
 - **Authors:** Z.ai GLM-5.3 (implementer). The captain made the contract rulings during
   review (spec 005, "Amended 2026-10-05").
@@ -244,7 +276,7 @@ large-workspace run is recorded separately.
 
 ## 005 compiler references — T001 and T002, 2026-10-04
 
-Locally implemented and verified, **unpushed and unreleased**.
+Locally implemented and verified, **pushed 2026-10-05, unreleased**.
 - **Authors:** Z.ai GLM-5.3 (implementer); captain integration (the `fault.rs` point
   union and the `Cargo.lock` three-way merge with the gateway commit).
 - **Review:** cross-lab by OpenAI GPT-6.1 Sol:
@@ -321,7 +353,7 @@ Locally implemented and verified, **unpushed and unreleased**.
 
 ## 003 T004 owned model gateway — 2026-10-04
 
-Locally implemented and verified, **unpushed and unreleased**.
+Locally implemented and verified, **pushed 2026-10-05, unreleased**.
 - **Authors:** Z.ai GLM-5.3 (implementer), plus captain fixes: the flush-before-abort
   in the response body, test-only fixes, and a Rust 1.90 clippy rewrite.
 - **Review:** cross-lab by OpenAI GPT-6.1 Sol in three rounds:
@@ -376,7 +408,7 @@ Locally implemented and verified, **unpushed and unreleased**.
 
 ## 008 explicit memory — T001 and T002, 2026-10-04
 
-Locally implemented and verified, **unpushed and unreleased**.
+Locally implemented and verified, **pushed 2026-10-05, unreleased**.
 - **Authors:** Z.ai GLM-5.3 (implementer), plus captain integration fixes.
 - **Review:** cross-lab by OpenAI GPT-6.1 Sol in three rounds:
   - REVISE: 8 Majors, including pending-key migration loss and enabled context reading
@@ -431,7 +463,7 @@ Locally implemented and verified, **unpushed and unreleased**.
 ## Token-economics remainder — 003 T005 and 007 T001, 2026-10-04
 
 Locally implemented and verified; committed on main as `bd1d890` (001 T005 amendment),
-`5e99ffd` (003 T005) and `cc402e0` (007 T001), **unpushed and unreleased**. Authors: Z.ai
+`5e99ffd` (003 T005) and `cc402e0` (007 T001), **pushed 2026-10-05, unreleased**. Authors: Z.ai
 `glm-5.3` (usage import and economics tests, multi-root, OMP hook) and Anthropic Claude
 Opus 5.5 (captain: 001 T005 leading-run amendment and integration). Reviewer: OpenAI
 `gpt-6.1-sol:xhigh`, one reviewer per slice on a different lab from both authors; not an

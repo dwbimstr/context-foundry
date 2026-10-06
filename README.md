@@ -6,12 +6,13 @@ budget. The revised plan includes Foundry-owned Rust learning in isolated worker
 explicit repository bootstrap, adapter budgets and optional request forwarding/metering. Ordinary retrieval
 requires no model or GPU. Laya is a research reference, not the target runtime.
 
-**Status: 001 (T001–T006) and 003 T001–T003 verified locally; 003 T005 and 007 T001
-accepted and committed locally on 2026-10-04 (unpushed); nothing released.** Reliable
-cited CLI context, explicit bootstrap and agent access over MCP (stdio, plus an opt-in
-shared owner for concurrent hosts) work on macOS arm64; see [validation](docs/validation.md).
-Large-codebase performance, agent task improvement, and dollar savings have not been
-established. There is no published release yet.
+**Status: 001, 003, 005, 007 and 008 complete; 009 T001–T002 and 013 T001 accepted
+(2026-10-05), with model workers under development isolation only; 009 T003 and 013
+T002–T004 open. Pushed to `main`; nothing released.** Reliable cited CLI context,
+explicit bootstrap and agent access over MCP (stdio, plus an opt-in shared owner for
+concurrent hosts) work on macOS arm64; see [validation](docs/validation.md).
+Agent task improvement and dollar savings have not been established. There is no
+published release yet.
 
 ## Try it
 
