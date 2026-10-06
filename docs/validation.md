@@ -40,6 +40,42 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## Installable package — 2026-10-06
+
+Unsigned (ad-hoc-signed development bundles). Signing is the last step, by owner decision (2026-10-06).
+- **Shape.**
+  - `scripts/package.sh` builds `context-foundry-<version>-macos-arm64.tar.gz`: the core, optional `foundry-embed`/`foundry-learn` with their bundle scripts, README, LICENSE, THIRD-PARTY (331 packages) and `PACKAGE.json` (every file's SHA-256 plus the dependency identities). No weights, datasets, profiles or credentials.
+  - `scripts/install.sh` supports `install`, `upgrade`, `rollback`, `disable-semantic`, `disable-learning` and `uninstall`.
+  - Versions install side by side, selected by an atomically switched `current` link.
+  - Worker bundles are built at install time from the operator's profiles, which are written back as installed copies.
+  - One lock and one recorded intent (`pending.json`) make every interrupted command recoverable: it completes or rolls back from recorded hashes only.
+  - Refusals happen before any change: running owners, symlinked layout, a foreign launcher, non-ASCII or control-character paths.
+  - Uninstall removes only owned files that still match their hashes, plus the `connect` host-config block (byte-exact restore through `connect --remove-config`).
+  - `bootstrap` reports a `versions` object.
+- **Review.** Anthropic Opus 5.5 implemented it; OpenAI GPT-6.1 Sol reviewed it over four rounds (REVISE ×3, then SHIP). The findings fixed were:
+  - deletion through replaced symlinks;
+  - pruning of unowned empty directories;
+  - overwriting an operator launcher;
+  - unrecoverable interruptions;
+  - ownership recovered by rehashing;
+  - glob-based temp cleanup;
+  - a symlinked lock;
+  - busy-check gaps;
+  - marker substrings in host configs;
+  - recovery bypassing the busy gate;
+  - post-commit rollback;
+  - unproven host cleanup;
+  - foreign `current` links.
+  
+  The remaining limits are documented in deployment.md: a check-to-delete TOCTOU window, an owner starting after the final busy check, and recovery's own temporaries.
+- **Tests.** `tests/install.rs` (5): package contents and manifest; install, run, upgrade, rollback and uninstall with user data kept; busy refusal; worker bundles with fake workers; byte-exact host-config removal; interrupted-command recovery at every recorded point; refusal cases.
+- **Real smoke** (release build with both real workers):
+  - Install builds both ad-hoc bundles. Semantic context is `ready` through the installed Nemotron bundle; context is `route:policy` through the installed learning bundle.
+  - `connect --apply-config` works.
+  - Upgrade to a relabeled package rebuilds both bundles and serves `ready`.
+  - Rollback and `disable-learning` work.
+  - Uninstall leaves the store byte-identical, the host config byte-exact, the supplied profiles intact and nothing under the prefix.
+
 ## Measurement phase — 2026-10-06
 
 The owner deferred every measurement until the implementable spec tasks were done (2026-10-05). All runs used release builds and the development bundles; nothing ran under production isolation. Evidence: [009 T003 lifecycle](review/009-t003-lifecycle-2026-10-06.json), [013 rounds](review/013-measurement-2026-10-06.json).
