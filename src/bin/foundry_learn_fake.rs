@@ -6,6 +6,12 @@
 //! two fake parameters), so the core's candidate validation runs unchanged.
 //!
 //! `--shim` serves the owner-death tests exactly as 009's fake does.
+//!
+//! 013 T003 serving hooks, keyed by the 1-based prediction count:
+//! `--predict-delays-ms A,B,…` sleeps before each prediction's logits,
+//! `--predict-die-at N` aborts during prediction N, and
+//! `--predict-tamper N:KIND,…` rewrites (or duplicates, or withholds)
+//! prediction N's reply header (see [`fake::tamper`]).
 #[cfg(target_os = "macos")]
 fn main() {
     use context_foundry::learning::worker::{self, WorkerArgs};
@@ -41,6 +47,10 @@ fn main() {
         std::process::exit(1);
     }
     args.faults = hooks.reply.clone();
+    if !hooks.predict_tamper.is_empty() {
+        let _ = fake::TAMPER.set(hooks.predict_tamper.clone());
+        args.faults.serve_reply = Some(fake::tamper);
+    }
     let mut backend = fake::Fake::new(hooks);
     std::process::exit(worker::serve(args, &mut backend));
 }
@@ -76,6 +86,9 @@ mod fake {
         pub save_bloat_mb: u64,
         pub frozen_drift: bool,
         pub env_report: Option<String>,
+        pub predict_delays_ms: Vec<u64>,
+        pub predict_die_at: Option<u64>,
+        pub predict_tamper: Vec<(u64, String)>,
     }
 
     impl Hooks {
@@ -111,6 +124,22 @@ mod fake {
                     "--stale-logits" => hooks.reply.stale_logits = Some(number(i, name)?),
                     "--save-extra-mb" => hooks.save_extra_mb = number(i, name)?,
                     "--save-bloat-mb" => hooks.save_bloat_mb = number(i, name)?,
+                    "--predict-die-at" => hooks.predict_die_at = Some(number(i, name)?),
+                    "--predict-delays-ms" => {
+                        hooks.predict_delays_ms = text(i, name)?
+                            .split(',')
+                            .map(|ms| ms.parse::<u64>().map_err(|e| format!("{name}: {e}")))
+                            .collect::<Result<_, _>>()?;
+                    }
+                    "--predict-tamper" => {
+                        for entry in text(i, name)?.split(',') {
+                            let (n, kind) = entry
+                                .split_once(':')
+                                .ok_or(format!("{name} entries are N:KIND"))?;
+                            let n = n.parse::<u64>().map_err(|e| format!("{name}: {e}"))?;
+                            hooks.predict_tamper.push((n, kind.to_owned()));
+                        }
+                    }
                     _ => {
                         takes_value = false;
                         match name {
@@ -364,6 +393,17 @@ mod fake {
 
         fn logits(&mut self, ids: &[u32], markers: [usize; 2]) -> Result<[f32; 2], Refusal> {
             self.logits_calls += 1;
+            if self.hooks.predict_die_at == Some(self.logits_calls) {
+                std::process::abort();
+            }
+            if let Some(ms) = self
+                .hooks
+                .predict_delays_ms
+                .get(self.logits_calls as usize - 1)
+                .filter(|ms| **ms > 0)
+            {
+                std::thread::sleep(std::time::Duration::from_millis(*ms));
+            }
             if self.hooks.nonfinite_logits_at == Some(self.logits_calls) {
                 return Ok([f32::NAN, 0.0]);
             }
@@ -439,6 +479,101 @@ mod fake {
                 format!("fake encoder {drift}").as_bytes(),
             ))
         }
+    }
+
+    /// The configured reply rewrites (`--predict-tamper`).
+    pub static TAMPER: std::sync::OnceLock<Vec<(u64, String)>> = std::sync::OnceLock::new();
+
+    /// Rewrite prediction `count`'s reply header. Kinds: `legacy_confidence`
+    /// and `extra_field` add a field; `missing_graph` and `extra_option`
+    /// break the probability keys; `null_choice`; `sum`, `range`,
+    /// `minority_choice`, `tie_search` and `confidence` break the
+    /// distribution or its consistency; `wrong_candidate`, `wrong_model`,
+    /// `wrong_input` and `wrong_id` break the identity; `duplicate_key`
+    /// repeats `choice` in the raw JSON; `twice` sends the reply twice;
+    /// `silent` sends nothing; `probs=S/G[/C]` sets a CONSISTENT vector
+    /// (choice by the maximum/tie rule, confidence the maximum or `C`).
+    pub fn tamper(count: u64, header: Vec<u8>) -> Vec<Vec<u8>> {
+        use serde_json::{Value, json};
+        let Some(kind) = TAMPER
+            .get()
+            .and_then(|list| list.iter().find(|(n, _)| *n == count))
+            .map(|(_, kind)| kind.clone())
+        else {
+            return vec![header];
+        };
+        let mut value: Value = serde_json::from_slice(&header).expect("the worker's own reply");
+        let digest = |c: char| json!(c.to_string().repeat(64));
+        match kind.as_str() {
+            "legacy_confidence" => value["confidence"] = json!(0.99),
+            "extra_field" => value["act"] = json!(1),
+            "missing_graph" => {
+                value["probabilities"]
+                    .as_object_mut()
+                    .expect("probabilities")
+                    .remove("graph");
+            }
+            "extra_option" => value["probabilities"]["delete_workspace"] = json!(0.0),
+            "null_choice" => value["choice"] = Value::Null,
+            "sum" => {
+                value["probabilities"] = json!({"search": 0.7, "graph": 0.2});
+                value["choice"] = json!("search");
+                value["answer_confidence"] = json!(0.7);
+            }
+            "range" => {
+                value["probabilities"] = json!({"search": 1.2, "graph": -0.2});
+                value["choice"] = json!("search");
+                value["answer_confidence"] = json!(1.2);
+            }
+            "minority_choice" => {
+                let search = value["probabilities"]["search"].as_f64().unwrap_or(0.0);
+                let graph = value["probabilities"]["graph"].as_f64().unwrap_or(0.0);
+                value["choice"] = json!(if search > graph { "graph" } else { "search" });
+                value["answer_confidence"] = json!(search.min(graph));
+            }
+            "tie_search" => {
+                value["probabilities"] = json!({"search": 0.5, "graph": 0.5});
+                value["choice"] = json!("search");
+                value["answer_confidence"] = json!(0.5);
+            }
+            "confidence" => {
+                let confidence = value["answer_confidence"].as_f64().unwrap_or(0.0);
+                value["answer_confidence"] = json!(confidence - 0.01);
+            }
+            "wrong_candidate" => value["candidate_sha256"] = digest('0'),
+            "wrong_model" => value["model_function_sha256"] = digest('1'),
+            "wrong_input" => value["input_sha256"] = digest('2'),
+            "wrong_id" => {
+                let id = value["request_id"].as_u64().unwrap_or(0);
+                value["request_id"] = json!(id + 1);
+            }
+            "twice" => return vec![header.clone(), header],
+            "silent" => return Vec::new(),
+            "duplicate_key" => {
+                let text = String::from_utf8(header).expect("JSON is UTF-8");
+                let choice = value["choice"].to_string();
+                let doubled = text.replacen(
+                    &format!("\"choice\":{choice}"),
+                    &format!("\"choice\":{choice},\"choice\":{choice}"),
+                    1,
+                );
+                return vec![doubled.into_bytes()];
+            }
+            other => {
+                let numbers: Vec<f64> = other
+                    .strip_prefix("probs=")
+                    .unwrap_or_else(|| panic!("unknown tamper kind {other}"))
+                    .split('/')
+                    .map(|n| n.parse().expect("a probability"))
+                    .collect();
+                let (search, graph) = (numbers[0], numbers[1]);
+                value["probabilities"] = json!({"search": search, "graph": graph});
+                value["choice"] = json!(if search > graph { "search" } else { "graph" });
+                value["answer_confidence"] =
+                    json!(numbers.get(2).copied().unwrap_or(search.max(graph)));
+            }
+        }
+        vec![serde_json::to_vec(&value).expect("JSON")]
     }
 }
 

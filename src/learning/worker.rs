@@ -9,7 +9,15 @@
 //! one loaded, a malformed input, and any nonfinite number it would send;
 //! every refusal is an `error` frame and the end of the process. Owner EOF
 //! ends the process normally.
-use super::ipc::{self, HeadSlot, Identity, LEARN_PROTOCOL, LearnHeader, Message, ParameterCounts};
+//!
+//! 013 T003: a `serve` load (the selected candidate's head, evaluation
+//! mode, its fitted temperature) switches the loop to IPC-v2 predictions
+//! for the rest of the process: one [`PredictRequest`] in, one
+//! [`PredictReply`] out, nothing else accepted.
+use super::ipc::{
+    self, HeadSlot, Identity, LEARN_PROTOCOL, LearnHeader, Message, PREDICT_PROTOCOL,
+    ParameterCounts, PredictReply, PredictRequest, Probabilities,
+};
 use crate::decision_model::CheckpointPin;
 use crate::neural::protocol::{FrameError, read_frame_as, write_frame_as};
 use crate::neural::worker_runtime::{
@@ -86,6 +94,10 @@ pub trait Backend {
     fn frozen_hash(&mut self) -> Result<String, Refusal>;
 }
 
+/// A serving reply rewrite: the prediction count and the reply header, to
+/// the headers actually sent (none, one or several).
+pub type ServeReplyHook = fn(u64, Vec<u8>) -> Vec<Vec<u8>>;
+
 /// Reply-side fault hooks of the fake worker (test-faults builds parse
 /// them; the real worker always runs with none).
 #[derive(Clone, Debug, Default)]
@@ -100,6 +112,8 @@ pub struct ReplyFaults {
     pub duplicate_saved: bool,
     /// Append `<kind> <request_id>` for every request received.
     pub request_log: Option<PathBuf>,
+    /// Serving: rewrite the n-th (1-based) prediction reply.
+    pub serve_reply: Option<ServeReplyHook>,
 }
 
 pub struct WorkerArgs {
@@ -248,13 +262,139 @@ fn read_head(slot: HeadSlot) -> Result<Vec<u8>, Refusal> {
 }
 
 fn log_request(faults: &ReplyFaults, kind: &str, id: u64) {
+    log_line(faults, &format!("{kind} {id}"));
+}
+
+fn log_line(faults: &ReplyFaults, line: &str) {
     if let Some(path) = &faults.request_log
         && let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
     {
-        let _ = writeln!(file, "{kind} {id}");
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// What a serving worker loaded (013 T003).
+struct Serving {
+    candidate_sha256: String,
+    model_function_sha256: String,
+    temperature: f64,
+}
+
+/// A serving refusal: the IPC-v2 reply has no error form, so the reason
+/// goes to stderr (which the owner keeps bounded) and the process ends.
+fn refuse_serving(code: &str, message: impl std::fmt::Display) -> ! {
+    eprintln!("{code}: {message}");
+    worker_runtime::exit_now(1)
+}
+
+fn write_raw_frame(out: &mut std::fs::File, header: &[u8]) -> std::io::Result<()> {
+    out.write_all(&(header.len() as u32).to_le_bytes())?;
+    out.write_all(header)?;
+    out.write_all(&0u32.to_le_bytes())?;
+    out.flush()
+}
+
+/// Serve IPC-v2 predictions until owner EOF: the request must follow the
+/// last ID, name exactly the loaded candidate and model function, the
+/// family and a permutation of the stable options, and carry a decodable
+/// rendering; then evaluation-mode logits, the contract's stable softmax at
+/// the candidate's fitted temperature, and the maximum/tie rule.
+fn serve_predictions(
+    out: &mut std::fs::File,
+    input: &mut impl std::io::Read,
+    backend: &mut dyn Backend,
+    serving: &Serving,
+    faults: &ReplyFaults,
+    mut last_id: u64,
+) -> i32 {
+    use crate::decision_model::{FAMILY, OPTIONS, STATE_MAX_BYTES};
+    let mut count = 0u64;
+    loop {
+        let (request, payload) = match read_frame_as::<PredictRequest, _>(input) {
+            Ok(frame) => frame,
+            Err(FrameError::Eof) => return 0,
+            Err(e) => {
+                eprintln!("frame_invalid: {e}");
+                return FRAME_EXIT;
+            }
+        };
+        count += 1;
+        log_line(
+            faults,
+            &format!(
+                "predict {} {}",
+                request.request_id, request.candidate_sha256
+            ),
+        );
+        if request.request_id <= last_id {
+            refuse_serving(
+                "request_out_of_order",
+                format!("request {} does not follow {last_id}", request.request_id),
+            );
+        }
+        last_id = request.request_id;
+        if request.candidate_sha256 != serving.candidate_sha256
+            || request.model_function_sha256 != serving.model_function_sha256
+        {
+            refuse_serving(
+                "identity_mismatch",
+                "the request names another candidate or model function than this worker loaded",
+            );
+        }
+        let order = [
+            request.option_ids[0].as_str(),
+            request.option_ids[1].as_str(),
+        ];
+        if request.family != FAMILY
+            || request.state.len() > STATE_MAX_BYTES
+            || order[0] == order[1]
+            || !order
+                .iter()
+                .all(|id| OPTIONS.iter().any(|def| def.id == *id))
+        {
+            refuse_serving(
+                "input_invalid",
+                "the family, state or options are not a valid input",
+            );
+        }
+        let (ids, markers) = ipc::decode_predict_payload(&payload)
+            .unwrap_or_else(|m| refuse_serving("input_invalid", m));
+        let logits = backend
+            .logits(&ids, markers)
+            .unwrap_or_else(|r| refuse_serving(r.code, r.message));
+        if !logits.iter().all(|v| v.is_finite()) {
+            refuse_serving("nonfinite_logits", format!("logits {logits:?}"));
+        }
+        let p = super::eval::softmax(logits, serving.temperature);
+        let decision = super::eval::decide(p, order, 0.0);
+        let at = |id: &str| p[usize::from(order[1] == id)];
+        let reply = PredictReply {
+            v: PREDICT_PROTOCOL,
+            request_id: request.request_id,
+            candidate_sha256: serving.candidate_sha256.clone(),
+            model_function_sha256: serving.model_function_sha256.clone(),
+            input_sha256: crate::decision_model::input_sha256(&request.state, order),
+            choice: order[decision.selected].to_owned(),
+            probabilities: Probabilities {
+                search: at("search"),
+                graph: at("graph"),
+            },
+            answer_confidence: decision.confidence,
+        };
+        let header =
+            serde_json::to_vec(&reply).unwrap_or_else(|e| refuse_serving("frame_invalid", e));
+        let headers = match faults.serve_reply {
+            Some(tamper) => tamper(count, header),
+            None => vec![header],
+        };
+        for header in headers {
+            if write_raw_frame(out, &header).is_err() {
+                return FRAME_EXIT;
+            }
+        }
     }
 }
 
@@ -327,7 +467,9 @@ pub fn serve(args: WorkerArgs, backend: &mut dyn Backend) -> i32 {
             );
         }
         last_id = id;
-        if !matches!(header.message, Message::Load { .. }) && current.as_ref() != Some(&identity) {
+        if !matches!(header.message, Message::Load { .. } | Message::Serve { .. })
+            && current.as_ref() != Some(&identity)
+        {
             channel.refuse(
                 id,
                 &identity,
@@ -390,6 +532,71 @@ pub fn serve(args: WorkerArgs, backend: &mut dyn Backend) -> i32 {
                     trainable: report.trainable,
                     frozen_encoder_sha256: report.frozen_encoder_sha256,
                 }
+            }
+            Message::Serve {
+                checkpoint,
+                candidate_sha256,
+                temperature,
+                threads,
+            } => {
+                let Some(head) = identity.head_sha256.clone() else {
+                    refused!(Refusal::new(
+                        "identity_mismatch",
+                        "a serve load names the candidate's head"
+                    ));
+                };
+                if identity.steps != 0 {
+                    refused!(Refusal::new(
+                        "identity_mismatch",
+                        "a serve load starts at step 0 of its head"
+                    ));
+                }
+                if !super::hex64(&candidate_sha256)
+                    || !super::hex64(&identity.model_function_sha256)
+                    || !super::eval::valid_temperature(temperature)
+                {
+                    refused!(Refusal::new(
+                        "input_invalid",
+                        "a serve load needs a candidate and model digest and a grid temperature"
+                    ));
+                }
+                let bytes = read_head(HeadSlot::Serve).unwrap_or_else(|r| refused!(r));
+                if sha256(&bytes) != head {
+                    refused!(Refusal::new(
+                        "artifact_invalid",
+                        format!("{} is not the named head", HeadSlot::Serve.file_name()),
+                    ));
+                }
+                let report = backend
+                    .load(&args.checkpoint_dir, Some(&bytes), threads, 0)
+                    .unwrap_or_else(|r| refused!(r));
+                if let Err(refusal) = check_pin(&report, &checkpoint) {
+                    refused!(refusal);
+                }
+                let loaded = Message::Loaded {
+                    source_dtype: report.source_dtype,
+                    weights_sha256: report.weights_sha256,
+                    encoder_config_sha256: report.encoder_config_sha256,
+                    counts: report.counts,
+                    trainable: report.trainable,
+                    frozen_encoder_sha256: report.frozen_encoder_sha256,
+                };
+                if !channel.send(id, &identity, loaded) {
+                    return FRAME_EXIT;
+                }
+                let serving = Serving {
+                    candidate_sha256,
+                    model_function_sha256: identity.model_function_sha256,
+                    temperature,
+                };
+                return serve_predictions(
+                    &mut channel.out,
+                    &mut input,
+                    backend,
+                    &serving,
+                    &faults,
+                    id,
+                );
             }
             Message::Step { markers, target } => {
                 let (ids, at) = decode(markers).unwrap_or_else(|r| refused!(r));

@@ -558,6 +558,9 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
         items,
         counters,
         semantic: primary_semantic(batches),
+        // 013 T003: the policy routes the PRIMARY root only (its store
+        // composes the state), with the same scope suffix as semantics.
+        route: primary_word(batches[0].batch.route.as_ref(), batches.len()),
     }
 }
 
@@ -566,8 +569,13 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
 /// serving root the word says it covers the primary root only, so the merge
 /// never silently drops or broadens it.
 fn primary_semantic(batches: &[RootBatch]) -> Option<String> {
-    let word = batches[0].batch.semantic.as_ref()?;
-    Some(if batches.len() > 1 {
+    primary_word(batches[0].batch.semantic.as_ref(), batches.len())
+}
+
+/// A primary-root-only header word, suffixed when other roots also serve.
+fn primary_word(word: Option<&String>, serving: usize) -> Option<String> {
+    let word = word?;
+    Some(if serving > 1 {
         format!("{word}; primary root only")
     } else {
         word.clone()
@@ -618,6 +626,7 @@ mod tests {
             items,
             counters: CandidateCounters::default(),
             semantic: None,
+            route: None,
         }
     }
 

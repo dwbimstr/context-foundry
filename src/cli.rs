@@ -6,7 +6,7 @@ use crate::{
     Control, Engine, FResult, FoundryError, Strategy,
     adapter_error::AResult,
     graph::GraphBundle,
-    laya::Feedback,
+    learning::Feedback,
     response::{self, Budget},
     store::check_token_budget,
 };
@@ -52,6 +52,11 @@ enum Command {
         development_isolation: bool,
     },
     /// Print only the token-budgeted evidence text to stdout.
+    #[command(group(
+        clap::ArgGroup::new("isolated_workers")
+            .multiple(true)
+            .args(["semantic_profile", "policy_config"])
+    ))]
     Context {
         query: String,
         #[arg(long, default_value_t = 2048)]
@@ -65,9 +70,19 @@ enum Command {
         /// the lexical candidates. The worker loads at command start.
         #[arg(long = "semantic-profile", value_name = "FILE")]
         semantic_profile: Option<PathBuf>,
-        /// Required to run the development-isolated worker.
-        #[arg(long = "development-isolation", requires = "semantic_profile")]
+        /// 013 T003: route `--strategy auto` with the learned policy this
+        /// config v2 file selects. Validated and loaded at command start;
+        /// an invalid config or a failed start keeps deterministic routing
+        /// with the reason in the header.
+        #[arg(long = "policy-config", value_name = "FILE")]
+        policy_config: Option<PathBuf>,
+        /// Required to run the development-isolated workers.
+        #[arg(long = "development-isolation", requires = "isolated_workers")]
         development_isolation: bool,
+        /// Removed in 013 T003 (the legacy Laya HTTP router); refused with
+        /// migration guidance.
+        #[arg(long = "laya-port", value_name = "PORT", hide = true)]
+        laya_port: Option<String>,
     },
     /// Retrieve one exact span addressed by a v2 handle string
     /// (`path#start-end@sha32.ws16`), optionally narrowed to whole file lines.
@@ -142,7 +157,12 @@ enum Command {
     /// Resume pending derived-index work after an interrupted indexing command.
     Refresh,
     /// Store metadata; never touches the filesystem on a missing store.
-    Status,
+    /// `policy` reports the learned routing policy: `disabled`, or the
+    /// `--policy-config` file validated as an owner would (no worker starts).
+    Status {
+        #[arg(long = "policy-config", value_name = "FILE")]
+        policy_config: Option<PathBuf>,
+    },
     /// Explicit v1..v5 -> v6 schema upgrade under exclusive ownership; `--to`
     /// must be 6, the only supported target.
     UpgradeStore {
@@ -267,6 +287,24 @@ enum LearningAction {
         #[arg(long)]
         query: String,
     },
+    /// 013 T003: validate a published candidate (full read-back, identity,
+    /// report digest, the fitted scalar and no inherited temperature,
+    /// eligibility, and the CURRENT consent of every example it used) and
+    /// write a NEW config v2 file naming it; an existing file is never
+    /// overwritten (`output_exists`). Install it with `mcp --policy-config
+    /// FILE` (or `context --policy-config FILE`) and a restart; roll back by
+    /// restarting with the prior file or none. Exits 0 selected, 2 invalid
+    /// or refused, 3 busy, 1 write failure.
+    Select {
+        #[arg(long)]
+        candidate: PathBuf,
+        /// The learning-worker isolation profile the policy will serve under.
+        #[arg(long = "isolation-profile")]
+        isolation_profile: PathBuf,
+        /// The new config file.
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -364,6 +402,21 @@ fn parse_strategy(raw: &str) -> FResult<Strategy> {
             "unknown strategy {other:?}; expected auto, search or graph"
         ))),
     }
+}
+
+/// `--laya-port` (and the legacy HTTP router it enabled) was removed in 013
+/// T003. Host configurations are never rewritten; the message says what to
+/// run instead.
+fn removed_laya_port() -> FoundryError {
+    FoundryError::UnsupportedMode(
+        "--laya-port was removed with the legacy Laya HTTP router (013 T003). Context \
+         routing is deterministic by default; to serve a learned policy, select a trained \
+         candidate with `foundry learning select --candidate DIR --isolation-profile FILE \
+         --out CONFIG` and pass `--policy-config CONFIG --development-isolation` (see \
+         docs/learning.md). Remove --laya-port from your host configuration; Foundry does \
+         not edit it."
+            .into(),
+    )
 }
 
 /// The `--semantic-profile FILE [--development-isolation]` flags as the
@@ -627,8 +680,13 @@ fn run() -> AResult<()> {
             strategy,
             include_memory,
             semantic_profile,
+            policy_config,
             development_isolation,
+            laya_port,
         } => {
+            if laya_port.is_some() {
+                return Err(removed_laya_port().into());
+            }
             let strategy = parse_strategy(&strategy)?;
             check_token_budget(tokens)?;
             let engine = Engine::open_existing(&cli.store)?;
@@ -639,11 +697,27 @@ fn run() -> AResult<()> {
             // then applies to the embedding call only. A refused or failed
             // worker leaves baseline results with the reason in the header.
             let semantic = semantic_launch(semantic_profile, development_isolation);
-            let (batch, memory) = if let Some(launch) = semantic {
-                let slot = crate::mcp::semantic_slot(Some(launch))?;
+            // 013 T003: the policy config is validated and its worker loaded
+            // at command start, outside the request's read deadline; an
+            // invalid config or a failed start keeps deterministic routing
+            // with the reason in the header. No config, or a disabled one,
+            // leaves the output byte-identical.
+            let policy = policy_config.map(|config| {
+                crate::policy::Policy::start(
+                    Some(crate::policy::PolicyServing::new(
+                        config,
+                        development_isolation,
+                    )),
+                    engine.workspace_id().as_deref(),
+                )
+            });
+            let routed = policy.as_ref().filter(|policy| policy.routes());
+            let (batch, memory) = if semantic.is_some() || routed.is_some() {
+                let slot = crate::mcp::semantic_slot(semantic)?;
                 let control = Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE);
                 let combined = crate::mcp::context_primary(
                     &slot,
+                    routed,
                     &engine,
                     &query,
                     strategy,
@@ -872,9 +946,29 @@ fn run() -> AResult<()> {
                 serde_json::json!({"refreshed_sources": n.0, "refreshed_memory": n.1})
             );
         }
-        Command::Status => {
+        Command::Status { policy_config } => {
             let engine = Engine::open_existing(&cli.store)?;
-            println!("{}", serde_json::to_string_pretty(&engine.status()?)?);
+            /// The store status plus the policy object, store fields first.
+            #[derive(serde::Serialize)]
+            struct WithPolicy<'a> {
+                #[serde(flatten)]
+                status: &'a crate::StoreStatus,
+                policy: serde_json::Value,
+            }
+            let status = engine.status()?;
+            let policy = match policy_config {
+                Some(config) => {
+                    crate::policy::Policy::inspect(&config, engine.workspace_id().as_deref())
+                }
+                None => crate::policy::Policy::off().status(),
+            };
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&WithPolicy {
+                    status: &status,
+                    policy,
+                })?
+            );
         }
         Command::UpgradeStore { to } => {
             let control = live_control();
@@ -976,6 +1070,23 @@ fn learning_run(store: &std::path::Path, action: LearningAction) -> AResult<()> 
             let state = engine.compose_route_state(&query, &control)?;
             // Exactly the state plus the one LF `println!` adds.
             println!("{state}");
+        }
+        LearningAction::Select {
+            candidate,
+            isolation_profile,
+            out,
+        } => {
+            let engine = Engine::open_existing(store)?;
+            let selected = crate::policy::select(
+                &engine,
+                &crate::policy::SelectRequest {
+                    candidate: &candidate,
+                    isolation_profile: &isolation_profile,
+                    out: &out,
+                },
+                &control,
+            )?;
+            println!("{}", serde_json::to_string(&selected)?);
         }
     }
     Ok(())

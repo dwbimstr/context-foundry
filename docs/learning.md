@@ -7,8 +7,8 @@ review: `src/decision_model.rs` (the one shared renderer/tokenizer path, no weig
 prepare/check, manifest, and `Engine::compose_route_state` — the one composer of the
 `state` that rows store and T003 will send) and `tests/learning_data.rs`, pinned to the
 upstream renderer's IDs by `tests/fixtures/learning/render.json`. T002 (fitting,
-calibration, evaluation and the candidate; see below) is implemented locally and awaits
-review; serving, selection and rollback (T003) are not implemented.
+calibration, evaluation and the candidate; see below) is accepted. T003 (serving,
+selection and rollback; see below) is implemented locally and awaits review.
 
 A `learning prepare` whose process died after publishing its output but before
 recording it leaves a dataset that is not yet a valid parent (`lineage_missing`).
@@ -72,6 +72,53 @@ foundry learning train --input DATASET/manifest.json --policy POLICY.json \
   and `wall_seconds` up to 7200; record wall time, peak footprint and the evaluation report;
 - timing, resource and latency figures, and parity under the signed bundle.
 
+## Serving, selection and rollback (013 T003)
+
+```sh
+foundry learning select --candidate CANDIDATE --isolation-profile PROFILE.json --out POLICY-1.json
+foundry mcp --root ROOT --policy-config POLICY-1.json --development-isolation
+foundry context QUERY --policy-config POLICY-1.json --development-isolation   # one command
+foundry status --policy-config POLICY-1.json   # validates without starting a worker
+```
+
+- **Select.** Reads the candidate back completely (T002's rules: hashes, head, fitted
+  scalar ≥ 0.5 on the grid, no inherited temperature), requires this workspace, its
+  model-function identity, eligibility (`candidate_ineligible`; there is no override)
+  and the CURRENT consent of every fitted, calibrated and evaluated example
+  (`contribution_changed`). It writes a NEW config v2 by no-replace publication and
+  never overwrites (`output_exists`). Exits 0 selected, 2 refused, 3 busy, 1 write.
+- **Serve.** The owner validates the config once at startup and loads the SAME
+  `foundry-learn` worker with the candidate (≤ 30 s, outside requests). Only `auto`
+  contexts with a current graph scope consult it, after the semantic merge and before
+  graph expansion, within the read deadline: the prediction waits min(2 s, half the time
+  left), so the deterministic fallback keeps at least as long, and a wait under 50 ms
+  skips the model (`policy_insufficient_time`). A reply counts only when it is published
+  to the core's per-request state before the ceiling (one arbiter per request). The core
+  renders the state with the candidate's tokenizer from the profile's
+  `checkpoint_dir/tokenizer/`, validates every reply and thresholds the unrounded
+  maximum probability. One prediction at a time and none waiting. The header gains
+  `route:policy` or `route:fallback:<reason>`; `status` gains a `policy` object
+  (`disabled`, `enabled` with candidate, threshold, consecutive timeouts and `busy`, or
+  `unavailable` with its reason). Without a config, or with `{"v":2,"enabled":false}`,
+  output is byte-identical to before.
+- **Fail closed.** An invalid config, a missing isolation flag or a failed start leaves
+  the owner serving deterministically with the reason in `status`. A malformed or
+  wrong-identity reply, a dead worker, or three consecutive timeouts end the worker;
+  the policy stays unavailable until restart. There is no restart loop.
+- **Rollback.** Restart with the prior config file, or with none. Select, serving and
+  rollback write nothing to the store; source, memory, graph, feedback and the semantic
+  cache are untouched. One owner serves exactly one config.
+
+**Deferred to the measurement phase** (owner directive 2026-10-05: written, not run):
+the enablement gate — the same checked agent tasks with and without the policy, read by
+`foundry usage import --host omp|codex --session FILE`, comparing task correctness,
+latency and total provider tokens (enable only on equal correctness and lower tokens);
+the combined 009+013 residency run (`mcp --semantic-profile S --policy-config P
+--development-isolation` under `/usr/bin/time -l`, both workers loaded, the summed
+peak footprint against deployment's aggregate budget); and real-checkpoint prediction
+latency (`cargo test --features learning-worker --test policy -- --nocapture
+served_probabilities` reports parity only, not timing).
+
 ## Scope, ownership and the loop
 
 The [decision-ecosystem source map](references/laya-decision-ecosystem.md) is the
@@ -126,12 +173,11 @@ owns those deterministic boundaries. Learning remains off until actual task bene
 justifies it, but its tasks must be complete before any release. Model preparation
 and training costs are reported separately and amortized only over observed use.
 
-The existing `src/laya.rs`/`--laya-port` path is a legacy prototype interface scheduled
-for removal in 013 T003. [Legacy notes](laya.md) describe what currently exists; they
-do not override the owned design. No automatic Laya checkpoint conversion or
-dual-provider router is planned. V4 pins permitted starting weights and exact
-head/checkpoint mapping; base ModernBERT alone does not supply trained decisions.
-Preserve old feedback without silently granting new permissions.
+The legacy `src/laya.rs`/`--laya-port` HTTP path was removed in 013 T003; `--laya-port`
+is refused with migration guidance ([legacy notes](laya.md)). No automatic Laya
+checkpoint conversion or dual-provider router exists. V4 pins permitted starting weights
+and exact head/checkpoint mapping; base ModernBERT alone does not supply trained
+decisions. Old feedback stays exportable without silently granting new permissions.
 
 ## ModernBERT and the cost of matching Laya — 2026-09-29
 

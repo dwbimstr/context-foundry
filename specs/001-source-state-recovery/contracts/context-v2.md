@@ -226,6 +226,18 @@ examined window, so it never proves absence beyond it (§ Deduplication, no cros
 suppression). Database and store failures stay named errors, never a
 `coverage:unavailable` success. `graph:` stays context-only.
 
+Header segments amendment, 2026-10-05 (013 T003): a context whose strategy is `auto`
+on an owner or command started with a policy config that is not disabled (an invalid one included) adds one last segment,
+after `graph:` and 009's `semantic:` word: `route:policy` when the policy's choice was
+accepted, else `route:fallback:<reason>` with deterministic routing, the reason one of
+`policy_abstained`, `policy_busy`, `policy_timeout`, `policy_insufficient_time`,
+`policy_unavailable`, `policy_input_oversize`, `graph_unavailable` or `graph_stale`. An explicit strategy,
+search, retrieve, references, memory, a disabled config and no config emit no segment,
+so their output is byte-identical to an owner without a policy. In a multi-root owner
+the policy routes the primary root only and its word carries `; primary root only`
+when other roots serve, as `semantic:` does. Budget-refusal hints do not reserve room
+for it (the hint header's worst-case numbers dominate).
+
 Removed from v1: `format_version`, `tokenizer`, `boundary`, `budget_satisfied`,
 `indexed_snapshot`, `candidate_limit`, per-item `workspace_id`, `strategy` (except the
 graph segment), `context_id` and `budget_scope`. No delivery ID is emitted: this

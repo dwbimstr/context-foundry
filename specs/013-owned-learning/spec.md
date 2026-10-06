@@ -245,6 +245,36 @@ T003's and SC-004 T004's, each passing only with that task's verification.
   tokens are lower; otherwise default policy stays off.
 - **Review/cutover:** reject removed option with migration guidance, no host config rewrite.
   Rollback restores prior supported binary/config, not two simultaneous model paths.
+- **Decisions made during implementation, 2026-10-05** (see [learning](../../docs/learning.md#serving-selection-and-rollback-013-t003),
+  the contract's serving amendment and context-v2's header amendment):
+  - Prediction runs in T002's `foundry-learn`, loaded by a new `serve` message; IPC-v2
+    rides T002's frame as exactly the contract's header fields, the payload carrying the
+    core's rendering. One supervised launch (`supervisor::spawn`, one monitor through
+    `Limits::measure`) serves training and serving; a serving worker has no CPU-time
+    limit, each prediction has its ceiling instead.
+  - The core renders with the candidate's pinned tokenizer from the isolation profile's
+    `checkpoint_dir/tokenizer/`; `tokenizer_mismatch` and `checkpoint_invalid` are start
+    failures, not config refusals.
+  - `select` takes `--isolation-profile` (the config pins it), refuses ineligible
+    candidates with no override, and re-checks current consent of fitted, calibrated
+    and evaluated examples. `status --policy-config` validates without a worker.
+  - Search never routes, so `--policy-config` exists on `mcp` and `context` only. In a
+    multi-root owner the policy routes the primary root.
+  - `Strategy` moved to `src/response.rs` and legacy `Feedback` to `src/learning.rs`;
+    `src/laya.rs` and `tests/laya_protocol.rs` are removed; `--laya-port` is refused with
+    guidance. `ureq` stays (the gateway launcher uses it).
+  - Review round 1: the prediction wait is min(2000 ms, HALF the remaining read
+    deadline), matching 009's query-embedding rule, so a timed-out prediction leaves the
+    deterministic fallback at least as much time; below 50 ms nothing is dispatched
+    (`policy_insufficient_time`). Review round 3: a reply is within the ceiling when it
+    is published to the core's per-request state before the ceiling; reading bytes
+    earlier does not count, since the core cannot act on a reply it has not received.
+    That state, changed under the slot lock, is the one linearization point: exactly one
+    of on-time success or timeout per request, and a late publication only frees the
+    slot.
+  - Review round 1: every evaluated example's `permission_sha256` is part of its case in
+    the manifest-bound `evaluation.json` (a T002 report format change), and selection
+    requires it unchanged (`contribution_changed`).
 
 ### T004 — Repeat and deploy without growing an orchestration platform
 

@@ -1817,10 +1817,10 @@ fn a_source_edit_makes_every_compiler_fact_stale_and_a_reimport_restores_them() 
     // changes: the facts stay eligible.
     world
         .engine()
-        .record_feedback(&context_foundry::laya::Feedback {
+        .record_feedback(&context_foundry::learning::Feedback {
             task_id: "t".into(),
             query: "q".into(),
-            correct_strategy: context_foundry::laya::Strategy::Graph,
+            correct_strategy: context_foundry::Strategy::Graph,
             label_source: "operator".into(),
             allow_training: false,
         })
@@ -2790,10 +2790,10 @@ fn a_v3_store_upgrades_to_v4_in_one_transaction_preserving_every_other_feature()
         })
         .unwrap();
     engine
-        .record_feedback(&context_foundry::laya::Feedback {
+        .record_feedback(&context_foundry::learning::Feedback {
             task_id: "t".into(),
             query: "q".into(),
-            correct_strategy: context_foundry::laya::Strategy::Search,
+            correct_strategy: context_foundry::Strategy::Search,
             label_source: "operator".into(),
             allow_training: true,
         })

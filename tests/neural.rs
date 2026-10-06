@@ -1098,10 +1098,10 @@ fn schema_6_upgrade_from_v5_preserves_every_table_and_the_vector_cache() {
             })
             .unwrap();
         engine
-            .record_feedback(&context_foundry::laya::Feedback {
+            .record_feedback(&context_foundry::learning::Feedback {
                 task_id: "t".into(),
                 query: "q".into(),
-                correct_strategy: context_foundry::laya::Strategy::Search,
+                correct_strategy: context_foundry::Strategy::Search,
                 label_source: "operator".into(),
                 allow_training: true,
             })

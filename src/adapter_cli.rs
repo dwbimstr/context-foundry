@@ -13,6 +13,11 @@ pub enum AdapterCommand {
     /// (search/context/retrieve/index/status/memory/references): stdio by
     /// default, or one shared owner at /mcp with --transport
     /// streamable-http.
+    #[command(group(
+        clap::ArgGroup::new("isolated_workers")
+            .multiple(true)
+            .args(["semantic_profile", "policy_config"])
+    ))]
     Mcp {
         /// Repository root; canonicalized and bound once.
         #[arg(long)]
@@ -42,9 +47,16 @@ pub enum AdapterCommand {
         /// baseline results with the reason named in every response header.
         #[arg(long = "semantic-profile", value_name = "FILE")]
         semantic_profile: Option<PathBuf>,
-        /// Required to run the development-isolated worker (normal
+        /// 013 T003: serve the learned routing policy this config v2 file
+        /// selects (`foundry learning select`). Validated and loaded ONCE
+        /// before serving; an invalid config or a failed start leaves
+        /// deterministic routing with the reason in the header and status.
+        /// Rollback: restart with the prior config file, or without one.
+        #[arg(long = "policy-config", value_name = "FILE")]
+        policy_config: Option<PathBuf>,
+        /// Required to run the development-isolated workers (normal
         /// admission stays closed until platform isolation acceptance).
-        #[arg(long = "development-isolation", requires = "semantic_profile")]
+        #[arg(long = "development-isolation", requires = "isolated_workers")]
         development_isolation: bool,
     },
     /// Inspect repository bootstrap; `--apply` creates/opens the store and indexes baseline source.
@@ -179,6 +191,7 @@ fn serve_mcp(
     references: Vec<String>,
     no_memory: bool,
     semantic: Option<crate::mcp::SemanticServing>,
+    policy: Option<crate::policy::PolicyServing>,
 ) -> AResult<()> {
     let budget = read_budget(budget.as_deref())?;
     let mut parsed = Vec::with_capacity(references.len());
@@ -193,6 +206,7 @@ fn serve_mcp(
         budget,
         no_memory,
         semantic,
+        policy,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -285,6 +299,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             reference,
             no_memory,
             semantic_profile,
+            policy_config,
             development_isolation,
         } => serve_mcp(
             store,
@@ -297,6 +312,8 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             no_memory,
             semantic_profile
                 .map(|profile| crate::mcp::SemanticServing::new(profile, development_isolation)),
+            policy_config
+                .map(|config| crate::policy::PolicyServing::new(config, development_isolation)),
         )?,
         AdapterCommand::Bootstrap {
             root,

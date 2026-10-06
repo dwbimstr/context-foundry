@@ -678,6 +678,7 @@ fn cases_of(rows: &[Row]) -> Vec<CaseInput> {
             option_ids: row.option_ids.clone(),
             expected: row.expected.clone(),
             baseline: row.baseline.unwrap_or("search").to_owned(),
+            permission_sha256: row.contribution.permission_sha256.clone(),
         })
         .collect()
 }

@@ -971,7 +971,7 @@ fn interrupted_forget_and_stale_documents_never_leak() {
     let combined = engine
         .context_candidates_memory(
             "interrupt_term",
-            context_foundry::laya::Strategy::Auto,
+            context_foundry::Strategy::Auto,
             &Control::unbounded(),
         )
         .unwrap();
@@ -1298,7 +1298,7 @@ fn empty_tail_packing_is_byte_identical_to_plain_context() {
         .engine
         .context_candidates(
             "parse_record",
-            context_foundry::laya::Strategy::Auto,
+            context_foundry::Strategy::Auto,
             &Control::unbounded(),
         )
         .unwrap();

@@ -1,9 +1,9 @@
 //! Reconciliation under named faults: root/file/ancestor/FIFO replacement,
 //! deterministic unreadable-file injection, interruption, and page bounds.
 use context_foundry::fault::{self, Action, Ctx, names};
-use context_foundry::laya::{Feedback, Strategy as LayaStrategy};
+use context_foundry::learning::Feedback;
 use context_foundry::testkit::{self, Fixture, knowledge, new_fixture, snapshot};
-use context_foundry::{Control, Engine, FoundryError, digest};
+use context_foundry::{Control, Engine, FoundryError, Strategy, digest};
 use std::cell::RefCell;
 use std::fs;
 use std::os::unix::fs::symlink;
@@ -14,7 +14,7 @@ fn feedback(task: &str) -> Feedback {
     Feedback {
         task_id: task.into(),
         query: format!("query for {task}"),
-        correct_strategy: LayaStrategy::Graph,
+        correct_strategy: Strategy::Graph,
         label_source: "operator".into(),
         allow_training: true,
     }

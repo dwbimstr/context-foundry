@@ -14,6 +14,12 @@
 //!
 //! Token IDs travel as `u32 LE` in the payload (at most 1024); every number
 //! in a header is finite JSON. Owner EOF ends the worker.
+//!
+//! 013 T003 serving adds one load message, [`Message::Serve`], after which
+//! the same frame channel carries only the contract's IPC-v2 prediction
+//! request and reply ([`PredictRequest`], [`PredictReply`]) as the JSON
+//! header, exactly their fields. The request payload is the core's
+//! preflighted rendering: both marker positions, then the token IDs.
 use crate::decision_model::{CheckpointPin, MAX_TOTAL_TOKENS};
 use crate::neural::protocol::FrameHeader;
 use serde::{Deserialize, Serialize};
@@ -21,6 +27,11 @@ use serde::{Deserialize, Serialize};
 pub const LEARN_PROTOCOL: u32 = 1;
 /// The largest payload: one maximal input's token IDs.
 pub const MAX_PAYLOAD_BYTES: usize = MAX_TOTAL_TOKENS * 4;
+/// The IPC-v2 version every prediction header declares in `v`.
+pub const PREDICT_PROTOCOL: u32 = 2;
+/// A prediction request's payload: two marker positions, then at most one
+/// maximal input's token IDs, all `u32 LE`.
+pub const PREDICT_PAYLOAD_BYTES: usize = (MAX_TOTAL_TOKENS + 2) * 4;
 
 /// What the owner believes is loaded.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,6 +54,8 @@ pub enum HeadSlot {
     Base,
     /// `incumbent-head.safetensors`.
     Incumbent,
+    /// `serve-head.safetensors`: the selected candidate's head (013 T003).
+    Serve,
 }
 
 impl HeadSlot {
@@ -50,6 +63,7 @@ impl HeadSlot {
         match self {
             Self::Base => "base-head.safetensors",
             Self::Incumbent => "incumbent-head.safetensors",
+            Self::Serve => "serve-head.safetensors",
         }
     }
 }
@@ -76,6 +90,17 @@ pub enum Message {
         head: Option<HeadSlot>,
         threads: u32,
         seed: u64,
+    },
+    /// Owner → worker (013 T003): load the checkpoint and the selected
+    /// candidate's head (`serve-head.safetensors`, named by the identity's
+    /// `head_sha256`) for prediction only, in evaluation mode, with the
+    /// candidate's one fitted temperature. The reply is `loaded`; after it
+    /// the channel carries only IPC-v2 prediction frames.
+    Serve {
+        checkpoint: CheckpointPin,
+        candidate_sha256: String,
+        temperature: f64,
+        threads: u32,
     },
     /// Worker → owner: what it verified and loaded.
     Loaded {
@@ -134,6 +159,7 @@ impl Message {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Load { .. } => "load",
+            Self::Serve { .. } => "serve",
             Self::Loaded { .. } => "loaded",
             Self::Step { .. } => "step",
             Self::Stepped { .. } => "stepped",
@@ -218,6 +244,97 @@ pub fn decode_input(payload: &[u8], markers: [u32; 2]) -> Result<(Vec<u32>, [usi
     Ok((ids, [markers[0] as usize, markers[1] as usize]))
 }
 
+/// IPC-v2 prediction request (contract § Serving, selection and rollback):
+/// exactly these fields in the JSON header; unknown, null and duplicate
+/// fields are refused. The payload is [`encode_predict_payload`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PredictRequest {
+    pub v: u32,
+    pub request_id: u64,
+    pub candidate_sha256: String,
+    pub model_function_sha256: String,
+    pub family: String,
+    pub state: String,
+    pub option_ids: [String; 2],
+}
+
+/// The reply's probability vector, keyed by stable option ID: exactly
+/// `search` and `graph`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Probabilities {
+    pub search: f64,
+    pub graph: f64,
+}
+
+/// IPC-v2 prediction reply: exactly these fields, no payload. The legacy
+/// ambiguous `confidence` field is unknown and therefore refused.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PredictReply {
+    pub v: u32,
+    pub request_id: u64,
+    pub candidate_sha256: String,
+    pub model_function_sha256: String,
+    pub input_sha256: String,
+    pub choice: String,
+    pub probabilities: Probabilities,
+    pub answer_confidence: f64,
+}
+
+impl FrameHeader for PredictRequest {
+    const PROTOCOL: u32 = PREDICT_PROTOCOL;
+    const MAX_PAYLOAD_BYTES: usize = PREDICT_PAYLOAD_BYTES;
+    fn protocol(&self) -> u32 {
+        self.v
+    }
+}
+
+impl FrameHeader for PredictReply {
+    const PROTOCOL: u32 = PREDICT_PROTOCOL;
+    const MAX_PAYLOAD_BYTES: usize = 0;
+    fn protocol(&self) -> u32 {
+        self.v
+    }
+}
+
+/// A prediction payload: both marker positions, then the token IDs.
+pub fn encode_predict_payload(ids: &[u32], markers: [u32; 2]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(8 + ids.len() * 4);
+    payload.extend_from_slice(&markers[0].to_le_bytes());
+    payload.extend_from_slice(&markers[1].to_le_bytes());
+    payload.extend_from_slice(&encode_ids(ids));
+    payload
+}
+
+/// Decode a prediction payload: the [`decode_input`] checks, plus both
+/// markers on the pinned `[MASK]` ID (the option markers of the rendering).
+pub fn decode_predict_payload(payload: &[u8]) -> Result<(Vec<u32>, [usize; 2]), String> {
+    if payload.len() < 8 {
+        return Err(format!(
+            "a {}-byte payload has no marker pair",
+            payload.len()
+        ));
+    }
+    let marker = |at: usize| {
+        u32::from_le_bytes([
+            payload[at],
+            payload[at + 1],
+            payload[at + 2],
+            payload[at + 3],
+        ])
+    };
+    let (ids, markers) = decode_input(&payload[8..], [marker(0), marker(4)])?;
+    let mask = crate::decision_model::SpecialIds::PINNED.mask;
+    if markers.iter().any(|&at| ids[at] != mask) {
+        return Err(format!(
+            "markers {markers:?} do not point at the option markers"
+        ));
+    }
+    Ok((ids, markers))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,5 +411,84 @@ mod tests {
         assert_ne!(a, input_sha256(&[1, 2, 3], [1, 0]));
         assert_ne!(a, input_sha256(&[1, 2, 4], [0, 1]));
         assert_eq!(a, input_sha256(&[1, 2, 3], [0, 1]));
+    }
+
+    fn reply_json() -> serde_json::Value {
+        serde_json::json!({
+            "v": 2,
+            "request_id": 4,
+            "candidate_sha256": "c".repeat(64),
+            "model_function_sha256": "f".repeat(64),
+            "input_sha256": "1".repeat(64),
+            "choice": "search",
+            "probabilities": {"search": 0.8, "graph": 0.2},
+            "answer_confidence": 0.8,
+        })
+    }
+
+    fn read_reply(header: &[u8]) -> Result<PredictReply, FrameError> {
+        let mut bytes = (header.len() as u32).to_le_bytes().to_vec();
+        bytes.extend_from_slice(header);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        read_frame_as::<PredictReply, _>(&mut bytes.as_slice()).map(|(reply, _)| reply)
+    }
+
+    #[test]
+    fn the_v2_reply_is_exactly_the_contract_field_set() {
+        let good = reply_json();
+        let reply = read_reply(good.to_string().as_bytes()).unwrap();
+        assert_eq!(reply.probabilities.search, 0.8);
+        // The legacy ambiguous `confidence`, any extra field, a missing or
+        // extra option key, a null and the other version are all refused.
+        let mut cases: Vec<serde_json::Value> = Vec::new();
+        let mut legacy = good.clone();
+        legacy["confidence"] = 0.99.into();
+        cases.push(legacy);
+        let mut missing = good.clone();
+        missing["probabilities"] = serde_json::json!({"search": 1.0});
+        cases.push(missing);
+        let mut extra = good.clone();
+        extra["probabilities"]["delete_workspace"] = 0.0.into();
+        cases.push(extra);
+        let mut null = good.clone();
+        null["choice"] = serde_json::Value::Null;
+        cases.push(null);
+        let mut v1 = good.clone();
+        v1["v"] = 1.into();
+        cases.push(v1);
+        for case in cases {
+            assert!(read_reply(case.to_string().as_bytes()).is_err(), "{case}");
+        }
+        // A duplicate key, even with the same value.
+        let text = good.to_string();
+        let duplicate = text.replacen(
+            "\"choice\":\"search\"",
+            "\"choice\":\"search\",\"choice\":\"search\"",
+            1,
+        );
+        assert_ne!(duplicate, text);
+        assert!(read_reply(duplicate.as_bytes()).is_err());
+        // A reply carries no payload.
+        let mut bytes = (text.len() as u32).to_le_bytes().to_vec();
+        bytes.extend_from_slice(text.as_bytes());
+        bytes.extend_from_slice(&4u32.to_le_bytes());
+        bytes.extend_from_slice(&[0; 4]);
+        assert!(matches!(
+            read_frame_as::<PredictReply, _>(&mut bytes.as_slice()),
+            Err(FrameError::TooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn a_prediction_payload_carries_markers_on_the_mask_id() {
+        let mask = crate::decision_model::SpecialIds::PINNED.mask;
+        let ids = [1, mask, 7, mask, 9];
+        let payload = encode_predict_payload(&ids, [1, 3]);
+        assert_eq!(
+            decode_predict_payload(&payload).unwrap(),
+            (ids.to_vec(), [1, 3])
+        );
+        assert!(decode_predict_payload(&encode_predict_payload(&ids, [0, 3])).is_err());
+        assert!(decode_predict_payload(&payload[..6]).is_err());
     }
 }

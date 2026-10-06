@@ -995,7 +995,7 @@ fn legacy_feedback_rows_stay_exportable_and_never_eligible() {
             "label_source": "operator",
             "allow_training": true,
         });
-        let legacy: context_foundry::laya::Feedback = serde_json::from_value(legacy).unwrap();
+        let legacy: context_foundry::learning::Feedback = serde_json::from_value(legacy).unwrap();
         engine.record_feedback(&legacy).unwrap();
         let exported = engine.training_examples().unwrap();
         assert_eq!(exported.len(), 1, "legacy export is unchanged");
@@ -2512,7 +2512,7 @@ fn nothing_but_permitted_feedback_reaches_a_dataset() {
                 workspace_id: engine.workspace_id().unwrap(),
             })
             .unwrap();
-        let legacy: context_foundry::laya::Feedback = serde_json::from_value(json!({
+        let legacy: context_foundry::learning::Feedback = serde_json::from_value(json!({
             "task_id": format!("{SENTINEL}-legacy"),
             "query": format!("{SENTINEL} legacy question"),
             "correct_strategy": "graph",

@@ -1082,6 +1082,7 @@ async fn start_http(store: &Path, root: &Path) -> HttpServer {
             references: Vec::new(),
             no_memory: false,
             semantic: None,
+            policy: None,
             budget: context_foundry::config::BudgetConfig::default(),
         },
         context_foundry::mcp::HttpOptions {
@@ -1328,6 +1329,7 @@ async fn session_allowance_exhaustion_refuses_before_dispatch() {
             references: Vec::new(),
             no_memory: false,
             semantic: None,
+            policy: None,
             budget,
         },
         context_foundry::mcp::HttpOptions {
@@ -2386,6 +2388,7 @@ async fn assert_http_refused(token_env: &str, store: &Path, root: &Path) {
             references: Vec::new(),
             no_memory: false,
             semantic: None,
+            policy: None,
             budget: context_foundry::config::BudgetConfig::default(),
         },
         context_foundry::mcp::HttpOptions {
@@ -2604,6 +2607,7 @@ async fn http_sessions_expire_and_admit_again_after_keep_alive() {
             references: Vec::new(),
             no_memory: false,
             semantic: None,
+            policy: None,
             budget: context_foundry::config::BudgetConfig::default(),
         },
         context_foundry::mcp::HttpOptions {
@@ -4442,6 +4446,7 @@ async fn http_sessions_have_independent_allowances_and_a_lost_delivery_stays_cha
             references: Vec::new(),
             no_memory: false,
             semantic: None,
+            policy: None,
             budget: context_foundry::config::BudgetConfig::from_object(&serde_json::json!({
                 "v": 1, "max_context_tokens": 512, "session_context_tokens": 700
             }))

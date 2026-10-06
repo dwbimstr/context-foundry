@@ -4,14 +4,13 @@
 //! locked `o200k_base` tokenizer and no character-per-token fallback; nothing
 //! is appended after counting. Each boundary supplies the measure of the
 //! bytes it emits for a text, so the 256 KiB cap applies to what it emits.
-use crate::Strategy;
 use crate::error::{FResult, FoundryError};
 use crate::graph::ReferencesOutcome;
 use crate::store::{
     CandidateBatch, HandleRef, Hit, OutlineOutcome, RankedItem, RenderedForm, RetrieveOutcome,
     SearchOutcome, SourceHandle,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub const TOKENIZER: &str = "o200k_base";
@@ -77,6 +76,26 @@ const GRAPH_KEYWORDS: [&str; 11] = [
     "usage",
     "usages",
 ];
+
+/// The context retrieval strategy: `auto` routes (deterministically, or by
+/// the selected 013 policy), `search` and `graph` are explicit.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Strategy {
+    Auto,
+    Search,
+    Graph,
+}
+
+impl std::fmt::Display for Strategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Strategy::Auto => "auto",
+            Strategy::Search => "search",
+            Strategy::Graph => "graph",
+        })
+    }
+}
 
 /// Deterministic auto routing: ASCII-lowercase the query, tokenize maximal
 /// runs of ASCII letters, digits or `_`; any whole keyword token selects
@@ -257,6 +276,10 @@ struct HeaderV2<'a> {
     /// The 009 T002 semantic word: `ready`, `partial` or
     /// `fallback:<reason>`; `None` keeps the baseline header byte-for-byte.
     semantic: Option<&'a str>,
+    /// The 013 T003 route word: `policy` or `fallback:<reason>`, present
+    /// only when a configured policy routed an `auto` context; `None` keeps
+    /// the baseline header byte-for-byte.
+    route: Option<&'a str>,
 }
 
 impl HeaderV2<'_> {
@@ -311,6 +334,9 @@ impl HeaderV2<'_> {
         }
         if let Some(semantic) = self.semantic {
             segments.push(format!("semantic:{}", single_line(semantic)));
+        }
+        if let Some(route) = self.route {
+            segments.push(format!("route:{}", single_line(route)));
         }
         let mut line = segments.join(" · ");
         line.push('\n');
@@ -640,6 +666,7 @@ fn refusal_floor_impl(
         candidates_full: true,
         graph: (op == "context").then_some("graph_unavailable"),
         semantic: None,
+        route: None,
     };
     let item = handle.map_or_else(String::new, |handle| {
         let widest = HandleRef {
@@ -845,6 +872,7 @@ fn pack_retrieve_impl(
         candidates_full: false,
         graph: None,
         semantic: None,
+        route: None,
     };
     let render = |length: usize, shown: usize, limited_by: BudgetLimiter| {
         let split = out.requested.start + length as u64;
@@ -931,6 +959,7 @@ fn pack_retrieve_outline_impl(
         candidates_full: false,
         graph: None,
         semantic: None,
+        route: None,
     };
     let handle = out.requested.to_v2();
     let lines = (out.requested.start < out.requested.end).then_some((out.start_line, out.end_line));
@@ -1066,6 +1095,7 @@ fn pack_context_impl(
         candidates_full: batch.counters.candidates_full,
         graph: batch.counters.graph,
         semantic: batch.semantic.as_deref(),
+        route: batch.route.as_deref(),
     };
     // 001 § Deduplication: a neural candidate can deliver a full identity a
     // lexical candidate also names (a dense unit's lexical span equal to a
@@ -1132,6 +1162,7 @@ fn pack_search_impl(
         candidates_full: outcome.candidate_limit_reached,
         graph: None,
         semantic: outcome.semantic.as_deref(),
+        route: None,
     };
     pack(&items, &[], &header, budget, BYTE_CAP, boundary, None)
 }
@@ -1163,6 +1194,7 @@ pub fn pack_memory_search(
         candidates_full: outcome.candidates_full,
         graph: None,
         semantic: None,
+        route: None,
     };
     pack(&items, &[], &header, budget, BYTE_CAP, boundary, None)
 }

@@ -422,6 +422,10 @@ pub struct CandidateBatch {
     /// The semantic header word (009 T002): `ready`, `partial`, or
     /// `fallback:<reason>`; `None` keeps the baseline header byte-for-byte.
     pub semantic: Option<String>,
+    /// The 013 T003 route word (`policy` or `fallback:<reason>`): present
+    /// only when a context's `auto` strategy was routed with a configured
+    /// policy; `None` keeps the baseline header byte-for-byte.
+    pub route: Option<String>,
 }
 
 /// The `outline` and `outline-min` renderings of a retrieve range
@@ -2158,6 +2162,7 @@ impl Engine {
             items,
             counters,
             semantic: None,
+            route: None,
         })
     }
 
@@ -2629,6 +2634,7 @@ impl Engine {
             items,
             counters,
             semantic: Some(word.to_owned()),
+            route: None,
         })
     }
 
@@ -2764,6 +2770,7 @@ impl Engine {
                 control,
                 #[cfg(feature = "semantic")]
                 None,
+                None,
             )?
             .batch)
     }
@@ -2777,7 +2784,7 @@ impl Engine {
         dense: &crate::neural::query::DenseWindow,
     ) -> FResult<crate::memory::MemoryContext> {
         let plan = self.memory_plan(query)?;
-        self.context_candidates_inner(query, strategy, Some(plan), control, Some(dense))
+        self.context_candidates_inner(query, strategy, Some(plan), control, Some(dense), None)
     }
 
     /// [`Self::context_candidates`] with the 009 T002 dense window fused
@@ -2791,7 +2798,7 @@ impl Engine {
         dense: &crate::neural::query::DenseWindow,
     ) -> FResult<CandidateBatch> {
         Ok(self
-            .context_candidates_inner(query, strategy, None, control, Some(dense))?
+            .context_candidates_inner(query, strategy, None, control, Some(dense), None)?
             .batch)
     }
 
@@ -2813,6 +2820,33 @@ impl Engine {
             control,
             #[cfg(feature = "semantic")]
             None,
+            None,
+        )
+    }
+
+    /// [`Self::context_candidates`] with a configured 013 policy (and,
+    /// optionally, 008 memory and the 009 dense window): an `auto` strategy
+    /// is routed by [`crate::policy::Policy::route`] AFTER the 009 merge and
+    /// BEFORE graph expansion, outside every engine transaction and under
+    /// the request's own read deadline; the batch carries the route word.
+    pub fn context_candidates_routed(
+        &self,
+        query: &str,
+        strategy: Strategy,
+        memory: bool,
+        control: &crate::Control,
+        #[cfg(feature = "semantic")] dense: Option<&crate::neural::query::DenseWindow>,
+        policy: &crate::policy::Policy,
+    ) -> FResult<crate::memory::MemoryContext> {
+        let plan = memory.then(|| self.memory_plan(query)).transpose()?;
+        self.context_candidates_inner(
+            query,
+            strategy,
+            plan,
+            control,
+            #[cfg(feature = "semantic")]
+            dense,
+            Some(policy),
         )
     }
 
@@ -2823,16 +2857,13 @@ impl Engine {
         memory: Option<crate::memory::MemoryPlan>,
         control: &crate::Control,
         #[cfg(feature = "semantic")] dense: Option<&crate::neural::query::DenseWindow>,
+        policy: Option<&crate::policy::Policy>,
     ) -> FResult<crate::memory::MemoryContext> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
             ));
         }
-        let resolved = match strategy {
-            Strategy::Auto => response::strategy_for_query(query),
-            explicit => explicit,
-        };
         #[cfg(feature = "semantic")]
         let search = match dense {
             Some(dense) => {
@@ -2843,6 +2874,18 @@ impl Engine {
         #[cfg(not(feature = "semantic"))]
         let search = self.search_candidates(query, None, CONTEXT_UNITS, control)?;
         control.check()?;
+        // 013 T003: routing happens HERE, after the 009 merge and before
+        // graph expansion. Only `auto` with a configured policy consults it;
+        // explicit strategies never do, and without a policy the
+        // deterministic rule decides exactly as before.
+        let (resolved, route) = match (strategy, policy) {
+            (Strategy::Auto, Some(policy)) => {
+                let (resolved, word) = policy.route(self, query, control)?;
+                (resolved, Some(word))
+            }
+            (Strategy::Auto, None) => (response::strategy_for_query(query), None),
+            (explicit, _) => (explicit, None),
+        };
         let mut edges: Vec<graph::GraphEvidence> = Vec::new();
         let mut graph_state: Option<&'static str> = None;
         // The graph examination window (32 rows per seed and direction) filled.
@@ -3362,6 +3405,7 @@ impl Engine {
         Ok(crate::memory::MemoryContext {
             batch: CandidateBatch {
                 semantic,
+                route,
                 freshness,
                 items,
                 counters,

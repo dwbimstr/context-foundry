@@ -78,7 +78,7 @@ fn test_worker_args() -> Vec<String> {
 }
 
 /// A stop the monitor imposed: the named code wins over the symptom.
-type Breach = Arc<Mutex<Option<(&'static str, String)>>>;
+pub(super) type Breach = Arc<Mutex<Option<(&'static str, String)>>>;
 
 enum Frame {
     Header(Box<LearnHeader>, Vec<u8>),
@@ -202,7 +202,7 @@ fn tree_bytes(dir: &std::path::Path) -> std::io::Result<u64> {
 }
 
 /// A worker `error` code as the owner names it.
-fn worker_code(code: &str) -> &'static str {
+pub(super) fn worker_code(code: &str) -> &'static str {
     const KNOWN: [&str; 8] = [
         "nonfinite_loss",
         "nonfinite_gradient",
@@ -220,6 +220,199 @@ fn worker_code(code: &str) -> &'static str {
         .unwrap_or("worker_failed")
 }
 
+/// A launched, supervised worker before its first frame: the one launch
+/// convention training ([`LearnWorker`]) and serving ([`super::serve`])
+/// share. Its stderr drains into a bounded tail and ONE monitor polls
+/// [`Limits::measure`] every [`POLL_INTERVAL`], killing on a breach.
+pub(super) struct Spawned {
+    pub child: Arc<Mutex<Option<Child>>>,
+    pub pid: u32,
+    pub stdin: Option<ChildStdin>,
+    pub stdout: Option<std::process::ChildStdout>,
+    pub stderr_tail: Arc<Mutex<Vec<u8>>>,
+    pub breach: Breach,
+    pub stopping: Arc<AtomicBool>,
+    pub staged: Arc<std::sync::atomic::AtomicU64>,
+    limits: Limits,
+    pub handles: Vec<std::thread::JoinHandle<()>>,
+    pub liveness: OwnedFd,
+    pub run: PathBuf,
+    pub scratch: Dir,
+}
+
+/// The resources one launch requests: LibTorch threads, the hard
+/// `RLIMIT_CPU` (`None` for a serving worker, which lives as long as its
+/// owner and is bounded per prediction instead), and the supervised memory
+/// and output ceilings (output is also the hard `RLIMIT_FSIZE`).
+pub(super) struct Request {
+    pub threads: u32,
+    pub cpu_seconds: Option<u64>,
+    pub memory_bytes: u64,
+    pub output_bytes: u64,
+    /// The fake worker's test hooks; production launches pass none.
+    pub extra_args: Vec<String>,
+}
+
+/// Verify the profile and the bundle executable, create the scratch run
+/// directory, and start the worker with its stderr drain and monitor.
+pub(super) fn spawn(
+    profile: &LearnProfile,
+    request: Request,
+    control: &Control,
+) -> FResult<Spawned> {
+    control.check()?;
+    profile.validate()?;
+    let executable = profile.executable();
+    let (sha, _) = hash_regular_file_until(&executable, control).map_err(provider_error)?;
+    if sha != profile.worker.executable_sha256 {
+        return Err(fail(
+            "profile_invalid",
+            format!(
+                "worker executable {} has SHA-256 {sha}, the profile expects {}",
+                executable.display(),
+                profile.worker.executable_sha256
+            ),
+        ));
+    }
+    let run = prepare_run_scratch_at(&profile.worker.scratch_root, &|| {
+        profile.check_scratch_disjoint()
+    })
+    .map_err(provider_error)?;
+    let scratch = match Dir::open_path(&run) {
+        Ok(dir) => dir,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&run);
+            return Err(fail(
+                "isolation_unavailable",
+                format!("scratch run directory: {e}"),
+            ));
+        }
+    };
+    let (liveness_reader, liveness_writer) = match std::io::pipe() {
+        Ok(pipe) => pipe,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&run);
+            return Err(fail("isolation_unavailable", format!("liveness pipe: {e}")));
+        }
+    };
+    let read_fd = liveness_reader.as_raw_fd();
+    let mut command = Command::new(&executable);
+    command
+        .arg("--owner-pid")
+        .arg(std::process::id().to_string())
+        .arg("--liveness-fd")
+        .arg(read_fd.to_string())
+        .arg("--checkpoint-dir")
+        .arg(&profile.checkpoint_dir)
+        .args(request.extra_args)
+        .current_dir(&run)
+        // `env -i` style: no inherited credentials, proxies or sockets.
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", &run)
+        .env("TMPDIR", run.join("tmp"))
+        .env("OMP_NUM_THREADS", request.threads.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut hard = Vec::with_capacity(2);
+    if let Some(cpu_seconds) = request.cpu_seconds {
+        hard.push((libc::RLIMIT_CPU, cpu_seconds as libc::rlim_t));
+    }
+    hard.push((libc::RLIMIT_FSIZE, request.output_bytes as libc::rlim_t));
+    // SAFETY: the setup calls only async-signal-safe functions between
+    // fork and exec and allocates nothing there.
+    unsafe { command.pre_exec(child_setup_limited(read_fd, hard)) };
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&run);
+            return Err(fail(
+                "profile_invalid",
+                format!("launch {}: {e}", executable.display()),
+            ));
+        }
+    };
+    drop(liveness_reader);
+    let pid = child.id();
+    let stdin = child.stdin.take();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let child = Arc::new(Mutex::new(Some(child)));
+    let stderr_tail = Arc::new(Mutex::new(Vec::new()));
+    let breach: Breach = Arc::new(Mutex::new(None));
+    let stopping = Arc::new(AtomicBool::new(false));
+    let staged = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let mut handles = Vec::new();
+    if let Some(stderr) = stderr {
+        let tail = Arc::clone(&stderr_tail);
+        handles.push(std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = reader.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                let mut tail = tail.lock().unwrap_or_else(|p| p.into_inner());
+                let room = protocol::MAX_STDERR_BYTES.saturating_sub(tail.len());
+                tail.extend_from_slice(&chunk[..n.min(room)]);
+            }
+        }));
+    }
+    let limits = Limits {
+        memory: request.memory_bytes,
+        output: request.output_bytes,
+        run: run.clone(),
+        staged: Arc::clone(&staged),
+        // The measurement fault point names the worker by its scratch
+        // root (009's convention).
+        fault_detail: profile.worker.scratch_root.display().to_string(),
+    };
+    {
+        let child = Arc::clone(&child);
+        let breach = Arc::clone(&breach);
+        let stopping = Arc::clone(&stopping);
+        let limits = limits.clone();
+        handles.push(std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(POLL_INTERVAL);
+                if stopping.load(Ordering::SeqCst) {
+                    break;
+                }
+                let mut guard = child.lock().unwrap_or_else(|p| p.into_inner());
+                let Some(live) = guard.as_mut() else {
+                    break;
+                };
+                // Only an unreaped child is measured, so a reused PID
+                // is never read; a child that ended is the reader's.
+                if !matches!(live.try_wait(), Ok(None)) {
+                    break;
+                }
+                if let Some(stop) = limits.measure(live.id()) {
+                    *breach.lock().unwrap_or_else(|p| p.into_inner()) = Some(stop);
+                    unsafe { libc::kill(live.id() as libc::pid_t, libc::SIGKILL) };
+                    break;
+                }
+            }
+        }));
+    }
+    Ok(Spawned {
+        child,
+        pid,
+        stdin,
+        stdout,
+        stderr_tail,
+        breach,
+        stopping,
+        staged,
+        limits,
+        handles,
+        liveness: OwnedFd::from(liveness_writer),
+        run,
+        scratch,
+    })
+}
+
 impl LearnWorker {
     /// Verify the profile and the bundle executable, create the scratch run
     /// directory, and start the worker. `wall_deadline` bounds the whole
@@ -230,106 +423,32 @@ impl LearnWorker {
         wall_deadline: Instant,
         control: &Control,
     ) -> FResult<Self> {
-        control.check()?;
-        profile.validate()?;
-        let executable = profile.executable();
-        let (sha, _) = hash_regular_file_until(&executable, control).map_err(provider_error)?;
-        if sha != profile.worker.executable_sha256 {
-            return Err(fail(
-                "profile_invalid",
-                format!(
-                    "worker executable {} has SHA-256 {sha}, the profile expects {}",
-                    executable.display(),
-                    profile.worker.executable_sha256
-                ),
-            ));
-        }
-        let run = prepare_run_scratch_at(&profile.worker.scratch_root, &|| {
-            profile.check_scratch_disjoint()
-        })
-        .map_err(provider_error)?;
-        let scratch = match Dir::open_path(&run) {
-            Ok(dir) => dir,
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&run);
-                return Err(fail(
-                    "isolation_unavailable",
-                    format!("scratch run directory: {e}"),
-                ));
-            }
-        };
-        let (liveness_reader, liveness_writer) = match std::io::pipe() {
-            Ok(pipe) => pipe,
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&run);
-                return Err(fail("isolation_unavailable", format!("liveness pipe: {e}")));
-            }
-        };
-        let read_fd = liveness_reader.as_raw_fd();
         let threads = policy.cpu_threads;
-        let cpu_seconds = policy.wall_seconds.saturating_mul(u64::from(threads));
-        let mut command = Command::new(&executable);
-        command
-            .arg("--owner-pid")
-            .arg(std::process::id().to_string())
-            .arg("--liveness-fd")
-            .arg(read_fd.to_string())
-            .arg("--checkpoint-dir")
-            .arg(&profile.checkpoint_dir)
-            .args(test_worker_args())
-            .current_dir(&run)
-            // `env -i` style: no inherited credentials, proxies or sockets.
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .env("HOME", &run)
-            .env("TMPDIR", run.join("tmp"))
-            .env("OMP_NUM_THREADS", threads.to_string())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let limits = vec![
-            (libc::RLIMIT_CPU, cpu_seconds as libc::rlim_t),
-            (libc::RLIMIT_FSIZE, policy.output_bytes as libc::rlim_t),
-        ];
-        // SAFETY: the setup calls only async-signal-safe functions between
-        // fork and exec and allocates nothing there.
-        unsafe { command.pre_exec(child_setup_limited(read_fd, limits)) };
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&run);
-                return Err(fail(
-                    "profile_invalid",
-                    format!("launch {}: {e}", executable.display()),
-                ));
-            }
-        };
-        drop(liveness_reader);
-        let pid = child.id();
-        let stdin = child.stdin.take();
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let child = Arc::new(Mutex::new(Some(child)));
-        let stderr_tail = Arc::new(Mutex::new(Vec::new()));
-        let breach: Breach = Arc::new(Mutex::new(None));
-        let stopping = Arc::new(AtomicBool::new(false));
-        let staged = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let mut handles = Vec::new();
-        if let Some(stderr) = stderr {
-            let tail = Arc::clone(&stderr_tail);
-            handles.push(std::thread::spawn(move || {
-                let mut reader = BufReader::new(stderr);
-                let mut chunk = [0u8; 4096];
-                while let Ok(n) = reader.read(&mut chunk) {
-                    if n == 0 {
-                        break;
-                    }
-                    let mut tail = tail.lock().unwrap_or_else(|p| p.into_inner());
-                    let room = protocol::MAX_STDERR_BYTES.saturating_sub(tail.len());
-                    tail.extend_from_slice(&chunk[..n.min(room)]);
-                }
-            }));
-        }
+        let Spawned {
+            child,
+            pid,
+            stdin,
+            stdout,
+            stderr_tail,
+            breach,
+            stopping,
+            staged,
+            limits,
+            mut handles,
+            liveness,
+            run,
+            scratch,
+        } = spawn(
+            profile,
+            Request {
+                threads,
+                cpu_seconds: Some(policy.wall_seconds.saturating_mul(u64::from(threads))),
+                memory_bytes: policy.memory_bytes,
+                output_bytes: policy.output_bytes,
+                extra_args: test_worker_args(),
+            },
+            control,
+        )?;
         let (tx, frames) = mpsc::channel::<Frame>();
         if let Some(stdout) = stdout {
             handles.push(std::thread::spawn(move || {
@@ -353,43 +472,6 @@ impl LearnWorker {
                 }
             }));
         }
-        let limits = Limits {
-            memory: policy.memory_bytes,
-            output: policy.output_bytes,
-            run: run.clone(),
-            staged: Arc::clone(&staged),
-            // The measurement fault point names the worker by its scratch
-            // root (009's convention).
-            fault_detail: profile.worker.scratch_root.display().to_string(),
-        };
-        {
-            let child = Arc::clone(&child);
-            let breach = Arc::clone(&breach);
-            let stopping = Arc::clone(&stopping);
-            let limits = limits.clone();
-            handles.push(std::thread::spawn(move || {
-                loop {
-                    std::thread::sleep(POLL_INTERVAL);
-                    if stopping.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    let mut guard = child.lock().unwrap_or_else(|p| p.into_inner());
-                    let Some(live) = guard.as_mut() else {
-                        break;
-                    };
-                    // Only an unreaped child is measured, so a reused PID
-                    // is never read; a child that ended is the reader's.
-                    if !matches!(live.try_wait(), Ok(None)) {
-                        break;
-                    }
-                    if let Some(stop) = limits.measure(live.id()) {
-                        *breach.lock().unwrap_or_else(|p| p.into_inner()) = Some(stop);
-                        unsafe { libc::kill(live.id() as libc::pid_t, libc::SIGKILL) };
-                        break;
-                    }
-                }
-            }));
-        }
         Ok(Self {
             child,
             pid,
@@ -401,7 +483,7 @@ impl LearnWorker {
             staged,
             limits,
             handles,
-            liveness: Some(OwnedFd::from(liveness_writer)),
+            liveness: Some(liveness),
             scratch_path: Some(run),
             scratch,
             next_id: 1,

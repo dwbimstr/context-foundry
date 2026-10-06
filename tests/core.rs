@@ -7,7 +7,7 @@ use context_foundry::testkit::{
 use context_foundry::{
     Control, Engine, FoundryError, Strategy, digest,
     graph::{Edge, Endpoint, GraphBundle},
-    laya::{Feedback, Strategy as LayaStrategy},
+    learning::Feedback,
     response::{self, Budget},
     store::{HandleRef, SourceHandle},
 };
@@ -92,7 +92,7 @@ fn revision_counts_only_source_changes() {
     let feedback = Feedback {
         task_id: "t".into(),
         query: "q".into(),
-        correct_strategy: LayaStrategy::Search,
+        correct_strategy: Strategy::Search,
         label_source: "operator".into(),
         allow_training: false,
     };
@@ -179,7 +179,7 @@ fn explicit_repairs_rebuild_and_keep_one_quarantine() {
     let feedback = Feedback {
         task_id: "t1".into(),
         query: "repair".into(),
-        correct_strategy: LayaStrategy::Search,
+        correct_strategy: Strategy::Search,
         label_source: "operator".into(),
         allow_training: true,
     };
@@ -1136,7 +1136,7 @@ fn feedback_requires_explicit_training_opt_in_and_keeps_tasks_in_one_split() {
     let mut feedback = Feedback {
         task_id: "task-1".into(),
         query: "who calls parse".into(),
-        correct_strategy: LayaStrategy::Graph,
+        correct_strategy: Strategy::Graph,
         label_source: "operator".into(),
         allow_training: false,
     };

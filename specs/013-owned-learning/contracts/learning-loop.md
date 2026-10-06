@@ -245,8 +245,11 @@ live auto-promotion or threshold edit to reuse eligibility. Invalid config names
 config; operator installs/restarts. Rollback restores prior immutable config/artifacts
 or disables learning. Preserve source, memory, graph, feedback and semantic cache.
 
-Private inherited pipes; little-endian u32 length followed by strict JSON, maximum
-64 KiB checked before allocation. Request `{v:2,request_id,candidate_sha256,
+Private inherited pipes carrying the shared length-prefixed worker frame (013 T002's
+frame code: u32 LE header length, the strict JSON header, maximum 64 KiB checked before
+allocation, u32 LE payload length, payload). The IPC-v2 messages below are exactly that
+JSON header; a request's payload is the core's preflighted rendering (both marker
+positions, then the token IDs, all u32 LE), a reply carries none. Request `{v:2,request_id,candidate_sha256,
 model_function_sha256,family,state,option_ids}`; reply `{v:2,request_id,
 candidate_sha256,model_function_sha256,input_sha256,choice,probabilities,answer_confidence}`.
 `probabilities` has exactly `search` and `graph` keys, both finite in [0,1], sum within
@@ -258,8 +261,29 @@ IDs <=128 bytes, digests lowercase 64 hex; reject unknown/null/duplicate fields,
 `confidence` field. No arbitrary commands, paths or token-budget grants. This refines
 the still-unimplemented v4/IPC-v2 proposal; no deployed reader migration is implied.
 
+Amendment 2026-10-05 (013 T003, implemented): config v2 is `{"v":2,"enabled":false}` or
+`{"v":2,"enabled":true,candidate_path,candidate_sha256,model_function_sha256,report_sha256,
+threshold,isolation_profile}`; `candidate_sha256` is the manifest SHA-256 and `threshold`
+must equal the one the candidate's report was evaluated at. `learning select --candidate
+DIR --isolation-profile FILE --out CONFIG` refuses an ineligible candidate
+(`candidate_ineligible`; no override flag) and any withdrawn or changed contribution,
+evaluated examples included: each evaluation case carries its example's
+`permission_sha256` in the manifest-bound report (`contribution_changed`). The serving
+worker is T002's `foundry-learn`, loaded once by a
+`serve` message (the candidate's head, evaluation mode, its fitted scalar); the core
+renders the state with the candidate's pinned tokenizer from the profile's
+`checkpoint_dir/tokenizer/` before dispatch. Terminal reasons are `reply_invalid`,
+`reply_identity_mismatch`, `worker_failed` and `prediction_timeouts`. Header and status:
+[context-v2 § Header line](../../001-source-state-recovery/contracts/context-v2.md#header-line).
+
 One active prediction, zero waiting. Load ceiling 30 seconds outside requests;
-prediction ceiling min(2000 ms, remaining 003 deadline). These are supervised failure
+prediction ceiling min(2000 ms, remaining 003 deadline); as implemented (013 T003, review
+round 1) the wait is min(2000 ms, HALF the remaining read deadline), the fallback keeping at
+least as long, and below 50 ms nothing is dispatched (`policy_insufficient_time`). A reply
+is within the ceiling when it is published to the core's per-request state before the
+ceiling; reading bytes earlier does not count. The core cannot act on a reply it has not
+received. That per-request state, changed under one lock, is the only arbiter: exactly one
+of on-time success or timeout per request, and a late publication only frees the slot. These are supervised failure
 bounds, not latency promises. Busy returns deterministic fallback before dispatch.
 A prediction timeout returns the deterministic fallback with reason `policy_timeout`
 for that request only; the policy stays enabled. The slot stays occupied until the

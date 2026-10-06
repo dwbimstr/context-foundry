@@ -8,13 +8,13 @@
 //! not hardware power-loss immunity.
 use context_foundry::fault::{self, Action, names};
 use context_foundry::graph::{Edge, Endpoint, GraphBundle};
-use context_foundry::laya::{Feedback, Strategy as LayaStrategy};
+use context_foundry::learning::Feedback;
 use context_foundry::testkit;
 use context_foundry::testkit::{
     CORRUPT_INDEX_BYTES, KEPT_BODY, Snapshot, corrupt_search_index, craft_v1_store, knowledge,
     quarantine_dirs, schema_marker, snapshot,
 };
-use context_foundry::{Control, Engine, digest};
+use context_foundry::{Control, Engine, Strategy, digest};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
@@ -82,7 +82,7 @@ fn seed(work: &Path, filler: u32) -> Snapshot {
             .record_feedback(&Feedback {
                 task_id: "t1".into(),
                 query: "who calls probe_b".into(),
-                correct_strategy: LayaStrategy::Graph,
+                correct_strategy: Strategy::Graph,
                 label_source: "operator".into(),
                 allow_training: true,
             })

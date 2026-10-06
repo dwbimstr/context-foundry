@@ -101,7 +101,7 @@ release dependencies while retaining concrete safety and user-outcome contracts.
 | Two application protocols before one working agent integration | Former 002 specified custom framed socket traffic and an MCP relay; source currently has only CLI ownership | 003 uses direct SDK stdio and ordinary engine calls; simultaneous clients cannot share this first store owner |
 | Persistence complexity could survive the language rewrite | [Source/pending commit and index replay](../../src/store.rs) span redb and Tantivy; search validation is additional application policy | 001 explicitly reopens the single-transaction alternative before hardening; current pair remains working but provisional, with no invented performance advantage |
 | Graph correctness and a real producer were separate programs | Former 004/005/006 split source scale, graph publication and semantic production; a graph could pass fixtures without answering real code questions | 005 owns one actual producer, relation and large-workspace workflow; fewer languages and unsupported relations are explicit |
-| Learning planned a control plane before any custom checkpoint had served | Former 012/013 specified dataset management, trigger states and live selection; actual [Rust boundary](../../src/laya.rs) only provides HTTP decisions/feedback | One external bounded batch, immutable artifact and manual selection/restart; automatic deployment and uninterrupted model swaps are absent |
+| Learning planned a control plane before any custom checkpoint had served | Former 012/013 specified dataset management, trigger states and live selection; the actual Rust boundary (`src/laya.rs`, removed in 013 T003) only provided HTTP decisions/feedback | One external bounded batch, immutable artifact and manual selection/restart; automatic deployment and uninterrupted model swaps are absent |
 | Measurement became a universal close stage | Previous `/measure` also closed functional specs; 011/015 grew separate evidence/release programs | Focused acceptance closes functional work; experiments answer numerical decisions; release uses one checklist |
 | Deferred capabilities still looked executable | Fifteen plans and forty-five task slices included unselected models, federation and migration consumers | Five active workflows, ten disposition stubs; no implementation tasks for parked ideas |
 | Large-workspace promises exceeded the prototype | [Ingestion](../../src/ingest.rs) holds all observed paths and reports in memory; current graph imports a whole capped producer bundle | 001 bounds reconciliation, 005 adds scoped producer updates and a real workload witness; no arbitrary file-count guarantee |
@@ -174,7 +174,7 @@ retrieval must remain useful without training, a third model or a control servic
    that coordination. Tradeoff: a model change can temporarily use baseline retrieval;
    instant semantic rollback is not promised. Cache preservation remains mandatory.
 2. **Strong — correct routing and dataset assumptions before adding a model.**
-   [`laya::decide`](../../src/laya.rs) uses a substring heuristic that omits references,
+   `laya::decide` (`src/laya.rs`, removed in 013 T003) used a substring heuristic that omits references,
    although 005 first supports definitions/references. It may send `calls_tracker` to
    graph because of a substring, and caller-oriented format examples overstate 005.
    001 now owns an explicit whole-token rule; format examples name references. The
@@ -184,7 +184,7 @@ retrieval must remain useful without training, a third model or a control servic
    These are proposed behavior fixes, not changed Rust or executed training tests.
 3. **Strong — retain one retrieval owner and separate learned responsibilities.**
    [`context_with_strategy`](../../src/store.rs) searches in both routes and adds graph
-   evidence for one; [`predict`](../../src/laya.rs) returns one of two strategy labels,
+   evidence for one; `predict` (same removed module) returns one of two strategy labels,
    not document relevance. Do not reuse that confidence as a ranking score. Core
    ordering remains deterministic; 009 defers a learned reranker until required
    passages are present but wrongly ordered after merge/packing defects are fixed.

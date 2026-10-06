@@ -40,11 +40,11 @@ pub mod gateway;
 pub mod gateway_launch;
 pub mod graph;
 pub mod ingest;
-pub mod laya;
 pub mod learning;
 pub mod mcp;
 pub mod memory;
 pub mod neural;
+pub mod policy;
 pub mod receipts;
 pub mod response;
 pub mod roots;
@@ -58,8 +58,7 @@ pub mod usage;
 pub use control::Control;
 pub use error::{FResult, FoundryError, PartialIndexCounts};
 pub use ingest::IndexReport;
-pub use laya::Strategy;
-pub use response::FinalRender;
+pub use response::{FinalRender, Strategy};
 pub use store::{
     Engine, RepairReport, SCHEMA_VERSION, SourceHandle, SourceMeta, StoreStatus,
     workspace_id_for_root,

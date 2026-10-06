@@ -404,6 +404,7 @@ impl Corpus {
     fn context(&self, slot: &SemanticSlot, query: &str, tokens: usize) -> Answer {
         let combined = mcp::context_primary(
             slot,
+            None,
             self.engine(),
             query,
             Strategy::Search,
@@ -1053,6 +1054,7 @@ fn an_expiring_request_still_delivers_the_baseline_with_the_named_fallback() {
     let control = Control::with_deadline(started + remaining);
     let combined = mcp::context_primary(
         &slot,
+        None,
         corpus.engine(),
         query,
         Strategy::Search,
@@ -1668,6 +1670,7 @@ fn without_a_profile_requests_are_byte_identical_and_disabling_loses_no_source_o
     for (query, (context, search)) in queries.iter().zip(&before) {
         let combined = mcp::context_primary(
             &None,
+            None,
             corpus.engine(),
             query,
             Strategy::Search,
@@ -1885,6 +1888,7 @@ async fn serve(
             references: Vec::new(),
             no_memory: false,
             semantic: Some(semantic),
+            policy: None,
             budget: BudgetConfig::default(),
         },
         HttpOptions {
@@ -2717,6 +2721,7 @@ impl Corpus {
                 references: Vec::new(),
                 no_memory: false,
                 semantic,
+                policy: None,
                 budget: BudgetConfig::default(),
             },
             input,

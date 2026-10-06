@@ -269,6 +269,82 @@ impl FeedbackRowV4 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Legacy feedback (001)
+// ---------------------------------------------------------------------------
+
+/// The legacy v1 feedback row (`foundry feedback` with no subcommand): a
+/// caller-labeled task/query pair and explicit permission. It lacks the
+/// exact inputs and rights v4 requires, so it stays exportable
+/// (`export-training`) and is NEVER eligible for training.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Feedback {
+    pub task_id: String,
+    pub query: String,
+    pub correct_strategy: crate::Strategy,
+    pub label_source: String,
+    pub allow_training: bool,
+}
+
+fn feedback_invalid(message: &'static str) -> FoundryError {
+    FoundryError::InvalidArgument(message.into())
+}
+
+impl Engine {
+    pub fn record_feedback(&self, feedback: &Feedback) -> FResult<String> {
+        if feedback.task_id.trim().is_empty() || feedback.task_id.len() > 256 {
+            return Err(feedback_invalid("invalid task id"));
+        }
+        if feedback.query.trim().is_empty() || feedback.query.len() > 4096 {
+            return Err(feedback_invalid("invalid feedback query"));
+        }
+        if !["operator", "task_checker"].contains(&feedback.label_source.as_str()) {
+            return Err(feedback_invalid(
+                "label must come from operator or task_checker",
+            ));
+        }
+        let encoded = serde_json::to_string(feedback)?;
+        // A correction or consent withdrawal replaces the same task/query example.
+        let id =
+            crate::digest(serde_json::to_string(&(&feedback.task_id, &feedback.query))?.as_bytes());
+        let tx = self.db.begin_write()?;
+        {
+            tx.open_table(crate::store::FEEDBACK)?
+                .insert(id.as_str(), encoded.as_str())?;
+        }
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// A stable task split prevents different interactions from one task leaking across sets.
+    pub fn training_examples(&self) -> FResult<Vec<serde_json::Value>> {
+        let tx = self.db.begin_read()?;
+        let mut rows = Vec::new();
+        for row in tx.open_table(crate::store::FEEDBACK)?.iter()? {
+            let (id, encoded) = row?;
+            let feedback: Feedback = serde_json::from_str(encoded.value())
+                .map_err(|e| FoundryError::CorruptStore(format!("feedback record: {e}")))?;
+            if !feedback.allow_training {
+                continue;
+            }
+            let hash = crate::digest(feedback.task_id.as_bytes());
+            let bucket = u8::from_str_radix(&hash[..2], 16)?;
+            let split = if bucket == 0 {
+                "evaluation"
+            } else if bucket == 1 {
+                "calibration"
+            } else {
+                "train"
+            };
+            rows.push(serde_json::json!({"id": id.value(), "task_id": feedback.task_id, "state": feedback.query,
+                "correct_strategy": feedback.correct_strategy, "label_source": feedback.label_source,
+                "split": split, "recipe": "retrieval-strategy-v1"}));
+        }
+        Ok(rows)
+    }
+}
+
 fn compact_digest(value: &serde_json::Value) -> String {
     crate::digest(
         serde_json::to_string(value)
@@ -776,7 +852,7 @@ impl Engine {
 /// Open one operator-named input file (policy, tokenizer) for reading
 /// without following a final-component symlink or blocking on a FIFO;
 /// anything but a regular file is refused.
-fn open_regular(path: &Path) -> std::io::Result<File> {
+pub(crate) fn open_regular(path: &Path) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt as _;
     let file = std::fs::OpenOptions::new()
         .read(true)
@@ -795,7 +871,7 @@ fn open_regular(path: &Path) -> std::io::Result<File> {
 /// length is checked BEFORE anything is read, and the read is capped at
 /// `limit + 1` bytes so a file that grows meanwhile is still refused.
 /// `None` when the file is over the limit.
-fn read_capped(file: File, limit: u64) -> std::io::Result<Option<Vec<u8>>> {
+pub(crate) fn read_capped(file: File, limit: u64) -> std::io::Result<Option<Vec<u8>>> {
     if file.metadata()?.len() > limit {
         return Ok(None);
     }
@@ -1271,6 +1347,8 @@ pub mod eval;
 pub mod ipc;
 pub mod profile;
 #[cfg(target_os = "macos")]
+pub mod serve;
+#[cfg(target_os = "macos")]
 pub mod supervisor;
 pub mod train;
 #[cfg(target_os = "macos")]
@@ -1588,7 +1666,7 @@ fn manifest_at(parent: &Dir, name: &OsString) -> Option<Vec<u8>> {
 /// directory actually opened and compares `(st_dev, st_ino)` with the
 /// root's, so relative paths, `..` components and symlinked parents cannot
 /// hide the containment.
-fn refuse_inside_root(engine: &Engine, held: &Dir, out: &Path) -> FResult<()> {
+pub(crate) fn refuse_inside_root(engine: &Engine, held: &Dir, out: &Path) -> FResult<()> {
     use std::os::unix::fs::MetadataExt as _;
     let Some(root) = engine.workspace_root() else {
         return Ok(());
@@ -2335,7 +2413,16 @@ pub struct LoadedRenderer {
 
 #[cfg(feature = "semantic")]
 fn load_renderer(policy: &LearningPolicy) -> FResult<LoadedRenderer> {
-    let dir = &policy.tokenizer.dir;
+    load_pinned_renderer(&policy.tokenizer)
+}
+
+/// Load the renderer from a pinned tokenizer directory: both files opened
+/// without following a link and bounded, then their hashes against the
+/// pin (`tokenizer_mismatch`). 013 T003 serving loads the selected
+/// candidate's tokenizer through this same path.
+#[cfg(feature = "semantic")]
+pub(crate) fn load_pinned_renderer(pin: &TokenizerPin) -> FResult<LoadedRenderer> {
+    let dir = &pin.dir;
     // Opened without following a link and refused by length before reading.
     let read = |name: &str, cap: u64| -> FResult<Vec<u8>> {
         let path = dir.join(name);
@@ -2355,7 +2442,7 @@ fn load_renderer(policy: &LearningPolicy) -> FResult<LoadedRenderer> {
     let config = read("tokenizer_config.json", 64 * 1024)?;
     let json_sha = crate::digest(&json);
     let config_sha = crate::digest(&config);
-    if json_sha != policy.tokenizer.json_sha256 || config_sha != policy.tokenizer.config_sha256 {
+    if json_sha != pin.json_sha256 || config_sha != pin.config_sha256 {
         return Err(fail(
             "tokenizer_mismatch",
             "tokenizer files do not match the policy's pinned hashes",

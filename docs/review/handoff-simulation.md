@@ -71,7 +71,7 @@ v3 superseded (the linked contract is now replaced by v4). D001 had
 not selected the exact ModernBERT checkpoint/head, trainable parameter set, joint
 input schema, pretrained initialization, artifact layout or runtime bounds.
 
-The failure is concrete: [current feedback](../../src/laya.rs) contains `task_id`,
+The failure is concrete: current feedback (`src/laya.rs` then; moved to `src/learning.rs` in 013 T003) contains `task_id`,
 `query` and `correct_strategy`; its key hashes task/query (base lines 100–127). Two
 different states/options under that pair overwrite the same example. The old v3
 contract likewise stores query vectors and identifies duplicate queries, rather

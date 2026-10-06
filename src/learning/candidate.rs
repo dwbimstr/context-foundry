@@ -608,6 +608,7 @@ mod tests {
             option_ids: ["search".into(), "graph".into()],
             expected: "search".into(),
             baseline: "search".into(),
+            permission_sha256: "p".repeat(64),
         }];
         let report = eval::evaluate(
             &cases,

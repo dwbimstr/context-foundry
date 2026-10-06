@@ -3,7 +3,7 @@
 //! mutation INSIDE one response.
 use context_foundry::fault::{self, Action, names};
 use context_foundry::graph::{Edge, Endpoint, GraphBundle};
-use context_foundry::laya::{Feedback, Strategy as LayaStrategy};
+use context_foundry::learning::Feedback;
 use context_foundry::store::{CandidateBatch, HandleRef, RenderedForm};
 use context_foundry::testkit;
 use context_foundry::testkit::{
@@ -52,7 +52,7 @@ fn feedback(task: &str) -> Feedback {
     Feedback {
         task_id: task.into(),
         query: format!("query for {task}"),
-        correct_strategy: LayaStrategy::Graph,
+        correct_strategy: Strategy::Graph,
         label_source: "operator".into(),
         allow_training: true,
     }

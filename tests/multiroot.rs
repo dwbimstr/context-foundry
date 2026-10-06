@@ -351,6 +351,7 @@ async fn a_ws16_collision_is_refused_through_the_test_seam() {
         budget: context_foundry::config::BudgetConfig::default(),
         no_memory: false,
         semantic: None,
+        policy: None,
     })
     .await
     .unwrap_err();

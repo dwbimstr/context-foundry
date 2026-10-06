@@ -120,8 +120,11 @@ pub enum FoundryError {
     /// `state_invalid`, `critical_slice_empty`, `base_invalid`,
     /// `incumbent_invalid`, `candidate_invalid`, `inherited_temperature` and
     /// `temperature_invalid`, and the execution failures listed in
-    /// [`LEARNING_EXECUTION_CODES`]. Diagnostics name codes and identities,
-    /// never state or dataset contents.
+    /// [`LEARNING_EXECUTION_CODES`]. T003 selection adds
+    /// `candidate_ineligible` and the config refusal `policy_config_invalid`
+    /// (a serving owner reports it, and its other start failures, in
+    /// `status` and keeps serving deterministically). Diagnostics name
+    /// codes and identities, never state or dataset contents.
     Learning {
         code: &'static str,
         message: String,

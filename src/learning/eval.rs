@@ -170,6 +170,9 @@ pub struct CaseInput {
     pub expected: String,
     /// Deterministic routing's choice for this row's query.
     pub baseline: String,
+    /// The example's permission identity (consent plus rights assertion) at
+    /// preparation, so selection can require it unchanged (013 T003).
+    pub permission_sha256: String,
 }
 
 /// A reported case: no raw state, only identities, labels and the model's
@@ -182,6 +185,9 @@ pub struct CaseRow {
     pub option_ids: [String; 2],
     pub expected: String,
     pub baseline: String,
+    /// The evaluated example's permission identity; the manifest binds the
+    /// report, so selection compares the CURRENT row against it.
+    pub permission_sha256: String,
     /// Row-order logits; `None` when the model produced none.
     pub logits: Option<[f32; 2]>,
     /// Row-order calibrated probabilities.
@@ -409,6 +415,7 @@ pub fn evaluate(
             option_ids: case.option_ids.clone(),
             expected: case.expected.clone(),
             baseline: case.baseline.clone(),
+            permission_sha256: case.permission_sha256.clone(),
             logits: match output {
                 Output::Logits(z) => Some(*z),
                 _ => None,
@@ -679,6 +686,7 @@ mod tests {
             option_ids: ["search".to_owned(), "graph".to_owned()],
             expected: expected.to_owned(),
             baseline: baseline.to_owned(),
+            permission_sha256: "p".repeat(64),
         }
     }
 

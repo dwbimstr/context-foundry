@@ -180,6 +180,9 @@ pub(crate) struct Shared {
     /// root only), started by `index {semantic: "prepare"}`, never at startup.
     #[cfg(feature = "semantic")]
     preparation: Arc<crate::neural::driver::Preparation>,
+    /// 013 T003: the owner's policy, fixed at startup: off (no config, or a
+    /// disabled one), unavailable with its reason, or serving.
+    policy: Arc<crate::policy::Policy>,
 }
 
 /// The owner's semantic state: `None` without `--semantic-profile`, the
@@ -260,9 +263,12 @@ pub fn search_primary(
 }
 
 /// The primary root's context candidates (and 008 memory hits when asked)
-/// with the semantic path applied.
+/// with the semantic path applied and, when a policy is configured, its
+/// routing of an `auto` strategy (013 T003): after the 009 merge, before
+/// graph expansion, under the same read deadline as the query embedding.
 pub fn context_primary(
     slot: &SemanticSlot,
+    policy: Option<&crate::policy::Policy>,
     engine: &Engine,
     query: &str,
     strategy: Strategy,
@@ -273,6 +279,28 @@ pub fn context_primary(
     let plan = plan_semantic(slot, engine, query, control);
     #[cfg(not(feature = "semantic"))]
     let _ = slot;
+    if let Some(policy) = policy.filter(|policy| policy.routes()) {
+        #[cfg(feature = "semantic")]
+        let dense = match &plan {
+            SemanticPlan::Dense(window) => Some(window),
+            _ => None,
+        };
+        #[cfg_attr(not(feature = "semantic"), allow(unused_mut))]
+        let mut context = engine.context_candidates_routed(
+            query,
+            strategy,
+            memory,
+            control,
+            #[cfg(feature = "semantic")]
+            dense,
+            policy,
+        )?;
+        #[cfg(feature = "semantic")]
+        if let SemanticPlan::Fallback(word) = plan {
+            context.batch.semantic = Some(word);
+        }
+        return Ok(context);
+    }
     #[cfg(feature = "semantic")]
     if let SemanticPlan::Dense(window) = &plan {
         return if memory {
@@ -516,6 +544,7 @@ impl Shared {
             semantic: SemanticSlot::default(),
             #[cfg(feature = "semantic")]
             preparation: Arc::default(),
+            policy: Arc::new(crate::policy::Policy::off()),
         }
     }
 
@@ -1336,6 +1365,7 @@ impl FoundryMcp {
                 .await);
         }
         let semantic = self.state.semantic.clone();
+        let policy = Arc::clone(&self.state.policy);
         Ok(self
             .deliver(
                 &ctx,
@@ -1344,9 +1374,13 @@ impl FoundryMcp {
                 || response::refusal_floor("context", None),
                 move |engines, control, _budget| {
                     let engine = engines[0].as_ref().expect("the primary engine is open");
-                    let (batch, hits) = if semantic_on(&semantic) {
+                    // 013 T003: a configured policy routes `auto`; without
+                    // one this is exactly the baseline path.
+                    let routed = policy.routes().then_some(&*policy);
+                    let (batch, hits) = if semantic_on(&semantic) || routed.is_some() {
                         let combined = context_primary(
                             &semantic,
+                            routed,
                             engine,
                             &query,
                             strategy,
@@ -1899,7 +1933,7 @@ impl FoundryMcp {
         let semantic = self.state.semantic.clone();
         #[cfg(feature = "semantic")]
         let preparation = Arc::clone(&self.state.preparation);
-        let outcome = match run_engine_op(
+        let mut outcome = match run_engine_op(
             &self.state,
             Instant::now() + READ_DEADLINE,
             Some(ctx.ct.clone()),
@@ -1960,6 +1994,8 @@ impl FoundryMcp {
             Ok(outcome) => outcome,
             Err(e) => return Ok(foundry_error_result(&e)),
         };
+        // 013 T003: the policy state (no engine work).
+        outcome["policy"] = self.state.policy.status();
         Ok(text_result(response::compact_json(&outcome)))
     }
 
@@ -2447,6 +2483,7 @@ impl FoundryMcp {
         let run_meta = Arc::clone(&meta);
         let pack_meta = Arc::clone(&meta);
         let semantic = self.state.semantic.clone();
+        let policy = Arc::clone(&self.state.policy);
         self.deliver(
             ctx,
             tokens,
@@ -2473,10 +2510,14 @@ impl FoundryMcp {
                             engines[0].as_ref().expect("the primary engine is open"),
                         );
                         // 009 T002: semantic evidence belongs to the PRIMARY
-                        // root's store only (the merged header says so).
-                        if is_primary && semantic_on(&semantic) {
+                        // root's store only (the merged header says so); so
+                        // does 013 T003 routing, whose state the primary
+                        // store composes.
+                        let routed = policy.routes().then_some(&*policy);
+                        if is_primary && (semantic_on(&semantic) || routed.is_some()) {
                             let combined = context_primary(
                                 &semantic,
+                                routed,
                                 engine,
                                 &query,
                                 strategy,
@@ -2883,6 +2924,9 @@ pub struct ServerOptions {
     /// 009 T002: the semantic profile this owner serves, if any. `None`
     /// keeps every response byte-identical to a build without semantics.
     pub semantic: Option<SemanticServing>,
+    /// 013 T003: the policy config this owner serves, if any. `None` (or a
+    /// disabled config) keeps every response byte-identical.
+    pub policy: Option<crate::policy::PolicyServing>,
 }
 
 /// The launch-time semantic configuration (`mcp --semantic-profile FILE
@@ -2978,6 +3022,7 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         .map_err(|error| AdapterError::named(error.code(), error.message()))?;
     let primary = &admitted[0];
     let semantic_launch = options.semantic.take();
+    let policy_launch = options.policy.take();
     #[cfg(not(feature = "semantic"))]
     if semantic_launch.is_some() {
         return Err(refuse_unsupported_semantic().into());
@@ -3016,6 +3061,14 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
     // reports, with baseline results intact. 009 T003: startup never resumes
     // preparation; only `index {semantic: "prepare"}` starts the driver.
     let semantic = semantic_slot(semantic_launch)?;
+    // 013 T003: the config is validated and its worker loaded HERE, once,
+    // before serving (bounded by the load ceiling). An invalid config or a
+    // failed start leaves the policy unavailable by name; baseline
+    // retrieval serves either way.
+    let policy = Arc::new(crate::policy::Policy::start(
+        policy_launch,
+        Some(&primary.workspace_id),
+    ));
     Ok(Arc::new(Shared {
         engines: Arc::new(Mutex::new(engines)),
         meta: Arc::new(meta),
@@ -3027,6 +3080,7 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         semantic,
         #[cfg(feature = "semantic")]
         preparation: Arc::default(),
+        policy,
     }))
 }
 
