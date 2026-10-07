@@ -40,6 +40,32 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## Embedding model comparison: Nemotron 3 Embed 1B vs EmbeddingGemma 2 — 2026-10-07
+
+Owner-authorized exception to the measurement freeze, before signing; nothing in the repository changed except this record and the 009 status note. Decision rule (owner): switch only if EmbeddingGemma 2 delivers at least as much required evidence. **Result: rule not met; Nemotron stays.**
+- **Runtime.** No released MLX package supports EmbeddingGemma 2 (mlx-vlm 0.7.6 has no `embedding_gemma2`; support is an open pull request), so it ran through llama.cpp at build `b9acf138` (includes EmbeddingGemma 2 support, PR #30054), statically linked with Metal, using the ggml-org GGUF `bfcd2987` (BF16, converted from `google/embeddinggemma-2@914f7f89`, Apache-2.0). Parity against the reference sentence-transformers 6.1.0 float32 implementation: cosine ≥ 0.99999 on 20 queries and 40 code windows (Q8_0: ≥ 0.99982).
+- **Evaluation-only harness** (outside the repository, not product code). Foundry's embedding path is fixed at 2048 dimensions and the Nemotron `passage: `/`query: ` recipe, so a llama.cpp worker speaks Foundry's unchanged worker protocol inside the same App Sandbox bundle machinery. It decodes Foundry's token IDs, re-renders them with Gemma's prompts (`task: code retrieval | query: `, `title: none | text: `), keeps the first 768 or 256 dimensions, renormalizes and zero-pads to 2048. Zero padding leaves cosine similarity unchanged. Both arms embed the identical 15,026 units because Foundry partitions with the Nemotron tokenizer in both; decoding round-trips exactly on 200 of 200 sampled code windows.
+- **Protocol.** Library-only store (the 2,255 files of rust-lang/rust 1.99.0 `library/`, where every checker answer lives) with the 005 SCIP graph; the frozen 4,597 development and 2,284 held-out tasks (checker v3 `e190b7dd…f6c8`, pass logic unchanged); `context` at 2048 tokens, `search` and `graph`, through `foundry mcp --semantic-profile` (every response `semantic:ready`).
+
+| Required evidence delivered | dev search | dev graph | held-out search | held-out graph |
+| --- | ---: | ---: | ---: | ---: |
+| Lexical only | 49.3% | 22.2% | 44.1% | 19.5% |
+| Nemotron (MLX 4-bit, 2048-d) | 48.3% | 22.8% | 40.9% | 20.0% |
+| EmbeddingGemma 2, 768-d | 48.0% | 22.4% | 41.5% | 19.6% |
+| EmbeddingGemma 2, 256-d | 47.8% | 22.3% | 41.2% | 19.5% |
+
+- **Paired comparisons** (tasks gained / lost, exact McNemar):
+  - Gemma 768 vs Nemotron: search dev 70 / 83 (p = 0.33) and held-out 45 / 30 (p = 0.11), so within noise; graph dev 17 / 35 (p = 0.018) and held-out 6 / 16 (p = 0.052), so Gemma is worse. Gemma 256 is worse than Nemotron on graph (dev p = 0.001, held-out p = 0.043).
+  - Both models vs lexical only: search loses significantly (Nemotron dev 89 / 134, held-out 28 / 101; Gemma 768 dev 58 / 116, held-out 17 / 75; all p ≤ 0.003). Nemotron gains on graph for dev (51 / 21, p = 0.001).
+  - The loss is in usage questions (dev search: lexical 33.3%, Nemotron 30.7%, Gemma 29.9%; held-out 35.3%, 27.5%, 28.6%): fused dense candidates displace reference-site units. Definition questions are unchanged (58.2%, 58.1%, 58.1%).
+  - These tasks name an identifier; the set has no natural-language query without one, which is the case dense retrieval exists for. Delivered tokens were equal across arms (mean 1,807–1,812 for search).
+- **Cost** (same machine; MLX 4-bit vs llama.cpp BF16, so runtime and model both differ):
+  - Full preparation of the 15,026 units: Nemotron 6,889 s in three bounded rounds; Gemma 768 2,139 s in one, alone (3.2× faster). Gemma 256 took 2,098 s while two checker runs shared the machine.
+  - Worker peak footprint: Gemma about 1.62 GiB (eight 120-line windows, 4,096-token context); Nemotron about 1.6 GiB at a 2,048-token input (009 D001).
+  - Weights: 629 MB (Nemotron 4-bit artifact) vs 532 MB (Gemma BF16 GGUF).
+  - Index and cache size are computed, not measured, because the harness pads every vector to 2048: an F16 index of 15,026 vectors would be 61.5 MB at 2048-d, 23.1 MB at 768-d and 7.7 MB at 256-d.
+- **What a switch would have needed.** Profile-owned dimensions and prompts (today `DIMENSIONS`, the prefixes, the cache row layout and the frame size are constants), a llama.cpp worker in place of pyo3 and MLX, and a new signed bundle. The harness worker shows the llama.cpp path works under the existing protocol and sandbox, and it is the template if a future model without MLX support wins.
+
 ## Learned-router economics and tier-1 ranking — 2026-10-06
 
 Owner-approved after the 013 corpus analysis: (1) account for the learned router by economics, (2) fix the deterministic retrieval causes first, (3) decide a second learned decision from the rerun. Offline arithmetic and deterministic `context` runs only: no model call, no timing claim.

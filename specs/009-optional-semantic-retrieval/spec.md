@@ -34,6 +34,17 @@ Owner answers, 2026-10-04:
   `disable-semantic` removes only those files. Caches and stores stay through disable,
   rollback and uninstall. Package acceptance with the real bundle remains open with
   signing.
+- **Model comparison, 2026-10-07 (owner-authorized exception to the measurement
+  freeze).** Google EmbeddingGemma 2 (`914f7f89`, run through llama.cpp because no MLX
+  release supports it) was compared with the pinned Nemotron on the frozen checker tasks
+  over a library-only rust-lang/rust store. It was within noise for `search` and
+  delivered significantly less for `graph` on the development tasks, so the switch rule
+  ("at least as much") failed and Nemotron stays. Both models, fused as specified, delivered
+  less required evidence for `search` than lexical retrieval alone on these
+  identifier-named tasks, mostly on usage questions. The task set does not cover
+  natural-language queries without an identifier, which is where dense retrieval is
+  meant to help. [Validation](../../docs/validation.md) has the numbers and the
+  evaluation-only harness.
 
 The semantic-item line form was decided 2026-10-04 (§ Documents, embedding units and
 returned evidence).
