@@ -425,8 +425,8 @@ pub struct SearchOutcome {
     pub candidate_limit_reached: bool,
     pub truncated: bool,
     pub scan_state: String,
-    /// The 009 T002 semantic word (`ready`, `partial`) or `None` on the
-    /// baseline path; search locators never claim `whole_unit`.
+    /// The 009 semantic word (`ready`, `partial`) or `None` on the baseline
+    /// path.
     pub semantic: Option<String>,
 }
 
@@ -510,26 +510,14 @@ impl RankedItem {
     }
 }
 
-/// The neural evidence of one dense candidate (009 T002): the whole matched
-/// embedding unit, its verbatim bytes, and — when a lexical span retrieved
-/// in the same request intersects the unit — that span clipped to the
-/// unit's bounds. The packer tries the whole unit, then the span, then a
-/// bounded prefix labeled `preview`; the selection is decided by what fits.
-#[derive(Clone, Debug)]
+/// A unit dense retrieval placed (spec 009 § T004 "Placement"): it comes
+/// before the lexical candidates and renders through the ordinary unit
+/// ladder, tagged `[semantic]` (context-v2 § Evidence items).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SemanticEvidence {
-    /// The matched handle: the whole embedding unit.
-    pub matched: SourceHandle,
-    /// The unit's verbatim bytes.
-    pub unit_body: String,
-    /// The intersecting lexical span clipped to the unit, with its own
-    /// first line.
-    pub span: Option<(SourceHandle, String, u64)>,
-    /// The unit's first 1-based line.
-    pub unit_start_line: u64,
-    /// True when the unit came from the dense window alone (no lexical
-    /// delivery unit shares its span): it carries no delivery-unit label
-    /// and never seeds graph expansion, since a preview is not a localized
-    /// seed.
+    /// True when no lexical candidate shares the unit: it carries no
+    /// delivery-unit label (its locator says `semantic`) and never seeds
+    /// graph expansion.
     pub dense_only: bool,
 }
 
@@ -3704,9 +3692,9 @@ impl Engine {
     }
 
     /// The materialized hits of one candidate batch, as the CLI and MCP
-    /// render them: locator lines never carry a selection tag, so a dense
-    /// hit names its matched unit's handle under the `semantic` label and
-    /// never claims `whole_unit` (009 T002).
+    /// render them: locator lines never carry a selection tag, so a
+    /// dense-only hit (009 T004: a placed card's unit with no lexical
+    /// candidate) names its unit's handle under the `semantic` label.
     pub fn search_outcome(batch: CandidateBatch) -> SearchOutcome {
         let semantic = batch.semantic;
         let hits = batch
@@ -4182,24 +4170,24 @@ impl Engine {
         })
     }
 
-    /// The 009 T002 fused candidate selection: the D001 merge — tier-1
-    /// exact definitions first, then reciprocal-rank fusion (k = 60) over
-    /// the lexical top 256 and the dense top 64, ties by path then start.
+    /// The 009 T004 placement (spec 009 § T004 "Placement"), for a query
+    /// without an anchor: the dense window's units first, in similarity
+    /// order, then tier 1 and tier 2 in the baseline's order.
     ///
-    /// Everything is validated in ONE final read BEFORE fusion. A lexical
+    /// Everything is validated in ONE final read BEFORE placement. A lexical
     /// document whose source changed is dropped and counted stale, so it can
     /// neither suppress nor coalesce with a current dense unit of the same
     /// span. A dense hit expands through the serving generation's own label
     /// map (no partition walk): each location must satisfy the request's
     /// path filter, then is dropped and counted stale unless its recorded
     /// source hash is the current one and its range lies inside the source.
-    /// The fused list is then merged per unit, capped per file and cut to
-    /// `limit` like the baseline. A unit the dense window retrieved renders
-    /// as neural evidence (whole unit / lexical span / preview decided by
-    /// the packer); every other candidate renders exactly as the baseline
-    /// does. The coverage word is `ready` only for a complete generation
-    /// published at this read's source revision; otherwise `partial`.
-    /// `anchors` as in [`Self::search_candidates_with`].
+    /// The placed list is then merged per unit (a unit appears once, at its
+    /// first place), capped per file and cut to `limit` like the baseline.
+    /// A dense unit renders through the ordinary ladder, tagged semantic;
+    /// when a lexical candidate shares it, it keeps that candidate's label.
+    /// The coverage word is `ready` only for a complete generation published
+    /// at this read's source revision; otherwise `partial`. `anchors` as in
+    /// [`Self::search_candidates_with`].
     #[cfg(feature = "semantic")]
     pub fn search_candidates_semantic(
         &self,
@@ -4210,7 +4198,6 @@ impl Engine {
         dense: &crate::neural::query::DenseWindow,
         anchors: Option<&[AnchorCandidate]>,
     ) -> FResult<CandidateBatch> {
-        use crate::neural::merge::MergeUnit;
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
@@ -4230,7 +4217,7 @@ impl Engine {
             windows,
         } = self.collect_two_tier(query, path, control, anchors)?;
 
-        // Final read: every candidate is validated here, before fusion.
+        // Final read: every candidate is validated here, before placement.
         let tx = self.db.begin_read()?;
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
@@ -4273,23 +4260,21 @@ impl Engine {
             &wanted,
         )?;
         // Lexical documents of the current source version only.
-        let mut fresh: [Vec<Candidate>; 2] = [Vec::new(), Vec::new()];
-        for (kept, documents) in fresh.iter_mut().zip([first, second]) {
-            for candidate in documents {
-                load(&mut current, &candidate.path)?;
-                if current[&candidate.path]
-                    .as_ref()
-                    .is_some_and(|meta| meta.hash == candidate.hash)
-                {
-                    kept.push(candidate);
-                } else {
-                    counters.stale += 1;
-                }
+        let mut lexical: Vec<Candidate> = Vec::with_capacity(first.len() + second.len());
+        for candidate in first.into_iter().chain(second) {
+            load(&mut current, &candidate.path)?;
+            if current[&candidate.path]
+                .as_ref()
+                .is_some_and(|meta| meta.hash == candidate.hash)
+            {
+                lexical.push(candidate);
+            } else {
+                counters.stale += 1;
             }
         }
-        let [first, second] = fresh;
-        // Dense locations: the path restriction first, then freshness.
-        let mut dense_units: Vec<MergeUnit> = Vec::new();
+        // Dense locations in similarity order: the path restriction first,
+        // then freshness.
+        let mut placed: Vec<((String, u64, u64), bool)> = Vec::new();
         for hit in &dense.hits {
             for location in dense.units(hit) {
                 if filter
@@ -4309,45 +4294,30 @@ impl Engine {
                     counters.stale += 1;
                     continue;
                 }
-                dense_units.push(MergeUnit {
-                    path: location.path.clone(),
-                    start: location.start,
-                    end: location.end,
-                });
+                placed.push(((location.path.clone(), location.start, location.end), true));
             }
         }
-        let unit_of = |candidate: &Candidate| MergeUnit {
-            path: candidate.path.clone(),
-            start: candidate.unit_start,
-            end: candidate.unit_end,
-        };
-        let tier1_units: Vec<MergeUnit> = first.iter().map(unit_of).collect();
-        let lexical_units: Vec<MergeUnit> = second.iter().map(unit_of).collect();
-        let fused = crate::neural::merge::fuse(&tier1_units, &lexical_units, &dense_units);
+        // Then the lexical candidates in today's order (tier 1, tier 2).
+        placed.extend(lexical.iter().map(|candidate| (candidate.unit(), false)));
         // The candidate carrying each lexical unit: its first (best-ranked)
         // current document, as in the baseline.
         let mut by_unit: std::collections::HashMap<(String, u64, u64), &Candidate> =
             std::collections::HashMap::new();
-        for candidate in first.iter().chain(&second) {
+        for candidate in &lexical {
             by_unit.entry(candidate.unit()).or_insert(candidate);
         }
 
         // The baseline's merge per unit, per-file cap and cut, over the
-        // FUSED order.
+        // placed order.
         let mut seen = std::collections::BTreeSet::new();
         let mut per_file: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
-        struct Kept<'a> {
-            candidate: Option<&'a Candidate>,
-            unit: MergeUnit,
-            dense_rank: Option<usize>,
-        }
-        let mut kept: Vec<Kept<'_>> = Vec::new();
-        for entry in &fused {
-            if !seen.insert(&entry.unit) {
+        let mut kept: Vec<(&(String, u64, u64), bool)> = Vec::new();
+        for (unit, from_dense) in &placed {
+            if !seen.insert(unit) {
                 continue;
             }
-            let count = per_file.entry(entry.unit.path.clone()).or_default();
+            let count = per_file.entry(unit.0.clone()).or_default();
             if *count == PER_FILE_CAP {
                 counters.capped += 1;
                 continue;
@@ -4357,144 +4327,69 @@ impl Engine {
                 counters.truncated = true;
                 continue;
             }
-            kept.push(Kept {
-                candidate: by_unit
-                    .get(&(entry.unit.path.clone(), entry.unit.start, entry.unit.end))
-                    .copied(),
-                unit: entry.unit.clone(),
-                dense_rank: entry.dense_rank,
-            });
+            kept.push((unit, *from_dense));
         }
         let mut items = Vec::with_capacity(kept.len());
-        for (rank, kept_one) in kept.into_iter().enumerate() {
-            let Some(Some(meta)) = current.get(&kept_one.unit.path) else {
+        for (rank, (unit, from_dense)) in kept.into_iter().enumerate() {
+            let (unit_path, unit_start, unit_end) = unit;
+            let Some(Some(meta)) = current.get(unit_path) else {
                 continue;
             };
-            if !verified.contains_key(&kept_one.unit.path) {
-                let source = reconstruct_verified(&stored, &kept_one.unit.path, meta)?;
-                verified.insert(kept_one.unit.path.clone(), source);
+            if !verified.contains_key(unit_path) {
+                let source = reconstruct_verified(&stored, unit_path, meta)?;
+                verified.insert(unit_path.clone(), source);
             }
-            let body = &verified[&kept_one.unit.path].body;
-            let (from, to) = (kept_one.unit.start as usize, kept_one.unit.end as usize);
-            if !(from < to
-                && to <= body.len()
-                && body.is_char_boundary(from)
-                && body.is_char_boundary(to))
-            {
-                return Err(FoundryError::CorruptStore(format!(
-                    "candidate unit outside {}",
-                    kept_one.unit.path
-                )));
-            }
-            let text = &body[from..to];
-            let line_of = |at: usize| {
-                body.as_bytes()[..at]
-                    .iter()
-                    .filter(|&&b| b == b'\n')
-                    .count() as u64
-                    + 1
-            };
-            let start_line = line_of(from);
-            let end_line = start_line
-                + text.as_bytes()[..text.len().saturating_sub(1)]
-                    .iter()
-                    .filter(|&&b| b == b'\n')
-                    .count() as u64;
-            let handle = SourceHandle {
-                workspace_id: workspace_id.clone(),
-                path: kept_one.unit.path.clone(),
-                sha256: meta.hash.clone(),
-                start: kept_one.unit.start,
-                end: kept_one.unit.end,
-            };
-            match kept_one.candidate {
+            let body = &verified[unit_path].body;
+            let candidate = by_unit.get(unit).copied();
+            let mut item = match candidate {
                 Some(candidate) => {
-                    let head = candidate.unit_head as usize;
-                    if !(from <= head && head < to) {
-                        return Err(FoundryError::CorruptStore(format!(
-                            "search document head outside its unit in {}",
-                            kept_one.unit.path
-                        )));
-                    }
-                    let line = if candidate.tier == 1 {
-                        line_of(head)
-                    } else {
-                        start_line + best_line_index(text, &wanted)
-                    };
-                    let label = match &candidate.qname {
-                        Some(qname) => format!("{} {qname}", candidate.kind),
-                        None => candidate.kind.clone(),
-                    };
-                    items.push(RankedItem {
-                        tier: candidate.tier,
-                        rank,
-                        score: candidate.score,
-                        handle: Some(handle.clone()),
-                        start_line,
-                        end_line,
-                        line,
-                        label,
-                        lang: candidate.lang.clone(),
-                        semantic: kept_one.dense_rank.map(|_| SemanticEvidence {
-                            matched: handle.clone(),
-                            unit_body: text.to_owned(),
-                            span: None,
-                            unit_start_line: start_line,
-                            dense_only: false,
-                        }),
-                        resolver: candidate.resolver,
-                        forms: vec![RenderedForm::Verbatim(text.to_owned())],
-                    });
+                    ranked_item(candidate, rank, &workspace_id, &meta.hash, body, &wanted)?
                 }
                 None => {
-                    // A dense-only unit: neural evidence. The selected
-                    // lexical span is the highest-ranked retrieved current
-                    // lexical span intersecting the unit, clipped to its
-                    // bounds.
-                    let span = first.iter().chain(&second).find_map(|candidate| {
-                        if candidate.path != kept_one.unit.path {
-                            return None;
-                        }
-                        let (s, e) = (candidate.unit_start, candidate.unit_end);
-                        let (clip_from, clip_to) =
-                            (s.max(kept_one.unit.start), e.min(kept_one.unit.end));
-                        (clip_from < clip_to).then(|| {
-                            (
-                                SourceHandle {
-                                    workspace_id: workspace_id.clone(),
-                                    path: kept_one.unit.path.clone(),
-                                    sha256: meta.hash.clone(),
-                                    start: clip_from,
-                                    end: clip_to,
-                                },
-                                body[clip_from as usize..clip_to as usize].to_owned(),
-                                line_of(clip_from as usize),
-                            )
-                        })
-                    });
-                    items.push(RankedItem {
+                    // A dense-only unit: no delivery-unit label.
+                    let (from, to) = (*unit_start as usize, *unit_end as usize);
+                    if !(from < to
+                        && to <= body.len()
+                        && body.is_char_boundary(from)
+                        && body.is_char_boundary(to))
+                    {
+                        return Err(FoundryError::CorruptStore(format!(
+                            "candidate unit outside {unit_path}"
+                        )));
+                    }
+                    let text = &body[from..to];
+                    let newlines = |bytes: &[u8]| bytes.iter().filter(|&&b| b == b'\n').count();
+                    let start_line = newlines(&body.as_bytes()[..from]) as u64 + 1;
+                    let end_line = start_line + newlines(&text.as_bytes()[..text.len() - 1]) as u64;
+                    RankedItem {
                         tier: 2,
                         rank,
                         score: 0.0,
-                        handle: Some(handle.clone()),
+                        handle: Some(SourceHandle {
+                            workspace_id: workspace_id.clone(),
+                            path: unit_path.clone(),
+                            sha256: meta.hash.clone(),
+                            start: *unit_start,
+                            end: *unit_end,
+                        }),
                         start_line,
                         end_line,
                         line: start_line,
                         label: String::new(),
-                        lang: crate::syntax::Lang::from_path(&kept_one.unit.path)
+                        lang: crate::syntax::Lang::from_path(unit_path)
                             .map(|lang| lang.tag().to_owned()),
-                        semantic: Some(SemanticEvidence {
-                            matched: handle,
-                            unit_body: text.to_owned(),
-                            span,
-                            unit_start_line: start_line,
-                            dense_only: true,
-                        }),
+                        semantic: None,
                         resolver: None,
                         forms: vec![RenderedForm::Verbatim(text.to_owned())],
-                    });
+                    }
                 }
+            };
+            if from_dense {
+                item.semantic = Some(SemanticEvidence {
+                    dense_only: candidate.is_none(),
+                });
             }
+            items.push(item);
         }
         let freshness = self.freshness_in(&tx)?;
         // The word describes THIS read (a context recomputes it against its

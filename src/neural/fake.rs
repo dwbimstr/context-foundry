@@ -1,14 +1,15 @@
 //! The deterministic test `EmbeddingProvider` (009 T001): reproducible
-//! vectors derived from the exact model-input token ids, with call counters
-//! for the FR-002 reuse assertions and fault behaviors for the
-//! validation-preservation tests. Compiled only with `test-faults`.
+//! vectors of the descriptor's dimension derived from the exact model-input
+//! token ids, with call counters for the FR-002 reuse assertions and fault
+//! behaviors for the validation-preservation tests. Compiled only with
+//! `test-faults`.
 use crate::control::Control;
 use crate::error::FoundryError;
 use crate::neural::prepare;
-use crate::neural::profile::SemanticProfile;
+use crate::neural::profile::{DEFAULT_BATCH, SemanticProfile};
 use crate::neural::provider::{
-    DIMENSIONS, DOCUMENT_BATCH, DOCUMENT_UNIT_TOKENS, EmbeddingProvider, FunctionDescriptor,
-    ProviderError, SERVING_LIMIT_TOKENS, TokenizedInput,
+    DocumentLimits, EmbeddingProvider, FunctionDescriptor, ProviderError, SERVING_LIMIT_TOKENS,
+    TokenizedInput, check_document_batch,
 };
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -70,13 +71,14 @@ impl FakeHandle {
     pub fn batch_sizes(&self) -> Vec<usize> {
         self.batch_sizes.lock().expect("batch log").clone()
     }
-    /// No batch may exceed the document-batch bound.
+    /// No batch may exceed the default profile batch the fixtures use.
     pub fn assert_batches_bounded(&self) {
+        let bound = DEFAULT_BATCH as usize;
         assert!(
             self.batch_sizes()
                 .iter()
-                .all(|size| (1..=DOCUMENT_BATCH).contains(size)),
-            "batch sizes {:?} outside 1..={DOCUMENT_BATCH}",
+                .all(|size| (1..=bound).contains(size)),
+            "batch sizes {:?} outside 1..={bound}",
             self.batch_sizes()
         );
     }
@@ -88,12 +90,14 @@ struct FakeProvider {
     handle: FakeHandle,
 }
 
-/// Deterministic unit-vector-ish embedding of one id stream: a SHA-256
-/// stream keyed by the function digest, the ids and the component index.
+/// Deterministic unit-length embedding of one id stream, of the
+/// descriptor's dimension: a SHA-256 stream keyed by the function digest,
+/// the ids and the component index.
 fn deterministic_vector(descriptor: &FunctionDescriptor, ids: &[u32]) -> Vec<f32> {
-    let mut vector = Vec::with_capacity(DIMENSIONS);
+    let dims = descriptor.dims();
+    let mut vector = Vec::with_capacity(dims);
     let mut counter = 0u32;
-    while vector.len() < DIMENSIONS {
+    while vector.len() < dims {
         let mut hasher = Sha256::new();
         hasher.update(descriptor.digest().as_bytes());
         hasher.update((ids.len() as u64).to_le_bytes());
@@ -105,7 +109,7 @@ fn deterministic_vector(descriptor: &FunctionDescriptor, ids: &[u32]) -> Vec<f32
         for chunk in digest.chunks_exact(4) {
             let bits = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
             vector.push(bits as f32 / u32::MAX as f32 - 0.5);
-            if vector.len() == DIMENSIONS {
+            if vector.len() == dims {
                 break;
             }
         }
@@ -127,19 +131,7 @@ impl EmbeddingProvider for FakeProvider {
         batch: &[TokenizedInput],
         control: &Control,
     ) -> Result<Vec<Vec<f32>>, ProviderError> {
-        if batch.is_empty() || batch.len() > DOCUMENT_BATCH {
-            return Err(ProviderError::InputTooLarge(format!(
-                "fake refuses a batch of {} inputs",
-                batch.len()
-            )));
-        }
-        for input in batch {
-            if input.ids.is_empty() || input.ids.len() > DOCUMENT_UNIT_TOKENS {
-                return Err(ProviderError::InputTooLarge(
-                    "fake refuses an out-of-limit input".into(),
-                ));
-            }
-        }
+        check_document_batch(batch, DocumentLimits::PROTOCOL)?;
         let call = self.handle.document_calls.fetch_add(1, Ordering::SeqCst) + 1;
         if let FakeBehavior::SlowMs(ms) = self.behavior {
             std::thread::sleep(Duration::from_millis(ms));
@@ -231,8 +223,8 @@ impl FakeFactory {
     pub fn acquire(&self) -> prepare::Acquire {
         let served = if self.behavior == FakeBehavior::WrongDescriptor {
             let mut other = self.descriptor.clone();
-            // A different quantization names a different document function.
-            other.quantization = format!("{} +fake", other.quantization);
+            // Another model label names a different document function.
+            other.model = format!("{} +fake", other.model);
             other
         } else {
             self.descriptor.clone()

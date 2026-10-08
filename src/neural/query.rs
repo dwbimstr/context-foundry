@@ -2,13 +2,17 @@
 //! the derived dense index through the store descriptor (never a re-resolved
 //! path) from the very bytes that matched the generation manifest, with the
 //! USearch header and geometry check T001 deferred to this task, and return
-//! the bounded dense window the merge fuses with the lexical candidates.
-//! A dense hit expands to unit locations through the generation's own label
-//! map; no request walks the partition table.
+//! the bounded dense window of nearest cards. A dense hit expands to unit
+//! locations through the generation's own label map; no request walks the
+//! partition table.
 //!
-//! Nothing here reranks, rewrites the query or calls a second model: the
-//! ordering decision is [`super::merge`]. A failure at any step is a NAMED
-//! fallback ([`Fallback`]) for the baseline path; it never fails the response.
+//! 009 T004: only a query without an anchor reaches this module (the
+//! request path decides that before any model call); the candidate assembly
+//! places the window's units first, in similarity order, ahead of the
+//! lexical candidates (`Engine::search_candidates_semantic`). Nothing here
+//! reranks, rewrites the query or calls a second model. A failure at any
+//! step is a NAMED fallback ([`Fallback`]) for the baseline path; it never
+//! fails the response.
 use crate::control::Control;
 use crate::error::FoundryError;
 use crate::neural::index::{
@@ -16,16 +20,14 @@ use crate::neural::index::{
 };
 use crate::neural::partition::TokenCount as _;
 use crate::neural::profile::SemanticProfile;
-use crate::neural::provider::{
-    self, EmbeddingProvider, LateCall, ProviderError, QUERY_PREFIX, TokenizedInput,
-};
+use crate::neural::provider::{self, EmbeddingProvider, LateCall, ProviderError, TokenizedInput};
 use crate::neural::tokenize::DocumentTokenizer;
 use crate::store::Engine;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
-/// The dense candidate window (D001): the top 64 dense hits enter the fusion.
+/// The dense candidate window (D001): the top 64 nearest cards.
 pub const DENSE_WINDOW: usize = 64;
 /// The per-request query-embedding ceiling (D001): the earlier of 1500 ms
 /// and HALF the remaining read deadline, so a cut-off embedding always
@@ -151,15 +153,17 @@ pub struct DenseIndex {
 
 impl DenseIndex {
     /// Load the serving generation: the state row names the function digest
-    /// and recipe; the manifest and label map are validated by content and
-    /// the index file is read ONCE and hashed in memory; then the USearch
-    /// header of THOSE bytes is checked against the manifest's geometry
-    /// BEFORE they are restored, and the restored index's own geometry is
-    /// checked again. `Err` is the named fallback the baseline path reports.
+    /// and recipe; the manifest and label map are validated by content (the
+    /// manifest's geometry against the profile's `dimensions`) and the index
+    /// file is read ONCE and hashed in memory; then the USearch header of
+    /// THOSE bytes is checked against the manifest's geometry BEFORE they
+    /// are restored, and the restored index's own geometry is checked
+    /// again. `Err` is the named fallback the baseline path reports.
     pub fn load(
         engine: &Engine,
         expected_digest: &str,
         expected_recipe: &str,
+        dimensions: usize,
         control: &Control,
     ) -> Result<Arc<Self>, Fallback> {
         let unprepared = || Fallback::new("semantic_unprepared", "no semantic profile prepared");
@@ -187,7 +191,7 @@ impl DenseIndex {
         }
         let anchor = engine.semantic_anchor()?;
         let (generation, bytes) =
-            match index::load_generation_with(&anchor, &digest, &recipe, control) {
+            match index::load_generation_with(&anchor, &digest, &recipe, dimensions, control) {
                 Ok(loaded) => loaded,
                 Err(GenerationError::Interrupted(error)) => return Err(error.into()),
                 Err(GenerationError::Unavailable(reason)) => {
@@ -286,13 +290,14 @@ pub fn fallback_word(reason: &str) -> String {
     format!("fallback:{}", cleaned.trim())
 }
 
-/// Render and tokenize one query and refuse the serving limit: the exact
-/// model input of a query.
+/// Render one query with the profile's query template, tokenize it and
+/// refuse the serving limit: the exact model input of a query.
 pub fn tokenize_query(
     tokenizer: &DocumentTokenizer,
+    template: &str,
     query: &str,
 ) -> Result<TokenizedInput, ProviderError> {
-    let rendered = format!("{QUERY_PREFIX}{query}");
+    let rendered = provider::render(template, query);
     let tokenized = tokenizer.encode(&rendered)?;
     let input = TokenizedInput { ids: tokenized.ids };
     provider::check_query(&input)?;
@@ -597,7 +602,7 @@ impl QueryRuntime {
     pub fn embed(&self, query: &str, deadline: Instant) -> Result<Vec<f32>, ProviderError> {
         let _dispatching = Dispatching::enter(self);
         let _ = neural_fault!(QUERY_REGISTERED, None, query);
-        let input = tokenize_query(&self.tokenizer, query)?;
+        let input = tokenize_query(&self.tokenizer, &self.profile.query_template, query)?;
         let now = Instant::now();
         let ceiling = now + QUERY_CEILING.min(deadline.saturating_duration_since(now) / 2);
         if Instant::now() >= ceiling {
@@ -618,7 +623,7 @@ impl QueryRuntime {
         }
         match answer.recv_timeout(ceiling.saturating_duration_since(Instant::now())) {
             Ok(result) => result.and_then(|vector| {
-                provider::validate_vector(&vector)?;
+                provider::validate_vector(&vector, self.profile.descriptor.dims())?;
                 Ok(vector)
             }),
             Err(mpsc::RecvTimeoutError::Timeout) => Err(ProviderError::Timeout),
@@ -628,7 +633,7 @@ impl QueryRuntime {
         }
     }
 
-    /// 009 T003: admit ONE document batch (at most [`provider::DOCUMENT_BATCH`]
+    /// 009 T003: admit ONE document batch (at most the profile's batch of
     /// inputs, limits checked first) on the same slot as queries, with the
     /// caller's `control` (its deadline and cancellation reach the provider).
     /// Refused `Busy` — nothing is queued — while the slot is held by a call
@@ -642,7 +647,7 @@ impl QueryRuntime {
         inputs: Vec<TokenizedInput>,
         control: Control,
     ) -> Result<DocumentCall, ProviderError> {
-        provider::check_document_batch(&inputs)?;
+        provider::check_document_batch(&inputs, self.profile.document_limits())?;
         let _ = neural_fault!(DOCUMENT_ADMISSION, Some(&control), "");
         {
             let _admission = self.admission();
@@ -793,10 +798,15 @@ impl QueryRuntime {
         if let Some(index) = slot.as_ref() {
             return Ok(Arc::clone(index));
         }
+        let profile = &self.profile;
         let loaded = DenseIndex::load(
             engine,
-            &self.profile.descriptor.digest(),
-            &crate::neural::partition::recipe_id(&self.profile.descriptor.tokenizer),
+            &profile.descriptor.digest(),
+            &crate::neural::partition::recipe_id(
+                &profile.descriptor.tokenizer,
+                profile.card_tokens,
+            ),
+            profile.descriptor.dims(),
             control,
         )?;
         *slot = Some(Arc::clone(&loaded));
@@ -840,11 +850,11 @@ mod tests {
     //! holds it until the test releases it; the waiting query is read from
     //! the slot itself.
     use super::*;
-    use crate::neural::provider::{DIMENSIONS, FunctionDescriptor};
+    use crate::neural::provider::FunctionDescriptor;
     use std::sync::atomic::AtomicBool;
 
     fn unit_vector() -> Vec<f32> {
-        let mut vector = vec![0f32; DIMENSIONS];
+        let mut vector = vec![0f32; crate::testkit::FIXTURE_DIMENSIONS as usize];
         vector[0] = 1.0;
         vector
     }

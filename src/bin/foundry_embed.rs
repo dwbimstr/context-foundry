@@ -1,21 +1,40 @@
-//! 009 real embedding worker: the shared worker runtime driving the
-//! UNCHANGED publisher loader (`nemotron3_embed_mlx.py` from the verified
-//! model directory) through pyo3. Built only with the non-default
-//! `embed-worker` feature; `foundry` never links Python.
+//! 009 T004 real embedding worker: the shared worker runtime around a
+//! pinned, statically linked llama.cpp (Metal, embedded shader library), no
+//! Python. Built only with the non-default `embed-worker` feature (build.rs
+//! links llama.cpp into this binary alone); `foundry` never links it.
 //!
-//! Before any Python exists, `--probe <name>` runs one named development
-//! isolation check inside the sandboxed bundle and prints a JSON verdict;
-//! those probes exist for the profile's negative tests with positive
-//! controls and never load the model.
+//! The core renders every card or query with the profile's template and
+//! tokenizes it with the profile's `tokenizer.json`; this worker feeds those
+//! IDs to llama.cpp unchanged. One context serves every call: n_ctx =
+//! n_batch = n_ubatch = 2048 tokens (the protocol's per-call total) and at
+//! most 32 sequences, so one call is ONE llama.cpp evaluation. Each input is
+//! its own sequence, placed in the batch grouped by length; the pooled
+//! vector of each sequence (the descriptor's pinned pooling) is cut to the
+//! descriptor's dimension and renormalized.
+//!
+//! `--probe <name>` runs one named development isolation check inside the
+//! sandboxed bundle and prints a JSON verdict; probes never load the model.
+//! `--notices DIR` writes the license text of the linked llama.cpp (embedded
+//! by build.rs from the pinned checkout; it covers the vendored ggml) to
+//! `DIR/LICENSE` and prints the llama.cpp commit, for package.sh.
 #[cfg(target_os = "macos")]
 fn main() {
     use std::io::Write;
 
     let argv: Vec<String> = std::env::args().collect();
+    if let [_, flag, dir] = argv.as_slice()
+        && flag == "--notices"
+    {
+        let dir = std::path::Path::new(dir);
+        let code = context_foundry::neural::worker_runtime::write_notices(dir, llama::LICENSE);
+        let _ = std::io::stdout().flush();
+        std::process::exit(code);
+    }
     if let Some(index) = argv.iter().position(|arg| arg == "--probe") {
         let name = argv.get(index + 1).cloned().unwrap_or_default();
         let rest = argv[index + 2..].to_vec();
-        probes::run(&name, &rest);
+        context_foundry::neural::probes::run(&name, &rest);
+        let _ = std::io::stdout().flush();
         return;
     }
     use context_foundry::neural::worker_runtime::{self, WorkerArgs};
@@ -40,569 +59,411 @@ fn main() {
     std::process::exit(code);
 }
 
-/// Load the publisher model once inside one Python attach, report `ready`,
-/// then serve admitted jobs: build right-padded `int32` input-ID and mask
-/// arrays, call the unchanged `NemotronEmbedModel.__call__`, force
-/// evaluation, copy float32 vectors and clear the MLX cache per batch.
-///
-/// Order is fixed. The descriptor is checked against what this adapter
-/// actually implements first; then CPython is initialized in ISOLATED mode
-/// with site import disabled and an explicit search path; only then does any
-/// Python code run.
+/// Check the descriptor against what this adapter implements, load the
+/// verified GGUF, report `ready` with the model's vocabulary bound, then
+/// serve admitted jobs one at a time. Every failure after `ready` is a named
+/// job failure, never a panic.
 #[cfg(target_os = "macos")]
 fn real_run(engine: &mut context_foundry::neural::worker_runtime::Engine) -> i32 {
-    use context_foundry::neural::worker_runtime::{REAL_PAD_ID, check_real_descriptor};
-    use pyo3::prelude::*;
+    use context_foundry::neural::worker_runtime::check_real_descriptor;
 
     if let Err(message) = check_real_descriptor(&engine.args.expected) {
         engine.fail_load("descriptor_unsupported", &message);
         return 1;
     }
-    let paths = match search_paths(&engine.args.python_home, &engine.args.site_packages) {
-        Ok(paths) => paths,
+    let gguf = engine.args.model_dir.join(&engine.args.expected.gguf);
+    let mut embedder = match llama::Embedder::load(&gguf, &engine.args.expected) {
+        Ok(embedder) => embedder,
         Err(message) => {
             engine.fail_load("load_failed", &message);
             return 1;
         }
     };
-    if let Err(message) = init_isolated_python(&engine.args.python_home, &engine.args.site_packages)
-    {
-        engine.fail_load("load_failed", &message);
+    if !engine.send_ready(embedder.vocab_bound()) {
         return 1;
     }
-
-    Python::attach(|py| {
-        let (model, vocab) = match setup(py, engine, &paths) {
-            Ok(loaded) => loaded,
-            Err(message) => {
-                engine.fail_load("load_failed", &message);
-                return 1;
-            }
+    while let Some(job) = engine.next_job() {
+        let alive = match embedder.embed(&job.inputs) {
+            Ok(vectors) => engine.finish_job(job, vectors),
+            Err(message) => engine.fail_job(job, "inference_failed", &message),
         };
-        let mx: Py<PyModule> = match py.import("mlx.core") {
-            Ok(module) => module.unbind(),
-            Err(e) => {
-                engine.fail_load("load_failed", &format!("mlx.core import: {e}"));
-                return 1;
-            }
-        };
-        if !engine.send_ready(vocab) {
+        if !alive {
             return 1;
         }
-        while let Some(job) = py.detach(|| engine.next_job()) {
-            let mx = mx.bind(py);
-            match embed_batch(model.bind(py), mx, &job.inputs, REAL_PAD_ID as i32) {
-                Ok(vectors) => {
-                    if !engine.finish_job(job, vectors) {
-                        return 1;
-                    }
-                }
-                Err(message) => {
-                    if !engine.fail_job(job, "inference_failed", &message) {
-                        return 1;
-                    }
-                }
-            }
-        }
-        0
-    })
+    }
+    0
 }
 
-/// The interpreter's complete module search path, in order: the standard
-/// library, its extension modules and the profile's site-packages. Nothing
-/// else: not the environment, not the working directory, not a user or
-/// global site directory.
 #[cfg(target_os = "macos")]
-fn search_paths(
-    python_home: &std::path::Path,
-    site_packages: &std::path::Path,
-) -> Result<Vec<std::path::PathBuf>, String> {
-    let lib = python_home.join("lib");
-    let mut stdlib = None;
-    let entries =
-        std::fs::read_dir(&lib).map_err(|e| format!("python home lib {}: {e}", lib.display()))?;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with("python3.") && entry.path().join("os.py").is_file() {
-            if stdlib.is_some() {
+mod llama {
+    use context_foundry::neural::provider::{
+        FunctionDescriptor, MAX_DOCUMENT_BATCH, SERVING_LIMIT_TOKENS, TokenizedInput,
+    };
+    use context_foundry::neural::worker_runtime::{LLAMA_CPP_COMMIT, mark_phase};
+    use std::ffi::{CStr, CString, c_char, c_void};
+    use std::io::Write as _;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::path::Path;
+    use std::ptr::NonNull;
+    use std::sync::Once;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Exact bindgen output over the pinned `llama.h` (with its compile-time
+    /// layout assertions for every struct passed by value).
+    #[allow(
+        non_upper_case_globals,
+        non_camel_case_types,
+        non_snake_case,
+        dead_code,
+        unsafe_op_in_unsafe_fn,
+        clippy::all
+    )]
+    mod ffi {
+        include!(concat!(env!("OUT_DIR"), "/llama_bindings.rs"));
+    }
+
+    /// The checkout build.rs linked is the commit descriptors must name.
+    const _: () = assert!(
+        same(env!("FOUNDRY_LLAMA_CPP_COMMIT"), LLAMA_CPP_COMMIT),
+        "build.rs and worker_runtime pin different llama.cpp commits"
+    );
+
+    /// The pinned checkout's `LICENSE` (MIT, "The ggml authors"), which
+    /// build.rs copied into `OUT_DIR`; at this commit ggml has no license
+    /// file of its own, so this one text covers llama.cpp and its ggml.
+    pub const LICENSE: &str = include_str!(concat!(env!("OUT_DIR"), "/llama.cpp-LICENSE"));
+
+    const fn same(a: &str, b: &str) -> bool {
+        let (a, b) = (a.as_bytes(), b.as_bytes());
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut i = 0;
+        while i < a.len() {
+            if a[i] != b[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// The descriptor's pooling as llama.cpp's pooling type.
+    fn pooling_type(pooling: &str) -> Result<ffi::llama_pooling_type, String> {
+        match pooling {
+            "mean" => Ok(ffi::LLAMA_POOLING_TYPE_MEAN),
+            "cls" => Ok(ffi::LLAMA_POOLING_TYPE_CLS),
+            "last" => Ok(ffi::LLAMA_POOLING_TYPE_LAST),
+            other => Err(format!("pooling {other:?} has no llama.cpp pooling type")),
+        }
+    }
+
+    /// Keep the leading `dims` values and L2-normalize them in f64. Refuses a
+    /// nonfinite value or a zero norm.
+    pub fn truncate_normalize(values: &[f32], dims: usize) -> Result<Vec<f32>, String> {
+        let head = values
+            .get(..dims)
+            .ok_or_else(|| format!("the embedding has {} values, {dims} needed", values.len()))?;
+        let mut sum = 0f64;
+        for (index, &value) in head.iter().enumerate() {
+            if !value.is_finite() {
+                return Err(format!("embedding value {index} is not finite ({value})"));
+            }
+            sum += f64::from(value) * f64::from(value);
+        }
+        let norm = sum.sqrt();
+        if !(norm.is_finite() && norm > 0.0) {
+            return Err(format!("the embedding prefix has norm {norm}"));
+        }
+        Ok(head.iter().map(|&v| (f64::from(v) / norm) as f32).collect())
+    }
+
+    static LAST_LEVEL: AtomicU32 = AtomicU32::new(0);
+    static BACKEND: Once = Once::new();
+
+    /// llama.cpp/ggml log sink: stderr only, never stdout (stdout is the
+    /// supervisor's frame channel). WARN and ERROR only, so the load chatter
+    /// does not flood the supervisor's bounded stderr tail; CONT lines follow
+    /// the level they continue.
+    unsafe extern "C" fn log_to_stderr(
+        level: ffi::ggml_log_level,
+        text: *const c_char,
+        _user: *mut c_void,
+    ) {
+        let level = level as u32;
+        let effective = if level == ffi::GGML_LOG_LEVEL_CONT as u32 {
+            LAST_LEVEL.load(Ordering::Relaxed)
+        } else {
+            LAST_LEVEL.store(level, Ordering::Relaxed);
+            level
+        };
+        if effective < ffi::GGML_LOG_LEVEL_WARN as u32 || text.is_null() {
+            return;
+        }
+        // SAFETY: ggml passes a NUL-terminated string valid for this call.
+        let bytes = unsafe { CStr::from_ptr(text) }.to_bytes();
+        let _ = std::io::stderr().write_all(bytes);
+    }
+
+    fn init_backend() {
+        BACKEND.call_once(|| unsafe {
+            // Before any other llama.cpp call, so no line uses the default sink.
+            ffi::llama_log_set(Some(log_to_stderr), std::ptr::null_mut());
+            ffi::llama_backend_init();
+        });
+    }
+
+    /// A loaded GGUF embedding model and its one context: every layer on
+    /// Metal, embeddings on, the descriptor's pooling pinned, one unified
+    /// context of [`SERVING_LIMIT_TOKENS`] for up to [`MAX_DOCUMENT_BATCH`]
+    /// sequences, F32 K/V, flash attention off.
+    pub struct Embedder {
+        model: NonNull<ffi::llama_model>,
+        ctx: NonNull<ffi::llama_context>,
+        batch: ffi::llama_batch,
+        n_vocab: u32,
+        n_embd_out: usize,
+        dims: usize,
+        use_encode: bool,
+    }
+
+    impl Embedder {
+        pub fn load(path: &Path, descriptor: &FunctionDescriptor) -> Result<Self, String> {
+            let pooling = pooling_type(&descriptor.pooling)?;
+            init_backend();
+            if !unsafe { ffi::llama_supports_gpu_offload() } {
+                return Err("this llama.cpp build cannot offload to a GPU (Metal)".into());
+            }
+            if !path.is_file() {
+                return Err(format!("{} is not a file", path.display()));
+            }
+            let c_path = CString::new(path.as_os_str().as_bytes())
+                .map_err(|_| format!("{} contains a NUL byte", path.display()))?;
+            let mut model_params = unsafe { ffi::llama_model_default_params() };
+            model_params.n_gpu_layers = -1; // every layer (and the output) on the GPU
+            model_params.progress_callback = None;
+            let model = NonNull::new(unsafe {
+                ffi::llama_model_load_from_file(c_path.as_ptr(), model_params)
+            })
+            .ok_or_else(|| format!("llama.cpp could not load {}", path.display()))?;
+            let has_encoder = unsafe { ffi::llama_model_has_encoder(model.as_ptr()) };
+            let has_decoder = unsafe { ffi::llama_model_has_decoder(model.as_ptr()) };
+            if has_encoder && has_decoder {
+                unsafe { ffi::llama_model_free(model.as_ptr()) };
+                return Err("encoder-decoder models are not supported for embeddings".into());
+            }
+            let n_ctx = SERVING_LIMIT_TOKENS as u32;
+            let mut ctx_params = unsafe { ffi::llama_context_default_params() };
+            ctx_params.n_ctx = n_ctx;
+            ctx_params.n_batch = n_ctx;
+            ctx_params.n_ubatch = n_ctx;
+            ctx_params.n_seq_max = MAX_DOCUMENT_BATCH as u32;
+            // One context for every sequence of a call: each may use all of it.
+            ctx_params.kv_unified = true;
+            ctx_params.embeddings = true;
+            ctx_params.pooling_type = pooling;
+            ctx_params.flash_attn_type = ffi::LLAMA_FLASH_ATTN_TYPE_DISABLED;
+            ctx_params.type_k = ffi::GGML_TYPE_F32;
+            ctx_params.type_v = ffi::GGML_TYPE_F32;
+            ctx_params.offload_kqv = true;
+            ctx_params.no_perf = true;
+            let Some(ctx) =
+                NonNull::new(unsafe { ffi::llama_init_from_model(model.as_ptr(), ctx_params) })
+            else {
+                unsafe { ffi::llama_model_free(model.as_ptr()) };
+                return Err("llama.cpp could not create the embedding context".into());
+            };
+            // From here on `Self` owns the model, the context and the batch;
+            // a later failure frees them.
+            let batch = unsafe { ffi::llama_batch_init(n_ctx as i32, 0, 1) };
+            let mut embedder = Self {
+                model,
+                ctx,
+                batch,
+                n_vocab: 0,
+                n_embd_out: 0,
+                dims: descriptor.dims(),
+                use_encode: has_encoder && !has_decoder,
+            };
+            embedder.check(pooling)?;
+            Ok(embedder)
+        }
+
+        /// Refuse a context or model that is not what the descriptor pins.
+        fn check(&mut self, pooling: ffi::llama_pooling_type) -> Result<(), String> {
+            if self.batch.token.is_null()
+                || self.batch.pos.is_null()
+                || self.batch.n_seq_id.is_null()
+                || self.batch.seq_id.is_null()
+                || self.batch.logits.is_null()
+            {
+                return Err("llama_batch_init returned an incomplete batch".into());
+            }
+            let ctx = self.ctx.as_ptr();
+            let actual = unsafe { ffi::llama_pooling_type(ctx) };
+            if actual != pooling {
                 return Err(format!(
-                    "python home {} holds more than one standard library",
-                    python_home.display()
+                    "the context pools with type {actual}, not the pinned {pooling}"
                 ));
             }
-            stdlib = Some(entry.path());
-        }
-    }
-    let stdlib = stdlib.ok_or_else(|| {
-        format!(
-            "python home {} holds no lib/python3.N/os.py",
-            python_home.display()
-        )
-    })?;
-    Ok(vec![
-        stdlib.join("lib-dynload"),
-        stdlib,
-        site_packages.to_path_buf(),
-    ])
-}
-
-/// Start CPython from an explicit isolated configuration: the interpreter
-/// ignores the environment and the working directory, imports no `site`
-/// (so no global `.pth` line and no `sitecustomize`/`usercustomize` ever
-/// runs), runs in UTF-8 mode with unbuffered stdio and no bytecode writes,
-/// installs no signal handlers, and takes `sys.path` exactly from
-/// [`search_paths`]. This is the ONLY place the interpreter starts: pyo3's
-/// `auto-initialize` is off, so any other first use fails instead of
-/// silently starting an unisolated interpreter.
-#[cfg(target_os = "macos")]
-fn init_isolated_python(
-    python_home: &std::path::Path,
-    site_packages: &std::path::Path,
-) -> Result<(), String> {
-    use pyo3::ffi;
-    use std::ffi::{CStr, CString};
-    use std::os::unix::ffi::OsStrExt;
-
-    fn check(what: &str, status: ffi::PyStatus) -> Result<(), String> {
-        // SAFETY: `status` is a plain value returned by CPython.
-        if unsafe { ffi::PyStatus_Exception(status) } == 0 {
-            return Ok(());
-        }
-        let text = |ptr: *const std::ffi::c_char| {
-            if ptr.is_null() {
-                String::new()
-            } else {
-                // SAFETY: CPython's status strings are static C strings.
-                unsafe { CStr::from_ptr(ptr) }
-                    .to_string_lossy()
-                    .into_owned()
+            let (n_ctx, n_batch, n_ubatch, n_seq_max) = unsafe {
+                (
+                    ffi::llama_n_ctx(ctx),
+                    ffi::llama_n_batch(ctx),
+                    ffi::llama_n_ubatch(ctx),
+                    ffi::llama_n_seq_max(ctx),
+                )
+            };
+            let want = SERVING_LIMIT_TOKENS as u32;
+            if n_ctx.min(n_batch).min(n_ubatch) < want || n_seq_max < MAX_DOCUMENT_BATCH as u32 {
+                return Err(format!(
+                    "llama.cpp gave n_ctx {n_ctx}, n_batch {n_batch}, n_ubatch {n_ubatch}, \
+                     n_seq_max {n_seq_max}; {want} tokens and {MAX_DOCUMENT_BATCH} sequences needed"
+                ));
             }
-        };
-        Err(format!(
-            "python {what}: {} (in {})",
-            text(status.err_msg),
-            text(status.func)
-        ))
-    }
-
-    let paths = search_paths(python_home, site_packages)?;
-    let c_home = CString::new(python_home.as_os_str().as_bytes())
-        .map_err(|_| "python home contains a NUL byte".to_string())?;
-    let c_executable = CString::new(python_home.join("bin/python3").as_os_str().as_bytes())
-        .map_err(|_| "python home contains a NUL byte".to_string())?;
-
-    // SAFETY: called once on the main thread before any other CPython use;
-    // every pointer handed to CPython outlives the call that reads it, and
-    // `PyConfig_Clear` releases what the configuration allocated.
-    unsafe {
-        if ffi::Py_IsInitialized() != 0 {
-            return Err("python was already initialized".into());
-        }
-        let mut preconfig = std::mem::MaybeUninit::<ffi::PyPreConfig>::uninit();
-        ffi::PyPreConfig_InitIsolatedConfig(preconfig.as_mut_ptr());
-        let mut preconfig = preconfig.assume_init();
-        // UTF-8 mode: `open()` defaults, filesystem and stdio encodings are
-        // UTF-8 whatever the (empty) environment's locale says.
-        preconfig.utf8_mode = 1;
-        check("pre-initialization", ffi::Py_PreInitialize(&preconfig))?;
-
-        let mut config = std::mem::MaybeUninit::<ffi::PyConfig>::uninit();
-        ffi::PyConfig_InitIsolatedConfig(config.as_mut_ptr());
-        let mut config = config.assume_init();
-        let outcome = (|| {
-            config.isolated = 1;
-            config.use_environment = 0;
-            config.site_import = 0;
-            config.user_site_directory = 0;
-            config.install_signal_handlers = 0;
-            config.write_bytecode = 0;
-            config.buffered_stdio = 0;
-            config.safe_path = 1;
-            config.parse_argv = 0;
-            config.pathconfig_warnings = 0;
-            check(
-                "home",
-                ffi::PyConfig_SetBytesString(
-                    &mut config,
-                    std::ptr::addr_of_mut!(config.home),
-                    c_home.as_ptr(),
-                ),
-            )?;
-            check(
-                "executable",
-                ffi::PyConfig_SetBytesString(
-                    &mut config,
-                    std::ptr::addr_of_mut!(config.executable),
-                    c_executable.as_ptr(),
-                ),
-            )?;
-            config.module_search_paths_set = 1;
-            for dir in &paths {
-                let wide: Vec<libc::wchar_t> = dir
-                    .to_string_lossy()
-                    .chars()
-                    .map(|c| c as libc::wchar_t)
-                    .chain(std::iter::once(0))
-                    .collect();
-                check(
-                    "module search path",
-                    ffi::PyWideStringList_Append(
-                        std::ptr::addr_of_mut!(config.module_search_paths),
-                        wide.as_ptr(),
-                    ),
-                )?;
+            let vocab = unsafe { ffi::llama_model_get_vocab(self.model.as_ptr()) };
+            if vocab.is_null() {
+                return Err("the model has no vocabulary".into());
             }
-            check("initialization", ffi::Py_InitializeFromConfig(&config))
-        })();
-        ffi::PyConfig_Clear(&mut config);
-        outcome?;
-        // Release the GIL the initialization left held, as pyo3's own
-        // initialization does, so `Python::attach` takes it normally.
-        ffi::PyEval_SaveThread();
-    }
-    Ok(())
-}
-
-/// The interpreter's startup state as JSON: the startup flags, `sys.path`
-/// and whether `site`, `sitecustomize` or `usercustomize` were imported.
-#[cfg(target_os = "macos")]
-fn describe_interpreter(py: pyo3::Python<'_>) -> Result<serde_json::Value, String> {
-    use pyo3::prelude::*;
-
-    let sys = py.import("sys").map_err(|e| format!("sys import: {e}"))?;
-    let flags = sys
-        .getattr("flags")
-        .map_err(|e| format!("sys.flags: {e}"))?;
-    let flag = |name: &str| -> Result<i64, String> {
-        flags
-            .getattr(name)
-            .and_then(|value| value.extract::<i64>())
-            .map_err(|e| format!("sys.flags.{name}: {e}"))
-    };
-    let path: Vec<String> = sys
-        .getattr("path")
-        .and_then(|path| path.extract())
-        .map_err(|e| format!("sys.path: {e}"))?;
-    let modules = sys
-        .getattr("modules")
-        .map_err(|e| format!("sys.modules: {e}"))?;
-    let imported = |name: &str| -> Result<bool, String> {
-        modules
-            .contains(name)
-            .map_err(|e| format!("sys.modules lookup of {name}: {e}"))
-    };
-    Ok(serde_json::json!({
-        "isolated": flag("isolated")?,
-        "no_site": flag("no_site")?,
-        "ignore_environment": flag("ignore_environment")?,
-        "no_user_site": flag("no_user_site")?,
-        "utf8_mode": flag("utf8_mode")?,
-        "path": path,
-        "site_imported": imported("site")?,
-        "sitecustomize_imported": imported("sitecustomize")?,
-        "usercustomize_imported": imported("usercustomize")?,
-    }))
-}
-
-/// Refuse to continue unless the running interpreter really is the isolated
-/// one [`init_isolated_python`] asked for.
-#[cfg(target_os = "macos")]
-fn verify_isolation(
-    py: pyo3::Python<'_>,
-    expected_paths: &[std::path::PathBuf],
-) -> Result<(), String> {
-    let state = describe_interpreter(py)?;
-    let flag = |name: &str| state[name].as_i64().unwrap_or(-1);
-    let imported = |name: &str| state[name].as_bool().unwrap_or(true);
-    if flag("isolated") != 1
-        || flag("no_site") != 1
-        || flag("ignore_environment") != 1
-        || flag("no_user_site") != 1
-        || flag("utf8_mode") != 1
-    {
-        return Err(format!("the interpreter is not isolated: {state}"));
-    }
-    if imported("site_imported")
-        || imported("sitecustomize_imported")
-        || imported("usercustomize_imported")
-    {
-        return Err(format!("a startup hook module was imported: {state}"));
-    }
-    let expected: Vec<String> = expected_paths
-        .iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
-    let actual: Vec<String> = state["path"]
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    if actual != expected {
-        return Err(format!(
-            "sys.path is {actual:?}, expected exactly {expected:?}"
-        ));
-    }
-    Ok(())
-}
-
-/// Verify the isolation and the observed runtime closure against the
-/// expected descriptor, verify the loader's files exist, then call the
-/// unchanged publisher `load`.
-#[cfg(target_os = "macos")]
-fn setup(
-    py: pyo3::Python<'_>,
-    engine: &context_foundry::neural::worker_runtime::Engine,
-    paths: &[std::path::PathBuf],
-) -> Result<(pyo3::Py<pyo3::PyAny>, u32), String> {
-    use context_foundry::neural::worker_runtime::REAL_LOADER_INPUTS;
-    use pyo3::prelude::*;
-
-    let expected = &engine.args.expected;
-    let model_dir = engine.args.model_dir.display().to_string();
-
-    verify_isolation(py, paths)?;
-
-    // The observed runtime closure must equal the expected one, field by
-    // field; the worker never selects these values.
-    let platform = py
-        .import("platform")
-        .map_err(|e| format!("platform import: {e}"))?;
-    let observed_python: String = platform
-        .getattr("python_version")
-        .map_err(|e| format!("platform.python_version: {e}"))?
-        .call0()
-        .and_then(|v| v.extract())
-        .map_err(|e| format!("python_version: {e}"))?;
-    if observed_python != expected.runtime.python {
-        return Err(format!(
-            "python is {observed_python}, profile expects {}",
-            expected.runtime.python
-        ));
-    }
-    let metadata = py
-        .import("importlib.metadata")
-        .map_err(|e| format!("importlib.metadata import: {e}"))?;
-    let version_of = |dist: &str| -> Result<String, String> {
-        metadata
-            .getattr("version")
-            .map_err(|e| format!("importlib.metadata.version: {e}"))?
-            .call1((dist,))
-            .and_then(|v| v.extract::<String>())
-            .map_err(|e| format!("version of {dist}: {e}"))
-    };
-    for (dist, want) in [
-        ("mlx", &expected.runtime.mlx),
-        ("mlx-metal", &expected.runtime.mlx_metal),
-        ("mlx-lm", &expected.runtime.mlx_lm),
-        ("transformers", &expected.runtime.transformers),
-        ("numpy", &expected.runtime.numpy),
-    ] {
-        let observed = version_of(dist)?;
-        if &observed != want {
-            return Err(format!("{dist} is {observed}, profile expects {want}"));
-        }
-    }
-
-    // Named files must exist before `load` may run; a missing model
-    // directory would otherwise fall into an implicit Hub download.
-    for name in REAL_LOADER_INPUTS {
-        if !engine.args.model_dir.join(name).is_file() {
-            return Err(format!("model file missing: {name}"));
-        }
-    }
-
-    // Import the UNCHANGED publisher module from the verified model dir.
-    let importlib = py
-        .import("importlib.util")
-        .map_err(|e| format!("importlib.util import: {e}"))?;
-    let loader_path = engine
-        .args
-        .model_dir
-        .join("nemotron3_embed_mlx.py")
-        .display()
-        .to_string();
-    let spec = importlib
-        .getattr("spec_from_file_location")
-        .map_err(|e| format!("spec_from_file_location: {e}"))?
-        .call1(("nemotron3_embed_mlx", loader_path))
-        .map_err(|e| format!("spec_from_file_location call: {e}"))?;
-    let module = importlib
-        .getattr("module_from_spec")
-        .map_err(|e| format!("module_from_spec: {e}"))?
-        .call1((&spec,))
-        .map_err(|e| format!("module_from_spec call: {e}"))?;
-    let loader = spec
-        .getattr("loader")
-        .map_err(|e| format!("spec loader: {e}"))?;
-    loader
-        .getattr("exec_module")
-        .map_err(|e| format!("exec_module lookup: {e}"))?
-        .call1((&module,))
-        .map_err(|e| format!("publisher module exec: {e}"))?;
-
-    // The unchanged publisher `load`.
-    let loaded = module
-        .getattr("load")
-        .map_err(|e| format!("publisher load: {e}"))?
-        .call1((model_dir.as_str(),))
-        .map_err(|e| format!("publisher load call: {e}"))?;
-    let model = loaded
-        .get_item(0)
-        .map_err(|e| format!("load result model: {e}"))?;
-    // The embedding table's row count is the hard bound on every token ID;
-    // the tokenizer's own length can exceed it.
-    let vocab = model
-        .getattr("args")
-        .and_then(|args| args.getattr("vocab_size"))
-        .and_then(|size| size.extract::<usize>())
-        .map_err(|e| format!("model vocab_size: {e}"))?;
-    if vocab == 0 || vocab > u32::MAX as usize {
-        return Err(format!("implausible vocabulary bound {vocab}"));
-    }
-    Ok((model.unbind(), vocab as u32))
-}
-
-/// One batch through the publisher model: right-padded `int32` input IDs
-/// (pad ID from the descriptor) and `int32` mask arrays, the unchanged
-/// `NemotronEmbedModel.__call__`, forced evaluation, float32 copy and
-/// `mx.clear_cache()`. Pooling and normalization stay inside the model.
-#[cfg(target_os = "macos")]
-fn embed_batch(
-    model: &pyo3::Bound<'_, pyo3::PyAny>,
-    mx: &pyo3::Bound<'_, pyo3::types::PyModule>,
-    inputs: &[context_foundry::neural::provider::TokenizedInput],
-    pad_id: i32,
-) -> Result<Vec<Vec<f32>>, String> {
-    use pyo3::prelude::*;
-
-    let width = inputs
-        .iter()
-        .map(|input| input.ids.len())
-        .max()
-        .unwrap_or(0);
-    if width == 0 {
-        return Err("empty batch".into());
-    }
-    let mut ids: Vec<Vec<i32>> = Vec::with_capacity(inputs.len());
-    let mut mask: Vec<Vec<i32>> = Vec::with_capacity(inputs.len());
-    for input in inputs {
-        let mut row = Vec::with_capacity(width);
-        let mut bits = Vec::with_capacity(width);
-        for id in &input.ids {
-            row.push(*id as i32);
-            bits.push(1);
-        }
-        row.resize(width, pad_id);
-        bits.resize(width, 0);
-        ids.push(row);
-        mask.push(bits);
-    }
-    let int32 = mx.getattr("int32").map_err(|e| format!("mx.int32: {e}"))?;
-    let float32 = mx
-        .getattr("float32")
-        .map_err(|e| format!("mx.float32: {e}"))?;
-    let array = mx.getattr("array").map_err(|e| format!("mx.array: {e}"))?;
-    let input_ids = typed_array(&array, ids, &int32, "input_ids")?;
-    let attention_mask = typed_array(&array, mask, &int32, "attention_mask")?;
-    // Phase marks exist only in `test-faults` builds: a test kills the owner
-    // once the worker has really entered the model call and the evaluation.
-    context_foundry::neural::worker_runtime::mark_phase("call");
-    let output = model
-        .call1((input_ids, attention_mask))
-        .map_err(|e| format!("NemotronEmbedModel.__call__: {e}"))?;
-    context_foundry::neural::worker_runtime::mark_phase("eval");
-    mx.getattr("eval")
-        .map_err(|e| format!("mx.eval: {e}"))?
-        .call1((&output,))
-        .map_err(|e| format!("mx.eval: {e}"))?;
-    context_foundry::neural::worker_runtime::mark_phase("evaluated");
-    let output = output
-        .call_method("astype", (float32,), None)
-        .map_err(|e| format!("astype float32: {e}"))?;
-    let rows: Vec<Vec<f32>> = output
-        .call_method0("tolist")
-        .and_then(|v| v.extract())
-        .map_err(|e| format!("tolist: {e}"))?;
-    mx.getattr("clear_cache")
-        .map_err(|e| format!("mx.clear_cache: {e}"))?
-        .call0()
-        .map_err(|e| format!("mx.clear_cache: {e}"))?;
-    Ok(rows)
-}
-
-/// `mx.array(rows, dtype=dtype)` with an explicit int32 dtype, exactly the
-/// array construction the publisher's `encode` performs.
-#[cfg(target_os = "macos")]
-fn typed_array<'py>(
-    array: &pyo3::Bound<'py, pyo3::PyAny>,
-    rows: Vec<Vec<i32>>,
-    dtype: &pyo3::Bound<'py, pyo3::PyAny>,
-    what: &str,
-) -> Result<pyo3::Bound<'py, pyo3::PyAny>, String> {
-    use pyo3::prelude::*;
-    use pyo3::types::PyDict;
-
-    let py = array.py();
-    let kwargs = PyDict::new(py);
-    kwargs
-        .set_item("dtype", dtype)
-        .map_err(|e| format!("{what} dtype kwarg: {e}"))?;
-    array
-        .call((rows,), Some(&kwargs))
-        .map_err(|e| format!("{what} array: {e}"))
-}
-
-/// One named development-isolation probe. The file, descriptor,
-/// environment, network and process probes are shared with 013's learning
-/// worker ([`context_foundry::neural::probes`]); the interpreter probes are
-/// this worker's own. Each prints one JSON line and exits 0; the verdict
-/// (`allowed`, `errno`) is the evidence.
-#[cfg(target_os = "macos")]
-mod probes {
-    use context_foundry::neural::probes::report;
-
-    /// Initialize CPython the way the worker does, then print its startup
-    /// state. `isolated` takes the profile's python home and site-packages.
-    fn python(mode: &str, rest: &[String]) {
-        use std::path::Path;
-        let outcome = match (mode, rest) {
-            ("isolated", [home, site]) => {
-                super::init_isolated_python(Path::new(home), Path::new(site))
+            let n_vocab = unsafe { ffi::llama_vocab_n_tokens(vocab) };
+            self.n_vocab = u32::try_from(n_vocab)
+                .ok()
+                .filter(|&n| n > 0)
+                .ok_or_else(|| format!("the model reports {n_vocab} tokens"))?;
+            let n_embd_out = unsafe { ffi::llama_model_n_embd_out(self.model.as_ptr()) };
+            if n_embd_out <= 0 || (n_embd_out as usize) < self.dims {
+                return Err(format!(
+                    "the model embeds {n_embd_out} values; dimensions {} needs at least that many",
+                    self.dims
+                ));
             }
-            // The positive control: the interpreter as `Py_InitializeEx(0)`
-            // started it before the isolation fix (environment, global
-            // site, `sitecustomize` and `.pth` all honored).
-            ("default", []) => {
-                unsafe {
-                    pyo3::ffi::Py_InitializeEx(0);
-                    pyo3::ffi::PyEval_SaveThread();
+            self.n_embd_out = n_embd_out as usize;
+            Ok(())
+        }
+
+        /// One past the largest token ID the model accepts: the runtime
+        /// refuses any request ID at or above it.
+        pub fn vocab_bound(&self) -> u32 {
+            self.n_vocab
+        }
+
+        /// Embed one call's inputs (already within the protocol's caps) in
+        /// ONE llama.cpp evaluation: input `i` is sequence `i`, positions
+        /// from 0, sequences placed shortest first (grouped by length); the
+        /// pooled vector of each sequence is read by its ID, so placement
+        /// never changes which vector answers which input.
+        pub fn embed(&mut self, inputs: &[TokenizedInput]) -> Result<Vec<Vec<f32>>, String> {
+            mark_phase("call");
+            let total: usize = inputs.iter().map(|input| input.ids.len()).sum();
+            if inputs.is_empty() || inputs.len() > MAX_DOCUMENT_BATCH {
+                return Err(format!(
+                    "{} inputs; 1..={MAX_DOCUMENT_BATCH} allowed",
+                    inputs.len()
+                ));
+            }
+            if total > SERVING_LIMIT_TOKENS || inputs.iter().any(|input| input.ids.is_empty()) {
+                return Err(format!(
+                    "{total} tokens (or an empty input); 1..={SERVING_LIMIT_TOKENS} allowed"
+                ));
+            }
+            let mut order: Vec<usize> = (0..inputs.len()).collect();
+            order.sort_by_key(|&index| inputs[index].ids.len());
+            // SAFETY: the batch was allocated for SERVING_LIMIT_TOKENS tokens
+            // with one sequence-ID slot each (`check` verified every array),
+            // and `total` is at most that.
+            unsafe {
+                let token = std::slice::from_raw_parts_mut(self.batch.token, total);
+                let pos = std::slice::from_raw_parts_mut(self.batch.pos, total);
+                let n_seq_id = std::slice::from_raw_parts_mut(self.batch.n_seq_id, total);
+                let seq_id = std::slice::from_raw_parts_mut(self.batch.seq_id, total);
+                let logits = std::slice::from_raw_parts_mut(self.batch.logits, total);
+                let mut at = 0;
+                for &index in &order {
+                    for (position, &id) in inputs[index].ids.iter().enumerate() {
+                        if id >= self.n_vocab {
+                            return Err(format!("input {index}: token ID {id} is out of range"));
+                        }
+                        if seq_id[at].is_null() {
+                            return Err("llama_batch_init returned a null sequence-ID slot".into());
+                        }
+                        token[at] = id as ffi::llama_token;
+                        pos[at] = position as ffi::llama_pos;
+                        n_seq_id[at] = 1;
+                        *seq_id[at] = index as ffi::llama_seq_id;
+                        logits[at] = 1;
+                        at += 1;
+                    }
                 }
-                Ok(())
             }
-            _ => Err("python probe: isolated <home> <site-packages> | default".to_string()),
-        };
-        match outcome {
-            Err(message) => report(&format!("python-{mode}"), false, message, 22),
-            Ok(()) => pyo3::Python::attach(|py| match super::describe_interpreter(py) {
-                Ok(state) => report(&format!("python-{mode}"), true, state.to_string(), 0),
-                Err(message) => report(&format!("python-{mode}"), false, message, 22),
-            }),
+            self.batch.n_tokens = total as i32;
+            let ctx = self.ctx.as_ptr();
+            unsafe { ffi::llama_memory_clear(ffi::llama_get_memory(ctx), true) };
+            mark_phase("eval");
+            let (call, status) = if self.use_encode {
+                ("llama_encode", unsafe {
+                    ffi::llama_encode(ctx, self.batch)
+                })
+            } else {
+                ("llama_decode", unsafe {
+                    ffi::llama_decode(ctx, self.batch)
+                })
+            };
+            mark_phase("evaluated");
+            if status != 0 {
+                return Err(format!(
+                    "{call} returned {status} for {} sequences of {total} tokens",
+                    inputs.len()
+                ));
+            }
+            let mut vectors = Vec::with_capacity(inputs.len());
+            for index in 0..inputs.len() {
+                let pooled = unsafe { ffi::llama_get_embeddings_seq(ctx, index as i32) };
+                if pooled.is_null() {
+                    return Err(format!(
+                        "llama.cpp returned no pooled embedding for input {index}"
+                    ));
+                }
+                // SAFETY: a pooled sequence embedding has n_embd_out floats.
+                let pooled = unsafe { std::slice::from_raw_parts(pooled, self.n_embd_out) };
+                vectors.push(
+                    truncate_normalize(pooled, self.dims)
+                        .map_err(|e| format!("input {index}: {e}"))?,
+                );
+            }
+            Ok(vectors)
         }
     }
 
-    /// Run one probe by name with its arguments.
-    pub fn run(name: &str, rest: &[String]) {
-        match name {
-            "python-isolated" => python("isolated", rest),
-            "python-default" => python("default", rest),
-            other => context_foundry::neural::probes::run(other, rest),
+    impl Drop for Embedder {
+        fn drop(&mut self) {
+            unsafe {
+                ffi::llama_batch_free(self.batch);
+                ffi::llama_free(self.ctx.as_ptr());
+                ffi::llama_model_free(self.model.as_ptr());
+            }
         }
-        let _ = std::io::Write::flush(&mut std::io::stdout());
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn truncation_normalizes_the_prefix_only() {
+            let v = truncate_normalize(&[3.0, 4.0, 100.0], 2).unwrap();
+            assert_eq!(v, vec![0.6, 0.8]);
+            assert!(truncate_normalize(&[0.0, 0.0], 2).is_err());
+            assert!(truncate_normalize(&[f32::NAN, 1.0], 2).is_err());
+            assert!(truncate_normalize(&[1.0], 2).is_err());
+        }
+
+        #[test]
+        fn every_descriptor_pooling_maps_to_llama_cpp() {
+            for pooling in context_foundry::neural::provider::POOLINGS {
+                assert!(pooling_type(pooling).is_ok(), "{pooling}");
+            }
+            assert!(pooling_type("max").is_err());
+        }
     }
 }
 

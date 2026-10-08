@@ -7,11 +7,9 @@
 //! real-model development run is the `#[ignore]` tests at the bottom.
 #![cfg(target_os = "macos")]
 
-use context_foundry::neural::profile::{RuntimeSpec, SemanticProfile, WorkerSpec};
+use context_foundry::neural::profile::{SemanticProfile, WorkerSpec};
 use context_foundry::neural::protocol::{self, Header, Purpose};
-use context_foundry::neural::provider::{
-    DIMENSIONS, EmbeddingProvider, ProviderError, TokenizedInput,
-};
+use context_foundry::neural::provider::{EmbeddingProvider, ProviderError, TokenizedInput};
 use context_foundry::neural::supervisor::{self, WorkerProvider};
 use context_foundry::neural::worker_runtime::{self, fake_descriptor};
 use std::io::{BufReader, Read, Write};
@@ -20,6 +18,9 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
+
+/// The fake descriptor's output dimension.
+const DIMENSIONS: usize = 768;
 
 fn fake_exe() -> &'static str {
     env!("CARGO_BIN_EXE_foundry-embed-fake")
@@ -72,7 +73,7 @@ fn fake_bundle(dir: &Path) -> (PathBuf, String) {
     (app, sha)
 }
 
-/// A profile whose artifacts are the loader's five input files, all empty
+/// A v2 profile whose artifacts are the descriptor's files, all empty
 /// (their digests are pinned in the fake descriptor), whose worker is
 /// `bundle`, and whose scratch root is `dir/scratch-root`. The root is NOT
 /// created: the supervisor creates it owner-private on first use.
@@ -85,13 +86,9 @@ fn fake_profile(
 ) -> SemanticProfile {
     let model_dir = dir.join("model");
     std::fs::create_dir_all(&model_dir).expect("create model dir");
-    for name in worker_runtime::REAL_LOADER_INPUTS {
-        std::fs::write(model_dir.join(name), b"").expect("loader input");
-    }
-    let requirements = dir.join("requirements.txt");
-    std::fs::write(&requirements, b"").expect("requirements");
-    for extra in ["python-home", "site-packages"] {
-        std::fs::create_dir_all(dir.join(extra)).expect("runtime dir");
+    let descriptor = fake_descriptor();
+    for file in &descriptor.artifact_files {
+        std::fs::write(model_dir.join(&file.name), b"").expect("artifact file");
     }
     SemanticProfile {
         v: context_foundry::neural::profile::PROFILE_VERSION,
@@ -102,12 +99,10 @@ fn fake_profile(
             executable_sha256: exe_sha.into(),
             scratch_root: dir.join("scratch-root"),
         },
-        runtime: RuntimeSpec {
-            python_home: dir.join("python-home"),
-            site_packages: dir.join("site-packages"),
-            requirements,
-        },
-        descriptor: fake_descriptor(),
+        descriptor,
+        query_template: "query: {text}".into(),
+        card_tokens: context_foundry::neural::profile::DEFAULT_CARD_TOKENS,
+        batch: context_foundry::neural::profile::DEFAULT_BATCH,
         memory_ceiling_bytes: ceiling,
         load_timeout_seconds: load_timeout,
     }
@@ -154,10 +149,6 @@ fn spawn_fake(hooks: &[&str]) -> ManualWorker {
         .arg("--descriptor")
         .arg(&descriptor)
         .arg("--model-dir")
-        .arg(dir.path())
-        .arg("--python-home")
-        .arg(dir.path())
-        .arg("--site-packages")
         .arg(dir.path())
         .args(hooks)
         .stdin(Stdio::piped())
@@ -256,7 +247,7 @@ fn acquire_embeds_deterministic_documents_and_queries() {
     for (vector, tokenized) in vectors.iter().zip(&batch) {
         assert_eq!(
             vector,
-            &worker_runtime::deterministic_vector(&tokenized.ids)
+            &worker_runtime::deterministic_vector(&tokenized.ids, DIMENSIONS)
         );
         assert_eq!(vector.len(), DIMENSIONS);
     }
@@ -271,7 +262,10 @@ fn acquire_embeds_deterministic_documents_and_queries() {
             Instant::now() + Duration::from_secs(10),
         )
         .expect("embed query");
-    assert_eq!(query, worker_runtime::deterministic_vector(&[500, 501]));
+    assert_eq!(
+        query,
+        worker_runtime::deterministic_vector(&[500, 501], DIMENSIONS)
+    );
 }
 
 #[test]
@@ -328,12 +322,15 @@ fn worker_admission_slot_refuses_second_embeds_and_frees_on_completion() {
                 },
                 payload,
             ) if got == id => {
-                break protocol::decode_vectors(1, dims, &payload, 1).expect("decode");
+                break protocol::decode_vectors(1, dims, &payload, 1, DIMENSIONS).expect("decode");
             }
             other => panic!("expected busy or vectors for id {id}, got {other:?}"),
         }
     };
-    assert_eq!(vectors[0], worker_runtime::deterministic_vector(&[200]));
+    assert_eq!(
+        vectors[0],
+        worker_runtime::deterministic_vector(&[200], DIMENSIONS)
+    );
 }
 
 #[test]
@@ -363,7 +360,10 @@ fn caller_timeout_waits_for_the_in_flight_reply_and_discards_it() {
     let next = provider
         .embed_documents(&[input(&[200])], &context_foundry::Control::unbounded())
         .expect("slot freed and stale reply discarded");
-    assert_eq!(next[0], worker_runtime::deterministic_vector(&[200]));
+    assert_eq!(
+        next[0],
+        worker_runtime::deterministic_vector(&[200], DIMENSIONS)
+    );
 }
 
 #[test]
@@ -416,8 +416,14 @@ fn query_past_its_deadline_times_out_promptly_and_the_slot_stays_busy_until_the_
     let next = provider
         .embed_documents(&[input(&[800])], &context_foundry::Control::unbounded())
         .expect("the slot freed once the late reply was discarded");
-    assert_eq!(next[0], worker_runtime::deterministic_vector(&[800]));
-    assert_ne!(next[0], worker_runtime::deterministic_vector(&[700]));
+    assert_eq!(
+        next[0],
+        worker_runtime::deterministic_vector(&[800], DIMENSIONS)
+    );
+    assert_ne!(
+        next[0],
+        worker_runtime::deterministic_vector(&[700], DIMENSIONS)
+    );
     assert_eq!(provider.worker_pid(), Some(pid), "still the same worker");
 }
 
@@ -847,7 +853,12 @@ fn worker_rejects_invalid_frames_from_the_supervisor() {
 
     // Wrong protocol version: refused, stream ends.
     let mut worker = spawn_fake(&[]);
-    worker.send(&Header::Hello { protocol: 2 }, &[]);
+    worker.send(
+        &Header::Hello {
+            protocol: protocol::PROTOCOL_VERSION + 1,
+        },
+        &[],
+    );
     match worker.recv() {
         (Header::Error { code, .. }, _) => assert_eq!(code, "frame_invalid"),
         other => panic!("expected frame_invalid, got {other:?}"),
@@ -914,7 +925,10 @@ fn stray_stdout_writes_never_corrupt_the_frame_channel() {
     let vectors = provider
         .embed_documents(&[input(&[9])], &context_foundry::Control::unbounded())
         .expect("embed after stray stdout");
-    assert_eq!(vectors[0], worker_runtime::deterministic_vector(&[9]));
+    assert_eq!(
+        vectors[0],
+        worker_runtime::deterministic_vector(&[9], DIMENSIONS)
+    );
     assert!(
         provider
             .stderr_excerpt()
@@ -933,7 +947,10 @@ fn stderr_is_drained_continuously_into_a_bounded_buffer() {
     let vectors = provider
         .embed_documents(&[input(&[42])], &context_foundry::Control::unbounded())
         .expect("embed after flood");
-    assert_eq!(vectors[0], worker_runtime::deterministic_vector(&[42]));
+    assert_eq!(
+        vectors[0],
+        worker_runtime::deterministic_vector(&[42], DIMENSIONS)
+    );
     let excerpt = provider.stderr_excerpt();
     let retained = excerpt
         .split('(')
@@ -990,10 +1007,6 @@ fn fake_worker_args(dir: &Path, hooks: &[&str]) -> Vec<String> {
         "--descriptor".to_string(),
         serde_json::to_string(&fake_descriptor()).expect("descriptor JSON"),
         "--model-dir".to_string(),
-        dir.clone(),
-        "--python-home".to_string(),
-        dir.clone(),
-        "--site-packages".to_string(),
         dir,
     ];
     args.extend(hooks.iter().map(|hook| hook.to_string()));
@@ -1138,9 +1151,8 @@ impl Shim {
                     ..
                 },
                 payload,
-            ) if got == id => {
-                protocol::decode_vectors(n, dims, &payload, count).expect("decode vectors")
-            }
+            ) if got == id => protocol::decode_vectors(n, dims, &payload, count, DIMENSIONS)
+                .expect("decode vectors"),
             other => panic!("expected vectors for {id}, got {other:?}"),
         }
     }
@@ -1442,7 +1454,7 @@ fn artifact_hash_mismatch_is_refused_before_launch() {
     let (bundle, sha) = fake_bundle(dir.path());
     let profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
     // Corrupt the pinned artifact: its digest no longer matches.
-    std::fs::write(profile.model_dir.join("config.json"), b"tampered").expect("tamper");
+    std::fs::write(profile.model_dir.join("model.gguf"), b"tampered").expect("tamper");
     let error = refused(launch(&profile, &[]), "artifact mismatch");
     assert!(
         matches!(&error, ProviderError::ProfileInvalid(m) if m.contains("SHA-256")),
@@ -1597,7 +1609,10 @@ fn acquire_until_refuses_a_stopped_caller_before_spawning_anything() {
     let vectors = provider
         .embed_documents(&[input(&[5])], &context_foundry::Control::unbounded())
         .expect("embed");
-    assert_eq!(vectors[0], worker_runtime::deterministic_vector(&[5]));
+    assert_eq!(
+        vectors[0],
+        worker_runtime::deterministic_vector(&[5], DIMENSIONS)
+    );
 }
 
 #[test]
@@ -1693,32 +1708,43 @@ fn an_owner_gone_before_the_watcher_armed_is_found_by_the_registration_itself() 
     // watcher armed here would end this very test process with its owner.)
 }
 
-/// The adapter claims the real worker implements, one field at a time.
-const ADAPTER_FIELDS: [&str; 8] = [
+/// The claims the real worker implements, mutated one at a time by
+/// [`mutate_adapter_field`].
+const ADAPTER_FIELDS: [&str; 5] = [
     "adapter_revision",
-    "input_dtype",
-    "mask_dtype",
-    "padding_side",
-    "pad_id",
+    "llama_cpp",
     "pooling",
     "output",
     "dimensions",
 ];
 
-/// Change `field` to a value the real adapter does not implement.
+/// Change `field` to a value the real adapter does not implement; returns
+/// the text the refusal names and whether `validate` already refuses it.
 fn mutate_adapter_field(
     descriptor: &mut context_foundry::neural::provider::FunctionDescriptor,
     field: &str,
-) {
+) -> (&'static str, bool) {
     match field {
-        "adapter_revision" => descriptor.adapter_revision += 1,
-        "input_dtype" => descriptor.input_dtype = "int64".into(),
-        "mask_dtype" => descriptor.mask_dtype = "bool".into(),
-        "padding_side" => descriptor.padding_side = "left".into(),
-        "pad_id" => descriptor.pad_id = 0,
-        "pooling" => descriptor.pooling = "cls".into(),
-        "output" => descriptor.output = "f16".into(),
-        "dimensions" => descriptor.dimensions = 1024,
+        "adapter_revision" => {
+            descriptor.adapter_revision += 1;
+            ("adapter_revision", false)
+        }
+        "llama_cpp" => {
+            descriptor.llama_cpp = "0".repeat(40);
+            ("llama.cpp", false)
+        }
+        "pooling" => {
+            descriptor.pooling = "max".into();
+            ("pooling", true)
+        }
+        "output" => {
+            descriptor.output = "f16".into();
+            ("output", true)
+        }
+        "dimensions" => {
+            descriptor.dimensions = 1000;
+            ("dimensions", true)
+        }
         other => panic!("unknown adapter field {other}"),
     }
 }
@@ -1729,10 +1755,10 @@ fn the_real_adapter_check_refuses_each_claim_it_does_not_implement() {
         .expect("the unmutated descriptor is admitted (positive control)");
     for field in ADAPTER_FIELDS {
         let mut descriptor = fake_descriptor();
-        mutate_adapter_field(&mut descriptor, field);
-        let message = worker_runtime::check_real_adapter(&descriptor)
+        let (named, _) = mutate_adapter_field(&mut descriptor, field);
+        let message = worker_runtime::check_real_descriptor(&descriptor)
             .expect_err("a foreign adapter claim must be refused");
-        assert!(message.contains(field), "{field}: {message}");
+        assert!(message.contains(named), "{field}: {message}");
     }
 }
 
@@ -1742,13 +1768,13 @@ fn the_supervisor_refuses_a_foreign_adapter_recipe_before_launching_anything() {
         let dir = tempfile::tempdir().expect("tempdir");
         let (bundle, sha) = fake_bundle(dir.path());
         let mut profile = fake_profile(dir.path(), &bundle, &sha, 3 << 30, 60);
-        mutate_adapter_field(&mut profile.descriptor, field);
+        let (named, _) = mutate_adapter_field(&mut profile.descriptor, field);
         let error = refused(
             supervisor::acquire_until(&profile, true, &context_foundry::Control::unbounded()),
             field,
         );
         assert!(
-            matches!(&error, ProviderError::ProfileInvalid(m) if m.contains(field)),
+            matches!(&error, ProviderError::ProfileInvalid(m) if m.contains(named)),
             "{field}: got {error:?}"
         );
         assert!(
@@ -1758,14 +1784,18 @@ fn the_supervisor_refuses_a_foreign_adapter_recipe_before_launching_anything() {
     }
 }
 
+/// The files the real worker reads: the GGUF it loads and the core's
+/// tokenizer the IDs come from.
+const REAL_INPUTS: [&str; 2] = ["model.gguf", "tokenizer.json"];
+
 #[test]
-fn every_loader_input_must_be_in_the_verified_inventory() {
-    for name in worker_runtime::REAL_LOADER_INPUTS {
+fn every_file_the_worker_reads_must_be_in_the_verified_inventory() {
+    for name in REAL_INPUTS {
         // The check itself.
         let mut descriptor = fake_descriptor();
         descriptor.artifact_files.retain(|file| file.name != name);
-        let message = worker_runtime::check_real_inventory(&descriptor)
-            .expect_err("an omitted loader input must be refused");
+        let message = worker_runtime::check_real_descriptor(&descriptor)
+            .expect_err("an omitted input must be refused");
         assert!(message.contains(name), "{name}: {message}");
         // The supervisor, with the file still on disk: it would be loaded
         // without ever having been hashed.
@@ -1792,9 +1822,9 @@ fn every_loader_input_must_be_in_the_verified_inventory() {
     }
 }
 
-/// Run the REAL `foundry-embed` with `descriptor` against empty model and
-/// runtime directories, send `hello`, and report the first frame it answers
-/// with and its exit code. Nothing here can load Python or a model.
+/// Run the REAL `foundry-embed` with `descriptor` against an empty model
+/// directory, send `hello`, and report the first frame it answers with and
+/// its exit code. Nothing here can load a model.
 #[cfg(feature = "embed-worker")]
 fn real_worker_first_answer(
     descriptor: &context_foundry::neural::provider::FunctionDescriptor,
@@ -1810,10 +1840,6 @@ fn real_worker_first_answer(
         .arg("--descriptor")
         .arg(serde_json::to_string(descriptor).expect("descriptor JSON"))
         .arg("--model-dir")
-        .arg(dir.path())
-        .arg("--python-home")
-        .arg(dir.path())
-        .arg("--site-packages")
         .arg(dir.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1841,9 +1867,9 @@ fn real_worker_first_answer(
 
 #[cfg(feature = "embed-worker")]
 #[test]
-fn the_real_worker_refuses_a_foreign_descriptor_before_python_or_the_model() {
+fn the_real_worker_refuses_a_foreign_descriptor_before_the_model() {
     // Positive control: a descriptor the real recipe admits gets PAST the
-    // check and fails later, at the (empty) Python home, under another code.
+    // check and fails later, at the (absent) GGUF, under another code.
     let (header, code) = real_worker_first_answer(&fake_descriptor());
     match header {
         Some(Header::Error {
@@ -1857,9 +1883,9 @@ fn the_real_worker_refuses_a_foreign_descriptor_before_python_or_the_model() {
 
     for field in ADAPTER_FIELDS {
         let mut descriptor = fake_descriptor();
-        mutate_adapter_field(&mut descriptor, field);
+        let (named_text, structural) = mutate_adapter_field(&mut descriptor, field);
         let (header, code) = real_worker_first_answer(&descriptor);
-        if field == "dimensions" {
+        if structural {
             // Structurally invalid: refused while parsing the argv.
             assert!(header.is_none(), "{field}: no frame before refusal");
             assert_eq!(code, Some(64), "{field}");
@@ -1873,17 +1899,24 @@ fn the_real_worker_refuses_a_foreign_descriptor_before_python_or_the_model() {
                 ..
             }) => {
                 assert_eq!(named, "descriptor_unsupported", "{field}");
-                assert!(message.contains(field), "{field}: {message}");
+                assert!(message.contains(named_text), "{field}: {message}");
             }
             other => panic!("{field}: expected descriptor_unsupported, got {other:?}"),
         }
         assert_eq!(code, Some(1), "{field}");
     }
 
-    for name in worker_runtime::REAL_LOADER_INPUTS {
+    // The GGUF outside the inventory is structurally invalid; the tokenizer
+    // outside it is a recipe the worker refuses.
+    for (name, structural) in [("model.gguf", true), ("tokenizer.json", false)] {
         let mut descriptor = fake_descriptor();
         descriptor.artifact_files.retain(|file| file.name != name);
         let (header, code) = real_worker_first_answer(&descriptor);
+        if structural {
+            assert!(header.is_none(), "{name}: no frame before refusal");
+            assert_eq!(code, Some(64), "{name}");
+            continue;
+        }
         match header {
             Some(Header::Error {
                 id: None,
@@ -2047,7 +2080,10 @@ fn a_budget_that_expires_between_busy_and_the_retry_sends_nothing_more() {
     let next = provider
         .embed_documents(&[input(&[2])], &context_foundry::Control::unbounded())
         .expect("the next call is served");
-    assert_eq!(next[0], worker_runtime::deterministic_vector(&[2]));
+    assert_eq!(
+        next[0],
+        worker_runtime::deterministic_vector(&[2], DIMENSIONS)
+    );
 }
 
 #[test]
@@ -2114,7 +2150,10 @@ fn a_reply_that_crosses_the_deadline_inside_one_receive_slice_is_discarded() {
     let next = provider
         .embed_documents(&[input(&[2])], &context_foundry::Control::unbounded())
         .expect("the next call is served");
-    assert_eq!(next[0], worker_runtime::deterministic_vector(&[2]));
+    assert_eq!(
+        next[0],
+        worker_runtime::deterministic_vector(&[2], DIMENSIONS)
+    );
 }
 
 #[test]
@@ -3050,7 +3089,7 @@ fn the_scratch_root_may_not_overlap_any_read_only_grant() {
     for (what, root_of) in [
         ("equal to the model directory", 0u8),
         ("an ancestor of the model directory", 1),
-        ("inside the site-packages tree", 2),
+        ("inside the model directory", 2),
         ("a symlinked alias of the model directory", 3),
     ] {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -3059,9 +3098,7 @@ fn the_scratch_root_may_not_overlap_any_read_only_grant() {
         match root_of {
             0 => profile.worker.scratch_root = profile.model_dir.clone(),
             1 => profile.worker.scratch_root = dir.path().to_path_buf(),
-            2 => {
-                profile.worker.scratch_root = profile.runtime.site_packages.join("scratch");
-            }
+            2 => profile.worker.scratch_root = profile.model_dir.join("scratch"),
             _ => {
                 let alias = dir.path().join("alias");
                 symlink(&profile.model_dir, &alias).expect("alias");
@@ -3225,166 +3262,20 @@ fn the_bundle_script_refuses_a_scratch_grant_overlapping_an_extra_read() {
     assert!(out.join("Contents/MacOS/foundry-embed").is_file());
 }
 
-/// M7: the interpreter the worker starts is isolated. A temporary Python
-/// home (the real standard library, symlinked) carries a `sitecustomize.py`
-/// and a `.pth` hook in its GLOBAL site-packages, and `PYTHONPATH` names a
-/// directory too: the default start runs the hooks and reads the
-/// environment (positive control), the worker's isolated start does neither
-/// and its `sys.path` is exactly the standard library plus the profile's
-/// site-packages.
-#[cfg(feature = "embed-worker")]
-#[test]
-fn the_worker_interpreter_ignores_site_hooks_and_the_environment() {
-    use std::os::unix::fs::symlink;
-    let python = option_env!("PYO3_PYTHON").unwrap_or("python3");
-    let base = Command::new(python)
-        .args(["-c", "import sys; print(sys.base_prefix)"])
-        .output()
-        .expect("run the build interpreter");
-    assert!(base.status.success(), "{python} -c failed");
-    let real_home = PathBuf::from(String::from_utf8_lossy(&base.stdout).trim());
-    let stdlib_name = std::fs::read_dir(real_home.join("lib"))
-        .expect("python lib")
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .find(|name| {
-            name.starts_with("python3.") && real_home.join("lib").join(name).join("os.py").is_file()
-        })
-        .expect("a lib/python3.N holding os.py");
-
-    let work = tempfile::tempdir().expect("tempdir");
-    let markers = work.path().join("markers");
-    std::fs::create_dir(&markers).expect("markers");
-    let home = work.path().join("home");
-    let stdlib = home.join("lib").join(&stdlib_name);
-    std::fs::create_dir_all(&stdlib).expect("overlay stdlib");
-    for entry in std::fs::read_dir(real_home.join("lib").join(&stdlib_name))
-        .expect("real stdlib")
-        .flatten()
-    {
-        let name = entry.file_name();
-        // The distribution's own `sitecustomize.py` (Homebrew ships one in
-        // the standard library) would shadow the canary placed in the global
-        // site-packages; the overlay carries only the canary.
-        if name != "site-packages" && name != "sitecustomize.py" {
-            symlink(entry.path(), stdlib.join(&name)).expect("link stdlib entry");
-        }
-    }
-    let global_site = stdlib.join("site-packages");
-    std::fs::create_dir(&global_site).expect("global site-packages");
-    let mark = |name: &str| format!("open(r'{}/{name}', 'w').write('ran')", markers.display());
-    std::fs::write(
-        global_site.join("sitecustomize.py"),
-        format!("{}\n", mark("sitecustomize")),
-    )
-    .expect("sitecustomize");
-    std::fs::write(
-        global_site.join("canary.pth"),
-        format!("import os; {}\n", mark("pth")),
-    )
-    .expect("pth");
-    let env_path = work.path().join("env-path");
-    std::fs::create_dir(&env_path).expect("PYTHONPATH dir");
-    let profile_site = work.path().join("profile-site-packages");
-    std::fs::create_dir(&profile_site).expect("profile site-packages");
-
-    let probe = |name: &str, args: &[&str]| -> serde_json::Value {
-        let output = Command::new(env!("CARGO_BIN_EXE_foundry-embed"))
-            .arg("--probe")
-            .arg(name)
-            .args(args)
-            .env_clear()
-            .env("PYTHONHOME", &home)
-            .env("PYTHONPATH", &env_path)
-            .output()
-            .expect("probe");
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        serde_json::from_str(&stdout).unwrap_or_else(|_| {
-            panic!(
-                "probe {name} printed {stdout:?}; stderr {}",
-                String::from_utf8_lossy(&output.stderr)
-            )
-        })
-    };
-    let state_of = |verdict: &serde_json::Value| -> serde_json::Value {
-        assert_eq!(
-            verdict["allowed"], true,
-            "the interpreter started: {verdict}"
-        );
-        serde_json::from_str(verdict["detail"].as_str().expect("detail")).expect("state JSON")
-    };
-
-    let isolated = probe(
-        "python-isolated",
-        &[
-            &home.display().to_string(),
-            &profile_site.display().to_string(),
-        ],
-    );
-    let state = state_of(&isolated);
-    assert_eq!(state["isolated"], 1, "{state}");
-    assert_eq!(state["no_site"], 1, "{state}");
-    assert_eq!(state["ignore_environment"], 1, "{state}");
-    assert_eq!(state["no_user_site"], 1, "{state}");
-    assert_eq!(state["site_imported"], false, "{state}");
-    assert_eq!(state["sitecustomize_imported"], false, "{state}");
-    assert_eq!(state["usercustomize_imported"], false, "{state}");
-    let expected_path = serde_json::json!([
-        stdlib.join("lib-dynload").display().to_string(),
-        stdlib.display().to_string(),
-        profile_site.display().to_string(),
-    ]);
-    assert_eq!(
-        state["path"], expected_path,
-        "sys.path of the isolated start"
-    );
-    assert!(
-        !markers.join("sitecustomize").exists() && !markers.join("pth").exists(),
-        "a site hook ran in the isolated interpreter"
-    );
-
-    // Positive control: the default start runs both hooks and reads PYTHONPATH.
-    let default = probe("python-default", &[]);
-    let state = state_of(&default);
-    assert_eq!(state["site_imported"], true, "{state}");
-    assert_eq!(state["sitecustomize_imported"], true, "{state}");
-    assert!(
-        markers.join("sitecustomize").exists() && markers.join("pth").exists(),
-        "the default start must run the hooks, or this test proves nothing: {state}"
-    );
-    let paths = state["path"].to_string();
-    assert!(
-        paths.contains(&env_path.display().to_string()),
-        "the default start must honor PYTHONPATH: {paths}"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Development run with the real model: `--ignored`, never CI. Requires the
-// bundle built by scripts/embed-worker-bundle.sh, the profile at
+// bundle built by scripts/embed-worker-bundle.sh and the profile at
 // CF_EMBED_DEV_PROFILE (default /private/tmp/cf-009-dev/profile.json with
-// worker.executable_sha256 filled from the script's output) and the runtime
-// venv at /private/tmp/cf-009-d001/venv.
+// worker.executable_sha256 filled from the script's output).
 // ---------------------------------------------------------------------------
 
 /// The supervisor's worker environment (names and values), with private
 /// probe scratch for HOME and TMPDIR.
-fn worker_env(profile: &SemanticProfile) -> Vec<(&'static str, String)> {
+fn worker_env(_profile: &SemanticProfile) -> Vec<(&'static str, String)> {
     vec![
         ("PATH", "/usr/bin:/bin".to_string()),
         ("HOME", "/private/tmp/cf-embed-probe-home".to_string()),
         ("TMPDIR", "/private/tmp/cf-embed-probe-tmp".to_string()),
-        (
-            "PYTHONHOME",
-            profile.runtime.python_home.display().to_string(),
-        ),
-        ("PYTHONNOUSERSITE", "1".to_string()),
-        ("PYTHONDONTWRITEBYTECODE", "1".to_string()),
-        ("PYTHONUNBUFFERED", "1".to_string()),
-        ("HF_HUB_OFFLINE", "1".to_string()),
-        ("TRANSFORMERS_OFFLINE", "1".to_string()),
-        ("TOKENIZERS_PARALLELISM", "false".to_string()),
-        ("OMP_NUM_THREADS", "2".to_string()),
     ]
 }
 
@@ -3396,10 +3287,6 @@ fn real_worker_args(profile: &SemanticProfile) -> Vec<String> {
         serde_json::to_string(&profile.descriptor).expect("descriptor JSON"),
         "--model-dir".to_string(),
         profile.model_dir.display().to_string(),
-        "--python-home".to_string(),
-        profile.runtime.python_home.display().to_string(),
-        "--site-packages".to_string(),
-        profile.runtime.site_packages.display().to_string(),
     ]
 }
 
@@ -3409,17 +3296,21 @@ fn dev_profile() -> SemanticProfile {
     SemanticProfile::load(std::path::Path::new(&path)).expect("load the development profile")
 }
 
-/// `passage: ` + text with exactly `target` model tokens (prefix and any
-/// special tokens included), built by appending words and trimming to the
-/// exact count with the same Rust tokenizer the worker path uses.
+/// Text whose rendering with the profile's document template is exactly
+/// `target` model tokens (template and any special tokens included), built
+/// by appending words and trimming to the exact count with the same Rust
+/// tokenizer the core uses.
 #[cfg(feature = "semantic")]
-fn text_with_tokens(target: usize, model_dir: &Path) -> String {
-    let tokenizer =
-        tokenizers::Tokenizer::from_file(model_dir.join("tokenizer.json")).expect("tokenizer.json");
-    let prefix = context_foundry::neural::provider::DOCUMENT_PREFIX;
+fn text_with_tokens(target: usize, profile: &SemanticProfile) -> String {
+    let tokenizer = tokenizers::Tokenizer::from_file(profile.model_dir.join("tokenizer.json"))
+        .expect("tokenizer.json");
+    let template = &profile.descriptor.document_template;
     let count = |text: &str| {
         tokenizer
-            .encode(text, true)
+            .encode(
+                context_foundry::neural::provider::render(template, text),
+                profile.descriptor.add_special_tokens,
+            )
             .expect("encode")
             .get_ids()
             .len()
@@ -3428,7 +3319,7 @@ fn text_with_tokens(target: usize, model_dir: &Path) -> String {
     for word in std::iter::repeat("embedding retrieval partition grammar supplies boundary ")
         .flat_map(|line| line.split(' '))
     {
-        if count(&format!("{prefix}{text}{word}")) >= target {
+        if count(&format!("{text}{word}")) >= target {
             break;
         }
         text.push_str(word);
@@ -3436,187 +3327,126 @@ fn text_with_tokens(target: usize, model_dir: &Path) -> String {
     }
     // Trim whole words, then drop trailing characters one at a time until
     // the count is exact (single ASCII characters are one token each).
-    while count(&format!("{prefix}{text}")) > target {
+    while count(&text) > target {
         text.pop();
     }
-    while count(&format!("{prefix}{text}")) < target {
+    while count(&text) < target {
         text.push('x');
         // Guard against the rare multi-token character inflating the count.
-        while count(&format!("{prefix}{text}")) > target {
+        while count(&text) > target {
             text.pop();
             text.push(' ');
         }
     }
-    assert_eq!(count(&format!("{prefix}{text}")), target);
+    assert_eq!(count(&text), target);
     text
 }
 
-/// Publisher `encode(input_type=None)` on identical rendered inputs, run by
-/// the profile's venv interpreter; returns one vector per input.
+/// The profile's exact model input for `text`: rendered with the document
+/// template and tokenized like the core does.
 #[cfg(feature = "semantic")]
-fn publisher_vectors(model_dir: &Path, rendered: &[String]) -> Vec<Vec<f32>> {
-    let python = "/private/tmp/cf-009-d001/venv/bin/python3.12";
-    let script = format!(
-        r#"
-import json, sys
-sys.path.insert(0, {model_dir:?})
-import nemotron3_embed_mlx as n
-model, tok = n.load({model_dir:?})
-out = n.encode(model, tok, json.load(sys.stdin), input_type=None, batch_size=8, max_length=2048)
-print(json.dumps(out.tolist()))
-"#,
-    );
-    let mut child = Command::new(python)
-        .arg("-c")
-        .arg(&script)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("venv python");
-    child
-        .stdin
-        .take()
-        .expect("stdin")
-        .write_all(
-            serde_json::to_string(rendered)
-                .expect("rendered JSON")
-                .as_bytes(),
-        )
-        .expect("write inputs");
-    let mut output = String::new();
-    child
-        .stdout
-        .take()
-        .expect("stdout")
-        .read_to_string(&mut output)
-        .expect("read vectors");
-    let status = child.wait().expect("wait python");
-    assert!(status.success(), "publisher encode failed: {status}");
-    serde_json::from_str(&output).expect("vectors JSON")
+fn dev_ids(profile: &SemanticProfile, text: &str) -> TokenizedInput {
+    let tokenizer = tokenizers::Tokenizer::from_file(profile.model_dir.join("tokenizer.json"))
+        .expect("tokenizer.json");
+    let rendered =
+        context_foundry::neural::provider::render(&profile.descriptor.document_template, text);
+    TokenizedInput {
+        ids: tokenizer
+            .encode(rendered, profile.descriptor.add_special_tokens)
+            .expect("encode")
+            .get_ids()
+            .to_vec(),
+    }
 }
 
-/// Direct-ID path vs publisher encode, with the tolerances declared by the
-/// spec: cosine >= 0.9999 and max abs diff <= 1e-3 per vector.
+/// Batched against single-sequence vectors (spec 009 T004): cosine
+/// >= 0.9999 per input.
 #[cfg(feature = "semantic")]
-fn assert_parity(name: &str, direct: &[Vec<f32>], publisher: &[Vec<f32>]) {
-    assert_eq!(direct.len(), publisher.len(), "{name}: row count");
-    for (i, (a, b)) in direct.iter().zip(publisher).enumerate() {
+fn assert_agree(name: &str, batched: &[Vec<f32>], single: &[Vec<f32>]) {
+    assert_eq!(batched.len(), single.len(), "{name}: row count");
+    for (i, (a, b)) in batched.iter().zip(single).enumerate() {
         assert_eq!(a.len(), b.len(), "{name} row {i}: dimension");
-        let mut dot = 0.0f64;
-        let mut na = 0.0f64;
-        let mut nb = 0.0f64;
-        let mut max_abs = 0.0f64;
+        let (mut dot, mut na, mut nb) = (0.0f64, 0.0f64, 0.0f64);
         for (x, y) in a.iter().zip(b) {
             dot += *x as f64 * *y as f64;
             na += *x as f64 * *x as f64;
             nb += *y as f64 * *y as f64;
-            max_abs = max_abs.max((*x - *y).abs() as f64);
         }
         let cosine = dot / (na.sqrt() * nb.sqrt());
-        println!(
-            "parity {name} row {i}: cosine={cosine:.7} max_abs_diff={max_abs:.3e} \
-             (tolerances: cosine >= 0.9999, max abs diff <= 1e-3)"
-        );
+        println!("agreement {name} row {i}: cosine={cosine:.7} (tolerance: >= 0.9999)");
         assert!(
             cosine >= 0.9999,
-            "{name} row {i}: cosine {cosine:.6} < 0.9999 (max abs {max_abs:.3e})"
-        );
-        assert!(
-            max_abs <= 1e-3,
-            "{name} row {i}: max abs {max_abs:.3e} > 1e-3 (cosine {cosine:.6})"
+            "{name} row {i}: cosine {cosine:.6} < 0.9999"
         );
     }
 }
 
+/// One call per input: the single-sequence reference.
+#[cfg(feature = "semantic")]
+fn singly(provider: &mut dyn EmbeddingProvider, inputs: &[TokenizedInput]) -> Vec<Vec<f32>> {
+    inputs
+        .iter()
+        .map(|input| {
+            provider
+                .embed_documents(
+                    std::slice::from_ref(input),
+                    &context_foundry::Control::unbounded(),
+                )
+                .expect("single-sequence call")
+                .remove(0)
+        })
+        .collect()
+}
+
 #[cfg(feature = "semantic")]
 #[test]
-#[ignore = "development run: real model, sandbox bundle and venv required"]
-fn dev_real_worker_parity() {
+#[ignore = "development run: real model and sandbox bundle required"]
+fn dev_real_worker_batched_and_single_sequence_vectors_agree() {
     let profile = dev_profile();
-    let model_dir = profile.model_dir.clone();
-    let tokenizer =
-        tokenizers::Tokenizer::from_file(model_dir.join("tokenizer.json")).expect("tokenizer.json");
-    let render = |text: &str| {
-        format!(
-            "{}{text}",
-            context_foundry::neural::provider::DOCUMENT_PREFIX
-        )
-    };
-    let ids_of = |text: &str| TokenizedInput {
-        ids: tokenizer
-            .encode(text, true)
-            .expect("encode")
-            .get_ids()
-            .to_vec(),
-    };
-
     let mut provider =
         supervisor::acquire_until(&profile, true, &context_foundry::Control::unbounded())
             .expect("acquire the real worker");
 
-    // Batch of 1 and reordered batch of 8 with Unicode, CRLF and both
-    // boundaries represented across the checks below.
+    // A batch of 8 with Unicode, CRLF and tiny inputs, the reordered batch
+    // and a short input beside one exactly at the card limit, each against
+    // the same inputs embedded one per call.
     let short = "Where does the parser read configuration records?";
-    let unicode = "设置检索边界 — emoji 🧩 and combining márks";
+    let unicode = "设置检索边界 — emoji 🧩 and combining márks";
     let crlf = "first line\r\nsecond line\r\n";
-    let batch8_texts = [short, unicode, crlf, "a", "b c", "dd", "e f g", "h"];
-    let rendered: Vec<String> = batch8_texts.iter().map(|t| render(t)).collect();
-    let ids: Vec<TokenizedInput> = rendered.iter().map(|t| ids_of(t)).collect();
-
-    let direct8 = provider
-        .embed_documents(&ids, &context_foundry::Control::unbounded())
+    let batch8: Vec<TokenizedInput> = [short, unicode, crlf, "a", "b c", "dd", "e f g", "h"]
+        .iter()
+        .map(|text| dev_ids(&profile, text))
+        .collect();
+    let reference = singly(provider.as_mut(), &batch8);
+    let batched = provider
+        .embed_documents(&batch8, &context_foundry::Control::unbounded())
         .expect("batch 8");
-    let publisher8 = publisher_vectors(&model_dir, &rendered);
-    assert_parity("batch-8", &direct8, &publisher8);
-
-    let single = provider
-        .embed_documents(&ids[..1], &context_foundry::Control::unbounded())
-        .expect("batch 1");
-    let publisher1 = publisher_vectors(&model_dir, &rendered[..1]);
-    assert_parity("batch-1", &single, &publisher1);
-
-    // Reordered batch members: same inputs, different order.
-    let mut reordered_rendered: Vec<String> = rendered.clone();
-    reordered_rendered.reverse();
-    let reordered_ids: Vec<TokenizedInput> = reordered_rendered.iter().map(|t| ids_of(t)).collect();
-    let direct_reordered = provider
-        .embed_documents(&reordered_ids, &context_foundry::Control::unbounded())
+    assert_agree("batch-8", &batched, &reference);
+    let reordered: Vec<TokenizedInput> = batch8.iter().rev().cloned().collect();
+    let mut expected = reference.clone();
+    expected.reverse();
+    let batched = provider
+        .embed_documents(&reordered, &context_foundry::Control::unbounded())
         .expect("reordered");
-    let publisher_reordered = publisher_vectors(&model_dir, &reordered_rendered);
-    assert_parity("reordered", &direct_reordered, &publisher_reordered);
-
-    // Heterogeneous: a short input beside an exactly-1024-token one.
-    let long_doc = text_with_tokens(
-        context_foundry::neural::provider::DOCUMENT_UNIT_TOKENS,
-        &model_dir,
-    );
-    let hetero = [render(short), render(&long_doc)];
-    let hetero_ids: Vec<TokenizedInput> = hetero.iter().map(|t| ids_of(t)).collect();
-    let direct_hetero = provider
-        .embed_documents(&hetero_ids, &context_foundry::Control::unbounded())
+    assert_agree("reordered", &batched, &expected);
+    let card = text_with_tokens(profile.card_tokens as usize, &profile);
+    let hetero = vec![dev_ids(&profile, short), dev_ids(&profile, &card)];
+    assert_eq!(hetero[1].ids.len(), profile.card_tokens as usize);
+    let reference = singly(provider.as_mut(), &hetero);
+    let batched = provider
+        .embed_documents(&hetero, &context_foundry::Control::unbounded())
         .expect("heterogeneous");
-    let publisher_hetero = publisher_vectors(&model_dir, &hetero);
-    assert_parity("heterogeneous", &direct_hetero, &publisher_hetero);
+    assert_agree("heterogeneous", &batched, &reference);
 
     // Serving boundary: exactly 2048 tokens as one query input; 2049 is
     // refused before any model call.
-    let full = text_with_tokens(
-        context_foundry::neural::provider::SERVING_LIMIT_TOKENS,
-        &model_dir,
-    );
-    let full_ids = ids_of(&render(&full));
-    assert_eq!(
-        full_ids.ids.len(),
-        context_foundry::neural::provider::SERVING_LIMIT_TOKENS
-    );
-    let direct_full = provider
-        .embed_query(&full_ids, Instant::now() + Duration::from_secs(120))
+    let limit = context_foundry::neural::provider::SERVING_LIMIT_TOKENS;
+    let full = dev_ids(&profile, &text_with_tokens(limit, &profile));
+    assert_eq!(full.ids.len(), limit);
+    provider
+        .embed_query(&full, Instant::now() + Duration::from_secs(120))
         .expect("2048-token query");
-    let publisher_full = publisher_vectors(&model_dir, &[render(&full)]);
-    assert_parity("serving-2048", &[direct_full], &publisher_full);
-
-    let mut over = full_ids.clone();
+    let mut over = full.clone();
     over.ids.push(over.ids[0]);
     let refused = provider.embed_query(&over, Instant::now() + Duration::from_secs(5));
     assert!(
@@ -3646,35 +3476,23 @@ fn dev_scratch_root(profile: &SemanticProfile) -> PathBuf {
     std::fs::canonicalize(root).expect("canonical scratch root")
 }
 
-/// The warm-up of the original parity run, as real tokens from the model's
-/// own tokenizer: a batch of 8 (Unicode, CRLF, tiny inputs), a batch of 1,
-/// the reordered batch, a short input beside an exactly-1024-token one, and
+/// The warm-up of the agreement run, as real tokens from the profile's own
+/// tokenizer: a batch of 8 (Unicode, CRLF, tiny inputs), a batch of 1, the
+/// reordered batch, a short input beside one exactly at the card limit, and
 /// the exactly-2048-token serving query.
 #[cfg(feature = "semantic")]
-fn real_token_workload(model_dir: &Path) -> (Vec<Vec<TokenizedInput>>, TokenizedInput) {
-    use context_foundry::neural::provider::{
-        DOCUMENT_PREFIX, DOCUMENT_UNIT_TOKENS, SERVING_LIMIT_TOKENS,
-    };
-    let tokenizer =
-        tokenizers::Tokenizer::from_file(model_dir.join("tokenizer.json")).expect("tokenizer.json");
-    let render = |text: &str| format!("{DOCUMENT_PREFIX}{text}");
-    let ids_of = |text: &str| TokenizedInput {
-        ids: tokenizer
-            .encode(text, true)
-            .expect("encode")
-            .get_ids()
-            .to_vec(),
-    };
+fn real_token_workload(profile: &SemanticProfile) -> (Vec<Vec<TokenizedInput>>, TokenizedInput) {
+    use context_foundry::neural::provider::SERVING_LIMIT_TOKENS;
     let short = "Where does the parser read configuration records?";
     let unicode = "设置检索边界 — emoji 🧩 and combining márks";
     let crlf = "first line\r\nsecond line\r\n";
     let texts = [short, unicode, crlf, "a", "b c", "dd", "e f g", "h"];
-    let batch8: Vec<TokenizedInput> = texts.iter().map(|text| ids_of(&render(text))).collect();
+    let batch8: Vec<TokenizedInput> = texts.iter().map(|text| dev_ids(profile, text)).collect();
     let batch1 = batch8[..1].to_vec();
     let reordered: Vec<TokenizedInput> = batch8.iter().rev().cloned().collect();
-    let long_doc = text_with_tokens(DOCUMENT_UNIT_TOKENS, model_dir);
-    let hetero = vec![ids_of(&render(short)), ids_of(&render(&long_doc))];
-    let full = ids_of(&render(&text_with_tokens(SERVING_LIMIT_TOKENS, model_dir)));
+    let card = text_with_tokens(profile.card_tokens as usize, profile);
+    let hetero = vec![dev_ids(profile, short), dev_ids(profile, &card)];
+    let full = dev_ids(profile, &text_with_tokens(SERVING_LIMIT_TOKENS, profile));
     assert_eq!(full.ids.len(), SERVING_LIMIT_TOKENS);
     (vec![batch8, batch1, reordered, hetero], full)
 }
@@ -3702,7 +3520,7 @@ fn shim_worker_at_ready(
     profile: &SemanticProfile,
     warm: bool,
 ) -> (Shim, Vec<Vec<TokenizedInput>>, TokenizedInput) {
-    let (batches, full_query) = real_token_workload(&profile.model_dir);
+    let (batches, full_query) = real_token_workload(profile);
     let scratch = dev_scratch_root(profile);
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3777,7 +3595,7 @@ fn real_worker_mid_evaluation(profile: &SemanticProfile, warm: bool) -> Shim {
 #[ignore = "development run: real model, phase bundle, sandbox and venv required"]
 fn dev_real_worker_owner_death_during_a_model_call() {
     let profile = dev_profile();
-    let (batches, _) = real_token_workload(&profile.model_dir);
+    let (batches, _) = real_token_workload(&profile);
     // The parity run's supervised worker stays loaded and warmed alongside.
     let mut resident =
         supervisor::acquire_until(&profile, true, &context_foundry::Control::unbounded())
@@ -3805,36 +3623,21 @@ fn dev_real_worker_owner_death_during_a_model_call() {
 
 /// Diagnosis for the owner-death bound: list the mid-evaluation worker's
 /// threads and sample their stacks, showing the watcher thread is separate
-/// from the evaluating one and parked in `kevent`. The sampled call is a
-/// batch of eight 1024-token documents, long enough that the evaluation
-/// still spans the 1 s sample; the phase file is RE-CHECKED after the
-/// sample, and the attempt is repeated when the call finished under it.
+/// from the evaluating one and parked in `kevent`. The sampled call is one
+/// full context (the profile's batch of cards at the card limit), long
+/// enough that the evaluation still spans the 1 s sample; the phase file
+/// is RE-CHECKED after the sample, and the attempt is repeated when the
+/// call finished under it.
 #[cfg(feature = "semantic")]
 #[test]
-#[ignore = "development run: real model, phase bundle, sandbox and venv required"]
+#[ignore = "development run: real model, phase bundle and sandbox required"]
 fn dev_real_worker_threads_during_a_model_call() {
     let profile = dev_profile();
     let (mut shim, _batches, _full) = shim_worker_at_ready(&profile, true);
     let pid = shim.worker_pid;
-    // Eight copies of the exactly-1024-token document: one long batch.
-    let long_doc = text_with_tokens(
-        context_foundry::neural::provider::DOCUMENT_UNIT_TOKENS,
-        &profile.model_dir,
-    );
-    let rendered = format!(
-        "{}{long_doc}",
-        context_foundry::neural::provider::DOCUMENT_PREFIX
-    );
-    let tokenizer = tokenizers::Tokenizer::from_file(profile.model_dir.join("tokenizer.json"))
-        .expect("tokenizer.json");
-    let one = TokenizedInput {
-        ids: tokenizer
-            .encode(rendered.as_str(), true)
-            .expect("encode")
-            .get_ids()
-            .to_vec(),
-    };
-    let batch: Vec<TokenizedInput> = (0..8).map(|_| one.clone()).collect();
+    let card = text_with_tokens(profile.card_tokens as usize, &profile);
+    let one = dev_ids(&profile, &card);
+    let batch: Vec<TokenizedInput> = (0..profile.batch).map(|_| one.clone()).collect();
 
     let out = std::path::Path::new("/private/tmp/cf-009-dev").join(format!("sample-{pid}.txt"));
     let mut sampled_inside_eval = false;
@@ -3923,7 +3726,7 @@ fn start_gpu_pressure(
     let calls = Arc::new(AtomicU64::new(0));
     let (flag, counter, profile) = (Arc::clone(&stop), Arc::clone(&calls), profile.clone());
     let thread = std::thread::spawn(move || {
-        let (_, full) = real_token_workload(&profile.model_dir);
+        let (_, full) = real_token_workload(&profile);
         let mut provider =
             supervisor::acquire_until(&profile, true, &context_foundry::Control::unbounded())
                 .expect("acquire the pressure worker");
@@ -3964,7 +3767,7 @@ fn teardown_scenario(
     // The original condition: the parity run's supervised worker stays
     // resident (loaded and warmed) beside the shim-owned one.
     let mut resident_provider = resident.then(|| {
-        let (batches, _) = real_token_workload(&profile.model_dir);
+        let (batches, _) = real_token_workload(profile);
         let mut provider =
             supervisor::acquire_until(profile, true, &context_foundry::Control::unbounded())
                 .expect("acquire the resident real worker");
@@ -4281,45 +4084,6 @@ fn dev_sandbox_negative_probes() {
         "a link outside the grants must read exactly like its granted target: {via_outside}"
     );
 
-    // The interpreter inside the sandbox, started the way the worker starts
-    // it: isolated, no site import, `sys.path` exactly the standard library
-    // and the profile's site-packages.
-    let python_state = run_probe(
-        "python-isolated",
-        &[
-            &profile.runtime.python_home.display().to_string(),
-            &profile.runtime.site_packages.display().to_string(),
-        ],
-    );
-    assert_eq!(
-        python_state["allowed"],
-        serde_json::Value::Bool(true),
-        "the isolated interpreter must start inside the sandbox: {python_state}"
-    );
-    let state: serde_json::Value =
-        serde_json::from_str(python_state["detail"].as_str().expect("python detail"))
-            .expect("interpreter state JSON");
-    assert_eq!(state["isolated"], 1, "{state}");
-    assert_eq!(state["no_site"], 1, "{state}");
-    assert_eq!(state["site_imported"], false, "{state}");
-    assert_eq!(state["sitecustomize_imported"], false, "{state}");
-    let paths: Vec<&str> = state["path"]
-        .as_array()
-        .expect("sys.path")
-        .iter()
-        .filter_map(|p| p.as_str())
-        .collect();
-    assert_eq!(paths.len(), 3, "sys.path: {paths:?}");
-    assert!(
-        paths[0].ends_with("lib-dynload") && paths[1].contains("/lib/python3."),
-        "sys.path: {paths:?}"
-    );
-    assert_eq!(
-        paths[2],
-        profile.runtime.site_packages.display().to_string(),
-        "sys.path: {paths:?}"
-    );
-
     // Inherited environment: every name the supervisor set, and no extra
     // name beyond those the OS itself injects into a sandboxed process; in
     // particular nothing that looks like a credential, proxy or agent socket.
@@ -4417,10 +4181,6 @@ fn dev_sandbox_negative_probes() {
         .arg(&descriptor)
         .arg("--model-dir")
         .arg(&profile.model_dir)
-        .arg("--python-home")
-        .arg(&profile.runtime.python_home)
-        .arg("--site-packages")
-        .arg(&profile.runtime.site_packages)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -4435,7 +4195,14 @@ fn dev_sandbox_negative_probes() {
     drop(reader);
     let mut stdin = child.stdin.take().expect("stdin");
     let mut stdout = BufReader::new(child.stdout.take().expect("stdout"));
-    protocol::write_frame(&mut stdin, &Header::Hello { protocol: 1 }, &[]).expect("hello");
+    protocol::write_frame(
+        &mut stdin,
+        &Header::Hello {
+            protocol: protocol::PROTOCOL_VERSION,
+        },
+        &[],
+    )
+    .expect("hello");
     let (header, _) = protocol::read_frame(&mut stdout).expect("ready");
     assert!(matches!(header, Header::Ready { .. }));
     stdin

@@ -10,18 +10,20 @@
 //! type through [`read_frame_as`] / [`write_frame_as`] with the same caps and
 //! the same refusals (see [`FrameHeader`]); there is no second framing.
 use super::provider::{
-    DIMENSIONS, DOCUMENT_BATCH, DOCUMENT_UNIT_TOKENS, FunctionDescriptor, SERVING_LIMIT_TOKENS,
+    DocumentLimits, FunctionDescriptor, MAX_DIMENSIONS, MAX_DOCUMENT_BATCH, SERVING_LIMIT_TOKENS,
     TokenizedInput,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Version 2 (009 T004): the llama.cpp worker, descriptor v2 in `ready` and
+/// profile-owned dimensions; version 1 was the MLX worker's.
+pub const PROTOCOL_VERSION: u32 = 2;
 /// A header never needs more: the largest is `ready` with its descriptor.
 pub const MAX_HEADER_BYTES: usize = 64 * 1024;
-/// The largest payload is a full document batch of vectors.
-pub const MAX_PAYLOAD_BYTES: usize = DOCUMENT_BATCH * DIMENSIONS * 4;
+/// The largest payload is a full document batch of the widest vectors.
+pub const MAX_PAYLOAD_BYTES: usize = MAX_DOCUMENT_BATCH * MAX_DIMENSIONS * 4;
 /// Bound on worker stderr retained by the supervisor (drained continuously).
 pub const MAX_STDERR_BYTES: usize = 64 * 1024;
 
@@ -230,7 +232,10 @@ pub fn decode_ids(
     vocab_size: u32,
 ) -> Result<Vec<TokenizedInput>, FrameError> {
     let (max_inputs, max_ids) = match purpose {
-        Purpose::Document => (DOCUMENT_BATCH, DOCUMENT_UNIT_TOKENS),
+        Purpose::Document => (
+            DocumentLimits::PROTOCOL.inputs,
+            DocumentLimits::PROTOCOL.tokens,
+        ),
         Purpose::Query => (1, SERVING_LIMIT_TOKENS),
     };
     if lengths.is_empty() || lengths.len() > max_inputs {
@@ -250,6 +255,12 @@ pub fn decode_ids(
         total = total
             .checked_add(len)
             .ok_or_else(|| FrameError::Malformed("ID count overflow".into()))?;
+    }
+    // One call is one llama.cpp context: its IDs in all fit the serving limit.
+    if total > SERVING_LIMIT_TOKENS {
+        return Err(FrameError::Malformed(format!(
+            "{total} IDs in one call; at most {SERVING_LIMIT_TOKENS} allowed"
+        )));
     }
     let expected = total
         .checked_mul(4)
@@ -294,18 +305,19 @@ pub fn decode_vectors(
     dims: u32,
     payload: &[u8],
     expected_count: usize,
+    expected_dims: usize,
 ) -> Result<Vec<Vec<f32>>, FrameError> {
     if count as usize != expected_count {
         return Err(FrameError::Malformed(format!(
             "{count} vectors for {expected_count} inputs"
         )));
     }
-    if dims as usize != DIMENSIONS {
+    if dims as usize != expected_dims || expected_dims == 0 {
         return Err(FrameError::Malformed(format!(
-            "dimension {dims} is not {DIMENSIONS}"
+            "dimension {dims} is not the profile's {expected_dims}"
         )));
     }
-    let expected = expected_count * DIMENSIONS * 4;
+    let expected = expected_count * expected_dims * 4;
     if payload.len() != expected {
         return Err(FrameError::Malformed(format!(
             "payload has {} bytes, expected {expected}",
@@ -320,7 +332,7 @@ pub fn decode_vectors(
         return Err(FrameError::Malformed("nonfinite vector value".into()));
     }
     Ok(values
-        .chunks_exact(DIMENSIONS)
+        .chunks_exact(expected_dims)
         .map(<[f32]>::to_vec)
         .collect())
 }
@@ -335,6 +347,10 @@ mod tests {
         bytes.extend_from_slice(&payload_len.to_le_bytes());
         bytes.extend_from_slice(payload);
         bytes
+    }
+
+    fn hello(protocol: u32, extra: &str) -> Vec<u8> {
+        format!(r#"{{"kind":"hello","protocol":{protocol}{extra}}}"#).into_bytes()
     }
 
     #[test]
@@ -367,17 +383,28 @@ mod tests {
     }
 
     #[test]
-    fn per_input_limits_apply_not_just_the_batch_total() {
-        // One 1025-ID document input stays refused even though eight
-        // inputs could carry 8192 IDs in total.
-        let lengths = [1025u32];
-        let payload = vec![0u8; 1025 * 4];
-        assert!(decode_ids(Purpose::Document, &lengths, &payload, 100).is_err());
-        let lengths = [1024u32];
-        assert!(decode_ids(Purpose::Document, &lengths, &payload[..1024 * 4], 100).is_ok());
-        let lengths = [2049u32];
-        assert!(decode_ids(Purpose::Query, &lengths, &vec![0u8; 2049 * 4], 100).is_err());
-        assert!(decode_ids(Purpose::Document, &[1; 9], &[0u8; 36], 100).is_err());
+    fn a_call_stays_within_the_batch_cap_and_one_context() {
+        let ids = |n: usize| vec![0u8; n * 4];
+        // One full-context input; one ID more is refused for either purpose.
+        let limit = SERVING_LIMIT_TOKENS as u32;
+        assert!(decode_ids(Purpose::Query, &[limit], &ids(limit as usize), 100).is_ok());
+        assert!(decode_ids(Purpose::Query, &[limit + 1], &ids(limit as usize + 1), 100).is_err());
+        assert!(decode_ids(Purpose::Document, &[limit], &ids(limit as usize), 100).is_ok());
+        // Two inputs that together exceed one context are refused.
+        assert!(
+            decode_ids(
+                Purpose::Document,
+                &[limit, 1],
+                &ids(limit as usize + 1),
+                100
+            )
+            .is_err()
+        );
+        // More sequences than the cap are refused.
+        let many = vec![1u32; MAX_DOCUMENT_BATCH + 1];
+        assert!(decode_ids(Purpose::Document, &many, &ids(many.len()), 100).is_err());
+        let cap = vec![1u32; MAX_DOCUMENT_BATCH];
+        assert!(decode_ids(Purpose::Document, &cap, &ids(cap.len()), 100).is_ok());
     }
 
     #[test]
@@ -389,10 +416,10 @@ mod tests {
             read_frame(&mut bytes.as_slice()),
             Err(FrameError::TooLarge(_))
         ));
-        let header = br#"{"kind":"hello","protocol":1}"#;
+        let header = hello(PROTOCOL_VERSION, "");
         let bytes = frame(
             header.len() as u32,
-            header,
+            &header,
             MAX_PAYLOAD_BYTES as u32 + 1,
             &[],
         );
@@ -414,39 +441,49 @@ mod tests {
             read_frame(&mut [1u8, 0].as_slice()),
             Err(FrameError::Malformed(_))
         ));
-        let header = br#"{"kind":"hello","protocol":1}"#;
-        let full = frame(header.len() as u32, header, 4, &[1, 2, 3, 4]);
+        let header = hello(PROTOCOL_VERSION, "");
+        let full = frame(header.len() as u32, &header, 4, &[1, 2, 3, 4]);
         assert!(matches!(
             read_frame(&mut &full[..full.len() - 1]),
             Err(FrameError::Malformed(_))
         ));
-        let old = br#"{"kind":"hello","protocol":0}"#;
-        let bytes = frame(old.len() as u32, old, 0, &[]);
+        // The MLX worker's protocol 1 is another version.
+        let old = hello(1, "");
+        let bytes = frame(old.len() as u32, &old, 0, &[]);
         assert!(matches!(
             read_frame(&mut bytes.as_slice()),
             Err(FrameError::Malformed(_))
         ));
-        let extra = br#"{"kind":"hello","protocol":1,"x":1}"#;
-        let bytes = frame(extra.len() as u32, extra, 0, &[]);
+        let extra = hello(PROTOCOL_VERSION, r#","x":1"#);
+        let bytes = frame(extra.len() as u32, &extra, 0, &[]);
         assert!(matches!(
             read_frame(&mut bytes.as_slice()),
             Err(FrameError::Malformed(_))
         ));
     }
 
+    /// 009 T004: every profile dimension frames end to end; a reply of
+    /// another length or dimension is refused.
     #[test]
     fn vectors_are_checked_for_count_dimension_length_and_finiteness() {
-        let good = vec![vec![0.5f32; DIMENSIONS]; 2];
-        let payload = encode_vectors(&good);
-        assert_eq!(
-            decode_vectors(2, DIMENSIONS as u32, &payload, 2).unwrap(),
-            good
-        );
-        assert!(decode_vectors(2, DIMENSIONS as u32, &payload, 3).is_err());
-        assert!(decode_vectors(2, 1024, &payload, 2).is_err());
-        assert!(decode_vectors(2, DIMENSIONS as u32, &payload[4..], 2).is_err());
-        let mut bad = good.clone();
-        bad[1][7] = f32::NAN;
-        assert!(decode_vectors(2, DIMENSIONS as u32, &encode_vectors(&bad), 2).is_err());
+        for dims in [768usize, 512, 256, 128] {
+            let good = vec![vec![0.5f32; dims]; 2];
+            let payload = encode_vectors(&good);
+            assert_eq!(payload.len(), 2 * dims * 4, "frame size");
+            assert_eq!(
+                decode_vectors(2, dims as u32, &payload, 2, dims).unwrap(),
+                good
+            );
+            assert!(decode_vectors(2, dims as u32, &payload, 3, dims).is_err());
+            assert!(decode_vectors(2, dims as u32 / 2, &payload, 2, dims).is_err());
+            assert!(decode_vectors(2, dims as u32, &payload, 2, dims / 2).is_err());
+            assert!(decode_vectors(2, dims as u32, &payload[4..], 2, dims).is_err());
+            let mut bad = good.clone();
+            bad[1][7] = f32::NAN;
+            assert!(decode_vectors(2, dims as u32, &encode_vectors(&bad), 2, dims).is_err());
+        }
+        // The widest reply fits the payload cap.
+        let widest = vec![vec![0.5f32; MAX_DIMENSIONS]; MAX_DOCUMENT_BATCH];
+        assert!(encode_vectors(&widest).len() <= MAX_PAYLOAD_BYTES);
     }
 }

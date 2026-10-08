@@ -820,6 +820,13 @@ disabled() {
     case " $DISABLED " in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
 
+# A descriptor v1 (MLX worker) semantic profile: 009 T004's core refuses it
+# at load (`profile_unsupported`); only v2 (llama.cpp) profiles are served.
+v1_profile() {
+    [ "$(plutil -extract v raw -o - -- "$1" 2>/dev/null)" = 1 ] ||
+        [ "$(plutil -extract descriptor.v raw -o - -- "$1" 2>/dev/null)" = 1 ]
+}
+
 # disable_state PART-SUMS DISABLED > FILE: installed.json without PART's
 # files, with the intended disabled set (the recorded directories stay).
 disable_state() {
@@ -904,6 +911,17 @@ upgrade)
         die 73 "$PKG_VERSION is already installed; rollback switches between the current and the previous version"
     [ -z "$SEMANTIC_PROFILE" ] || enable semantic
     [ -z "$LEARNING_PROFILE" ] || enable learning
+    # An installed descriptor v1 profile is never carried forward: the core
+    # upgrade goes ahead with semantic retrieval disabled by name, and a v2
+    # profile is asked for. The old version keeps its bundle and profile, so
+    # a rollback is that binary with its own profile.
+    if [ -z "$SEMANTIC_PROFILE" ] && ! disabled semantic &&
+        [ -f "$LIB/$OLD/profiles/semantic-profile.json" ] &&
+        v1_profile "$LIB/$OLD/profiles/semantic-profile.json"; then
+        DISABLED=$(echo "$DISABLED semantic" | sed 's/^ //')
+        echo "semantic: disabled: $OLD's installed profile is descriptor v1 (the MLX worker), which $PKG_VERSION refuses (profile_unsupported); the core upgrade goes ahead without the semantic worker, and stores keep their semantic cache until 'foundry semantic purge'"
+        echo "semantic: to enable it again, give a v2 (llama.cpp) profile with --semantic-profile FILE to an upgrade"
+    fi
     # Disabled components stay disabled: their package files are not placed.
     if disabled semantic; then
         rm -f "$PKG/libexec/foundry-embed" "$PKG/scripts/embed-worker-bundle.sh"

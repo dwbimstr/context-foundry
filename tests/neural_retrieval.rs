@@ -1,6 +1,7 @@
-//! 009 T002 acceptance (FR-003, FR-005, FR-006 / SC-002): semantic evidence
-//! reaches the final context response inside the existing budget, with
-//! source freshness, a deterministic merge and named baseline fallbacks.
+//! 009 T002/T004 acceptance (FR-003, FR-005, FR-006 / SC-002): semantic
+//! evidence reaches the final context response inside the existing budget,
+//! with source freshness, the dense-first placement and named baseline
+//! fallbacks.
 //!
 //! The vocabulary-gap cases run the real preparation path, the real Rust
 //! tokenizer, the real USearch index and the real request path
@@ -23,11 +24,10 @@ use context_foundry::fault::{self, Action};
 use context_foundry::mcp::{self, HttpOptions, SemanticServing, SemanticSlot, ServerOptions};
 use context_foundry::neural::cache::DEFAULT_CACHE_CAP_BYTES;
 use context_foundry::neural::index;
-use context_foundry::neural::merge::{self, MergeUnit, RRF_K};
 use context_foundry::neural::prepare::{self, Acquire, PrepareOptions, PrepareReport};
 use context_foundry::neural::profile::SemanticProfile;
 use context_foundry::neural::provider::{
-    self, DIMENSIONS, EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput,
+    self, DocumentLimits, EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput,
 };
 use context_foundry::neural::query::{
     DENSE_WINDOW, DenseWindow, MakeProvider, QUERY_CEILING, QueryRuntime,
@@ -48,15 +48,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// The fixture profile's output dimension.
+const DIMENSIONS: usize = testkit::FIXTURE_DIMENSIONS as usize;
+
 // ---------------------------------------------------------------------------
 // The fixture: tests/fixtures/semantic-retrieval, with FROZEN expected spans.
 // ---------------------------------------------------------------------------
 
 /// The normal response budget (tokens).
 const BUDGET: usize = 2048;
-/// One embedding unit holds at most 1024 tokens including the 9-byte
-/// `passage: ` prefix; the fixture tokenizer is byte level.
-const UNIT_BYTES: u64 = 1024 - 9;
 
 const DUSK_PATH: &str = "docs/dusk.md";
 const DUSK_QUERY: &str = "twilight onset";
@@ -76,8 +76,6 @@ const CODE_QUERY: &str = "retry backoff";
 /// brace, among twenty-odd functions that have nothing to do with retrying.
 const CODE_EVIDENCE: Range<u64> = 517..809;
 const CODE_LEN: u64 = 4517;
-/// The code file spans more than one embedding unit.
-const _: () = assert!(CODE_LEN > UNIT_BYTES);
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/semantic-retrieval")
@@ -125,7 +123,7 @@ fn model_input(ids: &[u32]) -> String {
 /// signature, L2-normalized.
 fn concept_vector(rendered: &str) -> Vec<f32> {
     let text = rendered
-        .strip_prefix("passage: ")
+        .strip_prefix("doc: ")
         .or_else(|| rendered.strip_prefix("query: "))
         .unwrap_or(rendered)
         .to_ascii_lowercase();
@@ -220,7 +218,7 @@ impl EmbeddingProvider for ConceptProvider {
         batch: &[TokenizedInput],
         _control: &Control,
     ) -> Result<Vec<Vec<f32>>, ProviderError> {
-        provider::check_document_batch(batch)?;
+        provider::check_document_batch(batch, DocumentLimits::PROTOCOL)?;
         let pause = *self.probe.document_pause.lock().unwrap();
         std::thread::sleep(pause);
         self.probe.document_calls.fetch_add(1, Ordering::SeqCst);
@@ -565,12 +563,6 @@ fn span_of(handle: &str) -> (String, u64, u64) {
     )
 }
 
-fn handle_with_range(handle: &str, start: u64, end: u64) -> String {
-    let (head, identity) = handle.rsplit_once('@').expect("a handle identity");
-    let (path, _) = head.rsplit_once('#').expect("a handle range");
-    format!("{path}#{start}-{end}@{identity}")
-}
-
 fn item_of<'a>(parsed: &'a V2Response, path: &str) -> Option<&'a V2Item> {
     parsed
         .items
@@ -621,20 +613,18 @@ fn fillers(count: usize) -> Vec<(String, String)> {
 
 // ---------------------------------------------------------------------------
 // Who owns a missing piece of evidence (spec 009 § Ordering without another
-// required model): retrieval, merge, delivery or packing.
+// required model): retrieval, placement or packing.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, PartialEq, Eq)]
 enum Owner {
     /// Neither the lexical nor the dense window carried the candidate.
     Retrieval,
-    /// A window carried it; the fused, capped selection dropped it.
-    Merge,
-    /// It was delivered, but as a preview of an unlocalized unit.
-    Delivery,
+    /// A window carried it; the placed, capped and cut selection dropped it.
+    Placement,
     /// Selected and ranked, then omitted by the budget.
     Packing,
-    /// Delivered whole (or as its lexical span).
+    /// Delivered (verbatim or in its signature form).
     Delivered,
 }
 
@@ -649,18 +639,10 @@ fn attribute(
         return Owner::Retrieval;
     }
     if !selected.paths.iter().any(|selected| selected == path) {
-        return Owner::Merge;
+        return Owner::Placement;
     }
     match item_of(parsed, path) {
         None => Owner::Packing,
-        Some(item)
-            if item
-                .neural
-                .as_ref()
-                .is_some_and(|n| n.selection == "preview") =>
-        {
-            Owner::Delivery
-        }
         Some(_) => Owner::Delivered,
     }
 }
@@ -716,23 +698,29 @@ fn vocabulary_gap_evidence_reaches_the_final_response_within_the_normal_budget()
         let item = answer.item(path).unwrap_or_else(|| {
             panic!("{path}: no evidence for {query:?}:\n{}", answer.packed.text)
         });
-        let neural = item.neural.as_ref().expect("a neural item carries a tag");
-        assert_eq!(neural.selection, "whole_unit", "{path}");
-        assert_eq!(neural.matched, None, "whole_unit repeats no handle");
+        assert!(item.semantic, "{path}: a placed dense unit is tagged");
+        // The card's unit is the definition or section the evidence is: the
+        // delivered range is exactly the frozen evidence, no wider.
         let (_, start, end) = span_of(&item.handle);
-        assert!(
-            start <= evidence.start && evidence.end <= end,
-            "{path}: delivered {start}..{end} must cover the frozen evidence {evidence:?}"
-        );
+        assert_eq!(start..end, evidence, "{path}");
         // Source freshness: the delivered bytes are the live file's bytes and
         // the handle names the live content hash.
         let content = corpus.source(path);
-        assert_eq!(item.body, content[start as usize..end as usize], "{path}");
+        if item.form.is_none() {
+            assert_eq!(item.body, content[start as usize..end as usize], "{path}");
+        }
         let sha32 = &context_foundry::digest(content.as_bytes())[..32];
         assert!(
             item.handle.contains(&format!("@{sha32}.")),
             "{}",
             item.handle
+        );
+        // Dense units come first: the evidence is the first item.
+        assert_eq!(
+            span_of(&answer.parsed.items[0].handle).0,
+            path,
+            "{}",
+            answer.packed.text
         );
         // The exact output budget.
         assert!(answer.packed.tokens <= BUDGET);
@@ -740,7 +728,7 @@ fn vocabulary_gap_evidence_reaches_the_final_response_within_the_normal_budget()
             answer.packed.tokens,
             response::count_tokens(&answer.packed.text)
         );
-        // The provider saw the exact prefixed query once.
+        // The provider saw the exact templated query once.
         assert_eq!(
             corpus.probe.queries().last().map(String::as_str),
             Some(&*format!("query: {query}"))
@@ -749,23 +737,14 @@ fn vocabulary_gap_evidence_reaches_the_final_response_within_the_normal_budget()
             "query": query, "path": path,
             "frozen_evidence": [evidence.start, evidence.end],
             "delivered": [start, end],
-            "selection": neural.selection,
+            "form": item.form,
             "delivered_tokens": answer.packed.tokens,
         }));
     }
-    // The short document fits whole; the long document delivers only the
-    // unit holding its tail, not the whole file; the code file delivers
-    // the unit around the retry function, not the whole file.
-    let dusk = corpus.context(&slot, DUSK_QUERY, BUDGET);
-    assert_eq!(
-        span_of(&dusk.item(DUSK_PATH).unwrap().handle).1
-            ..span_of(&dusk.item(DUSK_PATH).unwrap().handle).2,
-        DUSK_EVIDENCE
-    );
+    // The long document delivers only its last section and the code file
+    // only the retry function, never the whole file.
+    assert!(LEDGER_EVIDENCE.start > 0 && CODE_EVIDENCE.end < CODE_LEN);
     let ledger = corpus.context(&slot, LEDGER_QUERY, BUDGET);
-    let (_, start, end) = span_of(&ledger.item(LEDGER_PATH).unwrap().handle);
-    assert!(end - start <= UNIT_BYTES, "{start}..{end}");
-    assert!(start > 0 && end == LEDGER_LEN, "{start}..{end}");
     assert!(
         !ledger
             .item(LEDGER_PATH)
@@ -773,119 +752,183 @@ fn vocabulary_gap_evidence_reaches_the_final_response_within_the_normal_budget()
             .body
             .contains("Shipping labels")
     );
-    let code = corpus.context(&slot, CODE_QUERY, BUDGET);
-    let (_, start, end) = span_of(&code.item(CODE_PATH).unwrap().handle);
-    // The code file is longer than one embedding unit (checked at compile
-    // time beside the constants), so the delivered unit is part of the file.
-    assert!(end - start <= UNIT_BYTES, "{start}..{end}");
     record("vocabulary-gap-fixture", serde_json::json!(delivered));
 }
 
 #[test]
-fn search_returns_locators_and_never_claims_a_whole_unit() {
+fn search_returns_locators_and_never_a_selection_tag() {
     let corpus = Corpus::new(&[]);
     let slot = corpus.slot();
     let answer = corpus.search(&slot, DUSK_QUERY, 10);
     assert_eq!(answer.word(), Some("ready"));
     let item = answer.item(DUSK_PATH).expect("the dense hit is a locator");
     assert_eq!(item.label.as_deref(), Some("semantic"));
-    assert!(item.neural.is_none(), "a locator carries no selection tag");
-    assert!(!answer.packed.text.contains("[whole_unit]"));
-    assert!(!answer.packed.text.contains("[preview"));
-    assert!(!answer.packed.text.contains("[lexical_span"));
+    assert!(!item.semantic, "a locator carries no selection tag");
+    assert!(!answer.packed.text.contains("[semantic]"));
+    // Dense units are placed first in search too.
+    assert_eq!(span_of(&answer.parsed.items[0].handle).0, DUSK_PATH);
 }
 
+/// 009 T004 "Placement": a query with an anchor never calls the model; its
+/// search and context answers are the answers without a profile, byte for
+/// byte (no `semantic:` word, no tag).
 #[test]
-fn exact_locator_fixtures_keep_passing_with_semantics_on() {
+fn an_anchored_query_never_calls_the_model_and_is_served_as_without_a_profile() {
     let corpus = Corpus::new(&[]);
     let slot = corpus.slot();
-    let baseline = corpus
-        .engine()
-        .search_candidates("parse_record", None, 10, &Control::unbounded())
-        .unwrap();
-    let base_first = baseline.items[0].handle.clone().unwrap();
-    assert_eq!(baseline.items[0].tier, 1, "an exact definition");
-    assert_eq!(base_first.path, "src/records.rs");
-
-    // search: the exact definition is the first locator, byte for byte.
-    let search = corpus.search(&slot, "parse_record", 10);
-    let base_outcome = Engine::search_outcome(baseline);
-    let base_text = response::pack_search(
-        &base_outcome,
-        Budget::request(BUDGET),
-        &response::stdout_bytes,
-    )
-    .unwrap()
-    .text;
-    assert_eq!(
-        search.packed.text.lines().nth(1),
-        base_text.lines().nth(1),
-        "the first locator line is the baseline's"
-    );
-    assert_eq!(search.facts.tiers[0], 1);
-    assert!(
-        search.facts.tiers.windows(2).all(|pair| pair[0] <= pair[1]),
-        "every exact definition precedes every other candidate: {:?}",
-        search.facts.tiers
-    );
-
-    // context: the exact definition delivers the same bytes first.
-    let base_context = corpus.baseline("parse_record", BUDGET);
-    let context = corpus.context(&slot, "parse_record", BUDGET);
-    let base_item = &base_context.parsed.items[0];
-    let item = &context.parsed.items[0];
-    assert_eq!(item.handle, base_item.handle);
-    assert_eq!(item.body, base_item.body);
-    assert_eq!(context.facts.tiers[0], 1);
-}
-
-// ---------------------------------------------------------------------------
-// The merge: exact definitions first, then k = 60 over lexical 256 + dense 64.
-// ---------------------------------------------------------------------------
-
-fn unit(path: &str, start: u64, end: u64) -> MergeUnit {
-    MergeUnit {
-        path: path.to_owned(),
-        start,
-        end,
+    for query in ["parse_record", "parse_record twilight onset"] {
+        let calls = corpus.probe.query_calls();
+        let plain_search = corpus.search(&None, query, 10);
+        let search = corpus.search(&slot, query, 10);
+        assert_eq!(search.packed.text, plain_search.packed.text, "{query}");
+        assert_eq!(search.facts.tiers[0], 1, "an exact definition first");
+        let plain = corpus.context(&None, query, BUDGET);
+        let context = corpus.context(&slot, query, BUDGET);
+        assert_eq!(context.packed.text, plain.packed.text, "{query}");
+        assert!(!context.packed.text.contains("semantic:"), "{query}");
+        assert!(context.parsed.items.iter().all(|item| !item.semantic));
+        assert_eq!(corpus.probe.query_calls(), calls, "{query}: no model call");
     }
+    // The same words without the identifier are anchor-less: one embedding.
+    let calls = corpus.probe.query_calls();
+    let answer = corpus.context(&slot, "parse record twilight onset", BUDGET);
+    assert_eq!(answer.word(), Some("ready"));
+    assert_eq!(corpus.probe.query_calls(), calls + 1);
 }
+
+// ---------------------------------------------------------------------------
+// The placement: dense units first in similarity order, then today's order.
+// ---------------------------------------------------------------------------
 
 #[test]
-fn the_merge_orders_exact_definitions_then_reciprocal_rank_fusion_with_stable_ties() {
-    assert_eq!(RRF_K, 60);
-    assert_eq!(DENSE_WINDOW, 64);
-    let exact = [unit("z.rs", 0, 9)];
-    let lexical = [unit("m.rs", 0, 9), unit("b.rs", 0, 9), unit("z.rs", 0, 9)];
-    let dense = [unit("b.rs", 0, 9), unit("a.rs", 4, 9), unit("a.rs", 0, 9)];
-    let fused = merge::fuse(&exact, &lexical, &dense);
-    let order: Vec<(String, u64)> = fused
+fn dense_units_come_first_in_similarity_order_then_the_lexical_ones_in_todays_order() {
+    let corpus = Corpus::new(&[]);
+    let slot = corpus.slot();
+    // Anchor-less, with lexical hits (`shift`, `dock`, …) and a dense match.
+    let query = "twilight onset shift dock desk badge lot";
+    let window = corpus
+        .runtime()
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Control::unbounded(),
+        )
+        .unwrap();
+    let baseline = corpus
+        .engine()
+        .search_candidates(query, None, 64, &Control::unbounded())
+        .unwrap();
+    let placed = mcp::search_primary(
+        &slot,
+        corpus.engine(),
+        query,
+        None,
+        64,
+        &Corpus::control(),
+        None,
+    )
+    .unwrap();
+    let unit = |item: &context_foundry::store::RankedItem| {
+        let handle = item.handle.as_ref().unwrap();
+        (handle.path.clone(), handle.start, handle.end)
+    };
+    let dense: Vec<_> = placed
+        .items
         .iter()
-        .map(|candidate| (candidate.unit.path.clone(), candidate.unit.start))
+        .take_while(|item| item.semantic.is_some())
         .collect();
-    assert_eq!(
-        order,
-        [
-            ("z.rs".to_owned(), 0), // the exact definition, once
-            ("b.rs".to_owned(), 0), // 1/62 (lexical rank 1) + 1/61 (dense rank 0)
-            ("m.rs".to_owned(), 0), // 1/61
-            ("a.rs".to_owned(), 4), // 1/62
-            ("a.rs".to_owned(), 0), // 1/63
-        ]
-    );
-    assert_eq!(fused[0].tier, 1);
-    let b = fused.iter().find(|c| c.unit.path == "b.rs").unwrap();
+    assert!(!dense.is_empty());
     assert!(
-        (b.score - (1.0 / 62.0 + 1.0 / 61.0)).abs() < 1e-6,
-        "{}",
-        b.score
+        placed.items[dense.len()..]
+            .iter()
+            .all(|item| item.semantic.is_none()),
+        "every dense unit precedes every lexical one"
     );
-    assert_eq!(b.dense_rank, Some(0));
-    assert!(b.lexical);
-    // Equal scores order by path, then start: deterministic.
-    let tied = merge::fuse(&[], &[unit("q.rs", 7, 9)], &[unit("p.rs", 3, 9)]);
-    assert_eq!(tied[0].unit.path, "p.rs");
-    assert_eq!(tied[1].unit.path, "q.rs");
+    // The dense units follow the window's similarity order.
+    let window_order: Vec<(String, u64, u64)> = window
+        .hits
+        .iter()
+        .flat_map(|hit| window.units(hit))
+        .map(|location| (location.path.clone(), location.start, location.end))
+        .collect();
+    let positions: Vec<usize> = dense
+        .iter()
+        .map(|item| {
+            window_order
+                .iter()
+                .position(|location| *location == unit(item))
+                .expect("a placed dense unit is a window location")
+        })
+        .collect();
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{positions:?}"
+    );
+    // The lexical units follow in the baseline's order, without the units
+    // already placed: each unit appears once.
+    let placed_units: BTreeSet<_> = dense.iter().map(|item| unit(item)).collect();
+    let rest: Vec<_> = placed.items[dense.len()..].iter().map(unit).collect();
+    let expected: Vec<_> = baseline
+        .items
+        .iter()
+        .map(unit)
+        .filter(|unit| !placed_units.contains(unit))
+        .take(rest.len())
+        .collect();
+    assert_eq!(rest, expected);
+    let all: Vec<_> = placed.items.iter().map(unit).collect();
+    let unique: BTreeSet<_> = all.iter().cloned().collect();
+    assert_eq!(all.len(), unique.len(), "no unit twice");
+}
+
+/// A unit both windows carry is placed once, at its dense place, tagged
+/// `[semantic]` before its own label (context-v2 § Evidence items).
+#[test]
+fn a_unit_both_dense_and_lexical_is_placed_once_with_its_label_after_the_tag() {
+    let corpus = Corpus::new(&[]);
+    let slot = corpus.slot();
+    // `evening observation` is lexical for the dusk section; `twilight` is
+    // its concept.
+    let query = "evening observation twilight";
+    let lexical = corpus.baseline(query, BUDGET);
+    assert!(lexical.item(DUSK_PATH).is_some(), "a lexical hit too");
+    let answer = corpus.context(&slot, query, BUDGET);
+    let first = &answer.parsed.items[0];
+    assert_eq!(
+        span_of(&first.handle).0,
+        DUSK_PATH,
+        "{}",
+        answer.packed.text
+    );
+    assert!(first.semantic);
+    assert_eq!(
+        first.label.as_deref(),
+        Some("section Evening observation notes")
+    );
+    let line = answer.packed.text.lines().nth(1).unwrap();
+    assert!(
+        line.ends_with(" [semantic] section Evening observation notes"),
+        "{line}"
+    );
+    let copies = answer
+        .parsed
+        .items
+        .iter()
+        .filter(|item| item.handle == first.handle)
+        .count();
+    assert_eq!(copies, 1, "delivered once");
+    let item = answer
+        .batch
+        .items
+        .iter()
+        .find(|item| {
+            item.handle
+                .as_ref()
+                .is_some_and(|handle| handle.path == DUSK_PATH)
+        })
+        .unwrap();
+    assert!(!item.is_dense_only(), "it seeds like the lexical hit it is");
 }
 
 #[test]
@@ -1151,7 +1194,7 @@ fn a_refused_provider_start_is_the_named_fallback_of_every_request() {
 fn a_store_prepared_for_another_profile_is_named_unavailable_and_baseline_is_intact() {
     let corpus = Corpus::new(&[]);
     let other_path = testkit::write_semantic_profile(corpus.dir.path(), "other", |descriptor| {
-        descriptor.quantization = "affine bits=8".into();
+        descriptor.model.push_str(" Q8_0");
     });
     let other = SemanticProfile::load(&other_path).unwrap();
     assert_ne!(other.descriptor.digest(), corpus.digest());
@@ -1325,11 +1368,11 @@ fn partial_coverage_serves_prepared_vectors_beside_baseline_candidates_and_says_
     let kiln = answer
         .item("docs/kiln.md")
         .expect("the unprepared source stays lexical");
-    assert!(kiln.neural.is_none(), "a lexical candidate carries no tag");
+    assert!(!kiln.semantic, "a lexical candidate carries no tag");
     let dusk = answer
         .item(DUSK_PATH)
         .expect("prepared vectors still serve");
-    assert_eq!(dusk.neural.as_ref().unwrap().selection, "whole_unit");
+    assert!(dusk.semantic);
 }
 
 // ---------------------------------------------------------------------------
@@ -1355,162 +1398,55 @@ fn neural_candidates_crowded_by_other_evidence_are_still_delivered_in_budget() {
         .iter()
         .position(|item| !item.handle.is_empty() && span_of(&item.handle).0 == DUSK_PATH)
         .unwrap_or_else(|| panic!("dusk not delivered:\n{}", answer.packed.text));
-    assert!(
-        position < 6,
-        "dense evidence kept its fused rank: {position}"
-    );
+    assert_eq!(position, 0, "the nearest dense unit is placed first");
     assert!(answer.packed.tokens <= BUDGET);
 }
 
-/// The budgets a sweep tries: wide enough to cross every ladder rung of one
-/// unit (preview prefixes, lexical span, whole unit), coarse enough to stay
-/// quick.
+/// The budgets a sweep tries: wide enough to cross the ladder rungs of one
+/// unit (signature, verbatim), coarse enough to stay quick.
 fn sweep() -> impl Iterator<Item = usize> {
     (40..=700).step_by(4)
 }
 
-/// The candidates of `query` and the whole-unit handle delivered for `path`.
-fn unit_of(
-    corpus: &Corpus,
-    slot: &SemanticSlot,
-    query: &str,
-    path: &str,
-) -> (CandidateBatch, String) {
-    let whole = corpus.context(slot, query, BUDGET);
-    let handle = whole.item(path).expect("the unit").handle.clone();
-    (whole.batch, handle)
-}
-
-/// The preview item whose matched handle is `unit`, if the response has one.
-fn preview_of<'a>(parsed: &'a V2Response, unit: &str) -> Option<&'a V2Item> {
-    parsed.items.iter().find(|item| {
-        item.neural.as_ref().is_some_and(|neural| {
-            neural.selection == "preview" && neural.matched.as_deref() == Some(unit)
-        })
-    })
-}
-
+/// A dense unit that does not fit verbatim takes its signature form, still
+/// tagged: the ordinary unit ladder, no preview and no continuation.
 #[test]
-fn a_forced_unlocalized_oversized_hit_is_a_preview_with_truthful_handles_and_a_continuation() {
+fn a_dense_unit_that_does_not_fit_takes_its_signature_form_still_tagged() {
     let corpus = Corpus::new(&[]);
     let slot = corpus.slot();
-    // The retry function sits inside a 942-byte embedding unit that no
-    // lexical candidate localizes (the query shares no word with it).
-    let (batch, unit_handle) = unit_of(&corpus, &slot, CODE_QUERY, CODE_PATH);
-    let (path, unit_start, unit_end) = span_of(&unit_handle);
-    assert!(unit_start <= CODE_EVIDENCE.start && CODE_EVIDENCE.end <= unit_end);
-    let content = corpus.source(&path);
-    let mut previews = 0;
+    let whole = corpus.context(&slot, CODE_QUERY, BUDGET);
+    let unit = whole
+        .item(CODE_PATH)
+        .expect("the retry function")
+        .handle
+        .clone();
+    let mut signatures = 0;
     for tokens in sweep() {
-        let Some((packed, parsed)) = pack(&batch, tokens) else {
+        let Some((packed, parsed)) = pack(&whole.batch, tokens) else {
             continue;
         };
         assert!(packed.tokens <= tokens);
-        let Some(item) = preview_of(&parsed, &unit_handle) else {
+        assert!(!packed.text.contains("\nnext: "), "no continuation");
+        let Some(item) = parsed.items.iter().find(|item| item.handle == unit) else {
             continue;
         };
-        let neural = item.neural.as_ref().unwrap();
-        previews += 1;
-        // The matched handle names the whole unit; the item handle names the
-        // returned prefix; `next:` names exactly the remainder.
-        assert_eq!(neural.matched.as_deref(), Some(unit_handle.as_str()));
-        let (_, start, end) = span_of(&item.handle);
-        assert_eq!(start, unit_start);
-        assert!(
-            start < end && end < unit_end,
-            "{start}..{end} of {unit_start}..{unit_end}"
-        );
-        assert_eq!(item.body, content[start as usize..end as usize]);
-        let next = neural
-            .next
-            .as_deref()
-            .expect("bytes remain: a continuation");
-        assert_eq!(next, handle_with_range(&unit_handle, end, unit_end));
-        // Forward progress: the continuation is strictly inside the unit and
-        // retrieving it returns exactly the rest; the two reassemble the unit.
-        let rest = corpus.engine().retrieve(next, None, 4096).unwrap();
-        assert_eq!(
-            [item.body.as_bytes(), rest.span.as_slice()].concat(),
-            content.as_bytes()[unit_start as usize..unit_end as usize]
-        );
-    }
-    assert!(
-        previews >= 3,
-        "budgets between header-only and the whole unit preview, got {previews}"
-    );
-}
-
-#[test]
-fn a_lexical_span_inside_a_dense_unit_is_delivered_once_when_the_whole_unit_does_not_fit() {
-    let corpus = Corpus::new(&[]);
-    let slot = corpus.slot();
-    // "fire lane" is a lexical hit inside the Parking and access section; the
-    // embedding unit holding it also holds the Warehouse shifts section (the
-    // greedy partition joins sections up to 1015 bytes), so the dense unit
-    // is wider than the lexical span it contains.
-    let query = "fire lane";
-    let content = corpus.source(LEDGER_PATH);
-    let hit = content.find("fire lane").expect("the fixture text") as u64;
-    let whole = corpus.context(&slot, query, BUDGET);
-    let units: Vec<&V2Item> = whole
-        .parsed
-        .items
-        .iter()
-        .filter(|item| {
-            !item.handle.is_empty()
-                && span_of(&item.handle).0 == LEDGER_PATH
-                && item
-                    .neural
-                    .as_ref()
-                    .is_some_and(|n| n.selection == "whole_unit")
-                && span_of(&item.handle).1 <= hit
-                && hit < span_of(&item.handle).2
-        })
-        .collect();
-    assert_eq!(
-        units.len(),
-        1,
-        "one dense unit holds the hit:\n{}",
-        whole.packed.text
-    );
-    let unit = units[0].handle.clone();
-    let (_, unit_start, unit_end) = span_of(&unit);
-    let mut spans = 0;
-    for tokens in sweep() {
-        let Some((_, parsed)) = pack(&whole.batch, tokens) else {
-            continue;
-        };
-        for item in &parsed.items {
-            let Some(neural) = item.neural.as_ref() else {
-                continue;
-            };
-            if neural.selection != "lexical_span" || neural.matched.as_deref() != Some(&unit) {
-                continue;
-            }
-            spans += 1;
-            let (_, start, end) = span_of(&item.handle);
-            assert!(unit_start <= start && end <= unit_end);
-            assert!(start <= hit && hit < end, "{start}..{end} holds {hit}");
+        assert!(item.semantic);
+        if item.form.as_deref() == Some("signature") {
+            signatures += 1;
+            assert!(item.body.contains("pub fn pause_before_next_attempt"));
+            let line = packed
+                .text
+                .lines()
+                .find(|line| line.starts_with(&unit))
+                .unwrap();
             assert!(
-                end - start < unit_end - unit_start,
-                "narrower than its unit"
+                line.ends_with(" [semantic] fn pause_before_next_attempt [signature]")
+                    || line.ends_with(" [semantic] [signature]"),
+                "{line}"
             );
-            assert_eq!(item.body, content[start as usize..end as usize]);
-            // 001 § Deduplication: one handle names these bytes once, even
-            // though a lexical candidate carries the same span.
-            let same = parsed
-                .items
-                .iter()
-                .filter(|other| other.handle == item.handle)
-                .count();
-            assert_eq!(same, 1, "{}", item.handle);
         }
     }
-    assert!(
-        spans >= 1,
-        "some budget selects the lexical span:\n{}",
-        whole.packed.text
-    );
+    assert!(signatures >= 1, "some budget delivers the signature form");
 }
 
 #[test]
@@ -1550,12 +1486,12 @@ fn each_missing_evidence_class_is_attributed_to_its_owner() {
         Owner::Retrieval
     );
 
-    // 2. Merge: with one result slot the exact definition (tier 1) wins the
-    //    cut; the dusk unit was in the dense window and is dropped by the
-    //    fused, capped selection, not by retrieval or packing.
+    // 2. Placement: with one result slot the nearest dense unit holds it;
+    //    every other unit the dense window carried is dropped by the cut,
+    //    not by retrieval or packing.
     let corpus = Corpus::new(&[]);
     let slot = corpus.slot();
-    let query = "parse_record twilight onset";
+    let query = DUSK_QUERY;
     let runtime = corpus.runtime();
     let window = runtime
         .window(
@@ -1572,43 +1508,23 @@ fn each_missing_evidence_class_is_attributed_to_its_owner() {
         .paths
         .into_iter()
         .collect();
-    let demoted = corpus.search(&slot, query, 1);
+    let cut = corpus.search(&slot, query, 1);
     assert_eq!(
-        demoted.facts.tiers,
-        [1],
-        "the exact definition holds the only slot"
+        cut.facts.paths,
+        [DUSK_PATH],
+        "the nearest unit holds the slot"
     );
-    assert!(demoted.facts.truncated);
-    assert!(windows.contains(DUSK_PATH));
+    assert!(cut.facts.truncated);
+    let dropped = windows
+        .iter()
+        .find(|path| path.as_str() != DUSK_PATH)
+        .expect("the window holds other units");
     assert_eq!(
-        attribute(
-            DUSK_PATH,
-            &windows,
-            &lexical,
-            &demoted.facts,
-            &demoted.parsed
-        ),
-        Owner::Merge
+        attribute(dropped, &windows, &lexical, &cut.facts, &cut.parsed),
+        Owner::Placement
     );
 
-    // 3. Delivery: an unlocalized unit that does not fit whole is a preview.
-    let (batch, unit_handle) = unit_of(&corpus, &slot, CODE_QUERY, CODE_PATH);
-    let (_, unit_start, unit_end) = span_of(&unit_handle);
-    let windows: BTreeSet<String> = [CODE_PATH.to_owned()].into();
-    let lexical = BTreeSet::new();
-    let preview = sweep()
-        .filter_map(|tokens| pack(&batch, tokens))
-        .find(|(_, parsed)| preview_of(parsed, &unit_handle).is_some())
-        .expect("some budget previews the unit");
-    let selected = facts(&batch);
-    assert_eq!(
-        attribute(CODE_PATH, &windows, &lexical, &selected, &preview.1),
-        Owner::Delivery
-    );
-    let (_, start, end) = span_of(&preview_of(&preview.1, &unit_handle).unwrap().handle);
-    assert!(unit_start <= start && end < unit_end);
-
-    // 4. Packing: ranked first and selected, then omitted by a budget that
+    // 3. Packing: ranked first and selected, then omitted by a budget that
     //    holds the header and nothing else.
     let dusk = corpus.context(&slot, DUSK_QUERY, BUDGET);
     let omitted = (1..=400)
@@ -1794,16 +1710,14 @@ fn the_fixture_costs_are_exact_and_recorded() {
     assert_eq!(report.embedded_units, report.eligible_units);
     assert_eq!(corpus.probe.document_inputs(), report.embedded_units);
     assert_eq!(corpus.probe.document_calls(), report.document_calls);
+    let batch = corpus.profile.document_limits().inputs as u64;
     assert!(
-        report.document_calls
-            >= report
-                .embedded_units
-                .div_ceil(provider::DOCUMENT_BATCH as u64)
+        report.document_calls >= report.embedded_units.div_ceil(batch)
             && report.document_calls <= report.embedded_units,
         "{report:?}"
     );
-    // Units tile every source exactly: the model input is the source bytes
-    // plus the 9-byte prefix per unit, one token per byte.
+    // Every model input is one card within the card limit, one token per
+    // byte: far fewer tokens than the sources' bytes.
     let source_bytes: u64 = [
         "docs/dusk.md",
         "docs/faq.md",
@@ -1815,10 +1729,11 @@ fn the_fixture_costs_are_exact_and_recorded() {
     .iter()
     .map(|path| corpus.source(path).len() as u64)
     .sum();
-    assert_eq!(
-        corpus.probe.document_tokens(),
-        source_bytes + 9 * report.embedded_units
+    assert!(
+        corpus.probe.document_tokens()
+            <= u64::from(corpus.profile.card_tokens) * report.embedded_units
     );
+    assert!(corpus.probe.document_tokens() < source_bytes);
     // The preparation report carries the same input-token total itself.
     assert_eq!(report.input_tokens, corpus.probe.document_tokens());
     let index_file = index::generation_dir(&corpus.store, &corpus.digest()).join(index::INDEX_FILE);
@@ -1945,7 +1860,7 @@ async fn the_mcp_owner_serves_semantic_context_and_search_from_one_resident_runt
     let parsed = parse_v2(&text).unwrap();
     assert_eq!(header_word(&parsed), Some("ready"));
     let item = item_of(&parsed, DUSK_PATH).expect("dense evidence over MCP");
-    assert_eq!(item.neural.as_ref().unwrap().selection, "whole_unit");
+    assert!(item.semantic);
     assert_eq!(
         span_of(&item.handle).1..span_of(&item.handle).2,
         DUSK_EVIDENCE
@@ -2112,7 +2027,7 @@ fn a_stale_lexical_document_never_hides_a_current_dense_unit_of_the_same_span() 
         .item("src/fresh.rs")
         .unwrap_or_else(|| panic!("the current dense unit is served:\n{}", answer.packed.text));
     assert_eq!(item.body, AFTER);
-    assert!(item.neural.is_some(), "it came from the dense window");
+    assert!(item.semantic, "it came from the dense window");
     assert!(!answer.packed.text.contains("let x = 1"));
     assert!(
         answer.batch.counters.stale >= 1,
@@ -2124,73 +2039,6 @@ fn a_stale_lexical_document_never_hides_a_current_dense_unit_of_the_same_span() 
             .parsed
             .header
             .contains(&format!("stale:{}", answer.batch.counters.stale))
-    );
-}
-
-/// The "fire lane" candidates: the batch, the dense unit whose selected
-/// lexical span is exactly a lexical candidate's unit, and that candidate.
-fn fire_lane(corpus: &Corpus, slot: &SemanticSlot) -> (CandidateBatch, usize, usize) {
-    let batch = corpus.context(slot, "fire lane", BUDGET).batch;
-    for (unit, item) in batch.items.iter().enumerate() {
-        let Some((span, ..)) = item.semantic.as_ref().and_then(|e| e.span.as_ref()) else {
-            continue;
-        };
-        let span = span.to_v2();
-        let lexical = batch.items.iter().position(|other| {
-            other.semantic.is_none()
-                && other
-                    .handle
-                    .as_ref()
-                    .is_some_and(|handle| handle.to_v2() == span)
-        });
-        if let Some(lexical) = lexical {
-            return (batch, unit, lexical);
-        }
-    }
-    panic!("no dense unit's span is a lexical candidate");
-}
-
-/// M4: dense first, lexical second — the later lexical candidate whose
-/// identity the dense unit already delivered as its span merges into it:
-/// it is neither delivered again nor counted omitted.
-#[test]
-fn a_lexical_candidate_already_delivered_as_a_neural_span_is_merged_not_charged_twice() {
-    let corpus = Corpus::new(&[]);
-    let slot = corpus.slot();
-    let (mut batch, unit, lexical) = fire_lane(&corpus, &slot);
-    let span = batch.items[lexical].handle.as_ref().unwrap().to_v2();
-    // Rank the dense unit ahead of the lexical candidate it contains.
-    if unit > lexical {
-        let dense = batch.items.remove(unit);
-        batch.items.insert(lexical, dense);
-    }
-    let mut merged = 0;
-    for tokens in sweep() {
-        let Some((packed, parsed)) = pack(&batch, tokens) else {
-            continue;
-        };
-        let copies: Vec<&V2Item> = parsed
-            .items
-            .iter()
-            .filter(|item| item.handle == span)
-            .collect();
-        assert!(copies.len() <= 1, "{tokens}:\n{}", packed.text);
-        if copies.first().is_some_and(|item| {
-            item.neural
-                .as_ref()
-                .is_some_and(|neural| neural.selection == "lexical_span")
-        }) {
-            merged += 1;
-            // The lexical candidate is neither shown nor counted omitted.
-            assert!(
-                parsed.items.len() + packed.omitted < batch.items.len(),
-                "{tokens}: the lexical candidate merged"
-            );
-        }
-    }
-    assert!(
-        merged >= 1,
-        "some budget delivers the span through the dense unit"
     );
 }
 
@@ -2378,12 +2226,14 @@ fn a_v1_generation_is_unavailable_by_name_and_prepare_republishes_it_without_doc
     assert!(answer.item(DUSK_PATH).is_some());
 }
 
-/// A minimal unsigned bundle around the fake worker and a profile whose
-/// loader inputs are the empty files the fake descriptor pins.
+/// A minimal unsigned bundle around the fake worker and a v2 profile whose
+/// artifacts are the empty files the fake descriptor pins.
 #[cfg(target_os = "macos")]
 fn fake_worker_profile(dir: &Path) -> SemanticProfile {
-    use context_foundry::neural::profile::{PROFILE_VERSION, RuntimeSpec, WorkerSpec};
-    use context_foundry::neural::worker_runtime::{REAL_LOADER_INPUTS, fake_descriptor};
+    use context_foundry::neural::profile::{
+        DEFAULT_BATCH, DEFAULT_CARD_TOKENS, PROFILE_VERSION, WorkerSpec,
+    };
+    use context_foundry::neural::worker_runtime::fake_descriptor;
     let app = dir.join("FoundryEmbedFake.app");
     let macos = app.join("Contents/MacOS");
     std::fs::create_dir_all(&macos).unwrap();
@@ -2399,13 +2249,9 @@ fn fake_worker_profile(dir: &Path) -> SemanticProfile {
     .unwrap();
     let model_dir = dir.join("model");
     std::fs::create_dir_all(&model_dir).unwrap();
-    for name in REAL_LOADER_INPUTS {
-        std::fs::write(model_dir.join(name), b"").unwrap();
-    }
-    let requirements = dir.join("requirements.txt");
-    std::fs::write(&requirements, b"").unwrap();
-    for extra in ["python-home", "site-packages"] {
-        std::fs::create_dir_all(dir.join(extra)).unwrap();
+    let descriptor = fake_descriptor();
+    for file in &descriptor.artifact_files {
+        std::fs::write(model_dir.join(&file.name), b"").unwrap();
     }
     SemanticProfile {
         v: PROFILE_VERSION,
@@ -2416,12 +2262,10 @@ fn fake_worker_profile(dir: &Path) -> SemanticProfile {
             executable_sha256: context_foundry::digest(&std::fs::read(&exe).unwrap()),
             scratch_root: dir.join("scratch-root"),
         },
-        runtime: RuntimeSpec {
-            python_home: dir.join("python-home"),
-            site_packages: dir.join("site-packages"),
-            requirements,
-        },
-        descriptor: fake_descriptor(),
+        descriptor,
+        query_template: "query: {text}".into(),
+        card_tokens: DEFAULT_CARD_TOKENS,
+        batch: DEFAULT_BATCH,
         memory_ceiling_bytes: 3 << 30,
         load_timeout_seconds: 30,
     }
@@ -2966,7 +2810,7 @@ async fn context_is_baseline_while_preparing_then_partial_then_ready_and_an_edit
     hold.wait_entered(1).await;
     let baseline = served.context(DUSK_QUERY).await;
     assert!(starts_with(&baseline, "fallback:"), "{:?}", baseline.header);
-    assert!(baseline.items.iter().all(|item| item.neural.is_none()));
+    assert!(baseline.items.iter().all(|item| !item.semantic));
 
     // Pause: the batch in flight (the dusk document is first in path order)
     // is committed and published, and nothing more.
@@ -2983,7 +2827,7 @@ async fn context_is_baseline_while_preparing_then_partial_then_ready_and_an_edit
     let partial = served.context(DUSK_QUERY).await;
     assert_eq!(header_word(&partial), Some("partial"));
     assert!(
-        item_of(&partial, DUSK_PATH).is_some_and(|item| item.neural.is_some()),
+        item_of(&partial, DUSK_PATH).is_some_and(|item| item.semantic),
         "semantic evidence from the partial coverage"
     );
 
@@ -2994,7 +2838,7 @@ async fn context_is_baseline_while_preparing_then_partial_then_ready_and_an_edit
     let ready = served.context(DUSK_QUERY).await;
     assert_eq!(header_word(&ready), Some("ready"));
     let item = item_of(&ready, DUSK_PATH).expect("dense evidence");
-    assert_eq!(item.neural.as_ref().unwrap().selection, "whole_unit");
+    assert!(item.semantic);
 
     // An indexed edit: a fresh baseline at once, then only its input.
     let (calls, inputs) = (
@@ -3011,17 +2855,38 @@ async fn context_is_baseline_while_preparing_then_partial_then_ready_and_an_edit
         header_word(&served.context(DUSK_QUERY).await),
         Some("partial")
     );
+    // A path-restricted search: the dense units the placement puts first
+    // (from the older generation) cannot crowd the edited file's own hit.
+    let text = served
+        .ok(
+            "search",
+            serde_json::json!({"query": "kiln", "limit": 10, "path": "docs/schedule.md"}),
+        )
+        .await;
     assert!(
-        item_of(&served.search("kiln").await, "docs/schedule.md").is_some(),
+        item_of(&parse_v2(&text).unwrap(), "docs/schedule.md").is_some(),
         "the edit is served at once"
     );
+    // The appended line lies past the card's lines: no card text changed,
+    // so preparation re-partitions and re-publishes without embedding.
+    served.prepare().await;
+    served.stopped().await;
+    assert_eq!(corpus.probe.document_calls(), calls, "no card changed");
+    assert_eq!(
+        header_word(&served.context(DUSK_QUERY).await),
+        Some("ready")
+    );
+    // A heading edit changes that card's text: only its input is embedded.
+    let renamed = edited.replacen("# Weekly schedule", "# Weekly kiln schedule", 1);
+    corpus.write("docs/schedule.md", &renamed);
+    served.index().await;
     served.prepare().await;
     served.stopped().await;
     assert_eq!(corpus.probe.document_calls() - calls, 1);
     assert_eq!(
         corpus.probe.document_inputs() - inputs,
         1,
-        "only the edited input"
+        "only the edited card"
     );
     assert_eq!(
         header_word(&served.context(DUSK_QUERY).await),
@@ -3299,10 +3164,28 @@ async fn a_second_writer_is_store_busy_while_the_owner_prepares() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_late_result_after_deletion_may_be_cached_but_its_source_is_never_eligible_or_served() {
     let mut corpus = Corpus::unprepared(&[]);
-    let dusk_key = provider::input_key(
-        &corpus.digest(),
-        &provider::render_document(&corpus.source(DUSK_PATH)),
-    );
+    // The dusk section's one card, keyed exactly as preparation keys it.
+    let dusk_key = {
+        use context_foundry::neural::partition::{self, CardRecipe};
+        let profile = &corpus.profile;
+        let tokenizer =
+            context_foundry::neural::tokenize::DocumentTokenizer::load(profile).unwrap();
+        let digest = corpus.digest();
+        let cards = partition::cards(
+            &corpus.source(DUSK_PATH),
+            DUSK_PATH,
+            context_foundry::syntax::Lang::from_path(DUSK_PATH),
+            &CardRecipe {
+                template: &profile.descriptor.document_template,
+                function_digest: &digest,
+                card_tokens: profile.card_tokens as usize,
+            },
+            &tokenizer,
+        )
+        .unwrap();
+        assert_eq!(cards.len(), 1);
+        cards[0].input_key.clone()
+    };
     let hold = Hold::gated();
     let semantic = corpus.held(&hold);
     let served = corpus.serve_stdio(Some(semantic)).await;
@@ -3563,7 +3446,7 @@ async fn model_failures_stop_preparation_by_name_and_never_wedge_foreground_oper
     // A worker computing another document function makes no call at all.
     let mut corpus = Corpus::unprepared(&[]);
     let mut other = corpus.profile.descriptor.clone();
-    other.quantization = "affine bits=8".into();
+    other.model.push_str(" Q8_0");
     let hold = Hold::default();
     let semantic = corpus.held_as(&hold, other);
     let served = corpus.serve_stdio(Some(semantic)).await;
@@ -4225,30 +4108,40 @@ fn edges_of(parsed: &V2Response) -> Vec<String> {
         .collect()
 }
 
-/// Gap 1: semantic evidence crowded by GRAPH and COMPILER evidence
-/// (`strategy: graph` with a 005 compiler graph and manual edges present)
-/// is still delivered whole inside the normal budget, and a dense-only hit
-/// ranked where a seed is taken seeds neither expansion. The control shows
-/// the very same unit seeding both once it is a lexical hit.
+/// Gap 1 under the 009 T004 placement (`strategy: graph`, a 005 compiler
+/// graph and manual edges present): dense units come first, and a
+/// dense-only unit — however early it is placed — seeds neither expansion.
+/// The control shows the very same unit seeding the manual graph once it is
+/// also a lexical hit. (Placed first, the dense window fills the context's
+/// unit bound here, which leaves no room for compiler units.)
 #[test]
-fn dense_only_hits_seed_no_graph_or_compiler_expansion_and_survive_that_crowding() {
-    use context_foundry::store::{RankedItem, TIER_COMPILER, TIER_OUTLINE};
+fn dense_only_hits_seed_no_graph_or_compiler_expansion() {
+    use context_foundry::store::RankedItem;
     let corpus = Corpus::new(&owned(&GRAPH_SOURCES));
     corpus.import_graphs();
     let slot = corpus.slot();
+    let evening_of = |batch: &CandidateBatch| -> (usize, RankedItem) {
+        batch
+            .items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| {
+                item.handle
+                    .as_ref()
+                    .is_some_and(|handle| handle.path == "src/evening.rs")
+            })
+            .map(|(at, item)| (at, item.clone()))
+            .expect("the evening unit is a candidate")
+    };
 
-    // Control: `evening bell` names the evening unit lexically. Queries here
-    // are anchor-less: an anchored context has no edge lines and places no
-    // dense units (context-v2 § Anchored context).
+    // Control: `evening bell` names the evening unit lexically too. Placed
+    // by the dense window, it is not dense-only and seeds the manual graph.
+    // Queries here are anchor-less: an anchored context places no dense
+    // units (context-v2 § Anchored context).
     let seeded = corpus.context_as(&slot, "evening bell", Strategy::Graph, BUDGET);
     assert_eq!(seeded.batch.counters.graph, Some("ok"));
-    assert!(
-        compiler_paths(&seeded.batch)
-            .iter()
-            .any(|path| path == "src/lantern_user.rs"),
-        "a lexical seed expands through the compiler graph: {:?}",
-        compiler_paths(&seeded.batch)
-    );
+    let (_, evening) = evening_of(&seeded.batch);
+    assert!(evening.semantic.is_some() && !evening.is_dense_only());
     assert!(
         edges_of(&seeded.parsed)
             .iter()
@@ -4258,191 +4151,34 @@ fn dense_only_hits_seed_no_graph_or_compiler_expansion_and_survive_that_crowding
         seeded.packed.text
     );
 
-    // Crowded: `hostseed` (one word, so a tier-1 run but no anchor) is the
-    // only lexical hit; the evening unit follows it on concepts alone,
-    // inside the first three units both expansions seed from.
+    // Crowded: `twilight` reaches the evening unit on concepts alone, and the
+    // placement puts it where a seed is taken.
     let answer = corpus.context_as(&slot, "hostseed twilight", Strategy::Graph, BUDGET);
-    let path_of = |item: &RankedItem| item.handle.as_ref().unwrap().path.clone();
-    let units: Vec<&RankedItem> = answer
-        .batch
-        .items
-        .iter()
-        .filter(|item| {
-            item.handle.is_some() && item.tier != TIER_COMPILER && item.tier != TIER_OUTLINE
-        })
-        .collect();
-    assert_eq!(path_of(units[0]), "src/host.rs");
-    let evening = units
-        .iter()
-        .position(|item| path_of(item) == "src/evening.rs")
-        .expect("the evening unit is a candidate");
+    let (position, evening) = evening_of(&answer.batch);
+    assert!(evening.is_dense_only());
     assert!(
-        evening < 3,
-        "the evening unit ranks at a seed position: {evening}"
+        position < 3,
+        "the evening unit ranks at a seed position: {position}"
     );
-    assert!(units[evening].is_dense_only());
-    // Neither expansion followed it; both followed the lexical seed.
-    assert_eq!(answer.batch.counters.graph, Some("ok"));
-    assert_eq!(compiler_paths(&answer.batch), ["src/caller.rs"]);
-    let edges = edges_of(&answer.parsed);
-    assert_eq!(edges.len(), 1, "{edges:?}");
+    // Neither expansion followed it.
     assert!(
-        edges[0].starts_with("src/host.rs:1 (hostseed) --calls--> src/target.rs:1"),
+        !compiler_paths(&answer.batch)
+            .iter()
+            .any(|path| path == "src/lantern_user.rs"),
+        "{:?}",
+        compiler_paths(&answer.batch)
+    );
+    let edges = edges_of(&answer.parsed);
+    assert!(
+        edges.iter().all(|edge| !edge.starts_with("src/evening.rs")),
         "{edges:?}"
     );
-
-    // The delivered response: the edge and the compiler unit are placed
-    // ahead of the dense evidence, which is still delivered whole within the
-    // normal budget.
+    // The dense evidence is delivered, tagged, within the normal budget.
     assert!(answer.packed.tokens <= BUDGET);
-    assert!(
-        answer
-            .parsed
-            .header
-            .iter()
-            .any(|segment| segment == "graph:ok"),
-        "{:?}",
-        answer.parsed.header
-    );
     assert_eq!(answer.word(), Some("ready"));
-    let at = |found: &dyn Fn(&V2Item) -> bool| {
-        answer
-            .parsed
-            .items
-            .iter()
-            .position(found)
-            .unwrap_or_else(|| panic!("not delivered:\n{}", answer.packed.text))
-    };
-    let edge = at(&|item| item.kind == testkit::V2Kind::Edge);
-    let compiler = at(&|item| {
-        item.neural.is_none()
-            && !item.handle.is_empty()
-            && span_of(&item.handle).0 == "src/caller.rs"
-    });
-    let whole = |path: &'static str| {
-        move |item: &V2Item| {
-            !item.handle.is_empty()
-                && span_of(&item.handle).0 == path
-                && item
-                    .neural
-                    .as_ref()
-                    .is_some_and(|neural| neural.selection == "whole_unit")
-        }
-    };
-    let evening = at(&whole("src/evening.rs"));
-    let dusk = at(&whole(DUSK_PATH));
-    assert!(
-        edge < compiler && compiler < evening && compiler < dusk,
-        "{edge} {compiler} {evening} {dusk}:\n{}",
-        answer.packed.text
-    );
-    assert_eq!(
-        answer.parsed.items[dusk].body,
-        corpus.source(DUSK_PATH),
-        "the crowded dense unit is delivered whole"
-    );
-}
-
-const QUOKKA_PATH: &str = "docs/quokka.md";
-
-/// Three sections that the greedy partition joins into ONE embedding unit;
-/// only the middle one says `quokka`, so the lexical hit localizes the unit
-/// to a span that ends well before the unit does.
-fn quokka_doc() -> String {
-    [
-        "## Alpha shelf\n\n",
-        "The alpha shelf holds spare cables, two label printers and a box of\n",
-        "fuses. Nothing on it is urgent and nothing on it moves often.\n\n",
-        "## Bravo shelf\n\n",
-        "The quokka enclosure log starts on this shelf. Keepers write the\n",
-        "feeding times, the water checks and the weight of every animal in\n",
-        "the green binder, then initial the page before the evening round.\n",
-        "Visitors may read the binder but never write in it, and a torn page\n",
-        "is copied into the spare binder the same day. The vet signs the\n",
-        "monthly summary on the last page, and the summary is photographed\n",
-        "and filed with the shelf inventory before the binder is closed.\n\n",
-        "## Charlie shelf\n\n",
-        "The charlie shelf holds the visitor badges and the spare radio\n",
-        "batteries, counted every Friday afternoon by the lead on duty.\n",
-    ]
-    .concat()
-}
-
-/// Gap 5: an oversized LOCALIZED lexical span. When neither the dense unit
-/// nor its lexical span fits, the preview is a prefix of the SPAN, and its
-/// continuation ends at the span's end, never at the larger unit's end.
-#[test]
-fn an_oversized_localized_span_previews_the_span_and_continues_to_the_span_end() {
-    let corpus = Corpus::new(&[(QUOKKA_PATH.to_owned(), quokka_doc())]);
-    let slot = corpus.slot();
-    let content = corpus.source(QUOKKA_PATH);
-    let whole = corpus.context(&slot, "quokka", BUDGET);
-    let evidence = whole
-        .batch
-        .items
-        .iter()
-        .filter_map(|item| item.semantic.as_ref())
-        .find(|evidence| evidence.matched.path == QUOKKA_PATH && evidence.span.is_some())
-        .expect("a dense unit localized by the lexical hit");
-    let unit = evidence.matched.clone();
-    let (span, _, _) = evidence.span.clone().unwrap();
-    // The geometry the case needs: the unit is the whole document, the span
-    // its middle section, ending before the unit does.
-    let hit = content.find("quokka").unwrap() as u64;
-    let charlie = content.find("## Charlie").unwrap() as u64;
-    assert_eq!((unit.start, unit.end), (0, content.len() as u64));
-    assert!(
-        span.start <= hit && hit < span.end && span.end <= charlie,
-        "{}..{} holds {hit} and stops before {charlie}",
-        span.start,
-        span.end
-    );
-    assert!(span.end < unit.end);
-    let unit_handle = unit.to_v2();
-    // The sweep packs this document's candidates only (the dense unit and
-    // the lexical section), through the production packer: quick, and no
-    // unrelated candidate decides which rung fits.
-    let mut batch = whole.batch.clone();
-    batch.items.retain(|item| {
-        item.handle
-            .as_ref()
-            .is_some_and(|handle| handle.path == QUOKKA_PATH)
-    });
-    let mut previews = 0;
-    for tokens in sweep() {
-        let Some((packed, parsed)) = pack(&batch, tokens) else {
-            continue;
-        };
-        assert!(packed.tokens <= tokens);
-        let Some(item) = preview_of(&parsed, &unit_handle) else {
-            continue;
-        };
-        previews += 1;
-        // The item handle names a prefix of the span; `next:` names exactly
-        // the rest of the SPAN.
-        let (_, start, end) = span_of(&item.handle);
-        assert_eq!(start, span.start, "a preview of the span, not the unit");
-        assert!(start < end && end < span.end, "{start}..{end}");
-        assert_eq!(item.body, content[start as usize..end as usize]);
-        let next = item
-            .neural
-            .as_ref()
-            .unwrap()
-            .next
-            .as_deref()
-            .expect("a continuation");
-        assert_eq!(next, handle_with_range(&item.handle, end, span.end));
-        let rest = corpus.engine().retrieve(next, None, 4096).unwrap();
-        assert_eq!(
-            [item.body.as_bytes(), rest.span.as_slice()].concat(),
-            content.as_bytes()[span.start as usize..span.end as usize]
-        );
-    }
-    assert!(
-        previews >= 1,
-        "some budget previews the localized span:\n{}",
-        whole.packed.text
-    );
+    let dusk = item_of(&answer.parsed, DUSK_PATH).expect("the dusk unit is delivered");
+    assert!(dusk.semantic);
+    assert_eq!(dusk.body, corpus.source(DUSK_PATH));
 }
 
 const GLYPHS_PATH: &str = "docs/glyphs.md";
@@ -4501,13 +4237,13 @@ fn fence_after(text: &str, handle: &str) -> usize {
     fence.bytes().take_while(|&byte| byte == b'`').count()
 }
 
-/// Gap 6: semantic forms over CRLF, multibyte and fence-like source. Every
-/// whole-unit, lexical-span and preview item at every budget carries the
-/// exact bytes of its handle (CR kept), ends on a character boundary, names
-/// the lines its range touches, is fenced longer than any fence-like line in
-/// its body, and a preview's continuation reassembles the selected range.
+/// Gap 6: semantic items over CRLF, multibyte and fence-like source. Every
+/// tagged item at every budget names the lines its range touches; a
+/// verbatim one carries the exact bytes of its handle (CR kept) on
+/// character boundaries and is fenced longer than any fence-like line in
+/// its body, and a literal `next:` body line stays body content.
 #[test]
-fn semantic_forms_keep_crlf_multibyte_and_fence_like_bytes_exact() {
+fn semantic_items_keep_crlf_multibyte_and_fence_like_bytes_exact() {
     let corpus = Corpus::new(&[(GLYPHS_PATH.to_owned(), glyphs_doc())]);
     let slot = corpus.slot();
     let content = corpus.source(GLYPHS_PATH);
@@ -4518,80 +4254,31 @@ fn semantic_forms_keep_crlf_multibyte_and_fence_like_bytes_exact() {
             .filter(|&&b| b == b'\n')
             .count()
     };
-    let mut seen: BTreeSet<&'static str> = BTreeSet::new();
-    let mut multibyte_splits = 0;
+    let mut forms: BTreeSet<&'static str> = BTreeSet::new();
     let (mut widest_fence, mut literal_next) = (0, false);
-    // Unlocalized (concepts only) and localized (`wombat`).
+    // Concepts only, and a word only the fence section's card holds.
     for query in ["twilight onset", "wombat"] {
         let whole = corpus.context(&slot, query, BUDGET);
-        let evidence = whole
-            .batch
-            .items
-            .iter()
-            .filter_map(|item| item.semantic.as_ref())
-            .find(|evidence| evidence.matched.path == GLYPHS_PATH)
-            .unwrap_or_else(|| panic!("{query}: the glyph unit is dense evidence"));
-        let unit = evidence.matched.clone();
-        let span = evidence.span.as_ref().map(|(span, _, _)| span.clone());
-        assert_eq!(span.is_some(), query == "wombat", "{query}");
-        // A preview continues to the end of the selected range.
-        let selected_end = span.as_ref().map_or(unit.end, |span| span.end);
-        let unit_handle = unit.to_v2();
-        // This document's candidates only, as in the localized-span case.
+        // This document's candidates only: quick, and no unrelated candidate
+        // decides which rung fits.
         let mut batch = whole.batch.clone();
         batch.items.retain(|item| {
             item.handle
                 .as_ref()
                 .is_some_and(|handle| handle.path == GLYPHS_PATH)
         });
+        assert!(
+            batch.items.iter().any(|item| item.semantic.is_some()),
+            "{query}: a glyph section is dense evidence"
+        );
         for tokens in sweep().chain([BUDGET]) {
             let Some((packed, parsed)) = pack(&batch, tokens) else {
                 continue;
             };
             assert!(packed.tokens <= tokens);
-            for item in &parsed.items {
-                let Some(neural) = item.neural.as_ref() else {
-                    continue;
-                };
+            for item in parsed.items.iter().filter(|item| item.semantic) {
                 let (path, start, end) = span_of(&item.handle);
-                if path != GLYPHS_PATH {
-                    continue;
-                }
-                let selection: &'static str = match neural.selection.as_str() {
-                    "whole_unit" => {
-                        assert_eq!((start, end), (unit.start, unit.end));
-                        "whole_unit"
-                    }
-                    "lexical_span" => {
-                        let span = span.as_ref().expect("a span only when localized");
-                        assert_eq!((start, end), (span.start, span.end));
-                        assert_eq!(neural.matched.as_deref(), Some(unit_handle.as_str()));
-                        "lexical_span"
-                    }
-                    "preview" => {
-                        assert_eq!(neural.matched.as_deref(), Some(unit_handle.as_str()));
-                        let base = span.as_ref().map_or(unit.start, |span| span.start);
-                        assert_eq!(start, base, "{query}");
-                        let next = neural.next.as_deref().expect("a continuation");
-                        assert_eq!(next, handle_with_range(&item.handle, end, selected_end));
-                        let rest = corpus.engine().retrieve(next, None, 4096).unwrap();
-                        assert_eq!(
-                            [item.body.as_bytes(), rest.span.as_slice()].concat(),
-                            content.as_bytes()[base as usize..selected_end as usize]
-                        );
-                        let bytes = content.as_bytes();
-                        if !bytes[end as usize - 1].is_ascii() || !bytes[end as usize].is_ascii() {
-                            multibyte_splits += 1;
-                        }
-                        "preview"
-                    }
-                    other => panic!("unknown selection {other}"),
-                };
-                seen.insert(selection);
-                // Exact bytes (CR kept) on character boundaries.
-                assert!(content.is_char_boundary(start as usize));
-                assert!(content.is_char_boundary(end as usize));
-                assert_eq!(item.body, content[start as usize..end as usize]);
+                assert_eq!(path, GLYPHS_PATH);
                 // The lines the range touches, counted by LF.
                 assert_eq!(
                     item.lines.as_deref(),
@@ -4599,6 +4286,15 @@ fn semantic_forms_keep_crlf_multibyte_and_fence_like_bytes_exact() {
                     "{}",
                     item.handle
                 );
+                if item.form.is_some() {
+                    forms.insert("signature");
+                    continue;
+                }
+                forms.insert("verbatim");
+                // Exact bytes (CR kept) on character boundaries.
+                assert!(content.is_char_boundary(start as usize));
+                assert!(content.is_char_boundary(end as usize));
+                assert_eq!(item.body, content[start as usize..end as usize]);
                 // The fence outruns every fence-like body line.
                 let longest = item.body.split('\n').map(fence_run).max().unwrap_or(0);
                 let fence = fence_after(&packed.text, &item.handle);
@@ -4608,15 +4304,7 @@ fn semantic_forms_keep_crlf_multibyte_and_fence_like_bytes_exact() {
             }
         }
     }
-    assert_eq!(
-        seen,
-        BTreeSet::from(["whole_unit", "lexical_span", "preview"]),
-        "every form was exercised"
-    );
-    assert!(
-        multibyte_splits >= 1,
-        "some preview split retreated to a multibyte boundary"
-    );
+    assert!(forms.contains("verbatim"), "{forms:?}");
     assert_eq!(
         widest_fence, 7,
         "a delivered body held the six-tick fence-like line"
@@ -4788,14 +4476,9 @@ fn a_semantic_context_packed_for_mcp_is_capped_on_its_serialized_bytes() {
     let parsed = parse_v2(&measured.text).unwrap();
     assert_eq!(header_word(&parsed), Some("ready"));
     let dusk = item_of(&parsed, DUSK_PATH).expect("the dense evidence is delivered");
-    assert_eq!(dusk.neural.as_ref().unwrap().selection, "whole_unit");
+    assert!(dusk.semantic);
     assert!(
-        parsed
-            .items
-            .iter()
-            .filter(|item| item.neural.is_some())
-            .count()
-            > 1,
+        parsed.items.iter().filter(|item| item.semantic).count() > 1,
         "{:?}",
         parsed.header
     );
@@ -4838,7 +4521,7 @@ async fn semantic_deliveries_charge_the_session_allowance_exactly_their_counted_
     assert_eq!(header_word(&parsed), Some("ready"));
     assert!(parsed.header.iter().any(|segment| segment == "budget:2048"));
     let dusk = item_of(&parsed, DUSK_PATH).expect("dense evidence");
-    assert_eq!(dusk.neural.as_ref().unwrap().selection, "whole_unit");
+    assert!(dusk.semantic);
     let charged = response::count_tokens(&first);
     assert!(
         charged > ALLOWANCE - BUDGET,
@@ -5178,7 +4861,13 @@ async fn semantic_evidence_stays_primary_only_in_a_multi_root_owner() {
     // Both roots serve: one embedding, for the primary; the word says so.
     for op in [Op::Search, Op::Context] {
         let before = primary.probe.query_calls();
-        let text = served.ok(op.tool(), op.arguments(QUERY, None)).await;
+        // The secondary's lexical hits follow the primary's placed dense
+        // units: a 64-hit search reaches them.
+        let mut arguments = op.arguments(QUERY, None);
+        if matches!(op, Op::Search) {
+            arguments["limit"] = 64.into();
+        }
+        let text = served.ok(op.tool(), arguments).await;
         assert_eq!(primary.probe.query_calls(), before + 1, "{op:?}");
         assert_eq!(
             word_of(&text).as_deref(),
@@ -5190,7 +4879,7 @@ async fn semantic_evidence_stays_primary_only_in_a_multi_root_owner() {
             if item.handle.is_empty() {
                 continue;
             }
-            let semantic = item.neural.is_some() || item.label.as_deref() == Some("semantic");
+            let semantic = item.semantic || item.label.as_deref() == Some("semantic");
             if ws16_of(&item.handle) == secondary_ws {
                 secondary_items += 1;
                 assert!(
@@ -5205,10 +4894,12 @@ async fn semantic_evidence_stays_primary_only_in_a_multi_root_owner() {
             }
         }
         assert!(dense > 0, "{op:?}: the primary's dense evidence:\n{text}");
-        assert!(
-            secondary_items > 0,
-            "{op:?}: the secondary's lexical hits:\n{text}"
-        );
+        if matches!(op, Op::Search) {
+            assert!(
+                secondary_items > 0,
+                "{op:?}: the secondary's lexical hits:\n{text}"
+            );
+        }
     }
     // The primary alone, and a selection listing the secondary first.
     let text = served

@@ -114,8 +114,19 @@ fn scratch() -> (tempfile::TempDir, PathBuf) {
 }
 
 /// Package the executables in `bin_dir`; `label` relabels the package the
-/// way only tests may (`CF_TEST_VERSION_LABEL`).
+/// way only tests may (`CF_TEST_VERSION_LABEL`). No llama.cpp checkout is
+/// named: a packaged worker supplies its own notices.
 fn package(bin_dir: &Path, out: &Path, label: Option<&str>, extra: &[&str]) -> PathBuf {
+    ok(package_command(bin_dir, out, label, extra)
+        .output()
+        .unwrap());
+    out.join(format!(
+        "context-foundry-{}-macos-arm64.tar.gz",
+        label.unwrap_or(VERSION)
+    ))
+}
+
+fn package_command(bin_dir: &Path, out: &Path, label: Option<&str>, extra: &[&str]) -> Command {
     let mut command = Command::new("/bin/sh");
     command
         .arg(script("package.sh"))
@@ -125,15 +136,13 @@ fn package(bin_dir: &Path, out: &Path, label: Option<&str>, extra: &[&str]) -> P
         .arg(bin_dir)
         .args(extra)
         .env("CARGO", env!("CARGO"))
-        .env_remove("CF_TEST_VERSION_LABEL");
+        .env_remove("CF_TEST_VERSION_LABEL")
+        .env_remove("LLAMA_CPP_DIR")
+        .env_remove("LLAMA_BUILD_DIR");
     if let Some(label) = label {
         command.env("CF_TEST_VERSION_LABEL", label);
     }
-    ok(command.output().unwrap());
-    out.join(format!(
-        "context-foundry-{}-macos-arm64.tar.gz",
-        label.unwrap_or(VERSION)
-    ))
+    command
 }
 
 /// One member of a package, read without unpacking it.
@@ -1199,7 +1208,7 @@ fn interrupted_commands_recover_from_their_recorded_intent() {
 /// `foundry-learn`, installed with operator profiles into ad-hoc-signed
 /// bundles, carried into an upgrade, disabled one by one and uninstalled;
 /// the supplied profiles and inputs never change.
-#[cfg(feature = "semantic")]
+#[cfg(all(feature = "semantic", target_os = "macos"))]
 #[test]
 fn worker_components_install_as_bundles_carry_forward_and_disable() {
     use context_foundry::learning::profile::LearnProfile;
@@ -1210,7 +1219,6 @@ fn worker_components_install_as_bundles_carry_forward_and_disable() {
     std::fs::create_dir(&inputs).unwrap();
     let semantic_profile =
         context_foundry::testkit::write_semantic_profile(&inputs, "fake", |_| {});
-    std::fs::create_dir(inputs.join("site-packages")).unwrap();
     let checkpoint = inputs.join("checkpoint");
     std::fs::create_dir(&checkpoint).unwrap();
     std::fs::write(checkpoint.join("model.safetensors"), "fixture weights\n").unwrap();
@@ -1302,8 +1310,31 @@ fn worker_components_install_as_bundles_carry_forward_and_disable() {
     let supplied_profile = SemanticProfile::load(&semantic_profile).unwrap();
     let dependencies = &manifest["dependencies"];
     assert_eq!(
-        dependencies["semantic"]["runtime"]["requirements_sha256"],
-        supplied_profile.descriptor.runtime.requirements_sha256
+        dependencies["semantic"]["llama_cpp"],
+        supplied_profile.descriptor.llama_cpp
+    );
+    assert!(dependencies["semantic"].get("runtime").is_none());
+    assert!(dependencies["semantic"].get("pyo3").is_none());
+    // The llama.cpp notice is the one the packaged worker wrote
+    // (`--notices`), counted with the crates' rows.
+    let commit = supplied_profile.descriptor.llama_cpp.as_str();
+    assert_eq!(
+        package_member(&first, &format!("THIRD-PARTY/llama.cpp-{commit}/LICENSE")),
+        context_foundry::neural::worker_runtime::FAKE_NOTICE.as_bytes()
+    );
+    let index: Value =
+        serde_json::from_slice(&package_member(&first, "THIRD-PARTY/INDEX.json")).unwrap();
+    let rows = index.as_array().unwrap();
+    assert_eq!(
+        rows.len() as u64,
+        dependencies["third_party_packages"].as_u64().unwrap()
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["name"] == "llama.cpp")
+            .cloned()
+            .collect::<Vec<_>>(),
+        [json!({"name": "llama.cpp", "version": commit, "license": "MIT", "files": ["LICENSE"]})]
     );
     assert_eq!(dependencies["learning"]["libtorch_required"], "2.11.0");
     assert_eq!(
@@ -1423,4 +1454,145 @@ fn worker_components_install_as_bundles_carry_forward_and_disable() {
         "supplied profiles and inputs are untouched"
     );
     assert!(inputs.join("scratch").is_dir() && learning_scratch.is_dir());
+}
+
+/// 009 T004 package cutover. Packaging reads the llama.cpp commit from the
+/// worker and refuses a profile that pins another. An upgrade over a version
+/// installed with a descriptor v1 (MLX worker) profile, as the pre-T004
+/// installer left it, keeps the core upgrade, disables semantic retrieval
+/// by name and asks for a v2 (llama.cpp) profile; the previous version keeps
+/// its bundle and v1 profile, so rollback is that binary with its profile.
+#[cfg(all(feature = "semantic", target_os = "macos"))]
+#[test]
+fn an_upgrade_over_a_v1_semantic_profile_keeps_the_core_and_disables_semantic_by_name() {
+    use context_foundry::neural::profile::SemanticProfile;
+
+    let (_dir, base) = scratch();
+    let inputs = base.join("inputs");
+    std::fs::create_dir(&inputs).unwrap();
+    let v2 = context_foundry::testkit::write_semantic_profile(&inputs, "fake", |_| {});
+    let other_pin = context_foundry::testkit::write_semantic_profile(&inputs, "other-pin", |d| {
+        d.llama_cpp = "0".repeat(40)
+    });
+    // The pre-T004 shape: profile and descriptor v1, no llama.cpp pin.
+    let mut profile = read_json(&v2);
+    profile["v"] = json!(1);
+    profile["descriptor"]["v"] = json!(1);
+    profile["descriptor"]
+        .as_object_mut()
+        .unwrap()
+        .remove("llama_cpp");
+    let v1 = inputs.join("profile-mlx.json");
+    std::fs::write(&v1, serde_json::to_vec_pretty(&profile).unwrap()).unwrap();
+    assert_eq!(
+        SemanticProfile::load(&v1).unwrap_err().code(),
+        "profile_unsupported"
+    );
+
+    let bin = base.join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    for (name, exe) in [
+        ("foundry", FOUNDRY),
+        ("foundry-embed", env!("CARGO_BIN_EXE_foundry-embed-fake")),
+    ] {
+        std::os::unix::fs::symlink(exe, bin.join(name)).unwrap();
+    }
+    let packages = base.join("packages");
+    let refused = package_command(
+        &bin,
+        &packages,
+        None,
+        &[
+            "--with-semantic",
+            "--semantic-profile",
+            other_pin.to_str().unwrap(),
+        ],
+    )
+    .output()
+    .unwrap();
+    assert_eq!(refused.status.code(), Some(65), "{}", text(&refused.stderr));
+    assert!(
+        text(&refused.stderr).contains(&format!(
+            "the profile pins llama.cpp {}; the worker is built from {}",
+            "0".repeat(40),
+            context_foundry::neural::worker_runtime::LLAMA_CPP_COMMIT
+        )),
+        "{}",
+        text(&refused.stderr)
+    );
+    let options = [
+        "--with-semantic",
+        "--semantic-profile",
+        v2.to_str().unwrap(),
+    ];
+    let second_label = format!("{VERSION}-test.2");
+    let first = package(&bin, &packages, None, &options);
+    let second = package(&bin, &packages, Some(&second_label), &options);
+
+    let prefix = base.join("prefix");
+    let lib = prefix.join("lib/context-foundry");
+    ok(installer(&[
+        &"install",
+        &"--package",
+        &first,
+        &"--prefix",
+        &prefix,
+        &"--semantic-profile",
+        &v1,
+    ]));
+    let old = lib.join(VERSION);
+    let old_profile = std::fs::read(old.join("profiles/semantic-profile.json")).unwrap();
+
+    let upgraded = ok(installer(&[
+        &"upgrade",
+        &"--package",
+        &second,
+        &"--prefix",
+        &prefix,
+    ]));
+    let said = text(&upgraded.stdout);
+    assert!(
+        said.contains(&format!(
+            "semantic: disabled: {VERSION}'s installed profile is descriptor v1 (the MLX worker), \
+             which {second_label} refuses (profile_unsupported)"
+        )) && said.contains("give a v2 (llama.cpp) profile with --semantic-profile FILE"),
+        "{said}"
+    );
+    assert!(
+        said.contains(&format!("upgraded {VERSION} -> {second_label}")),
+        "{said}"
+    );
+    assert_eq!(current_link(&prefix), Path::new(&second_label));
+    let new = lib.join(&second_label);
+    assert!(new.join("bin/foundry").is_file());
+    for absent in [
+        "libexec/foundry-embed",
+        "scripts/embed-worker-bundle.sh",
+        "FoundryEmbed.app",
+        "profiles/semantic-profile.json",
+    ] {
+        assert!(!new.join(absent).exists(), "{absent} is not placed");
+    }
+    assert_eq!(
+        read_json(&lib.join("installed.json"))["disabled"],
+        "semantic"
+    );
+    let installed = prefix.join("bin/foundry");
+    assert_eq!(versions(&installed, &base)["foundry_embed"], Value::Null);
+    assert_owned_files_match(&prefix);
+
+    // The previous version is untouched: rollback returns the old binary
+    // with its bundle and its own v1 profile.
+    ok(installer(&[&"rollback", &"--prefix", &prefix]));
+    assert_eq!(current_link(&prefix), Path::new(VERSION));
+    assert!(old.join("FoundryEmbed.app").is_dir());
+    assert_eq!(
+        std::fs::read(lib.join("current/profiles/semantic-profile.json")).unwrap(),
+        old_profile
+    );
+    assert_eq!(
+        versions(&installed, &base)["foundry_embed"],
+        old.join("libexec/foundry-embed").display().to_string()
+    );
+    assert_owned_files_match(&prefix);
 }

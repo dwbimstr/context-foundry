@@ -1,6 +1,6 @@
 //! 009 optional semantic retrieval. `provider` and `protocol` are the shared
 //! boundary between core preparation and the supervised embedding worker;
-//! neither loads a model, a tokenizer or Python.
+//! neither loads a model or a tokenizer.
 //!
 //! T001 core (slice A): `partition`, `tokenize`, `cache`, `index`, `prepare`,
 //! `status`, `anchor` (descriptor-anchored filesystem work) and the
@@ -9,7 +9,10 @@
 //! without the `semantic` feature; `tokenize`, `prepare` and the `index`
 //! build path carry the pinned `tokenizers` and `usearch` dependencies.
 //! T003: `driver`, the MCP owner's progressive preparation over the same
-//! steps as `prepare`.
+//! steps as `prepare`. T004: cards (`partition`), self-describing cache rows,
+//! generation v3 and the llama.cpp worker (`src/bin/foundry_embed.rs`); the
+//! reciprocal-rank fusion is gone: dense units are placed ahead of the
+//! lexical ones for queries without an anchor (`Engine::search_candidates_semantic`).
 
 /// Named fault points shared by the cache and the index (test-faults only;
 /// release builds carry no hook code and no fault-name strings).
@@ -81,7 +84,6 @@ pub mod driver;
 #[cfg(all(feature = "test-faults", feature = "semantic"))]
 pub mod fake;
 pub mod index;
-pub mod merge;
 pub mod partition;
 #[cfg(feature = "semantic")]
 pub mod prepare;

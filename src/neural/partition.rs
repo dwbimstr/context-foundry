@@ -1,46 +1,51 @@
-//! 009 retrieval partition, recipe `nemotron-units-v1` (spec 009 § Documents,
-//! embedding units and returned evidence).
+//! 009 T004 card partition, recipe `cards-v1` (spec 009 § T004 "Cards, not
+//! bodies").
 //!
-//! The recipe pins: the 001 T005 grammar versions this crate builds
-//! (tree-sitter/pulldown-cmark as pinned by `Cargo.toml`), the tokenizer
-//! identity string, the 1024-token document-unit limit including the
-//! `passage: ` rendered prefix and special tokens, and the tie-breaks below.
-//! Changing any of them is a recipe-version bump, never a tuning step.
+//! One card per definition (001 T007's definitions: a named
+//! programming-language unit, a Rust `impl` excluded) and per Markdown
+//! section. A card is, line by line:
 //!
-//! Tie-breaks and ordering rules: pieces are emitted in source order;
-//! whitespace between pieces joins the FOLLOWING piece and a trailing tail
-//! joins the last (decided before any limit check or greedy combination, at
-//! the top level and inside oversized descents alike); a delivery unit that
-//! alone exceeds the limit is replaced by its direct children's ranges plus
-//! the residual regions between them, recursively; every other oversized
-//! piece splits at line boundaries (each line keeps its own terminating
-//! newline), then into token-bounded UTF-8 spans; the greedy combine walks
-//! pieces in source order and closes a unit before the next piece would
-//! overflow it. Pieces tile `[0, len)` exactly, so every nonempty source byte
-//! belongs to exactly one embedding unit and no byte is encoded twice. An
-//! empty source partitions to zero units. Counts are the exact final model
-//! input; nothing is ever truncated silently — an input that cannot fit is
-//! refused.
+//! 1. its address, `<path> <kind>[ <qualified name>]`;
+//! 2. its signature (a unit with a body: from its head to the end of the
+//!    line where the body opens, or to the start of that line when the body
+//!    begins a line of its own) or its head lines (a section, or a unit
+//!    without a body: from its head to its end);
+//! 3. its leading documentation (the leading run of comments and attributes
+//!    before its head).
+//!
+//! Blank lines are dropped and trailing whitespace is trimmed. The card is
+//! the longest prefix of those lines whose input rendered with the
+//! profile's document template fits the card limit (template and special
+//! tokens included); an address that alone does not fit is cut at a UTF-8
+//! boundary by halving. Nothing is truncated silently and no source byte is
+//! rewritten: every kept line is verbatim.
+//!
+//! A card's cache key is its exact rendered input; its provenance is the
+//! unit range recorded in the partition row with the source hash, so an
+//! edit re-embeds only the cards whose text changed. The recipe pins the
+//! 001 T005/T007 grammar versions this crate builds, the tokenizer identity
+//! and the card limit; changing any of them is a recipe change, never a
+//! tuning step.
 //!
 //! This module never loads a tokenizer: token counting goes through the
 //! [`TokenCount`] seam so it stays pure and testable.
-use crate::neural::provider::{self, DOCUMENT_PREFIX, DOCUMENT_UNIT_TOKENS, ProviderError};
-use crate::syntax::{self, Lang, Unit};
-use std::collections::HashMap;
+use crate::neural::provider::{self, ProviderError};
+use crate::syntax::{self, Lang, Unit, UnitKind};
 
 /// The pinned recipe grammar version.
-pub const RECIPE_GRAMMAR: &str = "nemotron-units-v1";
+pub const RECIPE_GRAMMAR: &str = "cards-v1";
 
-/// The partition recipe id for one tokenizer identity. It participates in
-/// mapping eligibility: a partition row under another recipe is stale.
-pub fn recipe_id(tokenizer_identity: &str) -> String {
-    format!("{RECIPE_GRAMMAR}+{tokenizer_identity}")
+/// The partition recipe id for one tokenizer identity and card limit. It
+/// participates in mapping eligibility: a partition row under another
+/// recipe is stale.
+pub fn recipe_id(tokenizer_identity: &str, card_tokens: u32) -> String {
+    format!("{RECIPE_GRAMMAR}:{card_tokens}+{tokenizer_identity}")
 }
 
-/// One tokenized embedding unit of a partitioned source: a half-open byte
-/// range, its exact document-input key and the exact model-input token ids.
+/// One rendered card: the unit's half-open byte range, its exact
+/// document-input key and the exact model-input token ids.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UnitPartition {
+pub struct Card {
     pub start: usize,
     pub end: usize,
     pub input_key: String,
@@ -67,409 +72,136 @@ pub trait TokenCount {
     }
 }
 
-/// The unit forest of one source, indexed by range for the descent rule.
-struct Forest<'a> {
-    units: &'a [Unit],
-    by_range: HashMap<(usize, usize), usize>,
+/// What a card's rendering depends on besides the source: the document
+/// template, the function digest its key is computed under and the limit.
+#[derive(Clone, Copy, Debug)]
+pub struct CardRecipe<'a> {
+    pub template: &'a str,
+    pub function_digest: &'a str,
+    pub card_tokens: usize,
 }
 
-impl<'a> Forest<'a> {
-    fn new(units: &'a [Unit]) -> Self {
-        let by_range = units
-            .iter()
-            .enumerate()
-            .map(|(i, u)| ((u.start, u.end), i))
-            .collect();
-        Self { units, by_range }
-    }
-
-    fn index_of(&self, start: usize, end: usize) -> Option<usize> {
-        self.by_range.get(&(start, end)).copied()
-    }
+/// True when `unit` gets a card: a definition or a Markdown section.
+fn carded(unit: &Unit) -> bool {
+    unit.name_range.is_some() || unit.kind == UnitKind::Section
 }
 
-/// One piece of a region: the bytes `lead..tail_end` are its embedding range,
-/// where `lead` includes the whitespace that precedes the piece and
-/// `tail_end` the trailing tail that joined it. A unit piece keeps its
-/// natural `start..end` for forest identity.
-struct Piece {
-    lead: usize,
-    start: usize,
-    end: usize,
-    tail_end: usize,
-    unit: bool,
-}
-
-/// Lay a region `lo..hi` out as pieces around the ordered, strictly inside
-/// `children` ranges. Whitespace-only separators join the following piece; a
-/// separator holding text becomes a block whose leading whitespace is its own
-/// and whose trailing whitespace joins the following piece; a whitespace-only
-/// tail joins the last piece and a textual tail is a block. `None` when the
-/// children are not ordered inside the region.
-fn layout(source: &str, lo: usize, hi: usize, children: &[(usize, usize)]) -> Option<Vec<Piece>> {
-    let mut pieces: Vec<Piece> = Vec::with_capacity(children.len() * 2 + 1);
-    // End of the previously emitted piece: whitespace after it belongs to the
-    // next piece.
-    let mut pending = lo;
-    for &(start, end) in children {
-        if start < pending || end > hi || start >= end {
-            return None;
-        }
-        if pending < start {
-            let gap = &source[pending..start];
-            if !gap.trim().is_empty() {
-                let block_end = pending + gap.trim_end().len();
-                pieces.push(Piece {
-                    lead: pending,
-                    start: pending,
-                    end: block_end,
-                    tail_end: block_end,
-                    unit: false,
-                });
-                pending = block_end;
-            }
-        }
-        pieces.push(Piece {
-            lead: pending,
-            start,
-            end,
-            tail_end: end,
-            unit: true,
-        });
-        pending = end;
-    }
-    if pending < hi {
-        if source[pending..hi].trim().is_empty() {
-            match pieces.last_mut() {
-                Some(last) => last.tail_end = hi,
-                None => pieces.push(Piece {
-                    lead: pending,
-                    start: pending,
-                    end: hi,
-                    tail_end: hi,
-                    unit: false,
-                }),
-            }
-        } else {
-            pieces.push(Piece {
-                lead: pending,
-                start: pending,
-                end: hi,
-                tail_end: hi,
-                unit: false,
-            });
-        }
-    }
-    Some(pieces)
-}
-
-/// Partition `source` into embedding units under `function_digest`. The
-/// source must be valid UTF-8 (admitted sources are); `lang` is 001's mapping
-/// of the path. Empty sources return an empty partition, which the caller
-/// records as a completed zero-unit partition.
-pub fn partition(
+/// The cards of `source` at workspace-relative `path`, in the unit forest's
+/// pre-order (start ascending, the enclosing unit first). `lang` is 001's
+/// mapping of the path; a language without units, or a source over the
+/// parse bound, has no cards.
+pub fn cards(
     source: &str,
+    path: &str,
     lang: Option<Lang>,
-    function_digest: &str,
+    recipe: &CardRecipe<'_>,
     tokens: &dyn TokenCount,
-) -> Result<Vec<UnitPartition>, ProviderError> {
-    if source.is_empty() {
-        return Ok(Vec::new());
-    }
-    // `Lang::from_path` decides mapping: only languages with delivery units
-    // (and sources under the parse bound, which yield no units) use the
-    // unit forest; everything else partitions by blank-line paragraphs.
-    let units = match lang.filter(|l| l.has_units()) {
+) -> Result<Vec<Card>, ProviderError> {
+    let units = match lang.filter(|lang| lang.has_units()) {
         Some(mapped) => syntax::units(source, mapped),
-        None => Vec::new(),
+        None => return Ok(Vec::new()),
     };
-    let forest = Forest::new(&units);
-    let roots: Vec<(usize, usize)> = units
-        .iter()
-        .filter(|u| u.parent.is_none())
-        .map(|u| (u.start, u.end))
-        .collect();
-    let top = if roots.is_empty() {
-        None
-    } else {
-        layout(source, 0, source.len(), &roots)
-    };
-    let mut resolved: Vec<(usize, usize)> = Vec::new();
-    match top {
-        Some(pieces) => {
-            resolve_pieces(source, &forest, pieces, tokens, &mut resolved)?;
-        }
-        // A forest defect must never double-encode bytes; paragraphs tile by
-        // construction.
-        None => {
-            for (start, end) in paragraphs(source) {
-                resolve_generic(source, start, end, tokens, &mut resolved)?;
-            }
-        }
-    }
-    let combined = combine(source, &resolved, tokens)?;
-    let mut out = Vec::with_capacity(combined.len());
-    for (start, end) in combined {
-        let rendered = provider::render_document(&source[start..end]);
-        let ids = tokens.encode(&rendered)?.ids;
-        // Every emitted range was verified against the limit while it was
-        // formed; this guard makes silent truncation impossible even if a
-        // tokenizer behaved pathologically across boundaries.
-        if ids.len() > DOCUMENT_UNIT_TOKENS {
-            return Err(ProviderError::InputTooLarge(format!(
-                "unit [{start},{end}) needs {} tokens; limit {DOCUMENT_UNIT_TOKENS}",
-                ids.len()
-            )));
-        }
-        out.push(UnitPartition {
-            start,
-            end,
-            input_key: provider::input_key(function_digest, &rendered),
+    let mut out = Vec::new();
+    for unit in units.iter().filter(|unit| carded(unit)) {
+        let (rendered, ids) = render_card(source, path, unit, recipe, tokens)?;
+        out.push(Card {
+            start: unit.start,
+            end: unit.end,
+            input_key: provider::input_key(recipe.function_digest, &rendered),
             ids,
         });
     }
     Ok(out)
 }
 
-/// Resolve pieces in source order with an EXPLICIT work stack (a delivery
-/// forest of any depth costs heap, never call stack, and no depth cutoff can
-/// change the recipe). A piece is kept whole when it fits; an oversized
-/// delivery unit is replaced, in place, by its children and residual regions
-/// (whitespace joining the following piece, the unit's own leading whitespace
-/// and trailing tail carried to the first and last sub-piece), recursively;
-/// anything else splits at lines then token-bounded spans.
-fn resolve_pieces(
-    source: &str,
-    forest: &Forest<'_>,
-    pieces: Vec<Piece>,
-    tokens: &dyn TokenCount,
-    out: &mut Vec<(usize, usize)>,
-) -> Result<(), ProviderError> {
-    let mut stack: Vec<Piece> = pieces.into_iter().rev().collect();
-    while let Some(piece) = stack.pop() {
-        if fits(source, piece.lead, piece.tail_end, tokens)? {
-            out.push((piece.lead, piece.tail_end));
-            continue;
-        }
-        if piece.unit
-            && let Some(index) = forest.index_of(piece.start, piece.end)
-        {
-            let children: Vec<(usize, usize)> = forest.units[index]
-                .children
-                .iter()
-                .map(|&child| (forest.units[child].start, forest.units[child].end))
-                .collect();
-            if !children.is_empty()
-                && let Some(mut sub) = layout(source, piece.start, piece.end, &children)
-            {
-                if let Some(first) = sub.first_mut() {
-                    first.lead = piece.lead;
-                }
-                if let Some(last) = sub.last_mut() {
-                    last.tail_end = piece.tail_end;
-                }
-                // Reversed, so the first sub-piece is popped (and emitted) first.
-                stack.extend(sub.into_iter().rev());
-                continue;
-            }
-        }
-        resolve_generic(source, piece.lead, piece.tail_end, tokens, out)?;
+/// The end of a signature whose body opens at `body`: the end of that line
+/// when code precedes the body on it, else the start of that line.
+fn signature_end(source: &str, head: usize, body: usize) -> usize {
+    let line_start = source[..body].rfind('\n').map_or(0, |at| at + 1).max(head);
+    if source[line_start..body].trim().is_empty() {
+        return line_start;
     }
-    Ok(())
+    source[body..]
+        .find('\n')
+        .map_or(source.len(), |at| body + at + 1)
 }
 
-/// Greedy line accumulation; a line that alone exceeds the limit splits into
-/// token-bounded UTF-8 spans.
-fn resolve_generic(
-    source: &str,
-    start: usize,
-    end: usize,
-    tokens: &dyn TokenCount,
-    out: &mut Vec<(usize, usize)>,
-) -> Result<(), ProviderError> {
-    let mut acc: Option<(usize, usize)> = None;
-    let mut pos = start;
-    while pos < end {
-        let line_end = line_end(source, pos, end);
-        match acc {
-            None => {
-                if fits(source, pos, line_end, tokens)? {
-                    acc = Some((pos, line_end));
-                } else {
-                    span_split(source, pos, line_end, tokens, out)?;
-                }
-            }
-            Some((acc_start, _)) => {
-                if fits(source, acc_start, line_end, tokens)? {
-                    acc = Some((acc_start, line_end));
-                } else {
-                    out.push(acc.take().expect("accumulator is set"));
-                    if fits(source, pos, line_end, tokens)? {
-                        acc = Some((pos, line_end));
-                    } else {
-                        span_split(source, pos, line_end, tokens, out)?;
-                    }
-                }
-            }
-        }
-        pos = line_end;
-    }
-    if let Some(piece) = acc {
-        out.push(piece);
-    }
-    Ok(())
+/// The nonblank lines of `text`, trailing whitespace trimmed.
+fn lines(text: &str) -> impl Iterator<Item = &str> {
+    text.lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
 }
 
-/// Split one oversized line into spans that each fit the unit limit. Cut
-/// points come from the line's own tokenization (never mid-token) and are
-/// verified by re-tokenizing the exact candidate input, so the exact final
-/// model input never exceeds the limit. A span that provably cannot fit is a
-/// named refusal, never a truncation.
-fn span_split(
+/// The address line: `<path> <kind>[ <qualified name>]`, control characters
+/// replaced by spaces.
+fn address(path: &str, unit: &Unit) -> String {
+    let mut line = format!("{path} {}", unit.kind.as_str());
+    if let Some(qname) = &unit.qname {
+        line.push(' ');
+        line.push_str(qname);
+    }
+    line.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+/// One unit's rendered card input and its token ids (the module rule).
+fn render_card(
     source: &str,
-    start: usize,
-    end: usize,
+    path: &str,
+    unit: &Unit,
+    recipe: &CardRecipe<'_>,
     tokens: &dyn TokenCount,
-    out: &mut Vec<(usize, usize)>,
-) -> Result<(), ProviderError> {
-    let rendered = provider::render_document(&source[start..end]);
-    let encoded = tokens.encode(&rendered)?;
-    let prefix_len = DOCUMENT_PREFIX.len();
-    let ids = &encoded.ids;
-    // Source byte offset of a rendered-text offset (token boundaries are
-    // char boundaries in the rendered string; stay defensive anyway).
-    let to_source = |rendered_offset: usize| -> usize {
-        let relative = rendered_offset.saturating_sub(prefix_len);
-        let mut target = start + relative;
-        while target > start && !source.is_char_boundary(target) {
-            target -= 1;
-        }
-        target.min(end)
+) -> Result<(String, Vec<u32>), ProviderError> {
+    let limit = recipe.card_tokens;
+    let encode = |text: &str| -> Result<(String, Vec<u32>), ProviderError> {
+        let rendered = provider::render(recipe.template, text);
+        let ids = tokens.encode(&rendered)?.ids;
+        Ok((rendered, ids))
     };
-    let mut chunk_first = 0usize;
-    let mut chunk_source_start = start;
-    while chunk_first < ids.len() && chunk_source_start < end {
-        let remaining = ids.len() - chunk_first;
-        let mut take = remaining.min(DOCUMENT_UNIT_TOKENS);
-        let chunk_source_end;
-        loop {
-            let last = chunk_first + take - 1;
-            // Never cut inside a character: the smallest legal end is the
-            // next char boundary after the chunk start.
-            let mut min_end = chunk_source_start + 1;
-            while min_end < end && !source.is_char_boundary(min_end) {
-                min_end += 1;
-            }
-            let candidate_end = to_source(encoded.offsets[last].1).max(min_end);
-            let fits = tokens.count(&provider::render_document(
-                &source[chunk_source_start..candidate_end],
-            ))?;
-            if fits <= DOCUMENT_UNIT_TOKENS {
-                chunk_source_end = candidate_end;
-                break;
-            }
-            if take == 1 {
-                return Err(ProviderError::InputTooLarge(format!(
-                    "one token of the line at byte {chunk_source_start} cannot fit \
-                     {DOCUMENT_UNIT_TOKENS} model tokens"
-                )));
-            }
-            take -= 1;
+    // 1. The address, cut by halving at a UTF-8 boundary while it alone does
+    //    not fit.
+    let mut text = address(path, unit);
+    let mut best = encode(&text)?;
+    while best.1.len() > limit {
+        let mut cut = text.len() / 2;
+        while cut > 0 && !text.is_char_boundary(cut) {
+            cut -= 1;
         }
-        out.push((chunk_source_start, chunk_source_end));
-        chunk_first += take;
-        chunk_source_start = chunk_source_end;
-    }
-    Ok(())
-}
-
-/// Greedy combine in source order: close the accumulated unit before the
-/// next piece would overflow it.
-fn combine(
-    source: &str,
-    pieces: &[(usize, usize)],
-    tokens: &dyn TokenCount,
-) -> Result<Vec<(usize, usize)>, ProviderError> {
-    let mut result = Vec::new();
-    let mut acc: Option<(usize, usize)> = None;
-    for &(start, end) in pieces {
-        match acc {
-            None => acc = Some((start, end)),
-            Some((acc_start, _)) => {
-                if fits(source, acc_start, end, tokens)? {
-                    acc = Some((acc_start, end));
-                } else {
-                    result.push(acc.replace((start, end)).expect("set above"));
-                }
-            }
+        if cut == 0 {
+            return Err(ProviderError::InputTooLarge(format!(
+                "{path}: no card fits the {limit}-token card limit with this template"
+            )));
         }
+        text.truncate(cut);
+        best = encode(&text)?;
     }
-    if let Some((start, end)) = acc {
-        result.push((start, end));
-    }
-    Ok(result)
-}
-
-fn fits(
-    source: &str,
-    start: usize,
-    end: usize,
-    tokens: &dyn TokenCount,
-) -> Result<bool, ProviderError> {
-    Ok(tokens.count(&provider::render_document(&source[start..end]))? <= DOCUMENT_UNIT_TOKENS)
-}
-
-/// Blank-line paragraphs: consecutive non-blank lines form one piece, a
-/// blank-line run joins the following piece, and a trailing run joins the
-/// last. Whitespace-only sources are one piece.
-fn paragraphs(source: &str) -> Vec<(usize, usize)> {
-    let len = source.len();
-    let mut pieces = Vec::new();
-    let mut blank_run_start: Option<usize> = None;
-    let mut para: Option<(usize, usize)> = None;
-    let mut pos = 0usize;
-    while pos < len {
-        let end = line_end(source, pos, len);
-        let blank = source[pos..end].trim().is_empty();
-        match (&mut para, blank) {
-            (None, true) => {
-                blank_run_start.get_or_insert(pos);
-            }
-            (None, false) => {
-                let start = blank_run_start.take().unwrap_or(pos);
-                para = Some((start, end));
-            }
-            (Some(piece), false) => {
-                piece.1 = end;
-            }
-            (Some(_), true) => {
-                pieces.push(para.take().expect("paragraph is set"));
-                blank_run_start = Some(pos);
-            }
+    // 2–3. Signature or head lines, then the leading documentation, each
+    //      line kept while the card still fits. At most `limit` lines are
+    //      tried: every nonblank line costs at least one token.
+    let shown = match unit.body {
+        Some((body, _)) if unit.kind != UnitKind::Section => {
+            &source[unit.head..signature_end(source, unit.head, body)]
         }
-        pos = end;
+        _ => &source[unit.head..unit.end],
+    };
+    let documentation = &source[unit.start..unit.head];
+    for line in lines(shown).chain(lines(documentation)).take(limit) {
+        let candidate = format!("{text}\n{line}");
+        let encoded = encode(&candidate)?;
+        if encoded.1.len() > limit {
+            break;
+        }
+        text = candidate;
+        best = encoded;
     }
-    match (para, blank_run_start) {
-        (Some((start, _)), _) => pieces.push((start, len)),
-        // A trailing blank run joins the LAST piece; a whitespace-only
-        // source is one piece.
-        (None, Some(_)) => match pieces.last_mut() {
-            Some(last) => last.1 = len,
-            None => pieces.push((0, len)),
-        },
-        (None, None) => {}
+    if best.1.is_empty() {
+        return Err(ProviderError::InputTooLarge(format!(
+            "{path}: a card tokenized to zero ids"
+        )));
     }
-    pieces.retain(|&(start, end)| start < end);
-    pieces
-}
-
-/// The exclusive end of the line starting at `pos`, including its `\n`.
-fn line_end(source: &str, pos: usize, end: usize) -> usize {
-    let line = &source.as_bytes()[pos..end];
-    match line.iter().position(|&b| b == b'\n') {
-        Some(newline) => pos + newline + 1,
-        None => end,
-    }
+    Ok(best)
 }
 
 #[cfg(test)]
@@ -496,259 +228,191 @@ mod tests {
     }
 
     const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const TEMPLATE: &str = "doc: {text}";
 
-    fn units_of(source: &str, lang: Option<Lang>) -> Vec<UnitPartition> {
-        partition(source, lang, DIGEST, &Bytes).unwrap()
-    }
-
-    fn cover(source: &str, units: &[UnitPartition]) {
-        let mut cursor = 0usize;
-        for unit in units {
-            assert!(unit.start < unit.end, "empty unit");
-            assert_eq!(unit.start, cursor, "gap or overlap at {}", unit.start);
-            assert!(unit.ids.len() <= DOCUMENT_UNIT_TOKENS);
-            cursor = unit.end;
-        }
-        assert_eq!(cursor, source.len());
-    }
-
-    #[test]
-    fn empty_source_is_zero_units() {
-        assert!(units_of("", Some(Lang::Rust)).is_empty());
-    }
-
-    #[test]
-    fn small_source_is_one_unit_with_exact_prefix() {
-        let source = "pub fn a() -> u32 {\n    7\n}\n";
-        let units = units_of(source, Some(Lang::Rust));
-        assert_eq!(units.len(), 1);
-        assert_eq!(units[0].start, 0);
-        assert_eq!(units[0].end, source.len());
-        // `passage: ` is 9 bytes: the exact model input counts the prefix.
-        assert_eq!(units[0].ids.len(), source.len() + 9);
-        cover(source, &units);
-    }
-
-    #[test]
-    fn whitespace_only_source_is_one_unit() {
-        let source = "\n\n   \n\t\n";
-        let units = units_of(source, None);
-        assert_eq!(units.len(), 1);
-        cover(source, &units);
-    }
-
-    #[test]
-    fn many_tiny_functions_combine_into_one_unit() {
-        let mut source = String::new();
-        for i in 0..25 {
-            source.push_str(&format!("pub fn f{i}() -> u32 {{ {i} }}\n"));
-        }
-        // 25 fns of ~27 bytes: below the 1015-byte body budget (1024 - 9 prefix).
-        let units = units_of(&source, Some(Lang::Rust));
-        assert_eq!(units.len(), 1);
-        cover(&source, &units);
-    }
-
-    #[test]
-    fn unit_limit_boundaries_are_exact() {
-        // With the byte counter the prefix is 9 tokens: a 1015-byte body is
-        // exactly 1024 model tokens; 1016 bytes must split, never truncate.
-        let body = "x".repeat(1015);
-        let units = units_of(&body, None);
-        assert_eq!(units.len(), 1);
-        assert_eq!(units[0].ids.len(), DOCUMENT_UNIT_TOKENS);
-        let over = "x".repeat(1016);
-        let units = units_of(&over, None);
-        assert_eq!(units.len(), 2);
-        assert_eq!(units[0].ids.len(), DOCUMENT_UNIT_TOKENS);
-        assert_eq!(units[1].ids.len(), 10); // 9 prefix + 1 body byte
-        cover(&over, &units);
-    }
-
-    #[test]
-    fn oversized_line_splits_into_token_bounded_spans_on_char_boundaries() {
-        // One huge unbroken line of multibyte characters.
-        let body = "é".repeat(2000);
-        let units = units_of(&body, None);
-        assert!(units.len() >= 3);
-        cover(&body, &units);
-        for unit in &units {
-            assert!(body.is_char_boundary(unit.start));
-            assert!(body.is_char_boundary(unit.end));
+    fn recipe(card_tokens: usize) -> CardRecipe<'static> {
+        CardRecipe {
+            template: TEMPLATE,
+            function_digest: DIGEST,
+            card_tokens,
         }
     }
 
-    #[test]
-    fn oversized_unit_descends_to_children_and_residuals() {
-        // One outer fn over the limit whose interior holds two small inner
-        // fns (its delivery-unit children) and a large residual block
-        // comment between them.
-        let pad = "c".repeat(1000);
-        let mut source = String::new();
-        source.push_str("pub fn outer() {\n");
-        source.push_str("    fn inner_a() -> u32 { 1 }\n");
-        source.push_str(&format!("    /* {pad} */\n"));
-        source.push_str("    fn inner_b() -> u32 { 2 }\n");
-        source.push_str("}\n");
-        let units = units_of(&source, Some(Lang::Rust));
-        cover(&source, &units);
-        // Children and residuals cover the parent exactly once and combine
-        // greedily; nothing is left as one oversized blob.
-        assert!(units.len() >= 2, "{:?}", units.len());
-    }
-
-    #[test]
-    fn mapped_separator_whitespace_joins_the_following_piece() {
-        let shell = |name: &str, total: usize| {
-            let head = format!("pub fn {name}() {{ /*");
-            let tail = "*/ }";
-            format!(
-                "{head}{}{tail}",
-                "x".repeat(total - head.len() - tail.len())
-            )
-        };
-        let (a, b) = (shell("a", 1000), shell("b", 100));
-        assert_eq!((a.len(), b.len()), (1000, 100));
-        // Each fits alone (1009 / 109 tokens); together they do not. The two
-        // separator newlines belong to the SECOND function, not the first.
-        let source = format!("{a}\n\n{b}");
-        let units = units_of(&source, Some(Lang::Rust));
-        cover(&source, &units);
-        let spans: Vec<(usize, usize)> = units.iter().map(|u| (u.start, u.end)).collect();
-        assert_eq!(spans, [(0, 1000), (1000, 1102)]);
-        assert!(source[1000..1102].starts_with("\n\npub fn b"));
-    }
-
-    #[test]
-    fn mapped_trailing_tail_joins_the_last_piece() {
-        let shell = |name: &str, total: usize| {
-            let head = format!("pub fn {name}() {{ /*");
-            let tail = "*/ }";
-            format!(
-                "{head}{}{tail}",
-                "x".repeat(total - head.len() - tail.len())
-            )
-        };
-        let (a, b) = (shell("a", 1000), shell("b", 100));
-        let source = format!("{a}\n\n{b}\n\n\n");
-        let units = units_of(&source, Some(Lang::Rust));
-        cover(&source, &units);
-        let last = units.last().unwrap();
-        assert_eq!(last.end, source.len(), "the tail joins the last piece");
-        assert!(source[last.start..last.end].ends_with("\n\n\n"));
-    }
-
-    #[test]
-    fn a_deep_but_small_forest_keeps_child_aware_boundaries() {
-        // 70 nested modules (deeper than any fixed cutoff), a deepest module
-        // holding two ~600-byte functions on ONE line. Every enclosing module
-        // exceeds the limit, so each descends to its child; the two functions
-        // fit alone but not together, so a unit must end exactly where the
-        // first function ends — never inside it.
-        let shell = |name: &str, total: usize| {
-            let head = format!("pub fn {name}() {{ /*");
-            let tail = "*/ }";
-            format!(
-                "{head}{}{tail}",
-                "x".repeat(total - head.len() - tail.len())
-            )
-        };
-        let (a, b) = (shell("a", 600), shell("b", 600));
-        let mut source = String::new();
-        for i in 0..70 {
-            source.push_str(&format!("mod m{i} {{ "));
-        }
-        let a_start = source.len();
-        source.push_str(&a);
-        let a_end = source.len();
-        source.push(' ');
-        source.push_str(&b);
-        source.push_str(&" }".repeat(70));
-        source.push('\n');
-        let units = units_of(&source, Some(Lang::Rust));
-        cover(&source, &units);
-        assert!(
-            units.iter().any(|u| u.end == a_end),
-            "no unit boundary at the end of the first function: {:?}",
-            units.iter().map(|u| (u.start, u.end)).collect::<Vec<_>>()
-        );
-        assert!(
-            units.iter().all(|u| {
-                let inside = |at: usize| at > a_start && at < a_end;
-                !inside(u.start) && !inside(u.end)
-            }),
-            "a unit boundary falls inside the first function"
-        );
-        let next = units
+    /// Each card's text (the rendered input minus the template) by unit.
+    fn texts(path: &str, source: &str, card_tokens: usize) -> Vec<String> {
+        let cards = cards(
+            source,
+            path,
+            Lang::from_path(path),
+            &recipe(card_tokens),
+            &Bytes,
+        )
+        .unwrap();
+        cards
             .iter()
-            .find(|u| u.start == a_end)
-            .expect("a unit starts at the cut");
-        assert!(
-            source[next.start..next.end].starts_with(" pub fn b"),
-            "the separator joins the FOLLOWING piece"
+            .map(|card| {
+                assert!(card.ids.len() <= card_tokens, "over the limit");
+                let bytes: Vec<u8> = card.ids.iter().map(|&b| b as u8).collect();
+                let rendered = String::from_utf8(bytes).expect("byte ids of UTF-8 text");
+                assert_eq!(card.input_key, provider::input_key(DIGEST, &rendered));
+                rendered.strip_prefix("doc: ").unwrap().to_owned()
+            })
+            .collect()
+    }
+
+    /// One fixture per language with units: the card of each definition
+    /// (and each Markdown section) is its address, its signature or head
+    /// lines, then its leading documentation as `syntax::units` attaches it
+    /// (context-v2 § Unit forest: Rust outer doc comments and attributes,
+    /// `/**` blocks in Java, JavaScript and TypeScript, Go comments; a
+    /// Python, C or C++ comment, or a JavaScript `//` line, is not part of
+    /// the unit, so those cards have none).
+    #[test]
+    fn every_language_renders_address_signature_and_documentation() {
+        let cases: [(&str, &str, &[&str]); 9] = [
+            (
+                "src/lib.rs",
+                "/// Adds one.\n#[inline]\npub fn add_one(x: u32) -> u32 {\n    x + 1\n}\n",
+                &[
+                    "src/lib.rs fn add_one\npub fn add_one(x: u32) -> u32 {\n/// Adds one.\n#[inline]",
+                ],
+            ),
+            (
+                "pkg/mod.py",
+                "# Adds one.\ndef add_one(x):\n    return x + 1\n",
+                &["pkg/mod.py fn add_one\ndef add_one(x):"],
+            ),
+            (
+                "web/a.ts",
+                "/** Adds one. */\nexport function addOne(x: number): number {\n  return x + 1;\n}\n",
+                &[
+                    "web/a.ts fn addOne\nexport function addOne(x: number): number {\n/** Adds one. */",
+                ],
+            ),
+            (
+                "web/b.js",
+                "// Adds one.\nfunction addOne(x) {\n  return x + 1;\n}\n",
+                &["web/b.js fn addOne\nfunction addOne(x) {"],
+            ),
+            (
+                "cmd/main.go",
+                "// AddOne adds one.\nfunc AddOne(x int) int {\n\treturn x + 1\n}\n",
+                &["cmd/main.go fn AddOne\nfunc AddOne(x int) int {\n// AddOne adds one."],
+            ),
+            (
+                "c/add.c",
+                "/* Adds one. */\nint add_one(int x) {\n    return x + 1;\n}\n",
+                &["c/add.c fn add_one\nint add_one(int x) {"],
+            ),
+            (
+                "c/add.cpp",
+                "// Adds one.\nint add_one(int x) {\n    return x + 1;\n}\n",
+                &["c/add.cpp fn add_one\nint add_one(int x) {"],
+            ),
+            (
+                "j/Add.java",
+                "/** Adds. */\nclass Add {\n    int one(int x) { return x + 1; }\n}\n",
+                &[
+                    "j/Add.java class Add\nclass Add {\n/** Adds. */",
+                    "j/Add.java method Add.one\nint one(int x) { return x + 1; }",
+                ],
+            ),
+            (
+                "docs/guide.md",
+                "# Guide\n\nIntro text.\n\n## Install\n\nRun the script.\n",
+                &[
+                    "docs/guide.md section Guide\n# Guide\nIntro text.\n## Install\nRun the script.",
+                    "docs/guide.md section Guide.Install\n## Install\nRun the script.",
+                ],
+            ),
+        ];
+        let wrong: Vec<String> = cases
+            .iter()
+            .filter_map(|(path, source, want)| {
+                let got = texts(path, source, 2048);
+                (got != *want).then(|| format!("{path}: {got:?}"))
+            })
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn a_rust_impl_is_a_container_and_its_methods_carry_cards() {
+        let source = "struct S;\nimpl S {\n    /// Reads.\n    fn read(&self) {}\n}\n";
+        assert_eq!(
+            texts("s.rs", source, 2048),
+            [
+                "s.rs struct S\nstruct S;",
+                "s.rs fn S::read\nfn read(&self) {}\n/// Reads."
+            ]
         );
     }
 
     #[test]
-    fn oversized_markdown_section_splits_at_lines() {
-        let mut source = String::from("# heading\n\n");
-        for i in 0..60 {
-            source.push_str(&format!("line {i:03} {}\n", "d".repeat(20)));
+    fn the_card_is_the_longest_fitting_line_prefix_and_never_exceeds_the_limit() {
+        let source = "/// One.\n/// Two.\npub fn f(a: u32) -> u32 {\n    a\n}\n";
+        let full = "s.rs fn f\npub fn f(a: u32) -> u32 {\n/// One.\n/// Two.";
+        assert_eq!(texts("s.rs", source, 2048), [full]);
+        // `doc: ` is 5 bytes: a limit of exactly the full card keeps it all;
+        // one token less drops the last documentation line, never a byte of it.
+        let exact = 5 + full.len();
+        assert_eq!(texts("s.rs", source, exact), [full]);
+        assert_eq!(
+            texts("s.rs", source, exact - 1),
+            ["s.rs fn f\npub fn f(a: u32) -> u32 {\n/// One."]
+        );
+        // The address alone, then an address cut at a UTF-8 boundary.
+        assert_eq!(texts("s.rs", source, 5 + 9), ["s.rs fn f"]);
+        let cut = texts("é/s.rs", source, 5 + 3);
+        assert_eq!(cut, ["é/"]);
+    }
+
+    #[test]
+    fn languages_without_units_and_unmapped_files_have_no_cards() {
+        for path in ["a.toml", "a.json", "notes.txt", "Makefile"] {
+            assert!(texts(path, "x = 1\n", 2048).is_empty(), "{path}");
         }
-        let units = units_of(&source, Some(Lang::Markdown));
-        cover(&source, &units);
-        assert!(units.len() >= 2);
+        assert!(texts("e.rs", "", 2048).is_empty());
     }
 
     #[test]
-    fn fenced_heading_is_not_a_section_boundary() {
-        let fenced = "# real section\n\nbody one\n\n```text\n# not a heading\n```\nmore body\n";
-        let units = units_of(fenced, Some(Lang::Markdown));
-        // One section: the fence content does not split it.
-        assert_eq!(units.len(), 1);
-        cover(fenced, &units);
+    fn a_template_change_re_keys_every_card_and_an_edit_only_its_own() {
+        // A signature runs to the end of the line its body opens on, so a
+        // one-line body is card text; these bodies span their own lines.
+        let source = "fn a() {\n}\nfn b() {\n}\n";
+        let keyed = |template: &str, source: &str| {
+            let recipe = CardRecipe {
+                template,
+                function_digest: DIGEST,
+                card_tokens: 2048,
+            };
+            cards(source, "k.rs", Some(Lang::Rust), &recipe, &Bytes)
+                .unwrap()
+                .into_iter()
+                .map(|card| card.input_key)
+                .collect::<Vec<_>>()
+        };
+        let base = keyed("doc: {text}", source);
+        let other = keyed("title: none | text: {text}", source);
+        assert_eq!(base.len(), 2);
+        assert!(base.iter().zip(&other).all(|(a, b)| a != b));
+        // Editing b's body changes no card text: no key changes. Editing a's
+        // signature changes a's key alone.
+        assert_eq!(
+            keyed("doc: {text}", "fn a() {\n}\nfn b() {\n    1;\n}\n"),
+            base
+        );
+        let edited = keyed("doc: {text}", "fn a(x: u8) {\n}\nfn b() {\n}\n");
+        assert_ne!(edited[0], base[0]);
+        assert_eq!(edited[1], base[1]);
     }
 
     #[test]
-    fn crlf_and_unicode_cover_exactly() {
-        let source = "alpha\r\nbeta\r\n\r\ngamma γamma 🦀 delta\r\n";
-        let units = units_of(source, None);
-        cover(source, &units);
-        let crlf = "a\r\nb\r\nc\r\n";
-        let units = units_of(crlf, Some(Lang::Rust));
-        cover(crlf, &units);
-    }
-
-    #[test]
-    fn paragraphs_join_separators_forward_and_tail_backward() {
-        let source = "\n\none\n\ntwo\n\n\n  \nthree\n\n\n";
-        let pieces = paragraphs(source);
-        let mut cursor = 0;
-        for &(start, end) in &pieces {
-            assert_eq!(start, cursor);
-            cursor = end;
-        }
-        assert_eq!(cursor, source.len());
-        let text: Vec<&str> = pieces.iter().map(|&(a, b)| &source[a..b]).collect();
-        // Leading blanks join the first paragraph; each separator joins the
-        // following paragraph; the trailing tail joins the last.
-        assert_eq!(text.len(), 3, "{text:?}");
-        assert!(text[0].starts_with("\n\none"));
-        assert!(text[1].starts_with("\ntwo"));
-        assert!(text[2].starts_with("\n\n\n  \nthree") || text[2].starts_with("\n\n  \nthree"));
-        assert!(text[2].ends_with("\n\n\n"));
-        // Tiny paragraphs then combine greedily into one embedding unit.
-        let units = units_of(source, None);
-        cover(source, &units);
-        assert_eq!(units.len(), 1);
-    }
-
-    #[test]
-    fn identical_inputs_share_keys_independent_of_placement() {
-        let body = "shared body\n";
-        let left = units_of(body, None);
-        let right = units_of(body, None);
-        assert_eq!(left.len(), 1);
-        assert_eq!(left[0].input_key, right[0].input_key);
+    fn a_body_that_opens_on_its_own_line_is_not_part_of_the_signature() {
+        let source = "def f(\n    a,\n):\n    return a\n";
+        assert_eq!(
+            texts("m.py", source, 2048),
+            ["m.py fn f\ndef f(\n    a,\n):"]
+        );
     }
 }

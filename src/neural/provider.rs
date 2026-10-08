@@ -1,28 +1,37 @@
 //! 009 embedding boundary shared by core preparation (T001) and the worker
 //! supervisor: the document-function descriptor, cache input keys, tokenized
 //! inputs and the provider trait. Only these definitions cross between the
-//! two halves; nothing here loads a model, a tokenizer or Python.
+//! two halves; nothing here loads a model or a tokenizer.
+//!
+//! 009 T004: the profile owns the output dimension, the document and query
+//! templates, the card limit and the batch size; the constants below are
+//! only the caps every profile and the worker protocol stay within.
 use crate::control::Control;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-/// Model output dimension of the selected profile (D001).
-pub const DIMENSIONS: usize = 2048;
-/// Document embedding-unit limit, rendered prefix and special tokens included.
-pub const DOCUMENT_UNIT_TOKENS: usize = 1024;
-/// Serving limit for any single model input, prefix included (D001).
+/// Serving limit for any single model input, template and special tokens
+/// included (D001), and the token total of one call: the worker embeds a
+/// call's sequences in one llama.cpp context of this many tokens.
 pub const SERVING_LIMIT_TOKENS: usize = 2048;
-/// Inputs per document call; queries embed one input.
-pub const DOCUMENT_BATCH: usize = 8;
-/// Applied by Foundry exactly once; the worker never adds a prefix.
-pub const DOCUMENT_PREFIX: &str = "passage: ";
-/// Query recipe; part of the retrieval profile, never of the document function.
-pub const QUERY_PREFIX: &str = "query: ";
+/// The largest number of sequences a profile may embed per document call.
+pub const MAX_DOCUMENT_BATCH: usize = 32;
+/// Output dimensions a profile may pin: the model's full width or one of its
+/// supported Matryoshka truncations (renormalized by the worker).
+pub const SUPPORTED_DIMENSIONS: [usize; 6] = [128, 256, 512, 768, 1024, 2048];
+/// The widest vector any profile produces (the protocol's payload cap).
+pub const MAX_DIMENSIONS: usize = 2048;
+/// The one slot of a document or query template the text fills.
+pub const TEXT_SLOT: &str = "{text}";
+/// Pooling modes the llama.cpp worker can pin (`llama_pooling_type`).
+pub const POOLINGS: [&str; 3] = ["mean", "cls", "last"];
 /// Version of the descriptor layout below. Changing any field's meaning or the
-/// digest encoding bumps it, which re-keys every cached vector.
-pub const DESCRIPTOR_VERSION: u32 = 1;
+/// digest encoding bumps it, which re-keys every cached vector. Version 1 was
+/// the MLX worker's layout; it is refused with `profile_unsupported`.
+pub const DESCRIPTOR_VERSION: u32 = 2;
 
-/// One artifact file the publisher loader reads, verified before load.
+/// One artifact file the worker or the core tokenizer reads, verified
+/// before load.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ArtifactFile {
@@ -32,63 +41,74 @@ pub struct ArtifactFile {
     pub sha256: String,
 }
 
-/// The numerical runtime closure the worker executes with. The supervisor
-/// compares the worker's `hello` against these expected values; the worker
-/// never selects them.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeClosure {
-    pub python: String,
-    pub mlx: String,
-    pub mlx_metal: String,
-    pub mlx_lm: String,
-    pub transformers: String,
-    pub numpy: String,
-    /// SHA-256 of the runtime's frozen requirements listing.
-    pub requirements_sha256: String,
-}
-
 /// Everything that changes document vectors (spec 009 T001 "Document-function
-/// descriptor"). Worker location, signing identity, labels, the query recipe,
-/// ranking/packing, partition grammar/limits and ANN scalar settings are
-/// deliberately absent: changing them re-embeds nothing.
+/// descriptor", T004 descriptor v2). Worker location, signing identity,
+/// labels, the query template, the card limit and batch size, ranking and
+/// packing and ANN scalar settings are deliberately absent: changing them
+/// re-embeds nothing (the card limit re-partitions, and only cards whose
+/// rendered text changed get new keys).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FunctionDescriptor {
     pub v: u32,
     /// Upstream model and the local artifact identity, e.g.
-    /// `nvidia/Nemotron-3-Embed-1B-BF16 via mlx-community/Nemotron-3-Embed-1B-BF16-4bit@d0408b94…`.
+    /// `google/embeddinggemma-2@914f7f89 via ggml-org/embeddinggemma-2-GGUF@bfcd2987 BF16`.
     pub model: String,
-    /// Sorted by `name`; weights, configs, tokenizer files and loader source.
+    /// Sorted by `name`: the GGUF and the core's `tokenizer.json` at least.
     pub artifact_files: Vec<ArtifactFile>,
-    /// e.g. `affine bits=4 group_size=64`.
-    pub quantization: String,
+    /// The artifact file the worker loads (one of `artifact_files`).
+    pub gguf: String,
+    /// The pinned llama.cpp commit the worker is built from (40 hex).
+    pub llama_cpp: String,
     /// Rust tokenizer implementation and version, e.g. `tokenizers 0.23.2 onig`.
     pub tokenizer: String,
     pub add_special_tokens: bool,
-    /// `right`.
-    pub padding_side: String,
-    pub pad_id: u32,
-    /// Revision of the first-party adapter that builds input arrays and
-    /// materializes output. Bump on any change to that code path.
-    pub adapter_revision: u32,
-    /// e.g. `int32`.
-    pub input_dtype: String,
-    /// e.g. `int32`.
-    pub mask_dtype: String,
-    /// `publisher mean + l2` (pooling and normalization inside the model).
+    /// One of [`POOLINGS`]; the worker pins it and refuses another.
     pub pooling: String,
+    /// The pooled vector's leading `dimensions` values, L2-normalized: one
+    /// of [`SUPPORTED_DIMENSIONS`].
     pub dimensions: u32,
     /// `f32`.
     pub output: String,
-    pub runtime: RuntimeClosure,
-    /// Must equal [`DOCUMENT_PREFIX`].
-    pub document_prefix: String,
+    /// Revision of the first-party worker code that builds the llama.cpp
+    /// batch and materializes output. Bump on any change to that code path.
+    pub adapter_revision: u32,
+    /// The document template: [`TEXT_SLOT`] exactly once, filled with a card.
+    pub document_template: String,
+}
+
+/// The template's one [`TEXT_SLOT`], or why it has none.
+pub fn check_template(what: &str, template: &str) -> Result<(), String> {
+    match template.matches(TEXT_SLOT).count() {
+        1 => Ok(()),
+        n => Err(format!(
+            "{what} must contain {TEXT_SLOT} exactly once (found {n})"
+        )),
+    }
+}
+
+/// `template` with its one [`TEXT_SLOT`] filled by `text`.
+pub fn render(template: &str, text: &str) -> String {
+    match template.split_once(TEXT_SLOT) {
+        Some((before, after)) => {
+            let mut rendered = String::with_capacity(before.len() + text.len() + after.len());
+            rendered.push_str(before);
+            rendered.push_str(text);
+            rendered.push_str(after);
+            rendered
+        }
+        None => text.to_owned(),
+    }
+}
+
+fn hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 impl FunctionDescriptor {
-    /// Structural checks that need no files: version, prefix, dimensions,
-    /// sorted unique artifact names and hex digests.
+    /// Structural checks that need no files: version, template, dimensions,
+    /// pooling, sorted unique artifact names, hex digests and the pinned
+    /// GGUF and llama.cpp commit.
     pub fn validate(&self) -> Result<(), String> {
         if self.v != DESCRIPTOR_VERSION {
             return Err(format!(
@@ -96,11 +116,24 @@ impl FunctionDescriptor {
                 self.v
             ));
         }
-        if self.document_prefix != DOCUMENT_PREFIX {
-            return Err("document prefix must be `passage: `".into());
+        check_template("document_template", &self.document_template)?;
+        if !SUPPORTED_DIMENSIONS.contains(&(self.dimensions as usize)) {
+            return Err(format!(
+                "dimensions {} is not one of {SUPPORTED_DIMENSIONS:?}",
+                self.dimensions
+            ));
         }
-        if self.dimensions as usize != DIMENSIONS {
-            return Err(format!("dimensions must be {DIMENSIONS}"));
+        if !POOLINGS.contains(&self.pooling.as_str()) {
+            return Err(format!(
+                "pooling {:?} is not one of {POOLINGS:?}",
+                self.pooling
+            ));
+        }
+        if self.output != "f32" {
+            return Err("output must be `f32`".into());
+        }
+        if !hex(&self.llama_cpp, 40) {
+            return Err("llama_cpp must be a 40-hex commit".into());
         }
         if self.artifact_files.is_empty() {
             return Err("descriptor names no artifact files".into());
@@ -110,8 +143,6 @@ impl FunctionDescriptor {
                 return Err("artifact files must be sorted by name without duplicates".into());
             }
         }
-        let hex64 =
-            |s: &str| s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
         for file in &self.artifact_files {
             if file.name.is_empty()
                 || file.name.starts_with('/')
@@ -125,14 +156,26 @@ impl FunctionDescriptor {
                     file.name
                 ));
             }
-            if !hex64(&file.sha256) {
+            if !hex(&file.sha256, 64) {
                 return Err(format!("artifact file {:?} has no SHA-256", file.name));
             }
         }
-        if !hex64(&self.runtime.requirements_sha256) {
-            return Err("runtime requirements digest must be a SHA-256".into());
+        if !self
+            .artifact_files
+            .iter()
+            .any(|file| file.name == self.gguf)
+        {
+            return Err(format!(
+                "the GGUF {:?} is not among the artifact files",
+                self.gguf
+            ));
         }
         Ok(())
+    }
+
+    /// The output dimension as a length.
+    pub fn dims(&self) -> usize {
+        self.dimensions as usize
     }
 
     /// Lowercase hex SHA-256 of the compact JSON of this descriptor. Field
@@ -152,14 +195,6 @@ pub fn input_key(function_digest: &str, rendered: &str) -> String {
         bytes.extend_from_slice(part);
     }
     crate::digest(&bytes)
-}
-
-/// The rendered document input for a unit's exact source bytes.
-pub fn render_document(unit_text: &str) -> String {
-    let mut rendered = String::with_capacity(DOCUMENT_PREFIX.len() + unit_text.len());
-    rendered.push_str(DOCUMENT_PREFIX);
-    rendered.push_str(unit_text);
-    rendered
 }
 
 /// Token IDs of one rendered input, special tokens included, never truncated.
@@ -183,8 +218,12 @@ pub enum ProviderError {
     ResourceLimit(String),
     /// No accepted isolation profile admits model execution here.
     IsolationUnavailable(String),
-    /// The profile, worker, runtime or artifact failed verification.
+    /// The profile, worker or artifact failed verification.
     ProfileInvalid(String),
+    /// 009 T004: a profile this build no longer serves (descriptor v1, the
+    /// MLX worker). Semantic retrieval stays off; its retained cache rows and
+    /// generations are kept until an explicit `semantic purge`.
+    ProfileUnsupported(String),
     /// An input exceeded a token or batch limit before any model call.
     InputTooLarge(String),
     /// Cooperative cancellation.
@@ -201,6 +240,7 @@ impl ProviderError {
             Self::ResourceLimit(_) => "resource_limit",
             Self::IsolationUnavailable(_) => "isolation_unavailable",
             Self::ProfileInvalid(_) => "profile_invalid",
+            Self::ProfileUnsupported(_) => "profile_unsupported",
             Self::InputTooLarge(_) => "input_too_large",
             Self::Cancelled => "cancelled",
         }
@@ -216,16 +256,17 @@ impl std::fmt::Display for ProviderError {
             | Self::ResourceLimit(m)
             | Self::IsolationUnavailable(m)
             | Self::ProfileInvalid(m)
+            | Self::ProfileUnsupported(m)
             | Self::InputTooLarge(m) => write!(f, "{}: {m}", self.code()),
         }
     }
 }
 
-/// Validate one returned vector: exact dimension and finite values.
-pub fn validate_vector(vector: &[f32]) -> Result<(), ProviderError> {
-    if vector.len() != DIMENSIONS {
+/// Validate one returned vector: exactly `dims` finite values.
+pub fn validate_vector(vector: &[f32], dims: usize) -> Result<(), ProviderError> {
+    if vector.len() != dims {
         return Err(ProviderError::Malformed(format!(
-            "vector has {} values, expected {DIMENSIONS}",
+            "vector has {} values, expected {dims}",
             vector.len()
         )));
     }
@@ -246,8 +287,8 @@ pub type LateCall = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
 pub trait EmbeddingProvider {
     /// The verified descriptor this provider computes.
     fn descriptor(&self) -> &FunctionDescriptor;
-    /// Embed at most [`DOCUMENT_BATCH`] inputs of at most
-    /// [`DOCUMENT_UNIT_TOKENS`] IDs each; one vector per input, in order.
+    /// Embed at most the profile's batch of inputs of at most its card limit
+    /// each ([`DocumentLimits`]); one vector per input, in order.
     fn embed_documents(
         &mut self,
         batch: &[TokenizedInput],
@@ -269,22 +310,52 @@ pub trait EmbeddingProvider {
     }
 }
 
-/// Pre-call limits shared by every provider: batch size, per-input length
-/// and nonempty inputs. Refusal happens before any model work.
-pub fn check_document_batch(batch: &[TokenizedInput]) -> Result<(), ProviderError> {
-    if batch.is_empty() || batch.len() > DOCUMENT_BATCH {
+/// The size limits of one document call: at most `inputs` sequences of at
+/// most `tokens` IDs each, and never more than [`SERVING_LIMIT_TOKENS`] IDs
+/// in all (one llama.cpp context per call).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DocumentLimits {
+    pub inputs: usize,
+    pub tokens: usize,
+}
+
+impl DocumentLimits {
+    /// The protocol's caps: what the worker itself accepts from any profile.
+    pub const PROTOCOL: Self = Self {
+        inputs: MAX_DOCUMENT_BATCH,
+        tokens: SERVING_LIMIT_TOKENS,
+    };
+}
+
+/// Pre-call limits shared by every provider: batch size, per-input length,
+/// the call's token total and nonempty inputs. Refusal happens before any
+/// model work.
+pub fn check_document_batch(
+    batch: &[TokenizedInput],
+    limits: DocumentLimits,
+) -> Result<(), ProviderError> {
+    if batch.is_empty() || batch.len() > limits.inputs {
         return Err(ProviderError::InputTooLarge(format!(
-            "document batch of {} inputs; 1..={DOCUMENT_BATCH} allowed",
-            batch.len()
+            "document batch of {} inputs; 1..={} allowed",
+            batch.len(),
+            limits.inputs
         )));
     }
+    let mut total = 0usize;
     for (i, input) in batch.iter().enumerate() {
-        if input.ids.is_empty() || input.ids.len() > DOCUMENT_UNIT_TOKENS {
+        if input.ids.is_empty() || input.ids.len() > limits.tokens {
             return Err(ProviderError::InputTooLarge(format!(
-                "document input {i} has {} tokens; 1..={DOCUMENT_UNIT_TOKENS} allowed",
-                input.ids.len()
+                "document input {i} has {} tokens; 1..={} allowed",
+                input.ids.len(),
+                limits.tokens
             )));
         }
+        total += input.ids.len();
+    }
+    if total > SERVING_LIMIT_TOKENS {
+        return Err(ProviderError::InputTooLarge(format!(
+            "document batch has {total} tokens; at most {SERVING_LIMIT_TOKENS} per call"
+        )));
     }
     Ok(())
 }
@@ -317,6 +388,39 @@ mod tests {
             input_key(&"b".repeat(64), "passage: x")
         );
         assert_eq!(input_key(&f, "passage: x"), input_key(&f, "passage: x"));
-        assert_eq!(render_document("fn a() {}"), "passage: fn a() {}");
+    }
+
+    #[test]
+    fn a_template_has_exactly_one_text_slot() {
+        assert_eq!(
+            render("title: none | text: {text}", "fn a()"),
+            "title: none | text: fn a()"
+        );
+        assert_eq!(render("{text} [end]", "x"), "x [end]");
+        assert!(check_template("t", "q: {text}").is_ok());
+        assert!(check_template("t", "q: ").is_err());
+        assert!(check_template("t", "{text}{text}").is_err());
+    }
+
+    #[test]
+    fn a_document_call_stays_within_its_limits_and_one_context() {
+        let input = |n: usize| TokenizedInput { ids: vec![1; n] };
+        let limits = DocumentLimits {
+            inputs: 2,
+            tokens: 4,
+        };
+        assert!(check_document_batch(&[input(4), input(1)], limits).is_ok());
+        assert!(check_document_batch(&[], limits).is_err());
+        assert!(check_document_batch(&[input(1), input(1), input(1)], limits).is_err());
+        assert!(check_document_batch(&[input(5)], limits).is_err());
+        assert!(check_document_batch(&[input(0)], limits).is_err());
+        let wide = DocumentLimits {
+            inputs: 2,
+            tokens: SERVING_LIMIT_TOKENS,
+        };
+        assert!(
+            check_document_batch(&[input(SERVING_LIMIT_TOKENS), input(1)], wide).is_err(),
+            "the call's total stays within one context"
+        );
     }
 }

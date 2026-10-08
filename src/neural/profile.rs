@@ -1,18 +1,36 @@
 //! 009 semantic profile file: a bounded, versioned JSON document naming the
-//! model directory, the worker, the runtime and the expected document
-//! function. Parsed before any worker exists; every named object is resolved
-//! and verified before the publisher loader runs. Nothing is downloaded.
-use super::provider::{FunctionDescriptor, ProviderError};
+//! model directory, the worker, the document function and the retrieval
+//! recipe (query template, card limit, batch size). Parsed before any worker
+//! exists; every named object is resolved and verified before the worker
+//! loads. Nothing is downloaded.
+//!
+//! 009 T004: profile v2 pins a GGUF, the llama.cpp commit, pooling, the
+//! output dimension and the templates. A v1 profile (descriptor v1, the MLX
+//! worker and its Python closure) is refused at load with
+//! `profile_unsupported`; its retained cache rows and generations stay until
+//! an explicit `semantic purge`.
+use super::provider::{
+    DocumentLimits, FunctionDescriptor, MAX_DOCUMENT_BATCH, ProviderError, SERVING_LIMIT_TOKENS,
+    check_template,
+};
 use crate::control::Control;
 use crate::error::FoundryError;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-pub const PROFILE_VERSION: u32 = 1;
+pub const PROFILE_VERSION: u32 = 2;
 pub const MAX_PROFILE_BYTES: u64 = 64 * 1024;
 /// Default supervised memory ceiling (D001 measured 1.82 GiB for 8 × 1024).
 pub const DEFAULT_MEMORY_CEILING_BYTES: u64 = 3 * 1024 * 1024 * 1024;
+/// Default card limit: tokens of one rendered card, template and special
+/// tokens included (spec 009 T004).
+pub const DEFAULT_CARD_TOKENS: u32 = 128;
+/// Default sequences per document call.
+pub const DEFAULT_BATCH: u32 = 8;
+/// The smallest card limit: the template, the special tokens and an
+/// address line must fit.
+pub const MIN_CARD_TOKENS: u32 = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,17 +47,12 @@ pub struct WorkerSpec {
     pub scratch_root: PathBuf,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RuntimeSpec {
-    /// Absolute `PYTHONHOME` of the operator's interpreter.
-    pub python_home: PathBuf,
-    /// Absolute site-packages directory holding the pinned closure; the only
-    /// import path added besides the standard library.
-    pub site_packages: PathBuf,
-    /// Absolute path of the frozen requirements listing whose SHA-256 is the
-    /// descriptor's `runtime.requirements_sha256`.
-    pub requirements: PathBuf,
+fn default_card_tokens() -> u32 {
+    DEFAULT_CARD_TOKENS
+}
+
+fn default_batch() -> u32 {
+    DEFAULT_BATCH
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,8 +64,18 @@ pub struct SemanticProfile {
     /// Absolute model directory; `descriptor.artifact_files` are relative to it.
     pub model_dir: PathBuf,
     pub worker: WorkerSpec,
-    pub runtime: RuntimeSpec,
     pub descriptor: FunctionDescriptor,
+    /// The query template ([`super::provider::TEXT_SLOT`] exactly once):
+    /// part of the retrieval profile, never of the document function.
+    pub query_template: String,
+    /// The card limit: tokens of one rendered card. Part of the partition
+    /// recipe; changing it re-partitions, and only cards whose text changed
+    /// get new keys.
+    #[serde(default = "default_card_tokens")]
+    pub card_tokens: u32,
+    /// Sequences per document call (one llama.cpp context).
+    #[serde(default = "default_batch")]
+    pub batch: u32,
     pub memory_ceiling_bytes: u64,
     /// Upper bound on worker start, verification and model load.
     pub load_timeout_seconds: u64,
@@ -66,9 +89,33 @@ fn hex64(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// The version fields alone, read before the strict parse so a profile this
+/// build no longer serves is refused by name, not as a decode failure.
+#[derive(Deserialize)]
+struct Versions {
+    v: Option<u32>,
+    descriptor: Option<DescriptorVersion>,
+}
+
+#[derive(Deserialize)]
+struct DescriptorVersion {
+    v: Option<u32>,
+}
+
+/// The refusal of a descriptor v1 (MLX) profile.
+pub fn unsupported_v1() -> ProviderError {
+    ProviderError::ProfileUnsupported(
+        "descriptor v1 (MLX worker) profiles are no longer served; semantic retrieval stays \
+         off and the retained cache rows and generations are kept until `semantic purge`; \
+         install a v2 (llama.cpp) profile"
+            .into(),
+    )
+}
+
 impl SemanticProfile {
     /// Read at most [`MAX_PROFILE_BYTES`] (a regular file, not a symlink),
-    /// parse strictly and validate structure. No model files are opened.
+    /// refuse a v1 profile with `profile_unsupported`, parse strictly and
+    /// validate structure. No model files are opened.
     pub fn load(path: &Path) -> Result<Self, ProviderError> {
         let meta = std::fs::symlink_metadata(path)
             .map_err(|e| invalid(format!("profile {}: {e}", path.display())))?;
@@ -87,6 +134,11 @@ impl SemanticProfile {
                 "profile exceeds {MAX_PROFILE_BYTES} bytes"
             )));
         }
+        if let Ok(versions) = serde_json::from_slice::<Versions>(&bytes)
+            && (versions.v == Some(1) || versions.descriptor.and_then(|d| d.v) == Some(1))
+        {
+            return Err(unsupported_v1());
+        }
         let profile: Self =
             serde_json::from_slice(&bytes).map_err(|e| invalid(format!("profile JSON: {e}")))?;
         profile.validate()?;
@@ -103,9 +155,6 @@ impl SemanticProfile {
         for (what, path) in [
             ("model_dir", &self.model_dir),
             ("worker.bundle", &self.worker.bundle),
-            ("runtime.python_home", &self.runtime.python_home),
-            ("runtime.site_packages", &self.runtime.site_packages),
-            ("runtime.requirements", &self.runtime.requirements),
             ("worker.scratch_root", &self.worker.scratch_root),
         ] {
             if !path.is_absolute()
@@ -134,34 +183,52 @@ impl SemanticProfile {
                 self.load_timeout_seconds
             )));
         }
+        check_template("query_template", &self.query_template).map_err(invalid)?;
+        let (cards, batch) = (self.card_tokens as usize, self.batch as usize);
+        if self.card_tokens < MIN_CARD_TOKENS || cards > SERVING_LIMIT_TOKENS {
+            return Err(invalid(format!(
+                "card_tokens {cards} is outside {MIN_CARD_TOKENS}..={SERVING_LIMIT_TOKENS}"
+            )));
+        }
+        if batch == 0 || batch > MAX_DOCUMENT_BATCH {
+            return Err(invalid(format!(
+                "batch {batch} is outside 1..={MAX_DOCUMENT_BATCH}"
+            )));
+        }
+        if batch * cards > SERVING_LIMIT_TOKENS {
+            return Err(invalid(format!(
+                "batch {batch} × card_tokens {cards} exceeds one {SERVING_LIMIT_TOKENS}-token \
+                 llama.cpp context"
+            )));
+        }
         self.check_scratch_disjoint()?;
         self.descriptor.validate().map_err(invalid)
     }
 
+    /// The limits of one document call under this profile.
+    pub fn document_limits(&self) -> DocumentLimits {
+        DocumentLimits {
+            inputs: self.batch as usize,
+            tokens: self.card_tokens as usize,
+        }
+    }
+
     /// The scratch root is the worker's only WRITE grant. It must not
-    /// overlap any read-only grant: a scratch directory inside (or
-    /// containing) the model directory, the Python home, the site-packages
-    /// tree or the requirements listing would let the worker rewrite files
-    /// the profile hashes, or let a hash-verified file move under the write
-    /// grant. Paths are resolved through symlinks where they exist, so an
-    /// alias cannot smuggle an overlap past the check.
+    /// overlap the read-only model directory: a scratch directory inside (or
+    /// containing) it would let the worker rewrite files the profile hashes,
+    /// or let a hash-verified file move under the write grant. Paths are
+    /// resolved through symlinks where they exist, so an alias cannot
+    /// smuggle an overlap past the check.
     pub fn check_scratch_disjoint(&self) -> Result<(), ProviderError> {
         let scratch = resolve(&self.worker.scratch_root)?;
-        for what in [
-            &self.model_dir,
-            &self.runtime.python_home,
-            &self.runtime.site_packages,
-            &self.runtime.requirements,
-        ] {
-            let other = resolve(what)?;
-            if scratch == other || overlaps(&scratch, &other) || overlaps(&other, &scratch) {
-                return Err(invalid(format!(
-                    "worker.scratch_root ({}) overlaps {} ({}) after resolving symlinks",
-                    scratch.display(),
-                    what.display(),
-                    other.display()
-                )));
-            }
+        let other = resolve(&self.model_dir)?;
+        if scratch == other || overlaps(&scratch, &other) || overlaps(&other, &scratch) {
+            return Err(invalid(format!(
+                "worker.scratch_root ({}) overlaps {} ({}) after resolving symlinks",
+                scratch.display(),
+                self.model_dir.display(),
+                other.display()
+            )));
         }
         Ok(())
     }
@@ -236,9 +303,9 @@ pub(crate) fn overlaps(outer: &Path, inner: &Path) -> bool {
 }
 
 impl SemanticProfile {
-    /// Verify every artifact file and the requirements listing against the
-    /// descriptor by reading them through descriptors opened without
-    /// following a final symlink. Returns the verified total byte count.
+    /// Verify every artifact file against the descriptor by reading it
+    /// through a descriptor opened without following a final symlink.
+    /// Returns the verified total byte count.
     pub fn verify_artifacts(&self) -> Result<u64, ProviderError> {
         self.verify_artifacts_until(&Control::unbounded())
     }
@@ -258,10 +325,6 @@ impl SemanticProfile {
                 )));
             }
             total += bytes;
-        }
-        let (sha, _) = hash_regular_file_until(&self.runtime.requirements, control)?;
-        if sha != self.descriptor.runtime.requirements_sha256 {
-            return Err(invalid("runtime requirements do not match the descriptor"));
         }
         Ok(total)
     }

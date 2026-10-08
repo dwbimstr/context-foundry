@@ -20,9 +20,9 @@
 //! after a run committed new vectors — even when it stopped early, so partial
 //! coverage is searchable.
 //!
-//! Work pages current sources in pages of 128, embeds at most
-//! [`DOCUMENT_BATCH`] inputs per call with ONE batch outstanding, and commits
-//! the cache per batch (the committed counts move in the same transaction). A
+//! Work pages current sources in pages of 128, embeds at most the profile's
+//! batch of cards per call with ONE batch outstanding, and commits the cache
+//! per batch (the committed counts move in the same transaction). A
 //! stop caused by the budget is reported as `budget_exhausted` whatever the
 //! provider returned. Startup never resumes preparation: only this explicit
 //! command (or the MCP owner's explicit `index {semantic: "prepare"}`) does.
@@ -30,10 +30,17 @@
 //! 009 T003: the steps are shared with the MCP owner's background driver
 //! ([`super::driver`]), which composes the SAME functions between its own
 //! engine-slot holds: [`Steps::partition_page`], [`Steps::select_batch`],
-//! [`commit_batch`], [`publish`], [`begin`] and [`finalize`]. Only the
-//! ownership around them differs: the CLI holds the store exclusively and
-//! calls the provider directly under its budget; the driver takes the
-//! owner's engine slot per step and embeds through the resident runtime.
+//! [`Cards::render`], [`commit_batch`], [`publish`], [`begin`] and
+//! [`finalize`]. Only the ownership around them differs: the CLI holds the
+//! store exclusively and calls the provider directly under its budget; the
+//! driver takes the owner's engine slot per store step and embeds through
+//! the resident runtime.
+//!
+//! 009 T004: the embedding inputs are cards ([`super::partition`]). A batch
+//! is selected in a store step (which cards are missing, and their sources'
+//! bodies) and rendered and tokenized by [`Cards::render`], which needs no
+//! engine and no transaction, so the driver can prepare the next batch
+//! while one inference runs.
 //!
 //! The provider comes through the [`Acquire`] seam (slice B's supervised
 //! worker); whenever no accepted isolation profile admits model execution it
@@ -47,10 +54,10 @@ use crate::neural::cache::{
     ProviderObservation, StateError,
 };
 use crate::neural::index::Publication;
-use crate::neural::partition::{self, TokenCount as _};
+use crate::neural::partition::{self, CardRecipe};
 use crate::neural::profile::SemanticProfile;
 use crate::neural::provider::{
-    self, DOCUMENT_BATCH, EmbeddingProvider, ProviderError, TokenizedInput,
+    self, DocumentLimits, EmbeddingProvider, ProviderError, TokenizedInput,
 };
 use crate::neural::tokenize::DocumentTokenizer;
 use crate::store::Engine;
@@ -77,6 +84,9 @@ pub struct PrepareReport {
     pub profile: String,
     pub function_digest: String,
     pub recipe_id: String,
+    /// 009 T004: the profile's output dimension, recorded in the state row
+    /// with the digest and recipe.
+    pub dimensions: u32,
     pub sources: u64,
     pub partitioned_sources: u64,
     pub reused_partitions: u64,
@@ -270,17 +280,19 @@ pub fn run(
     let run_control = options.control.bounded_by(deadline);
 
     // The profile is parsed strictly and bounded before any worker exists;
-    // a missing/mismatched profile, worker, runtime or artifact is a named
-    // failure with no download, install or fallback execution.
+    // a missing/mismatched profile, worker or artifact is a named failure
+    // with no download, install or fallback execution, and a descriptor v1
+    // profile is `profile_unsupported` before the store is touched.
     let profile = SemanticProfile::load(options.profile_path)?;
     let function_digest = profile.descriptor.digest();
     let engine = Engine::open_existing(store_dir)?;
-    let recipe = partition::recipe_id(&profile.descriptor.tokenizer);
+    let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
 
     let mut report = PrepareReport {
         profile: profile.name.clone(),
         function_digest: function_digest.clone(),
         recipe_id: recipe.clone(),
+        dimensions: profile.descriptor.dimensions,
         budget_seconds: options.budget_seconds,
         publication_reserve_seconds: reserve.as_secs(),
         ..PrepareReport::default()
@@ -317,13 +329,15 @@ pub fn run(
     }
 }
 
-/// Record a run's start in the state row: the profile identity, `running`
-/// and no error.
+/// Record a run's start in the state row: the profile identity (digest,
+/// recipe and dimension), `running` and no error. A profile change never
+/// purges: rows and generations of the earlier profile stay retained.
 pub(crate) fn begin(engine: &Engine, report: &PrepareReport) -> FResult<()> {
     let mut state = engine.semantic_state()?.unwrap_or_default();
     state.profile_name = Some(report.profile.clone());
     state.function_digest = Some(report.function_digest.clone());
     state.recipe_id = Some(report.recipe_id.clone());
+    state.dimensions = Some(report.dimensions);
     state.state = "running".into();
     state.last_error = None;
     engine.semantic_set_state(&state)
@@ -341,6 +355,7 @@ pub(crate) fn finalize(
     final_state.profile_name = Some(report.profile.clone());
     final_state.function_digest = Some(report.function_digest.clone());
     final_state.recipe_id = Some(report.recipe_id.clone());
+    final_state.dimensions = Some(report.dimensions);
     let (totals_rows, totals_bytes) = engine.semantic_cache_totals()?;
     final_state.cache_bytes = totals_bytes;
     let (state_name, reason) = match outcome {
@@ -390,6 +405,7 @@ pub(crate) fn lifetime_code(code: &str) -> &'static str {
         "cancelled",
         "deadline_exceeded",
         "profile_invalid",
+        "profile_unsupported",
         "isolation_unavailable",
         "provider_busy",
         "provider_timeout",
@@ -595,9 +611,12 @@ fn inner(
 
     let steps = Steps {
         engine,
-        tokenizer: &tokenizer,
+        cards: Cards {
+            tokenizer: &tokenizer,
+            profile,
+            function_digest,
+        },
         recipe,
-        function_digest,
     };
     // --- Partition pass: current sources, pages of 128, commit per source.
     let mut after: Option<String> = None;
@@ -617,28 +636,33 @@ fn inner(
         return Ok(stop);
     }
 
-    // --- Embed pass: remaining work = current units minus valid cached
-    // results, pages of 128, batches of at most 8, one outstanding, commit
-    // per batch. Admission checks the run control AND the publication
-    // reserve immediately before every batch, and the control after every
-    // flush.
+    // --- Embed pass: remaining work = current cards minus valid cached
+    // results, pages of 128, batches of at most the profile's batch, one
+    // outstanding, commit per batch. Admission checks the run control AND
+    // the publication reserve immediately before every batch, and the
+    // control after every flush.
     let mut walk = Walk::default();
-    let mut batch = Batch::default();
     let mut committed: u64 = 0;
     let mut stop: Option<Stop> = None;
     loop {
-        let end =
-            match steps.select_batch(&mut walk, &mut batch, usize::MAX, report, &mut || {
-                halt(control, budget)
-            })? {
-                Selected::Full => false,
-                Selected::End => true,
-                Selected::Yield => continue,
-                Selected::Halted(halted) => {
-                    stop = Some(halted);
-                    break;
-                }
-            };
+        let mut selection = Selection::default();
+        let end = match steps.select_batch(
+            &mut walk,
+            &mut selection,
+            steps.cards.limits().inputs,
+            usize::MAX,
+            report,
+            &mut || halt(control, budget),
+        )? {
+            Selected::Full => false,
+            Selected::End => true,
+            Selected::Yield => continue,
+            Selected::Halted(halted) => {
+                stop = Some(halted);
+                break;
+            }
+        };
+        let batch = steps.cards.render(selection)?;
         if batch.is_empty() {
             break;
         }
@@ -648,10 +672,9 @@ fn inner(
         }
         let size = batch.len() as u64;
         match flush_batch(
-            engine,
+            &steps,
             provider.as_mut(),
-            std::mem::take(&mut batch),
-            function_digest,
+            batch,
             options.cache_cap_bytes,
             control,
             report,
@@ -723,15 +746,14 @@ pub(crate) enum StopOrError {
 /// commit. Limits are checked before any model work. The run control crosses
 /// the seam unchanged; the supervisor owns any in-flight grace.
 fn flush_batch(
-    engine: &Engine,
+    steps: &Steps<'_>,
     provider: &mut dyn EmbeddingProvider,
     batch: Batch,
-    function_digest: &str,
     cap_bytes: u64,
     control: &Control,
     report: &mut PrepareReport,
 ) -> Result<(), StopOrError> {
-    if let Err(e) = provider::check_document_batch(&batch.inputs) {
+    if let Err(e) = provider::check_document_batch(&batch.inputs, steps.cards.limits()) {
         return Err(StopOrError::Error(FoundryError::from(e)));
     }
     count_document_call(report, &batch.inputs);
@@ -749,10 +771,11 @@ fn flush_batch(
         }
     };
     commit_batch(
-        engine,
+        steps.engine,
         batch.keys,
         vectors,
-        function_digest,
+        steps.cards.function_digest,
+        steps.cards.dims(),
         cap_bytes,
         control,
         report,
@@ -773,20 +796,22 @@ pub(crate) fn count_document_call(report: &mut PrepareReport, inputs: &[Tokenize
 }
 
 /// Validate and commit one batch's vectors: one vector per input, each of
-/// the exact dimension with finite values, then ONE cache transaction (the
-/// committed counts move with it), before any publication. A malformed
-/// reply commits nothing and stops `provider_malformed`; the disk cap stops
-/// `cache_full` without evicting. Vectors are keyed by exact rendered input:
-/// a late result for a source edited or deleted since its selection may
-/// populate the cache, but eligibility is always recomputed from the
-/// CURRENT sources, so it never restores stale eligibility. (`control`
-/// reaches only the test-faults commit points.)
+/// the profile's exact dimension with finite values, then ONE cache
+/// transaction (the committed counts move with it), before any publication.
+/// A malformed reply commits nothing and stops `provider_malformed`; the
+/// disk cap stops `cache_full` without evicting. Vectors are keyed by exact
+/// rendered input: a late result for a source edited or deleted since its
+/// selection may populate the cache, but eligibility is always recomputed
+/// from the CURRENT sources, so it never restores stale eligibility.
+/// (`control` reaches only the test-faults commit points.)
 #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn commit_batch(
     engine: &Engine,
     keys: Vec<String>,
     vectors: Vec<Vec<f32>>,
     function_digest: &str,
+    dims: usize,
     cap_bytes: u64,
     control: &Control,
     report: &mut PrepareReport,
@@ -804,7 +829,7 @@ pub(crate) fn commit_batch(
         )));
     }
     for vector in &vectors {
-        if let Err(e) = provider::validate_vector(vector) {
+        if let Err(e) = provider::validate_vector(vector, dims) {
             // The batch is NOT committed: valid data stays intact.
             report.provider_state = Some("failed");
             report.provider_code = Some("provider_malformed");
@@ -821,7 +846,7 @@ pub(crate) fn commit_batch(
         &entries.len().to_string()
     )
     .map_err(StopOrError::Error)?;
-    if let Err(e) = engine.semantic_cache_commit(&entries, function_digest, cap_bytes) {
+    if let Err(e) = engine.semantic_cache_commit(&entries, function_digest, dims, cap_bytes) {
         return Err(match e.code() {
             "cache_full" => StopOrError::Stop(Stop::partial(
                 "cache_full",
@@ -844,8 +869,17 @@ pub(crate) fn commit_batch(
 /// MCP driver builds it inside each engine-slot hold.
 pub(crate) struct Steps<'a> {
     pub engine: &'a Engine,
-    pub tokenizer: &'a DocumentTokenizer,
+    pub cards: Cards<'a>,
     pub recipe: &'a str,
+}
+
+/// What card rendering needs, and nothing of the store: the profile, its
+/// tokenizer and its function digest. [`Cards::render`] runs with no engine
+/// slot and no transaction.
+#[derive(Clone, Copy)]
+pub(crate) struct Cards<'a> {
+    pub tokenizer: &'a DocumentTokenizer,
+    pub profile: &'a SemanticProfile,
     pub function_digest: &'a str,
 }
 
@@ -858,26 +892,50 @@ pub(crate) enum Progress {
     Halted(Stop),
 }
 
-/// What one selection step did to the caller's [`Batch`].
+/// What one selection step did to the caller's [`Selection`].
 pub(crate) enum Selected {
-    /// The batch holds [`DOCUMENT_BATCH`] inputs; the walk continues after it.
+    /// The selection holds the cards asked for; the walk continues after it.
     Full,
-    /// The step examined its source bound; the walk (and the batch) continue.
+    /// The step examined its source bound; the walk (and the selection)
+    /// continue.
     Yield,
-    /// The walk is over; the batch (possibly empty) is the last one.
+    /// The walk is over; the selection (possibly empty) is the last one.
     End,
     Halted(Stop),
 }
 
 /// The embed walk's position: every source up to `after` is done, `partial`
-/// is the source in progress (path, the source hash its units belong to,
-/// the next unit), and `seen` holds the input keys this run already
+/// is the source in progress (path, the source hash its cards belong to,
+/// the next card), and `seen` holds the input keys this run already
 /// resolved — identical rendered inputs share one result.
 #[derive(Default)]
 pub(crate) struct Walk {
     after: Option<String>,
     partial: Option<(String, String, usize)>,
     seen: HashSet<String>,
+}
+
+/// Cards a selection step found missing, not yet rendered: per source, its
+/// verified body, the recorded keys of all its cards and the indices of the
+/// missing ones, in walk order. Rendering ([`Cards::render`]) needs no
+/// engine and no transaction.
+#[derive(Default)]
+pub(crate) struct Selection {
+    sources: Vec<SelectedSource>,
+    len: usize,
+}
+
+struct SelectedSource {
+    path: String,
+    body: String,
+    keys: Vec<String>,
+    wanted: Vec<usize>,
+}
+
+impl Selection {
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
 }
 
 /// One document batch being formed: cache keys and the exact model inputs.
@@ -897,15 +955,79 @@ impl Batch {
     }
 }
 
+impl Cards<'_> {
+    /// The limits of one document call under the run's profile.
+    pub(crate) fn limits(&self) -> DocumentLimits {
+        self.profile.document_limits()
+    }
+
+    /// The profile's output dimension.
+    pub(crate) fn dims(&self) -> usize {
+        self.profile.descriptor.dims()
+    }
+
+    fn recipe(&self) -> CardRecipe<'_> {
+        CardRecipe {
+            template: &self.profile.descriptor.document_template,
+            function_digest: self.function_digest,
+            card_tokens: self.profile.card_tokens as usize,
+        }
+    }
+
+    /// The cards of one source body, rendered and tokenized.
+    fn of(&self, path: &str, body: &str) -> FResult<Vec<partition::Card>> {
+        Ok(partition::cards(
+            body,
+            path,
+            Lang::from_path(path),
+            &self.recipe(),
+            self.tokenizer,
+        )?)
+    }
+
+    /// Render and tokenize a selection into its batch, in selection order,
+    /// with no engine and no transaction: each selected source's cards are
+    /// rendered once from its verified body, and every recorded key must be
+    /// re-derived exactly (the partition row and the rendering share one
+    /// recipe), else the mapping is `partition_invalid`.
+    pub(crate) fn render(&self, selection: Selection) -> FResult<Batch> {
+        let mut batch = Batch::default();
+        for source in selection.sources {
+            let cards = self.of(&source.path, &source.body)?;
+            let same = cards.len() == source.keys.len()
+                && cards
+                    .iter()
+                    .zip(&source.keys)
+                    .all(|(card, key)| &card.input_key == key);
+            if !same {
+                return Err(FoundryError::Semantic {
+                    code: "partition_invalid",
+                    message: format!(
+                        "{}: the recorded cards differ from a fresh rendering",
+                        source.path
+                    ),
+                });
+            }
+            let mut cards: Vec<Option<partition::Card>> = cards.into_iter().map(Some).collect();
+            for index in source.wanted {
+                let card = cards[index].take().expect("each card is wanted once");
+                batch.keys.push(card.input_key);
+                batch.inputs.push(TokenizedInput { ids: card.ids });
+            }
+        }
+        Ok(batch)
+    }
+}
+
 impl Steps<'_> {
     /// Partition the current sources after `after`, one page at most, until
     /// `max_new` partitions were written or, once at least one source was
     /// examined, `until` passed (009 T003: the MCP owner's driver keeps each
     /// engine-slot step short): each source without a current partition is
-    /// partitioned from its committed body and its mapping accepted in its
-    /// own transaction. `halt` is asked before the page and before every
-    /// source that needs work. (`control` reaches only the test-faults point
-    /// after each partition commit.)
+    /// carded from its committed body and its mapping accepted in its own
+    /// transaction. `halt` is asked before the page and before every source
+    /// that needs work. (`control` reaches only the test-faults point after
+    /// each partition commit.)
     #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
     pub(crate) fn partition_page(
         &self,
@@ -932,7 +1054,12 @@ impl Steps<'_> {
             }
             report.sources += 1;
             if let Some(existing) = self.engine.semantic_partition(path)?
-                && cache::partition_is_current(&existing, meta, self.recipe, self.function_digest)
+                && cache::partition_is_current(
+                    &existing,
+                    meta,
+                    self.recipe,
+                    self.cards.function_digest,
+                )
             {
                 report.reused_partitions += 1;
                 *after = Some(path.clone());
@@ -942,18 +1069,17 @@ impl Steps<'_> {
                 return Ok(Progress::Halted(stop));
             }
             let body = self.engine.semantic_source_body(path, meta)?;
-            let lang = Lang::from_path(path);
-            let units = partition::partition(&body, lang, self.function_digest, self.tokenizer)?;
+            let cards = self.cards.of(path, &body)?;
             let record = PartitionRecord {
                 source_hash: meta.hash.clone(),
                 recipe_id: self.recipe.to_owned(),
-                function_digest: self.function_digest.to_owned(),
-                units: units
+                function_digest: self.cards.function_digest.to_owned(),
+                units: cards
                     .iter()
-                    .map(|unit| PartitionUnit {
-                        start: unit.start,
-                        end: unit.end,
-                        input_key: unit.input_key.clone(),
+                    .map(|card| PartitionUnit {
+                        start: card.start,
+                        end: card.end,
+                        input_key: card.input_key.clone(),
                     })
                     .collect(),
             };
@@ -966,25 +1092,32 @@ impl Steps<'_> {
         Ok(Progress::More)
     }
 
-    /// Add the next missing inputs to `batch`: the walk visits the units of
-    /// every source with a CURRENT partition in path order, skips inputs this
-    /// run resolved or the cache holds valid, and renders and tokenizes each
-    /// missing one, until the batch holds [`DOCUMENT_BATCH`] inputs, the walk
-    /// ends, or `max_sources` sources were examined. Pages are read fresh at
-    /// every step; a source whose version changed since the walk paused in it
-    /// restarts at its first unit. `halt` is asked before every page.
+    /// Add the next missing cards to `selection` (a store step: no
+    /// rendering, no tokenization): the walk visits the cards of every
+    /// source with a CURRENT partition in path order, skips inputs this run
+    /// resolved or the cache holds valid, and records each missing one with
+    /// its source's verified body, until the selection holds `room` cards,
+    /// the walk ends, or `max_sources` sources were examined. Pages are read
+    /// fresh at every step; a source whose version changed since the walk
+    /// paused in it restarts at its first card. `halt` is asked before every
+    /// page.
     pub(crate) fn select_batch(
         &self,
         walk: &mut Walk,
-        batch: &mut Batch,
+        selection: &mut Selection,
+        room: usize,
         max_sources: usize,
         report: &mut PrepareReport,
         halt: &mut dyn FnMut() -> Option<Stop>,
     ) -> FResult<Selected> {
+        let dims = self.cards.dims();
         let mut examined = 0usize;
         loop {
             if let Some(stop) = halt() {
                 return Ok(Selected::Halted(stop));
+            }
+            if selection.len >= room {
+                return Ok(Selected::Full);
             }
             let page = cache::source_page(&self.engine.db, walk.after.as_deref())?;
             if page.is_empty() {
@@ -1000,10 +1133,16 @@ impl Steps<'_> {
                     _ => 0,
                 };
                 if let Some(record) = self.engine.semantic_partition(path)?
-                    && cache::partition_is_current(&record, meta, self.recipe, self.function_digest)
+                    && cache::partition_is_current(
+                        &record,
+                        meta,
+                        self.recipe,
+                        self.cards.function_digest,
+                    )
                     && first < record.units.len()
                 {
-                    let body = self.engine.semantic_source_body(path, meta)?;
+                    let mut wanted = Vec::new();
+                    let mut full_at = None;
                     for (index, unit) in record.units.iter().enumerate().skip(first) {
                         report.eligible_units += 1;
                         if !walk.seen.insert(unit.input_key.clone()) {
@@ -1015,10 +1154,11 @@ impl Steps<'_> {
                         // same-length nonfinite (or otherwise tampered) row is
                         // disabled by name here and replaced by a fresh
                         // embedding.
-                        let needed = match self
-                            .engine
-                            .semantic_cache_lookup(&unit.input_key, self.function_digest)?
-                        {
+                        let needed = match self.engine.semantic_cache_lookup(
+                            &unit.input_key,
+                            self.cards.function_digest,
+                            dims,
+                        )? {
                             CacheLookup::Hit(_) => false,
                             CacheLookup::Corrupt(_) => {
                                 report.corrupt_cache_rows += 1;
@@ -1030,20 +1170,28 @@ impl Steps<'_> {
                             report.reused_cached_units += 1;
                             continue;
                         }
-                        let text = body.get(unit.start..unit.end).ok_or_else(|| {
-                            FoundryError::CorruptStore(format!(
-                                "semantic partition of {path}: {}..{} is not a valid slice",
-                                unit.start, unit.end
-                            ))
-                        })?;
-                        let rendered = provider::render_document(text);
-                        let ids = self.tokenizer.encode(&rendered)?.ids;
-                        batch.keys.push(unit.input_key.clone());
-                        batch.inputs.push(TokenizedInput { ids });
-                        if batch.len() == DOCUMENT_BATCH {
-                            walk.partial = Some((path.clone(), meta.hash.clone(), index + 1));
-                            return Ok(Selected::Full);
+                        wanted.push(index);
+                        if selection.len + wanted.len() == room {
+                            full_at = Some(index + 1);
+                            break;
                         }
+                    }
+                    if !wanted.is_empty() {
+                        selection.len += wanted.len();
+                        selection.sources.push(SelectedSource {
+                            path: path.clone(),
+                            body: self.engine.semantic_source_body(path, meta)?,
+                            keys: record
+                                .units
+                                .into_iter()
+                                .map(|unit| unit.input_key)
+                                .collect(),
+                            wanted,
+                        });
+                    }
+                    if let Some(next) = full_at {
+                        walk.partial = Some((path.clone(), meta.hash.clone(), next));
+                        return Ok(Selected::Full);
                     }
                 }
                 walk.after = Some(path.clone());
@@ -1078,12 +1226,15 @@ mod tests {
         let profile = SemanticProfile::load(&path).unwrap();
         let tokenizer = DocumentTokenizer::load(&profile).unwrap();
         let digest = profile.descriptor.digest();
-        let recipe = partition::recipe_id(&profile.descriptor.tokenizer);
+        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
         let steps = Steps {
             engine: &engine,
-            tokenizer: &tokenizer,
+            cards: Cards {
+                tokenizer: &tokenizer,
+                profile: &profile,
+                function_digest: &digest,
+            },
             recipe: &recipe,
-            function_digest: &digest,
         };
         let control = Control::unbounded();
         let mut report = PrepareReport::default();

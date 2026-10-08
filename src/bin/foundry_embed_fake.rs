@@ -6,7 +6,8 @@
 // keyed only by the ID sequence. The `--shim` mode serves the owner-death
 // tests: this process becomes the owner of one child copy of itself while
 // a separate `sleep` process holds the liveness pipe open, so killing this
-// process exercises the kqueue owner-exit path alone.
+// process exercises the kqueue owner-exit path alone. `--notices DIR` is the
+// real worker's packaging flag with `worker_runtime::FAKE_NOTICE` as text.
 #[cfg(target_os = "macos")]
 fn main() {
     use context_foundry::neural::worker_runtime::{self, FAKE_VOCAB, Hooks, WorkerArgs};
@@ -15,6 +16,14 @@ fn main() {
     let argv: Vec<String> = std::env::args().collect();
     if argv.iter().any(|arg| arg == "--shim") {
         worker_runtime::run_shim(argv[1..].to_vec());
+    }
+    if let [_, flag, dir] = argv.as_slice()
+        && flag == "--notices"
+    {
+        let code =
+            worker_runtime::write_notices(std::path::Path::new(dir), worker_runtime::FAKE_NOTICE);
+        let _ = std::io::stdout().flush();
+        std::process::exit(code);
     }
     let (mut args, rest) = match WorkerArgs::parse(argv.into_iter().skip(1)) {
         Ok(parsed) => parsed,
@@ -41,13 +50,15 @@ fn main() {
     args.hooks = hooks;
     let code = worker_runtime::serve(args, |engine| {
         let hooks = engine.args.hooks.clone();
-        if engine.args.expected != worker_runtime::fake_descriptor() {
+        let expected = &engine.args.expected;
+        if *expected != worker_runtime::fake_descriptor_with(expected.dimensions) {
             engine.fail_load(
                 "descriptor_mismatch",
-                "the fake worker serves only its own descriptor",
+                "the fake worker serves only its own descriptor (at any supported dimension)",
             );
             return 1;
         }
+        let dims = expected.dims();
         if let Some(path) = &hooks.pid_file
             && let Err(e) = std::fs::write(path, std::process::id().to_string())
         {
@@ -111,7 +122,7 @@ fn main() {
             let vectors: Vec<Vec<f32>> = job
                 .inputs
                 .iter()
-                .map(|input| worker_runtime::deterministic_vector(&input.ids))
+                .map(|input| worker_runtime::deterministic_vector(&input.ids, dims))
                 .collect();
             if !engine.finish_job(job, vectors) {
                 return 1;

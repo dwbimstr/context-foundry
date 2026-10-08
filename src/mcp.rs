@@ -219,14 +219,31 @@ enum SemanticPlan {
 }
 
 /// The dense window for one request, under the request's own read deadline,
-/// or the named fallback. Never fails the request.
+/// or the named fallback. Never fails the request. A query with an anchor
+/// (the `anchors` a multi-root owner chose, else this store's own choice)
+/// never calls the model and is served exactly as without a profile (009
+/// T004 "Placement"); an error choosing them is left to the baseline call,
+/// which makes the same choice.
 #[cfg(feature = "semantic")]
 fn plan_semantic(
     slot: &SemanticSlot,
     engine: &Engine,
     query: &str,
+    path: Option<&str>,
     control: &Control,
+    anchors: Option<&[crate::store::AnchorCandidate]>,
 ) -> SemanticPlan {
+    if slot.is_none() {
+        return SemanticPlan::Off;
+    }
+    let anchored = match anchors {
+        Some(chosen) => !chosen.is_empty(),
+        None => crate::roots::select_anchors(&[engine], query, path, control)
+            .map_or(true, |chosen| !chosen.is_empty()),
+    };
+    if anchored {
+        return SemanticPlan::Off;
+    }
     match slot {
         None => SemanticPlan::Off,
         Some(Err(word)) => SemanticPlan::Fallback(word.clone()),
@@ -256,7 +273,7 @@ pub fn search_primary(
     anchors: Option<&[crate::store::AnchorCandidate]>,
 ) -> FResult<crate::store::CandidateBatch> {
     #[cfg(feature = "semantic")]
-    match plan_semantic(slot, engine, query, control) {
+    match plan_semantic(slot, engine, query, path, control, anchors) {
         SemanticPlan::Off => {}
         SemanticPlan::Dense(window) => {
             return engine
@@ -290,7 +307,7 @@ pub fn context_primary(
     anchors: Option<&[crate::store::AnchorCandidate]>,
 ) -> FResult<crate::memory::MemoryContext> {
     #[cfg(feature = "semantic")]
-    let plan = plan_semantic(slot, engine, query, control);
+    let plan = plan_semantic(slot, engine, query, None, control, anchors);
     #[cfg(not(feature = "semantic"))]
     let _ = slot;
     let options = crate::store::ContextOptions {
@@ -4232,7 +4249,7 @@ mod tests {
 
     #[cfg(all(feature = "semantic", feature = "test-faults"))]
     fn unit_vector() -> Vec<f32> {
-        let mut vector = vec![0f32; crate::neural::provider::DIMENSIONS];
+        let mut vector = vec![0f32; crate::testkit::FIXTURE_DIMENSIONS as usize];
         vector[0] = 1.0;
         vector
     }

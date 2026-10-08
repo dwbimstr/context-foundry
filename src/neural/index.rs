@@ -16,8 +16,13 @@
 //! after a check cannot redirect it, and USearch never writes through a
 //! pathname (the index is serialized to a buffer and written through the
 //! descriptor). The USearch build is feature-gated (`semantic`); manifest and
-//! label validation is not, so `status` never loads the tokenizer, Python or
-//! the model.
+//! label validation is not, so `status` never loads the tokenizer or the
+//! model.
+//!
+//! 009 T004: generation v3 records the profile's geometry (its output
+//! dimension, metric and scalar kind) and is validated against the serving
+//! profile's dimension; a v2 generation is never served by a v2 profile and
+//! is rebuilt from the cache under the new one (zero document calls).
 use crate::control::Control;
 #[cfg(feature = "semantic")]
 use crate::error::FResult;
@@ -25,7 +30,7 @@ use crate::error::FoundryError;
 use crate::neural::anchor::{Dir, conflict_or_io};
 #[cfg(feature = "semantic")]
 use crate::neural::cache::{self, CacheLookup, CacheProbe};
-use crate::neural::provider::DIMENSIONS;
+use crate::neural::provider::SUPPORTED_DIMENSIONS;
 #[cfg(feature = "semantic")]
 use crate::store::Engine;
 use serde::{Deserialize, Serialize};
@@ -39,11 +44,12 @@ pub const SEMANTIC_DIR: &str = "semantic";
 pub const INDEX_FILE: &str = "index.usearch";
 pub const LABELS_FILE: &str = "labels.json";
 pub const MANIFEST_FILE: &str = "generation.json";
-/// Layout version of the manifest and label map below. v2 (009 T002) adds
-/// each label's unit locations and the coverage record serving needs; a v1
-/// generation is unavailable by name until preparation republishes it from
-/// the cache (zero document calls).
-pub const GENERATION_VERSION: u32 = 2;
+/// Layout version of the manifest and label map below. v2 (009 T002) added
+/// each label's unit locations and the coverage record serving needs; v3
+/// (009 T004) records the profile's own geometry. An older generation is
+/// unavailable by name until preparation republishes it from the cache
+/// (zero document calls).
+pub const GENERATION_VERSION: u32 = 3;
 /// The scalar kind and metric of the derived index (D001 chosen values).
 pub const SCALAR_KIND: &str = "f16";
 pub const METRIC: &str = "cos";
@@ -312,18 +318,27 @@ struct FormatVersion {
 /// Validate one generation by content, honoring `control` between bounded
 /// units of work (file chunks). `store` is a duplicate of the Engine's bound
 /// store-directory descriptor: the store pathname is not resolved here. A
-/// mismatched function digest or recipe is a refusal, so a foreign or stale
-/// directory can never serve; a symlinked semantic root, generation
-/// directory or file never validates. Every read goes through descriptors
-/// opened without following links.
+/// mismatched function digest, recipe or geometry (the profile's
+/// `dimensions`) is a refusal, so a foreign or stale directory can never
+/// serve; a symlinked semantic root, generation directory or file never
+/// validates. Every read goes through descriptors opened without following
+/// links.
 pub fn validate_generation_with(
     store: &Dir,
     function_digest: &str,
     recipe_id: &str,
+    dimensions: usize,
     control: &Control,
 ) -> Result<Generation, GenerationError> {
-    validate_inner(store, function_digest, recipe_id, control, false)
-        .map(|(generation, _)| generation)
+    validate_inner(
+        store,
+        function_digest,
+        recipe_id,
+        dimensions,
+        control,
+        false,
+    )
+    .map(|(generation, _)| generation)
 }
 
 /// [`validate_generation_with`] for serving: the index file is read ONCE
@@ -334,9 +349,11 @@ pub fn load_generation_with(
     store: &Dir,
     function_digest: &str,
     recipe_id: &str,
+    dimensions: usize,
     control: &Control,
 ) -> Result<(Generation, Vec<u8>), GenerationError> {
-    let (generation, bytes) = validate_inner(store, function_digest, recipe_id, control, true)?;
+    let (generation, bytes) =
+        validate_inner(store, function_digest, recipe_id, dimensions, control, true)?;
     Ok((
         generation,
         bytes.expect("a kept index read returns its bytes"),
@@ -347,6 +364,7 @@ fn validate_inner(
     store: &Dir,
     function_digest: &str,
     recipe_id: &str,
+    dimensions: usize,
     control: &Control,
     keep_index: bool,
 ) -> Result<(Generation, Option<Vec<u8>>), GenerationError> {
@@ -407,13 +425,16 @@ fn validate_inner(
             "generation belongs to a different partition recipe",
         ));
     }
-    if manifest.dimensions != DIMENSIONS
+    if manifest.dimensions != dimensions
+        || !SUPPORTED_DIMENSIONS.contains(&manifest.dimensions)
         || manifest.metric != METRIC
         || manifest.scalar != SCALAR_KIND
     {
-        return Err(unavailable(
-            "generation geometry differs from the selected profile",
-        ));
+        return Err(unavailable(format!(
+            "generation geometry ({} dimensions, {} {}) differs from the profile's \
+             ({dimensions} dimensions, {METRIC} {SCALAR_KIND})",
+            manifest.dimensions, manifest.metric, manifest.scalar
+        )));
     }
     let labels_bytes = read_bounded(labels_file, "label map")?;
     if crate::digest(&labels_bytes) != manifest.labels_sha256 {
@@ -467,9 +488,49 @@ pub fn validate_generation(
     store: &Dir,
     function_digest: &str,
     recipe_id: &str,
+    dimensions: usize,
 ) -> Result<Generation, String> {
-    validate_generation_with(store, function_digest, recipe_id, &Control::unbounded())
-        .map_err(|e| e.reason())
+    validate_generation_with(
+        store,
+        function_digest,
+        recipe_id,
+        dimensions,
+        &Control::unbounded(),
+    )
+    .map_err(|e| e.reason())
+}
+
+/// The prepared profile the state row records: its function digest,
+/// partition recipe and output dimension.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Prepared {
+    pub digest: String,
+    pub recipe: String,
+    pub dimensions: usize,
+}
+
+/// Why a state row names no servable prepared profile: none was prepared,
+/// or the recorded one is a descriptor v1 profile (its row has no
+/// dimension), whose cache rows and generation are kept, never rebuilt.
+pub fn unprepared_reason(state: Option<&crate::neural::cache::SemanticState>) -> &'static str {
+    match state {
+        Some(state) if state.function_digest.is_some() && state.dimensions.is_none() => {
+            "the recorded profile is descriptor v1 (profile_unsupported); its cache rows and \
+             generation are kept until `semantic purge`"
+        }
+        _ => "no semantic profile prepared",
+    }
+}
+
+/// The [`Prepared`] identity of a state row, if it names one this build
+/// serves.
+pub fn prepared(state: Option<&crate::neural::cache::SemanticState>) -> Option<Prepared> {
+    let state = state?;
+    Some(Prepared {
+        digest: state.function_digest.clone()?,
+        recipe: state.recipe_id.clone()?,
+        dimensions: state.dimensions? as usize,
+    })
 }
 
 /// What a rebuild did.
@@ -512,11 +573,10 @@ impl Engine {
         walk.finish(self)
     }
 
-    /// The recorded profile digest and recipe, if a profile was prepared.
-    pub(crate) fn semantic_identity(&self) -> FResult<Option<(String, String)>> {
-        Ok(self
-            .semantic_state()?
-            .and_then(|state| Some((state.function_digest?, state.recipe_id?))))
+    /// The recorded profile identity, if a profile this build serves was
+    /// prepared.
+    pub(crate) fn semantic_identity(&self) -> FResult<Option<Prepared>> {
+        Ok(prepared(self.semantic_state()?.as_ref()))
     }
 
     /// Rebuild the current profile's generation from the f32 cache: replay
@@ -524,16 +584,18 @@ impl Engine {
     /// however many units map to them. A same-length nonfinite cache row
     /// fails the decode in the lookup, is skipped by name and is re-embedded
     /// by the next preparation. Called by `repair-index` and by preparation
-    /// after new vectors were committed.
+    /// after new vectors were committed. A descriptor v1 state is never
+    /// rebuilt: its generation stays as it is until `semantic purge`.
     pub fn semantic_rebuild_index(&self, control: &Control) -> FResult<SemanticIndexReport> {
-        let Some((digest, recipe)) = self.semantic_identity()? else {
+        let state = self.semantic_state()?;
+        let Some(identity) = prepared(state.as_ref()) else {
             return Ok(SemanticIndexReport {
-                reason: Some("no semantic profile prepared".into()),
+                reason: Some(unprepared_reason(state.as_ref()).into()),
                 ..SemanticIndexReport::default()
             });
         };
-        let mapping = self.semantic_current_mapping(control, &digest, &recipe)?;
-        let count = self.semantic_publish_mapping(mapping, &digest, &recipe, control)?;
+        let mapping = self.semantic_current_mapping(control, &identity.digest, &identity.recipe)?;
+        let count = self.semantic_publish_mapping(mapping, &identity, control)?;
         Ok(SemanticIndexReport {
             rebuilt: true,
             entries: count,
@@ -547,8 +609,7 @@ impl Engine {
     fn semantic_publish_mapping(
         &self,
         mapping: CurrentMapping,
-        digest: &str,
-        recipe: &str,
+        identity: &Prepared,
         control: &Control,
     ) -> FResult<usize> {
         let mut scope = mapping.scope;
@@ -557,14 +618,14 @@ impl Engine {
         lookup_entries(
             self,
             &mut keys,
-            digest,
+            identity,
             &mut scope,
             &mut entries,
             control,
             None,
         )?;
         let store = self.semantic_anchor()?;
-        build_generation(&store, digest, recipe, &entries, scope, control)
+        build_generation(&store, identity, &entries, scope, control)
     }
 
     /// Publish pending committed coverage: when a validated generation
@@ -572,24 +633,30 @@ impl Engine {
     /// otherwise the generation is rebuilt from the cache. Zero inference,
     /// bounded by `control` (the hash work and the rebuild checkpoint it).
     pub fn semantic_publish_pending(&self, control: &Control) -> FResult<Publication> {
-        let Some((digest, recipe)) = self.semantic_identity()? else {
+        let Some(identity) = self.semantic_identity()? else {
             return Ok(Publication::Nothing);
         };
-        let wanted = self.semantic_current_mapping(control, &digest, &recipe)?;
+        let wanted = self.semantic_current_mapping(control, &identity.digest, &identity.recipe)?;
         if wanted.units.is_empty() {
             return Ok(Publication::Nothing);
         }
         // Current means the same keys, unit locations, coverage AND source
         // revision: an older format, a moved unit or a changed revision is
         // republished from the cache.
-        match validate_generation_with(&self.semantic_anchor()?, &digest, &recipe, control) {
+        match validate_generation_with(
+            &self.semantic_anchor()?,
+            &identity.digest,
+            &identity.recipe,
+            identity.dimensions,
+            control,
+        ) {
             Ok(generation) if wanted.published_by(&generation) => {
                 return Ok(Publication::Current(generation.manifest.count));
             }
             Err(GenerationError::Interrupted(error)) => return Err(error),
             _ => {}
         }
-        let count = self.semantic_publish_mapping(wanted, &digest, &recipe, control)?;
+        let count = self.semantic_publish_mapping(wanted, &identity, control)?;
         Ok(Publication::Rebuilt(count))
     }
 }
@@ -703,7 +770,7 @@ impl MappingWalk {
 pub(crate) fn lookup_entries(
     engine: &Engine,
     keys: &mut impl Iterator<Item = (String, Vec<UnitLocation>)>,
-    function_digest: &str,
+    identity: &Prepared,
     scope: &mut GenerationScope,
     entries: &mut Vec<GenerationEntry>,
     control: &Control,
@@ -721,7 +788,7 @@ pub(crate) fn lookup_entries(
             control.check()?;
         }
         read += 1;
-        match engine.semantic_cache_lookup(&input_key, function_digest)? {
+        match engine.semantic_cache_lookup(&input_key, &identity.digest, identity.dimensions)? {
             CacheLookup::Hit(vector) => entries.push(GenerationEntry {
                 input_key,
                 vector,
@@ -737,22 +804,12 @@ pub(crate) fn lookup_entries(
 #[cfg(feature = "semantic")]
 pub fn build_generation(
     store: &Dir,
-    function_digest: &str,
-    recipe_id: &str,
+    identity: &Prepared,
     entries: &[GenerationEntry],
     scope: GenerationScope,
     control: &Control,
 ) -> FResult<usize> {
-    stage_generation(
-        store,
-        function_digest,
-        recipe_id,
-        entries,
-        scope,
-        control,
-        &|| {},
-    )?
-    .publish(control)
+    stage_generation(store, identity, entries, scope, control, &|| {})?.publish(control)
 }
 
 #[cfg(feature = "semantic")]
@@ -819,8 +876,7 @@ impl Drop for Staged {
 #[cfg(feature = "semantic")]
 pub(crate) fn stage_generation(
     store: &Dir,
-    function_digest: &str,
-    recipe_id: &str,
+    identity: &Prepared,
     entries: &[GenerationEntry],
     scope: GenerationScope,
     control: &Control,
@@ -829,6 +885,8 @@ pub(crate) fn stage_generation(
     use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
     let io = io_error;
+    let (function_digest, recipe_id, dimensions) =
+        (&identity.digest, &identity.recipe, identity.dimensions);
     // Confine the destination before any work or write; keep the descriptors.
     let generation = open_generation_dir(store, function_digest, true)?
         .ok_or_else(|| FoundryError::RepairPathConflict("generation directory vanished".into()))?;
@@ -859,7 +917,7 @@ pub(crate) fn stage_generation(
             .collect(),
     };
     let options = IndexOptions {
-        dimensions: DIMENSIONS,
+        dimensions,
         metric: MetricKind::Cos,
         quantization: ScalarKind::F16,
         multi: false,
@@ -878,7 +936,7 @@ pub(crate) fn stage_generation(
         if ordinal % 256 == 0 {
             control.check()?;
         }
-        if vector.len() != DIMENSIONS {
+        if vector.len() != dimensions {
             return Err(FoundryError::Semantic {
                 code: "provider_malformed",
                 message: format!("vector for entry {ordinal} has {} values", vector.len()),
@@ -898,9 +956,9 @@ pub(crate) fn stage_generation(
     let labels_bytes = serde_json::to_vec(&labels).map_err(FoundryError::from)?;
     let manifest = GenerationManifest {
         v: GENERATION_VERSION,
-        function_digest: function_digest.to_owned(),
-        recipe_id: recipe_id.to_owned(),
-        dimensions: DIMENSIONS,
+        function_digest: function_digest.clone(),
+        recipe_id: recipe_id.clone(),
+        dimensions,
         metric: METRIC.into(),
         scalar: SCALAR_KIND.into(),
         count: sorted.len(),
@@ -966,19 +1024,25 @@ mod tests {
     fn a_missing_generation_names_its_reason() {
         let scratch = tempfile::tempdir().unwrap();
         let store = Dir::open_path(scratch.path()).unwrap();
-        let err = validate_generation(&store, "abc", "recipe").unwrap_err();
+        let err = validate_generation(&store, "abc", "recipe", 768).unwrap_err();
         assert!(err.contains("no generation manifest"), "{err}");
     }
 
     #[cfg(feature = "semantic")]
-    #[test]
-    fn a_built_generation_validates_and_a_tampered_one_refuses() {
-        let scratch = tempfile::tempdir().unwrap();
-        let store = Dir::open_path(scratch.path()).unwrap();
-        let entries: Vec<GenerationEntry> = (0..3)
+    fn identity(dimensions: usize) -> Prepared {
+        Prepared {
+            digest: "d1".repeat(32),
+            recipe: "r1".into(),
+            dimensions,
+        }
+    }
+
+    #[cfg(feature = "semantic")]
+    fn entries(dimensions: usize) -> Vec<GenerationEntry> {
+        (0..3)
             .map(|i| GenerationEntry {
                 input_key: format!("{:064x}", i),
-                vector: vec![i as f32 / 10.0; DIMENSIONS],
+                vector: vec![i as f32 / 10.0 + 0.1; dimensions],
                 units: vec![UnitLocation {
                     path: format!("f{i}.txt"),
                     start: 0,
@@ -986,50 +1050,57 @@ mod tests {
                     source_sha256: "ab".repeat(32),
                 }],
             })
-            .collect();
-        let digest = "d1".repeat(32);
+            .collect()
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn a_built_generation_validates_and_a_tampered_one_refuses() {
+        let scratch = tempfile::tempdir().unwrap();
+        let store = Dir::open_path(scratch.path()).unwrap();
+        let identity = identity(768);
+        let digest = &identity.digest;
+        let entries = entries(768);
         let scope = GenerationScope {
             source_revision: 7,
             complete: false,
         };
-        let count = build_generation(
-            &store,
-            &digest,
-            "r1",
-            &entries,
-            scope,
-            &Control::unbounded(),
-        )
-        .unwrap();
+        let count =
+            build_generation(&store, &identity, &entries, scope, &Control::unbounded()).unwrap();
         assert_eq!(count, 3);
-        let ok = validate_generation(&store, &digest, "r1").unwrap();
+        let ok = validate_generation(&store, digest, "r1", 768).unwrap();
         assert_eq!(ok.manifest.count, 3);
+        assert_eq!(ok.manifest.v, GENERATION_VERSION);
+        assert_eq!(ok.manifest.dimensions, 768);
         // The serving mapping and its scope are part of the validated set.
         assert_eq!(ok.manifest.source_revision, 7);
         assert_eq!(ok.manifest.coverage, COVERAGE_PARTIAL);
         assert_eq!(ok.labels.labels[1].units, entries[1].units);
         // Serving restores exactly the bytes that matched the manifest.
         let (_, bytes) =
-            load_generation_with(&store, &digest, "r1", &Control::unbounded()).unwrap();
+            load_generation_with(&store, digest, "r1", 768, &Control::unbounded()).unwrap();
         assert_eq!(crate::digest(&bytes), ok.manifest.index_sha256);
         // A foreign function digest never serves.
-        let err = validate_generation(&store, &"d2".repeat(32), "r1").unwrap_err();
+        let err = validate_generation(&store, &"d2".repeat(32), "r1", 768).unwrap_err();
         assert!(err.contains("no generation manifest"), "{err}");
+        // Another geometry never serves.
+        let err = validate_generation(&store, digest, "r1", 256).unwrap_err();
+        assert!(err.contains("geometry"), "{err}");
         // Tampering with the index file breaks the hash pair.
-        let dir = generation_dir(scratch.path(), &digest);
+        let dir = generation_dir(scratch.path(), digest);
         let original = std::fs::read(dir.join(INDEX_FILE)).unwrap();
         std::fs::write(dir.join(INDEX_FILE), b"tampered").unwrap();
-        let err = validate_generation(&store, &digest, "r1").unwrap_err();
+        let err = validate_generation(&store, digest, "r1", 768).unwrap_err();
         assert!(err.contains("does not match"), "{err}");
         std::fs::write(dir.join(INDEX_FILE), original).unwrap();
-        assert!(validate_generation(&store, &digest, "r1").is_ok());
+        assert!(validate_generation(&store, digest, "r1", 768).is_ok());
         // A recipe change refuses the old generation.
-        let err = validate_generation(&store, &digest, "r2").unwrap_err();
+        let err = validate_generation(&store, digest, "r2", 768).unwrap_err();
         assert!(err.contains("recipe"), "{err}");
         // An expired control interrupts validation instead of hashing on.
         let expired = Control::cancelled();
         assert!(matches!(
-            validate_generation_with(&store, &digest, "r1", &expired),
+            validate_generation_with(&store, digest, "r1", 768, &expired),
             Err(GenerationError::Interrupted(_))
         ));
         // No temporary build directory survives a publication.
@@ -1038,5 +1109,74 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(leftovers.len(), 3, "{leftovers:?}");
+    }
+
+    /// 009 T004: every supported Matryoshka dimension builds, records its
+    /// geometry and validates only under its own dimension; a vector of
+    /// another length is refused before anything is written.
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn each_dimension_records_its_geometry_and_a_wrong_length_is_refused() {
+        for dimensions in [768, 512, 256, 128] {
+            let scratch = tempfile::tempdir().unwrap();
+            let store = Dir::open_path(scratch.path()).unwrap();
+            let identity = identity(dimensions);
+            let scope = GenerationScope {
+                source_revision: 1,
+                complete: true,
+            };
+            let built = build_generation(
+                &store,
+                &identity,
+                &entries(dimensions),
+                scope,
+                &Control::unbounded(),
+            );
+            assert_eq!(built.unwrap(), 3, "{dimensions}");
+            let (generation, bytes) = load_generation_with(
+                &store,
+                &identity.digest,
+                "r1",
+                dimensions,
+                &Control::unbounded(),
+            )
+            .unwrap();
+            assert_eq!(generation.manifest.dimensions, dimensions);
+            let header = usearch::Index::metadata_from_buffer(&bytes).unwrap();
+            assert_eq!(header.dimensions, dimensions as u64);
+            let other = if dimensions == 768 { 512 } else { 768 };
+            assert!(validate_generation(&store, &identity.digest, "r1", other).is_err());
+            let mut wrong = entries(dimensions);
+            wrong[1].vector.pop();
+            let refused = build_generation(&store, &identity, &wrong, scope, &Control::unbounded());
+            assert_eq!(refused.unwrap_err().code(), "provider_malformed");
+        }
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn an_older_generation_format_is_unavailable_by_name() {
+        let scratch = tempfile::tempdir().unwrap();
+        let store = Dir::open_path(scratch.path()).unwrap();
+        let identity = identity(256);
+        let scope = GenerationScope {
+            source_revision: 1,
+            complete: true,
+        };
+        build_generation(
+            &store,
+            &identity,
+            &entries(256),
+            scope,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        let manifest = generation_dir(scratch.path(), &identity.digest).join(MANIFEST_FILE);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+        value["v"] = 2.into();
+        std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+        let err = validate_generation(&store, &identity.digest, "r1", 256).unwrap_err();
+        assert!(err.contains("format v2 is not v3"), "{err}");
     }
 }

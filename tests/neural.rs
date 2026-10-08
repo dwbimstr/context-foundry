@@ -1,19 +1,22 @@
-//! 009 T001 acceptance (SC-001): bounded preparation commits exact-profile
+//! 009 T001/T004 acceptance (SC-001): bounded preparation commits exact-profile
 //! vectors and resumes from cache; source/search repair preserves them.
 //! Every FakeProvider document call is counted, so each FR-002 reuse claim
-//! is an exact call-count assertion. Partition coverage cases live beside
+//! is an exact call-count assertion. Card rendering per language lives beside
 //! the partition implementation; the cases here run the real Rust tokenizer
 //! (a byte-level fixture: one token per UTF-8 byte) through the real
-//! preparation path end to end.
+//! preparation path end to end. Each fixture source is one Markdown section,
+//! so one card, unless a case says otherwise.
 #![cfg(feature = "semantic")]
-use context_foundry::neural::cache::{CacheLookup, DEFAULT_CACHE_CAP_BYTES, PartitionRecord};
+use context_foundry::neural::cache::{
+    CacheLookup, DEFAULT_CACHE_CAP_BYTES, LEGACY_ROW_BYTES, PartitionRecord, row_bytes,
+};
 use context_foundry::neural::fake::{FakeBehavior, FakeFactory};
 use context_foundry::neural::index;
 use context_foundry::neural::partition::{self, TokenCount as _};
 use context_foundry::neural::prepare::{self, PrepareOptions, PrepareReport};
 use context_foundry::neural::profile::SemanticProfile;
 use context_foundry::neural::provider::{
-    self, DOCUMENT_BATCH, DOCUMENT_UNIT_TOKENS, ProviderError, SERVING_LIMIT_TOKENS, TokenizedInput,
+    self, DocumentLimits, ProviderError, SERVING_LIMIT_TOKENS, TokenizedInput,
 };
 use context_foundry::neural::status::SemanticStatus;
 use context_foundry::neural::tokenize::DocumentTokenizer;
@@ -22,9 +25,35 @@ use context_foundry::{Control, Engine, FoundryError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-/// One body of exactly `bytes` ASCII bytes.
+/// One Markdown source of exactly `bytes` bytes (at least 16): one section
+/// whose heading names its length, so every length renders its own card.
 fn body(bytes: usize) -> String {
-    "x".repeat(bytes)
+    let mut text = format!("# h{bytes}\n\n");
+    text.push_str(&"x".repeat(bytes - text.len() - 1));
+    text.push('\n');
+    text
+}
+
+/// The fixture profile's output dimension and the length of one of its
+/// self-describing cache rows.
+const DIMS: usize = testkit::FIXTURE_DIMENSIONS as usize;
+const ROW: u64 = row_bytes(DIMS) as u64;
+
+/// The fixture profile's partition recipe.
+fn recipe() -> String {
+    partition::recipe_id(
+        "fake-bytes 1",
+        context_foundry::neural::profile::DEFAULT_CARD_TOKENS,
+    )
+}
+
+/// A prepared identity for hand-built generations.
+fn prepared(digest: &str) -> index::Prepared {
+    index::Prepared {
+        digest: digest.to_owned(),
+        recipe: "recipe".to_owned(),
+        dimensions: DIMS,
+    }
 }
 
 struct Env {
@@ -174,9 +203,9 @@ fn run_once(store: &Path, profile: &Path, slot: &mut Option<Engine>) -> (u64, Pr
 fn first_preparation_counts_calls_and_commits() {
     // Three one-unit sources: one batch of three inputs in one call.
     let (mut env, report) = first_preparation(&[
-        ("a.txt", &body(100)),
-        ("b.txt", &body(120)),
-        ("c.txt", &body(140)),
+        ("a.md", &body(100)),
+        ("b.md", &body(120)),
+        ("c.md", &body(140)),
     ]);
     assert!(!report.partial, "{report:?}");
     assert_eq!(report.sources, 3);
@@ -195,14 +224,14 @@ fn first_preparation_counts_calls_and_commits() {
     assert_eq!(status.searchable_current_units, 3);
     assert_eq!(status.missing_units, 0);
     assert_eq!(status.cache.entries, 3);
-    assert_eq!(status.cache.bytes, 3 * 8256);
+    assert_eq!(status.cache.bytes, 3 * ROW);
     assert_eq!(status.cache.orphan_entries, 0);
     assert!(status.index.available, "{status:?}");
 }
 
 #[test]
 fn unchanged_restart_makes_zero_document_calls() {
-    let (mut env, first) = first_preparation(&[("a.txt", &body(100)), ("b.txt", &body(120))]);
+    let (mut env, first) = first_preparation(&[("a.md", &body(100)), ("b.md", &body(120))]);
     let before = env.calls();
     let second = env.prepare(60);
     assert_eq!(second.document_calls, 0);
@@ -217,14 +246,14 @@ fn unchanged_restart_makes_zero_document_calls() {
 #[test]
 fn edited_input_reembeds_only_its_units() {
     let (mut env, first) = first_preparation(&[
-        ("a.txt", &body(100)),
-        ("b.txt", &body(120)),
-        ("c.txt", &body(140)),
+        ("a.md", &body(100)),
+        ("b.md", &body(120)),
+        ("c.md", &body(140)),
     ]);
     let before = env.calls();
-    // A one-byte edit inside one whole-file unit.
+    // A one-line edit inside one card.
     env.open()
-        .replace_source("b.txt", &format!("{}\n", body(119)))
+        .replace_source("b.md", &format!("{}\n", body(119)))
         .unwrap();
     env.open_mut().refresh(&Control::unbounded()).unwrap();
     // The old mapping is ineligible immediately, before any preparation.
@@ -247,20 +276,20 @@ fn edited_input_reembeds_only_its_units() {
 }
 
 #[test]
-fn rename_without_title_in_input_is_zero_calls() {
-    // Rendering is exactly `passage: ` plus the unit's source bytes: no path,
-    // no title, no language. A rename alone cannot invalidate a vector.
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100)), ("b.txt", &body(120))]);
+fn a_rename_re_embeds_only_the_renamed_sources_cards() {
+    // A card's address names its path, so a rename is new card text: the
+    // renamed source re-embeds; the untouched source is reused.
+    let (mut env, _) = first_preparation(&[("a.md", &body(100)), ("b.md", &body(120))]);
     let before = env.calls();
     let engine = env.open_mut();
-    engine.delete_source("a.txt").unwrap();
-    engine.replace_source("z.txt", &body(100)).unwrap();
+    engine.delete_source("a.md").unwrap();
+    engine.replace_source("z.md", &body(100)).unwrap();
     engine.refresh(&Control::unbounded()).unwrap();
     let report = env.prepare(60);
-    assert_eq!(report.document_calls, 0, "{report:?}");
-    assert_eq!(env.calls(), before);
-    assert_eq!(report.embedded_units, 0);
-    assert_eq!(report.reused_cached_units, 2);
+    assert_eq!(report.document_calls, 1, "{report:?}");
+    assert_eq!(env.calls(), before + 1);
+    assert_eq!(report.embedded_units, 1);
+    assert_eq!(report.reused_cached_units, 1);
     let status = env.status();
     assert_eq!(status.eligible_units, 2);
     assert_eq!(status.cached_current_units, 2);
@@ -268,16 +297,16 @@ fn rename_without_title_in_input_is_zero_calls() {
 
 #[test]
 fn retained_cache_revert_and_orphans_are_counted() {
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     let original = body(100);
     let edited = body(101);
-    env.open().replace_source("a.txt", &edited).unwrap();
+    env.open().replace_source("a.md", &edited).unwrap();
     env.open_mut().refresh(&Control::unbounded()).unwrap();
     let report = env.prepare(60);
     assert_eq!(report.document_calls, 1);
     assert_eq!(env.status().cache.entries, 2);
     // Reverting reuses the retained vector: zero calls.
-    env.open().replace_source("a.txt", &original).unwrap();
+    env.open().replace_source("a.md", &original).unwrap();
     env.open_mut().refresh(&Control::unbounded()).unwrap();
     let report = env.prepare(60);
     assert_eq!(report.document_calls, 0);
@@ -296,12 +325,12 @@ fn different_document_function_reembeds_and_retains_both() {
     std::fs::create_dir(&ws).unwrap();
     let store = dir.path().join("store");
     let mut engine = Engine::initialize(&store, &ws).unwrap();
-    engine.replace_source("a.txt", &body(100)).unwrap();
+    engine.replace_source("a.md", &body(100)).unwrap();
     engine.refresh(&Control::unbounded()).unwrap();
     let profile_a = testkit::write_semantic_profile(dir.path(), "fake-a", |_| {});
     let profile_b = testkit::write_semantic_profile(dir.path(), "fake-b", |descriptor| {
-        // A different quantization is a different document function.
-        descriptor.quantization = "affine bits=8".into();
+        // Another GGUF build is a different document function.
+        descriptor.model.push_str(" Q8_0");
     });
     let digest_a = SemanticProfile::load(&profile_a)
         .unwrap()
@@ -337,7 +366,7 @@ fn display_only_change_is_zero_calls() {
     std::fs::create_dir(&ws).unwrap();
     let store = dir.path().join("store");
     let mut engine = Engine::initialize(&store, &ws).unwrap();
-    engine.replace_source("a.txt", &body(100)).unwrap();
+    engine.replace_source("a.md", &body(100)).unwrap();
     engine.refresh(&Control::unbounded()).unwrap();
     // Same descriptor (identical document function), different display name.
     let profile_a = testkit::write_semantic_profile(dir.path(), "alpha", |_| {});
@@ -365,7 +394,7 @@ fn interrupt_before_and_after_cache_commit() {
     use context_foundry::fault::{self, Action};
     // Nine one-unit sources force two batches (8 + 1).
     let sources: Vec<(String, String)> = (0..9)
-        .map(|i| (format!("f{i}.txt"), body(100 + i)))
+        .map(|i| (format!("f{i}.md"), body(100 + i)))
         .collect();
     let borrowed: Vec<(&str, &str)> = sources
         .iter()
@@ -389,7 +418,7 @@ fn interrupt_before_and_after_cache_commit() {
         state.committed_units, 8,
         "progress is durable with the batch"
     );
-    assert_eq!(state.cache_bytes, 8 * 8256);
+    assert_eq!(state.cache_bytes, 8 * ROW);
     let status = env.status();
     assert_eq!(status.state, "paused");
     assert_eq!(status.cached_current_units, 8);
@@ -404,7 +433,7 @@ fn interrupt_before_and_after_cache_commit() {
     // After commit: the batch IS committed; a resume embeds nothing.
     for i in 0..9 {
         env.open()
-            .replace_source(&format!("g{i}.txt"), &body(300 + i))
+            .replace_source(&format!("g{i}.md"), &body(300 + i))
             .unwrap();
     }
     env.open_mut().refresh(&Control::unbounded()).unwrap();
@@ -428,15 +457,15 @@ fn interrupt_before_and_after_cache_commit() {
         state.committed_units, 18,
         "both fault points keep durable progress"
     );
-    assert_eq!(state.cache_bytes, 18 * 8256);
+    assert_eq!(state.cache_bytes, 18 * ROW);
 }
 
 #[test]
 fn repair_index_rebuilds_the_semantic_generation_with_zero_calls() {
     let (mut env, first) = first_preparation(&[
-        ("a.txt", &body(100)),
-        ("b.txt", &body(120)),
-        ("c.txt", &body(140)),
+        ("a.md", &body(100)),
+        ("b.md", &body(120)),
+        ("c.md", &body(140)),
     ]);
     let before = env.calls();
     // Corrupt the published index file; validation must refuse it.
@@ -464,7 +493,7 @@ fn repair_index_rebuilds_the_semantic_generation_with_zero_calls() {
 
 #[test]
 fn f16_rebuild_from_f32_cache_is_zero_calls() {
-    let (mut env, first) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, first) = first_preparation(&[("a.md", &body(100))]);
     let before = env.calls();
     // Remove the whole generation directory: preparation rebuilds it from
     // cache without any document call.
@@ -486,8 +515,8 @@ fn short_and_nonfinite_vectors_preserve_valid_data() {
         std::fs::create_dir(&ws).unwrap();
         let store = dir.path().join("store");
         let mut engine = Engine::initialize(&store, &ws).unwrap();
-        engine.replace_source("a.txt", &body(100)).unwrap();
-        engine.replace_source("b.txt", &body(120)).unwrap();
+        engine.replace_source("a.md", &body(100)).unwrap();
+        engine.replace_source("b.md", &body(120)).unwrap();
         engine.refresh(&Control::unbounded()).unwrap();
         let profile = testkit::write_semantic_profile(dir.path(), "fake-a", |_| {});
         let loaded = SemanticProfile::load(&profile).unwrap();
@@ -516,7 +545,7 @@ fn short_and_nonfinite_vectors_preserve_valid_data() {
         let (entries, _) = engine.semantic_cache_totals().unwrap();
         assert_eq!(entries, 0, "the malformed batch is not committed");
         assert!(
-            engine.source("a.txt").unwrap().is_some(),
+            engine.source("a.md").unwrap().is_some(),
             "source access stays available"
         );
         drop(engine);
@@ -525,7 +554,7 @@ fn short_and_nonfinite_vectors_preserve_valid_data() {
 
 #[test]
 fn wrong_profile_provider_is_refused_before_any_cache_write() {
-    let mut env = Env::new(&[("a.txt", &body(100))]);
+    let mut env = Env::new(&[("a.md", &body(100))]);
     let loaded = SemanticProfile::load(&env.profile).unwrap();
     env.factory = FakeFactory::new(loaded.descriptor.clone(), FakeBehavior::WrongDescriptor);
     let error = env.prepare_err(60);
@@ -540,14 +569,14 @@ fn disk_cap_stops_with_cache_full_and_preserves_valid_data() {
     // Nine one-unit sources: the first batch of eight fits a cap of eight
     // entries; the ninth crosses it and the run stops with `cache_full`.
     let sources: Vec<(String, String)> = (0..9)
-        .map(|i| (format!("f{i}.txt"), body(100 + i)))
+        .map(|i| (format!("f{i}.md"), body(100 + i)))
         .collect();
     let borrowed: Vec<(&str, &str)> = sources
         .iter()
         .map(|(path, content)| (path.as_str(), content.as_str()))
         .collect();
     let mut env = Env::new(&borrowed);
-    let cap = 8 * 8256;
+    let cap = 8 * ROW;
     let report = env.prepare_with(60, cap);
     assert!(report.partial, "{report:?}");
     assert_eq!(report.reason_code, Some("cache_full"));
@@ -565,7 +594,7 @@ fn disk_cap_stops_with_cache_full_and_preserves_valid_data() {
     assert_eq!(status.missing_units, 1);
     assert_eq!(status.cache.cap_bytes, DEFAULT_CACHE_CAP_BYTES);
     // The ninth source itself is untouched.
-    assert!(env.open().source("f8.txt").unwrap().is_some());
+    assert!(env.open().source("f8.md").unwrap().is_some());
 }
 
 #[test]
@@ -575,11 +604,11 @@ fn profile_change_across_restart_refuses_old_generation_and_restores() {
     std::fs::create_dir(&ws).unwrap();
     let store = dir.path().join("store");
     let mut engine = Engine::initialize(&store, &ws).unwrap();
-    engine.replace_source("a.txt", &body(100)).unwrap();
+    engine.replace_source("a.md", &body(100)).unwrap();
     engine.refresh(&Control::unbounded()).unwrap();
     let profile_a = testkit::write_semantic_profile(dir.path(), "a", |_| {});
     let profile_b = testkit::write_semantic_profile(dir.path(), "b", |descriptor| {
-        descriptor.quantization = "affine bits=8".into();
+        descriptor.model.push_str(" Q8_0");
     });
     let digest_a = SemanticProfile::load(&profile_a)
         .unwrap()
@@ -589,21 +618,21 @@ fn profile_change_across_restart_refuses_old_generation_and_restores() {
         .unwrap()
         .descriptor
         .digest();
-    let recipe = partition::recipe_id("fake-bytes 1");
+    let recipe = recipe();
     let anchor = context_foundry::neural::anchor::Dir::open_path(&store).unwrap();
     let mut slot = Some(engine);
     let (calls_a, report_a) = run_once(&store, &profile_a, &mut slot);
     assert_eq!(calls_a, 1);
-    assert!(index::validate_generation(&anchor, &digest_a, &recipe).is_ok());
+    assert!(index::validate_generation(&anchor, &digest_a, &recipe, DIMS).is_ok());
     // Profile change happens only across restart (a new run): the new
     // profile builds its own generation, and serving validation binds digest
     // and recipe by content, never by directory name.
     let (calls_b, report_b) = run_once(&store, &profile_b, &mut slot);
     assert_eq!(calls_b, 1);
     assert_eq!(report_b.function_digest, digest_b);
-    assert!(index::validate_generation(&anchor, &digest_b, &recipe).is_ok());
+    assert!(index::validate_generation(&anchor, &digest_b, &recipe, DIMS).is_ok());
     assert!(
-        index::validate_generation(&anchor, &digest_a, &recipe).is_ok(),
+        index::validate_generation(&anchor, &digest_a, &recipe, DIMS).is_ok(),
         "the prior generation is retained on disk"
     );
     // Both generation directories exist; the cache holds both functions.
@@ -635,7 +664,7 @@ fn profile_change_across_restart_refuses_old_generation_and_restores() {
 
 #[test]
 fn purge_beside_serving_is_busy_then_offline_purge_loses_nothing() {
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100)), ("b.txt", &body(120))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100)), ("b.md", &body(120))]);
     env.close();
     let knowledge_before = testkit::knowledge(&testkit::snapshot(&env.store));
     // A serving owner holds the store: purge cannot even open it.
@@ -648,7 +677,7 @@ fn purge_beside_serving_is_busy_then_offline_purge_loses_nothing() {
     let report = engine.semantic_purge().unwrap();
     assert_eq!(report.removed_partitions, 2);
     assert_eq!(report.removed_cache_entries, 2);
-    assert_eq!(report.removed_cache_bytes, 2 * 8256);
+    assert_eq!(report.removed_cache_bytes, 2 * ROW);
     assert_eq!(report.removed_generation_dirs, 1);
     drop(engine);
     // Sources, graph, memory and feedback survive; semantic tables are
@@ -676,7 +705,7 @@ fn purge_beside_serving_is_busy_then_offline_purge_loses_nothing() {
 
 #[test]
 fn source_reads_stay_usable_after_malformed_cache_and_state() {
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     env.close();
     // A malformed cache row disables that semantic data BY NAME; source
     // reads stay available and status counts the corruption honestly.
@@ -686,7 +715,7 @@ fn source_reads_stay_usable_after_malformed_cache_and_state() {
         .unwrap();
     testkit::tamper_semantic_cache_row(&env.store, &key, b"garbage");
     let engine = Engine::open_existing(&env.store).unwrap();
-    let source = engine.source("a.txt").unwrap().expect("source readable");
+    let source = engine.source("a.md").unwrap().expect("source readable");
     assert_eq!(source.bytes, 100);
     let status = engine.semantic_status(&Control::unbounded()).unwrap();
     assert_eq!(status.cache.corrupt_entries, 1);
@@ -705,7 +734,7 @@ fn source_reads_stay_usable_after_malformed_cache_and_state() {
     env.close();
     testkit::tamper_semantic_state(&env.store, "{not json");
     let engine = Engine::open_existing(&env.store).unwrap();
-    assert!(engine.source("a.txt").unwrap().is_some());
+    assert!(engine.source("a.md").unwrap().is_some());
     assert!(
         engine.semantic_status(&Control::unbounded()).is_err(),
         "the state row corruption is named"
@@ -719,7 +748,7 @@ fn source_reads_stay_usable_after_malformed_cache_and_state() {
 
 #[test]
 fn cold_status_reports_unknown_totals_and_never_tokenizes() {
-    let mut env = Env::new(&[("a.txt", &body(100)), ("b.txt", &body(120))]);
+    let mut env = Env::new(&[("a.md", &body(100)), ("b.md", &body(120))]);
     let status = env.status();
     assert_eq!(status.sources, 2);
     assert_eq!(status.unpartitioned_sources, 2);
@@ -775,27 +804,27 @@ fn empty_file_is_a_completed_zero_unit_partition_not_missing_metadata() {
 #[test]
 fn one_source_change_rejects_its_mapping_without_retokenizing_others() {
     let (mut env, _) = first_preparation(&[
-        ("a.txt", &body(100)),
-        ("b.txt", &body(120)),
-        ("c.txt", &body(140)),
+        ("a.md", &body(100)),
+        ("b.md", &body(120)),
+        ("c.md", &body(140)),
     ]);
     let a_before = env
         .partition_rows()
         .into_iter()
-        .find(|(path, _)| path == "a.txt")
+        .find(|(path, _)| path == "a.md")
         .unwrap();
     env.open()
-        .replace_source("b.txt", &format!("{}\n", body(119)))
+        .replace_source("b.md", &format!("{}\n", body(119)))
         .unwrap();
     env.open_mut().refresh(&Control::unbounded()).unwrap();
     let report = env.prepare(60);
     assert_eq!(report.reused_partitions, 2);
     assert_eq!(report.partitioned_sources, 1);
-    // a.txt's partition row is untouched, byte for byte.
+    // a.md's partition row is untouched, byte for byte.
     let a_after = env
         .partition_rows()
         .into_iter()
-        .find(|(path, _)| path == "a.txt")
+        .find(|(path, _)| path == "a.md")
         .unwrap();
     assert_eq!(a_before, a_after);
     assert_eq!(report.document_calls, 1);
@@ -804,7 +833,7 @@ fn one_source_change_rejects_its_mapping_without_retokenizing_others() {
 
 #[test]
 fn budget_exhaustion_names_itself_and_commits_nothing() {
-    let mut env = Env::new(&[("a.txt", &body(100)), ("b.txt", &body(120))]);
+    let mut env = Env::new(&[("a.md", &body(100)), ("b.md", &body(120))]);
     // A zero budget expires during profile verification: no partitioning,
     // no provider, no cache writes; state paused with the named reason.
     let report = env.prepare(0);
@@ -817,13 +846,13 @@ fn budget_exhaustion_names_itself_and_commits_nothing() {
     assert_eq!(status.state, "paused");
     assert_eq!(status.unpartitioned_sources, 2);
     assert_eq!(status.last_error.as_ref().unwrap().code, "budget_exhausted");
-    assert!(env.open().source("a.txt").unwrap().is_some());
+    assert!(env.open().source("a.md").unwrap().is_some());
 }
 
 #[test]
 fn cancelled_partition_run_leaves_partial_census() {
     use context_foundry::fault::{self, Action};
-    let mut env = Env::new(&[("a.txt", &body(100)), ("b.txt", &body(120))]);
+    let mut env = Env::new(&[("a.md", &body(100)), ("b.md", &body(120))]);
     fault::arm(
         prepare::fault_names::PARTITION_AFTER_COMMIT,
         0,
@@ -848,16 +877,16 @@ fn cancelled_partition_run_leaves_partial_census() {
 }
 
 #[test]
-fn batches_are_bounded_and_units_share_vectors_across_files() {
-    // Twenty one-unit sources: batches of 8, 8 and 4; two files share one
-    // body, so identical rendered inputs share a vector.
-    let shared = body(500);
+fn batches_are_bounded_and_identical_cards_share_one_vector() {
+    // Nineteen sources, twenty cards: batches of 8, 8 and 3 inputs. The two
+    // sections of `dup.md` render the same card (one path, kind, name and
+    // lines), so one vector serves both.
+    let shared = "# Same\n\nshared text\n";
     let mut sources: Vec<(String, String)> = Vec::new();
     for i in 0..18 {
-        sources.push((format!("f{i:02}.txt"), body(100 + i)));
+        sources.push((format!("f{i:02}.md"), body(100 + i)));
     }
-    sources.push(("dup1.txt".into(), shared.clone()));
-    sources.push(("dup2.txt".into(), shared));
+    sources.push(("dup.md".into(), format!("{shared}{shared}")));
     let borrowed: Vec<(&str, &str)> = sources
         .iter()
         .map(|(path, content)| (path.as_str(), content.as_str()))
@@ -865,7 +894,10 @@ fn batches_are_bounded_and_units_share_vectors_across_files() {
     let mut env = Env::new(&borrowed);
     let report = env.prepare(60);
     assert_eq!(report.eligible_units, 20);
-    assert_eq!(report.embedded_units, 19, "the duplicate shares one vector");
+    assert_eq!(
+        report.embedded_units, 19,
+        "the duplicate card shares one vector"
+    );
     assert_eq!(report.document_calls, 3, "8 + 8 + 3");
     env.factory.handle().assert_batches_bounded();
     let status = env.status();
@@ -882,8 +914,8 @@ fn batches_are_bounded_and_units_share_vectors_across_files() {
         status.searchable_current_units, 20,
         "duplicate units are searchable too"
     );
-    // Storage order never becomes unit identity: the two duplicate units
-    // carry the same input key in their partition rows.
+    // Storage order never becomes unit identity: the two duplicate cards
+    // carry the same input key in their partition row.
     let mut keys = Vec::new();
     for (_, raw) in env.partition_rows() {
         let record: PartitionRecord = serde_json::from_str(&raw).unwrap();
@@ -897,52 +929,45 @@ fn batches_are_bounded_and_units_share_vectors_across_files() {
 }
 
 #[test]
-fn exact_input_keys_include_the_prefix_and_nothing_else() {
-    // The stored input key is exactly the function digest and `passage: ` +
-    // the unit's source bytes — no path, title or language, one prefix.
-    let (mut env, _) = first_preparation(&[("a.txt", &body(1015))]);
+fn exact_input_keys_are_the_rendered_card_and_nothing_else() {
+    // The stored input key is exactly the function digest and the card
+    // rendered with the document template: the address, then the lines that
+    // fit the card limit (the heading; the long body line does not).
+    let (mut env, _) = first_preparation(&[("a.md", &body(1015))]);
     let digest = env.digest();
     let engine = env.open();
-    let body_text = body(1015);
-    let meta = engine.source("a.txt").unwrap().unwrap();
-    let stored = engine.semantic_partition("a.txt").unwrap().unwrap();
+    let meta = engine.source("a.md").unwrap().unwrap();
+    let stored = engine.semantic_partition("a.md").unwrap().unwrap();
     assert_eq!(stored.units.len(), 1);
     let unit = &stored.units[0];
-    assert_eq!(unit.start, 0);
-    assert_eq!(unit.end, meta.bytes);
-    let expected = provider::input_key(&digest, &provider::render_document(&body_text));
-    assert_eq!(unit.input_key, expected);
-    assert_eq!(
-        provider::render_document(&body_text)
-            .matches("passage: ")
-            .count(),
-        1,
-        "exactly one prefix, applied once"
-    );
+    assert_eq!((unit.start, unit.end), (0, meta.bytes));
+    let card = provider::render("doc: {text}", "a.md section h1015\n# h1015");
+    assert_eq!(unit.input_key, provider::input_key(&digest, &card));
 }
 
 #[test]
-fn unit_limit_boundaries_with_the_real_tokenizer() {
-    // The fixture tokenizer counts one token per UTF-8 byte: 1015 body bytes
-    // render to exactly 1024 model tokens (one unit); 1016 must split into
-    // two units, never truncate.
-    let (mut env, report) = first_preparation(&[("at.txt", &body(1015))]);
-    assert_eq!(report.eligible_units, 1);
-    let record = env.open().semantic_partition("at.txt").unwrap().unwrap();
-    assert_eq!(record.units.len(), 1);
-
-    let (mut env, report) = first_preparation(&[("over.txt", &body(1016))]);
-    assert_eq!(report.eligible_units, 2);
-    assert_eq!(report.embedded_units, 2);
-    let record = env.open().semantic_partition("over.txt").unwrap().unwrap();
-    assert_eq!(record.units.len(), 2);
-    // Complete, nonoverlapping coverage with the exact expected spans.
-    let spans: Vec<(usize, usize)> = record
-        .units
-        .iter()
-        .map(|unit| (unit.start, unit.end))
-        .collect();
-    assert_eq!(spans, [(0, 1015), (1015, 1016)]);
+fn the_card_limit_keeps_whole_lines_with_the_real_tokenizer() {
+    // One token per UTF-8 byte and a 128-token card limit: `doc: ` (5), the
+    // address `l.md section L` (14) and `\n# L` (4) leave 105 tokens for `\n`
+    // and the body line. A 104-byte line fits exactly; a 105-byte line is
+    // left out whole, never truncated.
+    for (line, kept) in [(104, true), (105, false)] {
+        let text = format!("# L\n{}\n", "y".repeat(line));
+        let (mut env, report) = first_preparation(&[("l.md", &text)]);
+        assert_eq!(report.eligible_units, 1, "{line}");
+        let digest = env.digest();
+        let record = env.open().semantic_partition("l.md").unwrap().unwrap();
+        let card = if kept {
+            format!("l.md section L\n# L\n{}", "y".repeat(line))
+        } else {
+            "l.md section L\n# L".to_owned()
+        };
+        assert_eq!(
+            record.units[0].input_key,
+            provider::input_key(&digest, &provider::render("doc: {text}", &card)),
+            "{line}"
+        );
+    }
 }
 
 #[test]
@@ -959,18 +984,23 @@ fn serving_limit_is_checked_before_any_model_work() {
         provider::check_query(&over).unwrap_err().code(),
         "input_too_large"
     );
-    // Document batches: at most 8 inputs of at most 1024 ids.
-    let batch: Vec<TokenizedInput> = (0..DOCUMENT_BATCH)
+    // Document calls: at most the profile's batch of cards of at most its
+    // card limit each.
+    let limits = DocumentLimits {
+        inputs: context_foundry::neural::profile::DEFAULT_BATCH as usize,
+        tokens: context_foundry::neural::profile::DEFAULT_CARD_TOKENS as usize,
+    };
+    let batch: Vec<TokenizedInput> = (0..limits.inputs)
         .map(|_| TokenizedInput {
-            ids: vec![7; DOCUMENT_UNIT_TOKENS],
+            ids: vec![7; limits.tokens],
         })
         .collect();
-    assert!(provider::check_document_batch(&batch).is_ok());
-    let too_many: Vec<TokenizedInput> = (0..=DOCUMENT_BATCH)
+    assert!(provider::check_document_batch(&batch, limits).is_ok());
+    let too_many: Vec<TokenizedInput> = (0..=limits.inputs)
         .map(|_| TokenizedInput { ids: vec![7; 8] })
         .collect();
     assert_eq!(
-        provider::check_document_batch(&too_many)
+        provider::check_document_batch(&too_many, limits)
             .unwrap_err()
             .code(),
         "input_too_large"
@@ -978,7 +1008,21 @@ fn serving_limit_is_checked_before_any_model_work() {
     let mut too_long = batch.clone();
     too_long[0].ids.push(7);
     assert_eq!(
-        provider::check_document_batch(&too_long)
+        provider::check_document_batch(&too_long, limits)
+            .unwrap_err()
+            .code(),
+        "input_too_large"
+    );
+    // The protocol's own caps: 32 sequences and one 2048-token context.
+    let protocol = DocumentLimits::PROTOCOL;
+    let full: Vec<TokenizedInput> = (0..32)
+        .map(|_| TokenizedInput { ids: vec![7; 64] })
+        .collect();
+    assert!(provider::check_document_batch(&full, protocol).is_ok());
+    let mut over = full.clone();
+    over[0].ids.push(7);
+    assert_eq!(
+        provider::check_document_batch(&over, protocol)
             .unwrap_err()
             .code(),
         "input_too_large"
@@ -995,11 +1039,12 @@ fn markdown_fences_and_crlf_partition_exactly() {
         report.eligible_units, 1,
         "the fence does not split the section"
     );
-    let (mut env, report) = first_preparation(&[("crlf.txt", "alpha\r\nbeta\r\n\r\ngamma\r\n")]);
+    let crlf = "# alpha\r\nbeta\r\n\r\ngamma\r\n";
+    let (mut env, report) = first_preparation(&[("crlf.md", crlf)]);
     assert_eq!(report.eligible_units, 1);
-    let record = env.open().semantic_partition("crlf.txt").unwrap().unwrap();
+    let record = env.open().semantic_partition("crlf.md").unwrap().unwrap();
     assert_eq!(record.units.len(), 1);
-    assert_eq!(record.units[0].end, "alpha\r\nbeta\r\n\r\ngamma\r\n".len());
+    assert_eq!(record.units[0].end, crlf.len());
 }
 
 #[test]
@@ -1081,7 +1126,7 @@ fn schema_6_upgrade_from_v5_preserves_every_table_and_the_vector_cache() {
     // A populated schema-5 store: a committed semantic preparation (cache,
     // partitions, state), memory and legacy feedback; then the 013 learning
     // tables are removed and the marker says 5.
-    let (mut env, report) = first_preparation(&[("a.txt", &body(100)), ("b.txt", &body(200))]);
+    let (mut env, report) = first_preparation(&[("a.md", &body(100)), ("b.md", &body(200))]);
     assert!(!report.partial);
     {
         let engine = env.open();
@@ -1150,19 +1195,19 @@ fn schema_6_upgrade_from_v5_preserves_every_table_and_the_vector_cache() {
         assert!(after[table].is_empty(), "{table} starts empty");
     }
     // The upgraded store opens and serves source reads.
-    assert!(env.open().source("a.txt").unwrap().is_some());
+    assert!(env.open().source("a.md").unwrap().is_some());
 }
 
 #[test]
 fn missing_artifacts_fail_by_name_without_downloads() {
     // A profile whose model directory lost a file: a named failure, no
     // download attempt, no cache reset, no state damage.
-    let mut env = Env::new(&[("a.txt", &body(100))]);
+    let mut env = Env::new(&[("a.md", &body(100))]);
     let report = env.prepare(60);
     assert!(!report.partial);
     env.close();
     let model_dir = SemanticProfile::load(&env.profile).unwrap().model_dir;
-    std::fs::remove_file(model_dir.join("model.safetensors")).unwrap();
+    std::fs::remove_file(model_dir.join("model.gguf")).unwrap();
     let error = env.prepare_err(60);
     assert_eq!(error.code(), "profile_invalid", "{error}");
     // The committed cache survives the refused run untouched.
@@ -1180,7 +1225,7 @@ fn byte_tokenizer_fixture_counts_one_token_per_byte() {
     profile.verify_artifacts().unwrap();
     let tokenizer = DocumentTokenizer::load(&profile).unwrap();
     for probe in [
-        "passage: x",
+        "doc: x",
         "alpha\r\nbeta\r\n",
         "gamma γamma 🦀 delta\n",
         &"y".repeat(4096),
@@ -1196,7 +1241,7 @@ fn byte_tokenizer_fixture_counts_one_token_per_byte() {
 /// Nine one-unit sources: a full batch of eight plus a batch of one.
 fn nine_sources() -> Vec<(String, String)> {
     (0..9)
-        .map(|i| (format!("f{i}.txt"), body(100 + i)))
+        .map(|i| (format!("f{i}.md"), body(100 + i)))
         .collect()
 }
 
@@ -1253,7 +1298,7 @@ fn no_inference_is_admitted_when_the_budget_is_below_the_reserve() {
     assert_eq!(report.document_calls, 0);
     assert_eq!(env.calls(), 0);
     assert_eq!(env.open().semantic_cache_totals().unwrap().0, 0);
-    assert!(env.open().source("f0.txt").unwrap().is_some());
+    assert!(env.open().source("f0.md").unwrap().is_some());
 }
 
 #[test]
@@ -1276,7 +1321,7 @@ fn a_provider_timeout_stops_preparation_with_committed_counts_intact() {
         "committed coverage is searchable"
     );
     // Source access is untouched; an explicit resume embeds only the rest.
-    assert!(env.open().source("f8.txt").unwrap().is_some());
+    assert!(env.open().source("f8.md").unwrap().is_some());
     env.factory = FakeFactory::new(
         SemanticProfile::load(&env.profile)
             .unwrap()
@@ -1315,9 +1360,9 @@ fn assert_outside_untouched(outside: &tempfile::TempDir) {
 fn one_entry() -> Vec<index::GenerationEntry> {
     vec![index::GenerationEntry {
         input_key: "00".repeat(32),
-        vector: vec![0.5f32; provider::DIMENSIONS],
+        vector: vec![0.5f32; DIMS],
         units: vec![index::UnitLocation {
-            path: "a.txt".into(),
+            path: "a.md".into(),
             start: 0,
             end: 1,
             source_sha256: "00".repeat(32),
@@ -1335,7 +1380,7 @@ fn partial_scope() -> index::GenerationScope {
 
 #[test]
 fn purge_and_publication_refuse_a_symlinked_semantic_root() {
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     env.close();
     let outside = outside_dir();
     let root = env.store.join("semantic");
@@ -1356,8 +1401,7 @@ fn purge_and_publication_refuse_a_symlinked_semantic_root() {
     );
     let err = index::build_generation(
         &context_foundry::neural::anchor::Dir::open_path(&env.store).unwrap(),
-        &env.digest(),
-        "recipe",
+        &prepared(&env.digest()),
         &one_entry(),
         partial_scope(),
         &Control::unbounded(),
@@ -1365,12 +1409,13 @@ fn purge_and_publication_refuse_a_symlinked_semantic_root() {
     .unwrap_err();
     assert_eq!(err.code(), "repair_path_conflict");
     assert_outside_untouched(&outside);
-    let recipe = partition::recipe_id("fake-bytes 1");
+    let recipe = recipe();
     assert!(
         index::validate_generation(
             &context_foundry::neural::anchor::Dir::open_path(&env.store).unwrap(),
             &env.digest(),
-            &recipe
+            &recipe,
+            DIMS
         )
         .is_err()
     );
@@ -1378,7 +1423,7 @@ fn purge_and_publication_refuse_a_symlinked_semantic_root() {
 
 #[test]
 fn purge_and_publication_refuse_a_symlinked_generation_directory() {
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     env.close();
     let outside = outside_dir();
     let generation = index::generation_dir(&env.store, &env.digest());
@@ -1395,8 +1440,7 @@ fn purge_and_publication_refuse_a_symlinked_generation_directory() {
     assert_eq!(testkit::snapshot(&env.store), before);
     let err = index::build_generation(
         &context_foundry::neural::anchor::Dir::open_path(&env.store).unwrap(),
-        &env.digest(),
-        "recipe",
+        &prepared(&env.digest()),
         &one_entry(),
         partial_scope(),
         &Control::unbounded(),
@@ -1404,12 +1448,13 @@ fn purge_and_publication_refuse_a_symlinked_generation_directory() {
     .unwrap_err();
     assert_eq!(err.code(), "repair_path_conflict");
     assert_outside_untouched(&outside);
-    let recipe = partition::recipe_id("fake-bytes 1");
+    let recipe = recipe();
     assert!(
         index::validate_generation(
             &context_foundry::neural::anchor::Dir::open_path(&env.store).unwrap(),
             &env.digest(),
-            &recipe
+            &recipe,
+            DIMS
         )
         .is_err()
     );
@@ -1487,7 +1532,7 @@ fn the_run_budget_reaches_worker_acquisition_and_names_budget_exhausted() {
     assert_eq!(status.state, "paused");
     assert_eq!(status.last_error.as_ref().unwrap().code, "budget_exhausted");
     assert_eq!(env.open().semantic_cache_totals().unwrap().0, 0);
-    assert!(env.open().source("f0.txt").unwrap().is_some());
+    assert!(env.open().source("f0.md").unwrap().is_some());
 }
 
 #[test]
@@ -1497,7 +1542,7 @@ fn the_final_short_batch_after_expiry_reports_budget_exhausted() {
     // Publication shares the budget, so it cannot run on an expired control:
     // the vectors stay cached, the index is NOT published, and the reason is
     // recorded in the report AND the state.
-    let sources = vec![("only.txt".to_owned(), body(100))];
+    let sources = vec![("only.md".to_owned(), body(100))];
     let mut env = env_with(&sources, FakeBehavior::SlowMs(7500));
     let report = env.prepare(7);
     assert!(report.partial, "{report:?}");
@@ -1532,23 +1577,24 @@ fn the_final_short_batch_after_expiry_reports_budget_exhausted() {
 }
 
 #[test]
-fn mapping_acceptance_validates_the_current_body() {
+fn mapping_acceptance_validates_the_cards_against_the_current_body() {
     use context_foundry::neural::cache::PartitionUnit;
     let a_text = body(100);
-    let u_text = "é".repeat(10);
-    let (mut env, _) = first_preparation(&[("a.txt", &a_text), ("u.txt", &u_text), ("e.txt", "")]);
+    let u_text = format!("# é\n{}\n", "é".repeat(10));
+    let (mut env, _) = first_preparation(&[("a.md", &a_text), ("u.md", &u_text), ("e.md", "")]);
     let digest = env.digest();
-    let recipe = partition::recipe_id("fake-bytes 1");
-    let key_of = |text: &str| provider::input_key(&digest, &provider::render_document(text));
-    // Units whose keys are the TRUE identity of their range of `text`, so a
-    // structural refusal below is about structure, not about the key.
-    let units_of = |text: &str, ranges: &[(usize, usize)]| -> Vec<PartitionUnit> {
+    let recipe = recipe();
+    // Acceptance checks the cards' structure against the current body; a
+    // card's key binds its rendered input, which the partition step computed
+    // (acceptance does not re-render it).
+    let key = provider::input_key(&digest, "doc: a card");
+    let units = |ranges: &[(usize, usize)]| -> Vec<PartitionUnit> {
         ranges
             .iter()
             .map(|&(start, end)| PartitionUnit {
                 start,
                 end,
-                input_key: key_of(text.get(start..end).unwrap_or("?")),
+                input_key: key.clone(),
             })
             .collect()
     };
@@ -1566,37 +1612,27 @@ fn mapping_acceptance_validates_the_current_body() {
             .unwrap_err();
         assert_eq!(err.code(), "partition_invalid", "{why}: {err}");
     };
-    refused("a.txt", units_of(&a_text, &[(0, 101)]), "past the end");
-    refused("a.txt", units_of(&a_text, &[(0, 50), (60, 100)]), "a gap");
+    refused("a.md", units(&[(0, 101)]), "past the end");
+    refused("a.md", units(&[(10, 10)]), "an empty range");
+    refused("a.md", units(&[(50, 100), (0, 100)]), "out of order");
+    refused("a.md", units(&[(0, 100), (0, 100)]), "a repeated range");
     refused(
-        "a.txt",
-        units_of(&a_text, &[(0, 60), (50, 100)]),
-        "an overlap",
+        "a.md",
+        units(&[(0, 50), (0, 100)]),
+        "an enclosing range after its child",
     );
-    refused("a.txt", units_of(&a_text, &[(0, 99)]), "a short cover");
-    refused("a.txt", Vec::new(), "empty for a nonempty source");
-    refused(
-        "u.txt",
-        units_of(&u_text, &[(0, 1), (1, 20)]),
-        "inside a character",
-    );
-    refused(
-        "e.txt",
-        units_of("", &[(0, 1)]),
-        "units for an empty source",
-    );
+    refused("u.md", units(&[(0, 3)]), "inside a character");
+    refused("e.md", units(&[(0, 1)]), "a card beyond an empty source");
     // A mapping naming a stale source version is refused.
-    let stale = record("0".repeat(64), units_of(&a_text, &[(0, 100)]));
+    let stale = record("0".repeat(64), units(&[(0, 100)]));
     assert_eq!(
         engine
-            .semantic_record_partition("a.txt", &stale)
+            .semantic_record_partition("a.md", &stale)
             .unwrap_err()
             .code(),
         "partition_invalid"
     );
-    // A malformed key, an ARBITRARY well-shaped key, and ANOTHER source's
-    // valid key are all refused: a key must be the identity of its exact
-    // rendered bytes.
+    // A key that is not lowercase SHA-256 hex is refused.
     let with_key = |key: &str| {
         vec![PartitionUnit {
             start: 0,
@@ -1604,29 +1640,31 @@ fn mapping_acceptance_validates_the_current_body() {
             input_key: key.to_owned(),
         }]
     };
-    refused("a.txt", with_key("short"), "a malformed key");
-    refused("a.txt", with_key(&"ab".repeat(32)), "an arbitrary key");
-    refused("a.txt", with_key(&key_of(&u_text)), "another source's key");
-    // Legal mappings (an exact cover under the true key; an empty list for
-    // an empty source).
+    refused("a.md", with_key("short"), "a malformed key");
+    refused("a.md", with_key(&"AB".repeat(32)), "an uppercase key");
+    // Legal mappings: nested cards (the enclosing one first) with gaps, and
+    // no cards at all, for any source.
     engine
         .semantic_record_partition(
-            "a.txt",
-            &record(hash_of("a.txt"), units_of(&a_text, &[(0, 100)])),
+            "a.md",
+            &record(hash_of("a.md"), units(&[(0, 100), (0, 40), (60, 90)])),
         )
         .unwrap();
     engine
-        .semantic_record_partition("e.txt", &record(hash_of("e.txt"), Vec::new()))
+        .semantic_record_partition("a.md", &record(hash_of("a.md"), Vec::new()))
+        .unwrap();
+    engine
+        .semantic_record_partition("e.md", &record(hash_of("e.md"), Vec::new()))
         .unwrap();
 }
 
 #[test]
 fn a_stored_mapping_with_a_bad_range_is_ineligible_not_a_panic() {
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     let digest = env.digest();
-    let recipe = partition::recipe_id("fake-bytes 1");
-    let hash = env.open().source("a.txt").unwrap().unwrap().hash;
-    let good = env.open().semantic_partition("a.txt").unwrap().unwrap();
+    let recipe = recipe();
+    let hash = env.open().source("a.md").unwrap().unwrap().hash;
+    let good = env.open().semantic_partition("a.md").unwrap().unwrap();
     env.close();
     let bad = serde_json::json!({
         "source_hash": hash,
@@ -1634,7 +1672,7 @@ fn a_stored_mapping_with_a_bad_range_is_ineligible_not_a_panic() {
         "function_digest": digest,
         "units": [{"start": 0, "end": 101, "input_key": "ab".repeat(32)}]
     });
-    testkit::write_raw_partition(&env.store, "a.txt", &bad.to_string());
+    testkit::write_raw_partition(&env.store, "a.md", &bad.to_string());
     let status = env.status();
     assert_eq!(
         status.unpartitioned_sources, 1,
@@ -1646,7 +1684,7 @@ fn a_stored_mapping_with_a_bad_range_is_ineligible_not_a_panic() {
     assert!(!report.partial, "{report:?}");
     assert_eq!(report.partitioned_sources, 1);
     assert_eq!(report.document_calls, 0, "the vector was cached");
-    let repaired = env.open().semantic_partition("a.txt").unwrap().unwrap();
+    let repaired = env.open().semantic_partition("a.md").unwrap().unwrap();
     assert_eq!(repaired.units[0].input_key, good.units[0].input_key);
     assert_eq!(repaired.units[0].end, 100);
 }
@@ -1655,7 +1693,7 @@ fn a_stored_mapping_with_a_bad_range_is_ineligible_not_a_panic() {
 fn status_honors_its_deadline_in_validation_and_the_census() {
     use context_foundry::fault::{self, Action};
     use context_foundry::neural::status::fault_names;
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     // During generation validation.
     fault::arm(
         fault_names::BEFORE_VALIDATION,
@@ -1667,7 +1705,7 @@ fn status_honors_its_deadline_in_validation_and_the_census() {
     fault::disarm_all();
     assert_eq!(error.code(), "deadline_exceeded");
     // During the census of a retained-cache-only store (its sources gone).
-    env.open_mut().delete_source("a.txt").unwrap();
+    env.open_mut().delete_source("a.md").unwrap();
     fault::arm(
         fault_names::BEFORE_CENSUS,
         0,
@@ -1685,7 +1723,7 @@ fn status_honors_its_deadline_in_validation_and_the_census() {
 
 #[test]
 fn status_names_the_workspace_and_reads_a_dead_owners_running_state_as_stopped() {
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     let status = env.status();
     assert_eq!(status.workspace_id.as_deref().map(str::len), Some(64));
     assert!(status.source_revision >= 1);
@@ -1734,7 +1772,7 @@ fn assert_generation_outside_untouched(outside: &tempfile::TempDir, digest: &str
 #[test]
 fn purge_deletion_is_anchored_to_the_descriptor_not_the_path() {
     use context_foundry::fault::{self, Action};
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     env.close();
     let digest = env.digest();
     let outside = outside_with_generation(&digest);
@@ -1768,7 +1806,7 @@ fn purge_deletion_is_anchored_to_the_descriptor_not_the_path() {
 #[test]
 fn publication_is_anchored_to_the_descriptors_not_the_path() {
     use context_foundry::fault::{self, Action};
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     env.close();
     let digest = env.digest();
     let outside = outside_with_generation(&digest);
@@ -1789,8 +1827,7 @@ fn publication_is_anchored_to_the_descriptors_not_the_path() {
     let store = context_foundry::neural::anchor::Dir::open_path(&env.store).unwrap();
     let count = index::build_generation(
         &store,
-        &digest,
-        "recipe",
+        &prepared(&digest),
         &one_entry(),
         partial_scope(),
         &Control::unbounded(),
@@ -1821,7 +1858,7 @@ fn purge_and_publication_follow_the_bound_store_not_a_substituted_ancestor() {
     let ws = parent.path().join("ws");
     std::fs::create_dir(&ws).unwrap();
     let mut init = Engine::initialize(&store, &ws).unwrap();
-    init.replace_source("a.txt", &body(100)).unwrap();
+    init.replace_source("a.md", &body(100)).unwrap();
     init.refresh(&Control::unbounded()).unwrap();
     drop(init);
     let profile = testkit::write_semantic_profile(parent.path(), "fake-a", |_| {});
@@ -1926,14 +1963,14 @@ fn grow_weights(env: &Env) {
     let model_dir = SemanticProfile::load(&env.profile).unwrap().model_dir;
     let file = std::fs::OpenOptions::new()
         .write(true)
-        .open(model_dir.join("model.safetensors"))
+        .open(model_dir.join("model.gguf"))
         .unwrap();
     file.set_len(16 << 30).unwrap();
 }
 
 #[test]
 fn artifact_verification_obeys_the_run_budget() {
-    let mut env = Env::new(&[("a.txt", &body(100))]);
+    let mut env = Env::new(&[("a.md", &body(100))]);
     grow_weights(&env);
     let started = Instant::now();
     let report = env.prepare(1);
@@ -1947,12 +1984,12 @@ fn artifact_verification_obeys_the_run_budget() {
     assert_eq!(report.partitioned_sources, 0);
     assert_eq!(env.calls(), 0);
     assert_eq!(env.open().semantic_cache_totals().unwrap().0, 0);
-    assert!(env.open().source("a.txt").unwrap().is_some());
+    assert!(env.open().source("a.md").unwrap().is_some());
 }
 
 #[test]
 fn artifact_verification_obeys_caller_cancellation() {
-    let mut env = Env::new(&[("a.txt", &body(100))]);
+    let mut env = Env::new(&[("a.md", &body(100))]);
     grow_weights(&env);
     let control = Control::unbounded();
     let flag = control.cancel_flag();
@@ -2059,15 +2096,16 @@ fn publication_cut_off_by_the_budget_records_its_reason_and_keeps_the_vectors() 
 
 #[test]
 fn a_same_length_nonfinite_cache_row_is_named_by_the_lookup_and_replaced_by_prepare() {
-    let (mut env, _) = first_preparation(&[("a.txt", &body(100))]);
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     env.close();
     let digest = env.digest();
     let (key, mut bytes) = testkit::semantic_cache_rows(&env.store)
         .into_iter()
         .next()
         .unwrap();
-    // Keep the length and the stored digest; poison one component.
-    bytes[64..68].copy_from_slice(&f32::NAN.to_le_bytes());
+    // Keep the length, the stored digest and the dimension; poison one
+    // component.
+    bytes[68..72].copy_from_slice(&f32::NAN.to_le_bytes());
     testkit::tamper_semantic_cache_row(&env.store, &key, &bytes);
     // Status trusts committed metadata and does not scan payloads: it still
     // counts the row (the documented limitation).
@@ -2075,7 +2113,11 @@ fn a_same_length_nonfinite_cache_row_is_named_by_the_lookup_and_replaced_by_prep
     assert_eq!(status.cached_current_units, 1);
     assert_eq!(status.cache.corrupt_entries, 0);
     // The lookup that USES the vector names it.
-    match env.open().semantic_cache_lookup(&key, &digest).unwrap() {
+    match env
+        .open()
+        .semantic_cache_lookup(&key, &digest, DIMS)
+        .unwrap()
+    {
         CacheLookup::Corrupt(message) => assert!(message.contains("nonfinite"), "{message}"),
         other => panic!("expected named corruption, got {other:?}"),
     }
@@ -2088,7 +2130,9 @@ fn a_same_length_nonfinite_cache_row_is_named_by_the_lookup_and_replaced_by_prep
     assert_eq!(env.calls(), before + 1);
     assert_eq!(report.embedded_units, 1);
     assert!(matches!(
-        env.open().semantic_cache_lookup(&key, &digest).unwrap(),
+        env.open()
+            .semantic_cache_lookup(&key, &digest, DIMS)
+            .unwrap(),
         CacheLookup::Hit(_)
     ));
 }
@@ -2096,7 +2140,7 @@ fn a_same_length_nonfinite_cache_row_is_named_by_the_lookup_and_replaced_by_prep
 #[test]
 fn status_reports_the_last_provider_observation_never_a_live_probe() {
     // A fresh store: nothing observed.
-    let mut env = Env::new(&[("a.txt", &body(100))]);
+    let mut env = Env::new(&[("a.md", &body(100))]);
     let status = env.status();
     assert_eq!(status.provider.state, "unknown");
     assert!(status.provider.observed_at_unix.is_none());
@@ -2114,7 +2158,7 @@ fn status_reports_the_last_provider_observation_never_a_live_probe() {
     assert_eq!(status.provider.state, "failed");
     assert_eq!(status.provider.code.as_deref(), Some("provider_timeout"));
     // A refused acquisition is observed as `refused`.
-    let mut refused = Env::new(&[("a.txt", &body(100))]);
+    let mut refused = Env::new(&[("a.md", &body(100))]);
     refused.engine = None;
     let profile = refused.profile.clone();
     let error = prepare::run(
@@ -2144,4 +2188,107 @@ fn status_reports_the_last_provider_observation_never_a_live_probe() {
     let calls = failing.calls();
     let _ = failing.status();
     assert_eq!(failing.calls(), calls);
+}
+
+#[test]
+fn mixed_retained_rows_open_and_account_their_actual_lengths() {
+    // A v2 run's 768-value row beside a retained descriptor v1 row (2048
+    // values, no dimension field) and a 256-value row of another profile.
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
+    env.close();
+    let mut legacy = "11".repeat(32).into_bytes();
+    legacy.extend(std::iter::repeat_n(0u8, 2048 * 4));
+    let mut narrow = "22".repeat(32).into_bytes();
+    narrow.extend_from_slice(&256u32.to_le_bytes());
+    for _ in 0..256 {
+        narrow.extend_from_slice(&0.0625f32.to_le_bytes());
+    }
+    testkit::tamper_semantic_cache_row(&env.store, &"aa".repeat(32), &legacy);
+    testkit::tamper_semantic_cache_row(&env.store, &"bb".repeat(32), &narrow);
+    let total = ROW + LEGACY_ROW_BYTES as u64 + row_bytes(256) as u64;
+    let status = env.status();
+    assert_eq!(status.cache.entries, 3);
+    assert_eq!(status.cache.bytes, total);
+    assert_eq!(status.cache.legacy_entries, 1);
+    assert_eq!(status.cache.orphan_entries, 2);
+    assert_eq!(status.cache.corrupt_entries, 0);
+    assert_eq!(status.cached_current_units, 1);
+    assert!(status.index.available, "{status:?}");
+    assert_eq!(env.open().semantic_cache_totals().unwrap(), (3, total));
+    // Neither retained row is served under the current profile.
+    let digest = env.digest();
+    for key in ["aa".repeat(32), "bb".repeat(32)] {
+        assert!(matches!(
+            env.open()
+                .semantic_cache_lookup(&key, &digest, DIMS)
+                .unwrap(),
+            CacheLookup::Corrupt(_)
+        ));
+    }
+    // An explicit purge removes every row and reports their actual lengths.
+    env.close();
+    let report = Engine::open_existing(&env.store)
+        .unwrap()
+        .semantic_purge()
+        .unwrap();
+    assert_eq!(report.removed_cache_entries, 3);
+    assert_eq!(report.removed_cache_bytes, total);
+}
+
+#[test]
+fn a_v1_profile_is_refused_by_name_and_its_retained_data_is_kept() {
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
+    env.close();
+    let before = testkit::snapshot(&env.store);
+    let cache_before = testkit::semantic_cache_rows(&env.store);
+    // A descriptor v1 (MLX worker) profile is refused at load, by name,
+    // before the store is touched.
+    let v1 = env._dir.path().join("profile-v1.json");
+    std::fs::write(
+        &v1,
+        r#"{"v":1,"name":"mlx","descriptor":{"v":1,"model":"m"}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        SemanticProfile::load(&v1).unwrap_err().code(),
+        "profile_unsupported"
+    );
+    let error = prepare::run(
+        &env.store,
+        &PrepareOptions {
+            profile_path: &v1,
+            budget_seconds: 60,
+            development: false,
+            cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+            started: Instant::now(),
+            control: &Control::unbounded(),
+        },
+        env.factory.acquire(),
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "profile_unsupported", "{error}");
+    assert_eq!(env.calls(), 1, "only the first run's call");
+    assert_eq!(testkit::snapshot(&env.store), before, "no row changed");
+    assert_eq!(testkit::semantic_cache_rows(&env.store), cache_before);
+    // A state row a pre-T004 run recorded (no dimension) names the refusal:
+    // its generation is neither served nor rebuilt, and its rows stay.
+    let (_, raw) = testkit::table_rows(&env.store, "semantic_state").remove(0);
+    let mut state: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    state.as_object_mut().unwrap().remove("dimensions");
+    testkit::tamper_semantic_state(&env.store, &state.to_string());
+    let status = env.status();
+    assert!(!status.index.available);
+    let reason = status.index.reason.clone().unwrap_or_default();
+    assert!(reason.contains("descriptor v1"), "{reason}");
+    assert_eq!(status.profile.as_ref().unwrap().dimensions, None);
+    assert_eq!(status.cache.entries, 1);
+    assert!(index::generation_dir(&env.store, &env.digest()).exists());
+    // Only an explicit purge removes them.
+    env.close();
+    let report = Engine::open_existing(&env.store)
+        .unwrap()
+        .semantic_purge()
+        .unwrap();
+    assert_eq!(report.removed_cache_entries, 1);
+    assert_eq!(report.removed_generation_dirs, 1);
 }

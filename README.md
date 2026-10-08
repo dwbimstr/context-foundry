@@ -67,10 +67,13 @@ Uninstall removes only installed files whose hashes still match; a modified one 
 and reported. Every store, memory, cache, dataset, checkpoint and supplied profile stays.
 `--host-config` first removes the block `foundry connect --apply-config` wrote
 (`foundry connect --remove-config FILE`), restoring the file's prior bytes. Optional
-workers: package with `--with-semantic --semantic-profile FILE` (built with
-`PYO3_PYTHON`) or `--with-learning` (with `LIBTORCH`), then install with
-`--semantic-profile FILE` or `--learning-profile FILE` to build the signed bundles and
-installed profile copies; `disable-semantic`/`disable-learning` remove them again.
+workers: package with `--with-semantic --semantic-profile FILE` (the worker built with
+`LLAMA_CPP_DIR`, a llama.cpp checkout at the pinned commit) or `--with-learning` (with
+`LIBTORCH`), then install with `--semantic-profile FILE` or `--learning-profile FILE`
+to build the signed bundles and installed profile copies;
+`disable-semantic`/`disable-learning` remove them again. An upgrade over an installed
+descriptor v1 (MLX) semantic profile upgrades the core, disables semantic by name and
+asks for a v2 (llama.cpp) profile.
 See [deployment](docs/deployment.md#lifecycle-and-installation).
 
 ## What works
@@ -124,15 +127,22 @@ See [deployment](docs/deployment.md#lifecycle-and-installation).
 - Multi-root context (007): `--reference ROOT=STORE` (up to 8) admits outside
   repositories at launch; `search`/`context` merge them with per-root coverage and
   handles, and an unavailable root is named rather than silently skipped.
-- Semantic preparation (009 T001): `foundry semantic prepare --profile FILE
-  --budget-seconds N`, `semantic status` and `semantic purge`. Sources are partitioned
-  into embedding units of at most 1024 tokens and tokenized in Rust. Vectors are cached
-  by document function and exact input, and a USearch F16 index is built from the cache.
-  Unchanged inputs are never re-embedded across restarts, repairs or profile rollback.
+- Semantic preparation (009 T001, T004): `foundry semantic prepare --profile FILE
+  --budget-seconds N`, `semantic status` and `semantic purge`. Each definition and each
+  Markdown section becomes one address card (its address, signature or head lines and
+  leading docs, cut at the profile's card limit), rendered with the profile's document
+  template and tokenized in Rust. Vectors are cached by document function and exact
+  input in self-describing rows (digest, dimension, f32 values), and a USearch F16
+  index is built from the cache. Unchanged inputs are never re-embedded across
+  restarts, repairs or profile rollback.
+  The worker, `foundry-embed`, runs the profile's pinned GGUF on a statically linked
+  llama.cpp (Metal) at a pinned commit, with no Python. A descriptor v1 (MLX) profile
+  is refused with `profile_unsupported`; its cache rows stay until `semantic purge`.
   Model execution needs an accepted isolation profile. Until signing and package
   acceptance close it runs only with `--development-isolation`, in an ad-hoc App
-  Sandbox worker; otherwise it is `isolation_unavailable`. Semantic search delivery is
-  009 T002.
+  Sandbox worker; otherwise it is `isolation_unavailable`. A query without an anchor
+  gets the dense units first, in similarity order, then the lexical ones in their
+  usual order; a query with an anchor never calls the model.
 - Progressive semantic preparation (009 T003): an MCP owner started with
   `--semantic-profile` prepares its primary root in the background after
   `index {semantic: "prepare"}` and stops admitting batches after

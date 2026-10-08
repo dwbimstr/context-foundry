@@ -4,8 +4,8 @@
 //! ONE background driver thread per owner, for the PRIMARY root only. It
 //! composes the CLI's own preparation steps ([`super::prepare`]): partition a
 //! few sources, publish pending committed coverage, select one batch of at
-//! most [`DOCUMENT_BATCH`] missing inputs, embed it, validate and commit it,
-//! publish. Only the ownership around the steps differs:
+//! most the profile's batch of missing cards, render it, embed it, validate
+//! and commit it, publish. Only the ownership around the steps differs:
 //!
 //! - every store step takes the owner's ONE engine slot, and only while no
 //!   foreground operation is in flight, and gives it back before the next
@@ -22,7 +22,14 @@
 //!   [`FOREGROUND_WINDOW`] ([`Preparation::foreground`]), a selected batch
 //!   is embedded at most [`FOREGROUND_BATCH`] inputs per call, so a query
 //!   that finds the model busy with a batch waits for a short one
-//!   ([`QueryRuntime::embed`]).
+//!   ([`QueryRuntime::embed`]);
+//! - 009 T004, one prefetched batch: while one document call runs, the
+//!   driver selects the next batch in a store step under the same slot rule
+//!   and renders and tokenizes it with no engine slot and no transaction. It
+//!   is admitted afresh after the call ended and was committed, under the
+//!   rules above: a foreground operation that arrived first holds the
+//!   commit's store step until it ends, so it goes first; a pause, owner
+//!   shutdown or EOF drops the prefetched batch unsent.
 //!
 //! Publication happens at most once per committed batch: after a commit
 //! that brings the vectors not yet published up to the size of the last
@@ -56,9 +63,10 @@ use crate::neural::index::{
 };
 use crate::neural::partition;
 use crate::neural::prepare::{
-    self, Batch, PrepareReport, Progress, Selected, Steps, Stop, StopOrError, Walk,
+    self, Batch, Cards, PrepareReport, Progress, Selected, Selection, Steps, Stop, StopOrError,
+    Walk,
 };
-use crate::neural::provider::{DOCUMENT_BATCH, ProviderError, TokenizedInput};
+use crate::neural::provider::{ProviderError, TokenizedInput};
 use crate::neural::query::QueryRuntime;
 use crate::store::Engine;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -69,7 +77,7 @@ use std::time::{Duration, Instant};
 /// `provider_timeout`.
 pub const DOCUMENT_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// New partitions one store step may write.
-const PARTITIONS_PER_STEP: usize = DOCUMENT_BATCH;
+const PARTITIONS_PER_STEP: usize = 8;
 /// Sources one selection step may examine.
 const SOURCES_PER_STEP: usize = cache::PAGE;
 /// How long the driver waits before looking again for a free engine slot,
@@ -79,7 +87,7 @@ const POLL: Duration = Duration::from_millis(10);
 /// operations (009 T003, captain decision 2026-10-06).
 pub const FOREGROUND_BATCH: usize = 2;
 /// How long after a foreground operation batches stay at
-/// [`FOREGROUND_BATCH`]; afterwards they are [`DOCUMENT_BATCH`] again.
+/// [`FOREGROUND_BATCH`]; afterwards they are the profile's batch again.
 pub const FOREGROUND_WINDOW: Duration = Duration::from_secs(60);
 /// The engine-slot time one partition or publication step aims at (009
 /// T003, captain decision 2026-10-06): the step ends at its first boundary
@@ -102,6 +110,10 @@ pub trait Owner: Send + Sync {
     /// admission.
     #[cfg(feature = "test-faults")]
     fn admitting(&self) {}
+    /// Test seam: while a document call runs, the driver rendered the next
+    /// batch (`inputs` cards buffered, none of them sent).
+    #[cfg(feature = "test-faults")]
+    fn prefetched(&self, _inputs: usize) {}
     /// Test seam: the driver is inside a publication's staging work, its
     /// index built in memory and not yet serialized, with no engine slot held.
     #[cfg(feature = "test-faults")]
@@ -172,13 +184,14 @@ impl Preparation {
             .unwrap_or_else(PoisonError::into_inner) = Some(Instant::now());
     }
 
-    /// The document batch size to admit at `now`.
-    fn batch_limit(&self, now: Instant) -> usize {
+    /// The document batch size to admit at `now` for a profile batch of
+    /// `full`.
+    fn batch_limit(&self, now: Instant, full: usize) -> usize {
         let last = *self
             .foreground
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        batch_limit(last, now)
+        batch_limit(last, now, full)
     }
 
     /// `index {semantic: "prepare"}`: start the driver, or resume a pausing
@@ -258,12 +271,15 @@ impl Preparation {
     }
 }
 
-/// [`FOREGROUND_BATCH`] while the last foreground operation started less
-/// than [`FOREGROUND_WINDOW`] before `now`, else [`DOCUMENT_BATCH`].
-fn batch_limit(last_foreground: Option<Instant>, now: Instant) -> usize {
+/// [`FOREGROUND_BATCH`] (at most `full`) while the last foreground operation
+/// started less than [`FOREGROUND_WINDOW`] before `now`, else `full`, the
+/// profile's batch.
+fn batch_limit(last_foreground: Option<Instant>, now: Instant, full: usize) -> usize {
     match last_foreground {
-        Some(at) if now.saturating_duration_since(at) < FOREGROUND_WINDOW => FOREGROUND_BATCH,
-        _ => DOCUMENT_BATCH,
+        Some(at) if now.saturating_duration_since(at) < FOREGROUND_WINDOW => {
+            FOREGROUND_BATCH.min(full)
+        }
+        _ => full,
     }
 }
 
@@ -344,7 +360,7 @@ impl<'a> Run<'a> {
     ) -> Self {
         let profile = &runtime.profile;
         let digest = profile.descriptor.digest();
-        let recipe = partition::recipe_id(&profile.descriptor.tokenizer);
+        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
         Self {
             owner,
             runtime,
@@ -354,6 +370,7 @@ impl<'a> Run<'a> {
                 profile: profile.name.clone(),
                 function_digest: digest.clone(),
                 recipe_id: recipe.clone(),
+                dimensions: profile.descriptor.dimensions,
                 // The resident runtime is up; a failed call says otherwise.
                 provider_state: Some("ready"),
                 ..PrepareReport::default()
@@ -426,9 +443,12 @@ impl<'a> Run<'a> {
             let progress = hold(owner, |engine| {
                 Steps {
                     engine,
-                    tokenizer: runtime.tokenizer(),
+                    cards: Cards {
+                        tokenizer: runtime.tokenizer(),
+                        profile: &runtime.profile,
+                        function_digest: digest,
+                    },
                     recipe,
-                    function_digest: digest,
                 }
                 .partition_page(
                     &mut after,
@@ -447,11 +467,13 @@ impl<'a> Run<'a> {
         }
     }
 
-    /// Select batches of up to [`DOCUMENT_BATCH`] inputs and embed them. A
-    /// batch admitted smaller (foreground activity) keeps its remaining
+    /// Select batches of up to the profile's batch of cards and embed them.
+    /// A batch admitted smaller (foreground activity) keeps its remaining
     /// inputs, in walk order, for the next admission; the walk resumes only
-    /// once fewer inputs remain than the current batch size.
+    /// once fewer inputs remain than the current batch size. While a call
+    /// runs, the next batch is selected and rendered ([`Self::embed`]).
     fn embed_pass(&mut self) -> FResult<Option<Stop>> {
+        let full = self.runtime.profile.document_limits().inputs;
         let mut walk = Walk::default();
         let mut batch = Batch::default();
         let mut end = false;
@@ -459,25 +481,9 @@ impl<'a> Run<'a> {
             if let Some(stop) = self.requested_stop() {
                 return Ok(Some(stop));
             }
-            if !end && batch.len() < self.preparation.batch_limit(Instant::now()) {
-                let (owner, runtime) = (self.owner, self.runtime);
-                let (recipe, digest, report) = (&self.recipe, &self.digest, &mut self.report);
-                let selected = hold(owner, |engine| {
-                    Steps {
-                        engine,
-                        tokenizer: runtime.tokenizer(),
-                        recipe,
-                        function_digest: digest,
-                    }
-                    .select_batch(
-                        &mut walk,
-                        &mut batch,
-                        SOURCES_PER_STEP,
-                        report,
-                        &mut || owner.closing().then(cancelled),
-                    )
-                })?;
-                match selected {
+            if !end && batch.len() < self.preparation.batch_limit(Instant::now(), full) {
+                let room = full - batch.len();
+                match self.fill(&mut walk, &mut batch, room)? {
                     Selected::Full => {}
                     Selected::End => end = true,
                     Selected::Yield => continue,
@@ -485,7 +491,7 @@ impl<'a> Run<'a> {
                 }
             }
             if !batch.is_empty()
-                && let Some(stop) = self.embed(&mut batch)?
+                && let Some(stop) = self.embed(&mut walk, &mut batch, &mut end, full)?
             {
                 return Ok(Some(stop));
             }
@@ -495,6 +501,41 @@ impl<'a> Run<'a> {
         }
     }
 
+    /// Up to `room` more cards into `batch`: one selection step under the
+    /// engine slot (the missing cards and their sources' bodies), then their
+    /// rendering and tokenization with NO engine slot and no transaction.
+    fn fill(&mut self, walk: &mut Walk, batch: &mut Batch, room: usize) -> FResult<Selected> {
+        let (owner, runtime) = (self.owner, self.runtime);
+        let (recipe, report) = (&self.recipe, &mut self.report);
+        let cards = Cards {
+            tokenizer: runtime.tokenizer(),
+            profile: &runtime.profile,
+            function_digest: &self.digest,
+        };
+        let mut selection = Selection::default();
+        let selected = hold(owner, |engine| {
+            Steps {
+                engine,
+                cards,
+                recipe,
+            }
+            .select_batch(
+                walk,
+                &mut selection,
+                room,
+                SOURCES_PER_STEP,
+                report,
+                &mut || owner.closing().then(cancelled),
+            )
+        })?;
+        if selection.len() > 0 {
+            let rendered = cards.render(selection)?;
+            batch.keys.extend(rendered.keys);
+            batch.inputs.extend(rendered.inputs);
+        }
+        Ok(selected)
+    }
+
     /// One admission: the first inputs of `batch`, as many as the batch size
     /// allows at the admission decision; the rest stay in `batch`. The final
     /// stop check, the size, the admission on the runtime slot and the
@@ -502,7 +543,19 @@ impl<'a> Run<'a> {
     /// `pause` takes, released before any wait on inference; the call runs
     /// with no engine slot or transaction held; validation and commit run
     /// under the slot.
-    fn embed(&mut self, batch: &mut Batch) -> FResult<Option<Stop>> {
+    ///
+    /// 009 T004: while the call runs, at most one next batch is prefetched
+    /// into `batch` ([`Self::fill`]): its store step follows the slot rule
+    /// and its rendering holds nothing. It is never sent here; the next
+    /// admission decides it afresh, after this call ended and was
+    /// committed. A failed prefetch is reported only after that commit.
+    fn embed(
+        &mut self,
+        walk: &mut Walk,
+        batch: &mut Batch,
+        end: &mut bool,
+        full: usize,
+    ) -> FResult<Option<Stop>> {
         #[cfg(feature = "test-faults")]
         self.owner.admitting();
         let preparation = self.preparation;
@@ -515,7 +568,9 @@ impl<'a> Run<'a> {
             if state.phase == Phase::Pausing {
                 return Ok(Some(paused()));
             }
-            let size = batch.len().min(preparation.batch_limit(Instant::now()));
+            let size = batch
+                .len()
+                .min(preparation.batch_limit(Instant::now(), full));
             let keys: Vec<String> = batch.keys.drain(..size).collect();
             let inputs: Vec<TokenizedInput> = batch.inputs.drain(..size).collect();
             let tokens: u64 = inputs.iter().map(|input| input.ids.len() as u64).sum();
@@ -535,6 +590,17 @@ impl<'a> Run<'a> {
         };
         self.report.document_calls += 1;
         self.report.input_tokens += tokens;
+        // The prefetch: a halt (owner shutdown) is caught by the wait below.
+        let mut prefetch_error = None;
+        if !*end && batch.len() < full {
+            match self.fill(walk, batch, full - batch.len()) {
+                Ok(Selected::End) => *end = true,
+                Ok(_) => {}
+                Err(error) => prefetch_error = Some(error),
+            }
+            #[cfg(feature = "test-faults")]
+            self.owner.prefetched(batch.len());
+        }
         let result = loop {
             if self.owner.closing() {
                 // The uncommitted result is discarded; the call itself may
@@ -558,6 +624,7 @@ impl<'a> Run<'a> {
         }
         let size = keys.len() as u64;
         let owner = self.owner;
+        let dims = self.runtime.profile.descriptor.dims();
         let (control, digest, report) = (self.control, &self.digest, &mut self.report);
         let committed = hold(owner, |engine| {
             // Shutdown may have arrived while the batch waited for the slot:
@@ -572,6 +639,7 @@ impl<'a> Run<'a> {
                 keys,
                 vectors,
                 digest,
+                dims,
                 DEFAULT_CACHE_CAP_BYTES,
                 control,
                 report,
@@ -581,6 +649,9 @@ impl<'a> Run<'a> {
             Ok(()) => {}
             Err(StopOrError::Stop(stop)) => return Ok(Some(stop)),
             Err(StopOrError::Error(error)) => return Err(error),
+        }
+        if let Some(error) = prefetch_error {
+            return Err(error);
         }
         self.unpublished += size;
         if self.unpublished >= self.published.max(1) {
@@ -640,12 +711,12 @@ impl<'a> Run<'a> {
     /// the mapping incomplete, never wrong: locations revalidate per request.
     fn generation(&self, rebuild: bool) -> Result<Publication, Failed> {
         let control = self.control;
-        let Some((digest, recipe, store, mut walk)) = self.step(|engine| {
-            let Some((digest, recipe)) = engine.semantic_identity()? else {
+        let Some((identity, store, mut walk)) = self.step(|engine| {
+            let Some(identity) = engine.semantic_identity()? else {
                 return Ok(None);
             };
-            let walk = MappingWalk::start(engine, &digest, &recipe)?;
-            Ok(Some((digest, recipe, engine.semantic_anchor()?, walk)))
+            let walk = MappingWalk::start(engine, &identity.digest, &identity.recipe)?;
+            Ok(Some((identity, engine.semantic_anchor()?, walk)))
         })?
         else {
             return Ok(Publication::Nothing);
@@ -658,7 +729,13 @@ impl<'a> Run<'a> {
             }
             // Current means the same keys, unit locations, coverage AND
             // source revision.
-            match validate_generation_with(&store, &digest, &recipe, control) {
+            match validate_generation_with(
+                &store,
+                &identity.digest,
+                &identity.recipe,
+                identity.dimensions,
+                control,
+            ) {
                 Ok(generation) if mapping.published_by(&generation) => {
                     return Ok(Publication::Current(generation.manifest.count));
                 }
@@ -673,7 +750,7 @@ impl<'a> Run<'a> {
             index::lookup_entries(
                 engine,
                 &mut keys,
-                &digest,
+                &identity,
                 &mut scope,
                 &mut entries,
                 control,
@@ -684,9 +761,8 @@ impl<'a> Run<'a> {
         let built = || self.owner.staging();
         #[cfg(not(feature = "test-faults"))]
         let built = || {};
-        let staged =
-            index::stage_generation(&store, &digest, &recipe, &entries, scope, control, &built)
-                .map_err(Failed::Step)?;
+        let staged = index::stage_generation(&store, &identity, &entries, scope, control, &built)
+            .map_err(Failed::Step)?;
         drop(entries);
         let count = self.step(|_| staged.publish(control))?;
         Ok(Publication::Rebuilt(count))
@@ -827,10 +903,14 @@ fn overlay(value: &mut serde_json::Value, live: Option<Live>) {
 mod tests {
     //! 009 T003, captain decision 2026-10-06: document batches are at most
     //! [`FOREGROUND_BATCH`] inputs while the owner serves foreground
-    //! operations and [`DOCUMENT_BATCH`] otherwise.
+    //! operations and the profile's batch otherwise. 009 T004: one batch is
+    //! prefetched while a call runs, admitted afresh after it, and dropped
+    //! on pause and owner shutdown.
     use super::*;
-    use crate::neural::profile::SemanticProfile;
-    use crate::neural::provider::{DIMENSIONS, EmbeddingProvider, FunctionDescriptor};
+    use crate::neural::profile::{DEFAULT_BATCH, SemanticProfile};
+    use crate::neural::provider::{EmbeddingProvider, FunctionDescriptor};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::mpsc;
 
     /// An owner of one engine with no foreground operation in flight.
     struct Quiet(Mutex<Engine>);
@@ -843,6 +923,12 @@ mod tests {
         fn closing(&self) -> bool {
             false
         }
+    }
+
+    fn unit_vector(descriptor: &FunctionDescriptor) -> Vec<f32> {
+        let mut vector = vec![0f32; descriptor.dims()];
+        vector[0] = 1.0;
+        vector
     }
 
     /// Records the size of every document batch. With `foreground`, every
@@ -867,9 +953,7 @@ mod tests {
             if let Some(preparation) = &self.foreground {
                 preparation.foreground();
             }
-            let mut vector = vec![0f32; DIMENSIONS];
-            vector[0] = 1.0;
-            Ok(vec![vector; batch.len()])
+            Ok(vec![unit_vector(&self.descriptor); batch.len()])
         }
         fn embed_query(
             &mut self,
@@ -880,9 +964,8 @@ mod tests {
         }
     }
 
-    /// Prepare twelve single-unit notes to completion; the sizes of the
-    /// document batches, in order.
-    fn batch_sizes(foreground: bool) -> Vec<usize> {
+    /// A store of twelve notes, one card each, and its fixture profile.
+    fn notes() -> (tempfile::TempDir, Engine, Arc<SemanticProfile>) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("workspace");
         std::fs::create_dir_all(&root).unwrap();
@@ -895,8 +978,23 @@ mod tests {
         }
         let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
         engine.index(&root, &Control::unbounded()).unwrap();
-        let path = crate::testkit::write_semantic_profile(dir.path(), "sizes", |_| {});
+        let path = crate::testkit::write_semantic_profile(dir.path(), "notes", |_| {});
         let profile = Arc::new(SemanticProfile::load(&path).unwrap());
+        (dir, engine, profile)
+    }
+
+    fn until_idle(preparation: &Preparation) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !preparation.idle() {
+            assert!(Instant::now() < deadline, "the driver never stopped");
+            std::thread::sleep(POLL);
+        }
+    }
+
+    /// Prepare twelve single-card notes to completion; the sizes of the
+    /// document batches, in order.
+    fn batch_sizes(foreground: bool) -> Vec<usize> {
+        let (_dir, engine, profile) = notes();
         let preparation = Arc::new(Preparation::default());
         let sizes = Arc::new(Mutex::new(Vec::new()));
         let provider = Sizes {
@@ -918,11 +1016,7 @@ mod tests {
         preparation
             .prepare(Arc::clone(&owner) as Arc<dyn Owner>, Arc::clone(&runtime))
             .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while !preparation.idle() {
-            assert!(Instant::now() < deadline, "the driver never stopped");
-            std::thread::sleep(POLL);
-        }
+        until_idle(&preparation);
         runtime.shutdown();
         let state = owner.0.lock().unwrap().semantic_state().unwrap().unwrap();
         assert_eq!(state.state, "stopped", "{state:?}");
@@ -944,20 +1038,230 @@ mod tests {
     #[test]
     fn the_foreground_window_ends_sixty_seconds_after_the_last_operation() {
         let at = Instant::now();
-        assert_eq!(batch_limit(None, at), DOCUMENT_BATCH);
-        assert_eq!(batch_limit(Some(at), at), FOREGROUND_BATCH);
+        let full = DEFAULT_BATCH as usize;
+        assert_eq!(batch_limit(None, at, full), full);
+        assert_eq!(batch_limit(Some(at), at, full), FOREGROUND_BATCH);
         assert_eq!(
-            batch_limit(Some(at), at + Duration::from_secs(59)),
+            batch_limit(Some(at), at + Duration::from_secs(59), full),
             FOREGROUND_BATCH
         );
-        assert_eq!(
-            batch_limit(Some(at), at + FOREGROUND_WINDOW),
-            DOCUMENT_BATCH
-        );
+        assert_eq!(batch_limit(Some(at), at + FOREGROUND_WINDOW, full), full);
         // A mark taken after the admission read the clock is recent.
         assert_eq!(
-            batch_limit(Some(at + Duration::from_secs(1)), at),
+            batch_limit(Some(at + Duration::from_secs(1)), at, full),
             FOREGROUND_BATCH
+        );
+        // A profile batch below the foreground batch is never exceeded.
+        assert_eq!(batch_limit(Some(at), at, 1), 1);
+    }
+
+    /// An owner whose foreground operations are counted: while one is in
+    /// flight no store step runs (the MCP owner's rule). It reports the
+    /// driver's prefetch and can be closed.
+    struct Counted {
+        engine: Mutex<Engine>,
+        in_flight: AtomicUsize,
+        closing: AtomicBool,
+        prefetched: Mutex<mpsc::Sender<usize>>,
+    }
+
+    impl Owner for Counted {
+        fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
+            if self.in_flight.load(Ordering::SeqCst) > 0 {
+                return Ok(false);
+            }
+            step(&self.engine.lock().unwrap_or_else(PoisonError::into_inner));
+            Ok(true)
+        }
+        fn closing(&self) -> bool {
+            self.closing.load(Ordering::SeqCst)
+        }
+        fn prefetched(&self, inputs: usize) {
+            let _ = locked(&self.prefetched).send(inputs);
+        }
+    }
+
+    /// The crate's lock convention: a poisoned lock still yields its guard.
+    fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+        mutex.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Every document call is logged, reports that it entered and waits for
+    /// one release; queries are logged and answered at once.
+    struct Gated {
+        descriptor: FunctionDescriptor,
+        calls: Arc<Mutex<Vec<String>>>,
+        entered: mpsc::Sender<usize>,
+        release: mpsc::Receiver<()>,
+    }
+
+    impl EmbeddingProvider for Gated {
+        fn descriptor(&self) -> &FunctionDescriptor {
+            &self.descriptor
+        }
+        fn embed_documents(
+            &mut self,
+            batch: &[TokenizedInput],
+            _control: &Control,
+        ) -> Result<Vec<Vec<f32>>, ProviderError> {
+            locked(&self.calls).push(format!("documents {}", batch.len()));
+            let _ = self.entered.send(batch.len());
+            let _ = self.release.recv();
+            Ok(vec![unit_vector(&self.descriptor); batch.len()])
+        }
+        fn embed_query(
+            &mut self,
+            _input: &TokenizedInput,
+            _deadline: Instant,
+        ) -> Result<Vec<f32>, ProviderError> {
+            locked(&self.calls).push("query".into());
+            Ok(unit_vector(&self.descriptor))
+        }
+    }
+
+    struct Prefetch {
+        _dir: tempfile::TempDir,
+        owner: Arc<Counted>,
+        runtime: Arc<QueryRuntime>,
+        preparation: Arc<Preparation>,
+        calls: Arc<Mutex<Vec<String>>>,
+        entered: mpsc::Receiver<usize>,
+        release: mpsc::Sender<()>,
+        prefetched: mpsc::Receiver<usize>,
+    }
+
+    impl Prefetch {
+        /// Start the driver over twelve notes and wait until its first
+        /// batch of 8 runs and the remaining 4 cards were rendered beside it.
+        fn started() -> Self {
+            let (dir, engine, profile) = notes();
+            let (entered_tx, entered) = mpsc::channel();
+            let (release, release_rx) = mpsc::channel();
+            let (prefetched_tx, prefetched) = mpsc::channel();
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let provider = Gated {
+                descriptor: profile.descriptor.clone(),
+                calls: Arc::clone(&calls),
+                entered: entered_tx,
+                release: release_rx,
+            };
+            let runtime = Arc::new(
+                QueryRuntime::start(
+                    profile,
+                    Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+                )
+                .unwrap(),
+            );
+            let owner = Arc::new(Counted {
+                engine: Mutex::new(engine),
+                in_flight: AtomicUsize::new(0),
+                closing: AtomicBool::new(false),
+                prefetched: Mutex::new(prefetched_tx),
+            });
+            let preparation = Arc::new(Preparation::default());
+            preparation
+                .prepare(Arc::clone(&owner) as Arc<dyn Owner>, Arc::clone(&runtime))
+                .unwrap();
+            let fixture = Self {
+                _dir: dir,
+                owner,
+                runtime,
+                preparation,
+                calls,
+                entered,
+                release,
+                prefetched,
+            };
+            assert_eq!(fixture.entered(), 8, "the first batch runs");
+            assert_eq!(
+                fixture
+                    .prefetched
+                    .recv_timeout(Duration::from_secs(30))
+                    .expect("the next batch was prefetched during the call"),
+                4
+            );
+            assert_eq!(fixture.calls(), ["documents 8"], "nothing more was sent");
+            fixture
+        }
+
+        fn entered(&self) -> usize {
+            self.entered
+                .recv_timeout(Duration::from_secs(30))
+                .expect("a document call entered")
+        }
+
+        fn calls(&self) -> Vec<String> {
+            locked(&self.calls).clone()
+        }
+
+        fn state(&self) -> SemanticState {
+            locked(&self.owner.engine)
+                .semantic_state()
+                .unwrap()
+                .unwrap()
+        }
+    }
+
+    /// A foreground query that arrived while the first batch ran gets the
+    /// model before the prefetched batch is admitted.
+    #[test]
+    fn a_prefetched_batch_is_admitted_only_after_a_foreground_query_that_arrived_first() {
+        let fixture = Prefetch::started();
+        fixture.owner.in_flight.fetch_add(1, Ordering::SeqCst);
+        let query = {
+            let (runtime, owner) = (Arc::clone(&fixture.runtime), Arc::clone(&fixture.owner));
+            std::thread::spawn(move || {
+                let embedded = runtime.embed("dusk", Instant::now() + Duration::from_secs(30));
+                owner.in_flight.fetch_sub(1, Ordering::SeqCst);
+                embedded
+            })
+        };
+        fixture.release.send(()).unwrap();
+        assert!(query.join().unwrap().is_ok(), "the query embedded");
+        assert_eq!(
+            fixture.entered(),
+            4,
+            "the prefetched batch, admitted afterwards"
+        );
+        fixture.release.send(()).unwrap();
+        until_idle(&fixture.preparation);
+        fixture.runtime.shutdown();
+        assert_eq!(fixture.calls(), ["documents 8", "query", "documents 4"]);
+        let state = fixture.state();
+        assert_eq!(state.state, "stopped", "{state:?}");
+        assert_eq!(state.committed_units, 12);
+    }
+
+    /// A pause lets the in-flight batch commit and drops the prefetched one
+    /// unsent.
+    #[test]
+    fn a_pause_drops_the_prefetched_batch() {
+        let fixture = Prefetch::started();
+        fixture.preparation.pause();
+        fixture.release.send(()).unwrap();
+        until_idle(&fixture.preparation);
+        fixture.runtime.shutdown();
+        assert_eq!(fixture.calls(), ["documents 8"]);
+        let state = fixture.state();
+        assert_eq!(state.state, "paused", "{state:?}");
+        assert_eq!(state.committed_units, 8, "the in-flight batch committed");
+    }
+
+    /// Owner shutdown or EOF discards the in-flight batch and drops the
+    /// prefetched one unsent.
+    #[test]
+    fn owner_shutdown_drops_the_in_flight_and_the_prefetched_batch() {
+        let fixture = Prefetch::started();
+        fixture.owner.closing.store(true, Ordering::SeqCst);
+        fixture.release.send(()).unwrap();
+        until_idle(&fixture.preparation);
+        fixture.runtime.shutdown();
+        assert_eq!(fixture.calls(), ["documents 8"]);
+        let state = fixture.state();
+        assert_eq!(state.committed_units, 0, "nothing uncommitted survives");
+        assert_eq!(
+            state.last_error.map(|error| error.code).as_deref(),
+            Some("cancelled")
         );
     }
 }

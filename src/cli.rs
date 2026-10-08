@@ -192,7 +192,8 @@ enum SemanticAction {
     /// entries and commits per batch.
     Prepare {
         /// The bounded versioned profile naming the model, worker and
-        /// runtime, verified before any worker starts.
+        /// recipe (templates, card limit, dimension), verified before any
+        /// worker starts.
         #[arg(long)]
         profile: PathBuf,
         /// Work budget in seconds.
@@ -203,7 +204,7 @@ enum SemanticAction {
         #[arg(long)]
         development_isolation: bool,
     },
-    /// Metadata-only readiness: never loads the tokenizer, Python, the
+    /// Metadata-only readiness: never loads the tokenizer, the worker, the
     /// model or a broken profile.
     Status,
     /// Offline removal of every semantic partition, cache entry and index

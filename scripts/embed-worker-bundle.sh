@@ -1,11 +1,10 @@
 #!/bin/sh
 # Build the 009 development embedding-worker bundle: an ad-hoc-signed App
-# Sandbox .app around foundry-embed whose grants come from the SEMANTIC
-# PROFILE, never from loose options: read-only for exactly the profile's
-# model_dir, runtime.python_home, runtime.site_packages and
-# runtime.requirements, and read-write for exactly the profile's
-# worker.scratch_root. No network, user-selected-file, inherit or
-# library-validation grants.
+# Sandbox .app around foundry-embed (statically linked llama.cpp; no Python)
+# whose grants come from the SEMANTIC PROFILE, never from loose options:
+# read-only for exactly the profile's model_dir, and read-write for exactly
+# the profile's worker.scratch_root. No network, user-selected-file, inherit
+# or library-validation grants.
 #
 # Scratch root contract: App Sandbox grants are static per signed bundle, so
 # the supervisor uses EXACTLY `worker.scratch_root` from the profile (an
@@ -17,10 +16,10 @@
 # supervisor refuses it at launch unless it is a real directory owned by the
 # current user and not group- or world-writable.
 #
-# Extra read grants (--extra-read DIR, repeatable) exist for a runtime library
-# root the interpreter links against outside the profile's python home (for
-# example the stable symlinked prefix a Homebrew framework build loads
-# through). Nothing is granted unless named.
+# Extra read grants (--extra-read DIR, repeatable) exist for a directory the
+# model directory's files resolve into outside model_dir (for example the
+# blob store a symlinked snapshot points at). Nothing is granted unless
+# named.
 #
 # Prints the executable's SHA-256 AFTER signing (codesign embeds the
 # signature in the executable, so the signed file is hashed); the profile's
@@ -88,11 +87,8 @@ done
 # (`set -e`), while a nested substitution would swallow the failure and hand
 # `cd` an empty path.
 MODEL_DIR=$(profile_value model_dir)
-PYTHON_HOME=$(profile_value runtime.python_home)
-SITE_PACKAGES=$(profile_value runtime.site_packages)
-REQUIREMENTS=$(profile_value runtime.requirements)
 SCRATCH_ROOT=$(profile_value worker.scratch_root)
-for absolute in "$MODEL_DIR" "$PYTHON_HOME" "$SITE_PACKAGES" "$REQUIREMENTS" "$SCRATCH_ROOT"; do
+for absolute in "$MODEL_DIR" "$SCRATCH_ROOT"; do
     case "$absolute" in
         /*) ;;
         *) echo "profile paths must be absolute: '$absolute'" >&2; exit 66 ;;
@@ -121,15 +117,11 @@ canon_maybe() {
 }
 
 MODEL_DIR=$(canon_dir "$MODEL_DIR")
-PYTHON_HOME=$(canon_dir "$PYTHON_HOME")
-SITE_PACKAGES=$(canon_dir "$SITE_PACKAGES")
-REQUIREMENTS=$(canon_file "$REQUIREMENTS")
 SCRATCH_ROOT=$(canon_maybe "$SCRATCH_ROOT")
 
 # M10, before anything is created or signed: the read-write scratch grant
-# must not overlap ANY read-only grant -- the profile's model directory,
-# Python home, site-packages and requirements listing, and EVERY canonical
-# --extra-read directory (equal, ancestor or descendant).
+# must not overlap ANY read-only grant -- the profile's model directory and
+# EVERY canonical --extra-read directory (equal, ancestor or descendant).
 overlap() {
     a=$1
     b=$2
@@ -143,9 +135,6 @@ overlap() {
     return 1
 }
 READ_ONLY="$MODEL_DIR
-$PYTHON_HOME
-$SITE_PACKAGES
-$REQUIREMENTS
 $EXTRA_READ"
 while IFS= read -r read_only; do
     [ -n "$read_only" ] || continue
@@ -185,11 +174,9 @@ cat > "$OUT/Contents/Info.plist" <<PL
 </plist>
 PL
 
-# Directory grants end in `/` so the sandbox matches the subtree; the
-# requirements listing is one literal file.
+# Directory grants end in `/` so the sandbox matches the subtree.
 read_only_grants() {
-    printf '    <string>%s/</string>\n' "$MODEL_DIR" "$PYTHON_HOME" "$SITE_PACKAGES"
-    printf '    <string>%s</string>\n' "$REQUIREMENTS"
+    printf '    <string>%s/</string>\n' "$MODEL_DIR"
     printf '%s' "$EXTRA_READ" | while IFS= read -r extra_dir; do
         if [ -n "$extra_dir" ]; then
             printf '    <string>%s/</string>\n' "$extra_dir"
@@ -227,7 +214,7 @@ SHA256=$(shasum -a 256 "$OUT/Contents/MacOS/foundry-embed" | cut -d' ' -f1)
 echo "bundle: $OUT"
 echo "identifier: $IDENTIFIER"
 echo "entitlements: $ENTITLEMENTS"
-echo "read-only grants: $MODEL_DIR/ $PYTHON_HOME/ $SITE_PACKAGES/ $REQUIREMENTS"
+echo "read-only grants: $MODEL_DIR/"
 if [ -n "$EXTRA_READ" ]; then
     echo "extra read grants: $(printf '%s' "$EXTRA_READ" | tr '\n' ' ')"
 fi

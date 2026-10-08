@@ -1,22 +1,22 @@
 //! 009 worker runtime shared by the real embedding worker (`foundry-embed`)
 //! and the test worker (`foundry-embed-fake`): owner-death containment, the
-//! single-slot admission protocol loop and reply integrity. No Python here.
+//! single-slot admission protocol loop and reply integrity.
 //!
 //! Containment order is fixed: the native owner-death watcher starts before
-//! the run closure may import or initialize anything heavy, and it exits the
-//! process with `_exit` (no GIL, no destructors, no locks) when either the
-//! liveness pipe reaches EOF or kqueue reports the owner PID exited. The
-//! admission slot is a nonblocking try-acquire taken before any inference
-//! allocation, held through inference, the vector copy and the bounded reply
-//! write, and never released by a client timeout.
+//! the run closure may load anything heavy, and it exits the process with
+//! `_exit` (no destructors, no locks) when either the liveness pipe reaches
+//! EOF or kqueue reports the owner PID exited. The admission slot is a
+//! nonblocking try-acquire taken before any inference allocation, held
+//! through inference, the vector copy and the bounded reply write, and never
+//! released by a client timeout.
 use super::protocol::{self, FrameError, Header, Purpose};
-use super::provider::{DIMENSIONS, FunctionDescriptor, TokenizedInput};
+use super::provider::{FunctionDescriptor, TokenizedInput};
 #[cfg(feature = "test-faults")]
 use sha2::{Digest, Sha256};
 use std::io;
 #[cfg(feature = "test-faults")]
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -33,96 +33,74 @@ pub const FRAME_EXIT: i32 = 101;
 /// Vocabulary bound the fake worker reports; test token IDs stay far below.
 pub const FAKE_VOCAB: u32 = 1 << 20;
 
-/// Revision of the first-party array-construction and output code in
-/// `foundry-embed`. The descriptor's `adapter_revision` must equal it: the
-/// worker computes exactly this recipe and never anything a profile merely
-/// claims.
+/// Revision of the first-party llama.cpp adapter in `foundry-embed` (batch
+/// construction, pooling read-out, truncation and renormalization). The
+/// descriptor's `adapter_revision` must equal it: the worker computes
+/// exactly this recipe and never anything a profile merely claims.
 pub const REAL_ADAPTER_REVISION: u32 = 1;
-/// Input and mask array element type the real adapter builds.
-pub const REAL_INPUT_DTYPE: &str = "int32";
-/// Padding side and pad ID the real adapter applies.
-pub const REAL_PADDING_SIDE: &str = "right";
-pub const REAL_PAD_ID: u32 = 11;
-/// Pooling and normalization the publisher model performs (never the adapter).
-pub const REAL_POOLING: &str = "publisher mean + l2";
-/// Output element type the real adapter copies out.
-pub const REAL_OUTPUT: &str = "f32";
-/// Every file the publisher loader (and the tokenizer it builds) reads. All
-/// must be named, and therefore hashed, in the descriptor's inventory: a
-/// loader input outside the inventory would execute unverified.
-pub const REAL_LOADER_INPUTS: [&str; 5] = [
-    "config.json",
-    "model.safetensors",
-    "nemotron3_embed_mlx.py",
-    "tokenizer.json",
-    "tokenizer_config.json",
-];
+/// The llama.cpp commit `foundry-embed` is built from (statically linked,
+/// Metal). `build.rs` refuses an `embed-worker` build from any other
+/// checkout and the worker refuses a descriptor that names another commit.
+pub const LLAMA_CPP_COMMIT: &str = "b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea";
+/// The core tokenizer's artifact: the worker takes token IDs, so the
+/// descriptor must pin the file they come from beside the GGUF.
+pub const REAL_TOKENIZER: &str = "tokenizer.json";
 
-/// Refuse a descriptor that claims a numerical recipe other than the one the
-/// real adapter implements. Checked before the model loads and before
-/// `ready`, by the supervisor before launch and by the worker itself.
-pub fn check_real_adapter(descriptor: &FunctionDescriptor) -> Result<(), String> {
-    fn same<T: PartialEq + std::fmt::Display>(
-        field: &str,
-        claimed: &T,
-        implemented: &T,
-    ) -> Result<(), String> {
-        if claimed == implemented {
-            Ok(())
-        } else {
-            Err(format!(
-                "descriptor claims {field} {claimed}, but the real adapter implements {implemented}"
-            ))
-        }
+/// What the fake worker's `--notices` writes in place of llama.cpp's
+/// license text: it links no llama.cpp.
+#[cfg(feature = "test-faults")]
+pub const FAKE_NOTICE: &str = "foundry-embed-fake: test notice; no llama.cpp is linked.\n";
+
+/// `foundry-embed --notices DIR` (and the fake worker's): write `license`,
+/// the license text of the llama.cpp the worker statically links, to
+/// `DIR/LICENSE` (creating DIR) and print the llama.cpp commit the worker
+/// is built from. The text travels inside the binary (build.rs embeds the
+/// pinned checkout's `LICENSE`), so packaging needs no llama.cpp checkout:
+/// package.sh ships it in THIRD-PARTY and checks the commit against the
+/// profile's pin. Nothing is loaded. Returns the exit code (73 when the
+/// file cannot be written).
+pub fn write_notices(dir: &Path, license: &str) -> i32 {
+    let file = dir.join("LICENSE");
+    if let Err(e) = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, license)) {
+        eprintln!("cannot write {}: {e}", file.display());
+        return 73;
     }
-    same(
-        "adapter_revision",
-        &descriptor.adapter_revision,
-        &REAL_ADAPTER_REVISION,
-    )?;
-    same(
-        "input_dtype",
-        &descriptor.input_dtype.as_str(),
-        &REAL_INPUT_DTYPE,
-    )?;
-    same(
-        "mask_dtype",
-        &descriptor.mask_dtype.as_str(),
-        &REAL_INPUT_DTYPE,
-    )?;
-    same(
-        "padding_side",
-        &descriptor.padding_side.as_str(),
-        &REAL_PADDING_SIDE,
-    )?;
-    same("pad_id", &descriptor.pad_id, &REAL_PAD_ID)?;
-    same("pooling", &descriptor.pooling.as_str(), &REAL_POOLING)?;
-    same("output", &descriptor.output.as_str(), &REAL_OUTPUT)?;
-    same("dimensions", &(descriptor.dimensions as usize), &DIMENSIONS)
+    println!("{LLAMA_CPP_COMMIT}");
+    0
 }
 
-/// Require the real loader's complete input inventory in the descriptor's
-/// verified artifact list (extra files are allowed, missing ones are not).
-pub fn check_real_inventory(descriptor: &FunctionDescriptor) -> Result<(), String> {
-    for required in REAL_LOADER_INPUTS {
-        if !descriptor
-            .artifact_files
-            .iter()
-            .any(|file| file.name == required)
-        {
-            return Err(format!(
-                "the descriptor's artifact inventory omits the loader input {required}, which \
-                 would load unverified"
-            ));
-        }
+/// Refuse a descriptor that claims a recipe other than the one the real
+/// worker implements: the adapter revision, the llama.cpp commit, and an
+/// inventory naming the GGUF and the core's tokenizer (each therefore
+/// hash-verified before load). Pooling, output and dimension are checked by
+/// [`FunctionDescriptor::validate`]. Checked by the supervisor before launch
+/// and by the worker itself before the model loads.
+pub fn check_real_descriptor(descriptor: &FunctionDescriptor) -> Result<(), String> {
+    descriptor.validate()?;
+    if descriptor.adapter_revision != REAL_ADAPTER_REVISION {
+        return Err(format!(
+            "descriptor claims adapter_revision {}, but the real adapter implements \
+             {REAL_ADAPTER_REVISION}",
+            descriptor.adapter_revision
+        ));
+    }
+    if descriptor.llama_cpp != LLAMA_CPP_COMMIT {
+        return Err(format!(
+            "descriptor names llama.cpp {}, but the worker is built from {LLAMA_CPP_COMMIT}",
+            descriptor.llama_cpp
+        ));
+    }
+    if !descriptor
+        .artifact_files
+        .iter()
+        .any(|file| file.name == REAL_TOKENIZER)
+    {
+        return Err(format!(
+            "the descriptor's artifact inventory omits {REAL_TOKENIZER}, which would load \
+             unverified"
+        ));
     }
     Ok(())
-}
-
-/// Both real-worker descriptor checks, adapter claims first.
-pub fn check_real_descriptor(descriptor: &FunctionDescriptor) -> Result<(), String> {
-    check_real_adapter(descriptor)?;
-    check_real_inventory(descriptor)
 }
 
 /// Parsed worker argv as the supervisor writes it.
@@ -132,8 +110,6 @@ pub struct WorkerArgs {
     pub liveness_fd: i32,
     pub expected: FunctionDescriptor,
     pub model_dir: PathBuf,
-    pub python_home: PathBuf,
-    pub site_packages: PathBuf,
     /// Test hooks, armed only by `foundry-embed-fake`.
     #[cfg(feature = "test-faults")]
     pub hooks: Hooks,
@@ -147,8 +123,6 @@ impl WorkerArgs {
         let mut liveness_fd = None;
         let mut descriptor: Option<FunctionDescriptor> = None;
         let mut model_dir = None;
-        let mut python_home = None;
-        let mut site_packages = None;
         let mut rest = Vec::new();
         let mut raw = args.into_iter().peekable();
         while let Some(flag) = raw.next() {
@@ -178,8 +152,6 @@ impl WorkerArgs {
                     );
                 }
                 "--model-dir" => model_dir = Some(PathBuf::from(value("--model-dir")?)),
-                "--python-home" => python_home = Some(PathBuf::from(value("--python-home")?)),
-                "--site-packages" => site_packages = Some(PathBuf::from(value("--site-packages")?)),
                 other => rest.push(other.to_string()),
             }
         }
@@ -193,8 +165,6 @@ impl WorkerArgs {
                 liveness_fd: liveness_fd.ok_or("--liveness-fd is required")?,
                 expected,
                 model_dir: model_dir.ok_or("--model-dir is required")?,
-                python_home: python_home.ok_or("--python-home is required")?,
-                site_packages: site_packages.ok_or("--site-packages is required")?,
                 #[cfg(feature = "test-faults")]
                 hooks: Hooks::default(),
             },
@@ -348,63 +318,58 @@ impl Hooks {
     }
 }
 
-/// The test worker's fixed descriptor: the identity the supervisor's test
-/// profile pins, so `ready` equality can be checked end to end. It is a
-/// descriptor the REAL recipe admits (the same adapter claims and the
-/// loader's complete input inventory), so the supervisor runs one check for
-/// every worker and the tests exercise exactly that check; only the model
-/// behind it differs. Every artifact digest is the SHA-256 of the empty
-/// file, matching the zero-byte files the tests create.
+/// The test worker's descriptor at 768 dimensions: the identity the
+/// supervisor's test profile pins, so `ready` equality can be checked end
+/// to end. It is a descriptor the REAL recipe admits (the adapter revision,
+/// the llama.cpp commit and the inventory), so the supervisor runs one
+/// check for every worker and the tests exercise exactly that check; only
+/// the model behind it differs. Every artifact digest is the SHA-256 of the
+/// empty file, matching the zero-byte files the tests create.
 #[cfg(feature = "test-faults")]
 pub fn fake_descriptor() -> FunctionDescriptor {
+    fake_descriptor_with(768)
+}
+
+/// [`fake_descriptor`] at another output dimension: the test worker serves
+/// each of these and nothing else.
+#[cfg(feature = "test-faults")]
+pub fn fake_descriptor_with(dimensions: u32) -> FunctionDescriptor {
     let empty = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     FunctionDescriptor {
         v: super::provider::DESCRIPTOR_VERSION,
-        model: "foundry-fake/deterministic-embed-v1".into(),
-        artifact_files: REAL_LOADER_INPUTS
+        model: "foundry-fake/deterministic-embed-v2".into(),
+        artifact_files: ["model.gguf", REAL_TOKENIZER]
             .iter()
             .map(|name| super::provider::ArtifactFile {
                 name: (*name).into(),
                 sha256: empty.into(),
             })
             .collect(),
-        quantization: "none".into(),
+        gguf: "model.gguf".into(),
+        llama_cpp: LLAMA_CPP_COMMIT.into(),
         tokenizer: "fake-ids 1".into(),
         add_special_tokens: true,
-        padding_side: REAL_PADDING_SIDE.into(),
-        pad_id: REAL_PAD_ID,
+        pooling: "mean".into(),
+        dimensions,
+        output: "f32".into(),
         adapter_revision: REAL_ADAPTER_REVISION,
-        input_dtype: REAL_INPUT_DTYPE.into(),
-        mask_dtype: REAL_INPUT_DTYPE.into(),
-        pooling: REAL_POOLING.into(),
-        dimensions: DIMENSIONS as u32,
-        output: REAL_OUTPUT.into(),
-        runtime: super::provider::RuntimeClosure {
-            python: "none".into(),
-            mlx: "none".into(),
-            mlx_metal: "none".into(),
-            mlx_lm: "none".into(),
-            transformers: "none".into(),
-            numpy: "none".into(),
-            requirements_sha256: empty.into(),
-        },
-        document_prefix: super::provider::DOCUMENT_PREFIX.into(),
+        document_template: "doc: {text}".into(),
     }
 }
 
-/// Deterministic unit-length-free vector keyed only by the ID sequence: the
-/// same IDs always yield the same finite 2048 values. Shared by the test
-/// worker and the supervisor tests so expectations never drift.
+/// Deterministic vector of `dims` values keyed only by the ID sequence: the
+/// same IDs always yield the same finite values. Shared by the test worker
+/// and the supervisor tests so expectations never drift.
 #[cfg(feature = "test-faults")]
-pub fn deterministic_vector(ids: &[u32]) -> Vec<f32> {
+pub fn deterministic_vector(ids: &[u32], dims: usize) -> Vec<f32> {
     let mut hasher = Sha256::new();
     for id in ids {
         hasher.update(id.to_le_bytes());
     }
     let seed = u64::from_le_bytes(hasher.finalize()[..8].try_into().expect("8 bytes"));
     let mut state = seed | 1;
-    let mut vector = Vec::with_capacity(DIMENSIONS);
-    for _ in 0..DIMENSIONS {
+    let mut vector = Vec::with_capacity(dims);
+    for _ in 0..dims {
         // xorshift64* then map the high 24 bits into [-1, 1).
         state ^= state >> 12;
         state ^= state << 25;
@@ -530,10 +495,11 @@ impl Engine {
         job: Job,
         #[cfg_attr(not(feature = "test-faults"), allow(unused_mut))] mut vectors: Vec<Vec<f32>>,
     ) -> bool {
+        let dims = self.args.expected.dims();
         let shape_ok = vectors.len() == job.inputs.len()
             && vectors
                 .iter()
-                .all(|v| v.len() == DIMENSIONS && v.iter().all(|c| c.is_finite()));
+                .all(|v| v.len() == dims && v.iter().all(|c| c.is_finite()));
         if !shape_ok {
             self.shared.write_error(
                 Some(job.id),
@@ -571,9 +537,9 @@ impl Engine {
                 ReplyFault::None => {}
                 ReplyFault::WrongDims | ReplyFault::WrongCount => {
                     let dims = if hooks.reply_fault == ReplyFault::WrongDims {
-                        (DIMENSIONS - 1) as u32
+                        (dims - 1) as u32
                     } else {
-                        DIMENSIONS as u32
+                        dims as u32
                     };
                     let count = if hooks.reply_fault == ReplyFault::WrongCount {
                         vectors.len() as u32 + 1
@@ -595,7 +561,8 @@ impl Engine {
                 ReplyFault::Nan => vectors[0][0] = f32::NAN,
                 ReplyFault::Oversize => {
                     let header = format!(
-                        "{{\"kind\":\"vectors\",\"protocol\":1,\"id\":{},\"count\":1,\"dims\":{DIMENSIONS}}}",
+                        "{{\"kind\":\"vectors\",\"protocol\":{},\"id\":{},\"count\":1,\"dims\":{dims}}}",
+                        protocol::PROTOCOL_VERSION,
                         job.id
                     );
                     let ok = self.raw_frame(&header, 0x00ff_ffff, b"partial");
@@ -621,7 +588,7 @@ impl Engine {
                 protocol: protocol::PROTOCOL_VERSION,
                 id: job.id,
                 count: vectors.len() as u32,
-                dims: DIMENSIONS as u32,
+                dims: dims as u32,
             },
             &protocol::encode_vectors(&vectors),
         );
@@ -660,8 +627,8 @@ impl Engine {
 
 /// Take the frame channel private. The original stdout descriptor moves to a
 /// new close-on-exec descriptor owned by the runtime, and descriptor 1
-/// becomes a copy of stderr: a stray `print` from any library (a Python
-/// warning, a C `printf`) then lands in the supervisor's bounded stderr
+/// becomes a copy of stderr: a stray `printf` from any library (llama.cpp
+/// or ggml chatter included) then lands in the supervisor's bounded stderr
 /// drain instead of corrupting a frame. 013's learning worker takes its
 /// frame channel private through this same function.
 pub fn take_ipc_stdout() -> io::Result<std::fs::File> {
@@ -940,8 +907,8 @@ fn classify_event(event: &libc::kevent, owner_pid: u32, liveness_fd: i32) -> Ver
 
 /// Arm one native thread that exits the process when the owner disappears.
 /// Both signals are required: kqueue `EVFILT_PROC`/`NOTE_EXIT` on the owner
-/// PID and EOF on the inherited liveness pipe. The thread never touches
-/// Python or any lock and sits in `kevent` only; on either signal it calls
+/// PID and EOF on the inherited liveness pipe. The thread never touches the
+/// model or any lock and sits in `kevent` only; on either signal it calls
 /// `_exit`. Events already pending at registration are handled here, with
 /// the watcher loop's own classification, before the thread starts.
 pub fn arm_owner_death_watcher(owner_pid: u32, liveness_fd: i32) -> Result<Armed, String> {
@@ -1036,8 +1003,8 @@ pub fn arm_owner_death_watcher(owner_pid: u32, liveness_fd: i32) -> Result<Armed
 }
 
 /// Leave the process now: no destructors, no atexit handlers, no locks. The
-/// only exit the watcher and the frame-error paths use, because an MLX
-/// evaluation may be running on another thread.
+/// only exit the watcher and the frame-error paths use, because a
+/// llama.cpp evaluation may be running on another thread.
 pub fn exit_now(code: i32) -> ! {
     #[cfg(feature = "test-faults")]
     mark_phase(&format!("exit {}", unix_nanos()));

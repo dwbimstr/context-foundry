@@ -11,7 +11,7 @@ use super::anchor::{Dir, Kind};
 use super::profile::{SemanticProfile, control_stop, hash_regular_file_until};
 use super::protocol::{self, Header, Purpose};
 use super::provider::{
-    EmbeddingProvider, FunctionDescriptor, LateCall, ProviderError, TokenizedInput,
+    DocumentLimits, EmbeddingProvider, FunctionDescriptor, LateCall, ProviderError, TokenizedInput,
     check_document_batch, check_query,
 };
 use super::worker_runtime;
@@ -664,6 +664,8 @@ impl Caller<'_> {
 pub struct WorkerProvider {
     shared: Arc<Shared>,
     descriptor: Arc<FunctionDescriptor>,
+    /// The profile's document-call limits, checked before any request.
+    limits: DocumentLimits,
     /// Vocabulary bound the worker reported at readiness.
     pub vocab: u32,
     /// The per-run scratch directory, removed at shutdown.
@@ -699,7 +701,7 @@ impl WorkerProvider {
         Self::launch_with(profile, &extra_args, control)
     }
 
-    /// Verify the profile, every artifact, the requirements listing and the
+    /// Verify the profile, every artifact (the GGUF and the tokenizer) and the
     /// bundle executable hash BEFORE launch, then start the worker and wait
     /// for a `ready` whose descriptor equals the profile's.
     ///
@@ -776,28 +778,17 @@ impl WorkerProvider {
             .arg("--descriptor")
             .arg(&descriptor_json)
             .arg("--model-dir")
-            .arg(&profile.model_dir)
-            .arg("--python-home")
-            .arg(&profile.runtime.python_home)
-            .arg("--site-packages")
-            .arg(&profile.runtime.site_packages);
+            .arg(&profile.model_dir);
         command.args(extra_args);
         command
             .current_dir(&scratch_dir)
             // `env -i` style: no inherited credentials, proxies or agent
-            // sockets reach the worker.
+            // sockets reach the worker. The llama.cpp worker needs no
+            // interpreter, site path or model-hub variable.
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", &scratch_dir)
             .env("TMPDIR", scratch_dir.join("tmp"))
-            .env("PYTHONHOME", &profile.runtime.python_home)
-            .env("PYTHONNOUSERSITE", "1")
-            .env("PYTHONDONTWRITEBYTECODE", "1")
-            .env("PYTHONUNBUFFERED", "1")
-            .env("HF_HUB_OFFLINE", "1")
-            .env("TRANSFORMERS_OFFLINE", "1")
-            .env("TOKENIZERS_PARALLELISM", "false")
-            .env("OMP_NUM_THREADS", "2")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -926,6 +917,7 @@ impl WorkerProvider {
         if let Some(stdout) = stdout {
             let shared = Arc::clone(&shared);
             let launch_tx = launch_tx.clone();
+            let profile_dims = profile.descriptor.dims();
             handles.push(Some(std::thread::spawn(move || {
                 let mut reader = BufReader::new(stdout);
                 loop {
@@ -975,8 +967,13 @@ impl WorkerProvider {
                             }
                             match shared.expected_count() {
                                 Some(expected) => {
-                                    match protocol::decode_vectors(count, dims, &payload, expected)
-                                    {
+                                    match protocol::decode_vectors(
+                                        count,
+                                        dims,
+                                        &payload,
+                                        expected,
+                                        profile_dims,
+                                    ) {
                                         Ok(vectors) => shared.notify(Reply::Vectors(vectors)),
                                         Err(e) => shared.notify(Reply::Failed {
                                             code: "provider_malformed".into(),
@@ -1084,16 +1081,14 @@ impl WorkerProvider {
             // reaped, and the caller's stop reason stands.
             Some(LaunchEvent::Ready(descriptor, vocab)) => {
                 if let Some(stop) = control_stop(control) {
-                    let mut provider =
-                        Self::assemble(shared, &profile.descriptor, 0, scratch_dir, handles);
+                    let mut provider = Self::assemble(shared, profile, 0, scratch_dir, handles);
                     provider.shutdown();
                     return Err(stop);
                 }
                 (*descriptor, vocab)
             }
             Some(LaunchEvent::Failed(message)) => {
-                let mut provider =
-                    Self::assemble(shared, &profile.descriptor, 0, scratch_dir, handles);
+                let mut provider = Self::assemble(shared, profile, 0, scratch_dir, handles);
                 provider.shutdown();
                 if let Some(breach) = provider.breach_message() {
                     return Err(ProviderError::ResourceLimit(breach));
@@ -1104,8 +1099,7 @@ impl WorkerProvider {
                 )));
             }
             None => {
-                let mut provider =
-                    Self::assemble(shared, &profile.descriptor, 0, scratch_dir, handles);
+                let mut provider = Self::assemble(shared, profile, 0, scratch_dir, handles);
                 provider.shutdown();
                 if let Some(breach) = provider.breach_message() {
                     return Err(ProviderError::ResourceLimit(breach));
@@ -1114,14 +1108,14 @@ impl WorkerProvider {
             }
         };
         if descriptor != profile.descriptor {
-            let mut provider = Self::assemble(shared, &profile.descriptor, 0, scratch_dir, handles);
+            let mut provider = Self::assemble(shared, profile, 0, scratch_dir, handles);
             provider.shutdown();
             return Err(ProviderError::ProfileInvalid(
                 "the worker reported a different function descriptor than the profile".into(),
             ));
         }
         if vocab == 0 {
-            let mut provider = Self::assemble(shared, &profile.descriptor, 0, scratch_dir, handles);
+            let mut provider = Self::assemble(shared, profile, 0, scratch_dir, handles);
             provider.shutdown();
             return Err(ProviderError::Malformed(
                 "the worker reported a zero vocabulary bound".into(),
@@ -1130,29 +1124,24 @@ impl WorkerProvider {
         // The full control again before the provider is handed out: a stop
         // that landed while the reply checks ran never yields a worker.
         if let Some(stop) = control_stop(control) {
-            let mut provider = Self::assemble(shared, &profile.descriptor, 0, scratch_dir, handles);
+            let mut provider = Self::assemble(shared, profile, 0, scratch_dir, handles);
             provider.shutdown();
             return Err(stop);
         }
-        Ok(Self::assemble(
-            shared,
-            &profile.descriptor,
-            vocab,
-            scratch_dir,
-            handles,
-        ))
+        Ok(Self::assemble(shared, profile, vocab, scratch_dir, handles))
     }
 
     fn assemble(
         shared: Arc<Shared>,
-        descriptor: &FunctionDescriptor,
+        profile: &SemanticProfile,
         vocab: u32,
         scratch: std::path::PathBuf,
         handles: Vec<Option<std::thread::JoinHandle<()>>>,
     ) -> Self {
         Self {
             shared,
-            descriptor: Arc::new(descriptor.clone()),
+            descriptor: Arc::new(profile.descriptor.clone()),
+            limits: profile.document_limits(),
             vocab,
             scratch: Some(scratch),
             handles,
@@ -1502,7 +1491,7 @@ impl EmbeddingProvider for WorkerProvider {
         batch: &[TokenizedInput],
         control: &Control,
     ) -> Result<Vec<Vec<f32>>, ProviderError> {
-        check_document_batch(batch)?;
+        check_document_batch(batch, self.limits)?;
         self.request(
             Purpose::Document,
             batch,

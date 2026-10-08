@@ -7,16 +7,22 @@
 //! bytes), a decode failure is corruption by name, cache commits precede any
 //! derived publication, and the disk cap stops preparation with `cache_full`
 //! instead of evicting. Every eligibility check compares the CURRENT source
-//! hash, recipe, function digest AND the unit ranges against the source's
-//! recorded length, so a source change (or a malformed mapping) makes the old
-//! mapping ineligible immediately; source commits never touch these tables.
-//! Accepting a mapping additionally binds every unit key to the exact
-//! rendered bytes it names.
+//! hash, recipe, function digest AND the card ranges against the source's
+//! recorded length, so a source change (or a malformed mapping) makes the
+//! old mapping ineligible immediately; source commits never touch these
+//! tables.
+//!
+//! 009 T004 cache rows are self-describing: the 64-hex function digest, the
+//! dimension as `u32` LE, then that many `f32` LE values. A row of exactly
+//! [`LEGACY_ROW_BYTES`] (a digest and 2048 values, no dimension) is a
+//! descriptor v1 row: retained and accounted, never served by a v2
+//! profile, removed only by `semantic purge`. Accounting sums the actual
+//! row lengths.
 use crate::control::Control;
 use crate::error::{FResult, FoundryError};
 use crate::neural::anchor::{Dir, conflict_or_io};
 use crate::neural::index::SEMANTIC_DIR;
-use crate::neural::provider;
+use crate::neural::provider::{self, MAX_DIMENSIONS};
 use crate::store::{CHUNKS, Engine, SOURCES, SourceMeta, decode, reconstruct_verified};
 use redb::{
     Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition,
@@ -36,24 +42,32 @@ pub(crate) const STATE: TableDefinition<&str, &str> = TableDefinition::new("sema
 pub const STATE_KEY: &str = "state";
 /// Default cache cap: 2 GiB per workspace (D001 chosen values).
 pub const DEFAULT_CACHE_CAP_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-/// Fixed cache-row layout: 64 hex digest bytes + `DIMENSIONS` f32 LE values.
-pub const CACHE_VALUE_BYTES: usize = 64 + provider::DIMENSIONS * 4;
+/// A descriptor v1 cache row: 64 hex digest bytes and 2048 f32 LE values,
+/// with no dimension field.
+pub const LEGACY_ROW_BYTES: usize = 64 + 2048 * 4;
 /// The paged-walk bound shared with every other store census.
 pub const PAGE: usize = 128;
 
+/// The byte length of a self-describing row of `dims` values.
+pub const fn row_bytes(dims: usize) -> usize {
+    64 + 4 + dims * 4
+}
+
 /// One partitioned source version: the source hash and recipe it belongs to,
-/// and the unit ranges with their document-input keys. An empty `units` list
-/// is a COMPLETED zero-unit partition (legal only for an empty source),
-/// distinguishable from a missing row.
+/// and its card ranges with their document-input keys. An empty `units`
+/// list is a COMPLETED partition of a source without cards, distinguishable
+/// from a missing row.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PartitionRecord {
     pub source_hash: String,
     pub recipe_id: String,
-    /// The function digest the unit input keys were computed under.
+    /// The function digest the card input keys were computed under.
     pub function_digest: String,
     pub units: Vec<PartitionUnit>,
 }
 
+/// One card's provenance: the unit range it was rendered from and the key
+/// of its exact rendered input.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PartitionUnit {
     pub start: usize,
@@ -82,13 +96,19 @@ pub struct SemanticState {
     pub function_digest: Option<String>,
     /// The recipe id the recorded partitions were built under.
     pub recipe_id: Option<String>,
+    /// 009 T004: the output dimension of the recorded profile. A row
+    /// written before T004 has none: its profile (descriptor v1) is no
+    /// longer served, and its generation is kept, never rebuilt.
+    #[serde(default)]
+    pub dimensions: Option<u32>,
     /// `stopped`, `paused` or `running`.
     pub state: String,
     pub last_error: Option<StateError>,
     /// Vectors durably committed since the last purge; updated in the SAME
     /// transaction as each cache batch.
     pub committed_units: u64,
-    /// Exact byte total of the cache rows, updated with each batch commit.
+    /// Exact byte total of the cache rows (their actual lengths), updated
+    /// with each batch commit.
     pub cache_bytes: u64,
     /// The last provider state a preparation run observed, if any.
     #[serde(default)]
@@ -123,9 +143,11 @@ pub enum CacheLookup {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CacheProbe {
     Absent,
-    /// Valid layout, stored under the active function's digest.
+    /// Valid self-describing layout, stored under the active function's
+    /// digest.
     Current,
-    /// Valid layout stored under ANOTHER function's digest: retention.
+    /// Valid layout stored under ANOTHER function's digest, or a descriptor
+    /// v1 row: retention.
     Retained,
     Corrupt,
 }
@@ -138,6 +160,8 @@ pub struct CacheCensus {
     pub corrupt: u64,
     /// Valid rows no current partition references (any function).
     pub orphan: u64,
+    /// Valid descriptor v1 rows (no dimension field), retained until purge.
+    pub legacy: u64,
 }
 
 /// The bounded page of admitted sources after `after`.
@@ -197,81 +221,52 @@ fn decode_state(raw: &str) -> FResult<SemanticState> {
     })
 }
 
-/// The immutable source body and function digest a mapping is checked
-/// against at acceptance.
-#[derive(Clone, Copy)]
-pub struct Identity<'a> {
-    pub body: &'a str,
-    pub function_digest: &'a str,
-}
-
-/// Validate a unit list against a source of `len` bytes: exact contiguous
-/// nonoverlapping cover, no empty or inverted range and key shape. An empty
-/// list is legal only for an empty source, and an empty source carries no
-/// units. With `identity` (acceptance, where the immutable body is at hand)
-/// every range must also sit on UTF-8 boundaries and every key must equal
-/// `input_key(function digest, render_document(exact unit bytes))`: an
-/// arbitrary or cross-source key is refused.
+/// Validate a card list against a source of `len` bytes: nonempty ranges
+/// inside the source in the unit forest's pre-order (start ascending, the
+/// enclosing range first among equal starts), no range twice, and key
+/// shape. Any source may carry zero cards. With `body` (acceptance, where
+/// the immutable body is at hand) every range must also sit on UTF-8
+/// boundaries.
 pub fn validate_units(
     units: &[PartitionUnit],
     len: usize,
-    identity: Option<Identity<'_>>,
+    body: Option<&str>,
 ) -> Result<(), String> {
-    if len == 0 {
-        return if units.is_empty() {
-            Ok(())
-        } else {
-            Err("an empty source cannot carry units".into())
-        };
-    }
-    if units.is_empty() {
-        return Err("a nonempty source cannot carry an empty partition".into());
-    }
-    let mut cursor = 0usize;
     for (index, unit) in units.iter().enumerate() {
-        if unit.start != cursor {
-            return Err(format!(
-                "unit {index} starts at {} but the cover is at {cursor}",
-                unit.start
-            ));
-        }
         if unit.end <= unit.start {
-            return Err(format!("unit {index} is empty or inverted"));
+            return Err(format!("card {index} is empty or inverted"));
         }
         if unit.end > len {
             return Err(format!(
-                "unit {index} ends at {} beyond the {len}-byte source",
+                "card {index} ends at {} beyond the {len}-byte source",
                 unit.end
             ));
         }
         if !is_key(&unit.input_key) {
-            return Err(format!("unit {index} has a malformed input key"));
+            return Err(format!("card {index} has a malformed input key"));
         }
-        if let Some(identity) = identity {
-            let Some(text) = identity.body.get(unit.start..unit.end) else {
-                return Err(format!("unit {index} splits a UTF-8 character"));
-            };
-            let expected =
-                provider::input_key(identity.function_digest, &provider::render_document(text));
-            if unit.input_key != expected {
-                return Err(format!(
-                    "unit {index} key does not name its exact rendered input"
-                ));
+        if index > 0 {
+            let previous = &units[index - 1];
+            let ordered = previous.start < unit.start
+                || (previous.start == unit.start && previous.end > unit.end);
+            if !ordered {
+                return Err(format!("card {index} is out of order or repeats a range"));
             }
         }
-        cursor = unit.end;
-    }
-    if cursor != len {
-        return Err(format!("units cover {cursor} of {len} bytes"));
+        if let Some(body) = body
+            && body.get(unit.start..unit.end).is_none()
+        {
+            return Err(format!("card {index} splits a UTF-8 character"));
+        }
     }
     Ok(())
 }
 
 /// Whether one partition row is current for this source version, recipe and
-/// document function, with unit ranges that still satisfy the metadata-level
-/// invariants against the source's recorded length. Every serving and
-/// eligibility lookup checks all of it; a source change makes its old mapping
-/// ineligible immediately.
+/// document function, with card ranges that still satisfy the
+/// metadata-level invariants against the source's recorded length. Every
+/// serving and eligibility lookup checks all of it; a source change makes
+/// its old mapping ineligible immediately.
 pub fn partition_is_current(
     record: &PartitionRecord,
     meta: &SourceMeta,
@@ -291,22 +286,56 @@ fn invalid_partition(message: impl Into<String>) -> FoundryError {
     }
 }
 
-fn probe_row(bytes: &[u8], function_digest: &str) -> CacheProbe {
-    if bytes.len() != CACHE_VALUE_BYTES {
-        return CacheProbe::Corrupt;
+/// The layout of one cache row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Layout {
+    /// A descriptor v1 row: digest and 2048 values, no dimension.
+    Legacy,
+    /// A self-describing row of this many values.
+    Dims(usize),
+    Corrupt,
+}
+
+fn hex_digest(bytes: &[u8]) -> bool {
+    bytes.iter().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn layout(bytes: &[u8]) -> Layout {
+    if bytes.len() < 64 || !hex_digest(&bytes[..64]) {
+        return Layout::Corrupt;
     }
-    let stored = &bytes[..64];
-    if !stored
-        .iter()
-        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-    {
-        return CacheProbe::Corrupt;
+    if bytes.len() == LEGACY_ROW_BYTES {
+        return Layout::Legacy;
     }
-    if stored == function_digest.as_bytes() {
-        CacheProbe::Current
+    let Some(field) = bytes.get(64..68) else {
+        return Layout::Corrupt;
+    };
+    let dims = u32::from_le_bytes([field[0], field[1], field[2], field[3]]) as usize;
+    if (1..=MAX_DIMENSIONS).contains(&dims) && bytes.len() == row_bytes(dims) {
+        Layout::Dims(dims)
     } else {
-        CacheProbe::Retained
+        Layout::Corrupt
     }
+}
+
+fn probe_row(bytes: &[u8], function_digest: &str) -> CacheProbe {
+    match layout(bytes) {
+        Layout::Corrupt => CacheProbe::Corrupt,
+        Layout::Legacy => CacheProbe::Retained,
+        Layout::Dims(_) if &bytes[..64] == function_digest.as_bytes() => CacheProbe::Current,
+        Layout::Dims(_) => CacheProbe::Retained,
+    }
+}
+
+/// One self-describing row: digest, dimension, values.
+fn encode_row(function_digest: &str, vector: &[f32]) -> Vec<u8> {
+    let mut value = Vec::with_capacity(row_bytes(vector.len()));
+    value.extend_from_slice(function_digest.as_bytes());
+    value.extend_from_slice(&(vector.len() as u32).to_le_bytes());
+    for component in vector {
+        value.extend_from_slice(&component.to_le_bytes());
+    }
+    value
 }
 
 impl Engine {
@@ -321,12 +350,13 @@ impl Engine {
         }
     }
 
-    /// Accept one completed partition (or a completed empty one). The CURRENT
-    /// source version and its immutable body are read in the same write
-    /// transaction, and the mapping is refused unless it names that version
-    /// and covers it exactly: bounds, ordering, UTF-8 boundaries, key shape,
-    /// empty-partition legality and — from the body — that every key is the
-    /// identity of the exact rendered bytes of its range.
+    /// Accept one completed partition (or a completed one without cards).
+    /// The CURRENT source version and its immutable body are read in the
+    /// same write transaction, and the mapping is refused unless it names
+    /// that version and its cards lie inside it: bounds, order, UTF-8
+    /// boundaries and key shape. (A card key binds the card's exact
+    /// rendered input, which the partition step computed; acceptance does
+    /// not re-render it.)
     pub fn semantic_record_partition(&self, path: &str, record: &PartitionRecord) -> FResult<()> {
         let tx = self.db.begin_write()?;
         {
@@ -342,15 +372,8 @@ impl Engine {
             }
             let chunks = tx.open_table(CHUNKS)?;
             let body = reconstruct_verified(&chunks, path, &meta)?.body;
-            validate_units(
-                &record.units,
-                body.len(),
-                Some(Identity {
-                    body: &body,
-                    function_digest: &record.function_digest,
-                }),
-            )
-            .map_err(|m| invalid_partition(format!("{path}: {m}")))?;
+            validate_units(&record.units, body.len(), Some(&body))
+                .map_err(|m| invalid_partition(format!("{path}: {m}")))?;
             let mut table = tx.open_table(PARTITIONS)?;
             table.insert(
                 path,
@@ -403,7 +426,7 @@ impl Engine {
         Ok(())
     }
 
-    /// Metadata-only classification of one cache row (length and digest
+    /// Metadata-only classification of one cache row (layout and digest
     /// only; no vector decode).
     pub fn semantic_cache_probe(&self, key: &str, function_digest: &str) -> FResult<CacheProbe> {
         let tx = self.db.begin_read()?;
@@ -414,13 +437,20 @@ impl Engine {
         })
     }
 
-    /// One serving lookup under the CURRENT function digest. A row carrying
-    /// another digest, a wrong layout or nonfinite bytes is corrupt: named,
-    /// never served, never reset. This is the lookup that catches a payload
-    /// tampered with after commit (a same-length NaN/infinity row passes the
-    /// metadata probe but not this decode); preparation and the index rebuild
-    /// both use it, disable the row by name and re-embed it.
-    pub fn semantic_cache_lookup(&self, key: &str, function_digest: &str) -> FResult<CacheLookup> {
+    /// One serving lookup under the CURRENT function digest and its
+    /// dimension. A row carrying another digest, a descriptor v1 row, a
+    /// wrong layout or dimension, or nonfinite bytes is corrupt for this
+    /// lookup: named, never served, never reset. This is the lookup that
+    /// catches a payload tampered with after commit (a same-length
+    /// NaN/infinity row passes the metadata probe but not this decode);
+    /// preparation and the index rebuild both use it, disable the row by
+    /// name and re-embed it.
+    pub fn semantic_cache_lookup(
+        &self,
+        key: &str,
+        function_digest: &str,
+        dims: usize,
+    ) -> FResult<CacheLookup> {
         let tx = self.db.begin_read()?;
         let table = tx.open_table(CACHE)?;
         let Some(raw) = table.get(key)? else {
@@ -428,35 +458,49 @@ impl Engine {
         };
         let bytes = raw.value();
         let short = key.get(..8).unwrap_or(key);
-        match probe_row(bytes, function_digest) {
-            CacheProbe::Corrupt | CacheProbe::Absent => Ok(CacheLookup::Corrupt(format!(
+        match (probe_row(bytes, function_digest), layout(bytes)) {
+            (CacheProbe::Current, Layout::Dims(stored)) if stored == dims => {
+                match decode_vector(&bytes[68..]) {
+                    Some(vector) => Ok(CacheLookup::Hit(vector)),
+                    None => Ok(CacheLookup::Corrupt(format!(
+                        "semantic_cache[{short}…] holds a nonfinite vector"
+                    ))),
+                }
+            }
+            (CacheProbe::Current, Layout::Dims(stored)) => Ok(CacheLookup::Corrupt(format!(
+                "semantic_cache[{short}…] holds {stored} values; the profile has {dims}"
+            ))),
+            (CacheProbe::Retained, Layout::Legacy) => Ok(CacheLookup::Corrupt(format!(
+                "semantic_cache[{short}…] is a descriptor v1 row"
+            ))),
+            (CacheProbe::Retained, _) => Ok(CacheLookup::Corrupt(format!(
+                "semantic_cache[{short}…] carries a foreign function digest"
+            ))),
+            _ => Ok(CacheLookup::Corrupt(format!(
                 "semantic_cache[{short}…] has an invalid layout ({} bytes)",
                 bytes.len()
             ))),
-            CacheProbe::Retained => Ok(CacheLookup::Corrupt(format!(
-                "semantic_cache[{short}…] carries a foreign function digest"
-            ))),
-            CacheProbe::Current => match decode_vector(&bytes[64..]) {
-                Some(vector) => Ok(CacheLookup::Hit(vector)),
-                None => Ok(CacheLookup::Corrupt(format!(
-                    "semantic_cache[{short}…] holds a nonfinite vector"
-                ))),
-            },
         }
     }
 
-    /// Cache rows and their exact byte total (fixed-layout rows).
+    /// Cache rows and the exact sum of their actual lengths (one read).
     pub fn semantic_cache_totals(&self) -> FResult<(u64, u64)> {
         let tx = self.db.begin_read()?;
-        let rows = tx.open_table(CACHE)?.len()?;
-        Ok((rows, rows * CACHE_VALUE_BYTES as u64))
+        let table = tx.open_table(CACHE)?;
+        let (mut rows, mut bytes) = (0u64, 0u64);
+        for row in table.iter()? {
+            let (_, value) = row?;
+            rows += 1;
+            bytes += value.value().len() as u64;
+        }
+        Ok((rows, bytes))
     }
 
     /// Paged, metadata-only census of the whole cache: each row is validated
-    /// against its OWN layout and stored digest (length and digest only, no
-    /// vector decode — status trusts committed payloads), valid rows no
-    /// current mapping references are retention, and `control` is checked
-    /// before every page.
+    /// against its OWN layout (a self-describing row or a descriptor v1 row;
+    /// length, dimension and digest only, no vector decode — status trusts
+    /// committed payloads), valid rows no current mapping references are
+    /// retention, and `control` is checked before every page.
     pub fn semantic_cache_census(
         &self,
         control: &Control,
@@ -481,9 +525,12 @@ impl Engine {
                 let bytes = value.value();
                 census.entries += 1;
                 census.bytes += bytes.len() as u64;
-                match probe_row(bytes, "") {
-                    CacheProbe::Corrupt => census.corrupt += 1,
-                    _ => {
+                match layout(bytes) {
+                    Layout::Corrupt => census.corrupt += 1,
+                    found => {
+                        if found == Layout::Legacy {
+                            census.legacy += 1;
+                        }
                         if !referenced.contains(key.value()) {
                             census.orphan += 1;
                         }
@@ -499,23 +546,26 @@ impl Engine {
         }
     }
 
-    /// Commit one validated batch of vectors under `function_digest`, cache
-    /// commits before any index publication. The disk cap stops the run with
-    /// `cache_full` BEFORE this batch is written: nothing is evicted and
-    /// earlier valid data stays intact. The committed count and the exact
-    /// cache-byte total are updated in the SAME transaction, so durable
-    /// vectors and durable progress can never disagree.
+    /// Commit one validated batch of `dims`-value vectors under
+    /// `function_digest`, cache commits before any index publication. The
+    /// disk cap stops the run with `cache_full` BEFORE this batch is
+    /// written: nothing is evicted and earlier valid data stays intact. The
+    /// committed count and the exact cache-byte total (actual row lengths:
+    /// a replaced row's length leaves it, the new row's enters) are updated
+    /// in the SAME transaction, so durable vectors and durable progress can
+    /// never disagree.
     pub fn semantic_cache_commit(
         &self,
         entries: &[(String, Vec<f32>)],
         function_digest: &str,
+        dims: usize,
         cap_bytes: u64,
     ) -> FResult<()> {
         if entries.is_empty() {
             return Ok(());
         }
         for (key, vector) in entries {
-            provider::validate_vector(vector).map_err(FoundryError::from)?;
+            provider::validate_vector(vector, dims).map_err(FoundryError::from)?;
             if !is_key(key) {
                 return Err(FoundryError::InvalidArgument(format!(
                     "cache key {key:?} is not a 64-hex digest"
@@ -525,38 +575,37 @@ impl Engine {
         let tx = self.db.begin_write()?;
         {
             let mut table = tx.open_table(CACHE)?;
-            let existing = table.len()?;
-            let mut fresh = 0u64;
-            for (key, _) in entries {
-                if table.get(key.as_str())?.is_none() {
-                    fresh += 1;
-                }
-            }
-            if (existing + fresh) * CACHE_VALUE_BYTES as u64 > cap_bytes {
-                return Err(FoundryError::Semantic {
-                    code: "cache_full",
-                    message: format!(
-                        "committing {fresh} vectors would put the cache over \
-                         {cap_bytes} bytes ({existing} rows held); nothing was evicted"
-                    ),
-                });
-            }
-            for (key, vector) in entries {
-                let mut value = Vec::with_capacity(CACHE_VALUE_BYTES);
-                value.extend_from_slice(function_digest.as_bytes());
-                for component in vector {
-                    value.extend_from_slice(&component.to_le_bytes());
-                }
-                table.insert(key.as_str(), value.as_slice())?;
-            }
             let mut state_table = tx.open_table(STATE)?;
             let mut state = state_table
                 .get(STATE_KEY)?
                 .map(|raw| decode_state(raw.value()))
                 .transpose()?
                 .unwrap_or_else(SemanticState::stopped);
+            let mut bytes = state.cache_bytes;
+            let mut replaced: HashSet<&str> = HashSet::new();
+            for (key, _) in entries {
+                if replaced.insert(key.as_str())
+                    && let Some(old) = table.get(key.as_str())?
+                {
+                    bytes = bytes.saturating_sub(old.value().len() as u64);
+                }
+            }
+            bytes += replaced.len() as u64 * row_bytes(dims) as u64;
+            if bytes > cap_bytes {
+                return Err(FoundryError::Semantic {
+                    code: "cache_full",
+                    message: format!(
+                        "committing {} vectors would put the cache at {bytes} bytes, over \
+                         {cap_bytes}; nothing was evicted",
+                        entries.len()
+                    ),
+                });
+            }
+            for (key, vector) in entries {
+                table.insert(key.as_str(), encode_row(function_digest, vector).as_slice())?;
+            }
             state.committed_units += entries.len() as u64;
-            state.cache_bytes = (existing + fresh) * CACHE_VALUE_BYTES as u64;
+            state.cache_bytes = bytes;
             state_table.insert(
                 STATE_KEY,
                 serde_json::to_string(&state)
@@ -584,13 +633,14 @@ impl Engine {
     /// row changes) and the deletion both work through it, so renaming or
     /// substituting an ancestor path — before OR after the plan — cannot
     /// redirect the deletion. Sources, graph, memory and feedback are
-    /// untouched; nothing repopulates later.
+    /// untouched; nothing repopulates later. Descriptor v1 rows and
+    /// generations go with everything else: this is the only removal.
     pub fn semantic_purge(&self) -> FResult<SemanticPurgeReport> {
         let store = self.semantic_anchor()?;
         let plan = plan_generation_removal(&store)?;
         let (partitions, cache_rows, cache_bytes) = {
             let tx = self.db.begin_write()?;
-            let (partitions, rows) = {
+            let (partitions, rows, bytes) = {
                 let mut partition_table = tx.open_table(PARTITIONS)?;
                 let mut cache = tx.open_table(CACHE)?;
                 let partitions = partition_table.len()?;
@@ -600,8 +650,11 @@ impl Engine {
                     partition_keys.push(row?.0.value().to_owned());
                 }
                 let mut cache_keys = Vec::new();
+                let mut bytes = 0u64;
                 for row in cache.iter()? {
-                    cache_keys.push(row?.0.value().to_owned());
+                    let (key, value) = row?;
+                    bytes += value.value().len() as u64;
+                    cache_keys.push(key.value().to_owned());
                 }
                 for key in partition_keys {
                     partition_table.remove(key.as_str())?;
@@ -609,7 +662,7 @@ impl Engine {
                 for key in cache_keys {
                     cache.remove(key.as_str())?;
                 }
-                (partitions, rows)
+                (partitions, rows, bytes)
             };
             {
                 let mut state = tx.open_table(STATE)?;
@@ -621,7 +674,7 @@ impl Engine {
                 )?;
             }
             tx.commit()?;
-            (partitions, rows, rows * CACHE_VALUE_BYTES as u64)
+            (partitions, rows, bytes)
         };
         // Rows are gone; the descriptor-relative deletion follows. The hook
         // is where tests substitute the path of `semantic/` AFTER the plan.
@@ -688,12 +741,10 @@ pub(crate) fn plan_generation_removal(store: &Dir) -> FResult<Option<(Dir, Vec<O
     Ok(Some((root, names)))
 }
 
-/// Cache-row vector decode: exact length and finite values, else `None`.
+/// Cache-row vector decode of a row's value bytes: finite values, else
+/// `None`.
 fn decode_vector(bytes: &[u8]) -> Option<Vec<f32>> {
-    if bytes.len() != provider::DIMENSIONS * 4 {
-        return None;
-    }
-    let mut vector = Vec::with_capacity(provider::DIMENSIONS);
+    let mut vector = Vec::with_capacity(bytes.len() / 4);
     for chunk in bytes.chunks_exact(4) {
         let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
         if !value.is_finite() {
@@ -706,4 +757,68 @@ fn decode_vector(bytes: &[u8]) -> Option<Vec<f32>> {
 
 pub(crate) fn is_key(key: &str) -> bool {
     key.len() == 64 && key.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DIGEST: &str = "abababababababababababababababababababababababababababababababab";
+
+    #[test]
+    fn rows_describe_their_own_dimension_and_legacy_rows_are_retained() {
+        for dims in [768, 512, 256, 128, 2048] {
+            let row = encode_row(DIGEST, &vec![0.5; dims]);
+            assert_eq!(row.len(), row_bytes(dims));
+            assert_eq!(layout(&row), Layout::Dims(dims));
+            assert_eq!(probe_row(&row, DIGEST), CacheProbe::Current);
+            assert_eq!(probe_row(&row, &"cd".repeat(32)), CacheProbe::Retained);
+            assert_eq!(decode_vector(&row[68..]).unwrap().len(), dims);
+        }
+        // A descriptor v1 row: digest and 2048 values, no dimension field.
+        let mut legacy = DIGEST.as_bytes().to_vec();
+        legacy.extend(std::iter::repeat_n(0u8, 2048 * 4));
+        assert_eq!(layout(&legacy), Layout::Legacy);
+        assert_eq!(probe_row(&legacy, DIGEST), CacheProbe::Retained);
+        // A dimension field that disagrees with the length, a zero or
+        // oversized dimension, a non-hex digest: corrupt.
+        let mut wrong = encode_row(DIGEST, &[1.0; 8]);
+        wrong.truncate(wrong.len() - 4);
+        assert_eq!(layout(&wrong), Layout::Corrupt);
+        assert_eq!(layout(&encode_row(DIGEST, &[])), Layout::Corrupt);
+        let mut huge = encode_row(DIGEST, &[1.0; 4]);
+        huge[64..68].copy_from_slice(&4096u32.to_le_bytes());
+        assert_eq!(layout(&huge), Layout::Corrupt);
+        let mut upper = encode_row(DIGEST, &[1.0; 4]);
+        upper[0] = b'A';
+        assert_eq!(layout(&upper), Layout::Corrupt);
+        // No self-describing row of a supported dimension has the legacy
+        // length (2047 values would; no profile can pin that width).
+        assert!(
+            provider::SUPPORTED_DIMENSIONS
+                .iter()
+                .all(|&dims| row_bytes(dims) != LEGACY_ROW_BYTES)
+        );
+    }
+
+    #[test]
+    fn cards_may_nest_and_be_absent_but_never_repeat_or_leave_the_source() {
+        let key = "e".repeat(64);
+        let unit = |start: usize, end: usize| PartitionUnit {
+            start,
+            end,
+            input_key: key.clone(),
+        };
+        assert!(validate_units(&[], 10, None).is_ok());
+        assert!(validate_units(&[unit(0, 10), unit(0, 4), unit(5, 9)], 10, None).is_ok());
+        assert!(validate_units(&[unit(0, 4), unit(0, 10)], 10, None).is_err());
+        assert!(validate_units(&[unit(2, 4), unit(2, 4)], 10, None).is_err());
+        assert!(validate_units(&[unit(5, 9), unit(0, 4)], 10, None).is_err());
+        assert!(validate_units(&[unit(3, 3)], 10, None).is_err());
+        assert!(validate_units(&[unit(0, 11)], 10, None).is_err());
+        assert!(validate_units(&[unit(1, 3)], 4, Some("é é")).is_err());
+        let mut bad = unit(0, 2);
+        bad.input_key = "x".into();
+        assert!(validate_units(&[bad], 10, None).is_err());
+    }
 }

@@ -80,11 +80,6 @@ bytes = "1"
 # `--no-default-features` builds the lexical-only core.
 tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
 usearch = { version = "=2.26.2", optional = true }
-# 009 embedding worker only (`embed-worker`): the embedded Python runtime that
-# runs the publisher's MLX model. `foundry` never links it. No
-# `auto-initialize`: the worker starts CPython itself, from an isolated
-# `PyConfig` (site import off, explicit search path), before any attach.
-pyo3 = { version = "=0.29.2", optional = true }
 # 013 T002 learning worker only (`learning-worker`): LibTorch through tch,
 # the pin D001 accepted on Rust 1.90 (torch-sys 0.24.0 checks for LibTorch
 # 2.11.0). `foundry` and the default build never link it. `LIBTORCH` names
@@ -95,11 +90,18 @@ tch = { version = "=0.24.0", optional = true }
 [features]
 default = ["semantic"]
 semantic = ["dep:tokenizers", "dep:usearch"]
-embed-worker = ["dep:pyo3"]
+# 009 T004 embedding worker only: `foundry-embed` on a pinned, statically
+# linked llama.cpp (Metal). build.rs generates its FFI bindings with bindgen
+# and links the static archives into that binary alone; `foundry` and the
+# default build never touch llama.cpp.
+embed-worker = ["dep:bindgen"]
 learning-worker = ["dep:tch"]
 # Named deterministic fault points for recovery tests. Never enabled by
 # default; release builds contain no hook code or fault-name strings.
 test-faults = []
+
+[build-dependencies]
+bindgen = { version = "0.72", optional = true }
 
 [dev-dependencies]
 # Self dev-dependency: `cargo test` builds the crate with its fault points.

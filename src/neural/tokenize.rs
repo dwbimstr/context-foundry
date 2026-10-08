@@ -1,11 +1,11 @@
 //! 009 Rust tokenization boundary: the profile's verified `tokenizer.json`
 //! loaded through `tokenizers` (pinned 0.23.2 `onig`), counting the exact
-//! model input. Foundry alone applies the prefix, counts and refuses; the
-//! worker receives token IDs, never text.
+//! model input. Foundry alone applies the profile's templates, counts and
+//! refuses; the worker receives token IDs, never text.
 //!
 //! The loader's own truncation/padding settings (restored from the artifact
-//! by `Tokenizer::from_file`) are cleared here: a unit that would exceed a
-//! limit is refused upstream, never silently shortened.
+//! by `Tokenizer::from_file`) are cleared here: a card that would exceed its
+//! limit is cut at a line by the card partition, never silently shortened.
 use crate::neural::partition::{TokenCount, TokenizedText};
 use crate::neural::profile::SemanticProfile;
 use crate::neural::provider::ProviderError;

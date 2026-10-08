@@ -507,20 +507,10 @@ pub struct V2Item {
     pub form: Option<String>,
     /// The fence info string.
     pub lang: Option<String>,
-    /// The 009 T002 selection of a neural evidence item, if it carries one.
-    pub neural: Option<V2Neural>,
+    /// 009 T004: the item carries the `[semantic]` selection tag (a unit
+    /// dense retrieval placed).
+    pub semantic: bool,
     pub body: String,
-}
-
-/// The selection tag of a neural evidence item (context-v2 § Evidence
-/// items): `whole_unit` (no matched handle), `lexical_span` or `preview`
-/// (each with the matched unit's handle), and — for a preview — the
-/// `next:` continuation that belongs to the item, not to the response.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct V2Neural {
-    pub selection: String,
-    pub matched: Option<String>,
-    pub next: Option<String>,
 }
 
 /// A parsed context-v2 success: header segments, items and the optional
@@ -537,8 +527,8 @@ enum V2Tail {
         lines: Option<String>,
         label: Option<String>,
         form: Option<String>,
-        /// `(selection, matched handle)` of a 009 T002 neural item.
-        neural: Option<(String, Option<String>)>,
+        /// 009 T004: the `[semantic]` selection tag.
+        semantic: bool,
     },
     Locator {
         lines: String,
@@ -600,7 +590,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
                         label: Some(label),
                         form: None,
                         lang: None,
-                        neural: None,
+                        semantic: false,
                         body: String::new(),
                     });
                 }
@@ -649,7 +639,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
                 label,
                 form: None,
                 lang: None,
-                neural: None,
+                semantic: false,
                 body: excerpt,
             });
             pos = after;
@@ -673,27 +663,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
             }
             match complete.len() {
                 1 => {
-                    let (mut item, mut end) = complete.remove(0);
-                    // A context `next:` line belongs to the immediately
-                    // preceding PREVIEW (item, fence and continuation are
-                    // one rendering); a literal `next:` inside a fenced body
-                    // was consumed with the body above.
-                    if op == "context"
-                        && item
-                            .neural
-                            .as_ref()
-                            .is_some_and(|neural| neural.selection == "preview")
-                        && text[end..].starts_with("next: ")
-                    {
-                        let (continuation, line_end) = v2_line(text, end)?;
-                        let handle = continuation.strip_prefix("next: ").unwrap_or_default();
-                        crate::store::HandleRef::parse(handle)
-                            .map_err(|e| format!("malformed continuation {handle:?}: {e}"))?;
-                        if let Some(neural) = item.neural.as_mut() {
-                            neural.next = Some(handle.to_owned());
-                        }
-                        end = line_end;
-                    }
+                    let (item, end) = complete.remove(0);
                     items.push(item);
                     pos = end;
                     continue;
@@ -733,7 +703,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
                         label,
                         form: Some("address".to_owned()),
                         lang: None,
-                        neural: None,
+                        semantic: false,
                         body: String::new(),
                     });
                     pos = after;
@@ -761,7 +731,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
                         label,
                         form: None,
                         lang: None,
-                        neural: None,
+                        semantic: false,
                         body: excerpt,
                     });
                     pos = after;
@@ -780,7 +750,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
                 label: None,
                 form: None,
                 lang: None,
-                neural: None,
+                semantic: false,
                 body: edge.to_owned(),
             });
             pos = after;
@@ -816,7 +786,7 @@ fn v2_fenced_item(
         lines,
         mut label,
         mut form,
-        neural,
+        semantic,
     } = tail
     else {
         return Err("not a fenced item".into());
@@ -874,11 +844,7 @@ fn v2_fenced_item(
         label,
         form,
         lang,
-        neural: neural.map(|(selection, matched)| V2Neural {
-            selection,
-            matched,
-            next: None,
-        }),
+        semantic,
         body: body.to_owned(),
     };
     Ok((item, after_close))
@@ -920,7 +886,7 @@ fn parse_v2_tail(tail: &str) -> Option<V2Tail> {
             lines: None,
             label: None,
             form: None,
-            neural: None,
+            semantic: false,
         });
     }
     let rest = tail.strip_prefix(' ')?;
@@ -934,20 +900,19 @@ fn parse_v2_tail(tail: &str) -> Option<V2Tail> {
                     return None;
                 }
                 let (last, remainder) = range_rest.split_at(more);
-                if let Some((selection, matched, label)) = v2_neural(remainder) {
-                    return Some(V2Tail::Fenced {
-                        lines: Some(format!("L{first}-{last}")),
-                        label,
-                        form: None,
-                        neural: Some((selection, matched)),
-                    });
-                }
+                // 009 T004: the selection tag slot right after `L<a>-<b>`,
+                // before the optional label; a label (which starts with its
+                // kind) never begins with it.
+                let (semantic, remainder) = match remainder.strip_prefix(" [semantic]") {
+                    Some(after) if after.is_empty() || after.starts_with(' ') => (true, after),
+                    _ => (false, remainder),
+                };
                 let (label, form) = v2_label_and_form(remainder)?;
                 return Some(V2Tail::Fenced {
                     lines: Some(format!("L{first}-{last}")),
                     label,
                     form,
-                    neural: None,
+                    semantic,
                 });
             }
             let (label, excerpt) = match after_first.strip_prefix(": ") {
@@ -969,7 +934,7 @@ fn parse_v2_tail(tail: &str) -> Option<V2Tail> {
         lines: None,
         label,
         form,
-        neural: None,
+        semantic: false,
     })
 }
 
@@ -991,43 +956,6 @@ fn v2_label_and_form(remainder: &str) -> Option<(Option<String>, Option<String>)
         }
     }
     Some((Some(rest.to_owned()), None))
-}
-
-/// The label after a tag slot: nothing, or one space then the label text.
-fn v2_label_after(after: &str) -> Option<Option<String>> {
-    if after.is_empty() {
-        Some(None)
-    } else {
-        after.strip_prefix(' ').map(|label| Some(label.to_owned()))
-    }
-}
-
-/// The 009 T002 selection tag slot right after `L<a>-<b>`: `[whole_unit]`,
-/// `[lexical_span <matched handle>]` or `[preview <matched handle>]`, then
-/// the optional label. Returns `(selection, matched handle, label)`. A
-/// matched handle is the shortest prefix before a `]` that parses as a
-/// handle, so a label ending in `[whole_unit]` stays label text.
-#[allow(clippy::type_complexity)]
-fn v2_neural(remainder: &str) -> Option<(String, Option<String>, Option<String>)> {
-    let rest = remainder.strip_prefix(' ')?;
-    if let Some(after) = rest.strip_prefix("[whole_unit]") {
-        return Some(("whole_unit".into(), None, v2_label_after(after)?));
-    }
-    for selection in ["lexical_span", "preview"] {
-        if let Some(after) = rest.strip_prefix(&format!("[{selection} ")) {
-            for (at, _) in after.match_indices(']') {
-                if crate::store::HandleRef::parse(&after[..at]).is_ok() {
-                    return Some((
-                        selection.into(),
-                        Some(after[..at].to_owned()),
-                        v2_label_after(&after[at + 1..])?,
-                    ));
-                }
-            }
-            return None;
-        }
-    }
-    None
 }
 
 /// Every reading of `line` as `<handle> L<line> in <label>`: a split after a
@@ -1283,75 +1211,55 @@ pub fn write_byte_tokenizer(dir: &Path) -> (std::path::PathBuf, String) {
     (path, sha)
 }
 
-/// A full fake model directory (the artifacts the profile names) plus the
-/// strict profile JSON naming it. `mutate` may adjust the descriptor (e.g.
-/// a different quantization) to build a second profile. Returns the profile
-/// path; the model directory is `<dir>/model`.
+/// The output dimension of the fixture profile and of the in-crate test
+/// providers (one of the supported Matryoshka widths).
+pub const FIXTURE_DIMENSIONS: u32 = 768;
+
+/// A full fake model directory (the artifacts the profile names: a GGUF
+/// placeholder and the byte tokenizer) plus the strict v2 profile JSON
+/// naming it. `mutate` may adjust the descriptor (e.g. a different GGUF
+/// identity) to build a second profile. Returns the profile path; the model
+/// directory is `<dir>/model`.
 #[cfg(feature = "semantic")]
 pub fn write_semantic_profile(
     dir: &Path,
     name: &str,
     mutate: impl FnOnce(&mut crate::neural::provider::FunctionDescriptor),
 ) -> std::path::PathBuf {
-    use crate::neural::provider::{ArtifactFile, FunctionDescriptor, RuntimeClosure};
+    use crate::neural::provider::{ArtifactFile, FunctionDescriptor};
 
     let model_dir = dir.join("model");
     std::fs::create_dir_all(&model_dir).unwrap();
     let (_, tokenizer_sha) = write_byte_tokenizer(&model_dir);
-    for file in ["config.json", "model.safetensors", "nemotron3_embed_mlx.py"] {
-        std::fs::write(model_dir.join(file), format!("fixture {file}\n")).unwrap();
-    }
-    let sha_of = |file: &str| crate::digest(&std::fs::read(model_dir.join(file)).unwrap());
-    let requirements = dir.join("freeze.txt");
-    std::fs::write(&requirements, "fake==1.0\n").unwrap();
-    let requirements_sha = crate::digest(&std::fs::read(&requirements).unwrap());
+    std::fs::write(model_dir.join("model.gguf"), "fixture model.gguf\n").unwrap();
+    let gguf_sha = crate::digest(&std::fs::read(model_dir.join("model.gguf")).unwrap());
     let mut descriptor = FunctionDescriptor {
-        v: 1,
+        v: crate::neural::provider::DESCRIPTOR_VERSION,
         model: "fake-model via fixture".to_owned(),
         artifact_files: vec![
             ArtifactFile {
-                name: "config.json".into(),
-                sha256: sha_of("config.json"),
-            },
-            ArtifactFile {
-                name: "model.safetensors".into(),
-                sha256: sha_of("model.safetensors"),
-            },
-            ArtifactFile {
-                name: "nemotron3_embed_mlx.py".into(),
-                sha256: sha_of("nemotron3_embed_mlx.py"),
+                name: "model.gguf".into(),
+                sha256: gguf_sha,
             },
             ArtifactFile {
                 name: "tokenizer.json".into(),
                 sha256: tokenizer_sha,
             },
         ],
-        quantization: "affine bits=4 group_size=64".into(),
+        gguf: "model.gguf".into(),
+        llama_cpp: crate::neural::worker_runtime::LLAMA_CPP_COMMIT.into(),
         tokenizer: "fake-bytes 1".into(),
         add_special_tokens: true,
-        padding_side: "right".into(),
-        pad_id: 11,
-        adapter_revision: 1,
-        input_dtype: "int32".into(),
-        mask_dtype: "int32".into(),
-        pooling: "fake mean".into(),
-        dimensions: crate::neural::provider::DIMENSIONS as u32,
+        pooling: "mean".into(),
+        dimensions: FIXTURE_DIMENSIONS,
         output: "f32".into(),
-        runtime: RuntimeClosure {
-            python: "3.12".into(),
-            mlx: "0".into(),
-            mlx_metal: "0".into(),
-            mlx_lm: "0".into(),
-            transformers: "0".into(),
-            numpy: "0".into(),
-            requirements_sha256: requirements_sha,
-        },
-        document_prefix: "passage: ".into(),
+        adapter_revision: crate::neural::worker_runtime::REAL_ADAPTER_REVISION,
+        document_template: "doc: {text}".into(),
     };
     mutate(&mut descriptor);
     descriptor.validate().expect("fixture descriptor validates");
     let profile = crate::neural::profile::SemanticProfile {
-        v: 1,
+        v: crate::neural::profile::PROFILE_VERSION,
         name: name.into(),
         model_dir: model_dir.canonicalize().unwrap(),
         worker: crate::neural::profile::WorkerSpec {
@@ -1359,12 +1267,10 @@ pub fn write_semantic_profile(
             executable_sha256: "0".repeat(64),
             scratch_root: std::path::absolute(dir.join("scratch")).unwrap(),
         },
-        runtime: crate::neural::profile::RuntimeSpec {
-            python_home: std::path::absolute("/usr").unwrap(),
-            site_packages: dir.join("site-packages"),
-            requirements: requirements.canonicalize().unwrap(),
-        },
         descriptor,
+        query_template: "query: {text}".into(),
+        card_tokens: crate::neural::profile::DEFAULT_CARD_TOKENS,
+        batch: crate::neural::profile::DEFAULT_BATCH,
         memory_ceiling_bytes: 1024,
         load_timeout_seconds: 1,
     };

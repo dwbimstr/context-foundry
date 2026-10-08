@@ -211,12 +211,15 @@ cleanup. Missing required enforcement still disables the affected feature.
 Normal semantic admission returns `isolation_unavailable` until signing/notarization
 and package acceptance close. `foundry semantic prepare --development-isolation` runs
 the development profile, which works as follows:
-- **Profile and bundle.** The semantic profile (≤64 KiB, versioned) names the model
-  directory, worker bundle and executable hash, the Python home and site-packages, the
-  frozen requirements, the expected document-function descriptor and
+- **Profile and bundle.** The semantic profile (≤64 KiB, versioned; v2 since 009 T004)
+  names the model directory, worker bundle and executable hash, the expected
+  document-function descriptor (the GGUF and tokenizer SHA-256s, the llama.cpp commit,
+  pooling, dimension and document template), the query template, the card limit and
   `worker.scratch_root`. `scripts/embed-worker-bundle.sh --profile FILE` builds an
-  ad-hoc-signed App Sandbox bundle. Every grant comes from that profile: read-only
-  grants for its input paths, and one read-write grant for exactly the scratch root.
+  ad-hoc-signed App Sandbox bundle. Every grant comes from that profile: one read-only
+  grant for the model directory (plus any `--extra-read` directory its files resolve
+  into), and one read-write grant for exactly the scratch root. A descriptor v1 (MLX)
+  profile is refused at load with `profile_unsupported`.
 - **Refusals before launch.** Validation, the script and the launcher all refuse a
   scratch root that equals, contains or lies inside any read-only grant, aliases
   included. Scratch and per-run directories are created 0700. The load timeout is
@@ -224,15 +227,16 @@ the development profile, which works as follows:
 - **Launch.** Before exec the supervisor sets soft and hard `RLIMIT_NPROC=0`, an
   `env -i`-style offline environment, and closes descriptors beyond stdio and the
   liveness pipe.
-- **Interpreter.** The worker starts CPython isolated: no site import, no user site,
-  no environment, and an explicit search path of stdlib plus the profile's
-  site-packages. This happens before any Python runs. It verifies the artifact
-  inventory and adapter claims before loading.
+- **Worker.** `foundry-embed` statically links llama.cpp (Metal, embedded shader
+  library) built from the pinned commit; it links only system libraries and
+  frameworks and runs no Python. It verifies the artifact inventory and adapter claims
+  before loading the GGUF, then embeds each call's cards (or one query) as sequences
+  of one llama.cpp evaluation, cut to the descriptor's dimension and renormalized.
 - **Resources.** Process count is `hard`. Memory is `supervised`: the supervisor
   polls the physical footprint every 250 ms against the profile's ceiling (3 GiB by
   default), and a breach stops the worker with `resource_limit`.
 - **Owner death.** A native watcher on the liveness pipe and a kqueue `NOTE_EXIT`
-  calls `_exit` without the GIL.
+  calls `_exit`.
 
   Measured on the development bundle under cold and warm load and under CPU and GPU
   pressure: `_exit` within about 1 ms of an owner SIGKILL, and the process gone within
@@ -418,8 +422,9 @@ explicit CPU/RAM/disk bounds. A changed image/kernel/VMM updates that profile's 
 and reruns its affected checks, not source-index/learning quality experiments.
 The release owns guest patching, license inventory, image verification and cleanup.
 
-Virtualized GPU support does not establish MLX compatibility. The selected MLX artifact
-requires its actual supported runtime/loader; never assume it runs in a Linux guest.
+Virtualized GPU support does not establish Metal compatibility. The selected embedding
+runtime (a GGUF on a pinned, statically linked llama.cpp with Metal, 009 T004) is
+native; never assume it runs in a Linux guest.
 009 D001 must demonstrate its chosen native/VM access and execution profile separately.
 An unavailable embedding profile leaves lexical retrieval working; availability of
 the separate ModernBERT policy follows its own inputs/configuration/profile. Neither
@@ -448,14 +453,18 @@ real bundles is measured separately.
   build (or `--bin-dir DIR`). It holds `bin/foundry`, `README.md`, `LICENSE`,
   `scripts/install.sh` and `THIRD-PARTY/`: each normal dependency's license and notice
   files, an `INDEX.json`, and a supplied notice with canonical text for a crate that
-  ships none. `--with-semantic` adds `libexec/foundry-embed` and
-  `scripts/embed-worker-bundle.sh`; `--with-learning` adds `libexec/foundry-learn` and
-  `scripts/learn-worker-bundle.sh`. `PACKAGE.json` records the version, git commit,
-  target, every file's SHA-256, the versions the core reports and the dependency
-  identities: the `Cargo.lock` digest, pyo3 and the semantic profile's runtime closure
-  (Python, MLX, frozen-requirements SHA-256), tch, torch-sys and LibTorch 2.11.0 with
-  the build's LibTorch directory. Weights, datasets, profiles and credentials are never
-  packaged.
+  ships none. `--with-semantic` adds `libexec/foundry-embed`,
+  `scripts/embed-worker-bundle.sh` and `THIRD-PARTY/llama.cpp-<commit>/LICENSE` (MIT;
+  at the pinned commit it also covers the vendored ggml). The worker writes that text
+  and prints its commit (`foundry-embed --notices DIR`; build.rs embeds both from the
+  checkout it builds against), and packaging refuses a profile that pins another
+  commit; so only building the worker needs `LLAMA_CPP_DIR`. `--with-learning` adds
+  `libexec/foundry-learn` and `scripts/learn-worker-bundle.sh`. `PACKAGE.json` records
+  the version, git commit, target, every file's SHA-256, the versions the core reports
+  and the dependency identities: the `Cargo.lock` digest, the number of THIRD-PARTY
+  packages, the llama.cpp commit and the semantic profile's name, tch, torch-sys and
+  LibTorch 2.11.0 with the build's LibTorch directory. Weights, datasets, profiles and
+  credentials are never packaged.
 - **Layout.** Under a prefix P: `P/bin/foundry` → `../lib/context-foundry/current/bin/foundry`,
   `current` → `<version>`, one `P/lib/context-foundry/<version>/` per installed version,
   and `installed.json` recording every owned file with its SHA-256, the directories the
@@ -473,7 +482,12 @@ real bundles is measured separately.
 - **Upgrade.** `upgrade --package TGZ --prefix P [--store DIR]...` installs the new
   version beside the old one and rebuilds the bundles the old version had. It then
   switches `current` atomically. It reports whether the store schema changed and
-  whether each named store needs `foundry upgrade-store`; it never runs it.
+  whether each named store needs `foundry upgrade-store`; it never runs it. An
+  installed descriptor v1 (MLX) semantic profile is not carried forward: the core
+  upgrade goes ahead, semantic is disabled by name and a v2 (llama.cpp) profile is
+  asked for (`--semantic-profile FILE` on an upgrade enables it again). The old
+  version keeps its bundle and v1 profile, so rollback is that binary with its own
+  profile.
 - **Rollback.** `rollback --prefix P` switches to the previous version after checking
   its files; repeating it switches back. A store already upgraded to a newer schema is
   refused by the older binary itself (`unsupported_schema`).

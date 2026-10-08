@@ -1,6 +1,6 @@
 //! 009 semantic readiness census (`foundry semantic status`): metadata-only
 //! paged reads. Status never opens source bodies, never tokenizes, never
-//! loads Python or the model, never decodes a cache vector, never starts
+//! loads the model, never decodes a cache vector, never starts
 //! preparation, and never populates missing mappings — not even the profile
 //! file: a broken profile is named, not parsed. Repeated status (and
 //! context) therefore performs zero corpus tokenization and zero inference.
@@ -102,15 +102,22 @@ pub struct ProfileIdentity {
     pub name: String,
     pub function_digest: String,
     pub recipe_id: String,
+    /// 009 T004: the output dimension; `None` for a descriptor v1 profile
+    /// recorded before T004 (no longer served).
+    pub dimensions: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct CacheStatus {
     pub entries: u64,
+    /// The exact sum of the rows' actual lengths.
     pub bytes: u64,
     /// Valid retained entries no current partition references (cache
     /// retention of any function, disclosed; explicit purge removes them).
     pub orphan_entries: u64,
+    /// 009 T004: valid descriptor v1 rows (2048 values, no dimension field),
+    /// retained until `semantic purge`; counted among the entries above.
+    pub legacy_entries: u64,
     /// Rows whose OWN layout is invalid; valid rows of another function are
     /// retention, never corruption.
     pub corrupt_entries: u64,
@@ -129,12 +136,10 @@ impl Engine {
     pub fn semantic_status(&self, control: &Control) -> FResult<SemanticStatus> {
         control.check()?;
         let state = self.semantic_state()?;
-        let prepared = state.as_ref().and_then(|state| {
-            Some((
-                state.function_digest.as_deref()?,
-                state.recipe_id.as_deref()?,
-            ))
-        });
+        let identity = index::prepared(state.as_ref());
+        let prepared = identity
+            .as_ref()
+            .map(|identity| (identity.digest.as_str(), identity.recipe.as_str()));
         let mut unpartitioned = 0u64;
         let mut sources = 0u64;
         let mut eligible = 0u64;
@@ -145,11 +150,20 @@ impl Engine {
         // profile: validated by content (hash work checkpointed against the
         // deadline), never served by directory name.
         status_fault!(BEFORE_VALIDATION, control)?;
-        let (generation, index_reason) = match prepared {
-            None => (None, Some("no semantic profile prepared".to_owned())),
-            Some((digest, recipe)) => {
+        let (generation, index_reason) = match &identity {
+            None => (
+                None,
+                Some(index::unprepared_reason(state.as_ref()).to_owned()),
+            ),
+            Some(identity) => {
                 let store = self.semantic_anchor()?;
-                match index::validate_generation_with(&store, digest, recipe, control) {
+                match index::validate_generation_with(
+                    &store,
+                    &identity.digest,
+                    &identity.recipe,
+                    identity.dimensions,
+                    control,
+                ) {
                     Ok(generation) => (Some(generation), None),
                     Err(GenerationError::Interrupted(error)) => return Err(error),
                     Err(GenerationError::Unavailable(reason)) => (None, Some(reason)),
@@ -225,6 +239,7 @@ impl Engine {
                     name: state.profile_name.clone()?,
                     function_digest: state.function_digest.clone()?,
                     recipe_id: state.recipe_id.clone()?,
+                    dimensions: state.dimensions,
                 })
             }),
             provider: match state.as_ref().and_then(|state| state.provider.as_ref()) {
@@ -259,6 +274,7 @@ impl Engine {
                 entries: census.entries,
                 bytes: census.bytes,
                 orphan_entries: census.orphan,
+                legacy_entries: census.legacy,
                 corrupt_entries: census.corrupt,
                 cap_bytes: DEFAULT_CACHE_CAP_BYTES,
             },

@@ -19,11 +19,15 @@
 #
 # Model weights, datasets, profiles and credentials are never packaged: the
 # contents are exactly the list above. The semantic profile named here is
-# read only to record the runtime closure (Python, MLX, the frozen
-# requirements digest) the worker is packaged for.
+# read only to check it pins the llama.cpp commit the worker is built from.
+# That commit and the llama.cpp license text (which covers its vendored
+# ggml) come from the worker itself (`foundry-embed --notices DIR`; build.rs
+# embeds both), so packaging a built worker needs no llama.cpp checkout.
 #
 # Binaries are built here (`cargo build --locked --offline --release`; the
-# semantic worker needs PYO3_PYTHON, the learning worker LIBTORCH), or taken
+# semantic worker needs LLAMA_CPP_DIR, a llama.cpp checkout at the pinned
+# commit with its static build in LLAMA_BUILD_DIR, default
+# $LLAMA_CPP_DIR/build-static; the learning worker LIBTORCH), or taken
 # already built from --bin-dir DIR (DIR/foundry, DIR/foundry-embed,
 # DIR/foundry-learn). Tests only: with --bin-dir, CF_TEST_VERSION_LABEL
 # relabels the package as `<crate version>-test.<suffix>`; it is refused
@@ -109,7 +113,7 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$OUT" ] || usage
 if [ "$WITH_SEMANTIC" = 1 ]; then
-    [ -n "$SEMANTIC_PROFILE" ] || die 64 "--with-semantic needs --semantic-profile FILE (its runtime closure is recorded)"
+    [ -n "$SEMANTIC_PROFILE" ] || die 64 "--with-semantic needs --semantic-profile FILE (its llama.cpp pin is checked)"
     [ -f "$SEMANTIC_PROFILE" ] || die 66 "semantic profile is not a file: $SEMANTIC_PROFILE"
 elif [ -n "$SEMANTIC_PROFILE" ]; then
     die 64 "--semantic-profile is only meaningful with --with-semantic"
@@ -169,7 +173,7 @@ cp "$FOUNDRY_BIN" "$ROOT/bin/foundry"
 if [ "$WITH_SEMANTIC" = 1 ]; then
     TREE_FEATURES="$TREE_FEATURES,embed-worker"
     if [ "$PREBUILT" = false ]; then
-        [ -n "${PYO3_PYTHON:-}" ] || die 64 "building foundry-embed needs PYO3_PYTHON (the worker's Python)"
+        [ -n "${LLAMA_CPP_DIR:-}" ] || die 64 "building foundry-embed needs LLAMA_CPP_DIR (the pinned llama.cpp checkout)"
         "$CARGO" build --manifest-path "$REPO/Cargo.toml" --locked --offline --release \
             --features embed-worker --bin foundry-embed
     fi
@@ -177,6 +181,13 @@ if [ "$WITH_SEMANTIC" = 1 ]; then
     mkdir -p "$ROOT/libexec"
     cp "$EMBED_BIN" "$ROOT/libexec/foundry-embed"
     cp "$REPO/scripts/embed-worker-bundle.sh" "$ROOT/scripts/"
+    # The worker prints the llama.cpp commit it is built from and writes the
+    # license text it links; the profile must pin that same commit.
+    LLAMA_CPP=$(json_value "$SEMANTIC_PROFILE" descriptor.llama_cpp)
+    plain "$LLAMA_CPP"
+    built=$("$ROOT/libexec/foundry-embed" --notices "$STAGE/llama.cpp") ||
+        die 65 "$EMBED_BIN --notices failed: not a foundry-embed this package can ship"
+    [ "$built" = "$LLAMA_CPP" ] || die 65 "the profile pins llama.cpp $LLAMA_CPP; the worker is built from $built"
 fi
 if [ "$WITH_LEARNING" = 1 ]; then
     TREE_FEATURES="$TREE_FEATURES,learning-worker"
@@ -285,6 +296,16 @@ NOTICE
 done < "$STAGE/packages.txt"
 [ -n "$APACHE" ] || die 66 "no dependency ships LICENSE-APACHE to supply the canonical Apache-2.0 text"
 cp "$APACHE" "$THIRD/_canonical/Apache-2.0.txt"
+if [ "$WITH_SEMANTIC" = 1 ]; then
+    # llama.cpp and its vendored ggml are statically linked into the worker.
+    # At the pinned commit one MIT LICENSE ("The ggml authors") covers both:
+    # ggml has no license file of its own there, so the text ships once.
+    mkdir "$THIRD/llama.cpp-$LLAMA_CPP"
+    cp "$STAGE/llama.cpp/LICENSE" "$THIRD/llama.cpp-$LLAMA_CPP/LICENSE"
+    INDEX_ROWS="$INDEX_ROWS${INDEX_ROWS:+,
+} {\"name\": \"llama.cpp\", \"version\": \"$LLAMA_CPP\", \"license\": \"MIT\", \"files\": [\"LICENSE\"]}"
+    PACKAGES=$((PACKAGES + 1))
+fi
 printf '[\n%s\n]\n' "$INDEX_ROWS" > "$THIRD/INDEX.json"
 
 # --- manifest -------------------------------------------------------------
@@ -301,22 +322,11 @@ DEPENDENCIES="  \"cargo_lock_sha256\": \"$(shasum -a 256 "$REPO/Cargo.lock" | cu
   \"third_party_packages\": $PACKAGES"
 if [ "$WITH_SEMANTIC" = 1 ]; then
     COMPONENTS="$COMPONENTS, \"semantic\""
-    # Whole pathnames: otool prints `<path> (compatibility version ...)`.
-    python_library=$(otool -L "$ROOT/libexec/foundry-embed" |
-        sed -n '2,$ s/^[[:space:]]*\(.*\) (compatibility version [^)]*)$/\1/p' |
-        grep '[Pp]ython' | head -1) || python_library=""
-    runtime=""
-    for key in python mlx mlx_metal mlx_lm transformers numpy requirements_sha256; do
-        value=$(json_value "$SEMANTIC_PROFILE" "descriptor.runtime.$key")
-        runtime="$runtime${runtime:+, }\"$key\": $(json_str "$value")"
-    done
     DEPENDENCIES="$DEPENDENCIES,
   \"semantic\": {
-   \"pyo3\": $(json_str "$(lock_version pyo3)"),
-   \"python_library\": $(json_str "$python_library"),
-   \"runtime\": {$runtime},
+   \"llama_cpp\": $(json_str "$LLAMA_CPP"),
    \"runtime_profile\": $(json_str "$(json_value "$SEMANTIC_PROFILE" name)"),
-   \"note\": \"Not packaged: the Python runtime, its site-packages and the model. The operator supplies them through the semantic profile given at install, which builds the signed bundle; runtime is the closure this package was built for, and the worker's hello is checked against the installed profile.\"
+   \"note\": \"Not packaged: the GGUF model and its tokenizer. The operator supplies them through the semantic profile given at install, which builds the signed bundle; the worker statically links llama.cpp (Metal) and only system libraries and frameworks, and its hello is checked against the installed profile.\"
   }"
 fi
 if [ "$WITH_LEARNING" = 1 ]; then

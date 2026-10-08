@@ -384,7 +384,9 @@ fn merged_anchors(batches: &[RootBatch]) -> Vec<AnchorWindow> {
 
 /// The merged delivery-unit order over every root's batch:
 ///
-/// 1. tier-1 items from all roots first: an anchored query's by anchor, then
+/// 0. the units dense retrieval placed (009 T004; the primary root's
+///    only), in that root's order;
+/// 1. then tier-1 items from all roots: an anchored query's by anchor, then
 ///    the resolver tuple, then root order, then each root's own order
 ///    (context-v2 § Resolver order); otherwise by root order, then in each
 ///    root's own tier-1 order (§ Two-tier query: most specific run first,
@@ -404,6 +406,7 @@ fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
         rrf: f64,
         item: &'a RankedItem,
     }
+    let mut dense: Vec<Unit> = Vec::new();
     let mut tier1: Vec<Unit> = Vec::new();
     let mut tier2: Vec<Unit> = Vec::new();
     for (root, entry) in batches.iter().enumerate() {
@@ -417,6 +420,10 @@ fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
                 rrf: 0.0,
                 item,
             };
+            if item.semantic.is_some() {
+                dense.push(unit);
+                continue;
+            }
             match item.tier {
                 1 => tier1.push(unit),
                 2 => {
@@ -445,8 +452,9 @@ fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
             .then_with(|| a.path.cmp(b.path))
             .then_with(|| a.start.cmp(&b.start))
     });
-    tier1
+    dense
         .into_iter()
+        .chain(tier1)
         .chain(tier2)
         .map(|unit| (unit.root, unit.item.clone()))
         .collect()
@@ -498,8 +506,9 @@ pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
                     end_line: item.end_line,
                     handle,
                     text,
-                    // 009 T002: a dense hit has no delivery-unit label; its
-                    // locator names it `semantic` (never `whole_unit`).
+                    // 009 T004: a dense-only unit (a placed card's unit with
+                    // no lexical candidate) has no candidate label; its
+                    // locator names it `semantic`.
                     label: if dense_only {
                         "semantic".to_owned()
                     } else {
