@@ -40,6 +40,16 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## 001 T009 parallel indexing — 2026-10-08
+
+Accepted locally at `89a8c54`; unreleased.
+- **Shape.** `src/store.rs` refresh hands each page's sources out in key order to min(available parallelism, 8) scoped threads; at most 64 MiB of source bytes are out and not yet added. The single writer adds documents in key order as builds finish, then commits and reloads before the version-matched pending clear. A parse panic (`catch_unwind` per source) gives a named scan failure and the plain blocks of an unmapped source whose first document carries kind `unparsed`; `status` reports `parse_failures` by counting those documents and samples at most 20. A worker panic outside the parse guard, a writer-side panic and a corrupt recorded length end the page with an error, never a hang. Cancellation is checked at each hand-out and after the commit. No new dependency, table, META key or schema change.
+- **Tests.** 1 versus 8 threads give equal documents and tables with the earliest key finishing last; panic fallback, status counting and persistence until reparse or `repair-index`; the hand-out bound counting built-but-unadded sources (at a bound reduced through a test hook); add, commit, reload and cancellation faults with replay; two crash stages, one with a build still in flight. The T009 tests take about 11 s in total.
+- **G1 identity.** Copies of the G1 baseline stores (rust-lang/rust, oh-my-pi) rebuilt by the T009 release binary's `repair-index` gave the same result on all 10,431 G1 tasks (pass, calls, tokens and body), with no repetition, exclusion, duplicate or missing task.
+- **Review.** Cross-lab by OpenAI GPT-6.1 Sol over four rounds: REVISE (M1–M5, m1–m2; M5 rejected by the captain and the contract amended), REVISE (m1), SHIP, then SHIP on the `unparsed` census changes made after cross-lab refutation by GPT-6 Astra. Author: Anthropic Opus 5.5.
+- **Gates.** fmt, clippy (stable and Rust 1.90) and Rust 1.90 check passed. The test suite passed except one load-sensitive test, `tests/mcp.rs::http_dropped_stream_keeps_slot_and_overload_keeps_control_traffic_serviceable`: it drops an `index` request after 300 ms and expects the engine to be busy, and at host load 20–150 the request had not started yet. It passed 3 of 3 runs alone. It does not touch T009's code and is a pre-existing timing assumption.
+- **Not measured:** index time and peak memory before and after, which wait for the measurement batch.
+
 ## City-map evidence — 2026-10-07
 
 Deterministic runs and arithmetic on recorded responses; no model calls. They motivate the owner-approved city map (001 T007–T009, 005 T004, 009 T004) and are not acceptance of it.

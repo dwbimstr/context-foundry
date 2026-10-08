@@ -14,7 +14,7 @@ whose marked identifiers each have exactly one definition returns them plus at m
 one-line pointers; [context v2](contracts/context-v2.md#compact-context)), was accepted
 locally at the cross-lab SHIP and committed (`844796c`); unreleased. The owner approved
 the city-map design on 2026-10-07 (T007–T009 below; [context v2](contracts/context-v2.md#city-map)):
-proposed, not implemented.
+T009 implemented and accepted locally 2026-10-08 (`89a8c54`); T007 and T008 proposed.
 
 ## Outcome and baseline
 
@@ -507,7 +507,9 @@ day, proposed. Measured by G1 before and after.
 
 ### T009 — Parallel indexing
 
-**Status:** approved 2026-10-07 (owner), revised after refutation, proposed.
+**Status:** approved 2026-10-07 (owner), revised after refutation; implemented and
+accepted locally 2026-10-08 (`89a8c54`, [validation](../../docs/validation.md)); the
+timing record waits for the measurement batch.
 
 - **Depends:** T005. **Scope:** `src/store.rs` refresh (bounded parse fan-out ahead of
   the one Tantivy writer), `tests/recovery.rs` and `tests/core.rs`.
