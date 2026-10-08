@@ -16,7 +16,7 @@ locally at the cross-lab SHIP and committed (`844796c`); unreleased. The owner a
 the city-map design on 2026-10-07 (T007–T009 below; [context v2](contracts/context-v2.md#city-map)):
 T009 implemented and accepted locally 2026-10-08 (`89a8c54`); T007 implemented and
 merged 2026-10-08 (`4e23dee`, cross-lab SHIP, gates green), its G1 verdict pending with
-005 T004; T008 in review.
+005 T004 (merged `d00fc19`) on the final city-map binary; T008 in review.
 
 ## Outcome and baseline
 

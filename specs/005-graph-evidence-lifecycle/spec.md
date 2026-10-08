@@ -4,8 +4,10 @@ Status: T001–T003 complete and locally accepted, unreleased. T001 and T002 wer
 2026-10-04 (CLI `import-scip` and `references`, store schema 4). T003 was accepted
 2026-10-05: its agent surface (MCP `references`, `index {scip}`, compiler graph
 context) and its measured run on rust-lang/rust 1.99.0, which passed every criterion
-(see validation). T004 (doors, city map) was approved by the owner on 2026-10-07 and is
-proposed. Dependencies: 001; 003 only for the agent-facing part of T003.
+(see validation). T004 (doors, city map) was approved by the owner on 2026-10-07,
+implemented and merged 2026-10-08 (`d00fc19`, cross-lab SHIP, gates green); its G1
+verdict is recorded with 001 T007 on the final city-map binary. Dependencies: 001; 003
+only for the agent-facing part of T003.
 Authorization: specification refinement.
 Spec-pass decisions recorded 2026-10-03: pinned producer release, UTF-8-only positions,
 the producer coverage rule, budgeted v2 `references` and MCP import through `index`.
@@ -431,7 +433,8 @@ T003's, each passing only with that task's verification.
 ### T004 — Doors: who uses an addressed definition (city map)
 
 **Status:** approved 2026-10-07 (owner), revised after cross-lab refutation the same
-day, proposed. Measured by G1 before and after. Evidence ([validation](../../docs/validation.md),
+day; implemented and merged 2026-10-08 (`d00fc19`; [validation](../../docs/validation.md)).
+G1 judges it together with 001 T007. Evidence ([validation](../../docs/validation.md),
 § City-map evidence): given the intended definition, `references` covered the required
 sites of every failed usage task it was tried on (265 of 265, median about 185
 tokens); `context(strategy=graph)` seeds from every occurrence in the top units and
