@@ -4304,7 +4304,19 @@ mod tests {
                     .and_then(Weak::upgrade)
                     .expect("the owner is live");
                 let in_flight = shared.in_flight_engine.load(Ordering::SeqCst);
-                let slot_free = shared.engines.try_lock().is_ok();
+                // The prefetch may take the slot for one bounded selection
+                // step while this call runs (009 T004); the slot is never
+                // held through the inference, so it frees within the call.
+                let started = Instant::now();
+                let slot_free = loop {
+                    if shared.engines.try_lock().is_ok() {
+                        break true;
+                    }
+                    if started.elapsed() > Duration::from_secs(5) {
+                        break false;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                };
                 // The first call writes a source from another thread: it can
                 // commit only if the driver holds no slot and no transaction.
                 let wrote = if self.probes.lock().unwrap().is_empty() {

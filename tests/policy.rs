@@ -1132,8 +1132,10 @@ fn explicit_strategy_and_a_stale_graph_bypass_the_policy() {
     );
 }
 
-/// A semantic profile that could not start (no Nemotron) leaves the policy
-/// serving; both words are in the header.
+/// A semantic profile that could not start (no worker) leaves the policy
+/// serving. An anchor-less query carries both words in the header; an
+/// anchored one never consults the profile (009 T004), so its header has
+/// no `semantic:` word and the policy's route, doors and `anchored` follow.
 #[test]
 fn missing_nemotron_does_not_disable_the_policy() {
     let env = Env::new(0.6);
@@ -1141,28 +1143,34 @@ fn missing_nemotron_does_not_disable_the_policy() {
     let served = env.start(&config, &hooks(&["--predict-tamper", "1:probs=0.1/0.9"]));
     let engine = env.engine();
     let slot: context_foundry::mcp::SemanticSlot = Some(Err("fallback:profile_invalid".into()));
-    let control = Control::with_deadline(Instant::now() + Duration::from_secs(5));
-    let combined = context_foundry::mcp::context_primary(
-        &slot,
-        Some(&served),
-        &engine,
-        SEARCH_QUERY,
-        Strategy::Auto,
-        &control,
-        false,
-        None,
-    )
-    .unwrap();
-    let text = response::pack_context(
-        &combined.batch,
-        Budget::request(2048),
-        &response::stdout_bytes,
-    )
-    .unwrap()
-    .text;
-    let segments = header(&text);
+    let segments_for = |query: &str| {
+        let control = Control::with_deadline(Instant::now() + Duration::from_secs(5));
+        let combined = context_foundry::mcp::context_primary(
+            &slot,
+            Some(&served),
+            &engine,
+            query,
+            Strategy::Auto,
+            &control,
+            false,
+            None,
+        )
+        .unwrap();
+        let text = response::pack_context(
+            &combined.batch,
+            Budget::request(2048),
+            &response::stdout_bytes,
+        )
+        .unwrap()
+        .text;
+        (header(&text), text)
+    };
+    // The worker's first prediction is the tampered one that chooses graph.
+    let (segments, text) = segments_for(SEARCH_QUERY);
     assert!(
-        segments.contains(&"semantic:fallback:profile_invalid".to_owned()),
+        !segments
+            .iter()
+            .any(|segment| segment.starts_with("semantic:")),
         "{text}"
     );
     // The query anchors `alpha_one` and the policy chose graph, so the
@@ -1173,6 +1181,17 @@ fn missing_nemotron_does_not_disable_the_policy() {
     assert!(tail[1].starts_with("doors:"), "{text}");
     assert_eq!(tail[2], "anchored", "{text}");
     assert!(resolved_graph(&text));
+    // The policy keeps serving the next, anchor-less query (it abstains on
+    // the untampered prediction), whose header names the semantic state.
+    let (segments, text) = segments_for("where is the alpha one function defined");
+    assert!(
+        segments.contains(&"semantic:fallback:profile_invalid".to_owned()),
+        "{text}"
+    );
+    assert!(
+        segments.iter().any(|segment| segment.starts_with("route:")),
+        "{text}"
+    );
 }
 
 /// A state over the 1024-token total is a named fallback before dispatch.

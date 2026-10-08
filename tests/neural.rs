@@ -1602,12 +1602,15 @@ fn renderer(env: &Env) -> impl Fn(&str, &str) -> Result<Vec<PartitionUnit>, Foun
     }
 }
 
+/// The genuine card renderer acceptance runs: `(path, body)` to its cards.
+type Render = dyn Fn(&str, &str) -> Result<Vec<PartitionUnit>, FoundryError>;
+
 /// Offer `record` to acceptance as a claim, under the genuine renderer.
 fn claim(
     engine: &Engine,
     path: &str,
     record: &PartitionRecord,
-    render: &dyn Fn(&str, &str) -> Result<Vec<PartitionUnit>, FoundryError>,
+    render: &Render,
 ) -> Result<(), FoundryError> {
     engine.semantic_record_partition(
         path,

@@ -743,7 +743,7 @@ fn vocabulary_gap_evidence_reaches_the_final_response_within_the_normal_budget()
     }
     // The long document delivers only its last section and the code file
     // only the retry function, never the whole file.
-    assert!(LEDGER_EVIDENCE.start > 0 && CODE_EVIDENCE.end < CODE_LEN);
+    const { assert!(LEDGER_EVIDENCE.start > 0 && CODE_EVIDENCE.end < CODE_LEN) };
     let ledger = corpus.context(&slot, LEDGER_QUERY, BUDGET);
     assert!(
         !ledger
