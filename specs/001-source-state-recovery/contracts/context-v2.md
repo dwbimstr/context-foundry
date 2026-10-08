@@ -29,7 +29,7 @@ implementing MCP. Limits are selected engineering bounds, not measured capacity 
 | Multi-root identity, `roots`/`root`, per-root header | 007 T001 | Locally implemented and accepted 2026-10-04 (delta SHIP), committed in `cc402e0`; unreleased |
 | Tier-1 marked runs and specificity order, MCP `lines` array, empty-selection message (2026-10-06 amendment) | 001 (amendment) | Accepted locally 2026-10-06 (cross-lab SHIP; gates green), committed in `c3437e6`; route keywords withdrawn after measurement; unreleased |
 | Compact context (2026-10-06 amendment) | 001 (amendment) | Committed in `844796c`; replaced by § Anchored context in 001 T007 |
-| City map: roles, definitions and addresses, anchors, resolver, `[address]`, anchored context, doors, languages, parallel indexing (2026-10-07) | 001 T007–T009, 005 T004 | Approved 2026-10-07, revised after cross-lab refutation. T009 accepted locally 2026-10-08 (`89a8c54`); T007 implemented, under review; T008 and 005 T004 proposed |
+| City map: roles, definitions and addresses, anchors, resolver, `[address]`, anchored context, doors, languages, parallel indexing (2026-10-07) | 001 T007–T009, 005 T004 | Approved 2026-10-07, revised after cross-lab refutation. T009 accepted locally 2026-10-08 (`89a8c54`); T007 merged 2026-10-08 (`4e23dee`), G1 verdict pending with 005 T004; T008 and 005 T004 in review |
 | `foundry references` header segments 12–14, `next: after=<path>#<start>-<end>` cursor; MCP `references`, `index.scip`, compiler graph context | 005 T002, T003 | Locally implemented and accepted (CLI 2026-10-04; MCP and graph context 2026-10-05); unreleased |
 
 ## Identity and reference validation
