@@ -10,7 +10,9 @@
 //! hash, recipe, function digest AND the card ranges against the source's
 //! recorded length, so a source change (or a malformed mapping) makes the
 //! old mapping ineligible immediately; source commits never touch these
-//! tables.
+//! tables. Acceptance writes only the cards the verified body renders
+//! ([`Engine::semantic_record_partition`]): every recorded
+//! `(start, end, input_key)` tuple is bound to its rendered input.
 //!
 //! 009 T004 cache rows are self-describing: the 64-hex function digest, the
 //! dimension as `u32` LE, then that many `f32` LE values. A row of exactly
@@ -68,7 +70,7 @@ pub struct PartitionRecord {
 
 /// One card's provenance: the unit range it was rendered from and the key
 /// of its exact rendered input.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PartitionUnit {
     pub start: usize,
     pub end: usize,
@@ -262,6 +264,32 @@ pub fn validate_units(
     Ok(())
 }
 
+/// Where a claimed card list departs from the cards the body renders: the
+/// first card whose range or key differs, else a different count; `None`
+/// when every `(start, end, input_key)` tuple matches.
+fn first_difference(claimed: &[PartitionUnit], rendered: &[PartitionUnit]) -> Option<String> {
+    let short = |key: &str| key.get(..8).unwrap_or(key).to_owned();
+    if let Some(index) = claimed.iter().zip(rendered).position(|(a, b)| a != b) {
+        let (claim, card) = (&claimed[index], &rendered[index]);
+        return Some(format!(
+            "card {index} claims {}..{} under key {}…, but the body renders {}..{} under key {}…",
+            claim.start,
+            claim.end,
+            short(&claim.input_key),
+            card.start,
+            card.end,
+            short(&card.input_key)
+        ));
+    }
+    (claimed.len() != rendered.len()).then(|| {
+        format!(
+            "the mapping claims {} cards, but the body renders {}",
+            claimed.len(),
+            rendered.len()
+        )
+    })
+}
+
 /// Whether one partition row is current for this source version, recipe and
 /// document function, with card ranges that still satisfy the
 /// metadata-level invariants against the source's recorded length. Every
@@ -350,14 +378,27 @@ impl Engine {
         }
     }
 
-    /// Accept one completed partition (or a completed one without cards).
-    /// The CURRENT source version and its immutable body are read in the
-    /// same write transaction, and the mapping is refused unless it names
-    /// that version and its cards lie inside it: bounds, order, UTF-8
-    /// boundaries and key shape. (A card key binds the card's exact
-    /// rendered input, which the partition step computed; acceptance does
-    /// not re-render it.)
-    pub fn semantic_record_partition(&self, path: &str, record: &PartitionRecord) -> FResult<()> {
+    /// Accept one completed card mapping (possibly without cards) for the
+    /// CURRENT version of `path`, named by `source_hash`. That version and
+    /// its immutable body are read in the write transaction, and the row
+    /// written is `cards` applied to THAT body (the run's card renderer
+    /// under `recipe_id` and `function_digest`): every accepted
+    /// `(start, end, input_key)` tuple is the card the verified body renders
+    /// at that range, whether or not its vector is cached, so a vector is
+    /// never published under a range it was not rendered from. `claimed`, a
+    /// mapping rendered elsewhere, must equal that rendering tuple for
+    /// tuple. A stale version, a differing claim, or a rendering outside the
+    /// structural invariants (bounds, order, UTF-8 boundaries, key shape) is
+    /// `partition_invalid` and nothing is written.
+    pub fn semantic_record_partition(
+        &self,
+        path: &str,
+        source_hash: &str,
+        recipe_id: &str,
+        function_digest: &str,
+        claimed: Option<&[PartitionUnit]>,
+        cards: &dyn Fn(&str) -> FResult<Vec<PartitionUnit>>,
+    ) -> FResult<()> {
         let tx = self.db.begin_write()?;
         {
             let sources = tx.open_table(SOURCES)?;
@@ -365,19 +406,31 @@ impl Engine {
                 Some(raw) => decode(raw.value(), "source")?,
                 None => return Err(FoundryError::NotFound),
             };
-            if meta.hash != record.source_hash {
+            if meta.hash != source_hash {
                 return Err(invalid_partition(format!(
                     "{path}: the mapping names a stale source version"
                 )));
             }
             let chunks = tx.open_table(CHUNKS)?;
             let body = reconstruct_verified(&chunks, path, &meta)?.body;
-            validate_units(&record.units, body.len(), Some(&body))
+            let units = cards(&body)?;
+            validate_units(&units, body.len(), Some(&body))
                 .map_err(|m| invalid_partition(format!("{path}: {m}")))?;
+            if let Some(claimed) = claimed
+                && let Some(message) = first_difference(claimed, &units)
+            {
+                return Err(invalid_partition(format!("{path}: {message}")));
+            }
+            let record = PartitionRecord {
+                source_hash: meta.hash,
+                recipe_id: recipe_id.to_owned(),
+                function_digest: function_digest.to_owned(),
+                units,
+            };
             let mut table = tx.open_table(PARTITIONS)?;
             table.insert(
                 path,
-                serde_json::to_string(record)
+                serde_json::to_string(&record)
                     .map_err(FoundryError::from)?
                     .as_str(),
             )?;
@@ -418,6 +471,39 @@ impl Engine {
             table.insert(
                 STATE_KEY,
                 serde_json::to_string(state)
+                    .map_err(FoundryError::from)?
+                    .as_str(),
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Record a preparation run's start in ONE write transaction: `start`
+    /// sets the run's identity on the state row, after the row's cache-byte
+    /// total was reconciled from the actual row lengths. Another binary may
+    /// have recorded a different total (a pre-T004 finalizer counts 8,256
+    /// bytes per row); nothing is purged, and cache-cap admission counts real
+    /// bytes from the run's first commit on.
+    pub fn semantic_begin_run(&self, start: impl FnOnce(&mut SemanticState)) -> FResult<()> {
+        let tx = self.db.begin_write()?;
+        {
+            let cache = tx.open_table(CACHE)?;
+            let mut bytes = 0u64;
+            for row in cache.iter()? {
+                bytes += row?.1.value().len() as u64;
+            }
+            let mut table = tx.open_table(STATE)?;
+            let mut state = table
+                .get(STATE_KEY)?
+                .map(|raw| decode_state(raw.value()))
+                .transpose()?
+                .unwrap_or_default();
+            state.cache_bytes = bytes;
+            start(&mut state);
+            table.insert(
+                STATE_KEY,
+                serde_json::to_string(&state)
                     .map_err(FoundryError::from)?
                     .as_str(),
             )?;
@@ -551,9 +637,10 @@ impl Engine {
     /// disk cap stops the run with `cache_full` BEFORE this batch is
     /// written: nothing is evicted and earlier valid data stays intact. The
     /// committed count and the exact cache-byte total (actual row lengths:
-    /// a replaced row's length leaves it, the new row's enters) are updated
-    /// in the SAME transaction, so durable vectors and durable progress can
-    /// never disagree.
+    /// a replaced row's length leaves it, the new row's enters, from the
+    /// total the run reconciled at its start, [`Self::semantic_begin_run`])
+    /// are updated in the SAME transaction, so durable vectors and durable
+    /// progress can never disagree.
     pub fn semantic_cache_commit(
         &self,
         entries: &[(String, Vec<f32>)],

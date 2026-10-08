@@ -68,7 +68,8 @@ and reported. Every store, memory, cache, dataset, checkpoint and supplied profi
 `--host-config` first removes the block `foundry connect --apply-config` wrote
 (`foundry connect --remove-config FILE`), restoring the file's prior bytes. Optional
 workers: package with `--with-semantic --semantic-profile FILE` (the worker built with
-`LLAMA_CPP_DIR`, a llama.cpp checkout at the pinned commit) or `--with-learning` (with
+`LLAMA_CPP_DIR`, a llama.cpp git repository holding the pinned commit, which build.rs
+builds with CMake) or `--with-learning` (with
 `LIBTORCH`), then install with `--semantic-profile FILE` or `--learning-profile FILE`
 to build the signed bundles and installed profile copies;
 `disable-semantic`/`disable-learning` remove them again. An upgrade over an installed

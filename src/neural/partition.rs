@@ -86,10 +86,22 @@ fn carded(unit: &Unit) -> bool {
     unit.name_range.is_some() || unit.kind == UnitKind::Section
 }
 
+/// The units of `source` that get a card, in the unit forest's pre-order
+/// (start ascending, the enclosing unit first): card `i` of the source is
+/// rendered from unit `i`. `lang` is 001's mapping of the path; a language
+/// without units, or a source over the parse bound, has none.
+pub fn carded_units(source: &str, lang: Option<Lang>) -> Vec<Unit> {
+    match lang.filter(|lang| lang.has_units()) {
+        Some(mapped) => syntax::units(source, mapped)
+            .into_iter()
+            .filter(carded)
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
 /// The cards of `source` at workspace-relative `path`, in the unit forest's
-/// pre-order (start ascending, the enclosing unit first). `lang` is 001's
-/// mapping of the path; a language without units, or a source over the
-/// parse bound, has no cards.
+/// pre-order ([`carded_units`], each rendered by [`card`]).
 pub fn cards(
     source: &str,
     path: &str,
@@ -97,21 +109,28 @@ pub fn cards(
     recipe: &CardRecipe<'_>,
     tokens: &dyn TokenCount,
 ) -> Result<Vec<Card>, ProviderError> {
-    let units = match lang.filter(|lang| lang.has_units()) {
-        Some(mapped) => syntax::units(source, mapped),
-        None => return Ok(Vec::new()),
-    };
-    let mut out = Vec::new();
-    for unit in units.iter().filter(|unit| carded(unit)) {
-        let (rendered, ids) = render_card(source, path, unit, recipe, tokens)?;
-        out.push(Card {
-            start: unit.start,
-            end: unit.end,
-            input_key: provider::input_key(recipe.function_digest, &rendered),
-            ids,
-        });
-    }
-    Ok(out)
+    carded_units(source, lang)
+        .iter()
+        .map(|unit| card(source, path, unit, recipe, tokens))
+        .collect()
+}
+
+/// The card of one carded `unit` of `source`: its range, the key of its
+/// exact rendered input and that input's token ids.
+pub fn card(
+    source: &str,
+    path: &str,
+    unit: &Unit,
+    recipe: &CardRecipe<'_>,
+    tokens: &dyn TokenCount,
+) -> Result<Card, ProviderError> {
+    let (rendered, ids) = render_card(source, path, unit, recipe, tokens)?;
+    Ok(Card {
+        start: unit.start,
+        end: unit.end,
+        input_key: provider::input_key(recipe.function_digest, &rendered),
+        ids,
+    })
 }
 
 /// The end of a signature whose body opens at `body`: the end of that line

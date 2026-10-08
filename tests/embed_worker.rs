@@ -1829,7 +1829,20 @@ fn every_file_the_worker_reads_must_be_in_the_verified_inventory() {
 fn real_worker_first_answer(
     descriptor: &context_foundry::neural::provider::FunctionDescriptor,
 ) -> (Option<Header>, Option<i32>) {
+    real_worker_answer_over(descriptor, &[])
+}
+
+/// [`real_worker_first_answer`] with `files` written into the model
+/// directory first.
+#[cfg(feature = "embed-worker")]
+fn real_worker_answer_over(
+    descriptor: &context_foundry::neural::provider::FunctionDescriptor,
+    files: &[(&str, &[u8])],
+) -> (Option<Header>, Option<i32>) {
     let dir = tempfile::tempdir().expect("tempdir");
+    for (name, bytes) in files {
+        std::fs::write(dir.path().join(name), bytes).expect("model file");
+    }
     let (reader, read_fd, _liveness_write) = liveness_pipe();
     let mut command = Command::new(env!("CARGO_BIN_EXE_foundry-embed"));
     command
@@ -1931,6 +1944,68 @@ fn the_real_worker_refuses_a_foreign_descriptor_before_the_model() {
         }
         assert_eq!(code, Some(1), "{name}");
     }
+}
+
+/// A GGUF v3 header with no tensors whose key/value pairs are `pairs`
+/// (each a key, a GGUF value type and the value's bytes).
+#[cfg(feature = "embed-worker")]
+fn gguf_header(pairs: &[(&str, u32, Vec<u8>)]) -> Vec<u8> {
+    let mut bytes = b"GGUF".to_vec();
+    bytes.extend_from_slice(&3u32.to_le_bytes());
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    bytes.extend_from_slice(&(pairs.len() as u64).to_le_bytes());
+    for (key, kind, value) in pairs {
+        bytes.extend_from_slice(&(key.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(key.as_bytes());
+        bytes.extend_from_slice(&kind.to_le_bytes());
+        bytes.extend_from_slice(value);
+    }
+    bytes
+}
+
+/// Review M5: the pinned llama.cpp loader opens the sibling shards a
+/// GGUF's `split.count` names, files the descriptor never hashed. Given the
+/// first shard of two (the only GGUF the descriptor lists) with the second
+/// beside it in the granted model directory, the real worker refuses before
+/// llama.cpp loads anything.
+#[cfg(feature = "embed-worker")]
+#[test]
+fn the_real_worker_refuses_a_split_gguf_before_loading() {
+    const FIRST: &str = "model-00001-of-00002.gguf";
+    let shard = |no: u16| {
+        let mut architecture = (6u64).to_le_bytes().to_vec();
+        architecture.extend_from_slice(b"gemma3");
+        gguf_header(&[
+            ("general.architecture", 8, architecture),
+            ("split.no", 2, no.to_le_bytes().to_vec()),
+            ("split.count", 2, 2u16.to_le_bytes().to_vec()),
+        ])
+    };
+    let (first, second) = (shard(0), shard(1));
+    let mut descriptor = fake_descriptor();
+    for file in &mut descriptor.artifact_files {
+        if file.name == descriptor.gguf {
+            file.name = FIRST.into();
+        }
+    }
+    descriptor.gguf = FIRST.into();
+    let (answer, code) = real_worker_answer_over(
+        &descriptor,
+        &[(FIRST, &first), ("model-00002-of-00002.gguf", &second)],
+    );
+    match answer {
+        Some(Header::Error {
+            id: None,
+            code: named,
+            message,
+            ..
+        }) => {
+            assert_eq!(named, "load_failed");
+            assert!(message.contains("split.count 2"), "{message}");
+        }
+        other => panic!("a split GGUF must be refused before loading: {other:?}"),
+    }
+    assert_eq!(code, Some(1));
 }
 
 /// A profile whose descriptor also names `zz-big.bin`, an 8 GiB sparse file:

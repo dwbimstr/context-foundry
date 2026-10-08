@@ -8,7 +8,8 @@
 //! so one card, unless a case says otherwise.
 #![cfg(feature = "semantic")]
 use context_foundry::neural::cache::{
-    CacheLookup, DEFAULT_CACHE_CAP_BYTES, LEGACY_ROW_BYTES, PartitionRecord, row_bytes,
+    CacheLookup, DEFAULT_CACHE_CAP_BYTES, LEGACY_ROW_BYTES, PartitionRecord, PartitionUnit,
+    row_bytes,
 };
 use context_foundry::neural::fake::{FakeBehavior, FakeFactory};
 use context_foundry::neural::index;
@@ -20,6 +21,7 @@ use context_foundry::neural::provider::{
 };
 use context_foundry::neural::status::SemanticStatus;
 use context_foundry::neural::tokenize::DocumentTokenizer;
+use context_foundry::syntax::Lang;
 use context_foundry::testkit;
 use context_foundry::{Control, Engine, FoundryError};
 use std::path::{Path, PathBuf};
@@ -1576,17 +1578,57 @@ fn the_final_short_batch_after_expiry_reports_budget_exhausted() {
     assert_eq!(env.status().searchable_current_units, 1);
 }
 
+/// The fixture profile's card renderer, the one preparation hands
+/// acceptance: the card tuples of one body at one path.
+fn renderer(env: &Env) -> impl Fn(&str, &str) -> Result<Vec<PartitionUnit>, FoundryError> + use<> {
+    let profile = SemanticProfile::load(&env.profile).unwrap();
+    let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+    let digest = profile.descriptor.digest();
+    move |path: &str, body: &str| {
+        let recipe = partition::CardRecipe {
+            template: &profile.descriptor.document_template,
+            function_digest: &digest,
+            card_tokens: profile.card_tokens as usize,
+        };
+        let cards = partition::cards(body, path, Lang::from_path(path), &recipe, &tokenizer)?;
+        Ok(cards
+            .into_iter()
+            .map(|card| PartitionUnit {
+                start: card.start,
+                end: card.end,
+                input_key: card.input_key,
+            })
+            .collect())
+    }
+}
+
+/// Offer `record` to acceptance as a claim, under the genuine renderer.
+fn claim(
+    engine: &Engine,
+    path: &str,
+    record: &PartitionRecord,
+    render: &dyn Fn(&str, &str) -> Result<Vec<PartitionUnit>, FoundryError>,
+) -> Result<(), FoundryError> {
+    engine.semantic_record_partition(
+        path,
+        &record.source_hash,
+        &record.recipe_id,
+        &record.function_digest,
+        Some(&record.units),
+        &|body| render(path, body),
+    )
+}
+
 #[test]
 fn mapping_acceptance_validates_the_cards_against_the_current_body() {
-    use context_foundry::neural::cache::PartitionUnit;
     let a_text = body(100);
     let u_text = format!("# é\n{}\n", "é".repeat(10));
     let (mut env, _) = first_preparation(&[("a.md", &a_text), ("u.md", &u_text), ("e.md", "")]);
     let digest = env.digest();
     let recipe = recipe();
-    // Acceptance checks the cards' structure against the current body; a
-    // card's key binds its rendered input, which the partition step computed
-    // (acceptance does not re-render it).
+    let render = renderer(&env);
+    // Acceptance renders the current body and accepts only that rendering:
+    // a structurally broken claim is refused like any other differing one.
     let key = provider::input_key(&digest, "doc: a card");
     let units = |ranges: &[(usize, usize)]| -> Vec<PartitionUnit> {
         ranges
@@ -1607,9 +1649,7 @@ fn mapping_acceptance_validates_the_cards_against_the_current_body() {
         units,
     };
     let refused = |path: &str, units: Vec<PartitionUnit>, why: &str| {
-        let err = engine
-            .semantic_record_partition(path, &record(hash_of(path), units))
-            .unwrap_err();
+        let err = claim(engine, path, &record(hash_of(path), units), &render).unwrap_err();
         assert_eq!(err.code(), "partition_invalid", "{why}: {err}");
     };
     refused("a.md", units(&[(0, 101)]), "past the end");
@@ -1621,15 +1661,18 @@ fn mapping_acceptance_validates_the_cards_against_the_current_body() {
         units(&[(0, 50), (0, 100)]),
         "an enclosing range after its child",
     );
+    refused(
+        "a.md",
+        units(&[(0, 100), (0, 40), (60, 90)]),
+        "invented cards",
+    );
+    refused("a.md", Vec::new(), "no cards for a source with one");
     refused("u.md", units(&[(0, 3)]), "inside a character");
     refused("e.md", units(&[(0, 1)]), "a card beyond an empty source");
     // A mapping naming a stale source version is refused.
     let stale = record("0".repeat(64), units(&[(0, 100)]));
     assert_eq!(
-        engine
-            .semantic_record_partition("a.md", &stale)
-            .unwrap_err()
-            .code(),
+        claim(engine, "a.md", &stale, &render).unwrap_err().code(),
         "partition_invalid"
     );
     // A key that is not lowercase SHA-256 hex is refused.
@@ -1642,20 +1685,17 @@ fn mapping_acceptance_validates_the_cards_against_the_current_body() {
     };
     refused("a.md", with_key("short"), "a malformed key");
     refused("a.md", with_key(&"AB".repeat(32)), "an uppercase key");
-    // Legal mappings: nested cards (the enclosing one first) with gaps, and
-    // no cards at all, for any source.
-    engine
-        .semantic_record_partition(
-            "a.md",
-            &record(hash_of("a.md"), units(&[(0, 100), (0, 40), (60, 90)])),
-        )
-        .unwrap();
-    engine
-        .semantic_record_partition("a.md", &record(hash_of("a.md"), Vec::new()))
-        .unwrap();
-    engine
-        .semantic_record_partition("e.md", &record(hash_of("e.md"), Vec::new()))
-        .unwrap();
+    // Legal mappings: the genuine rendering, and no cards for a source that
+    // renders none.
+    let genuine = engine.semantic_partition("a.md").unwrap().unwrap();
+    claim(engine, "a.md", &genuine, &render).unwrap();
+    claim(
+        engine,
+        "e.md",
+        &record(hash_of("e.md"), Vec::new()),
+        &render,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -1687,6 +1727,102 @@ fn a_stored_mapping_with_a_bad_range_is_ineligible_not_a_panic() {
     let repaired = env.open().semantic_partition("a.md").unwrap().unwrap();
     assert_eq!(repaired.units[0].input_key, good.units[0].input_key);
     assert_eq!(repaired.units[0].end, 100);
+}
+
+/// 009 T004 M1: acceptance binds every complete card tuple, range AND key,
+/// to the card the current body renders there, whether or not its vector is
+/// cached: another card's cached key at a genuine range, or the genuine keys
+/// over wrong in-bounds ranges, is refused and nothing is written, so no
+/// cached vector is ever published under a range it was not rendered from.
+#[test]
+fn a_mapping_is_refused_unless_every_card_tuple_is_the_card_rendered_there() {
+    let two = "# One\n\nalpha text\n\n# Two\n\nbeta text\n";
+    let (mut env, first) = first_preparation(&[("a.md", &body(100)), ("t.md", two)]);
+    assert_eq!(first.embedded_units, 3, "every key below is cached");
+    let render = renderer(&env);
+    let engine = env.open();
+    let genuine = engine.semantic_partition("t.md").unwrap().unwrap();
+    assert_eq!(genuine.units.len(), 2);
+    let foreign = engine.semantic_partition("a.md").unwrap().unwrap();
+    let refused = |units: Vec<PartitionUnit>, why: &str| {
+        let forged = PartitionRecord {
+            units,
+            ..genuine.clone()
+        };
+        let error = claim(engine, "t.md", &forged, &render).expect_err(why);
+        assert_eq!(error.code(), "partition_invalid", "{why}: {error}");
+        let kept = engine.semantic_partition("t.md").unwrap().unwrap();
+        assert_eq!(kept.units, genuine.units, "{why}");
+    };
+    // Another card's cached key at a genuine range.
+    let mut units = genuine.units.clone();
+    units[0].input_key = foreign.units[0].input_key.clone();
+    refused(units, "another source's cached key");
+    let mut units = genuine.units.clone();
+    let key = units[0].input_key.clone();
+    units[0].input_key = units[1].input_key.clone();
+    units[1].input_key = key;
+    refused(units, "two cards' keys swapped");
+    // The genuine keys over wrong ranges, in bounds and in order.
+    let mut units = genuine.units.clone();
+    units[0].end = two.len();
+    refused(units, "a card widened to the whole file");
+    let mut units = genuine.units.clone();
+    units[1].start += 1;
+    refused(units, "a card shifted by one byte");
+    refused(vec![genuine.units[1].clone()], "a card left out");
+    // The genuine mapping is accepted.
+    claim(engine, "t.md", &genuine, &render).unwrap();
+}
+
+/// Rewrite the state row as a pre-T004 binary's finalizer leaves it: no
+/// dimension, and a cache-byte total of `per_row` bytes for every row.
+fn old_binary_counter(env: &mut Env, per_row: u64) {
+    env.close();
+    let rows = testkit::semantic_cache_rows(&env.store).len() as u64;
+    let (_, raw) = testkit::table_rows(&env.store, "semantic_state").remove(0);
+    let mut state: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let object = state.as_object_mut().unwrap();
+    object.remove("dimensions");
+    object.insert("cache_bytes".into(), (rows * per_row).into());
+    testkit::tamper_semantic_state(&env.store, &state.to_string());
+}
+
+/// 009 T004 M2: the disk cap is decided on the actual row lengths, whatever
+/// byte total another binary recorded: a run reconciles the total from the
+/// rows when it begins (nothing is purged) and moves it with each commit.
+#[test]
+fn the_cache_cap_counts_actual_rows_whatever_total_an_older_binary_recorded() {
+    // 768 values: 3,140-byte rows, which a pre-T004 finalizer records as
+    // 8,256 bytes each. Two actual rows fit a cap of exactly two rows.
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
+    old_binary_counter(&mut env, LEGACY_ROW_BYTES as u64);
+    env.open().replace_source("b.md", &body(120)).unwrap();
+    env.open_mut().refresh(&Control::unbounded()).unwrap();
+    let report = env.prepare_with(60, 2 * ROW);
+    assert!(!report.partial, "two actual rows fit the cap: {report:?}");
+    assert_eq!(report.embedded_units, 1);
+    assert_eq!(report.cache_bytes, 2 * ROW);
+    let state = env.open().semantic_state().unwrap().unwrap();
+    assert_eq!(state.cache_bytes, 2 * ROW);
+
+    // 2048 values: 8,260-byte rows, recorded as 8,256. A cap one byte short
+    // of two actual rows refuses the second.
+    let mut wide = Env::new(&[("a.md", &body(100))]);
+    wide.profile = testkit::write_semantic_profile(wide._dir.path(), "fake-wide", |descriptor| {
+        descriptor.dimensions = 2048;
+    });
+    let descriptor = SemanticProfile::load(&wide.profile).unwrap().descriptor;
+    wide.factory = FakeFactory::new(descriptor, FakeBehavior::Ok);
+    let row = row_bytes(2048) as u64;
+    assert!(!wide.prepare(60).partial);
+    old_binary_counter(&mut wide, LEGACY_ROW_BYTES as u64);
+    wide.open().replace_source("b.md", &body(120)).unwrap();
+    wide.open_mut().refresh(&Control::unbounded()).unwrap();
+    let report = wide.prepare_with(60, 2 * row - 1);
+    assert_eq!(report.reason_code, Some("cache_full"), "{report:?}");
+    assert_eq!(report.cache_entries, 1);
+    assert_eq!(report.cache_bytes, row);
 }
 
 #[test]

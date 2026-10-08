@@ -457,8 +457,13 @@ real bundles is measured separately.
   `scripts/embed-worker-bundle.sh` and `THIRD-PARTY/llama.cpp-<commit>/LICENSE` (MIT;
   at the pinned commit it also covers the vendored ggml). The worker writes that text
   and prints its commit (`foundry-embed --notices DIR`; build.rs embeds both from the
-  checkout it builds against), and packaging refuses a profile that pins another
-  commit; so only building the worker needs `LLAMA_CPP_DIR`. `--with-learning` adds
+  tree it builds), and packaging refuses a profile that pins another commit; so only
+  building the worker needs `LLAMA_CPP_DIR`, a llama.cpp git repository holding the
+  pinned commit. build.rs reads that commit's library tree from the object store (no
+  working tree, index or earlier build is used) and builds it with CMake into its
+  `OUT_DIR` with fixed flags: static archives, Metal with the embedded shader library,
+  Accelerate BLAS, no OpenMP, CPU kernels for the architecture's baseline, not the
+  build host. `--with-learning` adds
   `libexec/foundry-learn` and `scripts/learn-worker-bundle.sh`. `PACKAGE.json` records
   the version, git commit, target, every file's SHA-256, the versions the core reports
   and the dependency identities: the `Cargo.lock` digest, the number of THIRD-PARTY

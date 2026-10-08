@@ -865,21 +865,163 @@ fn dense_units_come_first_in_similarity_order_then_the_lexical_ones_in_todays_or
         positions.windows(2).all(|pair| pair[0] < pair[1]),
         "{positions:?}"
     );
-    // The lexical units follow in the baseline's order, without the units
-    // already placed: each unit appears once.
-    let placed_units: BTreeSet<_> = dense.iter().map(|item| unit(item)).collect();
-    let rest: Vec<_> = placed.items[dense.len()..].iter().map(unit).collect();
-    let expected: Vec<_> = baseline
-        .items
-        .iter()
-        .map(unit)
-        .filter(|unit| !placed_units.contains(unit))
-        .take(rest.len())
-        .collect();
-    assert_eq!(rest, expected);
+    // Then the lexical units in the baseline's order: the whole placed list
+    // is the placement rule applied to the window and the baseline, never a
+    // tail cut to the observed length.
+    assert!(!baseline.counters.truncated, "the whole lexical order");
+    let lexical: Vec<_> = baseline.items.iter().map(unit).collect();
+    let (expected, capped) = expected_placement(&window_order, &lexical, 64);
     let all: Vec<_> = placed.items.iter().map(unit).collect();
+    assert_eq!(all, expected);
+    assert_eq!(placed.counters.capped, capped);
     let unique: BTreeSet<_> = all.iter().cloned().collect();
     assert_eq!(all.len(), unique.len(), "no unit twice");
+}
+
+/// One placed unit: `(path, start, end)`.
+type PlacedUnit = (String, u64, u64);
+
+/// The baseline's per-file cap (`store::PER_FILE_CAP`).
+const PER_FILE_CAP: usize = 4;
+
+/// The 009 T004 placement over independent inputs: the dense window's units
+/// in similarity order, then the lexical units in today's order; each unit
+/// once, at its first place, at most [`PER_FILE_CAP`] per file (dense units
+/// counted), at most `limit`. Returns the placed units and how many units
+/// the per-file cap dropped.
+fn expected_placement(
+    dense: &[PlacedUnit],
+    lexical: &[PlacedUnit],
+    limit: usize,
+) -> (Vec<PlacedUnit>, u64) {
+    let mut seen = BTreeSet::new();
+    let mut per_file = std::collections::BTreeMap::<&str, usize>::new();
+    let (mut placed, mut capped) = (Vec::new(), 0u64);
+    for unit in dense.iter().chain(lexical) {
+        if !seen.insert(unit) {
+            continue;
+        }
+        let count = per_file.entry(unit.0.as_str()).or_default();
+        if *count == PER_FILE_CAP {
+            capped += 1;
+            continue;
+        }
+        *count += 1;
+        if placed.len() < limit {
+            placed.push(unit.clone());
+        }
+    }
+    (placed, capped)
+}
+
+/// Review m1: many of the nearest cards share one file, so its dense units
+/// hit the per-file cap, and a known lexical-only candidate (a file without
+/// cards) must follow the dense units. The exact order is derived from
+/// independent inputs (the window's similarity order, today's lexical
+/// order), never from the observed residual.
+#[test]
+fn capped_dense_units_are_followed_by_a_known_lexical_only_candidate_in_exact_order() {
+    const GLOW: &str = "docs/glow.md";
+    const HARBOR: &str = "notes/harbor.txt";
+    let sections: String = (1..=6)
+        .map(|n| {
+            format!(
+                "# Amber hour {n}\n\nSundown, dusk and twilight glow on the horizon at \
+                 sunset, hour {n}.\n\n"
+            )
+        })
+        .collect();
+    let corpus = Corpus::new(&[
+        (GLOW.to_owned(), sections),
+        (
+            HARBOR.to_owned(),
+            "The quayside crane log lists every quayside shift change.\n".to_owned(),
+        ),
+    ]);
+    let slot = corpus.slot();
+    let query = "twilight quayside";
+    let window = corpus
+        .runtime()
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Control::unbounded(),
+        )
+        .unwrap();
+    let baseline = corpus
+        .engine()
+        .search_candidates(query, None, 64, &Control::unbounded())
+        .unwrap();
+    let placed = mcp::search_primary(
+        &slot,
+        corpus.engine(),
+        query,
+        None,
+        64,
+        &Corpus::control(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        placed.semantic.as_deref(),
+        Some("ready"),
+        "anchor-less: placed"
+    );
+    let unit = |item: &context_foundry::store::RankedItem| {
+        let handle = item.handle.as_ref().unwrap();
+        (handle.path.clone(), handle.start, handle.end)
+    };
+    let dense: Vec<PlacedUnit> = window
+        .hits
+        .iter()
+        .flat_map(|hit| window.units(hit))
+        .map(|location| (location.path.clone(), location.start, location.end))
+        .collect();
+    assert_eq!(
+        dense.iter().filter(|unit| unit.0 == GLOW).count(),
+        6,
+        "all six glow cards are among the nearest"
+    );
+    assert!(
+        dense.iter().all(|unit| unit.0 != HARBOR),
+        "a file without cards has no dense unit"
+    );
+    assert!(!baseline.counters.truncated, "the whole lexical order");
+    let lexical: Vec<PlacedUnit> = baseline.items.iter().map(unit).collect();
+    assert!(
+        lexical.iter().any(|unit| unit.0 == HARBOR),
+        "a lexical candidate"
+    );
+    let (expected, capped) = expected_placement(&dense, &lexical, 64);
+    let all: Vec<PlacedUnit> = placed.items.iter().map(unit).collect();
+    assert_eq!(all, expected);
+    assert_eq!(placed.counters.capped, capped);
+    // The glow file: six nearest cards, four placed, each from the window.
+    let glow: Vec<_> = placed
+        .items
+        .iter()
+        .filter(|item| unit(item).0 == GLOW)
+        .collect();
+    assert_eq!(glow.len(), PER_FILE_CAP);
+    assert!(glow.iter().all(|item| item.semantic.is_some()));
+    assert!(capped >= 2, "the fifth and sixth glow cards were capped");
+    // The lexical-only candidate is placed, untagged, after every dense unit.
+    let first_lexical = placed
+        .items
+        .iter()
+        .position(|item| item.semantic.is_none())
+        .expect("lexical units follow the dense ones");
+    assert!(
+        placed.items[first_lexical..]
+            .iter()
+            .all(|item| item.semantic.is_none())
+    );
+    let harbor = all
+        .iter()
+        .position(|unit| unit.0 == HARBOR)
+        .expect("the lexical-only candidate is placed");
+    assert!(harbor >= first_lexical, "{all:?}");
 }
 
 /// A unit both windows carry is placed once, at its dense place, tagged

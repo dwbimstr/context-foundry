@@ -137,8 +137,7 @@ fn package_command(bin_dir: &Path, out: &Path, label: Option<&str>, extra: &[&st
         .args(extra)
         .env("CARGO", env!("CARGO"))
         .env_remove("CF_TEST_VERSION_LABEL")
-        .env_remove("LLAMA_CPP_DIR")
-        .env_remove("LLAMA_BUILD_DIR");
+        .env_remove("LLAMA_CPP_DIR");
     if let Some(label) = label {
         command.env("CF_TEST_VERSION_LABEL", label);
     }

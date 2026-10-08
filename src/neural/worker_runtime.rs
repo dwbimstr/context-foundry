@@ -39,8 +39,9 @@ pub const FAKE_VOCAB: u32 = 1 << 20;
 /// exactly this recipe and never anything a profile merely claims.
 pub const REAL_ADAPTER_REVISION: u32 = 1;
 /// The llama.cpp commit `foundry-embed` is built from (statically linked,
-/// Metal). `build.rs` refuses an `embed-worker` build from any other
-/// checkout and the worker refuses a descriptor that names another commit.
+/// Metal): `build.rs` exports exactly this commit's tree and builds it with
+/// fixed flags, and the worker refuses a descriptor that names another
+/// commit.
 pub const LLAMA_CPP_COMMIT: &str = "b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea";
 /// The core tokenizer's artifact: the worker takes token IDs, so the
 /// descriptor must pin the file they come from beside the GGUF.
@@ -55,7 +56,7 @@ pub const FAKE_NOTICE: &str = "foundry-embed-fake: test notice; no llama.cpp is 
 /// the license text of the llama.cpp the worker statically links, to
 /// `DIR/LICENSE` (creating DIR) and print the llama.cpp commit the worker
 /// is built from. The text travels inside the binary (build.rs embeds the
-/// pinned checkout's `LICENSE`), so packaging needs no llama.cpp checkout:
+/// pinned commit's `LICENSE`), so packaging needs no llama.cpp checkout:
 /// package.sh ships it in THIRD-PARTY and checks the commit against the
 /// profile's pin. Nothing is loaded. Returns the exit code (73 when the
 /// file cannot be written).
@@ -101,6 +102,144 @@ pub fn check_real_descriptor(descriptor: &FunctionDescriptor) -> Result<(), Stri
         ));
     }
     Ok(())
+}
+
+/// The GGUF key whose value makes the pinned llama.cpp loader open sibling
+/// shards (`LLM_KV_SPLIT_COUNT`).
+const SPLIT_COUNT: &str = "split.count";
+
+/// Refuse a split GGUF before llama.cpp loads it. The pinned loader
+/// (`llama-model-loader.cpp`) reads the first file's `split.count` (a u16)
+/// and, when it is above 1, derives the sibling shards' names from the file
+/// name and opens them: files the descriptor never hashed, which could
+/// change the document function under the same digest. This reads the
+/// header as the pinned `gguf.cpp` does (magic, version 2 or 3, the tensor
+/// and key/value counts, then every key/value pair in order) and refuses
+/// any `split.count` other than one u16 of at most 1, and any header it
+/// cannot read to its last pair. Only a single-file GGUF is supported.
+pub fn refuse_split_gguf(path: &Path) -> Result<(), String> {
+    let shown = path.display();
+    let file = std::fs::File::open(path).map_err(|e| format!("{shown}: {e}"))?;
+    let left = file.metadata().map_err(|e| format!("{shown}: {e}"))?.len();
+    let mut header = GgufHeader {
+        reader: io::BufReader::new(file),
+        left,
+    };
+    let read = |error: String| format!("{shown}: the GGUF header cannot be read ({error})");
+    if header.array::<4>().map_err(read)? != *b"GGUF" {
+        return Err(format!("{shown} is not a GGUF file"));
+    }
+    let version = header.u32().map_err(read)?;
+    if !(2..=3).contains(&version) {
+        return Err(format!("{shown}: GGUF version {version} is not 2 or 3"));
+    }
+    let _tensors = header.u64().map_err(read)?;
+    let pairs = header.u64().map_err(read)?;
+    for _ in 0..pairs {
+        let key = header.u64().map_err(read)?;
+        let split = if key == SPLIT_COUNT.len() as u64 {
+            let name = header.array::<{ SPLIT_COUNT.len() }>().map_err(read)?;
+            name.as_slice() == SPLIT_COUNT.as_bytes()
+        } else {
+            header.skip(key).map_err(read)?;
+            false
+        };
+        let mut kind = header.u32().map_err(read)?;
+        let mut count = 1;
+        let array = kind == GGUF_ARRAY;
+        if array {
+            kind = header.u32().map_err(read)?;
+            count = header.u64().map_err(read)?;
+        }
+        if split {
+            if array || kind != GGUF_UINT16 {
+                return Err(format!(
+                    "{shown} declares {SPLIT_COUNT} as GGUF type {kind}{}; only a single-file \
+                     GGUF is supported",
+                    if array { " array" } else { "" }
+                ));
+            }
+            let shards = u16::from_le_bytes(header.array().map_err(read)?);
+            if shards > 1 {
+                return Err(format!(
+                    "{shown} declares {SPLIT_COUNT} {shards}: llama.cpp would also load {} \
+                     sibling shard(s) the descriptor never hashed; only a single-file GGUF is \
+                     supported",
+                    shards - 1
+                ));
+            }
+            continue;
+        }
+        header.skip_values(kind, count).map_err(read)?;
+    }
+    Ok(())
+}
+
+const GGUF_UINT16: u32 = 2;
+const GGUF_STRING: u32 = 8;
+const GGUF_ARRAY: u32 = 9;
+
+/// A bounded GGUF header reader: every read and skip is checked against
+/// the bytes left in the file.
+struct GgufHeader {
+    reader: io::BufReader<std::fs::File>,
+    left: u64,
+}
+
+impl GgufHeader {
+    fn reserve(&mut self, bytes: u64) -> Result<(), String> {
+        self.left = self
+            .left
+            .checked_sub(bytes)
+            .ok_or_else(|| "it ends early".to_owned())?;
+        Ok(())
+    }
+
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], String> {
+        use std::io::Read;
+        self.reserve(N as u64)?;
+        let mut bytes = [0u8; N];
+        self.reader
+            .read_exact(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        Ok(bytes)
+    }
+
+    fn u32(&mut self) -> Result<u32, String> {
+        self.array().map(u32::from_le_bytes)
+    }
+
+    fn u64(&mut self) -> Result<u64, String> {
+        self.array().map(u64::from_le_bytes)
+    }
+
+    fn skip(&mut self, bytes: u64) -> Result<(), String> {
+        self.reserve(bytes)?;
+        let offset = i64::try_from(bytes).map_err(|e| e.to_string())?;
+        self.reader.seek_relative(offset).map_err(|e| e.to_string())
+    }
+
+    /// Skip `count` values of GGUF type `kind` (an array's elements).
+    fn skip_values(&mut self, kind: u32, count: u64) -> Result<(), String> {
+        let width: u64 = match kind {
+            0 | 1 | 7 => 1,
+            2 | 3 => 2,
+            4..=6 => 4,
+            10..=12 => 8,
+            GGUF_STRING => {
+                for _ in 0..count {
+                    let bytes = self.u64()?;
+                    self.skip(bytes)?;
+                }
+                return Ok(());
+            }
+            other => return Err(format!("a value has GGUF type {other}")),
+        };
+        let bytes = count
+            .checked_mul(width)
+            .ok_or_else(|| "an array is too large".to_owned())?;
+        self.skip(bytes)
+    }
 }
 
 /// Parsed worker argv as the supervisor writes it.
@@ -1172,4 +1311,90 @@ pub fn allocate_touching(mib: usize) -> Vec<u8> {
         chunk[0] = 1;
     }
     buffer
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A GGUF string: its u64 length, then its bytes.
+    fn string(text: &str) -> Vec<u8> {
+        let mut bytes = (text.len() as u64).to_le_bytes().to_vec();
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
+    }
+
+    /// A GGUF header of `version` with no tensors and these key/value pairs.
+    fn header(version: u32, pairs: &[(&str, u32, Vec<u8>)]) -> Vec<u8> {
+        let mut bytes = b"GGUF".to_vec();
+        bytes.extend_from_slice(&version.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&(pairs.len() as u64).to_le_bytes());
+        for (key, kind, value) in pairs {
+            bytes.extend_from_slice(&string(key));
+            bytes.extend_from_slice(&kind.to_le_bytes());
+            bytes.extend_from_slice(value);
+        }
+        bytes
+    }
+
+    fn check(bytes: &[u8]) -> Result<(), String> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model.gguf");
+        std::fs::write(&path, bytes).unwrap();
+        refuse_split_gguf(&path)
+    }
+
+    /// A vocabulary-like string array, a float array and scalars before the
+    /// key, so the reader walks every value shape the loader reads.
+    fn metadata() -> Vec<(&'static str, u32, Vec<u8>)> {
+        let mut tokens = GGUF_STRING.to_le_bytes().to_vec();
+        tokens.extend_from_slice(&3u64.to_le_bytes());
+        for token in ["<s>", "a", "split.count"] {
+            tokens.extend_from_slice(&string(token));
+        }
+        let mut scores = 6u32.to_le_bytes().to_vec();
+        scores.extend_from_slice(&2u64.to_le_bytes());
+        scores.extend_from_slice(&[0u8; 8]);
+        vec![
+            ("general.architecture", GGUF_STRING, string("gemma3")),
+            ("tokenizer.ggml.tokens", GGUF_ARRAY, tokens),
+            ("tokenizer.ggml.scores", GGUF_ARRAY, scores),
+            ("general.alignment", 4, 32u32.to_le_bytes().to_vec()),
+            ("general.flag", 7, vec![1]),
+            ("general.size", 10, 7u64.to_le_bytes().to_vec()),
+        ]
+    }
+
+    #[test]
+    fn a_split_gguf_is_refused_and_a_single_file_gguf_passes() {
+        // A single-file GGUF, v2 and v3, with and without `split.count 1`.
+        for version in [2, 3] {
+            assert_eq!(check(&header(version, &metadata())), Ok(()));
+        }
+        let mut one = metadata();
+        one.push((SPLIT_COUNT, GGUF_UINT16, 1u16.to_le_bytes().to_vec()));
+        assert_eq!(check(&header(3, &one)), Ok(()));
+        // The first shard of two: refused by name.
+        let mut split = metadata();
+        split.push(("split.no", GGUF_UINT16, 0u16.to_le_bytes().to_vec()));
+        split.push((SPLIT_COUNT, GGUF_UINT16, 2u16.to_le_bytes().to_vec()));
+        let message = check(&header(3, &split)).unwrap_err();
+        assert!(message.contains("split.count 2"), "{message}");
+        // `split.count` of another type or as an array: refused.
+        let mut wide = metadata();
+        wide.push((SPLIT_COUNT, 4, 2u32.to_le_bytes().to_vec()));
+        assert!(check(&header(3, &wide)).is_err());
+        let mut array = GGUF_UINT16.to_le_bytes().to_vec();
+        array.extend_from_slice(&1u64.to_le_bytes());
+        array.extend_from_slice(&2u16.to_le_bytes());
+        assert!(check(&header(3, &[(SPLIT_COUNT, GGUF_ARRAY, array)])).is_err());
+        // Anything it cannot read to the last pair is refused: another
+        // magic, version 1, a truncated pair, an unknown value type.
+        assert!(check(b"GGML\x03\0\0\0").is_err());
+        assert!(check(&header(1, &metadata())).is_err());
+        let whole = header(3, &split);
+        assert!(check(&whole[..whole.len() - 1]).is_err());
+        assert!(check(&header(3, &[("general.odd", 13, vec![0; 8])])).is_err());
+    }
 }

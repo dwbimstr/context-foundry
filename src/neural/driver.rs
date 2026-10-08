@@ -548,7 +548,8 @@ impl<'a> Run<'a> {
     /// into `batch` ([`Self::fill`]): its store step follows the slot rule
     /// and its rendering holds nothing. It is never sent here; the next
     /// admission decides it afresh, after this call ended and was
-    /// committed. A failed prefetch is reported only after that commit.
+    /// committed. A failed prefetch is reported only after that commit, and
+    /// the committed batch is counted first, so the stop publishes it.
     fn embed(
         &mut self,
         walk: &mut Walk,
@@ -650,10 +651,12 @@ impl<'a> Run<'a> {
             Err(StopOrError::Stop(stop)) => return Ok(Some(stop)),
             Err(StopOrError::Error(error)) => return Err(error),
         }
+        // Committed is unpublished until a publication, whatever stops the
+        // run next: the stop ([`Self::finish`]) publishes it.
+        self.unpublished += size;
         if let Some(error) = prefetch_error {
             return Err(error);
         }
-        self.unpublished += size;
         if self.unpublished >= self.published.max(1) {
             return self.publish(true);
         }
@@ -1057,12 +1060,17 @@ mod tests {
 
     /// An owner whose foreground operations are counted: while one is in
     /// flight no store step runs (the MCP owner's rule). It reports the
-    /// driver's prefetch and can be closed.
+    /// driver's prefetch and can be closed. With `fail_prefetch`, the first
+    /// prefetch's selection step meets one injected store failure: armed on
+    /// the driver thread at the first admission, disarmed when that prefetch
+    /// is reported.
     struct Counted {
         engine: Mutex<Engine>,
         in_flight: AtomicUsize,
         closing: AtomicBool,
         prefetched: Mutex<mpsc::Sender<usize>>,
+        fail_prefetch: AtomicBool,
+        armed: AtomicBool,
     }
 
     impl Owner for Counted {
@@ -1076,7 +1084,24 @@ mod tests {
         fn closing(&self) -> bool {
             self.closing.load(Ordering::SeqCst)
         }
+        fn admitting(&self) {
+            if self.fail_prefetch.swap(false, Ordering::SeqCst) {
+                crate::fault::arm(
+                    crate::neural::fault_names::PARTITION_READ,
+                    0,
+                    crate::fault::Action::Fail("injected store failure".into()),
+                );
+                self.armed.store(true, Ordering::SeqCst);
+            }
+        }
         fn prefetched(&self, inputs: usize) {
+            if self.armed.swap(false, Ordering::SeqCst) {
+                crate::fault::arm(
+                    crate::neural::fault_names::PARTITION_READ,
+                    0,
+                    crate::fault::Action::Call(Box::new(|_| {})),
+                );
+            }
             let _ = locked(&self.prefetched).send(inputs);
         }
     }
@@ -1134,6 +1159,21 @@ mod tests {
         /// Start the driver over twelve notes and wait until its first
         /// batch of 8 runs and the remaining 4 cards were rendered beside it.
         fn started() -> Self {
+            let fixture = Self::start(false);
+            assert_eq!(fixture.entered(), 8, "the first batch runs");
+            assert_eq!(
+                fixture
+                    .prefetched
+                    .recv_timeout(Duration::from_secs(30))
+                    .expect("the next batch was prefetched during the call"),
+                4
+            );
+            assert_eq!(fixture.calls(), ["documents 8"], "nothing more was sent");
+            fixture
+        }
+
+        /// Start the driver over twelve notes behind a gated provider.
+        fn start(fail_prefetch: bool) -> Self {
             let (dir, engine, profile) = notes();
             let (entered_tx, entered) = mpsc::channel();
             let (release, release_rx) = mpsc::channel();
@@ -1157,12 +1197,14 @@ mod tests {
                 in_flight: AtomicUsize::new(0),
                 closing: AtomicBool::new(false),
                 prefetched: Mutex::new(prefetched_tx),
+                fail_prefetch: AtomicBool::new(fail_prefetch),
+                armed: AtomicBool::new(false),
             });
             let preparation = Arc::new(Preparation::default());
             preparation
                 .prepare(Arc::clone(&owner) as Arc<dyn Owner>, Arc::clone(&runtime))
                 .unwrap();
-            let fixture = Self {
+            Self {
                 _dir: dir,
                 owner,
                 runtime,
@@ -1171,17 +1213,7 @@ mod tests {
                 entered,
                 release,
                 prefetched,
-            };
-            assert_eq!(fixture.entered(), 8, "the first batch runs");
-            assert_eq!(
-                fixture
-                    .prefetched
-                    .recv_timeout(Duration::from_secs(30))
-                    .expect("the next batch was prefetched during the call"),
-                4
-            );
-            assert_eq!(fixture.calls(), ["documents 8"], "nothing more was sent");
-            fixture
+            }
         }
 
         fn entered(&self) -> usize {
@@ -1263,5 +1295,43 @@ mod tests {
             state.last_error.map(|error| error.code).as_deref(),
             Some("cancelled")
         );
+    }
+
+    /// 009 T004 M3: a prefetch whose selection step fails stops the run with
+    /// that error once the in-flight batch is committed, and that committed
+    /// batch is published at the stop: cached AND searchable.
+    #[test]
+    fn a_failed_prefetch_still_publishes_the_batch_committed_before_it() {
+        let fixture = Prefetch::start(true);
+        assert_eq!(fixture.entered(), 8, "the first batch runs");
+        assert_eq!(
+            fixture
+                .prefetched
+                .recv_timeout(Duration::from_secs(30))
+                .expect("the prefetch was attempted during the call"),
+            0,
+            "its selection step failed"
+        );
+        fixture.release.send(()).unwrap();
+        until_idle(&fixture.preparation);
+        fixture.runtime.shutdown();
+        assert_eq!(fixture.calls(), ["documents 8"]);
+        let state = fixture.state();
+        assert_eq!(state.state, "paused", "{state:?}");
+        assert_eq!(state.committed_units, 8, "{state:?}");
+        assert!(
+            state
+                .last_error
+                .as_ref()
+                .is_some_and(|error| error.message.contains("injected store failure")),
+            "{state:?}"
+        );
+        let status = locked(&fixture.owner.engine)
+            .semantic_status(&Control::unbounded())
+            .unwrap();
+        assert_eq!(status.cache.entries, 8, "{status:?}");
+        assert_eq!(status.cached_current_units, 8, "{status:?}");
+        assert_eq!(status.searchable_current_units, 8, "{status:?}");
+        assert!(status.index.available, "{status:?}");
     }
 }

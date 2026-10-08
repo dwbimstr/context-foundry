@@ -10,13 +10,14 @@
 //! most 32 sequences, so one call is ONE llama.cpp evaluation. Each input is
 //! its own sequence, placed in the batch grouped by length; the pooled
 //! vector of each sequence (the descriptor's pinned pooling) is cut to the
-//! descriptor's dimension and renormalized.
+//! descriptor's dimension and renormalized. A split GGUF is refused before
+//! llama.cpp opens it: its other shards are outside the verified inventory.
 //!
 //! `--probe <name>` runs one named development isolation check inside the
 //! sandboxed bundle and prints a JSON verdict; probes never load the model.
 //! `--notices DIR` writes the license text of the linked llama.cpp (embedded
-//! by build.rs from the pinned checkout; it covers the vendored ggml) to
-//! `DIR/LICENSE` and prints the llama.cpp commit, for package.sh.
+//! by build.rs from the pinned commit's tree it built; it covers the vendored
+//! ggml) to `DIR/LICENSE` and prints the llama.cpp commit, for package.sh.
 #[cfg(target_os = "macos")]
 fn main() {
     use std::io::Write;
@@ -99,7 +100,9 @@ mod llama {
     use context_foundry::neural::provider::{
         FunctionDescriptor, MAX_DOCUMENT_BATCH, SERVING_LIMIT_TOKENS, TokenizedInput,
     };
-    use context_foundry::neural::worker_runtime::{LLAMA_CPP_COMMIT, mark_phase};
+    use context_foundry::neural::worker_runtime::{
+        LLAMA_CPP_COMMIT, mark_phase, refuse_split_gguf,
+    };
     use std::ffi::{CStr, CString, c_char, c_void};
     use std::io::Write as _;
     use std::os::unix::ffi::OsStrExt as _;
@@ -122,15 +125,17 @@ mod llama {
         include!(concat!(env!("OUT_DIR"), "/llama_bindings.rs"));
     }
 
-    /// The checkout build.rs linked is the commit descriptors must name.
+    /// The commit build.rs built and linked is the commit descriptors must
+    /// name.
     const _: () = assert!(
         same(env!("FOUNDRY_LLAMA_CPP_COMMIT"), LLAMA_CPP_COMMIT),
         "build.rs and worker_runtime pin different llama.cpp commits"
     );
 
-    /// The pinned checkout's `LICENSE` (MIT, "The ggml authors"), which
-    /// build.rs copied into `OUT_DIR`; at this commit ggml has no license
-    /// file of its own, so this one text covers llama.cpp and its ggml.
+    /// The pinned commit's `LICENSE` (MIT, "The ggml authors"), which
+    /// build.rs copied into `OUT_DIR` from the tree it built; at this commit
+    /// ggml has no license file of its own, so this one text covers
+    /// llama.cpp and its ggml.
     pub const LICENSE: &str = include_str!(concat!(env!("OUT_DIR"), "/llama.cpp-LICENSE"));
 
     const fn same(a: &str, b: &str) -> bool {
@@ -237,6 +242,9 @@ mod llama {
             if !path.is_file() {
                 return Err(format!("{} is not a file", path.display()));
             }
+            // Before llama.cpp opens anything: a split GGUF would make it
+            // open shards outside the verified inventory.
+            refuse_split_gguf(path)?;
             let c_path = CString::new(path.as_os_str().as_bytes())
                 .map_err(|_| format!("{} contains a NUL byte", path.display()))?;
             let mut model_params = unsafe { ffi::llama_model_default_params() };

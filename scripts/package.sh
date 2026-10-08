@@ -25,9 +25,9 @@
 # embeds both), so packaging a built worker needs no llama.cpp checkout.
 #
 # Binaries are built here (`cargo build --locked --offline --release`; the
-# semantic worker needs LLAMA_CPP_DIR, a llama.cpp checkout at the pinned
-# commit with its static build in LLAMA_BUILD_DIR, default
-# $LLAMA_CPP_DIR/build-static; the learning worker LIBTORCH), or taken
+# semantic worker needs LLAMA_CPP_DIR, a llama.cpp git repository holding
+# the pinned commit, whose tree build.rs builds with CMake and fixed flags;
+# the learning worker LIBTORCH), or taken
 # already built from --bin-dir DIR (DIR/foundry, DIR/foundry-embed,
 # DIR/foundry-learn). Tests only: with --bin-dir, CF_TEST_VERSION_LABEL
 # relabels the package as `<crate version>-test.<suffix>`; it is refused
@@ -173,7 +173,7 @@ cp "$FOUNDRY_BIN" "$ROOT/bin/foundry"
 if [ "$WITH_SEMANTIC" = 1 ]; then
     TREE_FEATURES="$TREE_FEATURES,embed-worker"
     if [ "$PREBUILT" = false ]; then
-        [ -n "${LLAMA_CPP_DIR:-}" ] || die 64 "building foundry-embed needs LLAMA_CPP_DIR (the pinned llama.cpp checkout)"
+        [ -n "${LLAMA_CPP_DIR:-}" ] || die 64 "building foundry-embed needs LLAMA_CPP_DIR (a llama.cpp git repository holding the pinned commit)"
         "$CARGO" build --manifest-path "$REPO/Cargo.toml" --locked --offline --release \
             --features embed-worker --bin foundry-embed
     fi

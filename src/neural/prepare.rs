@@ -36,11 +36,14 @@
 //! driver takes the owner's engine slot per store step and embeds through
 //! the resident runtime.
 //!
-//! 009 T004: the embedding inputs are cards ([`super::partition`]). A batch
-//! is selected in a store step (which cards are missing, and their sources'
-//! bodies) and rendered and tokenized by [`Cards::render`], which needs no
-//! engine and no transaction, so the driver can prepare the next batch
-//! while one inference runs.
+//! 009 T004: the embedding inputs are cards ([`super::partition`]). A
+//! partition is accepted only as the cards its verified body renders, in
+//! the acceptance transaction. A batch is selected in a store step (which
+//! cards are missing, with their recorded tuples and their source's body)
+//! and only those cards are rendered and tokenized by [`Cards::render`],
+//! which needs no engine and no transaction and checks each against its
+//! recorded tuple, so the driver can prepare the next batch while one
+//! inference runs.
 //!
 //! The provider comes through the [`Acquire`] seam (slice B's supervised
 //! worker); whenever no accepted isolation profile admits model execution it
@@ -50,21 +53,22 @@
 use crate::control::Control;
 use crate::error::{FResult, FoundryError};
 use crate::neural::cache::{
-    self, CacheLookup, DEFAULT_CACHE_CAP_BYTES, PartitionRecord, PartitionUnit,
-    ProviderObservation, StateError,
+    self, CacheLookup, DEFAULT_CACHE_CAP_BYTES, PartitionUnit, ProviderObservation, StateError,
 };
 use crate::neural::index::Publication;
-use crate::neural::partition::{self, CardRecipe};
+use crate::neural::partition::{self, CardRecipe, TokenCount};
 use crate::neural::profile::SemanticProfile;
 use crate::neural::provider::{
     self, DocumentLimits, EmbeddingProvider, ProviderError, TokenizedInput,
 };
 use crate::neural::tokenize::DocumentTokenizer;
 use crate::store::Engine;
-use crate::syntax::Lang;
+use crate::syntax::{Lang, Unit};
 use serde::Serialize;
+use std::cell::OnceCell;
 use std::collections::HashSet;
 use std::path::Path;
+use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The provider seam: profile, isolation flag and the run control (caller
@@ -330,17 +334,19 @@ pub fn run(
 }
 
 /// Record a run's start in the state row: the profile identity (digest,
-/// recipe and dimension), `running` and no error. A profile change never
+/// recipe and dimension), `running`, no error, and the cache-byte total
+/// reconciled from the actual rows in the same transaction, so the disk cap
+/// never trusts a total another binary recorded. A profile change never
 /// purges: rows and generations of the earlier profile stay retained.
 pub(crate) fn begin(engine: &Engine, report: &PrepareReport) -> FResult<()> {
-    let mut state = engine.semantic_state()?.unwrap_or_default();
-    state.profile_name = Some(report.profile.clone());
-    state.function_digest = Some(report.function_digest.clone());
-    state.recipe_id = Some(report.recipe_id.clone());
-    state.dimensions = Some(report.dimensions);
-    state.state = "running".into();
-    state.last_error = None;
-    engine.semantic_set_state(&state)
+    engine.semantic_begin_run(|state| {
+        state.profile_name = Some(report.profile.clone());
+        state.function_digest = Some(report.function_digest.clone());
+        state.recipe_id = Some(report.recipe_id.clone());
+        state.dimensions = Some(report.dimensions);
+        state.state = "running".into();
+        state.last_error = None;
+    })
 }
 
 /// Finalize the state row for a run's outcome: `stopped` when complete,
@@ -878,7 +884,7 @@ pub(crate) struct Steps<'a> {
 /// slot and no transaction.
 #[derive(Clone, Copy)]
 pub(crate) struct Cards<'a> {
-    pub tokenizer: &'a DocumentTokenizer,
+    pub tokenizer: &'a dyn TokenCount,
     pub profile: &'a SemanticProfile,
     pub function_digest: &'a str,
 }
@@ -905,20 +911,31 @@ pub(crate) enum Selected {
 }
 
 /// The embed walk's position: every source up to `after` is done, `partial`
-/// is the source in progress (path, the source hash its cards belong to,
-/// the next card), and `seen` holds the input keys this run already
-/// resolved — identical rendered inputs share one result.
+/// is the source version in progress and its next card, and `seen` holds
+/// the input keys this run already resolved — identical rendered inputs
+/// share one result.
 #[derive(Default)]
 pub(crate) struct Walk {
     after: Option<String>,
-    partial: Option<(String, String, usize)>,
+    partial: Option<(Rc<SourceVersion>, usize)>,
     seen: HashSet<String>,
 }
 
-/// Cards a selection step found missing, not yet rendered: per source, its
-/// verified body, the recorded keys of all its cards and the indices of the
-/// missing ones, in walk order. Rendering ([`Cards::render`]) needs no
-/// engine and no transaction.
+/// One source version a selection drew cards from: its verified body and,
+/// once rendering needed them, its carded units. The version the walk
+/// pauses in carries both to its next selection, so a source consumed over
+/// many batches is read and parsed once.
+struct SourceVersion {
+    path: String,
+    hash: String,
+    body: String,
+    units: OnceCell<Vec<Unit>>,
+}
+
+/// Cards a selection step found missing, not yet rendered: per source
+/// version, how many cards its partition records and the missing ones
+/// (index and recorded tuple), in walk order. Rendering
+/// ([`Cards::render`]) needs no engine and no transaction.
 #[derive(Default)]
 pub(crate) struct Selection {
     sources: Vec<SelectedSource>,
@@ -926,10 +943,9 @@ pub(crate) struct Selection {
 }
 
 struct SelectedSource {
-    path: String,
-    body: String,
-    keys: Vec<String>,
-    wanted: Vec<usize>,
+    source: Rc<SourceVersion>,
+    cards: usize,
+    wanted: Vec<(usize, PartitionUnit)>,
 }
 
 impl Selection {
@@ -955,6 +971,13 @@ impl Batch {
     }
 }
 
+fn partition_invalid(message: String) -> FoundryError {
+    FoundryError::Semantic {
+        code: "partition_invalid",
+        message,
+    }
+}
+
 impl Cards<'_> {
     /// The limits of one document call under the run's profile.
     pub(crate) fn limits(&self) -> DocumentLimits {
@@ -974,43 +997,72 @@ impl Cards<'_> {
         }
     }
 
-    /// The cards of one source body, rendered and tokenized.
-    fn of(&self, path: &str, body: &str) -> FResult<Vec<partition::Card>> {
-        Ok(partition::cards(
+    /// The card tuples of one source body: what acceptance records.
+    fn units(&self, path: &str, body: &str) -> FResult<Vec<PartitionUnit>> {
+        let cards = partition::cards(
             body,
             path,
             Lang::from_path(path),
             &self.recipe(),
             self.tokenizer,
-        )?)
+        )?;
+        Ok(cards
+            .into_iter()
+            .map(|card| PartitionUnit {
+                start: card.start,
+                end: card.end,
+                input_key: card.input_key,
+            })
+            .collect())
     }
 
     /// Render and tokenize a selection into its batch, in selection order,
-    /// with no engine and no transaction: each selected source's cards are
-    /// rendered once from its verified body, and every recorded key must be
-    /// re-derived exactly (the partition row and the rendering share one
-    /// recipe), else the mapping is `partition_invalid`.
+    /// with no engine and no transaction. Only the selected cards are
+    /// rendered (a source version's units are parsed once per walk), and
+    /// each must be exactly the card its partition records, the same range
+    /// under the same key, else the mapping is `partition_invalid`.
     pub(crate) fn render(&self, selection: Selection) -> FResult<Batch> {
+        let recipe = self.recipe();
         let mut batch = Batch::default();
-        for source in selection.sources {
-            let cards = self.of(&source.path, &source.body)?;
-            let same = cards.len() == source.keys.len()
-                && cards
-                    .iter()
-                    .zip(&source.keys)
-                    .all(|(card, key)| &card.input_key == key);
-            if !same {
-                return Err(FoundryError::Semantic {
-                    code: "partition_invalid",
-                    message: format!(
-                        "{}: the recorded cards differ from a fresh rendering",
-                        source.path
-                    ),
-                });
+        for selected in selection.sources {
+            let source = &selected.source;
+            let units = source.units.get_or_init(|| {
+                partition::carded_units(&source.body, Lang::from_path(&source.path))
+            });
+            if units.len() != selected.cards {
+                return Err(partition_invalid(format!(
+                    "{}: the partition records {} cards, but the body has {} carded units",
+                    source.path,
+                    selected.cards,
+                    units.len()
+                )));
             }
-            let mut cards: Vec<Option<partition::Card>> = cards.into_iter().map(Some).collect();
-            for index in source.wanted {
-                let card = cards[index].take().expect("each card is wanted once");
+            for (index, recorded) in selected.wanted {
+                let card = partition::card(
+                    &source.body,
+                    &source.path,
+                    &units[index],
+                    &recipe,
+                    self.tokenizer,
+                )?;
+                if (card.start, card.end, card.input_key.as_str())
+                    != (recorded.start, recorded.end, recorded.input_key.as_str())
+                {
+                    return Err(partition_invalid(format!(
+                        "{}: card {index} is recorded as {}..{}, but renders as {}..{} under \
+                         {} key",
+                        source.path,
+                        recorded.start,
+                        recorded.end,
+                        card.start,
+                        card.end,
+                        if card.input_key == recorded.input_key {
+                            "the same"
+                        } else {
+                            "another"
+                        }
+                    )));
+                }
                 batch.keys.push(card.input_key);
                 batch.inputs.push(TokenizedInput { ids: card.ids });
             }
@@ -1068,22 +1120,15 @@ impl Steps<'_> {
             if let Some(stop) = halt() {
                 return Ok(Progress::Halted(stop));
             }
-            let body = self.engine.semantic_source_body(path, meta)?;
-            let cards = self.cards.of(path, &body)?;
-            let record = PartitionRecord {
-                source_hash: meta.hash.clone(),
-                recipe_id: self.recipe.to_owned(),
-                function_digest: self.cards.function_digest.to_owned(),
-                units: cards
-                    .iter()
-                    .map(|card| PartitionUnit {
-                        start: card.start,
-                        end: card.end,
-                        input_key: card.input_key.clone(),
-                    })
-                    .collect(),
-            };
-            self.engine.semantic_record_partition(path, &record)?;
+            let cards = self.cards;
+            self.engine.semantic_record_partition(
+                path,
+                &meta.hash,
+                self.recipe,
+                cards.function_digest,
+                None,
+                &|body| cards.units(path, body),
+            )?;
             report.partitioned_sources += 1;
             written += 1;
             *after = Some(path.clone());
@@ -1095,12 +1140,13 @@ impl Steps<'_> {
     /// Add the next missing cards to `selection` (a store step: no
     /// rendering, no tokenization): the walk visits the cards of every
     /// source with a CURRENT partition in path order, skips inputs this run
-    /// resolved or the cache holds valid, and records each missing one with
-    /// its source's verified body, until the selection holds `room` cards,
-    /// the walk ends, or `max_sources` sources were examined. Pages are read
-    /// fresh at every step; a source whose version changed since the walk
-    /// paused in it restarts at its first card. `halt` is asked before every
-    /// page.
+    /// resolved or the cache holds valid, and records each missing one (its
+    /// index and recorded tuple) with its source version's verified body,
+    /// until the selection holds `room` cards, the walk ends, or
+    /// `max_sources` sources were examined. Pages are read fresh at every
+    /// step; the version the walk paused in keeps its body (and parsed
+    /// units) for the next step, and a source whose version changed since
+    /// restarts at its first card. `halt` is asked before every page.
     pub(crate) fn select_batch(
         &self,
         walk: &mut Walk,
@@ -1128,10 +1174,11 @@ impl Steps<'_> {
                     return Ok(Selected::Yield);
                 }
                 examined += 1;
-                let first = match walk.partial.take() {
-                    Some((partial, hash, next)) if partial == *path && hash == meta.hash => next,
-                    _ => 0,
-                };
+                let resumed = walk
+                    .partial
+                    .take()
+                    .filter(|(source, _)| source.path == *path && source.hash == meta.hash);
+                let first = resumed.as_ref().map_or(0, |(_, next)| *next);
                 if let Some(record) = self.engine.semantic_partition(path)?
                     && cache::partition_is_current(
                         &record,
@@ -1170,28 +1217,32 @@ impl Steps<'_> {
                             report.reused_cached_units += 1;
                             continue;
                         }
-                        wanted.push(index);
+                        wanted.push((index, unit.clone()));
                         if selection.len + wanted.len() == room {
                             full_at = Some(index + 1);
                             break;
                         }
                     }
                     if !wanted.is_empty() {
+                        let source = match resumed {
+                            Some((source, _)) => source,
+                            None => Rc::new(SourceVersion {
+                                path: path.clone(),
+                                hash: meta.hash.clone(),
+                                body: self.engine.semantic_source_body(path, meta)?,
+                                units: OnceCell::new(),
+                            }),
+                        };
                         selection.len += wanted.len();
                         selection.sources.push(SelectedSource {
-                            path: path.clone(),
-                            body: self.engine.semantic_source_body(path, meta)?,
-                            keys: record
-                                .units
-                                .into_iter()
-                                .map(|unit| unit.input_key)
-                                .collect(),
+                            source: Rc::clone(&source),
+                            cards: record.units.len(),
                             wanted,
                         });
-                    }
-                    if let Some(next) = full_at {
-                        walk.partial = Some((path.clone(), meta.hash.clone(), next));
-                        return Ok(Selected::Full);
+                        if let Some(next) = full_at {
+                            walk.partial = Some((source, next));
+                            return Ok(Selected::Full);
+                        }
                     }
                 }
                 walk.after = Some(path.clone());
@@ -1257,5 +1308,131 @@ mod tests {
         assert_eq!(report.partitioned_sources, 12);
         assert!(matches!(step(None, &mut report), Progress::Done));
         assert_eq!(report.sources, 12, "every source examined once");
+    }
+
+    /// Counts every tokenization: the cost of rendering cards.
+    struct Counting<'a> {
+        inner: &'a DocumentTokenizer,
+        encodes: std::cell::Cell<usize>,
+    }
+
+    impl<'a> Counting<'a> {
+        fn new(inner: &'a DocumentTokenizer) -> Self {
+            Self {
+                inner,
+                encodes: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl TokenCount for Counting<'_> {
+        fn encode(&self, rendered: &str) -> Result<partition::TokenizedText, ProviderError> {
+            self.encodes.set(self.encodes.get() + 1);
+            self.inner.encode(rendered)
+        }
+    }
+
+    /// 009 T004 M4: the embed walk renders and tokenizes only the cards it
+    /// selected. Five batches of eight cards from ONE source of forty
+    /// definitions cost exactly what rendering each card once costs, not
+    /// five renderings of the whole source.
+    #[test]
+    fn a_partially_consumed_source_renders_only_its_selected_cards() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("workspace");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut source = String::new();
+        for n in 0..40 {
+            source.push_str(&format!(
+                "/// Item {n}.\npub fn item_{n:02}() -> u32 {{\n    {n}\n}}\n\n"
+            ));
+        }
+        std::fs::write(root.join("lib.rs"), &source).unwrap();
+        let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+        engine.index(&root, &Control::unbounded()).unwrap();
+        let path = crate::testkit::write_semantic_profile(dir.path(), "steps", |_| {});
+        let profile = SemanticProfile::load(&path).unwrap();
+        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+        let digest = profile.descriptor.digest();
+        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+        let control = Control::unbounded();
+        let mut report = PrepareReport::default();
+        let partitioning = Steps {
+            engine: &engine,
+            cards: Cards {
+                tokenizer: &tokenizer,
+                profile: &profile,
+                function_digest: &digest,
+            },
+            recipe: &recipe,
+        };
+        let mut after = None;
+        while let Progress::More = partitioning
+            .partition_page(
+                &mut after,
+                usize::MAX,
+                None,
+                &control,
+                &mut report,
+                &mut || None,
+            )
+            .unwrap()
+        {}
+        // What rendering every card once costs.
+        let once = Counting::new(&tokenizer);
+        let cards = partition::cards(
+            &source,
+            "lib.rs",
+            Lang::from_path("lib.rs"),
+            &partitioning.cards.recipe(),
+            &once,
+        )
+        .unwrap();
+        assert_eq!(cards.len(), 40);
+        // The embed walk, selection then rendering, batch by batch.
+        let counting = Counting::new(&tokenizer);
+        let steps = Steps {
+            engine: &engine,
+            cards: Cards {
+                tokenizer: &counting,
+                profile: &profile,
+                function_digest: &digest,
+            },
+            recipe: &recipe,
+        };
+        let mut walk = Walk::default();
+        let mut batches = Vec::new();
+        loop {
+            let mut selection = Selection::default();
+            let end = match steps
+                .select_batch(
+                    &mut walk,
+                    &mut selection,
+                    8,
+                    usize::MAX,
+                    &mut report,
+                    &mut || None,
+                )
+                .unwrap()
+            {
+                Selected::Full => false,
+                Selected::End => true,
+                Selected::Yield => continue,
+                Selected::Halted(_) => unreachable!("nothing halts this walk"),
+            };
+            let batch = steps.cards.render(selection).unwrap();
+            if !batch.is_empty() {
+                batches.push(batch.len());
+            }
+            if end {
+                break;
+            }
+        }
+        assert_eq!(batches, [8; 5]);
+        assert_eq!(
+            counting.encodes.get(),
+            once.encodes.get(),
+            "each selected card is rendered once, nothing else"
+        );
     }
 }

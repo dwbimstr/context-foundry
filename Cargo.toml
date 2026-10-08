@@ -91,9 +91,10 @@ tch = { version = "=0.24.0", optional = true }
 default = ["semantic"]
 semantic = ["dep:tokenizers", "dep:usearch"]
 # 009 T004 embedding worker only: `foundry-embed` on a pinned, statically
-# linked llama.cpp (Metal). build.rs generates its FFI bindings with bindgen
-# and links the static archives into that binary alone; `foundry` and the
-# default build never touch llama.cpp.
+# linked llama.cpp (Metal). build.rs builds the pinned commit's tree with
+# CMake and fixed flags into OUT_DIR, generates its FFI bindings with
+# bindgen and links the static archives into that binary alone; `foundry`
+# and the default build never touch llama.cpp.
 embed-worker = ["dep:bindgen"]
 learning-worker = ["dep:tch"]
 # Named deterministic fault points for recovery tests. Never enabled by
