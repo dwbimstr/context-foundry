@@ -18,4 +18,4 @@ jobs:
       - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
       - run: cargo +1.90.0 fmt --check
       - run: cargo +1.90.0 clippy --locked --all-targets -- -D warnings
-      - run: cargo +1.90.0 test --locked
+      - run: cargo +1.90.0 test --locked --no-fail-fast

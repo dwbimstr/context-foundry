@@ -132,6 +132,9 @@ impl Dir {
     }
 
     /// The kind of a child, without following it; `None` when absent.
+    // `mode_t` is `u16` on macOS and `u32` on Linux: the conversions are
+    // needed on one and identities on the other.
+    #[allow(clippy::useless_conversion)]
     pub fn kind_of(&self, name: impl AsRef<OsStr>) -> io::Result<Option<Kind>> {
         let c = component(name.as_ref())?;
         // SAFETY: an all-zero `stat` is a valid out-parameter for fstatat(2).

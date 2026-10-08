@@ -684,7 +684,7 @@ pub fn connect(info: &ConnectInfo) -> AResult<PrintedConfig> {
                 launch,
                 instructions,
                 capability_note: format!(
-                    "Codex mcp_servers.<id>.url / bearer_token_env_var / tool_timeout_sec ({timeout_note}). Tools declare standard MCP annotations; default_tools_approval_mode = \"writes\" lets the four read-only tools run without prompts, while index — the only writing tool, writing solely Foundry's own store for the bound root — is listed for per-call approval; a host operator may tighten this. Per-project config requires project trust; printing or applying configuration is not runtime trust proof. Effective context ceiling {} tokens.",
+                    "Codex mcp_servers.<id>.url / bearer_token_env_var / tool_timeout_sec ({timeout_note}). Tools declare standard MCP annotations; default_tools_approval_mode = \"writes\" lets the five read-only tools (search, context, retrieve, references, status) run without prompts, while index and memory, the tools that write (solely Foundry's own store for the bound root), need approval, and index is also listed for per-call approval; a host operator may tighten this. Per-project config requires project trust; printing or applying configuration is not runtime trust proof. Effective context ceiling {} tokens.",
                     info.budget.max_context_tokens
                 ),
             })

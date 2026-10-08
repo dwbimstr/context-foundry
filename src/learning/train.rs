@@ -31,6 +31,11 @@
 //!
 //! Any failure stops and reaps the worker first; nothing partial is ever
 //! eligible or published.
+// The learning worker exists only on macOS (its isolation profile targets
+// it); elsewhere `train` refuses with `isolation_unavailable` before the
+// run's machinery below is used.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use super::candidate::{self, Base, CandidateManifest, Contributions, Lineage};
 use super::eval::{self, CaseInput, Output};
 use super::profile::LearnProfile;
@@ -320,6 +325,7 @@ pub fn train(engine: &Engine, request: &TrainRequest<'_>, control: &Control) -> 
             evaluation_rows,
             profile,
         );
+        #[allow(clippy::needless_return)] // the macOS block below is the tail there
         return Err(fail(
             "isolation_unavailable",
             "the learning worker's isolation profile targets macOS",

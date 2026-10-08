@@ -3010,9 +3010,11 @@ fn a_ready_crossing_the_deadline_inside_one_receive_slice_is_never_accepted() {
         if !entered.get() || !pid_file.exists() {
             continue;
         }
+        // It wakes at its deadline: not before it, and before the ready
+        // (`load`, 500 ms later) and the 30 s slice end. Scheduler delay on a
+        // loaded host stays inside that window.
         assert!(
-            took + Duration::from_millis(50) >= deadline
-                && took <= deadline + Duration::from_millis(300),
+            took + Duration::from_millis(50) >= deadline && took < load,
             "the acquisition must wake at its {deadline:?} deadline, took {took:?} \
              (the ready comes {load:?} after the worker's start, the slice ends at 30 s)"
         );
