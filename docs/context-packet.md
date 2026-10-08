@@ -25,9 +25,9 @@ deferred. None of these is release work.
 
 Validation for each item, with counts, is in [validation](validation.md). Key commits:
 T007 `4e23dee`, T009 `89a8c54`, 005 T004 `d00fc19`, tie-group amendment `483810a`
-(G1 PASS recorded in `1e0bb6a`), T008 `3e0a117`, 009 T004 `fd01489`; the cache cap
-became an operator setting on 2026-10-08 (`semantic prepare --cache-cap`,
-`mcp --semantic-cache-cap`).
+(G1 PASS recorded in `1e0bb6a`), T008 `3e0a117`, 009 T004 `fd01489`, the cache cap as an
+operator setting `8035faa` (`semantic prepare --cache-cap`, `mcp --semantic-cache-cap`),
+and the measurement handoff `18e27f9`.
 
 ## What remains, in order
 
