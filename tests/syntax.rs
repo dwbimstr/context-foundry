@@ -4060,6 +4060,7 @@ fn deeply_nested_units_keep_at_most_sixteen_qualifiers() {
     assert_eq!(found.last().unwrap().qualifiers, want);
 }
 
+#[cfg(target_os = "macos")]
 const PERL_MEMORY: &str = "FOUNDRY_TEST_PERL_MEMORY";
 
 /// Perl's scanner frees what it allocates (001 T008 review R2; the fork's

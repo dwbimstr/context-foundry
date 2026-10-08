@@ -13,9 +13,34 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    env:
+      # The 013 learning tests read the pinned checkpoint's tokenizer and
+      # configuration (convaiinnovations/laya-typed-decisions, Apache-2.0);
+      # the small files are fetched below, never the weights.
+      CONTEXT_FOUNDRY_013_CHECKPOINT: ${{ github.workspace }}/../laya-typed-decisions
+      CONTEXT_FOUNDRY_013_TOKENIZER: ${{ github.workspace }}/../laya-typed-decisions/tokenizer
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+      - name: Fetch the pinned 013 tokenizer and configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          rev=1a793eb568e6718f15941d08f85432581df534e3
+          dir=$CONTEXT_FOUNDRY_013_CHECKPOINT
+          mkdir -p "$dir/tokenizer" "$dir/encoder"
+          while read -r sum file; do
+            curl -sfL --retry 3 -o "$dir/$file" \
+              "https://huggingface.co/convaiinnovations/laya-typed-decisions/resolve/$rev/$file"
+            echo "$sum  $dir/$file" | shasum -a 256 -c -
+          done <<'EOF'
+          6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30 tokenizer/tokenizer.json
+          08d4cf3ac4dca381759441b85b91a6d40e688471dcd33d15d6649eb0a9a854d1 tokenizer/tokenizer_config.json
+          ebf0cd524d92342a6be5e48e9fca3d7c2babfb5a56ccd79d2171ef5d8c7f7be8 rl_agent_config.json
+          5268d24ad3b77c8151de5dcb0762ba4391619aad9ab0bda33e36fb083cfeae6d encoder/config.json
+          EOF
+      # Packaging tests build offline: fetch every locked package first.
+      - run: cargo +1.90.0 fetch --locked
       - run: cargo +1.90.0 fmt --check
       - run: cargo +1.90.0 clippy --locked --all-targets -- -D warnings
       - run: cargo +1.90.0 test --locked --no-fail-fast
