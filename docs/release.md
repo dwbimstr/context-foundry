@@ -41,7 +41,11 @@ when the owner adopted this policy; their checklist record remains in
 [validation](validation.md) as history. The owner selected the destination on
 2026-10-08: a GitHub release on `dwbimstr/context-foundry` carrying the macOS arm64
 package, the source archive and `SHA256SUMS`, after Developer ID signing; the tag and
-publication still need the owner's go-ahead. The remaining real-model and timing
-measurements moved to the [measurement handoff](measurement-handoff.md); while it is
-open the package is built without `--with-semantic` and advertises no semantic
-retrieval, as with learning while 013 is frozen off.
+publication still need the owner's go-ahead.
+
+G2, G1 with the profile, and vector parity selected EmbeddingGemma 2 on 2026-10-08
+([validation](validation.md)). Until the installed-artifact checks (row 4 of the
+[measurement handoff](measurement-handoff.md)) pass on the signed package, the package
+is built without `--with-semantic` and advertises no semantic retrieval, just as
+learning is not advertised while 013 is frozen off. When they pass, build it with
+`--with-semantic --semantic-profile` and the frozen EmbeddingGemma 2 profile.

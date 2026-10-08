@@ -9,8 +9,8 @@ recorded results before measuring anything. Background is in the
 ## Requirements
 
 - **macOS on Apple silicon.** The embedding worker needs Metal, and the stores, binaries
-  and worker bundles below are macOS arm64 builds. Linux is untested for the core and
-  unsupported for the worker.
+  and worker bundles below are macOS arm64 builds. CI also builds and tests the core on
+  Linux, but the worker and the package do not support it.
 - **At least 32 GiB of memory** for measurements (one job at a time), about 20 GB of free
   disk, and administrator rights (step 1).
 - **Tools:** Xcode command-line tools (`xcode-select --install`), `rustup`, `cmake`,
@@ -209,7 +209,7 @@ shasum -a 256 /private/tmp/cf-city/g2/models/*/*   # must equal the FROZEN.txt l
   `FROZEN.txt` naming the new binary, bundle and profile hashes and the reason, before
   any G2 run.
 
-Then follow the [measurement handoff](measurement-handoff.md) from row 1.
+Then follow the [measurement handoff](measurement-handoff.md) for the rows still open.
 
 ## Continuing code work
 

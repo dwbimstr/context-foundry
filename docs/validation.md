@@ -40,6 +40,83 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## Measurements on the development host — 2026-10-08
+
+The owner reversed the cloud handoff below because the baseline stores are too large to copy. The remaining rows ran on this host (Mac15,6, 12 cores, 18 GiB), one job at a time, using the frozen apparatus (`FROZEN.txt` of 11:31:14Z, with addenda at 14:45Z and 18:48Z).
+
+Every result below comes from a run with 0 retried, refused, missing or duplicate tasks. INVALID runs are named and not used.
+
+A timing run counts only if it had no swapouts and the 1-minute load was below 6 before it started. The owner's resident services keep the idle load at 4–7, so the usual idle rule (load below 2) could not be met. The owner stopped three resident model servers for the timing rows.
+
+**Result:** EmbeddingGemma 2 is the selected profile. Semantic retrieval stays off by default and unadvertised until the installed-artifact checks pass on the Developer ID-signed package.
+
+- **G2 (row 1).** Foundry `8035faa` (`0ca21c8e…`); K = 2; pass requires one-sided p < 0.025.
+  - **No-profile baseline:** delivered evidence on 0 of 388 questions. The result is identical on `90a82cd`. Two checks confirm the scoring:
+    - A positive control of 6 questions that name the definition passed 6 of 6.
+    - The 21 baseline responses that name the answer's file deliver other units from that file.
+  - **EmbeddingGemma 2** (`gemma.json` `bb1c9d08…`): **ENABLE.**
+    - 139 of 388 gained (rust 45/197, bun 94/191), 0 lost; p = 1.43e-42.
+    - Mean delivered tokens 2,019.7 → 2,018.1.
+  - **Nemotron 3 Embed 1B** (`nemotron.json` `619205ad…`): **INVALID twice.**
+    - In both runs the first rust question was refused once and retried.
+    - The refusal code was not captured. [inference] The likely cause is the first dense query loading the 2.74 GB rust index past the read deadline.
+    - For information only: 147 gained, 0 lost; mean tokens 2,019.7 → 2,015.2.
+    - The owner closed Nemotron: it is not enabled and will not be measured further.
+- **G1 with EmbeddingGemma 2 (row 2): PASS.**
+  - Sets: checker (6,881 tasks), qualified (2,551) and bun (999), via `g1quick.sh … 1/1 1`.
+  - The run used one shard. Six shards, each with its own worker, swapped this host and produced 44 retries (INVALID).
+  - No target or guard that passes without the profile fails with it.
+  - First-call passes, task by task against the no-profile run:
+    - **checker:** 3,741 → 3,716. Every change is on an unmarked wording: 26 definition and 7 usage tasks lost; 3 definition and 5 usage tasks gained.
+    - **qualified:** unchanged.
+    - **bun:** 971 → 969.
+  - The largest guard drop is checker definition/unmarked first-call, 55.0% → 51.7%. It stays above its frozen baseline of 37.4%.
+- **Nemotron conversion.**
+  - Converted offline from the local BF16 safetensors with llama.cpp `b9acf138`'s converter (`mistral3.attention.causal = False`); GGUF `e0cd7ff3…`.
+  - Worker against the torch BF16 bidirectional reference, 12 inputs: min cosine 0.999691. A causal reference scores only 0.62–0.90.
+- **Batched against single-sequence vectors (row 3), EmbeddingGemma 2: PASS.**
+  - The ignored `embed_worker` test on the frozen bundle: all 18 rows have cosine ≥ 0.9999. The lowest is 0.9999878; a 128-token heterogeneous batch scores 0.9999962.
+  - Max absolute difference: 5.79e-4.
+  - A 2,048-token query embeds; a 2,049-token query is refused.
+- **T009 index time (row 6).** Release builds, fresh stores, `/usr/bin/time -l`.
+
+  | Corpus | Build | Valid runs | Wall time | Peak footprint |
+  | --- | --- | --- | --- | --- |
+  | oh-my-pi (8,436 sources) | before T009 (`fb4511c`) | 3 | 56.1–57.2 s | 328–350 MB |
+  | oh-my-pi | T009 (`89a8c54`) | 1 | 54.9 s | 368 MB |
+  | oh-my-pi | main (`d61f1da`) | 2 | 53.2–54.4 s | 364–375 MB |
+  | rust-lang/rust (60,739 sources) | before T009 | 0 | none valid | — |
+  | rust-lang/rust | T009 | 1 | 363.5 s | 703 MB |
+  | rust-lang/rust | main | 2 | 361.2–365.5 s | 731–733 MB |
+
+  - On oh-my-pi, comparing the fastest valid runs, T009 takes 0.978× and main 0.949× the before-T009 time.
+  - Every rust before-T009 run swapped (4 attempts, wall 361.6–390.1 s). In total, 15 runs swapped and are not used.
+  - In the valid runs, user plus system time is about 18–51% of wall time. [inference] Indexing on this host is bound by I/O under memory pressure, so T009's eight build threads give no visible wall-time gain here.
+- **Door latency (row 7).** Main `d61f1da`, `context` at 2,048 tokens, 3 passes, 0 swapouts. Every response text equals its G1 response.
+
+  | Corpus | Group | Queries | p50 | p95 |
+  | --- | --- | --- | --- | --- |
+  | rust-lang/rust with SCIP | tie group (`doors:each`) | 30 | 50.2 ms | 125.7 ms |
+  | rust-lang/rust with SCIP | resolved anchor (`doors:exact`) | 30 | 35.4 ms | 113.7 ms |
+  | rust-lang/rust with SCIP | approximate (`doors:approx`) | 11 | 28.4 ms | 85.0 ms |
+  | oh-my-pi | tie group, approximate doors | 14 | 61.3 ms | 170.5 ms |
+  | oh-my-pi | approximate (`doors:approx`) | 30 | 53.3 ms | 80.6 ms |
+
+**Preparation (record; rows 1 and 5).** `semantic prepare --budget-seconds 3600 --development-isolation`, repeated until `partial` is false. Peak is the foundry process's footprint.
+
+| Store | Profile | Rounds | Cards | Embedded | Input tokens | Elapsed | Peak |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| oh-my-pi | EmbeddingGemma 2 | 1 | 112,549 | 111,239 | 6,798,414 | 1,256 s | 1.97 GB |
+| rust-lang/rust | EmbeddingGemma 2 | 2 | 332,732 | 331,556 | 19,303,357 | 4,437 s | 4.72 GB |
+| oh-my-pi | Nemotron | 2 | 112,549 | 111,240 | 5,848,851 | 4,129 s | 3.60 GB |
+| rust-lang/rust | Nemotron, `--cache-cap 4294967296` | 4 | 332,732 | 331,556 | 16,213,239 | 12,884 s | 7.63 GB |
+
+- **Library-only rust-lang/rust store, EmbeddingGemma 2 (row 5; the 2,255 files of `library/`).**
+  - 62,023 cards; 61,674 embedded; 4,681,997 input tokens; 7,710 document calls.
+  - Cache 194 MB; foundry peak 1.11–1.12 GB across attempts; worker peak 1.27 GB.
+  - Its time is not accepted: all three attempts swapped (65,628–953,714 swapouts). They took 694–747 s, against 2,139 s for 15,026 body units with EmbeddingGemma at 768 dimensions on 2026-10-07.
+- **Nemotron's rust index.** The 2,048-dimension index needed 2.74 GB of cache, hence the cap setting below. Publishing it at about 292k rows overran one 3,600 s round.
+
 ## Measurement handoff and cache cap — 2026-10-08
 
 - **Handoff.** The owner moved the remaining real-model and timing measurements (G2, G1 with a semantic profile, vector parity, the installed artifact, preparation cost, T009 timing, tie-group door latency, rollback re-embedding) to the [measurement handoff](measurement-handoff.md) for a cloud agent: this 18 GiB host swapped under six G1 shards with a resident worker each, and the resulting deadline refusals made that run INVALID. The frozen inputs that lived only under `/private/tmp` (the G1 baseline stores, SCIP artifact, baseline binary and token counter) were cloned into the G1 dataset directory outside Git. Semantic retrieval stays off by default and unadvertised until the handoff's rows 1–4 pass.
@@ -71,7 +148,7 @@ Every guard passes; the closest are definitions with more than 16 names (pass@1 
 Merged at `483810a`; unreleased. When a first anchor is ambiguous and its tie group (the window entries the resolver cannot tell apart) has at most 4 definitions, each gets its own exact door group of at most 4 lines right after its entry (`doors:each`), packed after the address pass and before signature upgrades; an entry without exact doors gets none, and with none for every entry the name's approximate doors follow the list once, joined from every tie root. A stale entry promotes nothing, in one root or across roots. At most 4 references windows per root's final read. A Head form for ambiguous lists was rejected: both refuters (Anthropic Opus 5.5, OpenAI GPT-6 Astra) showed it would be a directory line credited only by the scorer's fence rule.
 - **Review.** Cross-lab by OpenAI GPT-6.1 Sol over two rounds: REVISE (final backtracking could split a door group; the multi-root approximate fallback took only the first root's group), SHIP. Author: Anthropic Opus 5.5.
 - **Gates.** fmt, the full test suite and Rust 1.90 check passed at `70b97e6`; two clippy findings (a redundant closure, a test type) were fixed in `483810a` and clippy then passed on stable and Rust 1.90.
-- **Not measured.** Exact-door latency for common 2–4-namesake names (up to 4 windows per root) is in the [measurement handoff](measurement-handoff.md), as a record.
+- **Latency.** Exact-door latency for common names with 2–4 namesakes (up to 4 windows per root) was recorded on 2026-10-08, under *Measurements on the development host* above.
 
 ## 001 T008 languages — 2026-10-08
 
@@ -230,7 +307,7 @@ Unsigned (ad-hoc-signed development bundles). Signing is the last step, by owner
   - foreign `current` links.
   
   The remaining limits are documented in deployment.md: a check-to-delete TOCTOU window, an owner starting after the final busy check, and recovery's own temporaries.
-- **Tests.** `tests/install.rs` (5): package contents and manifest; install, run, upgrade, rollback and uninstall with user data kept; busy refusal; worker bundles with fake workers; byte-exact host-config removal; interrupted-command recovery at every recorded point; refusal cases.
+- **Tests.** `tests/install.rs` (5): package contents and manifest; install, run, upgrade, rollback and uninstall with user data kept; busy refusal; worker bundles with fake workers; byte-exact host-config removal; interrupted-command recovery at every recorded point; refusal cases. Since 2026-10-08 the host-config removal test is in `tests/mcp.rs`, and `tests/install.rs` builds only on macOS arm64, the package target.
 - **Real smoke** (release build with both real workers):
   - Install builds both ad-hoc bundles. Semantic context is `ready` through the installed Nemotron bundle; context is `route:policy` through the installed learning bundle.
   - `connect --apply-config` works.

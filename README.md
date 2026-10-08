@@ -95,7 +95,7 @@ upgrades are explicit (`upgrade-store`, `repair-index`). Per-task evidence is in
 | Project memory | Stable core | `foundry memory …` and the MCP `memory` tool |
 | Compiler references (SCIP) | Stable core | `import-scip` of rust-analyzer artifacts, `references`, exact doors |
 | Multi-root context | Stable core | `mcp --reference ROOT=STORE`, up to 8 |
-| Semantic retrieval | Optional, off by default | Implemented; enabled only after the [measurement handoff](docs/measurement-handoff.md) and signing pass |
+| Semantic retrieval | Optional, off by default | Implemented. EmbeddingGemma 2 passed G2 and G1; it is packaged after signing and the installed-artifact checks ([measurement handoff](docs/measurement-handoff.md)) |
 | Owned learning | Frozen off | Implemented commands remain as research tooling; not packaged or advertised |
 | Model gateway | Meter only | One pinned host profile (OMP 18.6.0 with Z.ai `glm-5.3-flash`); no spend cap |
 
@@ -103,8 +103,10 @@ upgrades are explicit (`upgrade-store`, `repair-index`). Per-task evidence is in
 
 - no tagged release, prebuilt binary or crates.io package (`publish = false`);
 - the macOS package is not signed; Developer ID signing and notarization come last;
-- semantic retrieval is not advertised until its measurements pass;
-- index time and memory after parallel indexing are not yet measured.
+- semantic retrieval is not advertised until the installed-artifact checks pass on the
+  signed package;
+- a valid rust-lang/rust index timing with the binary before parallel indexing is still
+  owed (record only; oh-my-pi is measured).
 
 The withdrawn local `v0.1.0` tag of 2026-10-04 is not a release.
 
@@ -310,7 +312,7 @@ Short pointers; each links to its contract.
 | [Context-v2 contract](specs/001-source-state-recovery/contracts/context-v2.md) | Wire format, city map, languages, packing |
 | [Graph bundle format](docs/graph.md) | `import-graph` input |
 | [Owned learning](docs/learning.md) | The frozen learning subsystem |
-| [Measurement handoff](docs/measurement-handoff.md) | Measurements still owed before semantic retrieval is enabled |
+| [Measurement handoff](docs/measurement-handoff.md) | Measurements still owed: the installed artifact after signing, and two record-only timings |
 | [Release checklist](docs/release.md) | What a release requires |
 | [Dependencies and licenses](docs/dependencies.md) | Third-party crates, forks and licenses |
 | [Context packet](docs/context-packet.md) | Orientation for a new maintainer or agent |

@@ -515,8 +515,12 @@ merged 2026-10-08 (`3e0a117`; [validation](../../docs/validation.md)).
 
 **Status:** approved 2026-10-07 (owner), revised after refutation; implemented and
 accepted locally 2026-10-08 (`89a8c54`, [validation](../../docs/validation.md)). Its
-timing record moved to the [measurement handoff](../../docs/measurement-handoff.md)
-(owner, 2026-10-08); it is a record, not an acceptance condition.
+timing is a record, not an acceptance condition, and was taken on 2026-10-08. On the
+18 GiB development host, indexing oh-my-pi took 53–57 s with every binary (fastest
+valid runs: main 0.949× of before). [inference] Indexing there is I/O-bound, so the eight threads
+give no visible gain. A valid rust-lang/rust run with the binary before T009 is still
+owed: every attempt swapped
+([measurement handoff](../../docs/measurement-handoff.md)).
 
 - **Depends:** T005. **Scope:** `src/store.rs` refresh (bounded parse fan-out ahead of
   the one Tantivy writer), `tests/recovery.rs` and `tests/core.rs`.

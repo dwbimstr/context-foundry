@@ -20,7 +20,7 @@ on `main` (`dwbimstr/context-foundry`). Nothing is released.
 | 005 Graph evidence | T001–T004 done; T004 doors plus the tie-group amendment (`doors:each`). |
 | 007 Multi-workspace context | T001 done. |
 | 008 Project memory | T001–T002 done. |
-| 009 Semantic retrieval | T001–T004 done. T004 (address cards on a statically linked llama.cpp worker) is accepted on implementation evidence; whether any embedding profile is enabled is decided by the measurements below. Semantic retrieval is off by default. |
+| 009 Semantic retrieval | T001–T004 done. T004 (address cards on a statically linked llama.cpp worker) is accepted on implementation evidence. On 2026-10-08, G2, G1 with the profile, and vector parity selected EmbeddingGemma 2. Nemotron was INVALID in G2 and closed by the owner. Semantic retrieval stays off by default until the installed-artifact checks pass on the signed package. |
 
 013 is frozen off; 002, 004, 006, 011, 012 and 015 are superseded; 010 and 014 are
 deferred. None of these is release work.
@@ -33,29 +33,27 @@ and the measurement handoff `18e27f9`.
 
 ## What remains, in order
 
-1. **Measurements.** Everything still needing a real model, timing or a quiet large
-   host is in the [measurement handoff](measurement-handoff.md): G2 per embedding
-   profile, G1 with a profile, vector parity, installed-artifact checks, preparation
-   cost, T009 timing, door latency. They decide whether a semantic profile is enabled
-   and advertised; they gate nothing else.
-2. **Signing.** Developer ID signing and notarization of the macOS package and worker
-   bundles (009 package acceptance, [deployment](deployment.md)). Needs the owner's Apple
-   Developer ID; nothing has been signed yet.
-3. **Release.** The [release checklist](release.md) to a GitHub release on
+1. **Signing.** Developer ID signing and notarization of the macOS package and worker
+   bundles (009 package acceptance, [deployment](deployment.md)). This needs the owner's
+   Apple Developer ID; nothing has been signed yet. After signing, run the
+   installed-artifact checks (row 4 of the [measurement handoff](measurement-handoff.md))
+   with the EmbeddingGemma 2 profile. They decide whether the release packages and
+   advertises semantic retrieval; they gate nothing else.
+2. **Release.** The [release checklist](release.md) to a GitHub release on
    `dwbimstr/context-foundry` (owner-selected destination). The tag and the publication
    each need the owner's explicit go-ahead.
+3. **Record-only timings** that the 18 GiB development host could not take without
+   swapping: the preparation time on the library-only store, and a rust-lang/rust index
+   run with the binary before T009. The owner either reruns them on a host with more
+   free memory or retires them.
 
-## In flight when this was written
+## Measurement results
 
-A local G2 run (agent `G2Run`, on the owner's machine) was left to finish. It prepares
-both frozen profiles and runs G2 and then G1 with a profile, writing everything under
-`~/VSC_DEV/datasets/context-foundry-g2-runs` (`FROZEN.txt`, `runs/`, `prep/`, `logs/`).
-Its frozen inputs are K = 2 profiles (EmbeddingGemma 2 at 768 dimensions, Nemotron 3
-Embed 1B converted offline to GGUF, parity min cosine 0.999691). Before using any of its
-results, check its final report and `FROZEN.txt`: a result counts only if its binary,
-profiles and stores match the frozen identities and the run was not INVALID. One early
-EmbeddingGemma G2 result (139 questions gained, 0 lost) ran on a binary that predates
-the cache-cap change and was discarded by the run itself; it is indicative only.
+All results are recorded in [validation](validation.md) under *Measurements on the
+development host*. The raw results, logs and frozen identities are outside Git:
+- `~/VSC_DEV/datasets/context-foundry-g2-runs`: `FROZEN.txt`, `runs/`, `g1/`, `prep/`,
+  `rows/`.
+- `~/VSC_DEV/datasets/context-foundry-timing`: scripts and `results/`.
 
 ## How work is done here
 
@@ -84,10 +82,11 @@ the cache-cap change and was discarded by the run itself; it is indicative only.
 
 ## Environment
 
-- **Platform.** All development, gates and measurements so far ran on macOS arm64.
-  `foundry-embed` (feature `embed-worker`) needs macOS with Metal, and its worker
-  isolation is macOS-specific. The core has not been built or tested on Linux; a Linux
-  host is not a substitute for the macOS gates or the measurements.
+- **Platform.** All development, gates and measurements ran on macOS arm64. CI also
+  builds and tests the core on Linux (x86_64). `foundry-embed` (feature `embed-worker`)
+  needs macOS with Metal, its worker isolation is macOS-specific, and the package
+  target is macOS arm64 (`tests/install.rs` builds only there). A Linux host is not a
+  substitute for the macOS gates or the measurements.
 - **Toolchains.** Rust stable plus the 1.90 toolchain (the MSRV gate). The worker build
   also needs `cmake` and a llama.cpp git checkout at commit `b9acf138` (`LLAMA_CPP_DIR`).
 - **Network for dependencies.** Three tree-sitter grammars resolve from owner-approved
@@ -120,8 +119,13 @@ the cache-cap change and was discarded by the run itself; it is indicative only.
   the model.
 - **Cache cap.** 2 GiB by default; an operator setting, not part of the profile or its
   function identity.
-- **Measurements moved off the development host** (owner, 2026-10-08), because that
-  18 GiB host swapped under parallel G1 shards with resident workers.
+- **Measurements stayed on the development host** (owner, 2026-10-08). A cloud handoff
+  was reversed because the baseline stores are too large to copy. G1 with a profile
+  runs one shard at a time, because six shards with resident workers swapped the
+  18 GiB host.
+- **EmbeddingGemma 2 over Nemotron** (owner, 2026-10-08). Nemotron gained more in G2,
+  but both of its runs were INVALID, so its result cannot be accepted. EmbeddingGemma 2
+  passed every check and embeds about 3× faster.
 
 ## Known rough edges
 
@@ -132,5 +136,7 @@ the cache-cap change and was discarded by the run itself; it is indicative only.
   questions name no identifier, which lexical retrieval cannot answer. That is the gap a
   semantic profile is meant to close, not an apparatus fault (a 6-question positive
   control passed).
-- Exact-door latency for common names with tie groups (up to 4 references windows per
-  root) is not yet measured.
+- The first dense query on a large index can be refused once and then succeed on retry.
+  Nemotron's G2 runs were INVALID for this reason on the 2.74 GB rust-lang/rust index.
+  The refusal code was not captured; [inference] the likely cause is a read-deadline
+  refusal while the index loads.

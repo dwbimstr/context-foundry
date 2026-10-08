@@ -7,10 +7,15 @@ only (see validation). T003's real lifecycle exercise passed its predeclared bou
 the measurement phase (2026-10-06); package acceptance needs signing. T004 (address
 cards on a llama.cpp worker, city map) was approved on 2026-10-07 and implemented and
 merged on 2026-10-08 (`fd01489`, cross-lab SHIP, gates green); it replaces the MLX worker
-and the fused merge. Its real-model and timing checks (G2, G1 with a profile, vector
-parity, the installed artifact, preparation cost) moved to the
-[measurement handoff](../../docs/measurement-handoff.md) (owner, 2026-10-08); until
-they pass, semantic retrieval stays off by default and a release advertises none.
+and the fused merge. Its real-model checks ran on 2026-10-08
+([validation](../../docs/validation.md)):
+- EmbeddingGemma 2 passed G2 (139 of 388 gained, 0 lost), G1 with the profile, and the
+  batched-against-single-sequence check, so it is the selected profile.
+- Nemotron 3 Embed 1B's G2 runs were INVALID, and the owner closed it.
+
+The installed-artifact checks wait for Developer ID signing
+([measurement handoff](../../docs/measurement-handoff.md)). Until they pass, semantic
+retrieval stays off by default and a release advertises none.
 D001 recorded 2026-09-29; its chosen values were
 recorded 2026-10-03 (below). Reactivated for planning by the owner's preparation-cost
 concern. Dependencies:
@@ -911,10 +916,15 @@ T003's, each passing only with that task's verification.
 **Status:** approved 2026-10-07 (owner: "llama.cpp worker + cards"), revised after
 cross-lab refutation the same day; implemented and merged 2026-10-08 (`fd01489`;
 [validation](../../docs/validation.md)); accepted on its implementation evidence, with
-its real-model and timing checks (G2, G1 with a profile, batched against
-single-sequence vectors, the installed artifact, preparation cost) moved to the
-[measurement handoff](../../docs/measurement-handoff.md) (owner, 2026-10-08); they
-decide enablement, not this task's acceptance. Evidence ([validation](../../docs/validation.md)):
+its real-model and timing checks deciding enablement, not this task's acceptance.
+Those checks ran on 2026-10-08:
+- EmbeddingGemma 2 passed G2, G1 with the profile, and batched against
+  single-sequence vectors, and is the selected profile.
+- Nemotron was INVALID in G2 and closed by the owner.
+- The installed artifact waits for signing
+  ([measurement handoff](../../docs/measurement-handoff.md)).
+
+Earlier evidence ([validation](../../docs/validation.md)):
 fused into the final ranking, both Nemotron and EmbeddingGemma 2 delivered less
 required evidence than lexical retrieval alone on the identifier-named checker tasks,
 mostly on usage questions; Nemotron's only gain was on `graph` for dev (51 / 21), the
@@ -1025,16 +1035,21 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
   arrived first; card acceptance refuses any tuple the body does not render; a run's
   cap accounting starts from the actual rows; a failed prefetch still publishes the
   committed batch; a partly consumed source renders only its selected cards; a split
-  GGUF is refused before loading. In the
-  [measurement handoff](../../docs/measurement-handoff.md): batched and
-  single-sequence vectors agree (cosine ≥ 0.9999); the installed worker links only
-  system libraries and frameworks and passes the isolation, resource and numerical
-  checks on the installed artifact; preparation time, peak footprint and tokens
-  embedded are recorded on the library-only rust-lang/rust store before and after.
+  GGUF is refused before loading. Measured 2026-10-08
+  ([validation](../../docs/validation.md)):
+  - Batched and single-sequence vectors agree (EmbeddingGemma 2, min cosine 0.9999878).
+  - Preparation counts and footprints on the library-only rust-lang/rust store are
+    recorded. Its time is not accepted, because every attempt swapped on the 18 GiB
+    host.
+
+  Still in the [measurement handoff](../../docs/measurement-handoff.md): the installed
+  worker links only system libraries and frameworks, and passes the isolation,
+  resource and numerical checks on the installed artifact.
 
 D001's model choice and chosen values were settled on 2026-10-03; T001–T003 were
 accepted on 2026-10-05 under development isolation and measured on 2026-10-06 (see
-validation). T004 (merged 2026-10-08) reopens the model choice through G2 and
-replaces the MLX worker; G2, signing and installed-package acceptance remain open in
-the measurement handoff. The owned learning head (013, frozen off) cannot substitute
+validation). T004 (merged 2026-10-08) reopened the model choice through G2, which
+selected EmbeddingGemma 2, and replaces the MLX worker. Signing and installed-package
+acceptance remain open in the measurement handoff. The owned learning head (013,
+frozen off) cannot substitute
 for this proof.
