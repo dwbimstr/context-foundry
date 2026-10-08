@@ -3933,6 +3933,10 @@ fn powershell_module_operands_give_keys_quoted_or_not() {
         (". \"$name\"\n", &[]),
         (". \"$(Get-X)\"\n", &[]),
         (". $PSScriptRoot/Store.ps1\n", &[]),
+        // A bare name or token embedding a variable gives no key.
+        (". ./lib/$name.ps1\n", &[]),
+        ("Import-Module Mods/$name\n", &[]),
+        ("Import-Module -Prefix $p Mods/Store\n", &["Store"]),
     ] {
         assert_eq!(
             syntax::index(source, Some(Lang::PowerShell))

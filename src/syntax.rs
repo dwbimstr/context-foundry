@@ -4008,7 +4008,8 @@ fn import_keys(lang: Lang, node: tree_sitter::Node, source: &[u8], out: &mut Vec
                         _ => Some(name),
                     })
                     .filter(|name| match name.kind() {
-                        "command_name" => true,
+                        // A bare name may embed a variable (`./lib/$name.ps1`).
+                        "command_name" => text(*name).is_some_and(|path| !path.contains('$')),
                         "string_literal" => !named_children(*name).any(|string| {
                             matches!(
                                 string.kind(),
@@ -4305,6 +4306,9 @@ fn powershell_element(element: tree_sitter::Node, source: &[u8]) -> Option<Power
             let token = text(element, source)?;
             Some(if token.starts_with('-') {
                 parameter(token)
+            } else if token.contains('$') {
+                // A bare token may embed a variable (`Mods/$name`).
+                PowerShellElement::Argument(Vec::new())
             } else {
                 PowerShellElement::Argument(vec![token.to_owned()])
             })
