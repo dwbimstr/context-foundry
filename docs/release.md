@@ -38,4 +38,7 @@ and therefore the release. Gateway credentials never enter packaged data or work
 The current repository has no release. A local `v0.1.0` tag and artifact made on
 2026-10-04 under the earlier release-the-working-scope rule were withdrawn the same day
 when the owner adopted this policy; their checklist record remains in
-[validation](validation.md) as history.
+[validation](validation.md) as history. The owner selected the destination on
+2026-10-08: a GitHub release on `dwbimstr/context-foundry` carrying the macOS arm64
+package, the source archive and `SHA256SUMS`, after Developer ID signing and the
+measurement batch; the tag and publication still need the owner's go-ahead.

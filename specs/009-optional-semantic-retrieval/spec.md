@@ -7,8 +7,10 @@ only (see validation). T003's real lifecycle exercise passed its predeclared bou
 the measurement phase (2026-10-06); package acceptance needs signing. T004 (address
 cards on a llama.cpp worker, city map) was approved on 2026-10-07 and implemented and
 merged on 2026-10-08 (`fd01489`, cross-lab SHIP, gates green); it replaces the MLX worker
-and the fused merge. Its real-model checks and G2 run in the measurement batch after
-signing. D001 recorded 2026-09-29; its chosen values were
+and the fused merge. The owner lifted the measurement freeze for G2 alone on 2026-10-08
+(run on development bundles, with a Nemotron GGUF converted offline from the local
+safetensors); its other real-model checks run in the measurement batch after signing.
+D001 recorded 2026-09-29; its chosen values were
 recorded 2026-10-03 (below). Reactivated for planning by the owner's preparation-cost
 concern. Dependencies:
 001; 003 for preparation during agent use. Implementation requires D001 below. Beyond
@@ -906,9 +908,10 @@ T003's, each passing only with that task's verification.
 
 **Status:** approved 2026-10-07 (owner: "llama.cpp worker + cards"), revised after
 cross-lab refutation the same day; implemented and merged 2026-10-08 (`fd01489`;
-[validation](../../docs/validation.md)); the real-model checks of its verification
-(batched against single-sequence vectors, the installed artifact, preparation time) and
-G2 run in the post-signing measurement batch. Evidence ([validation](../../docs/validation.md)):
+[validation](../../docs/validation.md)); G2 runs before signing (owner, 2026-10-08) and
+the other real-model checks of its verification (batched against single-sequence
+vectors, the installed artifact, preparation time) in the post-signing measurement
+batch. Evidence ([validation](../../docs/validation.md)):
 fused into the final ranking, both Nemotron and EmbeddingGemma 2 delivered less
 required evidence than lexical retrieval alone on the identifier-named checker tasks,
 mostly on usage questions; Nemotron's only gain was on `graph` for dev (51 / 21), the
