@@ -146,7 +146,9 @@ const DOOR_WINDOW: usize = 256;
 /// and added `role`, `name_case_hash`, `addr_hash`, `name_start`/`name_end`
 /// and `imports`; `"3"` added the unit's own start (its head) and the
 /// leading-run unit ranges (§ Unit forest).
-const SEARCH_SCHEMA: &str = "5";
+/// 009 card partitions name it in their recipe, so a unit change
+/// re-partitions them.
+pub(crate) const SEARCH_SCHEMA: &str = "5";
 const SEARCH_SCHEMA_REASON: &str =
     "search_schema: search index format changed; run `foundry repair-index`";
 

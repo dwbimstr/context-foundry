@@ -37,9 +37,14 @@ pub const RECIPE_GRAMMAR: &str = "cards-v1";
 
 /// The partition recipe id for one tokenizer identity and card limit. It
 /// participates in mapping eligibility: a partition row under another
-/// recipe is stale.
+/// recipe is stale. It names the search index version too, which changes
+/// whenever units can (a grammar, language or unit-kind change, 001's index
+/// version gate): a source partitioned before such a change, even into no
+/// cards, is partitioned again, while unchanged card inputs keep their
+/// cached vectors.
 pub fn recipe_id(tokenizer_identity: &str, card_tokens: u32) -> String {
-    format!("{RECIPE_GRAMMAR}:{card_tokens}+{tokenizer_identity}")
+    let units = crate::store::SEARCH_SCHEMA;
+    format!("{RECIPE_GRAMMAR}+units{units}:{card_tokens}+{tokenizer_identity}")
 }
 
 /// One rendered card: the unit's half-open byte range, its exact
@@ -433,5 +438,46 @@ mod tests {
             texts("m.py", source, 2048),
             ["m.py fn f\ndef f(\n    a,\n):"]
         );
+    }
+
+    /// 001 T008 gave shell (and 14 more languages) units. A shell source
+    /// partitioned before it holds a completed zero-card partition under
+    /// the recipe of that time; it is not current under today's, so
+    /// preparation partitions it again and its function gets a card.
+    #[test]
+    fn a_zero_card_partition_made_before_a_unit_change_is_not_current() {
+        use crate::neural::cache::{PartitionRecord, partition_is_current};
+        let source = "outer() {\n  echo hello\n}\n";
+        assert_eq!(texts("tools.sh", source, 2048).len(), 1);
+        let meta = crate::store::SourceMeta {
+            hash: "h".into(),
+            chunks: 1,
+            bytes: source.len(),
+            lines: 3,
+        };
+        let record = |recipe: String| PartitionRecord {
+            source_hash: "h".into(),
+            recipe_id: recipe,
+            function_digest: DIGEST.into(),
+            units: Vec::new(),
+        };
+        let current = recipe_id("tok", 128);
+        let before_t008 = record(format!("{RECIPE_GRAMMAR}:128+tok"));
+        assert!(!partition_is_current(&before_t008, &meta, &current, DIGEST));
+        let under_index_4 = record(format!("{RECIPE_GRAMMAR}+units4:128+tok"));
+        assert!(!partition_is_current(
+            &under_index_4,
+            &meta,
+            &current,
+            DIGEST
+        ));
+        // The same rows under today's recipe are current: the check is the
+        // recipe, not the empty card list.
+        assert!(partition_is_current(
+            &record(current.clone()),
+            &meta,
+            &current,
+            DIGEST
+        ));
     }
 }

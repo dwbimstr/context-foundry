@@ -934,7 +934,10 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
     source hash), accepted only as the cards the verified body renders (every range
     and key) and checked again against a fresh rendering for every card rendered into
     a batch, so eligibility is recomputed from current sources and an edit re-embeds
-    only the cards whose text changed.
+    only the cards whose text changed. The partition recipe names 001's search index
+    version, which changes whenever units can, so a source partitioned before a unit
+    change (even into no cards) is partitioned again; unchanged card inputs keep their
+    cached vectors.
   - *Placement: only for queries without an anchor.* For such a query, dense retrieval
     returns the nearest cards; their units come first, in similarity order, each
     through the ordinary unit ladder (verbatim, then signature) and tagged as semantic
