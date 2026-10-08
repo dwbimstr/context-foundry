@@ -317,9 +317,9 @@ func Helper() {}
     assert_tiles(source, Some(Lang::Go));
 }
 
-/// Rust 2024 `safe` foreign items: tree-sitter-rust 0.24 has no `safe`
-/// keyword, but its error recovery keeps the item a signature or static item
-/// with its name, so each is a unit. Items inside a macro body such as
+/// Rust 2024 `safe` foreign items are fn and static units: the
+/// tree-sitter-rust fork parses `safe` (context-v2 § Languages), where 0.24
+/// only kept them through error recovery. Items inside a macro body such as
 /// `cfg_select! { … }` are token trees, not units.
 #[test]
 fn rust_safe_foreign_items_are_units_outside_macro_bodies() {
@@ -3903,6 +3903,14 @@ fn powershell_module_operands_give_keys_quoted_or_not() {
         ("Import-Module -Prefix X Store\n", &["Store"]),
         ("Import-Module 'A', 'B'\n", &["A", "B"]),
         ("Import-Module Tools\n", &["Tools"]),
+        // A nonliteral operand keeps its position (review R4).
+        ("Import-Module -Prefix $prefix './Store.psm1'\n", &["Store"]),
+        (
+            "Import-Module -ArgumentList $args './Store.psm1'\n",
+            &["Store"],
+        ),
+        ("Import-Module $path './Store.psm1'\n", &[]),
+        ("Import-Module -Name $name\n", &[]),
         ("using module Tools\n", &["Tools"]),
         ("using namespace System.IO\n", &["IO"]),
         ("Write-Host 'Store.psm1'\n", &[]),
@@ -3992,4 +4000,207 @@ fn new_language_qualifiers_come_from_the_tree() {
             .unwrap_or_else(|| panic!("no {qname} in {found:#?}"));
         assert_eq!(unit.qualifiers, want, "{qname}");
     }
+}
+
+/// Only a node that gives a unit reads its leading run (001 T008 review
+/// R3): a 20,000-line comment run before a Go function is read once, not
+/// once per comment, and the function keeps it as its documentation.
+#[test]
+fn a_long_comment_run_is_read_once() {
+    let source = format!("package p\n\n{}func f() {{}}\n", "// x\n".repeat(20_000));
+    let started = std::time::Instant::now();
+    let found = syntax::units(&source, Lang::Go);
+    let elapsed = started.elapsed();
+    println!("units of a 20,000-line comment run: {elapsed:?}");
+    let f = found
+        .iter()
+        .find(|unit| unit.qname.as_deref() == Some("f"))
+        .unwrap();
+    assert_eq!(f.start, "package p\n\n".len(), "the run starts the unit");
+    assert_eq!(f.head, source.find("func f").unwrap());
+    assert!(elapsed < std::time::Duration::from_secs(1), "{elapsed:?}");
+}
+
+/// Each unit keeps at most its 16 innermost qualifiers (001 T008 review
+/// R5): 20,000 nested one-letter modules keep memory linear in the depth.
+#[test]
+fn deeply_nested_units_keep_at_most_sixteen_qualifiers() {
+    let depth = 20_000;
+    let name = |level: usize| char::from(b'a' + (level % 26) as u8).to_string();
+    let mut source: String = (0..depth)
+        .map(|level| format!("mod {} {{\n", name(level)))
+        .collect();
+    source += &"}\n".repeat(depth);
+    let found = syntax::units(&source, Lang::Rust);
+    assert_eq!(found.len(), depth);
+    assert!(found.iter().all(|unit| unit.qualifiers.len() <= 16));
+    let want: Vec<String> = (depth - 17..depth - 1).map(name).collect();
+    assert_eq!(found.last().unwrap().qualifiers, want);
+}
+
+const PERL_MEMORY: &str = "FOUNDRY_TEST_PERL_MEMORY";
+
+/// Perl's scanner frees what it allocates (001 T008 review R2; the fork's
+/// `cf-scanner-lifetime` branch). In a child process, so that no other test
+/// allocates meanwhile: after 300 warm-up parses, 2,100 more parses of
+/// heredoc-bearing sources — valid, unterminated, and stopped by the work
+/// budget inside a heredoc — leave malloc's bytes in use within 64 KiB of
+/// where they were. The count is exact (every live malloc block, all zones)
+/// and the loop frees all it allocates, so the bound is deterministic; the
+/// unpatched scanner keeps at least one 1 KiB queue node per heredoc.
+#[cfg(target_os = "macos")]
+#[test]
+fn perl_heredoc_parses_leave_no_native_memory_behind() {
+    #[repr(C)]
+    #[derive(Default)]
+    struct MallocStatistics {
+        blocks_in_use: u32,
+        size_in_use: usize,
+        max_size_in_use: usize,
+        size_allocated: usize,
+    }
+    unsafe extern "C" {
+        fn malloc_zone_statistics(zone: *mut std::ffi::c_void, stats: *mut MallocStatistics);
+    }
+    let in_use = || {
+        let mut stats = MallocStatistics::default();
+        // SAFETY: a null zone asks for the totals of every zone; `stats` is
+        // a valid, writable `malloc_statistics_t`.
+        unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut stats) };
+        (stats.size_in_use, stats.blocks_in_use)
+    };
+    if std::env::var_os(PERL_MEMORY).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "perl_heredoc_parses_leave_no_native_memory_behind",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(PERL_MEMORY, "1")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        println!("{stdout}");
+        assert!(
+            output.status.success() && stdout.contains("perl memory flat"),
+            "{:?}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let body = "line $value\n".repeat(20);
+    let valid =
+        format!("my $x = <<EOT;\n{body}EOT\nmy $y = <<~'END';\n  raw\n  END\nprint $x, $y;\n");
+    let unterminated = format!("my $x = <<EOT;\n{body}");
+    let round = || {
+        assert!(syntax::index(&valid, Some(Lang::Perl)).is_ok());
+        assert!(syntax::index(&unterminated, Some(Lang::Perl)).is_ok());
+        syntax::parse_hooks::set_budget(Some(60));
+        assert!(syntax::index(&valid, Some(Lang::Perl)).is_err());
+        syntax::parse_hooks::set_budget(None);
+    };
+    for _ in 0..100 {
+        round();
+    }
+    let (before, blocks_before) = in_use();
+    for _ in 0..700 {
+        round();
+    }
+    let (after, blocks_after) = in_use();
+    println!(
+        "perl memory: {before} -> {after} bytes, {blocks_before} -> {blocks_after} blocks in use"
+    );
+    assert!(after <= before + 64 * 1024, "{before} -> {after}");
+    println!("perl memory flat");
+}
+
+// --- 001 T008: rustc nightly syntax through the tree-sitter-rust fork
+// (context-v2 § City map › Languages)
+
+/// The nightly syntax of rustc 1.99's own sources yields units: const and
+/// auto traits and impl-restricted traits are traits; `const impl` and
+/// `impl const` are impls whose methods the type qualifies; `[const]`-bounded
+/// generics are fns; macros 2.0 are macros; a trait alias is a type; `safe`
+/// extern items are fns and statics.
+#[test]
+fn rust_nightly_syntax_yields_units() {
+    let source = "\
+const impl<T> Default for HashMap<T> {
+    fn default() -> Self {
+        HashMap::new()
+    }
+}
+
+impl<T> const Clone for Wrapper<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> [T] {
+    pub const fn get<I: [const] SliceIndex<Self>>(&self, index: I) -> Option<&I::Output> {
+        index.get(self)
+    }
+}
+
+pub const fn take<T: [const] Default>(dest: &mut T) -> T {
+    replace(dest, T::default())
+}
+
+pub const trait Zero: Sized {
+    fn zero() -> Self;
+}
+
+pub impl(self) trait Sealed {
+    fn seal(&self);
+}
+
+pub macro ready($e:expr) {
+    $e
+}
+
+pub(crate) macro choose {
+    ($a:expr) => { $a },
+    ($a:expr, $b:expr) => { $b },
+}
+
+unsafe extern \"C\" {
+    safe fn abort() -> !;
+    pub safe static ERRNO: i32;
+}
+
+pub trait Thin = Pointee<Metadata = ()> + PointeeSized;
+
+auto trait Freeze {}
+";
+    let found: Vec<(&str, Option<String>)> = units(source, Lang::Rust)
+        .into_iter()
+        .map(|(kind, qname, _)| (kind, qname))
+        .collect();
+    let want: Vec<(&str, Option<String>)> = [
+        ("impl", "HashMap<T>"),
+        ("fn", "HashMap<T>::default"),
+        ("impl", "Wrapper<T>"),
+        ("fn", "Wrapper<T>::clone"),
+        ("impl", "[T]"),
+        ("fn", "[T]::get"),
+        ("fn", "take"),
+        ("trait", "Zero"),
+        ("fn", "Zero::zero"),
+        ("trait", "Sealed"),
+        ("fn", "Sealed::seal"),
+        ("macro", "ready"),
+        ("macro", "choose"),
+        ("fn", "abort"),
+        ("static", "ERRNO"),
+        ("type", "Thin"),
+        ("trait", "Freeze"),
+    ]
+    .into_iter()
+    .map(|(kind, qname)| (kind, Some(qname.to_owned())))
+    .collect();
+    assert_eq!(found, want);
+    assert_tiles(source, Some(Lang::Rust));
 }

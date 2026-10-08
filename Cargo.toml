@@ -175,3 +175,12 @@ harness = false
 # v0.23.1 tag plus a one-line bound on that word (cf-serialize-fix).
 [patch.crates-io]
 tree-sitter-ruby = { git = "https://github.com/dwbimstr/tree-sitter-ruby", rev = "1a594bfdaeddf672b6216d5008056efcbbe7b2b7" }
+# 001 T008 review R2: tree-sitter-perl 1.1.2's scanner never frees its
+# heredoc queues; the fork is its publish commit 883ab51 plus the lifetime
+# fix (cf-scanner-lifetime).
+tree-sitter-perl = { git = "https://github.com/dwbimstr/tree-sitter-perl", rev = "0686313f5e658ab93b4fa5c530f348d3bffbf927" }
+# 001 T008: tree-sitter-rust 0.24.2 (the latest release) cannot parse the
+# nightly syntax rustc 1.99's own sources use (`const impl`, `[const]` bounds,
+# const/auto/impl-restricted traits, macros 2.0, `safe` extern items, trait
+# aliases); the fork is the v0.24.2 tag plus those rules (cf-nightly-syntax).
+tree-sitter-rust = { git = "https://github.com/dwbimstr/tree-sitter-rust", rev = "8a5695efe03f477596d2c50e9227dc102ec6c238" }

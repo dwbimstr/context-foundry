@@ -57,6 +57,17 @@ tokio add client/process features only for tests.
 The tree-sitter runtime and grammars compile bundled C parsers/scanners through
 `cc`, already in the held graph. This is third-party C, not first-party C/C++.
 
+001 T008 moves the runtime to tree-sitter 0.26 and adds 15 grammars (context-v2
+§ Languages). Three grammars resolve from owner-approved forks through
+`[patch.crates-io]` git revs, each MIT like its upstream; packaging reads their
+license files from the git checkout Cargo resolved:
+
+| Package | Version | Fork and rev | Change |
+| --- | --- | --- | --- |
+| tree-sitter-ruby | 0.23.1 | `dwbimstr/tree-sitter-ruby` `1a594bf` | heredoc serialization bound |
+| tree-sitter-perl | 1.1.2 | `dwbimstr/tree-sitter-perl` `0686313` | scanner frees its heredoc queues |
+| tree-sitter-rust | 0.24.2 | `dwbimstr/tree-sitter-rust` `8a5695e` | rustc 1.99 nightly syntax |
+
 The current lock contains 300 packages including Foundry: **299 third-party**
 packages, up from the historical 286 by these 13 additions. Declared expressions are permissive
 (MIT/Apache-2.0 variants, Unlicense, Unicode-3.0, Zlib, BSD-3-Clause, BSL-1.0) or offer

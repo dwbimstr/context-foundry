@@ -198,19 +198,56 @@ chmod 0755 "$ROOT"/bin/* "$ROOT"/scripts/*
 # --- THIRD-PARTY ----------------------------------------------------------
 # The v0.1.0 recipe: every normal (non-dev, non-build) dependency of the
 # packaged binaries, for this target and the packaged features, gets
-# THIRD-PARTY/<name>-<version>/ with the license/notice files its published
-# crate ships. A crate that ships none gets NOTICE-SUPPLIED.txt naming its
+# THIRD-PARTY/<name>-<version>/ with the license/notice files its package
+# source ships. A package that ships none gets NOTICE-SUPPLIED.txt naming its
 # declared license, authors and repository, with the canonical text in
 # THIRD-PARTY/_canonical/ (a multi-license expression elects MIT).
 THIRD=$ROOT/THIRD-PARTY
 mkdir -p "$THIRD/_canonical"
-REGISTRY=${CARGO_HOME:-$HOME/.cargo}/registry/src
 TREE_FEATURES=${TREE_FEATURES#,}
 set -- --manifest-path "$REPO/Cargo.toml" --locked --offline -e normal --prefix none \
     --target "$TARGET" --format '{p}|{l}|{r}'
 [ -z "$TREE_FEATURES" ] || set -- "$@" --features "$TREE_FEATURES"
 "$CARGO" tree "$@" > "$STAGE/tree.txt"
 sed 's/ (\*)$//' "$STAGE/tree.txt" | LC_ALL=C sort -u > "$STAGE/packages.txt"
+
+# Each package's source directory, as Cargo resolved it: an unpacked
+# registry crate, a git dependency's checkout (a `[patch]` fork pin) or a
+# path. `plutil -p` prints the metadata one key per line, a package's own
+# keys six spaces in under `packages`. Rows: name|version|key|directory,
+# the key `registry` for a registry package, `git:<url>` (the source without
+# its `#` revision fragment) for a git one and `path:<directory>` for a path
+# one, as `cargo tree` writes them after a package.
+set -- metadata --manifest-path "$REPO/Cargo.toml" --format-version 1 --locked --offline \
+    --filter-platform "$TARGET"
+[ -z "$TREE_FEATURES" ] || set -- "$@" --features "$TREE_FEATURES"
+"$CARGO" "$@" > "$STAGE/metadata.json"
+plutil -p -- "$STAGE/metadata.json" > "$STAGE/metadata.txt" \
+    || die 66 "cargo metadata gave no readable JSON"
+awk '
+    function value(line) {
+        sub(/^[^>]*=> /, "", line)
+        if (line == "<null>") return ""
+        sub(/^"/, "", line)
+        sub(/"$/, "", line)
+        return line
+    }
+    /^  "packages" => \[$/ { inside = 1; next }
+    inside && /^  \]$/ { inside = 0; next }
+    inside && /^    [0-9]+ => \{$/ { name = version = source = manifest = ""; next }
+    inside && /^      "name" => / { name = value($0); next }
+    inside && /^      "version" => / { version = value($0); next }
+    inside && /^      "source" => / { source = value($0); next }
+    inside && /^      "manifest_path" => / { manifest = value($0); next }
+    inside && /^    \}$/ {
+        dir = manifest
+        sub(/\/Cargo\.toml$/, "", dir)
+        if (source ~ /^registry\+/) key = "registry"
+        else if (source ~ /^git\+/) { key = source; sub(/^git\+/, "git:", key); sub(/#.*$/, "", key) }
+        else key = "path:" dir
+        print name "|" version "|" key "|" dir
+    }
+' "$STAGE/metadata.txt" > "$STAGE/sources.txt"
 
 sed 's/^Copyright (c) .*/Copyright (c) <year> <copyright holders>/' "$REPO/LICENSE" \
     > "$THIRD/_canonical/MIT.txt"
@@ -222,11 +259,25 @@ while IFS='|' read -r pkg license repository; do
     rest=${pkg#* v}
     version=${rest%% *}
     [ "$name" != context-foundry ] || continue
-    src=""
-    for candidate in "$REGISTRY"/*/"$name-$version"; do
-        [ -d "$candidate" ] && src=$candidate && break
-    done
-    [ -n "$src" ] || die 66 "no registry source for $name $version under $REGISTRY"
+    # `{p}` is `name vX`, then ` (<source>)` unless from a registry, then
+    # ` (proc-macro)` for a procedural macro.
+    entry=${pkg% (proc-macro)}
+    case $entry in
+        *" ("*")")
+            origin=${entry#* (}
+            origin=${origin%")"}
+            ;;
+        *) origin="" ;;
+    esac
+    case $origin in
+        "") key=registry ;;
+        /*) key=path:$origin ;;
+        *) key=git:${origin%%#*} ;;
+    esac
+    src=$(awk -F'|' -v n="$name" -v v="$version" -v k="$key" \
+        '$1 == n && $2 == v && $3 == k { print $4; exit }' "$STAGE/sources.txt")
+    [ -n "$src" ] && [ -f "$src/Cargo.toml" ] \
+        || die 66 "no resolved source for $name $version ($key) in cargo metadata"
     dest=$THIRD/$name-$version
     mkdir -p "$dest"
     plain "$name"

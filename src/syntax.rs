@@ -1693,10 +1693,21 @@ fn candidates(
     out: &mut Vec<Candidate>,
 ) {
     let (lang, source) = (at.lang, at.source);
+    // Whether `node` gives a unit comes first: only then is its leading run
+    // read, so a long run of comments is walked once, by the unit after it,
+    // not once per comment (001 T008 review R3).
+    let bindings = bindings(at, node);
+    let kind = match bindings {
+        Some(_) => None,
+        None => match unit_kind(at, node) {
+            Some(kind) => Some(kind),
+            None => return,
+        },
+    };
     let outer = at.outermost_wrapper(node);
     // `outer` sits at the depth of the outermost wrapper (or of `node`).
     let (start, decl) = leading_run(outer, &runs[at.ancestors.len() - at.wrappers()], source);
-    if let Some(bindings) = bindings(at, node) {
+    if let Some(bindings) = bindings {
         // The declaration's first binding keeps its start and leading run;
         // each binding ends where its own text does.
         for binding in bindings {
@@ -1727,7 +1738,7 @@ fn candidates(
         }
         return;
     }
-    let Some(kind) = unit_kind(at, node) else {
+    let Some(kind) = kind else {
         return;
     };
     let open = statement_form(lang, node).and_then(|form| {
@@ -2043,6 +2054,11 @@ fn unit_kind(at: &Walk, node: tree_sitter::Node) -> Option<UnitKind> {
             "const_item" => Const,
             "static_item" => Static,
             "type_item" => Type,
+            // A trait alias (`trait Thin = Pointee + Sized;`) names a bound
+            // list as a type alias names a type. Const and auto traits, impl
+            // restrictions, `const impl` and macros 2.0 keep the node kinds
+            // above (the tree-sitter-rust fork, context-v2 § Languages).
+            "trait_alias_item" => Type,
             // Declaration-only trait and extern-block items: required
             // methods and foreign `fn`s, and associated types. Valueless
             // `const` and `static` items are `const_item`/`static_item`.
@@ -3528,13 +3544,20 @@ fn qualified(prefix: Option<&str>, separator: &str, name: &str) -> String {
     joined
 }
 
-/// Keeps the innermost qualifiers within [`QNAME_BYTES`] bytes in all, as a
-/// qualified name keeps its tail: deep named nesting stays linear.
+/// A unit keeps at most this many qualifiers, its innermost (001 T008 review
+/// R5): a byte bound alone lets one-letter names keep 256 strings per unit,
+/// copied into every unit, delivery unit and document of a deep nesting.
+const QUALIFIERS: usize = 16;
+
+/// Keeps the innermost qualifiers, at most [`QUALIFIERS`] of them and within
+/// [`QNAME_BYTES`] bytes in all, as a qualified name keeps its tail: deep
+/// named nesting stays linear.
 fn keep_qualifier_tail(qualifiers: &mut Vec<String>) {
     let mut bytes = 0usize;
     let kept = qualifiers
         .iter()
         .rev()
+        .take(QUALIFIERS)
         .take_while(|qualifier| {
             bytes += qualifier.len();
             bytes <= QNAME_BYTES
@@ -4241,6 +4264,10 @@ const IMPORT_MODULE_SWITCHES: &[&str] = &[
     "usewindowspowershell",
 ];
 
+/// One command element: `None` for a separator or a redirection, which take
+/// no position; any operand that is not a literal (`$prefix`, `(Get-X)`) is
+/// an argument without values, so it still takes its position and a
+/// preceding parameter's value (001 T008 review R4).
 fn powershell_element(element: tree_sitter::Node, source: &[u8]) -> Option<PowerShellElement> {
     let parameter = |text: &str| {
         PowerShellElement::Parameter(
@@ -4250,6 +4277,8 @@ fn powershell_element(element: tree_sitter::Node, source: &[u8]) -> Option<Power
         )
     };
     match element.kind() {
+        "command_argument_sep" => None,
+        kind if kind.contains("redirection") => None,
         "command_parameter" => Some(parameter(text(element, source)?)),
         "generic_token" => {
             let token = text(element, source)?;
@@ -4260,21 +4289,25 @@ fn powershell_element(element: tree_sitter::Node, source: &[u8]) -> Option<Power
             })
         }
         // `'./Store.psm1'`, `"Store"`, `'A', 'B'`: string literals, each
-        // inside a unary expression of an array literal.
+        // inside a unary expression of an array literal; anything else in
+        // the list makes the whole operand nonliteral.
         "array_literal_expression" => {
-            let literals: Vec<String> = named_children(element)
-                .filter_map(|item| named_child_of(item, &["string_literal"]))
-                .filter_map(|literal| text(literal, source))
-                .map(|literal| {
-                    let inner = literal
-                        .strip_prefix(['\'', '"'])
-                        .and_then(|rest| rest.strip_suffix(['\'', '"']));
-                    inner.unwrap_or(literal).to_owned()
-                })
-                .collect();
-            (!literals.is_empty()).then_some(PowerShellElement::Argument(literals))
+            let mut literals = Vec::new();
+            for item in named_children(element) {
+                let Some(literal) = named_child_of(item, &["string_literal"])
+                    .filter(|_| item.named_child_count() == 1)
+                    .and_then(|literal| text(literal, source))
+                else {
+                    return Some(PowerShellElement::Argument(Vec::new()));
+                };
+                let inner = literal
+                    .strip_prefix(['\'', '"'])
+                    .and_then(|rest| rest.strip_suffix(['\'', '"']));
+                literals.push(inner.unwrap_or(literal).to_owned());
+            }
+            Some(PowerShellElement::Argument(literals))
         }
-        _ => None,
+        _ => Some(PowerShellElement::Argument(Vec::new())),
     }
 }
 

@@ -3717,8 +3717,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-perl"
 version = "1.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e79d4ae71b42e595c24c354b59905ade8162bd400ebc53ab916ea8aec54da92d"
+source = "git+https://github.com/dwbimstr/tree-sitter-perl?rev=0686313f5e658ab93b4fa5c530f348d3bffbf927#0686313f5e658ab93b4fa5c530f348d3bffbf927"
 dependencies = [
  "cc",
  "tree-sitter",
@@ -3767,8 +3766,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-rust"
 version = "0.24.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "439e577dbe07423ec2582ac62c7531120dbfccfa6e5f92406f93dd271a120e45"
+source = "git+https://github.com/dwbimstr/tree-sitter-rust?rev=8a5695efe03f477596d2c50e9227dc102ec6c238#8a5695efe03f477596d2c50e9227dc102ec6c238"
 dependencies = [
  "cc",
  "tree-sitter-language",

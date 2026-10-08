@@ -424,7 +424,7 @@ their names unanswerable):
 
 | Language | Unit nodes (rendered kind) |
 | --- | --- |
-| Rust | `function_item` (fn), `function_signature_item` (fn), `struct_item` (struct), `enum_item` (enum), `enum_variant` (variant), `union_item` (union), `trait_item` (trait), `impl_item` (impl), `mod_item` (mod), `macro_definition` (macro), `const_item` (const), `static_item` (static), `type_item` and `associated_type` (type) |
+| Rust | `function_item` (fn), `function_signature_item` (fn), `struct_item` (struct), `enum_item` (enum), `enum_variant` (variant), `union_item` (union), `trait_item` (trait), `impl_item` (impl), `mod_item` (mod), `macro_definition` (macro), `const_item` (const), `static_item` (static), `type_item`, `associated_type` and `trait_alias_item` (type; the last from the tree-sitter-rust fork, § Languages) |
 | Python | `function_definition` (fn), `class_definition` (class); a wrapping `decorated_definition` supplies the range; a module-level `assignment` whose left side is one identifier (static), its `expression_statement` supplying the range |
 | TypeScript, TSX, JavaScript | `function_declaration`, `generator_function_declaration` (fn); `class_declaration` (class); `method_definition` (method); `interface_declaration` (interface); `type_alias_declaration` (type); `enum_declaration` (enum) and each of its members (variant); each declarator of a module-level `lexical_declaration`/`variable_declaration` whose name is an identifier: fn when its value is `arrow_function`/`function_expression`, otherwise const (`const`) or static (`let`, `var`), the declaration supplying the range when it has one declarator; at any depth, as before the city map, a declaration with exactly one declarator whose value is `arrow_function`/`function_expression` (fn); a wrapping `export_statement` supplies the range |
 | Go | `function_declaration` (fn), `method_declaration` (method), `type_spec` and `type_alias` (type), module-level `const_spec` (const) and `var_spec` (static); a declaration with one spec supplies the range |
@@ -907,7 +907,10 @@ than from the qname text: each enclosing named unit's name and the scope parts o
 unit's own name, where a generic or template name contributes its base name only (its
 argument list is never read) and a scoped name each of its parts
 (`UnionFind<Key>::find` gives `unionfind`; `impl Mapper<fn() -> u8>` gives `mapper`;
-`impl a::b::Wrapper<T>` gives `a b wrapper`).
+`impl a::b::Wrapper<T>` gives `a b wrapper`). A unit keeps at most its 16 innermost
+qualifiers, within 256 bytes in all, as its qualified name keeps its tail: in a 200 KB
+source of 20,000 nested one-letter modules each unit otherwise held up to 256
+qualifiers (indexing peaked at 864 MB; 197 MB with the bound).
 
 ### Anchors and qualifiers
 
@@ -1134,12 +1137,47 @@ indentation widths (the original grammar; its serializer overflows); Kotlin `@` 
 line break after it. The Ruby scanner's heredoc serialization overflow and word-length
 byte are fixed instead, by pinning `tree-sitter-ruby` to the fork
 `dwbimstr/tree-sitter-ruby` at `1a594bf` (0.23.1 plus a one-line bound; owner,
-2026-10-08) until upstream releases the fix. Constructs the pinned grammars do not parse
-are named limitations: VB.NET
+2026-10-08) until upstream releases the fix. The Perl scanner never freed its heredoc
+queues and left one 1,000-byte node per heredoc behind on every parse; `tree-sitter-perl`
+is pinned to the fork `dwbimstr/tree-sitter-perl` at `0686313` (its 1.1.2 publish
+commit `883ab51` plus a destructor that frees the queues and their nodes, and a
+completed heredoc that removes all three of its entries; owner, 2026-10-08). Each fork
+is a `[patch.crates-io]` git rev, and its license files come from that checkout.
+Constructs the pinned grammars do not parse are named limitations: VB.NET
 nested types, alias and XML imports; Perl `require "file"` and fully qualified
 `sub A::B::c`; F# signature-file member signatures; C++20 module imports; Elixir
 `@doc`/`@spec` and Haskell type signatures and pragmas lie outside their unit's range;
 `.fs`, `.pl`, `.sc` and `.t` are taken as F#, Perl, Scala and Perl.
+
+Rust parses through the fork `dwbimstr/tree-sitter-rust`, branch `cf-nightly-syntax`
+at `8a5695e` (0.24.2 plus the nightly syntax below; owner, 2026-10-08): 0.24.2, the
+latest release, rejects the nightly syntax of rustc 1.99's own sources, and one error
+can turn a whole file into an ERROR node (core's `slice/mod.rs`, from its line 574:
+132 of its 155 fns survived as units, `binary_search_by_key` not among them). The
+fork adds, keeping node kinds and fields: `const impl`, `const unsafe impl` and `impl
+const Trait for` (impls, so no definitions; their members qualify by the type as in
+any impl); `const`, `auto` and impl-restricted (`pub impl(crate) trait`) traits;
+macros 2.0, `macro m(…) {…}` and `macro m { … }` (`macro_definition`, macro units);
+`[const]`, `~const` and `const` trait bounds; `safe fn` and `safe`/`unsafe static`
+in `unsafe extern` blocks, and extern types `pub type T;` (fn, static and type
+units); `final fn`; associated type defaults; default field values and a bare `..`;
+`super let`; attributes on `let` values; const closures; `do yeet`; `${…}`
+metavariable expressions and `attr()`/`derive()` rules in `macro_rules!`;
+`f16`/`f128` literal suffixes; `~` in token trees; `box` patterns; attributes on
+struct pattern fields; negative literals as const arguments. A trait alias `trait A
+= B + C;` is the new node `trait_alias_item`, a type unit. Every rust-lang/rust
+1.99.0 file that 0.24.2 parses without error keeps a byte-identical tree under the
+fork, except former silent mis-parses: the reserved `box` and `macro` taken as names
+(`box (a, b)` as a tuple-struct pattern) and `1f16` as two tokens. Files with errors
+fell from 188 to 1 under `library/`, 63 to 1 under `compiler/` and 458 to 362 under
+`src/tools/` (356 of them tool test fixtures). Rust's named limitations, still parse
+errors: `_` as a fn-pointer parameter type (`fn(&_)`), `$ name` with a space and
+`$$` in macro patterns, `macro_rules ! name`, `dyn 'a + Trait`, a primitive type's
+name as a binding (`char @ …`), and the nightly syntax the fork leaves out
+(`become`, `async` bounds, `for<…>` closure binders, `use` closures, `type const`,
+unsafe fields, `mut` restrictions, `builtin #`, `try bikeshed`, unsafe binder types,
+postfix `.match`, `&pin`, `gen fn`, guard patterns, return type notation, negative
+bounds, frontmatter).
 
 Units of the 15 added languages (001 T008) follow § Unit kinds' principle that every
 definition gets an address:
@@ -1177,7 +1215,9 @@ definition gets an address:
 - Import keys: C# `using` and its alias; F# `open` and `#load`; VB `Imports`; PHP `use`
   (alias, group, function) and literal include/require paths; Perl `use`, `require`,
   `use parent`; shell `source`/`.`; PowerShell `using namespace`/`using module`,
-  `Import-Module` and dot-sourcing; Ruby `require`, `require_relative`, `load` and
+  `Import-Module` and dot-sourcing (an operand that is not a literal, such as a
+  variable, keeps its position and a preceding parameter's value but gives no key); Ruby
+  `require`, `require_relative`, `load` and
   `autoload` stems; Kotlin imports and aliases (not `*`); Swift imports; Scala paths,
   selectors and renames (not `_`); Lua `require` (last segment), `dofile`, `loadfile`;
   Dart alias, else `show` names, else the URI stem, plus `part`; Elixir `alias`,
