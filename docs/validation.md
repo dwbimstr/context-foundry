@@ -40,6 +40,25 @@ artifact; nothing published or pushed. Checklist (`docs/release.md`):
    of the tag), with `SHA256SUMS`; binary SHA-256 `e32204fb…6cee7`. Local preparation
    only.
 
+## G1 city-map verdict — 2026-10-08: PASS
+
+On main `483810a` (001 T007, T008, T009; 005 T004 with its tie-group amendment), release binary SHA-256 `cd99e35a…`, deterministic full sets through the frozen apparatus (`g1quick.sh` at SAMPLE=1/1, its acceptance mode), stores copied from the frozen baselines and brought to schema `"5"` by `repair-index` (rust-lang/rust 52 s, 580 MB peak). Every set has 0 duplicate, missing, retried or apparatus-error tasks.
+
+| Set | Targets (baseline → city map) | Tokens |
+| --- | --- | --- |
+| checker | D1 89.1 → 97.8%, D2 82.1 → 98.0%, D3 77.1 → 92.8%, U1 8.2 → 86.6% | median to pass 806 → 234 (grep 682); mean 2,056 → 1,440 |
+| qualified | D4 45.7 → 94.0%, U2 8.0 → 81.2% | median 2,017 → 234 (grep 674); mean 2,313 → 1,153 |
+| bun | B1 93.1 → 99.1%, B2 16.2 → 96.8% | median 1,994 → 184 (grep 647); mean 1,718 → 455 |
+
+Every guard passes; the closest are definitions with more than 16 names (pass@1 20.9 → 25.0%, body 20.5 → 21.7%) and usage with more than 16 names (6.3 → 6.8%, allowed drop 0.6). Usage with 2–4 names went 54.3 → 86.4% (50.5% before the amendment) and with 5–16 names 38.3 → 48.9%. Results, responses and the per-task comparisons stay outside Git.
+
+## 005 T004 amendment: doors for a tie group — 2026-10-08
+
+Merged at `483810a`; unreleased. When a first anchor is ambiguous and its tie group (the window entries the resolver cannot tell apart) has at most 4 definitions, each gets its own exact door group of at most 4 lines right after its entry (`doors:each`), packed after the address pass and before signature upgrades; an entry without exact doors gets none, and with none for every entry the name's approximate doors follow the list once, joined from every tie root. A stale entry promotes nothing, in one root or across roots. At most 4 references windows per root's final read. A Head form for ambiguous lists was rejected: both refuters (Anthropic Opus 5.5, OpenAI GPT-6 Astra) showed it would be a directory line credited only by the scorer's fence rule.
+- **Review.** Cross-lab by OpenAI GPT-6.1 Sol over two rounds: REVISE (final backtracking could split a door group; the multi-root approximate fallback took only the first root's group), SHIP. Author: Anthropic Opus 5.5.
+- **Gates.** fmt, the full test suite and Rust 1.90 check passed at `70b97e6`; two clippy findings (a redundant closure, a test type) were fixed in `483810a` and clippy then passed on stable and Rust 1.90.
+- **Not measured.** Exact-door latency for common 2–4-namesake names (up to 4 windows per root) is a timing measurement and waits for the post-signing measurement batch.
+
 ## 001 T008 languages — 2026-10-08
 
 Merged at `3e0a117`; unreleased. G1's final verdict is recorded on the city-map binary with the 005 T004 tie-group amendment.

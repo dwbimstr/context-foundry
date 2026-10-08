@@ -15,8 +15,8 @@ one-line pointers; [context v2](contracts/context-v2.md#compact-context)), was a
 locally at the cross-lab SHIP and committed (`844796c`); unreleased. The owner approved
 the city-map design on 2026-10-07 (T007–T009 below; [context v2](contracts/context-v2.md#city-map)):
 T009 implemented and accepted locally 2026-10-08 (`89a8c54`); T007 implemented and
-merged 2026-10-08 (`4e23dee`, cross-lab SHIP, gates green), its G1 verdict pending with
-005 T004 (merged `d00fc19`) on the final city-map binary; T008 implemented and merged
+merged 2026-10-08 (`4e23dee`, cross-lab SHIP, gates green); G1 passed 2026-10-08 on the
+city-map binary (`483810a`, with 005 T004 and its tie-group amendment); T008 implemented and merged
 2026-10-08 (`3e0a117`, cross-lab SHIP, gates green) with owner-approved forks of the Ruby,
 Perl and Rust grammars.
 
@@ -440,7 +440,7 @@ refusals are in § Retrieve views of the [v2 contract](contracts/context-v2.md#r
 
 **Status:** approved 2026-10-07 (owner), revised after cross-lab refutation the same
 day; implemented and merged 2026-10-08 (`4e23dee`; [validation](../../docs/validation.md)).
-G1 judges it together with 005 T004.
+G1 judged it together with 005 T004: PASS on 2026-10-08 (`483810a`).
 
 - **Depends:** T005/T006 and the 2026-10-06 amendments. **Scope:** `src/syntax.rs`
   (name-node range on each unit), `src/store.rs` (roles, one definition document per
@@ -616,6 +616,14 @@ statistics).
   results, responses and transcripts stay outside Git. During development,
   `g1quick.sh` runs a 1/8 sample of a set in under a minute; samples are indicative
   and never recorded as acceptance.
+- **Result (2026-10-08): PASS** on `483810a` (T007, T008, T009 and 005 T004 with its
+  tie-group amendment), every target and guard on all three full sets:
+  checker D1 97.8%, D2 98.0%, D3 92.8%, U1 86.6%; qualified D4 94.0%, U2 81.2%; bun B1
+  99.1%, B2 96.8%; tokens below grep's median and the baseline's mean everywhere
+  ([validation](../../docs/validation.md)). The first integrated run (T007 + T004)
+  failed D2, D3 and two usage guards; parse errors on rustc nightly syntax (fixed by
+  T008's Rust grammar fork) and ambiguous anchors without doors (the tie-group
+  amendment) were the causes.
 
 SC-004/005/006 are the acceptance of T004/T005/T006 respectively: each passed locally
 at its reviewer's SHIP (2026-10-04), recorded in [validation](../../docs/validation.md).

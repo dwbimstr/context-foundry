@@ -5,8 +5,8 @@ Status: T001–T003 complete and locally accepted, unreleased. T001 and T002 wer
 2026-10-05: its agent surface (MCP `references`, `index {scip}`, compiler graph
 context) and its measured run on rust-lang/rust 1.99.0, which passed every criterion
 (see validation). T004 (doors, city map) was approved by the owner on 2026-10-07,
-implemented and merged 2026-10-08 (`d00fc19`, cross-lab SHIP, gates green); its G1
-verdict is recorded with 001 T007 on the final city-map binary. Dependencies: 001; 003
+implemented and merged 2026-10-08 (`d00fc19`, cross-lab SHIP, gates green), amended for
+tie groups (`483810a`, cross-lab SHIP); G1 passed with 001 T007 on 2026-10-08. Dependencies: 001; 003
 only for the agent-facing part of T003.
 Authorization: specification refinement.
 Spec-pass decisions recorded 2026-10-03: pinned producer release, UTF-8-only positions,
@@ -434,7 +434,8 @@ T003's, each passing only with that task's verification.
 
 **Status:** approved 2026-10-07 (owner), revised after cross-lab refutation the same
 day; implemented and merged 2026-10-08 (`d00fc19`; [validation](../../docs/validation.md)).
-G1 judges it together with 001 T007. Evidence ([validation](../../docs/validation.md),
+Amended 2026-10-08 for tie groups of at most four namesakes (`483810a`). G1 judged it
+together with 001 T007: PASS on 2026-10-08. Evidence ([validation](../../docs/validation.md),
 § City-map evidence): given the intended definition, `references` covered the required
 sites of every failed usage task it was tried on (265 of 265, median about 185
 tokens); `context(strategy=graph)` seeds from every occurrence in the top units and
