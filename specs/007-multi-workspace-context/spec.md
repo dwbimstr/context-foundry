@@ -104,6 +104,11 @@ packing is the v2 ladder over the merged list, never a merge of packed responses
 Compact context (context-v2 § Compact context, amended 2026-10-06) sums each marked
 run's definition count over the merged roots before applying its rule, so a name
 defined once in each of two roots is not unique; the merged batch carries the sums.
+When 001 T007 is accepted (city map), rule 1 becomes: each anchor's windows from all
+roots, ordered by the resolver tuple (qualifier hits, exact case, role), then root
+order, then each root's own window order; `key_hash` never orders across roots. Each
+anchor's definition count is summed over the merged roots before resolution; § Compact
+context's sum becomes that rule.
 
 Selected roots that cannot serve appear in the header with their coverage. If none can
 serve, the request fails with `roots_unavailable`, whose message lists each root's

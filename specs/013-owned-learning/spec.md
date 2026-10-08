@@ -1,5 +1,13 @@
 # 013 — Owned, isolated continuous learning
 
+**Frozen off (owner, 2026-10-07).** No further work on 013: the learned router stays
+off, its code and the economics gate stay as they are, and T004's signed distributed
+profile and D001's signed-package acceptance are no longer release conditions. Reason:
+the measured router added nothing (one changed route of 71, identical evidence),
+matching Prakarana's closed LoRA result; the city map (001 T007, 005 T004) takes the
+retrieval decisions deterministically. Re-entry: a G1/G2 result showing a decision the
+deterministic rules get wrong and a model gets right, with the economics gate passing.
+
 Status: Proposed implementation contract v4, revised 2026-09-29 after bounded Rust
 feasibility probes. T001 (schema 6, `feedback v4`, `learning prepare|check|compose-state`)
 and T002 (the tch training worker, calibration, evaluation and candidates) and T003
@@ -13,7 +21,8 @@ stays off by default; its economics (one changed route of 71, identical evidence
 changes composed states, so a next round recomposes and relabels its rows. T004's
 install, upgrade, rollback, disable and uninstall are
 implemented with ad-hoc-signed bundles (2026-10-06); its signed distributed profile and
-package acceptance wait for signing. The owner selected
+package acceptance would wait for signing but are no longer release conditions under
+the 2026-10-07 freeze above. The owner selected
 ModernBERT with a decision head and all first-party code in Rust. Laya is a reference,
 not a deployed service. [Evidence and remaining blockers](../../docs/review/feasibility.md)
 are scoped by probe; this document does not declare a model package ready to release.
@@ -25,7 +34,7 @@ prediction timeouts, refusal of inherited per-option temperatures or a fitted
 temperature below 0.5, and enablement only after a usage-import comparison (replaced
 2026-10-06 by `learning select`'s offline economics gate, T003). External
 prerequisites (owner): approved labeled rows, the LibTorch package,
-signing/notarization and an aggregate residency run.
+signing/notarization and an aggregate residency run (the last two moot while frozen).
 
 Owner answers, 2026-10-04:
 - **LibTorch.** Download authorized and done (2.11.0 CPU, macOS arm64). tch 0.24.0 and

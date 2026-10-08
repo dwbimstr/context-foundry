@@ -1,10 +1,11 @@
 # 005 — Real relationships in a large workspace
 
-Status: complete and locally accepted, unreleased. T001 and T002 were accepted
+Status: T001–T003 complete and locally accepted, unreleased. T001 and T002 were accepted
 2026-10-04 (CLI `import-scip` and `references`, store schema 4). T003 was accepted
 2026-10-05: its agent surface (MCP `references`, `index {scip}`, compiler graph
 context) and its measured run on rust-lang/rust 1.99.0, which passed every criterion
-(see validation). Dependencies: 001; 003 only for the agent-facing part of T003.
+(see validation). T004 (doors, city map) was approved by the owner on 2026-10-07 and is
+proposed. Dependencies: 001; 003 only for the agent-facing part of T003.
 Authorization: specification refinement.
 Spec-pass decisions recorded 2026-10-03: pinned producer release, UTF-8-only positions,
 the producer coverage rule, budgeted v2 `references` and MCP import through `index`.
@@ -430,6 +431,47 @@ T003's, each passing only with that task's verification.
   unchanged runs to seek a pass. Stop at run budget, retain committed state and named
   limitations; undo only session-owned host configuration. Token savings require
   actual consumer/provider comparison and are not implied by passing SC-003.
+
+### T004 — Doors: who uses an addressed definition (city map)
+
+**Status:** approved 2026-10-07 (owner), revised after cross-lab refutation the same
+day, proposed. Measured by G1 before and after. Evidence ([validation](../../docs/validation.md),
+§ City-map evidence): given the intended definition, `references` covered the required
+sites of every failed usage task it was tried on (265 of 265, median about 185
+tokens); `context(strategy=graph)` seeds from every occurrence in the top units and
+expanded the wrong symbols.
+
+- **Depends:** 001 T007 (anchors, resolver, name ranges, import keys). **Scope:**
+  `src/graph.rs` (exact doors from the definition occurrence at a stored name range,
+  inside the response's final read; `references` with `handle` alone; removal of the
+  span-seeded `context_graph_units` expansion and its routing keywords), `src/store.rs`
+  (approximate doors from `ident` and `imports`), `src/response.rs` (door lines,
+  `doors:` states), `src/mcp.rs`/`src/cli.rs`, 003's instruction sentence, tests in
+  `tests/{semantic,core,mcp}.rs`.
+- **Outcome/acceptance:** the v2 contract's § Doors: requests, the resolved-anchor
+  target, exact doors, approximate doors from index-time import keys, door lines and
+  `references {handle}`. No configuration file is read, nothing is executed or
+  installed, and no import is resolved at query time. tools/list stays within 003's
+  ceiling (995 of 1000 on 2026-10-06), or the owner raises it before the change lands.
+- **Verification:**
+  - a same-name pair in two modules where only one is anchored by a qualifier: doors
+    come from that one alone; with the pair unqualified the anchor is ambiguous and
+    the response is `doors:ambiguous` with both in the directory;
+  - exact doors equal `references` for the same symbol; a decorated Python function,
+    an annotated Java method, a C++ template and a Rust `fn` whose name is on the next
+    line all resolve by name range; a unit with no definition occurrence gives
+    `doors:approx`, and `references {handle}` on it is `invalid_argument`; two split
+    identities of one definition give one deduplicated set; a graph replacement during
+    door collection is caught by the final read;
+  - approximate doors: an importing file outranks a same-named mention elsewhere,
+    including when it is the 65th candidate by path; the 256-unit window and the
+    spread rule (at most 2 per file first, 16 lines) hold; a one-character name has no
+    doors;
+  - import keys for each language's import forms, including TS/JS named, default,
+    namespace and type-only imports in a Bun workspace layout; an aliased import is
+    not followed (named limitation);
+  - `strategy:graph` without an anchor is `doors:none` with search packing; usage
+    words match case-insensitively.
 
 All three SCs were executed and passed: SC-001 and SC-002 on 2026-10-04, and SC-003 on
 2026-10-05 in one measured run with no failed criterion (validation). A failed scale run

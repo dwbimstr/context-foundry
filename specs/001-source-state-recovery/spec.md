@@ -11,8 +11,10 @@ handle's lines; [context v2](contracts/context-v2.md)) was accepted locally at t
 cross-lab SHIP and committed (`c3437e6`); its proposed route keywords were measured and
 withdrawn. A second owner-approved 2026-10-06 amendment, compact context (a context
 whose marked identifiers each have exactly one definition returns them plus at most 8
-one-line pointers; [context v2](contracts/context-v2.md#compact-context)), is
-implemented locally and awaits gates and cross-lab review; unreleased.
+one-line pointers; [context v2](contracts/context-v2.md#compact-context)), was accepted
+locally at the cross-lab SHIP and committed (`844796c`); unreleased. The owner approved
+the city-map design on 2026-10-07 (T007–T009 below; [context v2](contracts/context-v2.md#city-map)):
+proposed, not implemented.
 
 ## Outcome and baseline
 
@@ -429,6 +431,183 @@ refusals are in § Retrieve views of the [v2 contract](contracts/context-v2.md#r
   forms are whole-or-nothing with fixed parameters (60/120 and 0).
 - **Review/cutover:** remove `following_chunks` and any second packer; retrieve's text
   view keeps the bounded prefix fit.
+
+### T007 — Addresses, anchors and the anchored context (city map)
+
+**Status:** approved 2026-10-07 (owner), revised after cross-lab refutation the same
+day, proposed. Measured by G1 before and after.
+
+- **Depends:** T005/T006 and the 2026-10-06 amendments. **Scope:** `src/syntax.rs`
+  (name-node range on each unit), `src/store.rs` (roles, one definition document per
+  unit, the new fields, search schema `"4"`, anchors, resolver windows), `src/response.rs`
+  (`RenderedForm::Address`, anchored selection, header segments), `src/roots.rs` and
+  007's merge rule, `src/testkit.rs::parse_v2`, tests in `tests/{core,syntax,mcp,economics}.rs`.
+  Doors are 005 T004; import keys are written here for it.
+- **Outcome/acceptance:** the v2 contract's § Roles, § Definitions and addresses,
+  § Anchors and qualifiers, § Resolver order, § Ladder for anchored definitions and
+  § Anchored context; § Compact context, its trigger and its tests are replaced, not
+  kept beside it.
+- **Verification:**
+  - roles on a path table with first-match precedence and every listed pattern;
+  - one definition document per unit: a 20 KiB interface and a container with
+    residuals count once, and a 70-part region still counts once; `struct Foo` with
+    two `impl Foo` blocks is one definition of `Foo` (resolved), and the impls'
+    methods keep `Foo` as an address qualifier;
+  - anchors: marked chains (`Vec::push`, `` `Foo.bar` ``, `` `Get-ChildItem` ``) split
+    name and qualifiers; paths (`a/b.rs`, `learning.rs`, `package.sh`) never anchor;
+    unmarked `sleep_ms`, `READY_RECEIVE_ENTERED`, `toolSession`, `HttpServer` and `a::b`
+    anchor; `find`, `spawn`, `MCP`, `WAL`, `v2`, `T002`, `e.g.` and a URL do not;
+    `Engine` anchors only when not first and an exact-case definition exists; marked
+    anchors come first, then unmarked identifier-shaped runs (``how does `Engine` handle
+    refresh_index errors`` anchors both), then capitalized ones, at most four;
+  - the 27 recorded agent queries of the refutation, kept outside Git with their
+    expected anchors against this repository at `2513748` in
+    `~/VSC_DEV/datasets/context-foundry-citymap/anchor-queries.json`, give exactly those
+    anchors: none from an extension, acronym, id, abbreviation or URL;
+  - resolver: a qualifier beats exact case, exact case beats role, role beats path; a
+    window over more than 64 definitions finds the intended one; resolved selection
+    (1 ladder entry, 8 directory lines) and ambiguous selection (16 entries whose
+    name lines are all shown before any body, then upgraded to verbatim in list order
+    while the budget fits; address lines when the budget runs out) across several
+    definitions in one file; an anchored context carries no pointer lines;
+  - the ladder: the oh-my-pi `ToolSession` shape (a 349-line interface) degrades to
+    `[address]` and is never omitted while the remaining budget fits that line;
+  - a query without anchors differs from before only through one-document-per-
+    definition; header segment order and the 40-token bound at the largest values;
+  - schema `"3"` stores report `repair_required`, and `repair-index` rebuilds them;
+  - 007: counts summed over merged roots; merged windows ordered by tuple, then root
+    order, then each root's order, with `key_hash` never crossing roots.
+- **G1 (frozen before any T007 code):** § G1 below.
+
+### T008 — Languages beyond the first eight
+
+**Status:** approved 2026-10-07 (owner), revised after refutation, proposed.
+
+- **Depends:** T007 (schema and import keys). **Scope:** `Cargo.toml` (the grammar
+  crates of the contract's § Languages and `tree-sitter` 0.25 → 0.26), `src/syntax.rs`
+  (`Lang`, `from_path` with the two basenames, `unit_kind`, `unit_name` with suffix
+  stripping, `qname_separator`, `body_range`, `is_wrapper`, outline members, import
+  node kinds for every language including Rust, C and C++), fixtures in
+  `tests/syntax.rs`, THIRD-PARTY notices.
+- **Outcome/acceptance:** § Languages: 15 more languages get units, addresses, outlines
+  and import keys; every other text source stays plain text. Search schema bumps again
+  if T008 lands after T007.
+- **Verification:** the original eight's units are unchanged on their fixtures under
+  `tree-sitter` 0.26; per new language, a fixture with nested containers, an
+  overloaded name, a method in a nested type, a decorated/attributed/annotated
+  definition, a name with a `?`/`!`/`'` suffix where the language allows one, and one
+  import of each kind: exact units, qnames, name ranges and import keys; malformed and
+  deeply nested inputs parse without panic, and a parse that exceeds the work budget
+  (a 4,000-deep Haskell `let`, which the 2026-10-07 spike measured at 42 s) stops at
+  the same point on 1 and 8 threads and becomes a named failure with `unparsed` blocks;
+  each grammar loads at runtime on Rust
+  1.90; the release binary size before and after is recorded (the spike measured about
+  +48 MB for all 15) and the owner accepts it, or names grammars to drop, before T008
+  is accepted; a grammar that fails is dropped with its reason recorded.
+
+### T009 — Parallel indexing
+
+**Status:** approved 2026-10-07 (owner), revised after refutation, proposed.
+
+- **Depends:** T005. **Scope:** `src/store.rs` refresh (bounded parse fan-out ahead of
+  the one Tantivy writer), `tests/recovery.rs` and `tests/core.rs`.
+- **Outcome/acceptance:** § Parallel indexing.
+- **Verification:** 1 and 8 threads give equal documents (field values in key order)
+  and equal store tables, also when completions arrive out of order; a panic in the
+  earliest key's worker gives that source a named failure and plain-block documents,
+  and every other key of the page is indexed; add, commit and reload failures and
+  cancellation before and after commit lose no pending key and acknowledge none
+  early; restart after a crash replays; the hand-out bound counts sources built but
+  not yet added (tested at a bound reduced through a test-only hook, so the test stays
+  fast); G1 results (§ G1) on a store rebuilt by the T009 binary are identical to the
+  baseline's. Index time and peak memory for oh-my-pi (8,436 files, 65 s
+  single-threaded on 2026-10-07) and rust-lang/rust are recorded before and after in
+  the measurement batch (timing waits for signing under the measurement freeze).
+
+### G1 — city-map measurement
+
+**Frozen 2026-10-08 00:22Z, before any T007 code; refrozen 00:51Z after cross-lab
+refutation (apparatus, buckets and four targets), still before any T007 code**
+(captain; the 2026-10-07 draft's baselines were unreproducible). G1 measures whether
+an agent that names an identifier gets the evidence in fewer calls and tokens. It
+gates T007 and 005 T004 together (one city-map binary). T009 leaves every G1 result
+unchanged; T008 shows no target or guard regression and lists every task whose result
+changes (its new shell, PowerShell, Perl and Swift units add names and change lexical
+statistics).
+
+- **Apparatus** (outside Git, `~/VSC_DEV/datasets/context-foundry-citymap`, SHA-256 in
+  its `FROZEN-G1v4.txt`): `g1v4.py` (`5f7dac42…`) runs a scripted Foundry agent (at
+  most 4 MCP calls: `context`, `search` on a miss, `retrieve`, `references`) and a
+  scripted grep agent (ripgrep and read windows, output cut at 50 KiB); `g1score.py`
+  (`5dc1c5e8…`) scores delivered evidence; `g1compare.py` (`458a8c0d…`) holds the
+  targets below and prints the verdict; `g1estimates.py` (`6553cc12…`) derives the two
+  corpus estimates cited below; `g1quick.sh` runs a sample for iteration. Evidence is
+  delivered source: the definition's name line visible in a body, or reference-site
+  lines in at least min(3, files) files; handles, addresses, directory and locator
+  lines are navigation only. **Body** counts a definition task whose name line was
+  delivered inside a verbatim body (not only a signature, outline or elided form).
+- **Sets:** `checker` (6,881 tasks on rust-lang/rust 1.99.0: 4,597 development and
+  2,284 held-out wordings), `qualified` (2,551: each checker development symbol asked as
+  `q::name`, `q` its module's last segment) and `bun` (999 on oh-my-pi `5b8d5b8a15`:
+  exported TS/TSX definitions and their importers). Each task is also bucketed by how
+  many definitions share its exact name in the corpus (`g1buckets.py`, `53cdaffe…`: the
+  grep agent's definition keywords plus `const fn`, `static mut` and `const enum`
+  forms; 0, 1, 2–4, 5–16, >16). Bucket 0 is enum variants and macro-generated items,
+  which have no definition unit of their own.
+- **Reproducibility:** two runs of the same binary give identical results and
+  responses (timestamps aside); two full Foundry baseline runs agree on all 10,431
+  scored tasks. The grep agent sorts output by path and line before the cut. A call
+  refused as retryable (`deadline_exceeded`, `busy`) is repeated and the repetitions
+  are recorded; a task still refused is marked. The verdict fails closed: a run with a
+  duplicate or missing task, a marked task or any repetition is INVALID, never PASS,
+  and is rerun on a quiet host; a refusal the candidate reproduces there fails G1. The
+  2026-10-07 v2/v3 baselines failed these checks (ripgrep's parallel walk changed
+  grep's cut on every run; 49 of 1,000 bun tasks hit the 5 s read deadline on an
+  overloaded host) and were discarded.
+- **Baselines** (the `844796c`-equivalent release binary, full sets, 0 exclusions, 0
+  repetitions):
+
+  | Group | Tasks | Foundry pass@1 | Foundry pass≤4 | Foundry body | grep pass≤4 | Foundry / grep median tokens to pass |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | checker marked definitions, unique name | 495 | 89.1% | 89.1% | 89.1% | 97.6% | 806 / 682 |
+  | checker marked definitions, 2–4 names | 546 | 82.1% | 82.1% | 82.1% | 92.5% | 2,016 / 941 |
+  | checker marked definitions, 5–16 names | 707 | 77.1% | 77.1% | 76.5% | 49.1% | 2,022 / 1,327 |
+  | checker definitions, >16 names | 2,159 | 20.9% | 21.0% | 20.5% | 5.0% | 2,026 / 2,635 |
+  | checker marked usage, unique name | 417 | 8.2% | 93.8% | — | 100% | 1,088 / 177 |
+  | checker usage, 2–4 names | 457 | 22.5% | 54.3% | — | 99.6% | 2,066 / 670 |
+  | checker usage, 5–16 names | 444 | 21.8% | 38.3% | — | 96.6% | 2,043 / 2,827 |
+  | qualified definitions (excluding bucket 0) | 1,836 | 45.7% | 45.8% | 45.2% | 39.3% | 2,025 / 868 |
+  | qualified usage (excluding bucket 0) | 623 | 8.0% | 31.8% | — | 74.6% | 2,149 / 2,246 |
+  | bun definitions, unique name | 462 | 93.1% | 93.5% | 90.3% | 100% | 1,994 / 647 |
+  | bun usage, unique name | 314 | 16.2% | 16.2% | — | 99.4% | 2,021 / 231 |
+
+  Mean tokens per task: checker 2,056, qualified 2,313 and bun 1,718 (Foundry); 7,491,
+  7,228 and 836 (grep). Grep's first call is a location list, so its pass@1 for
+  definitions is 0 by construction.
+- **Targets** (full sets, the city-map binary against the Foundry baseline):
+  - checker marked definitions: pass@1 ≥ 95% (unique name, 2–4 names), ≥ 90% (5–16
+    names);
+  - checker marked usage with a unique name: pass@1 ≥ 80% (48 of its 417 tasks use the
+    held-out wording "which code relies on", which requests no doors);
+  - qualified, excluding bucket 0: definitions pass@1 ≥ 80% (the qualifier narrows the
+    name to one definition for 41.8% and to 2–16 for 46.6%); usage pass@1 ≥ 40% (doors
+    need a resolved anchor; the qualifier resolves 51.8%);
+  - bun unique names: definitions pass@1 ≥ 97%; usage pass@1 ≥ 85%;
+  - median tokens to pass of unique-name definitions at most grep's (checker marked,
+    qualified and bun); mean tokens per task at most the Foundry baseline's, per set;
+  - guard: in every group of at least 300 tasks (intent × bucket, intent × marked,
+    targeted groups included), pass≤4, and for definition groups also pass@1 and body,
+    fall by at most min(2.0 points, 10% of the baseline value) against the Foundry
+    baseline. This is a fixed rule on the frozen census, not a statistical claim of
+    non-regression. Equally scored definitions keep today's tier-1 order (§ Resolver
+    order).
+- **Protocol:** a copy of the baseline store (rust-lang/rust with the same imported
+  SCIP artifact; oh-my-pi) is brought to the candidate's schema with its
+  `repair-index`; `g1v4.py` runs every task; `g1compare.py` gives the verdict. The
+  result and its counts are recorded in [validation](../../docs/validation.md);
+  results, responses and transcripts stay outside Git. During development,
+  `g1quick.sh` runs a 1/8 sample of a set in under a minute; samples are indicative
+  and never recorded as acceptance.
 
 SC-004/005/006 are the acceptance of T004/T005/T006 respectively: each passed locally
 at its reviewer's SHIP (2026-10-04), recorded in [validation](../../docs/validation.md).

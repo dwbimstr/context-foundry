@@ -27,7 +27,9 @@ isolation and resource controls, demonstrate bootstrap/connect/budget behavior, 
 upgrade/rollback/uninstall without user-data loss. Core-only distributions need no ML
 runtime or VM. Failed optional isolation blocks that feature and therefore the release.
 The learning package must use the owned Rust worker; the legacy Laya client is not
-evidence for it. A raw subprocess is not a successful jail test.
+evidence for it. A raw subprocess is not a successful jail test. While 013 is frozen
+off (owner, 2026-10-07), the release package is built without `--with-learning` and
+advertises no learned routing, so its learning-worker checks are not release conditions.
 An advertised gateway additionally proves its actual host/API streaming/tool round,
 private credential boundary, input/output admission, unknown-usage handling and exact
 host-config restoration on opt-out. Missing integration proof blocks that gateway

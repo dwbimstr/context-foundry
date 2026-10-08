@@ -4,7 +4,9 @@ Status: T001 (preparation, cache, index and the supervised development worker), 
 (semantic context within the existing budget) and T003 (progressive preparation in the
 MCP owner) implemented and accepted locally on 2026-10-05, under development isolation
 only (see validation). T003's real lifecycle exercise passed its predeclared bounds in
-the measurement phase (2026-10-06); package acceptance needs signing. D001 recorded 2026-09-29; its chosen values were
+the measurement phase (2026-10-06); package acceptance needs signing. T004 (address
+cards on a llama.cpp worker, city map) was approved on 2026-10-07 and is proposed; it
+replaces the MLX worker and the fused merge. D001 recorded 2026-09-29; its chosen values were
 recorded 2026-10-03 (below). Reactivated for planning by the owner's preparation-cost
 concern. Dependencies:
 001; 003 for preparation during agent use. Implementation requires D001 below. Beyond
@@ -469,10 +471,12 @@ The D001 merge is deterministic: 001's tier-1 exact-definition candidates first,
 reciprocal-rank fusion with k = 60, score 1/(60 + rank), over the lexical top 256 and
 the dense top 64, ties ordered by path then start as in 001's tier-2 order. This is
 ordinary ranking, not a learned reranker. Exact locator behavior and candidate
-retention are checked in T002. Do not add a model-selection router, query-rewriting loop,
+retention are checked in T002. When T004 is accepted, this fusion, D001's "Candidate
+merge" row and T002's merge checks are replaced by T004's placement: dense candidates
+only for queries without an anchor, ahead of the lexical ones. Do not add a model-selection router, query-rewriting loop,
 reranker endpoint, second candidate journal or reranker configuration in this scope.
-The owned policy under 013 can choose graph expansion; its confidence is not a passage
-relevance score and must never reorder source candidates.
+The owned policy under 013 (frozen off, 2026-10-07) chose graph expansion; its
+confidence is not a passage relevance score and must never reorder source candidates.
 
 A learned reranker is a future option only after a fixed example shows that a required
 passage is present in the bounded candidate set, but ordering loses it before packing.
@@ -888,8 +892,92 @@ T003's, each passing only with that task's verification.
     later call that succeeds, and `status` names it as `fallback:<code>` without
     calling the model.
 
-D001's model choice and chosen values are settled; executing their checks, the cache
-schema, the open semantic-item line form and isolated Rust-bridge integration remain
-incomplete, and the external prerequisites above are the owner's. The owned learning
-head cannot substitute for this proof. All tasks are proposed; no model/runtime
-performance or implementation acceptance above has been measured in Foundry.
+### T004 — Address cards on a llama.cpp worker (city map)
+
+**Status:** approved 2026-10-07 (owner: "llama.cpp worker + cards"), revised after
+cross-lab refutation the same day, proposed. Evidence ([validation](../../docs/validation.md)):
+fused into the final ranking, both Nemotron and EmbeddingGemma 2 delivered less
+required evidence than lexical retrieval alone on the identifier-named checker tasks,
+mostly on usage questions; Nemotron's only gain was on `graph` for dev (51 / 21), the
+path-seeded expansion that 005 T004 replaces. Full preparation of 15,026 units took
+6,889 s with Nemotron on MLX and 2,139 s with EmbeddingGemma 2 on a single-sequence
+llama.cpp worker (model and runtime both differ); the average embedded unit was about
+822 tokens.
+
+- **Depends:** 001 T007 (definitions, addresses, anchors). **Scope:** `src/neural/*`
+  (profile-owned dimension, templates and card limit replacing the `DIMENSIONS`,
+  `DOCUMENT_PREFIX`, `QUERY_PREFIX` and `DOCUMENT_UNIT_TOKENS` constants; descriptor v2;
+  self-describing cache rows; generation v3; card partition), `src/bin/foundry_embed.rs`
+  rebuilt on a pinned, statically linked llama.cpp (Metal) with no Python, the pyo3/MLX
+  worker and its runtime closure removed, `scripts/{package,install,embed-worker-bundle}.sh`,
+  THIRD-PARTY (llama.cpp, ggml), tests in `tests/{embed_worker,neural_retrieval}.rs`.
+- **Outcome/acceptance:**
+  - *Cards, not bodies.* One card per definition (001 T007's one definition document per
+    unit) and per Markdown section: its address, its signature or head lines and its
+    leading documentation, at most the profile's card limit (128 tokens by default),
+    rendered with the profile's document template. A card's cache key is its exact
+    rendered input; its provenance is the existing partition row (path, unit range,
+    source hash), so eligibility is recomputed from current sources and an edit
+    re-embeds only the cards whose text changed.
+  - *Placement: only for queries without an anchor.* For such a query, dense retrieval
+    returns the nearest cards; their units come first, in similarity order, each
+    through the ordinary unit ladder (verbatim, then signature) and tagged as semantic
+    candidates under the existing `semantic:<state>` header; the lexical candidates
+    follow in today's order. A query with an anchor never calls the model. This
+    replaces reciprocal rank fusion (D001's "Candidate merge" row, § Bounded candidate
+    merge and T002's merge verification) and the semantic preview ladder; both are
+    removed with this task.
+  - *One inference, one prefetched batch.* The worker embeds up to the profile's batch
+    of sequences per call in one llama.cpp context (non-causal pooling, sequences
+    grouped by length). While one inference runs, the core may render and tokenize at
+    most one next batch without holding the engine slot or a transaction; admission
+    of that batch is decided afresh after the call ends, under T003's slot,
+    foreground-wait, pause and late-call rules, which are unchanged.
+  - *Data cutover.* Cache rows become self-describing: digest, dimension (u32 LE), then
+    that many f32 values; a 2048-value row without a dimension is read as a descriptor
+    v1 row; accounting sums actual row lengths. A descriptor v1 (MLX) profile is refused
+    at load with `profile_unsupported`, semantic retrieval stays off, and its retained
+    cache rows and generations are kept until an explicit `semantic purge`; a profile
+    change never purges. Generation v3 records its geometry; a v2 generation is never
+    served by a v2 profile and is rebuilt from cache under the new one. Source, memory,
+    feedback and graph are untouched by every refusal. Rollback across this task is
+    binary plus profile: the pre-T004 binary with its v1 profile. That binary reads a
+    self-describing row as a corrupt cache row (counted, re-embedded under its own
+    profile or removed by `semantic purge`), never as source damage; T004 verifies this
+    once with the released pre-T004 binary on a store written by T004. § Identity and
+    reusable work's rollback promise holds within one binary generation.
+  - *Package cutover.* `install.sh upgrade` with an installed descriptor v1 profile
+    keeps the core upgrade, disables semantic retrieval by name and asks for a v2
+    profile; the bundle's Python and site-packages grants and `PACKAGE.json`'s Python
+    closure are removed; signing remains the final step (sign, hash the executable,
+    write the installed profile).
+  - *Model.* The profile pins a GGUF (SHA-256), the llama.cpp commit, pooling, dimension
+    (a supported Matryoshka truncation, renormalized) and the query and document
+    templates. G2 chooses between EmbeddingGemma 2
+    (`ggml-org/embeddinggemma-2-GGUF@bfcd2987`, Apache-2.0) and a Nemotron 3 Embed 1B
+    GGUF, on cards.
+  - *G2 and enablement.* G2 is a frozen set of at least 300 questions that name no
+    identifier, each with one ground-truth definition, built from a source the owner
+    approves before T004 code, on a corpus with SCIP coverage; its harness scores
+    delivered evidence as G1 v2 does. Semantic retrieval stays optional and off by
+    default; a profile is enabled for anchor-less queries only when, on G2, its
+    delivered evidence exceeds the same queries without it (exact McNemar p < 0.05) at
+    no more delivered tokens per query, and G1's anchor-less tasks (queries that name
+    plain-lowercase identifiers) show no significant loss with it enabled.
+- **Verification:** card rendering and the limit on a fixture per language; dimensions
+  768/512/256/128 end to end (cache, generation geometry, frame size) with a wrong
+  length refused; mixed retained 2048/768/256 rows open and account correctly; a v1
+  profile is refused with its cache intact, and an interrupted cutover or publication
+  restarts cleanly; a template change re-keys cards; batched and single-sequence
+  vectors agree (cosine ≥ 0.9999); the prefetched batch is dropped on pause, owner
+  death and EOF and re-admitted only after a foreground query that arrived first; the
+  installed worker links only system libraries and frameworks and passes the
+  isolation, resource and numerical checks on the installed artifact; preparation
+  time, peak footprint and tokens embedded are recorded on the library-only
+  rust-lang/rust store before and after.
+
+D001's model choice and chosen values were settled on 2026-10-03; T001–T003 were
+accepted on 2026-10-05 under development isolation and measured on 2026-10-06 (see
+validation). T004 (2026-10-07, proposed) reopens the model choice through G2 and
+replaces the MLX worker; signing and installed-package acceptance remain open. The
+owned learning head (013, frozen off) cannot substitute for this proof.

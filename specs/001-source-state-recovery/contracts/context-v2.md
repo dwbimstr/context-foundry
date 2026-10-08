@@ -28,7 +28,8 @@ implementing MCP. Limits are selected engineering bounds, not measured capacity 
 | Outlines, forms ladder, candidate seam, retrieve `view` | 001 T006 | Locally implemented and accepted (r3 SHIP); unreleased |
 | Multi-root identity, `roots`/`root`, per-root header | 007 T001 | Locally implemented and accepted 2026-10-04 (delta SHIP), committed in `cc402e0`; unreleased |
 | Tier-1 marked runs and specificity order, MCP `lines` array, empty-selection message (2026-10-06 amendment) | 001 (amendment) | Accepted locally 2026-10-06 (cross-lab SHIP; gates green), committed in `c3437e6`; route keywords withdrawn after measurement; unreleased |
-| Compact context: trigger, content, `compact` header segment, multi-root count sum (2026-10-06 amendment) | 001 (amendment) | Implemented locally 2026-10-06; awaiting gates and cross-lab review; unreleased |
+| Compact context: trigger, content, `compact` header segment, multi-root count sum (2026-10-06 amendment) | 001 (amendment) | Accepted locally 2026-10-06 (cross-lab SHIP; gates green), committed in `844796c`; replaced by § Anchored context when 001 T007 is accepted; unreleased |
+| City map: roles, definitions and addresses, anchors, resolver, `[address]`, anchored context, doors, languages, parallel indexing (2026-10-07) | 001 T007–T009, 005 T004 | Approved 2026-10-07, revised after cross-lab refutation; proposed |
 | `foundry references` header segments 12–14, `next: after=<path>#<start>-<end>` cursor; MCP `references`, `index.scip`, compiler graph context | 005 T002, T003 | Locally implemented and accepted (CLI 2026-10-04; MCP and graph context 2026-10-05); unreleased |
 
 ## Identity and reference validation
@@ -302,7 +303,10 @@ before the optional label.
 Parsers dispatch by operation:
 - a context `next:` line belongs to the immediately preceding preview;
 - retrieve keeps its single final `next: <handle>`;
-- references ends with `next: after=<path>#<start>-<end>` (005).
+- references ends with `next: after=<path>#<start>-<end>` (005);
+- with the city map, a context also carries `[address]` item lines and directory lines
+  (navigation, no fence), door lines `<handle> L<n> in <label>: <excerpt>` with optional
+  ` (+<n>)` and ` [approx]`, and a closing `⋯ <m> more files` line; none has a `next:`.
 
 Framed source items are parsed before continuation prefixes. A literal `next:` inside a
 fenced body stays body content.
@@ -516,7 +520,8 @@ Tantivy schema v2:
 
 Definition documents are those whose delivery unit is a programming-language unit
 (not a Markdown section or block): a leaf's document, or each residual of a
-container, carries that unit's `def_name`. Source bytes are not stored in Tantivy;
+container, carries that unit's `def_name` (until 001 T007: then only the document
+holding the unit's name node, § City map). Source bytes are not stored in Tantivy;
 hits reconstruct verified source from `CHUNKS`.
 
 ### Two-tier query
@@ -566,6 +571,9 @@ distinct query subtokens (`foundry_code` analysis), the earliest on ties. Contex
 draws its units from this same materialized ranking.
 
 ### Index version gate
+
+When 001 T007 is accepted, the value becomes `"4"` (§ City map), and every later change
+to search-document content bumps it again.
 
 META key `search_schema = "3"` (it was `"2"` before the 2026-10-04 leading-run
 amendment changed search-document ranges) is written in the store-initialization transaction for
@@ -694,6 +702,8 @@ Context candidates, in order:
 1. up to 32 delivery units from the two-tier ranking (§ Hit materialization);
 2. when the strategy resolves to graph, bounded graph items placed after the first
    unit, seeded by the paths of the top 3 units as in v1;
+   (When 005 T004 is accepted, this item and the keyword routing below are replaced by
+   § Doors: graph and usage-intent requests build doors for a resolved anchor.)
 3. up to 3 file outlines for the first distinct files among those units, skipping an
    empty file and a file that one of those units spans (only whitespace lies outside
    the unit). Only mapped languages have outlines, read literally: a mapped
@@ -755,6 +765,9 @@ existing sufficient-budget hint; no success is over budget, and the hint is not
 advertised as a mathematical token minimum.
 
 ### Compact context
+
+When 001 T007 is accepted, § Anchored context replaces this section, and the header
+word `compact` becomes `anchored`.
 
 Amended 2026-10-06 (owner-approved). Without this rule every `context` fills its budget:
 on the rust-lang/rust checker tasks responses averaged about 2,015 of 2,048 o200k tokens
@@ -841,6 +854,298 @@ model. `omitted:<n>` counts constructed candidates dropped by packing, not all
 unknown matches; an empty or limited result never proves absence. 009 may construct a
 smaller source candidate under its explicit excerpt rules before packing; it cannot
 silently truncate evidence or call a preview localized.
+
+## City map
+
+Approved by the owner 2026-10-07 and revised after cross-lab refutation; proposed
+until 001 T007–T009 and 005 T004 are accepted. Evidence is in [validation](../../../docs/validation.md)
+(§ City-map evidence, § Embedding model comparison, § Learned-router economics):
+one call delivered the required evidence for about three quarters of names with a
+single definition and for 2–10% of names with more than 64; given the intended
+definition, `references` covered every required call site of the failed usage tasks;
+path-seeded graph expansion expanded the wrong symbols; in a Bun monorepo a
+19,500-byte `interface ToolSession` was the first tier-1 candidate yet vanished at
+2,048 tokens because no form of it fit, so case-folded test helpers named `toolSession`
+were what the response delivered. Neither the learned router nor dense fusion improved
+these identifier tasks (dense fusion gained only on `graph` for dev, 51 / 21, while
+losing on `search`).
+
+A codebase is a city: every definition has an address; a query names a place; the
+answer is that building, a short directory of buildings that share the name, or the
+building's doors. Everything here is built during ordinary indexing: no model, no
+compiler run, no configuration file is read for it, and nothing is executed. When
+accepted, § Anchored context replaces § Compact context (its header word `compact`
+becomes `anchored`), § Doors replaces the path-seeded graph expansion and the graph
+keyword routing of § Context candidates and routing, and search schema `"4"` replaces
+`"3"` in § Index version gate. Every later change to what a search document contains
+bumps the schema again.
+
+### Roles
+
+Every source path has one role, decided by the first matching rule on its
+workspace-relative path (components compared case-sensitively; basename patterns as
+written):
+
+1. `lock` (4): basename `bun.lock`, `bun.lockb`, `package-lock.json`,
+   `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `Cargo.lock`, `composer.lock`,
+   `Gemfile.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `go.sum`,
+   `packages.lock.json`, `Podfile.lock`, `pubspec.lock`, `mix.lock` or `flake.lock`;
+2. `snapshot` (5): extension `.snap`, or a `__snapshots__` component;
+3. `generated` (2): basename ending `.min.js`, `.min.css`, `.g.cs`, `.Designer.cs`,
+   `.designer.cs`, `_pb2.py` or `.pb.go`, or containing `.generated.`; or a
+   `generated`, `__generated__` or `obj` component;
+4. `vendored` (3): a `vendor`, `third_party`, `third-party` or `Pods` component;
+5. `test` (1): a `test`, `tests`, `__tests__`, `testing`, `testdata`, `fixtures`, `e2e`,
+   `spec` or `benches` component; or basename `tests.rs`, `conftest.py`, or matching
+   `*_test.go`, `test_*.py`, `*_test.py`, `*.test.*`, `*.spec.*`, `*_spec.rb`,
+   `*Test.java`, `*Tests.java`, `*Test.kt`, `*Tests.kt`, `*Test.swift`, `*Tests.swift`,
+   `*Test.cs`, `*Tests.cs`, `*Test.php`, `*_test.cc`, `*_test.cpp`, `*_unittest.cc`,
+   `*.t` or `*.bats`;
+6. `source` (0): everything else.
+
+Every search document stores its role. The role orders definitions in § Resolver
+order and nothing else: tier 2 and every response without an anchor are unaffected,
+and no role filters anything.
+
+### Definitions and addresses
+
+Exactly one search document per definition carries `def_name`: the document whose
+range contains the start of the unit's **name node** (the identifier the language's
+name rule selects, § Unit forest). Container residuals and the parts of a region over
+8192 bytes no longer carry it; they stay searchable through `ident` and `body`. A unit
+that extends a type defined elsewhere (a Rust `impl` block, a Swift `extension`) is a
+container, not a definition of that type: it carries no `def_name`, and its members'
+addresses keep the type as a qualifier (otherwise `struct Foo` and each `impl Foo`
+would tie in § Resolver order and no Rust type with an impl could resolve). Counts in
+§ Two-tier query and § Compact context are therefore definitions, not documents.
+Search schema `"4"` adds:
+
+| Field | Options | Content |
+| --- | --- | --- |
+| `role` | u64 FAST, STORED | every document: § Roles |
+| `name_case_hash` | u64 FAST | definition documents: first 8 bytes of SHA-256 of the name exactly as written |
+| `addr_hash` | u64 FAST, multi-valued | definition documents: first 8 bytes of SHA-256 of each address segment |
+| `name_start`, `name_end` | u64 STORED | definition documents: the name node's byte range |
+| `imports` | STRING, multi-valued | each file's first document: § Doors import keys |
+
+(`unit_head`, stored since the 2026-10-04 leading-run amendment, belongs in the
+§ Search index v2 table as well.) **Address segments** are, lowercased and distinct:
+each path component, the last without its extension, split on every character outside
+`[A-Za-z0-9_$]` (`packages/coding-agent/src/tools/index.ts` gives `packages coding
+agent src tools index`); then the unit's qname with every generic argument list
+(`<…>`, `[…]`, nested) removed first, split on the language's qname separator, minus the
+unit's own name (`UnionFind<Key>::find` gives `unionfind`).
+
+### Anchors and qualifiers
+
+Runs and code spans are those of § Two-tier query, except that inside a code span a run
+may also contain `-` between letters (`Get-ChildItem`). A **chain** is runs joined only by
+`::` or `->`, or, inside a code span, by `.`; its last run is its name and the others
+are its qualifiers. A token containing `/` or `\`, or ending in `.<extension>` where the
+extension is one § Dependencies and languages maps or `md txt rst json yaml yml toml lock`,
+is a **path**, never a chain or an anchor; its segments (split as for addresses) are
+qualifiers.
+
+**Anchors** are taken in three groups, each in order of first appearance, at most four
+in all:
+
+1. the names of marked chains (a lone marked run is a chain of one);
+2. unmarked runs that contain `_` or `$` (`sleep_ms`, `READY_RECEIVE_ENTERED`) or a
+   lowercase letter followed by an uppercase letter (`toolSession`, `HttpServer`), and
+   the names of unmarked `::` or `->` chains;
+3. unmarked capitalized runs other than the query's first word that have an exact-case
+   definition (`where is the Engine struct`).
+
+Unmarked, these never anchor: all-uppercase runs without `_` (`MCP`, `WAL`), runs of
+letters then digits (`v2`, `T002`, `utf8`), single letters, `e.g.`/`i.e.` and URLs.
+**Qualifiers** are chain qualifiers, path segments and marked runs that are not
+anchors, lowercased; plain unmarked words are never qualifiers. When a query has
+anchors, its tier-1 runs are its anchors; otherwise the 2026-10-06 rule stands.
+
+### Resolver order
+
+Each anchor has its own window. Its definitions are scored by the tuple: distinct
+qualifiers equal to an address segment (descending; compared by hash); name equal to
+the anchor exactly as written (`name_case_hash`, exact first); role (ascending). The
+window keeps the best 64 by that tuple, then `key_hash` ascending; every matching
+definition is scored. Within the window, definitions are ordered by the tuple, then
+path and start ascending: for equally scored definitions this is today's tier-1 order
+(a `key_hash` selection of 64, listed by path and start), on which the G1 baselines
+were measured. Tier 1 is the windows in anchor order. An anchor is **resolved** when
+it has exactly one definition, or when its first definition's tuple is strictly
+better than its second's; otherwise **ambiguous**. `defs:<n>` reports definitions
+(after this amendment, one document each).
+
+### Ladder for anchored definitions
+
+An anchored definition takes the first fitting form of verbatim, signature (when it
+differs) and `address`: its item line alone, suffixed ` [address]`, with no fence.
+`RenderedForm` gains `Address`; § Evidence items gains the suffix; an `[address]` line
+is navigation, as a locator line is. Every other candidate keeps its ladder. Within
+the anchored selection below, an anchored definition is omitted only when the
+remaining budget cannot fit its address line.
+
+### Anchored context
+
+A `context` (CLI and MCP; single- and multi-root) whose query has an anchor with at
+least one definition is **anchored**. Its selection, from the anchor windows and the
+already ordered batch, is:
+
+1. per anchor, in order: when resolved, its first definition through the ladder above,
+   then its other definitions as directory lines (their search locator lines), at most
+   8; when ambiguous, the first 16 of its window in two passes: first each takes its
+   signature form (verbatim when it has no shorter signature) or, when the remaining
+   budget cannot fit that, its address line, so every listed candidate's name line is
+   shown; then, in list order, an entry is upgraded to verbatim while the remaining
+   budget fits the difference. An ambiguous name has no single answer, so no body is
+   shown at the expense of another candidate's name line, and bodies still fill the
+   budget as today's context does (2026-10-07, after refutation: three expanded bodies
+   followed by directory lines lose today's G1 ambiguous-bucket passes, and signatures
+   alone lose its bodies). The materialization cap of 4 per file and the 32-unit
+   context limit do not apply to these entries;
+2. then the door lines of § Doors when they apply;
+3. nothing else. Everything else is omitted and counted in `omitted:<n>`; `search`
+   lists it. The pointers of § Compact context are not part of an anchored context:
+   the city map answers with the named definition, its namesakes or its doors (G1:
+   with pointers, a resolved definition costs more tokens than grep's two calls).
+
+The header's last segments are, in order, `defs:<n>` (when an anchor is ambiguous; the
+largest count among them), `doors:<state>` (when doors were requested) and `anchored`;
+the 40-token header bound holds at their largest values. A query without an anchor
+keeps today's ordering and packing rules, with two changes: its tier 1 sees one
+document per definition (§ Definitions and addresses), and when it requests doors it
+gets `doors:none` and search packing instead of graph expansion (§ Doors). When 009
+T004 is accepted and a semantic profile is enabled, its placement (dense candidates
+first, then lexical) overrides these rules for anchor-less queries only. `search` orders
+anchored locator lines by the resolver; `retrieve` is unchanged.
+
+### Doors
+
+**Requests.** Under `auto`, a query requests doors when a token, ASCII-lowercased, is one
+of `callers caller calls called invokes invoked invokers uses used usage usages
+references reference referenced dependents depends dependency dependencies impact
+affects break breaks`; `strategy:graph` always requests them; `strategy:search` never
+does. "What does `X` use" (callees) is not supported: its words request doors for
+`X`'s callers, a named limitation.
+
+**Target.** Doors are built only for the query's first anchor, only when it is
+resolved: its definition `D`. When the first anchor is ambiguous, no doors are built
+(`doors:ambiguous`) and the directory lines name the candidates. A query that requests
+doors but has no anchor gets `doors:none` and search packing: this changes today's
+anchor-less `auto` usage-word and `strategy:graph` responses, which lose the path-seeded
+graph expansion (`context_graph_units` over span occurrences, removed) and with it the
+`graph:<state>` header segment. G1's anchor-less usage wordings measure that change.
+
+**Exact doors.** When a selected compiler scope (005) is current for `D`'s path, the
+symbols are those of the definition occurrences whose range equals `D`'s stored
+`name_start..name_end`. One symbol, or several split identities of the same source
+definition, give exact doors: their references, deduplicated by site, read in the
+response's one final read with 005's scope, snapshot, revision and source checks.
+No such occurrence gives approximate doors with `doors:approx`.
+
+**Approximate doors.** Each file's **import keys** are computed during indexing from
+its parse (the import node kinds of § Languages) and stored in `imports`: for every
+import statement, the bound names it introduces (named imports, the last segment of a
+`use`/`import` path, `from m import a, b`, `using`/`open` namespaces' last segment,
+`#include "x/y.h"` as `y`, `require`/`source` paths' file stem). A file imports `D` when
+its keys contain `D`'s name, or the last segment of `D`'s module (its file stem, or the
+directory for `index`, `mod`, `lib` and `__init__` stems). Approximate doors draw on
+the delivery units, other than `D`'s own, whose `ident` contains `D`'s name, taken in
+the order: importing files first, then role, path and start; the first 256 are
+examined, and a candidate becomes a door only where its line contains `D`'s name
+exactly as written (checked on the line in the final read). Aliased imports,
+re-exports, `tsconfig.json` paths and package `exports` are not followed; Rust glob
+imports (`use m::*`) give no key; a Go file's module key is its directory (its package),
+not its stem; a C#, F# or VB namespace in `using`/`open`/`Imports` matches only when its
+last segment equals a file stem or container name; occurrences in comments and strings
+are not excluded; identifiers of one character have no doors. These are named
+limitations of `[approx]` lines.
+
+**Door lines summarize by file.** One line per file: `<handle> L<line> in <label>:
+<excerpt>`, the file's first site (its line, the enclosing unit's label and at most 160
+bytes of the line, § Search locator lines' excerpt rules), suffixed ` (+<n>)` when the
+file has `n` more sites and ` [approx]` for approximate doors. Files are listed in the
+order above (exact: path order; approximate: importing files first, then role and
+path), at most 16, then `⋯ <m> more files` when more remain. Doors carry no cursor:
+the complete list is `references {handle}` on `D`'s handle (shown as the anchored
+definition), whose ordering and `after` pagination are unchanged. A door line is
+delivered evidence of its one site's location, not of its enclosing unit's body.
+
+**`references {handle}`** without `byte_offset` (MCP and CLI) means the symbols of
+the handle's unit by the exact-doors rule; a unit that defines none is
+`invalid_argument` naming `no_compiler_definition`. The catalog stays within 003's
+tools/list ceiling.
+
+### Languages
+
+Syntax units, addresses and import keys extend to these languages through these
+grammar crates (licenses from crates.io; each depends only on `tree-sitter-language`
+unless noted):
+
+| Language | Extensions and basenames | Crate | License |
+| --- | --- | --- | --- |
+| C# | `.cs` | `tree-sitter-c-sharp` 0.23.5 | MIT |
+| F# | `.fs .fsi .fsx` | `tree-sitter-fsharp` 0.3.12 | MIT |
+| VB.NET | `.vb` | `tree-sitter-vb-dotnet` 0.1.0 | MIT |
+| PHP | `.php .phtml` | `tree-sitter-php` 0.25.1 | MIT |
+| Perl | `.pl .pm .t .psgi` | `tree-sitter-perl` 1.1.2 (requires `tree-sitter` 0.26) | MIT |
+| shell | `.sh .bash .zsh` | `tree-sitter-bash` 0.25.1 | MIT |
+| PowerShell | `.ps1 .psm1 .psd1` | `tree-sitter-powershell` 0.26.4 | MIT |
+| Ruby | `.rb .rake`, `Rakefile`, `Gemfile` | `tree-sitter-ruby` 0.23.1 | MIT |
+| Kotlin | `.kt .kts` | `tree-sitter-kotlin-ng` 1.1.0 | MIT |
+| Swift | `.swift` | `tree-sitter-swift` 0.7.4 | MIT |
+| Scala | `.scala .sc` | `tree-sitter-scala` 0.26.2 | MIT |
+| Lua | `.lua` | `tree-sitter-lua` 0.5.0 | MIT |
+| Dart | `.dart` | `tree-sitter-dart` 0.2.0 | MIT |
+| Elixir | `.ex .exs` | `tree-sitter-elixir` 0.3.5 | Apache-2.0 |
+| Haskell | `.hs` | `tree-sitter-haskell` 0.24.1 | MIT |
+
+`tree-sitter-perl` has one published release, which requires the `tree-sitter` 0.26
+runtime (minimum Rust 1.77): T008 moves the runtime from 0.25 to 0.26 for every
+grammar and re-verifies the original eight. A grammar that does not load or parse its
+fixtures on that runtime and Rust 1.90 is dropped, and its language stays plain text,
+as a named limitation; there is no keyword-line fallback. `.fs`, `.pl` and `.sc` are
+taken as F#, Perl and Scala (GLSL, Prolog and SuperCollider sources are mis-parsed, a
+named limitation). The basenames `Rakefile` and `Gemfile` amend § Dependencies and
+languages' extension-only rule. A name ending in `?`, `!` or `'` (Ruby, Elixir,
+Haskell) is stored and matched without that suffix. Rust, C and C++ gain import keys
+(`use`, `#include`) with this amendment as well.
+
+A 2026-10-07 feasibility spike (outside the repository) built all 23 grammars on
+`tree-sitter` 0.26.13 with Rust 1.90; the original eight produced identical units on
+7,357 of 7,358 real files (one mis-parsed C++ file lost 3 units) and their syntax tests
+pass unchanged. Grammar archives add about 48 MB to a release binary (F# 14.1 MB, C#
+5.3 MB, Swift 4.2 MB, Scala 4.0 MB, Haskell 3.9 MB, Kotlin 3.5 MB, the rest under 3 MB
+each). Parsing is bounded by work, not by time: every parse runs under a progress
+callback (`parse_with_options`) that counts its checks and stops the parse after a fixed
+budget per source, so identical inputs stop identically on any thread count or host
+load; T008 calibrates the budget so that no spike-corpus file that parses within a
+second on a quiet host is stopped, and a stopped parse is handled like a panic
+(§ Parallel indexing), because deeply nested Haskell and F# inputs take tens of
+seconds. Constructs the pinned grammars do not parse are named limitations: VB.NET
+nested types, alias and XML imports; Perl `require "file"` and fully qualified
+`sub A::B::c`; F# signature-file member signatures; C++20 module imports.
+
+### Parallel indexing
+
+Refresh builds the search documents of each page's pending sources on at most
+min(available parallelism, 8) threads, with at most 64 MiB of source bytes handed out
+and not yet consumed (a source is consumed when its documents are added; one source
+always fits). Each source has one outcome: its documents, or, when its parse panics
+or is stopped, a named scan failure and the plain-block documents of an unmapped source
+with the `kind` term `unparsed` (rendered and searched exactly as blocks); it is never
+dropped. The one writer adds documents in key order as their builds finish; after
+every thread has finished it commits and reloads, and only then are matching pending
+keys cleared, as before. Cancellation is checked at each hand-out and after the commit:
+it stops handing out work and waits for the threads; a page whose sources were all
+handed out may still be added and committed, and its pending keys then stay pending
+until a later refresh, whose replay converges. A refresh on 8 threads yields the same
+documents (field values, in key order) and the same store tables as on 1 thread;
+physical file bytes are not compared. `status` names the sources whose documents carry
+`unparsed` (one term query, work proportional to the failures) until each is parsed
+again: on its next change, or on `repair-index`, which rebuilds every source's
+documents. A source with no searchable text (empty or whitespace only) has no
+documents either way and is named only in the scan report of the refresh that hit it.
 
 ## Failure scope
 
