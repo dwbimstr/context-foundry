@@ -2648,6 +2648,11 @@ impl FoundryMcp {
                 let mut hits: Vec<memory::MemoryHit> = Vec::new();
                 let hits_ref = &mut hits;
                 let engines = &*engines;
+                // 005 T004: the first serving root's resolved doors request
+                // (a policy may have made it) governs every later root, so
+                // the root holding the merged first anchor's definition builds
+                // its doors; the policy is consulted once.
+                let mut decided: Option<Strategy> = None;
                 let (batches, facts) = collect_root_batches(
                     engines,
                     control,
@@ -2656,6 +2661,7 @@ impl FoundryMcp {
                     &query,
                     None,
                     |engine, control, anchors| {
+                        let strategy = decided.unwrap_or(strategy);
                         let is_primary = std::ptr::eq(
                             engine,
                             engines[0].as_ref().expect("the primary engine is open"),
@@ -2665,7 +2671,7 @@ impl FoundryMcp {
                         // does 013 T003 routing, whose state the primary
                         // store composes.
                         let routed = policy.routes().then_some(&*policy);
-                        if is_primary && (semantic_on(&semantic) || routed.is_some()) {
+                        let batch = if is_primary && (semantic_on(&semantic) || routed.is_some()) {
                             let combined = context_primary(
                                 &semantic,
                                 routed,
@@ -2677,23 +2683,31 @@ impl FoundryMcp {
                                 Some(anchors),
                             )?;
                             *hits_ref = combined.hits;
-                            return Ok(combined.batch);
-                        }
-                        // No catch-all for the primary's memory: corruption
-                        // fails the request (context-v2 § Failure scope); an
-                        // unavailable primary is excluded by `serving` above
-                        // and its coverage stays in the header.
-                        let options = crate::store::ContextOptions {
-                            memory: primary_memory && is_primary,
-                            anchors: Some(anchors),
-                            ..crate::store::ContextOptions::default()
+                            combined.batch
+                        } else {
+                            // No catch-all for the primary's memory:
+                            // corruption fails the request (context-v2 §
+                            // Failure scope); an unavailable primary is
+                            // excluded by `serving` above and its coverage
+                            // stays in the header.
+                            let options = crate::store::ContextOptions {
+                                memory: primary_memory && is_primary,
+                                anchors: Some(anchors),
+                                ..crate::store::ContextOptions::default()
+                            };
+                            let combined = engine
+                                .context_candidates_with(&query, strategy, control, &options)?;
+                            if options.memory {
+                                *hits_ref = combined.hits;
+                            }
+                            combined.batch
                         };
-                        let combined =
-                            engine.context_candidates_with(&query, strategy, control, &options)?;
-                        if options.memory {
-                            *hits_ref = combined.hits;
-                        }
-                        Ok(combined.batch)
+                        decided.get_or_insert(if batch.doors.is_some() {
+                            Strategy::Graph
+                        } else {
+                            Strategy::Search
+                        });
+                        Ok(batch)
                     },
                 )?;
                 Ok(MultiOutcome {

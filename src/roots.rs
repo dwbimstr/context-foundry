@@ -13,8 +13,9 @@
 //! merged response, packed once by the v2 ladder over the merged list.
 
 use crate::store::{
-    ANCHOR_LIST, AnchorCandidate, AnchorWindow, CandidateBatch, CandidateCounters, DoorState,
-    Doors, Hit, MAX_ANCHORS, QueryAnchors, RankedItem, RenderedForm, SearchOutcome, TIER_OUTLINE,
+    ANCHOR_LIST, AnchorCandidate, AnchorWindow, CandidateBatch, CandidateCounters, CollectedAnchor,
+    DoorState, DoorTarget, Doors, Hit, MAX_ANCHORS, QueryAnchors, RankedItem, RenderedForm,
+    SearchOutcome, TIER_OUTLINE,
 };
 use crate::{Control, Engine, FoundryError, error::FResult};
 use std::path::{Path, PathBuf};
@@ -564,35 +565,50 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
         route: primary_word(batches[0].batch.route.as_ref(), batches.len()),
         doors: merged_doors(batches, &anchors),
         anchors,
+        collected: None,
     }
 }
 
 /// The merged context's doors (context-v2 § Doors; 007): requested when the
-/// primary root's context requested them, and built only for the merged
-/// first anchor when it is resolved - they are the doors of the root whose
-/// own first anchor resolved to that same definition (every root builds its
-/// doors in its own final read). The merged first anchor ambiguous gives
-/// `ambiguous`; no merged anchor with a definition gives `none`.
+/// primary root's context requested them, and built only for the target of
+/// the merged first anchor as collected - every root's head of that anchor
+/// before its final read, merged as the windows are (the tuple, then root
+/// order, then each root's order). They are the doors of the root whose own
+/// first anchor resolved to that same definition (every root builds its
+/// doors in its own final read). Collected ambiguous gives `ambiguous`; no
+/// merged anchor with a definition, or a target its root's final read
+/// dropped as stale, gives `none`: another root's namesake is never
+/// promoted, and namesakes left tied never make it `ambiguous`.
 fn merged_doors(batches: &[RootBatch], anchors: &[AnchorWindow]) -> Option<Doors> {
     batches[0].batch.doors.as_ref()?;
     let Some(window) = anchors.first().filter(|window| window.definitions > 0) else {
         return Some(Doors::unbuilt(DoorState::None));
     };
-    if !window.resolved() {
-        return Some(Doors::unbuilt(DoorState::Ambiguous));
-    }
-    let Some(target) = window
-        .entries
-        .first()
-        .and_then(|entry| entry.handle.as_ref())
-    else {
-        return Some(Doors::unbuilt(DoorState::None));
+    let mut head: Vec<_> = batches
+        .iter()
+        .filter_map(|root| root.batch.collected.as_ref())
+        .filter(|first| first.anchor == window.anchor)
+        .flat_map(|first| first.head.iter().cloned())
+        .collect();
+    // Stable: equal tuples keep root order, then each root's order.
+    head.sort_by_key(|(_, resolver)| resolver.map(|resolver| resolver.key()));
+    head.truncate(2);
+    let collected = CollectedAnchor {
+        anchor: window.anchor.clone(),
+        definitions: window.definitions,
+        head,
     };
+    let target = match collected.target() {
+        DoorTarget::None => return Some(Doors::unbuilt(DoorState::None)),
+        DoorTarget::Ambiguous => return Some(Doors::unbuilt(DoorState::Ambiguous)),
+        DoorTarget::Resolved(target) => target,
+    };
+    // Its root built doors for it only when it survived that root's read.
     Some(
         batches
             .iter()
             .filter_map(|root| root.batch.doors.as_ref())
-            .find(|doors| doors.target.as_ref() == Some(target))
+            .find(|doors| doors.target.as_ref() == Some(&target))
             .cloned()
             .unwrap_or_else(|| Doors::unbuilt(DoorState::None)),
     )
@@ -664,6 +680,7 @@ mod tests {
             route: None,
             anchors: Vec::new(),
             doors: None,
+            collected: None,
         }
     }
 
@@ -809,13 +826,15 @@ mod tests {
         assert!(merged.doors.is_none(), "no root requested doors");
     }
 
-    /// A root whose only anchor `parse` lists `entries` and whose context
-    /// requested doors that open onto `target` (none built without one).
+    /// A root whose only anchor `parse` lists `entries` (as collected and as
+    /// validated) and whose context requested doors that open onto `target`
+    /// (none built without one).
     fn with_doors(alias: &str, entries: Vec<RankedItem>, target: Option<&RankedItem>) -> RootBatch {
         let mut root = anchored(
             alias,
             vec![("parse", (1, 0), entries.len() as u64, entries)],
         );
+        root.batch.collected = Some(CollectedAnchor::of(&root.batch.anchors[0]));
         root.batch.doors = Some(match target {
             Some(item) => Doors {
                 state: DoorState::Exact,

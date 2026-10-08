@@ -610,6 +610,74 @@ impl Doors {
     }
 }
 
+/// The first anchor's doors target (context-v2 § Doors, Target), decided
+/// from its window as collected, before the final read validates it.
+pub(crate) enum DoorTarget {
+    /// No anchor with a definition.
+    None,
+    /// The first anchor is ambiguous.
+    Ambiguous,
+    /// The first anchor resolved to this definition, its window's first.
+    Resolved(SourceHandle),
+}
+
+/// A context's first anchor as collected, before its final read validates
+/// the windows: the doors target is decided from it, so that read can drop
+/// the target but never retarget the doors. A 007 merge decides from every
+/// root's, so a definition one root dropped as stale never hands the doors
+/// to another root's namesake.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectedAnchor {
+    pub anchor: String,
+    pub definitions: u64,
+    /// The window's first two definitions in window order: all resolution
+    /// reads (a merge's first two are among its roots' first two).
+    pub head: Vec<(Option<SourceHandle>, Option<Resolver>)>,
+}
+
+impl CollectedAnchor {
+    pub(crate) fn of(window: &AnchorWindow) -> Self {
+        Self {
+            anchor: window.anchor.clone(),
+            definitions: window.definitions,
+            head: window
+                .entries
+                .iter()
+                .take(2)
+                .map(|entry| (entry.handle.clone(), entry.resolver))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn target(&self) -> DoorTarget {
+        if self.definitions == 0 {
+            return DoorTarget::None;
+        }
+        if !resolves(
+            self.definitions,
+            self.head.iter().map(|(_, resolver)| *resolver),
+        ) {
+            return DoorTarget::Ambiguous;
+        }
+        match self.head.first().and_then(|(handle, _)| handle.clone()) {
+            Some(handle) => DoorTarget::Resolved(handle),
+            None => DoorTarget::None,
+        }
+    }
+}
+
+/// Resolved (context-v2 § Resolver order): exactly one definition, or a
+/// first definition (of `tuples`, in window order) whose tuple is strictly
+/// better than the second's.
+fn resolves(definitions: u64, mut tuples: impl Iterator<Item = Option<Resolver>>) -> bool {
+    let key = |resolver: Option<Resolver>| resolver.map(|resolver| resolver.key());
+    definitions == 1
+        || matches!(
+            (tuples.next(), tuples.next()),
+            (Some(first), Some(second)) if key(first) < key(second)
+        )
+}
+
 /// One anchor of the query and the head of its resolver window (context-v2
 /// § Anchors and qualifiers, § Resolver order).
 #[derive(Clone, Debug)]
@@ -633,9 +701,10 @@ impl AnchorWindow {
     /// Resolved: exactly one definition, or a first definition whose tuple
     /// is strictly better than the second's; otherwise ambiguous.
     pub fn resolved(&self) -> bool {
-        let key = |item: &RankedItem| item.resolver.map(|resolver| resolver.key());
-        self.definitions == 1
-            || matches!(self.entries.as_slice(), [first, second, ..] if key(first) < key(second))
+        resolves(
+            self.definitions,
+            self.entries.iter().map(|entry| entry.resolver),
+        )
     }
 }
 
@@ -659,6 +728,10 @@ pub struct CandidateBatch {
     /// A context's doors (context-v2 § Doors) when it requested them;
     /// `None` otherwise and for search.
     pub doors: Option<Doors>,
+    /// A context that requested doors: its first anchor as collected, before
+    /// its final read (a 007 merge decides its doors target from every
+    /// root's); `None` otherwise, for search and for a merged batch.
+    pub collected: Option<CollectedAnchor>,
 }
 
 impl CandidateBatch {
@@ -4083,6 +4156,7 @@ impl Engine {
             route: None,
             anchors,
             doors: None,
+            collected: None,
         })
     }
 
@@ -4690,6 +4764,7 @@ impl Engine {
             route: None,
             anchors,
             doors: None,
+            collected: None,
         })
     }
 
@@ -4888,8 +4963,12 @@ impl Engine {
             (Strategy::Auto, None) => (response::strategy_for_query(query), None),
             (explicit, _) => (explicit, None),
         };
-        // A context resolved to graph requests doors (context-v2 § Doors).
-        let doors_requested = resolved == Strategy::Graph;
+        // A context resolved to graph requests doors (context-v2 § Doors),
+        // for the first anchor's target as resolved from the collected
+        // windows: the final read can drop that definition, never retarget.
+        // `Some(None)`: requested, but the query has no anchor.
+        let collected: Option<Option<CollectedAnchor>> =
+            (resolved == Strategy::Graph).then(|| search.anchors.first().map(CollectedAnchor::of));
         control.check()?;
         // Candidates are collected. Anything may commit before the final read.
         fault!(
@@ -4948,10 +5027,14 @@ impl Engine {
             window.entries = fresh_entries;
         }
         // Doors, from the validated windows, in this same read.
-        let doors = if doors_requested {
-            Some(self.doors_in(&tx, &anchors, &mut counters)?)
-        } else {
-            None
+        let doors = match &collected {
+            Some(first) => {
+                let target = first
+                    .as_ref()
+                    .map_or(DoorTarget::None, CollectedAnchor::target);
+                Some(self.doors_in(&tx, &target, &anchors, &mut counters)?)
+            }
+            None => None,
         };
         // Verified bodies, once per path, for the signature forms of units in
         // languages with units and for the first distinct files' outlines.
@@ -5136,36 +5219,40 @@ impl Engine {
                 // them.
                 anchors,
                 doors,
+                collected: collected.flatten(),
             },
             hits,
         })
     }
 
     /// The doors of a context that requested them (context-v2 § Doors),
-    /// built in its final read `tx` from the validated anchor windows: only
-    /// for the first anchor, only when it is resolved (its first definition
-    /// `D`). Exact doors when a current compiler scope of `D`'s path holds
-    /// definition occurrences at `D`'s stored name range; otherwise
-    /// approximate doors. A malformed compiler row is component-local: it
-    /// gives approximate doors, never a failed context.
+    /// built in its final read `tx` for `target`, the first anchor's
+    /// definition `D` as resolved before this read. `D` dropped as stale by
+    /// this read's validation of the anchor windows gives `none`: no namesake
+    /// is promoted for this request. Exact doors when a current compiler
+    /// scope of `D`'s path holds definition occurrences at `D`'s stored name
+    /// range; otherwise approximate doors. A malformed compiler row is
+    /// component-local: it gives approximate doors, never a failed context.
     fn doors_in(
         &self,
         tx: &redb::ReadTransaction,
+        target: &DoorTarget,
         anchors: &[AnchorWindow],
         counters: &mut CandidateCounters,
     ) -> FResult<Doors> {
-        let Some(window) = anchors.first().filter(|window| window.definitions > 0) else {
-            return Ok(Doors::unbuilt(DoorState::None));
+        let handle = match target {
+            DoorTarget::None => return Ok(Doors::unbuilt(DoorState::None)),
+            DoorTarget::Ambiguous => return Ok(Doors::unbuilt(DoorState::Ambiguous)),
+            DoorTarget::Resolved(handle) => handle,
         };
-        if !window.resolved() {
-            return Ok(Doors::unbuilt(DoorState::Ambiguous));
-        }
-        let Some((handle, resolver)) = window
-            .entries
+        // Validation only removes entries, so `D` is still the window's
+        // first entry exactly when it survived.
+        let Some(resolver) = anchors
             .first()
-            .and_then(|definition| definition.handle.as_ref().zip(definition.resolver))
+            .and_then(|window| window.entries.first())
+            .filter(|definition| definition.handle.as_ref() == Some(handle))
+            .and_then(|definition| definition.resolver)
         else {
-            // Its definition went stale before this read.
             return Ok(Doors::unbuilt(DoorState::None));
         };
         let revision = self.freshness_in(tx)?.source_revision;
@@ -5178,7 +5265,7 @@ impl Engine {
             &handle.sha256,
             resolver.name,
         ) {
-            Ok(Some(exact)) => {
+            Ok(graph::ExactResolution::Doors(exact)) => {
                 counters.stale += exact.stale as u64;
                 counters.candidates_full |= exact.full;
                 return Ok(Doors {
@@ -5188,7 +5275,12 @@ impl Engine {
                     more_files: exact.more_files,
                 });
             }
-            Ok(None) | Err(FoundryError::GraphInvalid(_)) => {}
+            // A name scan that ran out of its allowance filled the window,
+            // whatever the approximate window does.
+            Ok(graph::ExactResolution::Approximate { exhausted }) => {
+                counters.candidates_full |= exhausted;
+            }
+            Err(FoundryError::GraphInvalid(_)) => {}
             Err(other) => return Err(other),
         }
         let sources = tx.open_table(SOURCES)?;

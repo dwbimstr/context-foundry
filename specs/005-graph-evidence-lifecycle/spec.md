@@ -238,10 +238,13 @@ source counts. Retire obsolete scopes only for source paths proven absent by the
 completed input manifest; never infer absence from a cancelled/failed run. A run with
 unresolved/unsupported inputs remains partial and cannot certify no references.
 
-Proposed `references` operation arguments are `{symbol_id?, handle?, byte_offset?,
-limit?, tokens?, after?}`: exactly one seed form, either a `symbol_id` (16-hex prefix)
-or a source `handle` plus an absolute `byte_offset` within it; unknown/null fields and
-both/neither forms are `invalid_argument`. Resolve the occurrence at that position
+`references` operation arguments are `{symbol_id?, handle?, byte_offset?, limit?,
+tokens?, after?}`: exactly one seed form — a `symbol_id` (16-hex prefix), a source
+`handle` plus an absolute `byte_offset` within it, or (T004) a `handle` alone, which
+means the symbols defined at that definition unit's stored name range (a handle that is
+not a definition unit, or defines no compiler symbol, is `invalid_argument` naming
+`no_compiler_definition`); unknown/null fields and conflicting forms are
+`invalid_argument`. With a `byte_offset`, resolve the occurrence at that position
 (refined 2026-10-04: rust-analyzer's module-definition occurrences span whole files):
 - among all occurrences whose range contains the offset, the narrowest range wins;
 - none→`symbol_not_found`;
@@ -282,23 +285,16 @@ document is counted accepted-empty. A failed or cancelled run retires no scope. 
 coverage means complete for supported indexed input, not all possible runtime
 references. Bounds do not remove facts.
 
-`context(strategy=graph)` expands at most three retrieved source spans' overlapping
-resolved symbols in that order, symbol-ID tie break. Reference occurrences contribute
-their enclosing delivery units (001's search documents), deduplicated into at most 32
-total units and 256 examined graph records, including definition lookups as well as
-reference occurrences. Amended 2026-10-05 (captain, T003 review): only symbols with a
-unique eligible, source-verified definition expand. The final read re-proves each
-expansion's snapshot, witness rows, uniqueness and source bodies in a separately bounded
-pass of at most 256 graph records. That pass discovers nothing new, so one response
-examines at most 512 graph records. A proof the pass cannot finish drops the expansion
-and sets `candidates:full`.
-Before 009 these seeds are lexical; when semantics is enabled its merged ordering
-applies, excluding unlocalized previews. Compiler occurrences are not embedding units,
-and graph arrival cannot repartition source embeddings or require a second vector set.
-Use 001's source-first packing. No eligible compiler graph yields source-only context
-with `graph_unavailable`, `graph_stale` or `graph_invalid`, never a false empty call
-graph. Existing file-neighborhood `graph PATH` remains explicitly separate from
-symbol references.
+`context(strategy=graph)` no longer expands retrieved spans (removed by T004): it
+requests doors for the query's first anchor when that anchor is resolved
+(001 context-v2 § Doors), exact doors from that definition's references inside the
+response's final read, approximate doors otherwise. The 2026-10-05 span-seeded
+expansion (three spans' overlapping symbols, 32 units, 256 plus 256 proof records)
+chose path neighbors rather than the queried symbol and was removed with its witness
+proof. Compiler occurrences are not embedding units, and graph arrival cannot
+repartition source embeddings or require a second vector set. No eligible compiler
+graph yields approximate doors, never a false empty call graph. Existing
+file-neighborhood `graph PATH` remains explicitly separate from symbol references.
 
 ### Import through the existing agent owner
 

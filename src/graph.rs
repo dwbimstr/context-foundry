@@ -1214,6 +1214,8 @@ impl EligibleScopes {
 /// Its delivery units are parsed on first use, so a file whose sites are only
 /// counted (doors beyond the shown files) is never parsed.
 struct FileView {
+    /// The SHA-256 of the bytes `body` was verified against.
+    hash: String,
     body: String,
     lang: Option<crate::syntax::Lang>,
     line_starts: Vec<usize>,
@@ -1221,10 +1223,11 @@ struct FileView {
 }
 
 impl FileView {
-    fn new(path: &str, body: String) -> Self {
+    fn new(path: &str, hash: String, body: String) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(body.match_indices('\n').map(|(at, _)| at + 1));
         Self {
+            hash,
             body,
             lang: crate::syntax::Lang::from_path(path),
             line_starts,
@@ -1279,43 +1282,48 @@ impl FileView {
     }
 }
 
-/// Load `path` once into `files`: `None` when the source is absent or no
-/// longer has the hash the scope was published from (stale).
-fn ensure_file(
-    files: &mut HashMap<String, Option<FileView>>,
+/// The verified view of `path` when its source still carries
+/// `expected_hash`, the bytes the caller's scope was published from; `None`
+/// when the source is absent or carries other bytes (stale). A source is read
+/// and verified at most once per response, and every access compares the
+/// view's verified hash with the caller's: a scope expecting other bytes never
+/// reuses bytes verified for another.
+fn verified_file<'f>(
+    files: &'f mut HashMap<String, Option<FileView>>,
     sources: &redb::ReadOnlyTable<&'static str, &'static str>,
     chunks: &redb::ReadOnlyTable<&'static str, &'static str>,
     path: &str,
     expected_hash: &str,
-) -> FResult<()> {
-    if files.contains_key(path) {
-        return Ok(());
-    }
-    let view = match sources.get(path)? {
-        None => None,
-        Some(raw) => {
-            let meta: SourceMeta = crate::store::decode(raw.value(), "source")?;
-            if meta.hash == expected_hash {
-                Some(FileView::new(
-                    path,
-                    reconstruct_verified(chunks, path, &meta)?.body,
-                ))
-            } else {
-                None
+) -> FResult<Option<&'f FileView>> {
+    if !files.contains_key(path) {
+        let view = match sources.get(path)? {
+            None => None,
+            Some(raw) => {
+                let meta: SourceMeta = crate::store::decode(raw.value(), "source")?;
+                if meta.hash != expected_hash {
+                    // Stale for this caller and not read: a later caller
+                    // expecting the stored bytes still loads them.
+                    return Ok(None);
+                }
+                let body = reconstruct_verified(chunks, path, &meta)?.body;
+                Some(FileView::new(path, meta.hash, body))
             }
-        }
-    };
-    files.insert(path.to_owned(), view);
-    Ok(())
+        };
+        files.insert(path.to_owned(), view);
+    }
+    Ok(cached_file(files, path, expected_hash))
 }
 
-/// The loaded body of `path`, or `None` when its source is absent or no
-/// longer carries the hash the scope was published from.
-fn body_of<'a>(files: &'a HashMap<String, Option<FileView>>, path: &str) -> Option<&'a str> {
+/// The already verified view of `path`, only when it carries `expected_hash`.
+fn cached_file<'f>(
+    files: &'f HashMap<String, Option<FileView>>,
+    path: &str,
+    expected_hash: &str,
+) -> Option<&'f FileView> {
     files
         .get(path)
         .and_then(Option::as_ref)
-        .map(|view| view.body.as_str())
+        .filter(|view| view.hash == expected_hash)
 }
 
 fn unit_label(unit: &crate::syntax::DeliveryUnit) -> String {
@@ -1404,20 +1412,21 @@ fn resolve_position(
     }
     // The seed's own source read is part of the response's shared file
     // budget: it goes through the same cache every later file uses.
-    ensure_file(
+    visited.insert(handle.path.clone());
+    let Some(view) = verified_file(
         files,
         &sources,
         &tx.open_table(CHUNKS)?,
         &handle.path,
         &meta.hash,
-    )?;
-    visited.insert(handle.path.clone());
-    let Some(body) = body_of(files, &handle.path) else {
+    )?
+    else {
         return Err(FoundryError::CorruptSource(format!(
             "{}: the indexed source could not be loaded",
             handle.path
         )));
     };
+    let body = view.body.as_str();
     let valid_empty = handle.start == 0 && handle.end == 0 && meta.bytes == 0;
     let valid_span = handle.start < handle.end
         && handle.end <= body.len() as u64
@@ -1711,15 +1720,15 @@ fn resolve_handle(
     if !meta.hash.starts_with(&handle.sha32) {
         return Err(FoundryError::StaleHandle);
     }
-    ensure_file(
+    visited.insert(handle.path.clone());
+    let Some(view) = verified_file(
         files,
         &sources,
         &tx.open_table(CHUNKS)?,
         &handle.path,
         &meta.hash,
-    )?;
-    visited.insert(handle.path.clone());
-    let Some(Some(view)) = files.get(&handle.path) else {
+    )?
+    else {
         return Err(FoundryError::CorruptSource(format!(
             "{}: the indexed source could not be loaded",
             handle.path
@@ -1911,8 +1920,10 @@ fn reference_window(
         heads[index].next();
         *examined += 1;
         window.consumed = Some(site.clone());
-        ensure_file(files, sources, chunks, &parsed.path, &scope.source_hash)?;
-        let Some(Some(view)) = files.get(&parsed.path) else {
+        // A scope expecting other bytes than the verified ones is stale,
+        // even where another producer's scope loaded the file first.
+        let Some(view) = verified_file(files, sources, chunks, &parsed.path, &scope.source_hash)?
+        else {
             window.stale += 1;
             continue;
         };
@@ -1984,6 +1995,154 @@ fn reference_window(
         });
     }
     Ok(window)
+}
+
+/// What the definition lookup and the reference window found for a target
+/// set.
+struct TargetWindow {
+    definitions: Vec<DefinitionCandidate>,
+    definitions_truncated: bool,
+    target: TargetResolution,
+    window: ReferenceWindow,
+    /// Definition and reference records dropped as ineligible.
+    stale: usize,
+}
+
+/// The definition lookup, then one reference window, over `targets` in the
+/// caller's read `tx`, drawing on the response's shared allowance
+/// (`examined`), file cache and visited-file budget: the one window that
+/// `references` and exact doors share (context-v2 § Doors). `labeled` gives
+/// `references` items (enclosing unit, label, edge id); otherwise door sites,
+/// which the caller labels per shown file.
+#[allow(clippy::too_many_arguments)] // the window shares the response's one read state
+fn target_window(
+    tx: &redb::ReadTransaction,
+    producers: &[(String, ProducerRow)],
+    targets: &[Target],
+    after: Option<&(String, u64, u64)>,
+    limit: usize,
+    bound: &str,
+    labeled: bool,
+    examined: &mut usize,
+    files: &mut HashMap<String, Option<FileView>>,
+    visited: &mut BTreeSet<String>,
+) -> FResult<TargetWindow> {
+    let by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
+    let sources = tx.open_table(SOURCES)?;
+    let chunks = tx.open_table(CHUNKS)?;
+    let mut scopes = eligible_scopes(tx, producers, targets)?;
+    let mut stale = 0usize;
+
+    // Definition lookup: at most nine eligible records (eight candidates and
+    // one more to know that more exist; stale drops draw too), taken from the
+    // shared allowance but never from its last record
+    // (`DEFINITION_SCAN_LIMIT`). A split identity's definition at a site
+    // already listed is the same definition. Every candidate that survives
+    // is re-verified against its indexed bytes before it can make the target
+    // unique.
+    let mut definitions: Vec<DefinitionCandidate> = Vec::new();
+    let mut eligible_definitions = 0usize;
+    let mut definitions_truncated = false;
+    let mut lookup_finished = true;
+    'lookup: for target in targets {
+        let low = format!("{}\0d\0", target.symbol_id);
+        let high = format!("{}\0d\u{1}", target.symbol_id);
+        for entry in by_symbol.range(low.as_str()..high.as_str())? {
+            if *examined >= DEFINITION_SCAN_LIMIT {
+                lookup_finished = false;
+                break 'lookup;
+            }
+            let (key, _) = entry?;
+            *examined += 1;
+            let parsed = parse_symbol_key(key.value())?;
+            let scope = match scopes.get_mut(&target.namespace) {
+                Some(eligible) => eligible.get(&parsed.path)?,
+                None => None,
+            };
+            let Some(scope) = scope else {
+                stale += 1;
+                continue;
+            };
+            if definitions.iter().any(|known| {
+                known.path == parsed.path && known.start == parsed.start && known.end == parsed.end
+            }) {
+                continue;
+            }
+            if definitions.len() == DEFINITION_CANDIDATES {
+                // A ninth eligible candidate only proves that more exist.
+                eligible_definitions += 1;
+                definitions_truncated = true;
+                break 'lookup;
+            }
+            // Verify the candidate's source from the same transaction and
+            // the same file budget BEFORE it can count as a target: an
+            // absent or re-hashed source (or bytes verified for another
+            // scope's hash) is a stale drop, an unverifiable range is a named
+            // corruption.
+            let Some(view) =
+                verified_file(files, &sources, &chunks, &parsed.path, &scope.source_hash)?
+            else {
+                stale += 1;
+                continue;
+            };
+            let body = &view.body;
+            let verified = parsed.end <= body.len() as u64
+                && body.is_char_boundary(parsed.start as usize)
+                && body.is_char_boundary(parsed.end as usize);
+            if !verified {
+                return Err(FoundryError::GraphInvalid(format!(
+                    "a stored definition lies outside its source: {}",
+                    parsed.path
+                )));
+            }
+            eligible_definitions += 1;
+            visited.insert(parsed.path.clone());
+            definitions.push(DefinitionCandidate {
+                path: parsed.path,
+                sha256: scope.source_hash,
+                start: parsed.start,
+                end: parsed.end,
+            });
+        }
+    }
+    if !lookup_finished {
+        definitions_truncated = true;
+    }
+    let target = match eligible_definitions {
+        0 if lookup_finished => TargetResolution::Unknown,
+        1 if lookup_finished => TargetResolution::Unique,
+        n if n >= 2 => TargetResolution::Ambiguous,
+        _ => TargetResolution::Unfinished,
+    };
+
+    // References in (path, start, end) order, strictly after the cursor.
+    // Door sites carry no edge ids.
+    let unique = (labeled && target == TargetResolution::Unique)
+        .then(|| definitions.first())
+        .flatten();
+    let window = reference_window(
+        &by_symbol,
+        &sources,
+        &chunks,
+        &mut scopes,
+        targets,
+        after,
+        limit,
+        unique,
+        bound,
+        labeled,
+        examined,
+        files,
+        visited,
+    )?;
+    stale += window.stale;
+    Ok(TargetWindow {
+        definitions,
+        definitions_truncated,
+        target,
+        window,
+        stale,
+    })
 }
 
 impl Engine {
@@ -2122,119 +2281,24 @@ impl Engine {
                 .is_some_and(|chosen| chosen.state == SnapshotState::Complete)
         });
 
-        let by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
-        let sources = tx.open_table(SOURCES)?;
-        let chunks = tx.open_table(CHUNKS)?;
-        let mut scopes = eligible_scopes(&tx, &producers, &targets)?;
-        let mut stale = 0usize;
-
-        // Definition lookup: at most nine eligible records (eight candidates
-        // and one more to know that more exist; stale drops draw too), taken
-        // from the shared allowance but never from its last record
-        // (`DEFINITION_SCAN_LIMIT`). A split identity's definition at a site
-        // already listed is the same definition. Every candidate that
-        // survives is re-verified against its indexed bytes before it can
-        // make the target unique.
-        let mut definitions: Vec<DefinitionCandidate> = Vec::new();
-        let mut eligible_definitions = 0usize;
-        let mut definitions_truncated = false;
-        let mut lookup_finished = true;
-        'lookup: for target in &targets {
-            let low = format!("{}\0d\0", target.symbol_id);
-            let high = format!("{}\0d\u{1}", target.symbol_id);
-            for entry in by_symbol.range(low.as_str()..high.as_str())? {
-                if examined >= DEFINITION_SCAN_LIMIT {
-                    lookup_finished = false;
-                    break 'lookup;
-                }
-                let (key, _) = entry?;
-                examined += 1;
-                let parsed = parse_symbol_key(key.value())?;
-                let scope = match scopes.get_mut(&target.namespace) {
-                    Some(eligible) => eligible.get(&parsed.path)?,
-                    None => None,
-                };
-                let Some(scope) = scope else {
-                    stale += 1;
-                    continue;
-                };
-                if definitions.iter().any(|known| {
-                    known.path == parsed.path
-                        && known.start == parsed.start
-                        && known.end == parsed.end
-                }) {
-                    continue;
-                }
-                if definitions.len() == DEFINITION_CANDIDATES {
-                    // A ninth eligible candidate only proves that more exist.
-                    eligible_definitions += 1;
-                    definitions_truncated = true;
-                    break 'lookup;
-                }
-                // Verify the candidate's source from the same transaction
-                // and the same file budget BEFORE it can count as a target:
-                // an absent or re-hashed source is a stale drop, an
-                // unverifiable range is a named corruption.
-                ensure_file(
-                    &mut files,
-                    &sources,
-                    &chunks,
-                    &parsed.path,
-                    &scope.source_hash,
-                )?;
-                let Some(body) = body_of(&files, &parsed.path) else {
-                    stale += 1;
-                    continue;
-                };
-                let verified = parsed.end <= body.len() as u64
-                    && body.is_char_boundary(parsed.start as usize)
-                    && body.is_char_boundary(parsed.end as usize);
-                if !verified {
-                    return Err(FoundryError::GraphInvalid(format!(
-                        "a stored definition lies outside its source: {}",
-                        parsed.path
-                    )));
-                }
-                eligible_definitions += 1;
-                visited.insert(parsed.path.clone());
-                definitions.push(DefinitionCandidate {
-                    path: parsed.path,
-                    sha256: scope.source_hash,
-                    start: parsed.start,
-                    end: parsed.end,
-                });
-            }
-        }
-        if !lookup_finished {
-            definitions_truncated = true;
-        }
-        let target = match eligible_definitions {
-            0 if lookup_finished => TargetResolution::Unknown,
-            1 if lookup_finished => TargetResolution::Unique,
-            n if n >= 2 => TargetResolution::Ambiguous,
-            _ => TargetResolution::Unfinished,
-        };
-
-        // References in (path, start, end) order, strictly after the cursor.
-        let unique = (target == TargetResolution::Unique)
-            .then(|| definitions.first())
-            .flatten();
-        let window = reference_window(
-            &by_symbol,
-            &sources,
-            &chunks,
-            &mut scopes,
+        let TargetWindow {
+            definitions,
+            definitions_truncated,
+            target,
+            window,
+            stale,
+        } = target_window(
+            &tx,
+            &producers,
             &targets,
             after.as_ref(),
             request.limit,
-            unique,
             &bound,
             true,
             &mut examined,
             &mut files,
             &mut visited,
         )?;
-        stale += window.stale;
         // `more` promises a continuation cursor. A window that stopped with
         // a reference still pending but before consuming ANY record has no
         // cursor to hand back: that is a budget cliff, not an end. It is
@@ -2294,8 +2358,20 @@ pub(crate) struct ExactDoors {
     pub(crate) more_files: usize,
     /// The references window filled (records, files or lines).
     pub(crate) full: bool,
-    /// Records the window dropped as ineligible.
+    /// Definition and reference records the window dropped as ineligible.
     pub(crate) stale: usize,
+}
+
+/// What exact-door resolution found for a definition.
+pub(crate) enum ExactResolution {
+    Doors(ExactDoors),
+    /// No current compiler scope defines the name: approximate doors serve.
+    /// `exhausted` when the name scan ran out of the shared allowance before
+    /// it finished - the window filled (`candidates:full`) even though the
+    /// approximate window may not.
+    Approximate {
+        exhausted: bool,
+    },
 }
 
 /// Exact doors (context-v2 § Doors) of the definition whose stored name range
@@ -2304,10 +2380,12 @@ pub(crate) struct ExactDoors {
 /// it, their symbols - one, or several split identities of the same
 /// definition - give their references, deduplicated by site and read in the
 /// caller's final read transaction `tx` with 005's scope, snapshot, revision
-/// and source checks, in exactly one `references` window (the same record,
-/// file and line caps). `None` when no such occurrence exists: the caller
-/// gives approximate doors. Only the listed files' first sites are labeled,
-/// so only those files are parsed.
+/// and source checks, in exactly the window `references {handle}` on the
+/// definition reads at limit 256: the definition's own source is its first
+/// file, charged once, then the definition lookup and the references draw on
+/// the same record, file and line caps. No such occurrence gives approximate
+/// doors. Only the listed files' first sites are labeled, so only those files
+/// are parsed.
 pub(crate) fn exact_doors(
     tx: &redb::ReadTransaction,
     revision: u64,
@@ -2315,10 +2393,10 @@ pub(crate) fn exact_doors(
     path: &str,
     source_hash: &str,
     name: (u64, u64),
-) -> FResult<Option<ExactDoors>> {
+) -> FResult<ExactResolution> {
     let producers = read_producers(tx)?;
     let mut examined = 0usize;
-    let NameSymbols::Found(targets) = symbols_at_name(
+    let targets = match symbols_at_name(
         tx,
         &producers,
         revision,
@@ -2326,38 +2404,49 @@ pub(crate) fn exact_doors(
         source_hash,
         name,
         &mut examined,
-    )?
-    else {
-        return Ok(None);
+    )? {
+        NameSymbols::Found(targets) => targets,
+        NameSymbols::Unfinished => return Ok(ExactResolution::Approximate { exhausted: true }),
+        NameSymbols::Unavailable | NameSymbols::Stale { .. } | NameSymbols::Undefined => {
+            return Ok(ExactResolution::Approximate { exhausted: false });
+        }
     };
-    let by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
-    let sources = tx.open_table(SOURCES)?;
-    let chunks = tx.open_table(CHUNKS)?;
-    let mut scopes = eligible_scopes(tx, &producers, &targets)?;
     let mut files: HashMap<String, Option<FileView>> = HashMap::new();
     let mut visited: BTreeSet<String> = BTreeSet::new();
-    let window = reference_window(
-        &by_symbol,
-        &sources,
-        &chunks,
-        &mut scopes,
+    // The definition's source joins the window first, as a handle seed's
+    // does: it counts once toward the visited-file budget.
+    if verified_file(
+        &mut files,
+        &tx.open_table(SOURCES)?,
+        &tx.open_table(CHUNKS)?,
+        path,
+        source_hash,
+    )?
+    .is_none()
+    {
+        return Ok(ExactResolution::Approximate { exhausted: false });
+    }
+    visited.insert(path.to_owned());
+    let found = target_window(
+        tx,
+        &producers,
         &targets,
         None,
         REFERENCES_MAX_LIMIT,
-        None,
         bound,
         false,
         &mut examined,
         &mut files,
         &mut visited,
     )?;
+    let window = found.window;
     let mut doors = ExactDoors {
         lines: Vec::new(),
         more_files: 0,
         full: window.want_more
             || examined >= REFERENCES_MAX_EXAMINED
             || visited.len() >= REFERENCES_MAX_FILES,
-        stale: window.stale,
+        stale: found.stale,
     };
     for sites in window.items.chunk_by(|a, b| a.path == b.path) {
         if doors.lines.len() == crate::store::DOOR_FILES {
@@ -2365,7 +2454,7 @@ pub(crate) fn exact_doors(
             continue;
         }
         let first = &sites[0];
-        let Some(Some(view)) = files.get(&first.path) else {
+        let Some(view) = cached_file(&files, &first.path, &first.sha256) else {
             return Err(FoundryError::CorruptStore(format!(
                 "{}: a delivered reference's source is not loaded",
                 first.path
@@ -2389,7 +2478,7 @@ pub(crate) fn exact_doors(
             more: sites.len() - 1,
         });
     }
-    Ok(Some(doors))
+    Ok(ExactResolution::Doors(doors))
 }
 
 impl ReferencesRequest {

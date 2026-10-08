@@ -5758,6 +5758,271 @@ fn a_graph_replacement_during_door_collection_is_caught_by_the_final_read() {
     assert_eq!(doors(&batch).state, DoorState::Approx);
 }
 
+/// The SCIP range of the `nth` occurrence of `word` in `body`.
+fn word_range(body: &str, word: &str, nth: usize) -> Vec<i32> {
+    let (at, _) = body.match_indices(word).nth(nth).unwrap();
+    scip_range(body, at, word.len())
+}
+
+/// A scope expecting other bytes never reuses a source verified for another
+/// scope (review M1). Two current producers define `Pair` at its name range;
+/// producer B's scope of `src/user.rs` claims bytes the source does not
+/// carry. A's definition and reference there verify the file first, so B's
+/// definition and reference in it would otherwise reuse those bytes under
+/// B's hash: both are stale drops, in `references {handle}` and in the exact
+/// doors alike.
+#[test]
+fn a_scope_expecting_other_bytes_never_reuses_a_file_verified_for_another_scope() {
+    const A_PAIR: &str = "rust-analyzer cargo toy 0.1.0 Pair#";
+    const B_PAIR: &str = "scip-b cargo toy 0.1.0 Pair#";
+    let lib = "pub struct Pair;\n";
+    let user = "fn one() { crate::Pair; }\nfn two() { crate::Pair; }\n";
+    let mut world = World::with_sources(&[("src/lib.rs", lib), ("src/user.rs", user)]);
+    let name = word_range(lib, "Pair", 0);
+    // A also defines its symbol at `one`, so A's definition lookup verifies
+    // user.rs before B's; A's reference is on line 1, B's on line 2.
+    world.import_ok(
+        RA,
+        "a",
+        &artifact(vec![
+            doc("src/lib.rs", vec![occ(&name, A_PAIR, DEF)]),
+            doc(
+                "src/user.rs",
+                vec![
+                    occ(&word_range(user, "one", 0), A_PAIR, DEF),
+                    occ(&word_range(user, "Pair", 0), A_PAIR, REF),
+                ],
+            ),
+        ]),
+    );
+    world.import_ok(
+        "scip-b",
+        "b",
+        &artifact(vec![
+            doc("src/lib.rs", vec![occ(&name, B_PAIR, DEF)]),
+            doc(
+                "src/user.rs",
+                vec![
+                    occ(&word_range(user, "two", 0), B_PAIR, DEF),
+                    occ(&word_range(user, "Pair", 1), B_PAIR, REF),
+                ],
+            ),
+        ]),
+    );
+    make_searchable(&mut world);
+    let actual = world.engine().source("src/user.rs").unwrap().unwrap().hash;
+    let claimed = digest(b"bytes src/user.rs does not carry");
+    let mut row = scope_json(&world.raw(), "scip-b", "src/user.rs");
+    row["source_hash"] = json!(claimed);
+    world
+        .engine()
+        .overwrite_compiler_scope_for_tests("scip-b", "src/user.rs", &row.to_string())
+        .unwrap();
+
+    let batch = context_with(&world, "what uses `Pair`", Strategy::Auto);
+    let built = doors(&batch);
+    assert_eq!(built.state, DoorState::Exact);
+    assert_eq!(door_lines(&batch), [("src/user.rs".to_owned(), 1, 0)]);
+    assert_eq!(built.lines[0].unit.sha256, actual);
+
+    let target = built.target.clone().unwrap();
+    let by_handle = world
+        .references(ReferencesSeed::Handle(target.to_v2()), 64, None)
+        .unwrap();
+    assert_eq!(by_handle.symbol_ids.len(), 2, "both producers' identities");
+    let delivered: Vec<(&str, &str, u64)> = by_handle
+        .definitions
+        .iter()
+        .map(|definition| {
+            (
+                definition.path.as_str(),
+                definition.sha256.as_str(),
+                definition.start,
+            )
+        })
+        .collect();
+    let lib_hash = world.engine().source("src/lib.rs").unwrap().unwrap().hash;
+    assert_eq!(
+        delivered,
+        [
+            (
+                "src/lib.rs",
+                lib_hash.as_str(),
+                lib.find("Pair").unwrap() as u64
+            ),
+            (
+                "src/user.rs",
+                actual.as_str(),
+                user.find("one").unwrap() as u64
+            ),
+        ]
+    );
+    let items: Vec<(&str, u64, &str)> = by_handle
+        .items
+        .iter()
+        .map(|item| (item.path.as_str(), item.line, item.sha256.as_str()))
+        .collect();
+    assert_eq!(items, [("src/user.rs", 1, actual.as_str())]);
+    assert_eq!(
+        by_handle.stale, 2,
+        "B's definition and reference in user.rs"
+    );
+    assert_eq!(by_handle.coverage, Coverage::Partial);
+}
+
+/// A resolved definition that the final read drops as stale gives
+/// `doors:none` (review M3): the doors never move to the namesake the drop
+/// leaves strictly first, and never turn `ambiguous` when the namesakes left
+/// tie.
+#[test]
+fn a_stale_resolved_definition_gives_no_doors_and_promotes_no_namesake() {
+    // The qualifiers `alpha` and `beta` score beta.rs 2 and gamma.rs 1; the
+    // last namesake scores 0 (ordered runners-up) or 1 (tied runners-up).
+    let pivot = "pub fn pivot_dock() {}\n";
+    for (last, runners_up) in [("src/delta.rs", "ordered"), ("src/alpha/eps.rs", "tied")] {
+        let mut world = World::with_sources(&[
+            ("src/alpha/beta.rs", pivot),
+            ("src/alpha/gamma.rs", pivot),
+            (last, pivot),
+            ("src/user.rs", "fn user() { pivot_dock(); }\n"),
+        ]);
+        make_searchable(&mut world);
+        let query = "who calls `alpha::beta::pivot_dock`";
+        let before = context_with(&world, query, Strategy::Auto);
+        let built = doors(&before);
+        assert_eq!(built.state, DoorState::Approx, "{runners_up}");
+        assert_eq!(
+            built.target.as_ref().unwrap().path,
+            "src/alpha/beta.rs",
+            "{runners_up}"
+        );
+        fault::arm(
+            names::CONTEXT_BEFORE_FINAL_VALIDATION,
+            0,
+            Action::Call(Box::new(|ctx| {
+                ctx.engine
+                    .unwrap()
+                    .replace_source(
+                        "src/alpha/beta.rs",
+                        "pub fn pivot_dock() { /* edited */ }\n",
+                    )
+                    .unwrap();
+            })),
+        );
+        let batch = context_with(&world, query, Strategy::Auto);
+        fault::disarm_all();
+        assert_eq!(
+            doors(&batch),
+            &Doors::unbuilt(DoorState::None),
+            "{runners_up}"
+        );
+    }
+}
+
+/// An exact-name scan that runs out of its allowance fills the window
+/// (review M4): 254 split identities at one name range still resolve and
+/// give exact doors; at 255 the scan stops short, approximate doors serve
+/// and the context reports `candidates:full`, as `references {handle}` does.
+#[test]
+fn an_exhausted_exact_name_scan_reports_candidates_full_under_approximate_doors() {
+    let lib = "pub struct Many;\n";
+    let user = "fn user() { crate::Many; }\n";
+    for (identities, state) in [(255usize, DoorState::Approx), (254, DoorState::Exact)] {
+        let mut world = World::with_sources(&[("src/lib.rs", lib), ("src/user.rs", user)]);
+        let symbols: Vec<String> = (0..identities)
+            .map(|i| format!("rust-analyzer cargo toy 0.1.0 Many{i}#"))
+            .collect();
+        let name = word_range(lib, "Many", 0);
+        world.import_ok(
+            RA,
+            "many",
+            &artifact(vec![
+                doc(
+                    "src/lib.rs",
+                    symbols
+                        .iter()
+                        .map(|symbol| occ(&name, symbol, DEF))
+                        .collect(),
+                ),
+                doc(
+                    "src/user.rs",
+                    vec![occ(&word_range(user, "Many", 0), &symbols[0], REF)],
+                ),
+            ]),
+        );
+        make_searchable(&mut world);
+        let batch = context_with(&world, "what uses `Many`", Strategy::Auto);
+        assert_eq!(doors(&batch).state, state, "{identities}");
+        assert_eq!(
+            door_lines(&batch),
+            [("src/user.rs".to_owned(), 1, 0)],
+            "{identities}"
+        );
+        assert!(batch.counters.candidates_full, "{identities}");
+        let (text, parsed) = packed_context(&batch, 2048);
+        assert!(
+            parsed.header.contains(&"candidates:full".to_owned()),
+            "{text}"
+        );
+        if identities == 255 {
+            let target = doors(&batch).target.clone().unwrap();
+            let by_handle = world
+                .references(ReferencesSeed::Handle(target.to_v2()), 64, None)
+                .unwrap();
+            assert!(by_handle.candidates_full);
+            assert_eq!(by_handle.coverage, Coverage::Partial);
+            assert!(by_handle.items.is_empty());
+        }
+    }
+}
+
+/// Exact doors read exactly the window `references {handle}` reads at limit
+/// 256 (review M5): the definition's own source is charged once to the
+/// 64-file budget, so across that boundary both stop after the same 63
+/// referring files.
+#[test]
+fn exact_doors_equal_references_across_the_64_file_boundary() {
+    const EDGE: &str = "rust-analyzer cargo toy 0.1.0 Edge#";
+    let lib = "pub struct Edge;\n";
+    let user = "fn user() { crate::Edge; }\n";
+    let users: Vec<String> = (0..65).map(|i| format!("src/u{i:02}.rs")).collect();
+    let mut sources = vec![("src/lib.rs", lib)];
+    sources.extend(users.iter().map(|path| (path.as_str(), user)));
+    let mut world = World::with_sources(&sources);
+    let mut documents = vec![doc(
+        "src/lib.rs",
+        vec![occ(&word_range(lib, "Edge", 0), EDGE, DEF)],
+    )];
+    let site = word_range(user, "Edge", 0);
+    documents.extend(
+        users
+            .iter()
+            .map(|path| doc(path, vec![occ(&site, EDGE, REF)])),
+    );
+    world.import_ok(RA, "edge", &artifact(documents));
+    make_searchable(&mut world);
+    let batch = context_with(&world, "what uses `Edge`", Strategy::Auto);
+    let built = doors(&batch);
+    assert_eq!(built.state, DoorState::Exact);
+    let by_handle = world
+        .references(
+            ReferencesSeed::Handle(built.target.clone().unwrap().to_v2()),
+            256,
+            None,
+        )
+        .unwrap();
+    assert!(by_handle.candidates_full);
+    let files = first_sites(&by_handle);
+    assert_eq!(
+        files.len(),
+        63,
+        "the definition's file and 63 referring files"
+    );
+    assert_eq!(door_lines(&batch), files[..16]);
+    assert_eq!(built.more_files, files.len() - 16);
+    assert!(batch.counters.candidates_full);
+}
+
 #[test]
 fn references_request_validation_is_pure_syntax_and_bounds() {
     let request = |seed, limit, after: Option<&str>| ReferencesRequest {

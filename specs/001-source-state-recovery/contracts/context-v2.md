@@ -216,12 +216,13 @@ segments appear only when not at their default:
 6. `shown:<k>`, the items rendered (search and context);
 7. `omitted:<n>` when packing dropped constructed candidates;
 8. `capped:<n>` when the per-file cap skipped hits;
-9. `stale:<n>` when the final read dropped stale source or graph candidates;
+9. `stale:<n>` when the final read dropped stale source candidates or door sites;
 10. `candidates:full` when a candidate window filled: search tier 1's 64 slots with
-    definitions left over, tier 2 at 256, or a context graph examination window (32
-    rows per seed and direction) that filled exactly or was truncated;
-11. `graph:<ok|graph_unavailable|graph_stale|graph_invalid>` when the strategy
-    resolved to graph;
+    definitions left over, tier 2 at 256, an exact-doors references window (256
+    records, 64 files) or its exact-name resolution, or the approximate-doors window of
+    256 units;
+11. (removed by 005 T004) `graph:<state>` reported path-seeded graph expansion; an
+    anchored context reports `doors:<state>` instead (§ Anchored context);
 12. `examined:<n>`: `foundry references` only, always present. Counts the graph records
     examined in this window, definition lookups included;
 13. `unresolved:<n>`: `foundry references` only, present when n > 0. Counts examined
@@ -240,11 +241,11 @@ held), segments 7–10 keep their meanings:
 absence. `coverage:complete` still covers only supported indexed input inside the
 examined window, so it never proves absence beyond it (§ Deduplication, no cross-call
 suppression). Database and store failures stay named errors, never a
-`coverage:unavailable` success. `graph:` stays context-only.
+`coverage:unavailable` success.
 
 Header segments amendment, 2026-10-05 (013 T003): a context whose strategy is `auto`
 on an owner or command started with a policy config that is not disabled (an invalid one included) adds one last segment,
-after `graph:` and 009's `semantic:` word: `route:policy` when the policy's choice was
+after 009's `semantic:` word: `route:policy` when the policy's choice was
 accepted, else `route:fallback:<reason>` with deterministic routing, the reason one of
 `policy_abstained`, `policy_busy`, `policy_timeout`, `policy_insufficient_time`,
 `policy_unavailable`, `policy_input_oversize`, `graph_unavailable` or `graph_stale`. An explicit strategy,

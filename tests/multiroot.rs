@@ -779,6 +779,126 @@ async fn a_multi_root_graph_context_requests_doors_and_reads_no_manual_graph() {
     client.cancel().await.unwrap();
 }
 
+/// A repository with `files`, bootstrapped into its own store.
+fn repo_with(parent: &Path, name: &str, files: &[(&str, &str)]) -> Repo {
+    let root = parent.join(name);
+    for (path, body) in files {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, body).unwrap();
+    }
+    let store = parent.join(format!("{name}-store"));
+    bootstrap_apply(&store, &root);
+    Repo { root, store }
+}
+
+/// 007 (context-v2 § Doors): the merged first anchor's doors target is
+/// decided from every root's window as collected. The primary's qualified
+/// winner, dropped as stale by the primary's final read, gives the merged
+/// context `doors:none`: a reference root's namesake that the drop leaves
+/// strictly first is never promoted (ordered), and namesakes left tied
+/// across roots never make it `ambiguous` (tied). The owner's per-root flow
+/// runs in process, so the barrier fires in the primary's own final read.
+#[test]
+fn a_stale_merged_winner_gives_no_doors_and_promotes_no_other_roots_namesake() {
+    use context_foundry::fault::{self, Action, names};
+    use context_foundry::store::{ContextOptions, DoorState, Doors};
+    use context_foundry::{Control, Engine, Strategy, roots};
+    let pivot = "pub fn pivot_dock() {}\n";
+    let user = "fn user() { pivot_dock(); }\n";
+    // One reference root's files.
+    type Files<'a> = Vec<(&'a str, &'a str)>;
+    // The qualifiers `alpha` and `beta` score the primary's beta.rs 2 and
+    // gamma.rs 1; delta.rs scores 0 and eps.rs 1.
+    let cases: [(&str, Vec<Files<'_>>); 2] = [
+        (
+            "ordered",
+            vec![vec![
+                ("src/alpha/gamma.rs", pivot),
+                ("src/delta.rs", pivot),
+                ("src/user.rs", user),
+            ]],
+        ),
+        (
+            "tied",
+            vec![
+                vec![("src/alpha/gamma.rs", pivot), ("src/user.rs", user)],
+                vec![("src/alpha/eps.rs", pivot), ("src/user.rs", user)],
+            ],
+        ),
+    ];
+    let query = "who calls `alpha::beta::pivot_dock`";
+    for (runners_up, references) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let mut repos = vec![repo_with(
+            dir.path(),
+            "ws0",
+            &[("src/alpha/beta.rs", pivot)],
+        )];
+        for (i, files) in references.iter().enumerate() {
+            repos.push(repo_with(dir.path(), &format!("ref{i}"), files));
+        }
+        let engines: Vec<Engine> = repos
+            .iter()
+            .map(|repo| Engine::open_existing(&repo.store).unwrap())
+            .collect();
+        let merged = |barrier: bool| {
+            let control = Control::unbounded();
+            let serving: Vec<&Engine> = engines.iter().collect();
+            let anchors = roots::select_anchors(&serving, query, None, &control).unwrap();
+            if barrier {
+                fault::arm(
+                    names::CONTEXT_BEFORE_FINAL_VALIDATION,
+                    0,
+                    Action::Call(Box::new(|ctx| {
+                        let engine = ctx.engine.unwrap();
+                        // Only the primary holds the winner.
+                        if engine.source("src/alpha/beta.rs").unwrap().is_some() {
+                            engine
+                                .replace_source(
+                                    "src/alpha/beta.rs",
+                                    "pub fn pivot_dock() { /* edited */ }\n",
+                                )
+                                .unwrap();
+                        }
+                    })),
+                );
+            }
+            let options = ContextOptions {
+                anchors: Some(&anchors),
+                ..ContextOptions::default()
+            };
+            let batches: Vec<roots::RootBatch> = engines
+                .iter()
+                .enumerate()
+                .map(|(i, engine)| roots::RootBatch {
+                    alias: format!("r{i}"),
+                    batch: engine
+                        .context_candidates_with(query, Strategy::Auto, &control, &options)
+                        .unwrap()
+                        .batch,
+                })
+                .collect();
+            fault::disarm_all();
+            roots::merge_context(&batches)
+                .doors
+                .expect("the primary requested doors")
+        };
+        let before = merged(false);
+        assert_eq!(before.state, DoorState::Approx, "{runners_up}");
+        assert_eq!(
+            before.target.as_ref().unwrap().path,
+            "src/alpha/beta.rs",
+            "{runners_up}"
+        );
+        assert_eq!(
+            merged(true),
+            Doors::unbuilt(DoorState::None),
+            "{runners_up}"
+        );
+    }
+}
+
 /// 007 group 3 through the owner: the reference defines no exact-case
 /// `Engine`, yet the owner chooses the anchor once over every root, so the
 /// reference's `motor` definition, which the query's path qualifies, resolves
