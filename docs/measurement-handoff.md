@@ -39,15 +39,15 @@ public sources; the datasets, results and converted model files are not redistri
 | Input | Location | Identity |
 | --- | --- | --- |
 | Context Foundry | this repository | main, at or after the cache-cap commit |
-| rust-lang/rust source | `corpora/rust-1.99.0` | release 1.99.0 |
-| oh-my-pi source | `oh-my-pi` | commit `5b8d5b8a15` |
+| rust-lang/rust source | `corpora/rust-1.99.0`, or a clone of `github.com/rust-lang/rust` at tag `1.99.0` without submodules | commit `b940084d` |
+| oh-my-pi source | `oh-my-pi`, or a clone of `github.com/can1357/oh-my-pi` (no `node_modules`) | commit `5b8d5b8a15` |
 | G1 apparatus and baseline runs | `datasets/context-foundry-citymap` | `FROZEN-G1v4.txt` (`g1v4.py` `5f7dac42…`, `g1score.py` `5dc1c5e8…`, `g1compare.py` `458a8c0d…`, `g1quick.sh` `dc2e96e9…`, `runs-SHA256SUMS` `9cee37e2…`) |
 | G1 baseline stores, SCIP artifact, baseline binary, o200k counter | `datasets/context-foundry-citymap/inputs` | `store-rust-g1base`, `store-bun-g1base`, `index.scip`, `foundry-baseline` (`SHA256SUMS`), `o200k` |
 | G2 questions | `datasets/context-foundry-g2/questions.jsonl` | `e434d569…` (388: 197 rust, 191 bun) |
 | G2 harness | `datasets/context-foundry-g2-harness/g2.py` | `6cf3e1bc…` |
 | G2 candidate profiles, wrappers, Nemotron conversion | `datasets/context-foundry-g2-runs` | `FROZEN.txt` of 2026-10-08T11:31:14Z: K = 2, `gemma.json` `bb1c9d08…`, `nemotron.json` `619205ad…` |
-| EmbeddingGemma 2 | `models/embeddinggemma-2-GGUF-bfcd2987`, tokenizer from `models/embeddinggemma-2-914f7f89` | GGUF `68bae29d…` (Apache-2.0) |
-| Nemotron 3 Embed 1B | GGUF converted offline from `models/Nemotron-3-Embed-1B-BF16` by `nemotron-conversion/convert_noncausal.py` | GGUF `e0cd7ff3…`; parity against the torch reference min cosine 0.999691 (OpenMDW-1.1) |
+| EmbeddingGemma 2 | `datasets/context-foundry-g2-runs/artifacts/models/gemma` (from `models/embeddinggemma-2-GGUF-bfcd2987` and the tokenizer of `models/embeddinggemma-2-914f7f89`) | GGUF `68bae29d…`, tokenizer `4d777ef5…` (Apache-2.0) |
+| Nemotron 3 Embed 1B | `datasets/context-foundry-g2-runs/artifacts/models/nemotron`, converted offline from `models/Nemotron-3-Embed-1B-BF16` by `nemotron-conversion/convert_noncausal.py` | GGUF `e0cd7ff3…`, tokenizer `797410df…`; parity against the torch reference min cosine 0.999691 (OpenMDW-1.1) |
 | llama.cpp | public `ggml-org/llama.cpp` | commit `b9acf138`; `build.rs` builds it |
 
 `g2.py` reads the token counter at `/private/tmp/cf-o200k/target/release/o200k_count`;
