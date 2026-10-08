@@ -1519,6 +1519,25 @@ fn address_segments_split_the_path_and_the_qualified_name() {
         syntax::address_segments(&[], Lang::Java, "Outer.Inner.run"),
         ["outer", "inner"]
     );
+    // A generic list ends at its own close: the `>` of `->`, a `>` inside a
+    // parenthesized or braced group and a `>` in a char or string literal
+    // close nothing; a lifetime is no literal.
+    for (lang, qname, want) in [
+        (Lang::Rust, "Mapper<fn() -> u8>::run", &["mapper"][..]),
+        (
+            Lang::Rust,
+            "Mapper<fn(Vec<u8>) -> Option<u8>>::Inner::run",
+            &["mapper", "inner"],
+        ),
+        (Lang::Rust, "Grid<{ N > 2 }>::cell", &["grid"]),
+        (Lang::Rust, "Tag<'>'>::get", &["tag"]),
+        (Lang::Rust, "Tag<'\\''>::get", &["tag"]),
+        (Lang::Rust, "Ref<'a, Slot<'a>>::get", &["ref"]),
+        (Lang::Cpp, "Box<(a > b), \"x>y\">::get", &["box"]),
+        (Lang::Go, "Stack[func() []int].Push", &["stack"]),
+    ] {
+        assert_eq!(syntax::address_segments(&[], lang, qname), want, "{qname}");
+    }
     assert_eq!(syntax::path_segments(".gitignore"), ["gitignore"]);
 }
 
@@ -1677,4 +1696,75 @@ fn enum_members_and_module_level_bindings_are_definitions() {
         &syntax::outline(source, Lang::Rust, 0..source.len(), 0, 0),
     );
     assert_eq!(shown, source);
+}
+
+/// A quoted TypeScript enum member is a variant like a bare one (the enum
+/// body's `name` field holds either), with or without an initializer; its
+/// name is the text inside its quotes.
+#[test]
+fn quoted_typescript_enum_members_are_variants_named_inside_their_quotes() {
+    let source = "enum Mode { \"Fast\", Slow = 2, \"Quick\" = 3 }\n";
+    let found = syntax::units(source, Lang::TypeScript);
+    let shown: Vec<(&str, Option<&str>, &str, &str)> = found
+        .iter()
+        .map(|unit| {
+            let (start, end) = unit.name_range.expect("a definition");
+            (
+                unit.kind.as_str(),
+                unit.qname.as_deref(),
+                &source[unit.start..unit.end],
+                &source[start..end],
+            )
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("enum", Some("Mode"), source.trim_end(), "Mode"),
+            ("variant", Some("Mode.Fast"), "\"Fast\"", "Fast"),
+            ("variant", Some("Mode.Slow"), "Slow = 2", "Slow"),
+            ("variant", Some("Mode.Quick"), "\"Quick\" = 3", "Quick"),
+        ]
+    );
+    // One document holds each member's name: one definition each.
+    let documents = assert_tiles(source, Some(Lang::TypeScript));
+    for unit in &found[1..] {
+        let (name_start, _) = unit.name_range.unwrap();
+        let holding = documents
+            .iter()
+            .filter(|document| document.start <= name_start && name_start < document.end)
+            .filter(|document| document.unit.qname == unit.qname)
+            .count();
+        assert_eq!(holding, 1, "{:?}", unit.qname);
+    }
+}
+
+/// A Go declaration with one spec supplies the range and the leading docs,
+/// also when grouped: the grammar's `var_spec_list` sits between `var ( … )`
+/// and its spec. With several specs each spec keeps its own range and docs.
+#[test]
+fn a_grouped_go_declaration_with_one_spec_is_the_range() {
+    let source = "package p\n\n// Count is documented.\nvar (\n\tcount int\n)\n\nvar (\n\t// First is documented.\n\tfirst int\n\tsecond int\n)\n\n// Limit is documented.\nconst (\n\tLimit = 3\n)\n";
+    assert_eq!(
+        units(source, Lang::Go),
+        [
+            named(
+                "static",
+                "count",
+                "// Count is documented.\nvar (\n\tcount int\n)"
+            ),
+            named("static", "first", "// First is documented.\n\tfirst int"),
+            named("static", "second", "second int"),
+            named(
+                "const",
+                "Limit",
+                "// Limit is documented.\nconst (\n\tLimit = 3\n)"
+            ),
+        ]
+    );
+    for unit in syntax::units(source, Lang::Go) {
+        let (start, end) = unit.name_range.expect("a definition");
+        assert_eq!(Some(&source[start..end]), unit.name.as_deref());
+    }
+    assert_tiles(source, Some(Lang::Go));
 }

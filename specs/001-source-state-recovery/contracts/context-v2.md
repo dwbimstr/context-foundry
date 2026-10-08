@@ -990,7 +990,9 @@ already ordered batch, is:
 
 The header's last segments are, in order, `defs:<n>` (when an anchor is ambiguous; the
 largest count among them), `doors:<state>` (when doors were requested) and `anchored`;
-the 40-token header bound holds at their largest values. A query without an anchor
+the header line fixture stays within 40 tokens with them at their largest values (a
+bound on that fixture, not on every combination: all numeric segments at their maximum
+exceed it). A query without an anchor
 keeps today's ordering and packing rules, with two changes: its tier 1 sees one
 document per definition (§ Definitions and addresses), and when it requests doors it
 gets `doors:none` and search packing instead of graph expansion (§ Doors). When 009

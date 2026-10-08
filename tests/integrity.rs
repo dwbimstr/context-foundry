@@ -13,7 +13,7 @@ use context_foundry::testkit::{
 use context_foundry::{Control, Engine, FoundryError, Strategy, digest};
 
 /// Whether any candidate's first form (a unit's bytes, an outline or a graph
-/// line) contains `needle`.
+/// line) contains `needle`; an `[address]` form carries no text.
 fn mentions(batch: &CandidateBatch, needle: &str) -> bool {
     batch.items.iter().any(|item| {
         item.forms.first().is_some_and(|form| match form {
@@ -22,6 +22,7 @@ fn mentions(batch: &CandidateBatch, needle: &str) -> bool {
             | RenderedForm::Outline(text)
             | RenderedForm::OutlineMin(text)
             | RenderedForm::Line(text) => text.contains(needle),
+            RenderedForm::Address => false,
         })
     })
 }

@@ -12,11 +12,12 @@
 //! responses: one budget, one reservation and one charge cover the whole
 //! merged response, packed once by the v2 ladder over the merged list.
 
-use crate::FoundryError;
 use crate::store::{
-    ANCHOR_LIST, AnchorWindow, CandidateBatch, CandidateCounters, Hit, MAX_ANCHORS, RankedItem,
-    RenderedForm, SearchOutcome, TIER_COMPILER, TIER_GRAPH, TIER_OUTLINE,
+    ANCHOR_LIST, AnchorCandidate, AnchorWindow, CandidateBatch, CandidateCounters, Hit,
+    MAX_ANCHORS, QueryAnchors, RankedItem, RenderedForm, SearchOutcome, TIER_COMPILER, TIER_GRAPH,
+    TIER_OUTLINE,
 };
+use crate::{Control, Engine, FoundryError, error::FResult};
 use std::path::{Path, PathBuf};
 
 /// At most this many references may be admitted besides `primary`.
@@ -320,11 +321,39 @@ fn summed_counters(batches: &[RootBatch]) -> CandidateCounters {
     counters
 }
 
+/// A multi-root request's anchors (context-v2 § Anchors and qualifiers;
+/// 007), chosen once over every serving root before any root collects
+/// candidates: groups 1 and 2 from the query, then each capitalized
+/// candidate, in order, that some root defines exactly as written (one
+/// cheap probe per root until one admits it), at most four in all. This is
+/// the union of the roots' own choices by text, in group and position
+/// order, capped at four; every root then builds every chosen anchor's
+/// window, so counts, windows and search's tier 1 cover all roots. The
+/// cancel/deadline control is checked before each probe. `path` is the
+/// search's path filter.
+pub fn select_anchors(
+    engines: &[&Engine],
+    query: &str,
+    path: Option<&str>,
+    control: &Control,
+) -> FResult<Vec<AnchorCandidate>> {
+    QueryAnchors::parse(query).select(|candidate| {
+        for engine in engines {
+            control.check()?;
+            if engine.defines_exact_case(&candidate.text, path)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    })
+}
+
 /// The merged anchor windows (context-v2 § Resolver order; 007): one per
-/// anchor in anchor order, at most four; each anchor's definitions summed
-/// over the merged roots, and its entries ordered by the resolver tuple,
-/// then root order, then each root's own order — `key_hash` decided only
-/// inside a root — cut to [`ANCHOR_LIST`].
+/// anchor in anchor order — every root holds the same anchors
+/// ([`select_anchors`]) — each anchor's definitions summed over the merged
+/// roots, and its entries ordered by the resolver tuple, then root order,
+/// then each root's own order — `key_hash` decided only inside a root — cut
+/// to [`ANCHOR_LIST`].
 fn merged_anchors(batches: &[RootBatch]) -> Vec<AnchorWindow> {
     let mut merged: Vec<AnchorWindow> = Vec::new();
     for root in batches {

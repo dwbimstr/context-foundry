@@ -666,6 +666,7 @@ fn run() -> AResult<()> {
                     path.as_deref(),
                     limit,
                     &control,
+                    None,
                 )?)
             } else {
                 engine.search_in(&query, path.as_deref(), limit)?
@@ -731,6 +732,7 @@ fn run() -> AResult<()> {
                     strategy,
                     &control,
                     include_memory,
+                    None,
                 )?;
                 (combined.batch, combined.hits)
             } else if include_memory {

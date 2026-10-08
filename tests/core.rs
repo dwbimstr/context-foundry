@@ -2182,8 +2182,10 @@ fn a_documented_definition_owns_its_doc_and_tier_one_names_its_definition() {
 // --- City map (context-v2 § City map; 001 T007) -----------------------------
 
 use context_foundry::response::{RootHeader, stdout_bytes};
-use context_foundry::roots::{RootBatch, merge_context};
-use context_foundry::store::{AnchorWindow, CandidateBatch, QueryAnchors, path_role, role};
+use context_foundry::roots::{RootBatch, merge_context, merge_search, select_anchors};
+use context_foundry::store::{
+    AnchorWindow, CandidateBatch, ContextOptions, QueryAnchors, RenderedForm, path_role, role,
+};
 use context_foundry::testkit::{V2Kind, V2Response};
 
 /// One context at `tokens`: its candidate batch, packed text and parse.
@@ -2592,6 +2594,50 @@ fn the_resolver_orders_by_qualifier_then_exact_case_then_role_then_path() {
     assert_eq!(source(&batch.items[0]).path, "tests/exact.rs");
 }
 
+/// The impl of a type with a function-pointer generic argument keeps its
+/// type as the address qualifier: the `>` of `fn() -> u8` closes nothing,
+/// so `Mapper::run` resolves to that impl's method, not to `Other::run`.
+#[test]
+fn a_function_pointer_generic_keeps_the_impl_type_as_qualifier() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    let source = "pub struct Mapper<T>(T);\n\nimpl Mapper<fn() -> u8> {\n    pub fn run(&self) {}\n}\n\npub struct Other;\n\nimpl Other {\n    pub fn run(&self) {}\n}\n";
+    engine.replace_source("src/lib.rs", source).unwrap();
+    drain(&mut engine);
+    let window = &windows(&engine, "`Mapper::run`")[0];
+    assert_eq!(window.definitions, 2);
+    assert!(window.resolved());
+    assert_eq!(window.entries[0].label, "fn Mapper<fn() -> u8>::run");
+    let other = &windows(&engine, "`Other::run`")[0];
+    assert!(other.resolved());
+    assert_eq!(other.entries[0].label, "fn Other::run");
+}
+
+/// A quoted TypeScript enum member is one definition of the name inside its
+/// quotes, resolved like a bare member.
+#[test]
+fn a_quoted_enum_member_is_one_definition_of_its_name() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    engine
+        .replace_source(
+            "src/mode.ts",
+            "export enum Mode { \"Fast\", Slow = 2, \"Quick\" = 3 }\n",
+        )
+        .unwrap();
+    drain(&mut engine);
+    for (name, label) in [
+        ("Fast", "variant Mode.Fast"),
+        ("Slow", "variant Mode.Slow"),
+        ("Quick", "variant Mode.Quick"),
+    ] {
+        let window = &windows(&engine, &format!("`{name}`"))[0];
+        assert_eq!(window.definitions, 1, "{name}");
+        assert!(window.resolved(), "{name}");
+        assert_eq!(window.entries[0].label, label);
+    }
+}
+
 /// Every matching definition is scored, so a window over more than 64
 /// definitions still finds the qualified one; unqualified, the name is
 /// ambiguous and the header reports its count.
@@ -2623,16 +2669,33 @@ fn a_window_over_64_definitions_finds_the_intended_one() {
     assert!(header.ends_with(" · defs:71 · anchored"), "{header}");
     assert!(response::count_tokens(header) <= 40, "{header}");
     assert_eq!(kinds(&parsed), [V2Kind::Source; 16]);
-    // The header bound holds at the largest definition count.
+    // The header bound holds on this fixture at the largest values of what
+    // an anchored context adds and of the requested budget: defs at
+    // u64::MAX and budget 32768, beside the fixture's own scan, shown,
+    // omitted and candidates:full. A limiter label does not fit as well: at
+    // the session limiter this header is 41 o200k tokens, `foundry context ·
+    // r71 · scan:never · budget:32768(session) · shown:16 · omitted:16 ·
+    // candidates:full · defs:18446744073709551615 · anchored`. Nor does every
+    // optional segment at once: the baseline segments alone count 56 at
+    // small values (r12, scan:incomplete, pending:3, budget:32768(session),
+    // shown:16, omitted:71, capped:2, stale:1, candidates:full,
+    // graph:graph_unavailable, semantic:partial, route:policy), and 106 with
+    // every number at u64::MAX and defs and anchored added.
     let mut largest = batch.clone();
     largest.anchors[0].definitions = u64::MAX;
     let packed = response::pack_context(&largest, Budget::request(32_768), &stdout_bytes).unwrap();
     let header = packed.text.lines().next().unwrap();
     assert!(
+        header.contains(" · budget:32768 · shown:16 · omitted:"),
+        "{header}"
+    );
+    assert!(header.contains(" · candidates:full · "), "{header}");
+    assert!(
         header.ends_with(" · defs:18446744073709551615 · anchored"),
         "{header}"
     );
-    assert!(response::count_tokens(header) <= 40, "{header}");
+    let tokens = response::count_tokens(header);
+    assert!(tokens <= 40, "{tokens}: {header}");
 }
 
 /// A resolved anchor: its definition through the ladder, then at most 8
@@ -2667,9 +2730,68 @@ fn a_resolved_anchor_packs_its_definition_and_eight_directory_lines() {
         assert_eq!(line.label.as_deref(), Some("fn render"));
     }
     // No pointer to the caller or anything else: it is omitted and counted.
+    // The batch holds the 13 definitions and `main` (each file one unit, so
+    // no outline); 1 + 8 are shown, so 4 namesakes and `main` are omitted.
     assert!(!packed.text.contains("app/main.rs"));
-    assert!(packed.omitted > 0);
-    assert!(says(&parsed, &format!("omitted:{}", packed.omitted)));
+    assert_eq!(batch.items.len(), 14);
+    assert_eq!(packed.omitted, 5);
+    assert!(says(&parsed, "omitted:5"));
+    // The ladder's last rung is the seam's `[address]` form.
+    for entry in &batch.anchors[0].entries {
+        assert_eq!(entry.forms.last(), Some(&RenderedForm::Address));
+    }
+}
+
+/// One of two same-name anchored definitions changes between candidate
+/// collection and the final read: it is a tier-1 item and an anchor-window
+/// entry, yet it is dropped from both, absent from the output and counted
+/// stale exactly once.
+#[test]
+fn a_changed_anchored_definition_is_dropped_and_counted_stale_once() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    engine
+        .replace_source("src/a.rs", "pub fn same_probe() {}\n")
+        .unwrap();
+    engine
+        .replace_source("src/b.rs", "pub fn same_probe() {}\n")
+        .unwrap();
+    drain(&mut engine);
+    let query = "`same_probe`";
+    // Unchanged: both are listed and nothing is stale.
+    let (batch, packed, _) = context_at(&engine, query, 2048);
+    assert_eq!(batch.counters.stale, 0);
+    assert_eq!(paths(&batch.anchors[0]), ["src/a.rs", "src/b.rs"]);
+    assert!(packed.text.contains("\nsrc/b.rs#"), "{}", packed.text);
+    fault::arm(
+        names::CONTEXT_BEFORE_FINAL_VALIDATION,
+        0,
+        Action::Call(Box::new(|ctx| {
+            ctx.engine
+                .unwrap()
+                .replace_source("src/b.rs", "pub fn other_probe() {}\n")
+                .unwrap();
+        })),
+    );
+    let batch = engine
+        .context_candidates(query, Strategy::Search, &Control::unbounded())
+        .unwrap();
+    fault::disarm_all();
+    assert_eq!(batch.counters.stale, 1);
+    assert_eq!(paths(&batch.anchors[0]), ["src/a.rs"]);
+    assert!(
+        batch
+            .items
+            .iter()
+            .all(|item| source(item).path != "src/b.rs"),
+        "{:?}",
+        batch.items
+    );
+    let packed = response::pack_context(&batch, Budget::request(2048), &stdout_bytes).unwrap();
+    let parsed = parse_v2(&packed.text).unwrap();
+    assert!(!packed.text.contains("src/b.rs"), "{}", packed.text);
+    assert!(says(&parsed, "stale:1"), "{}", packed.text);
+    assert_eq!(kinds(&parsed), [V2Kind::Source]);
 }
 
 /// An ambiguous anchor lists the first 16 of its window, even 20 definitions
@@ -2868,15 +2990,23 @@ fn a_query_without_anchors_keeps_todays_packing() {
     );
 }
 
-/// Context over the 007 merge of `roots`, packed at 2048 tokens.
+/// Context over the 007 merge of `roots`, packed at 2048 tokens: the anchors
+/// are chosen once over every root, as the owner does.
 fn merged_context(roots: &[(&str, Engine)], query: &str) -> (CandidateBatch, V2Response) {
     let control = Control::unbounded();
+    let engines: Vec<&Engine> = roots.iter().map(|(_, engine)| engine).collect();
+    let anchors = select_anchors(&engines, query, None, &control).unwrap();
+    let options = ContextOptions {
+        anchors: Some(&anchors),
+        ..ContextOptions::default()
+    };
     let mut batches = Vec::new();
     let mut headers = Vec::new();
     for (alias, engine) in roots {
         let batch = engine
-            .context_candidates(query, Strategy::Search, &control)
-            .unwrap();
+            .context_candidates_with(query, Strategy::Search, &control, &options)
+            .unwrap()
+            .batch;
         headers.push(RootHeader {
             alias: (*alias).to_owned(),
             label: (*alias).to_owned(),
@@ -2944,6 +3074,176 @@ fn multi_root_windows_sum_counts_and_order_by_tuple_then_root() {
     assert!(merged.anchors[0].resolved());
     assert_eq!(kinds(&parsed), [V2Kind::Source, V2Kind::Locator]);
     assert!(parsed.items[0].handle.ends_with(&ws16(&roots[1].1)));
+}
+
+/// One indexed engine per `(alias, files)` under `fixture`, with its store.
+fn indexed_roots(
+    fixture: &Path,
+    roots: &[(&'static str, &[(&str, &str)])],
+) -> (Vec<tempfile::TempDir>, Vec<(&'static str, Engine)>) {
+    let mut stores = Vec::new();
+    let mut engines = Vec::new();
+    for &(alias, files) in roots {
+        let (store, mut engine) = setup(&fixture.join(alias));
+        for (path, body) in files {
+            engine.replace_source(path, body).unwrap();
+        }
+        drain(&mut engine);
+        stores.push(store);
+        engines.push((alias, engine));
+    }
+    (stores, engines)
+}
+
+/// 007 group 3: the reference defines no exact-case `Engine`, so alone it
+/// takes no anchor; the owner admits `Engine` once over every root, and the
+/// reference's `motor` definition, whose path segment the query qualifies,
+/// beats the primary's exact-case one.
+#[test]
+fn a_capitalized_anchor_admitted_by_one_root_resolves_across_all_roots() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_stores, roots) = indexed_roots(
+        fixture.path(),
+        &[
+            ("primary", &[("src/lib.rs", "pub struct Engine;\n")]),
+            ("ref1", &[("src/motor.rs", "pub fn engine() {}\n")]),
+        ],
+    );
+    let query = "where is Engine in motor.rs";
+    assert_eq!(windows(&roots[0].1, query).len(), 1);
+    assert!(
+        windows(&roots[1].1, query).is_empty(),
+        "ref1 alone admits none"
+    );
+    let engines: Vec<&Engine> = roots.iter().map(|(_, engine)| engine).collect();
+    let chosen = select_anchors(&engines, query, None, &Control::unbounded()).unwrap();
+    let texts: Vec<&str> = chosen.iter().map(|anchor| anchor.text.as_str()).collect();
+    assert_eq!(texts, ["Engine"]);
+    let ws16 = |engine: &Engine| engine.workspace_id().unwrap()[..16].to_owned();
+    let (merged, parsed) = merged_context(&roots, query);
+    assert_eq!(merged.anchors.len(), 1);
+    assert_eq!(merged.anchors[0].definitions, 2);
+    assert!(merged.anchors[0].resolved());
+    assert_eq!(paths(&merged.anchors[0]), ["src/motor.rs", "src/lib.rs"]);
+    assert_eq!(kinds(&parsed), [V2Kind::Source, V2Kind::Locator]);
+    assert!(parsed.items[0].handle.starts_with("src/motor.rs#"));
+    assert!(parsed.items[0].handle.ends_with(&ws16(&roots[1].1)));
+    assert_eq!(parsed.items[0].label.as_deref(), Some("fn engine"));
+    assert!(parsed.items[1].handle.ends_with(&ws16(&roots[0].1)));
+}
+
+/// 007 group 3 over four anchors: the union of the roots' choices in group
+/// and position order, capped at four, is every root's anchor set; each
+/// window counts every root's definitions, and no root keeps a tier-1 window
+/// for the fifth candidate in context or search.
+#[test]
+fn four_capitalized_anchors_are_one_union_over_the_roots() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_stores, roots) = indexed_roots(
+        fixture.path(),
+        &[
+            (
+                "primary",
+                &[("src/a.rs", "pub struct Alpha;\n\npub struct Gamma;\n")],
+            ),
+            (
+                "ref1",
+                &[(
+                    "src/b.rs",
+                    "pub struct Beta;\n\npub struct Delta;\n\npub struct Epsilon;\n\npub fn alpha() {}\n",
+                )],
+            ),
+        ],
+    );
+    let query = "show Alpha Beta Gamma Delta Epsilon";
+    let alone: Vec<String> = windows(&roots[1].1, query)
+        .into_iter()
+        .map(|window| window.anchor)
+        .collect();
+    assert_eq!(alone, ["Beta", "Delta", "Epsilon"], "ref1's own choice");
+    let engines: Vec<&Engine> = roots.iter().map(|(_, engine)| engine).collect();
+    let control = Control::unbounded();
+    let chosen = select_anchors(&engines, query, None, &control).unwrap();
+    let texts: Vec<&str> = chosen.iter().map(|anchor| anchor.text.as_str()).collect();
+    assert_eq!(texts, ["Alpha", "Beta", "Gamma", "Delta"]);
+    let (merged, parsed) = merged_context(&roots, query);
+    let counts: Vec<(&str, u64)> = merged
+        .anchors
+        .iter()
+        .map(|window| (window.anchor.as_str(), window.definitions))
+        .collect();
+    assert_eq!(
+        counts,
+        [("Alpha", 2), ("Beta", 1), ("Gamma", 1), ("Delta", 1)],
+        "ref1's `alpha` counts toward `Alpha`"
+    );
+    assert_eq!(paths(&merged.anchors[0]), ["src/a.rs", "src/b.rs"]);
+    let orders: Vec<(u8, usize)> = chosen
+        .iter()
+        .map(|anchor| (anchor.group, anchor.position))
+        .collect();
+    for item in merged.items.iter().filter(|item| item.tier == 1) {
+        let resolver = item.resolver.expect("every root's tier 1 is its windows");
+        assert!(orders.contains(&resolver.anchor), "{:?}", item.label);
+    }
+    assert!(says(&parsed, "anchored"));
+    let labels: Vec<&str> = parsed
+        .items
+        .iter()
+        .filter_map(|item| item.label.as_deref())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "struct Alpha",
+            "fn alpha",
+            "struct Beta",
+            "struct Gamma",
+            "struct Delta"
+        ]
+    );
+    // Search's merged tier 1 is the same four windows in anchor order.
+    let batches: Vec<RootBatch> = roots
+        .iter()
+        .map(|(alias, engine)| RootBatch {
+            alias: (*alias).to_owned(),
+            batch: engine
+                .search_candidates_with(query, None, 10, &control, Some(&chosen))
+                .unwrap(),
+        })
+        .collect();
+    for root in &batches {
+        let anchors: Vec<&str> = root
+            .batch
+            .anchors
+            .iter()
+            .map(|window| window.anchor.as_str())
+            .collect();
+        assert_eq!(
+            anchors,
+            ["Alpha", "Beta", "Gamma", "Delta"],
+            "{}",
+            root.alias
+        );
+    }
+    let search = merge_search(&batches, 10);
+    let tier_one: Vec<(&str, &str)> = search
+        .hits
+        .iter()
+        .filter(|hit| hit.tier == 1)
+        .map(|hit| (hit.path.as_str(), hit.label.as_str()))
+        .collect();
+    assert_eq!(
+        tier_one,
+        [
+            ("src/a.rs", "struct Alpha"),
+            ("src/b.rs", "fn alpha"),
+            ("src/b.rs", "struct Beta"),
+            ("src/a.rs", "struct Gamma"),
+            ("src/b.rs", "struct Delta"),
+        ]
+    );
+    assert!(search.hits[..5].iter().all(|hit| hit.tier == 1));
 }
 
 // ---------------------------------------------------------------------------

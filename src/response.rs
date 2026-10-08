@@ -418,6 +418,13 @@ fn item_text(
     lang: Option<&str>,
     body: &str,
 ) -> String {
+    let mut item = item_line(handle, lines, label, tag);
+    item.push_str(&fenced(body, lang));
+    item
+}
+
+/// An item line, `<handle>[ L<a>-<b>][ <label>][ <tag>]` and LF.
+fn item_line(handle: &str, lines: Option<(u64, u64)>, label: &str, tag: Option<&str>) -> String {
     let mut item = handle.to_owned();
     if let Some((first, last)) = lines {
         item.push_str(&format!(" L{first}-{last}"));
@@ -431,7 +438,6 @@ fn item_text(
         item.push_str(tag);
     }
     item.push('\n');
-    item.push_str(&fenced(body, lang));
     item
 }
 
@@ -449,12 +455,14 @@ fn source_item(handle: &str, start_line: u64, path: &str, body: &str) -> String 
 }
 
 /// One rendering of a candidate and the full-identity handle it delivers
-/// (`None` for edges and for signature/outline forms, which are not the
-/// verbatim bytes of that identity).
+/// (`None` for edges, for signature/outline forms, which are not the
+/// verbatim bytes of that identity, and for `[address]` lines, which are
+/// navigation).
 type RenderedChoice = (String, Option<String>);
 
-/// Every form of a ranked item, rendered in ladder order.
-fn ranked_forms(item: &RankedItem) -> Vec<RenderedChoice> {
+/// One form of a ranked item, rendered; empty when it cannot render (a
+/// source form without a handle).
+fn rendered_form(item: &RankedItem, form: &RenderedForm) -> RenderedChoice {
     let handle = item.handle.as_ref();
     let lines = handle
         .filter(|handle| handle.start < handle.end)
@@ -465,19 +473,30 @@ fn ranked_forms(item: &RankedItem) -> Vec<RenderedChoice> {
             item_text(&handle.to_v2(), lines, &item.label, tag, lang, body)
         })
     };
+    match form {
+        RenderedForm::Verbatim(body) => (
+            source(None, body),
+            handle.map(crate::store::SourceHandle::to_v2),
+        ),
+        RenderedForm::Signature(body) => (source(Some("[signature]"), body), None),
+        RenderedForm::Outline(body) | RenderedForm::OutlineMin(body) => {
+            (source(Some("[outline]"), body), None)
+        }
+        RenderedForm::Line(text) => (edge_line(text), None),
+        RenderedForm::Address => (
+            handle.map_or_else(String::new, |handle| {
+                item_line(&handle.to_v2(), lines, &item.label, Some("[address]"))
+            }),
+            None,
+        ),
+    }
+}
+
+/// Every form of a ranked item, rendered in ladder order.
+fn ranked_forms(item: &RankedItem) -> Vec<RenderedChoice> {
     item.forms
         .iter()
-        .map(|form| match form {
-            RenderedForm::Verbatim(body) => (
-                source(None, body),
-                handle.map(crate::store::SourceHandle::to_v2),
-            ),
-            RenderedForm::Signature(body) => (source(Some("[signature]"), body), None),
-            RenderedForm::Outline(body) | RenderedForm::OutlineMin(body) => {
-                (source(Some("[outline]"), body), None)
-            }
-            RenderedForm::Line(text) => (edge_line(text), None),
-        })
+        .map(|form| rendered_form(item, form))
         .filter(|(rendered, _)| !rendered.is_empty())
         .collect()
 }
@@ -1159,28 +1178,38 @@ fn pack_context_impl(
 }
 
 /// One entry of the anchored selection: its renderings in ladder order —
-/// verbatim, the signature when it differs, then the `[address]` line; or a
-/// directory line alone — and the one it shows.
+/// verbatim, the signature when it differs, then the `[address]` line
+/// ([`RenderedForm::Address`]); or a directory line alone — and the one it
+/// shows.
 struct Slot {
     forms: Vec<String>,
     /// An ambiguous entry's second-pass form: its signature, else verbatim.
     preferred: usize,
+    /// Its first-pass form: the `[address]` line, else its last rung;
+    /// `None` when nothing renders.
+    address: Option<usize>,
     chosen: Option<usize>,
 }
 
 impl Slot {
     /// An anchored definition's ladder.
     fn ladder(entry: &RankedItem) -> Self {
-        let mut forms: Vec<String> = Vec::with_capacity(3);
-        let mut preferred = 0;
-        for (form, (rendered, _)) in entry.forms.iter().zip(ranked_forms(entry)) {
-            if matches!(form, RenderedForm::Signature(_)) {
-                preferred = forms.len();
+        let mut forms: Vec<String> = Vec::with_capacity(entry.forms.len());
+        let (mut preferred, mut address) = (0, None);
+        for form in &entry.forms {
+            let (rendered, _) = rendered_form(entry, form);
+            if rendered.is_empty() {
+                continue;
+            }
+            match form {
+                RenderedForm::Signature(_) => preferred = forms.len(),
+                RenderedForm::Address => address = Some(forms.len()),
+                _ => {}
             }
             forms.push(rendered);
         }
-        forms.extend(address_line(entry));
         Slot {
+            address: address.or(forms.len().checked_sub(1)),
             forms,
             preferred,
             chosen: None,
@@ -1192,6 +1221,7 @@ impl Slot {
         Slot {
             forms: vec![line],
             preferred: 0,
+            address: Some(0),
             chosen: None,
         }
     }
@@ -1339,8 +1369,8 @@ fn pack_anchored(
                         dropped += 1;
                         continue;
                     }
-                    let address = slots[index].forms.len() - 1;
-                    place(&mut slots, index, &[address], &mut dropped);
+                    let address = slots[index].address;
+                    place(&mut slots, index, address.as_slice(), &mut dropped);
                 }
                 // Pass 2 upgrades to the signature (verbatim when there is
                 // none), pass 3 to verbatim: each in list order when the
@@ -1410,23 +1440,6 @@ fn pack_anchored(
         omitted,
         truncated: omitted > 0,
     })
-}
-
-/// An anchored definition's `[address]` form: its item line alone, suffixed
-/// ` [address]`, with no fence (context-v2 § Ladder for anchored
-/// definitions).
-fn address_line(item: &RankedItem) -> Option<String> {
-    let handle = item.handle.as_ref()?;
-    let mut line = handle.to_v2();
-    if handle.start < handle.end {
-        line.push_str(&format!(" L{}-{}", item.start_line, item.end_line));
-    }
-    if !item.label.is_empty() {
-        line.push(' ');
-        line.push_str(&single_line(&item.label));
-    }
-    line.push_str(" [address]\n");
-    Some(line)
 }
 
 /// A source item's search locator line (context-v2 § Search locator lines):

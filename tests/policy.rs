@@ -553,7 +553,7 @@ fn context(
 ) -> String {
     let control = Control::with_deadline(Instant::now() + deadline);
     let combined = context_foundry::mcp::context_primary(
-        &None, policy, engine, query, strategy, &control, false,
+        &None, policy, engine, query, strategy, &control, false, None,
     )
     .expect("context candidates");
     response::pack_context(
@@ -1150,6 +1150,7 @@ fn missing_nemotron_does_not_disable_the_policy() {
         Strategy::Auto,
         &control,
         false,
+        None,
     )
     .unwrap();
     let text = response::pack_context(

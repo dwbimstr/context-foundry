@@ -784,6 +784,51 @@ async fn identical_graph_rows_in_two_roots_stay_distinct() {
     client.cancel().await.unwrap();
 }
 
+/// 007 group 3 through the owner: the reference defines no exact-case
+/// `Engine`, yet the owner chooses the anchor once over every root, so the
+/// reference's `motor` definition, which the query's path qualifies, resolves
+/// it over the primary's exact-case struct (context-v2 § Anchors and
+/// qualifiers, § Resolver order).
+#[tokio::test]
+async fn a_capitalized_anchor_resolves_across_roots_through_the_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let primary = repo(dir.path(), "ws0", "pub struct Engine;\n");
+    let ref1 = repo(
+        dir.path(),
+        "foo",
+        "pub mod motor {\n    pub fn engine() {}\n}\n",
+    );
+    let client = stdio_owner(
+        &primary.store,
+        &primary.root,
+        &[reference_arg(&ref1.root, &ref1.store)],
+        &[],
+    )
+    .await;
+    let context = call(
+        client.peer(),
+        "context",
+        Some(serde_json::json!({"query": "where is Engine in motor.rs", "tokens": 2048})),
+    )
+    .await;
+    let text = assert_success(&context);
+    let parsed = parse_v2(&text).unwrap_or_else(|e| panic!("not a v2 text ({e}):\n{text}"));
+    assert!(parsed.header.contains(&"anchored".to_owned()), "{text}");
+    let kinds: Vec<_> = parsed.items.iter().map(|item| item.kind).collect();
+    use context_foundry::testkit::V2Kind;
+    assert_eq!(kinds, [V2Kind::Source, V2Kind::Locator], "{text}");
+    assert_eq!(
+        parsed.items[0].label.as_deref(),
+        Some("fn motor::engine"),
+        "{text}"
+    );
+    let ws16 =
+        |item: &context_foundry::testkit::V2Item| HandleRef::parse(&item.handle).unwrap().ws16;
+    assert_eq!(ws16(&parsed.items[0]), ws16_of(&ref1.root), "{text}");
+    assert_eq!(ws16(&parsed.items[1]), ws16_of(&primary.root), "{text}");
+    client.cancel().await.unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // Selection and admission scope
 // ---------------------------------------------------------------------------

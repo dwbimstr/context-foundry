@@ -1027,7 +1027,9 @@ fn unit_kind(
             "type_alias_declaration" => Some(Type),
             "enum_declaration" => Some(Enum),
             "enum_assignment" => Some(Variant),
-            "property_identifier" if above(1) == Some("enum_body") => Some(Variant),
+            // A bare member: the enum body's `name` field, an identifier or
+            // a quoted name.
+            "property_identifier" | "string" if above(1) == Some("enum_body") => Some(Variant),
             "variable_declarator" => declarator_kind(node, ancestors),
             _ => None,
         },
@@ -1128,11 +1130,28 @@ fn declarators(declaration: tree_sitter::Node) -> usize {
 /// The node the language's name rule selects (context-v2 § Unit kinds): the
 /// `name` field; for a Rust `impl` the `type` field; for C/C++ the innermost
 /// identifier of the declarator chain; a bare TypeScript enum member is its
-/// own name; a Python assignment's left identifier.
+/// own name, and a quoted member name is the text inside its quotes; a
+/// Python assignment's left identifier.
 fn unit_name(lang: Lang, node: tree_sitter::Node) -> Option<tree_sitter::Node> {
     match (lang, node.kind()) {
         (Lang::Rust, "impl_item") => node.child_by_field_name("type"),
-        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "property_identifier") => Some(node),
+        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, kind) => {
+            let name = match kind {
+                "property_identifier" | "string" => node,
+                _ => node.child_by_field_name("name")?,
+            };
+            if name.kind() != "string" {
+                return Some(name);
+            }
+            // `"Fast"`: its one `string_fragment`; an empty or escaped
+            // name has none.
+            let mut cursor = name.walk();
+            let mut parts = name.named_children(&mut cursor);
+            match (parts.next(), parts.next()) {
+                (Some(fragment), None) if fragment.kind() == "string_fragment" => Some(fragment),
+                _ => None,
+            }
+        }
         (Lang::Python, "assignment") => node.child_by_field_name("left"),
         (Lang::C | Lang::Cpp, "function_definition") => Some(innermost_declarator(
             node.child_by_field_name("declarator")?,
@@ -1191,7 +1210,8 @@ fn body_range(lang: Lang, node: tree_sitter::Node) -> Option<(usize, usize)> {
 /// Whether `node` wraps the unit directly inside it, supplying its range: a
 /// decorator or Python expression statement, an `export`, a C++ `template`,
 /// a JavaScript-family declaration with one declarator and a Go declaration
-/// with one spec.
+/// with one spec — for a grouped `var ( … )`, through the `var_spec_list`
+/// the grammar puts between the declaration and its specs.
 fn is_wrapper(lang: Lang, node: tree_sitter::Node) -> bool {
     let single = |kinds: &[&str]| {
         let mut cursor = node.walk();
@@ -1207,8 +1227,19 @@ fn is_wrapper(lang: Lang, node: tree_sitter::Node) -> bool {
             Lang::TypeScript | Lang::Tsx | Lang::JavaScript,
             "lexical_declaration" | "variable_declaration",
         ) => single(&["variable_declarator"]),
-        (Lang::Go, "type_declaration" | "const_declaration" | "var_declaration") => {
-            single(&["type_spec", "type_alias", "const_spec", "var_spec"])
+        (Lang::Go, "type_declaration" | "const_declaration") => {
+            single(&["type_spec", "type_alias", "const_spec"])
+        }
+        (Lang::Go, "var_spec_list") => single(&["var_spec"]),
+        (Lang::Go, "var_declaration") => {
+            let mut cursor = node.walk();
+            let mut specs = node
+                .named_children(&mut cursor)
+                .filter(|child| matches!(child.kind(), "var_spec" | "var_spec_list"));
+            match (specs.next(), specs.next()) {
+                (Some(spec), None) => spec.kind() == "var_spec" || is_wrapper(lang, spec),
+                _ => false,
+            }
         }
         (Lang::Cpp, "template_declaration") => true,
         _ => false,
@@ -1766,26 +1797,12 @@ pub fn path_segments(path: &str) -> Vec<String> {
 
 /// A definition's address segments: `path`'s segments (from
 /// [`path_segments`]), then its qualified name's — every generic argument
-/// list (`<…>`, `[…]`, nested) removed first, split on the language's qname
-/// separator, minus the unit's own name (`UnionFind<Key>::find` gives
-/// `unionfind`) — lowercased and distinct.
+/// list (`<…>`, `[…]`, nested) removed first ([`without_generic_lists`]),
+/// split on the language's qname separator, minus the unit's own name
+/// (`UnionFind<Key>::find` gives `unionfind`) — lowercased and distinct.
 pub fn address_segments(path: &[String], lang: Lang, qname: &str) -> Vec<String> {
     let mut out = path.to_vec();
-    let mut depth = 0usize;
-    let stripped: String = qname
-        .chars()
-        .filter(|&c| match c {
-            '<' | '[' => {
-                depth += 1;
-                false
-            }
-            '>' | ']' => {
-                depth = depth.saturating_sub(1);
-                false
-            }
-            _ => depth == 0,
-        })
-        .collect();
+    let stripped = without_generic_lists(qname);
     let mut parts: Vec<&str> = stripped.split(lang.qname_separator()).collect();
     // The last part is the unit's own name.
     parts.pop();
@@ -1793,6 +1810,72 @@ pub fn address_segments(path: &[String], lang: Lang, qname: &str) -> Vec<String>
         let part = part.trim().to_lowercase();
         if !part.is_empty() && !out.contains(&part) {
             out.push(part);
+        }
+    }
+    out
+}
+
+/// `qname` without its generic argument lists (`<…>`, `[…]`, nested): a
+/// list ends at its matching close, so inside a list the `>` of `->` closes
+/// nothing, a parenthesized or braced group (a function type's parameters, a
+/// const expression) is opaque, and string and char literals are skipped
+/// (`Mapper<fn() -> u8>::run` gives `Mapper::run`). A lifetime's `'` is not a
+/// literal. A stray close outside every list is dropped.
+fn without_generic_lists(qname: &str) -> String {
+    let mut out = String::with_capacity(qname.len());
+    // Open `<`/`[` lists, and open `(`/`{` groups inside the innermost.
+    let (mut lists, mut groups) = (0usize, 0usize);
+    let mut chars = qname.chars().peekable();
+    while let Some(c) = chars.next() {
+        if lists == 0 {
+            match c {
+                '<' | '[' => lists = 1,
+                '>' | ']' => {}
+                _ => out.push(c),
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => {
+                            chars.next();
+                        }
+                        '"' => break,
+                        _ => {}
+                    }
+                }
+            }
+            '\'' => {
+                let mut ahead = chars.clone();
+                match ahead.next() {
+                    // An escaped char literal runs to its closing quote.
+                    Some('\\') => {
+                        chars.next();
+                        chars.next();
+                        for c in chars.by_ref() {
+                            if c == '\'' {
+                                break;
+                            }
+                        }
+                    }
+                    // `'x'` is a char literal; `'a` alone a lifetime.
+                    Some(_) if ahead.next() == Some('\'') => {
+                        chars.next();
+                        chars.next();
+                    }
+                    _ => {}
+                }
+            }
+            '-' if chars.peek() == Some(&'>') => {
+                chars.next();
+            }
+            '(' | '{' => groups += 1,
+            ')' | '}' => groups = groups.saturating_sub(1),
+            '<' | '[' if groups == 0 => lists += 1,
+            '>' | ']' if groups == 0 => lists -= 1,
+            _ => {}
         }
     }
     out

@@ -244,7 +244,8 @@ fn plan_semantic(
     }
 }
 
-/// The primary root's search candidates with the semantic path applied.
+/// The primary root's search candidates with the semantic path applied;
+/// `anchors` as in [`Engine::search_candidates_with`].
 pub fn search_primary(
     slot: &SemanticSlot,
     engine: &Engine,
@@ -252,28 +253,32 @@ pub fn search_primary(
     path: Option<&str>,
     limit: usize,
     control: &Control,
+    anchors: Option<&[crate::store::AnchorCandidate]>,
 ) -> FResult<crate::store::CandidateBatch> {
     #[cfg(feature = "semantic")]
     match plan_semantic(slot, engine, query, control) {
         SemanticPlan::Off => {}
         SemanticPlan::Dense(window) => {
-            return engine.search_candidates_semantic(query, path, limit, control, &window);
+            return engine
+                .search_candidates_semantic(query, path, limit, control, &window, anchors);
         }
         SemanticPlan::Fallback(word) => {
-            let mut batch = engine.search_candidates(query, path, limit, control)?;
+            let mut batch = engine.search_candidates_with(query, path, limit, control, anchors)?;
             batch.semantic = Some(word);
             return Ok(batch);
         }
     }
     #[cfg(not(feature = "semantic"))]
     let _ = slot;
-    engine.search_candidates(query, path, limit, control)
+    engine.search_candidates_with(query, path, limit, control, anchors)
 }
 
 /// The primary root's context candidates (and 008 memory hits when asked)
 /// with the semantic path applied and, when a policy is configured, its
 /// routing of an `auto` strategy (013 T003): after the 009 merge, before
 /// graph expansion, under the same read deadline as the query embedding.
+/// `anchors` as in [`Engine::context_candidates_with`].
+#[allow(clippy::too_many_arguments)]
 pub fn context_primary(
     slot: &SemanticSlot,
     policy: Option<&crate::policy::Policy>,
@@ -282,53 +287,24 @@ pub fn context_primary(
     strategy: Strategy,
     control: &Control,
     memory: bool,
+    anchors: Option<&[crate::store::AnchorCandidate]>,
 ) -> FResult<crate::memory::MemoryContext> {
     #[cfg(feature = "semantic")]
     let plan = plan_semantic(slot, engine, query, control);
     #[cfg(not(feature = "semantic"))]
     let _ = slot;
-    if let Some(policy) = policy.filter(|policy| policy.routes()) {
+    let options = crate::store::ContextOptions {
+        memory,
         #[cfg(feature = "semantic")]
-        let dense = match &plan {
+        dense: match &plan {
             SemanticPlan::Dense(window) => Some(window),
             _ => None,
-        };
-        #[cfg_attr(not(feature = "semantic"), allow(unused_mut))]
-        let mut context = engine.context_candidates_routed(
-            query,
-            strategy,
-            memory,
-            control,
-            #[cfg(feature = "semantic")]
-            dense,
-            policy,
-        )?;
-        #[cfg(feature = "semantic")]
-        if let SemanticPlan::Fallback(word) = plan {
-            context.batch.semantic = Some(word);
-        }
-        return Ok(context);
-    }
-    #[cfg(feature = "semantic")]
-    if let SemanticPlan::Dense(window) = &plan {
-        return if memory {
-            engine.context_candidates_memory_semantic(query, strategy, control, window)
-        } else {
-            Ok(crate::memory::MemoryContext {
-                batch: engine.context_candidates_semantic(query, strategy, control, window)?,
-                hits: Vec::new(),
-            })
-        };
-    }
-    #[cfg_attr(not(feature = "semantic"), allow(unused_mut))]
-    let mut context = if memory {
-        engine.context_candidates_memory(query, strategy, control)?
-    } else {
-        crate::memory::MemoryContext {
-            batch: engine.context_candidates(query, strategy, control)?,
-            hits: Vec::new(),
-        }
+        },
+        policy: policy.filter(|policy| policy.routes()),
+        anchors,
     };
+    #[cfg_attr(not(feature = "semantic"), allow(unused_mut))]
+    let mut context = engine.context_candidates_with(query, strategy, control, &options)?;
     #[cfg(feature = "semantic")]
     if let SemanticPlan::Fallback(word) = plan {
         context.batch.semantic = Some(word);
@@ -1251,29 +1227,44 @@ fn root_facts(engines: &[Option<Engine>]) -> FResult<RootFacts> {
 }
 
 /// Run one candidate selection per selected serving root, sequentially inside
-/// the shared read deadline (007 § Combined search and context): a
-/// cooperative deadline/cancellation check and the `roots.before_root`
-/// test-faults point precede each root's call, so a stall in one root holds
-/// the single engine slot until it returns and the deadline fails the whole
-/// request. Returns each root's batch with its own final-read facts.
+/// the shared read deadline (007 § Combined search and context). The query's
+/// anchors are chosen first, once over every serving root
+/// ([`roots::select_anchors`], `path` as the search's path filter), and every
+/// root's selection receives them. Then a cooperative deadline/cancellation
+/// check and the `roots.before_root` test-faults point precede each root's
+/// call, so a stall in one root holds the single engine slot until it
+/// returns and the deadline fails the whole request. Returns each root's
+/// batch with its own final-read facts.
 fn collect_root_batches<F>(
     engines: &[Option<Engine>],
     control: &Control,
     meta: &[RootMeta],
     serving: &[usize],
+    query: &str,
+    path: Option<&str>,
     mut select: F,
 ) -> FResult<(Vec<roots::RootBatch>, RootFacts)>
 where
     // FnMut: the 008 multi-root path lets the primary's call stash its
     // validated memory hits beside the batch it returns.
-    F: FnMut(&Engine, &Control) -> FResult<crate::store::CandidateBatch>,
+    F: FnMut(
+        &Engine,
+        &Control,
+        &[crate::store::AnchorCandidate],
+    ) -> FResult<crate::store::CandidateBatch>,
 {
+    let serving_engines: Vec<&Engine> = serving
+        .iter()
+        .map(|&index| {
+            engines[index]
+                .as_ref()
+                .expect("a serving root holds an engine")
+        })
+        .collect();
+    let anchors = roots::select_anchors(&serving_engines, query, path, control)?;
     let mut batches = Vec::new();
     let mut facts = Vec::new();
-    for &index in serving {
-        let engine = engines[index]
-            .as_ref()
-            .expect("a serving root holds an engine");
+    for (&index, engine) in serving.iter().zip(serving_engines) {
         control.check()?;
         fault!(
             ROOTS_BEFORE_ROOT,
@@ -1281,7 +1272,7 @@ where
             Some(control),
             &meta[index].alias
         )?;
-        let batch = select(engine, control)?;
+        let batch = select(engine, control, &anchors)?;
         facts.push((
             index,
             batch.freshness.source_revision,
@@ -1413,6 +1404,7 @@ impl FoundryMcp {
                         path.as_deref(),
                         limit,
                         control,
+                        None,
                     )?))
                 },
                 response::pack_search,
@@ -1528,6 +1520,7 @@ impl FoundryMcp {
                             strategy,
                             control,
                             include_memory,
+                            None,
                         )?;
                         (combined.batch, combined.hits)
                     } else if include_memory {
@@ -2562,7 +2555,9 @@ impl FoundryMcp {
                     control,
                     &run_meta,
                     &serving,
-                    |engine, control| {
+                    &query,
+                    path.as_deref(),
+                    |engine, control, anchors| {
                         let is_primary = std::ptr::eq(
                             engine,
                             engines[0].as_ref().expect("the primary engine is open"),
@@ -2575,9 +2570,16 @@ impl FoundryMcp {
                                 path.as_deref(),
                                 limit,
                                 control,
+                                Some(anchors),
                             )
                         } else {
-                            engine.search_candidates(&query, path.as_deref(), limit, control)
+                            engine.search_candidates_with(
+                                &query,
+                                path.as_deref(),
+                                limit,
+                                control,
+                                Some(anchors),
+                            )
                         }
                     },
                 )?;
@@ -2652,7 +2654,9 @@ impl FoundryMcp {
                     control,
                     &run_meta,
                     &serving,
-                    |engine, control| {
+                    &query,
+                    None,
+                    |engine, control, anchors| {
                         let is_primary = std::ptr::eq(
                             engine,
                             engines[0].as_ref().expect("the primary engine is open"),
@@ -2671,22 +2675,26 @@ impl FoundryMcp {
                                 strategy,
                                 control,
                                 primary_memory,
+                                Some(anchors),
                             )?;
                             *hits_ref = combined.hits;
                             return Ok(combined.batch);
                         }
-                        if primary_memory && is_primary {
-                            // No catch-all: corruption fails the request
-                            // (context-v2 § Failure scope); an unavailable
-                            // primary is excluded by `serving` above and its
-                            // coverage stays in the header.
-                            let combined =
-                                engine.context_candidates_memory(&query, strategy, control)?;
+                        // No catch-all for the primary's memory: corruption
+                        // fails the request (context-v2 § Failure scope); an
+                        // unavailable primary is excluded by `serving` above
+                        // and its coverage stays in the header.
+                        let options = crate::store::ContextOptions {
+                            memory: primary_memory && is_primary,
+                            anchors: Some(anchors),
+                            ..crate::store::ContextOptions::default()
+                        };
+                        let combined =
+                            engine.context_candidates_with(&query, strategy, control, &options)?;
+                        if options.memory {
                             *hits_ref = combined.hits;
-                            Ok(combined.batch)
-                        } else {
-                            engine.context_candidates(&query, strategy, control)
                         }
+                        Ok(combined.batch)
                     },
                 )?;
                 Ok(MultiOutcome {

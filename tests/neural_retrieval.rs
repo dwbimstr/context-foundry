@@ -410,6 +410,7 @@ impl Corpus {
             Strategy::Search,
             &Self::control(),
             false,
+            None,
         )
         .expect("context candidates");
         Answer::of(combined.batch, tokens)
@@ -437,8 +438,16 @@ impl Corpus {
         path: Option<&str>,
         limit: usize,
     ) -> SearchAnswer {
-        let batch = mcp::search_primary(slot, self.engine(), query, path, limit, &Self::control())
-            .expect("search candidates");
+        let batch = mcp::search_primary(
+            slot,
+            self.engine(),
+            query,
+            path,
+            limit,
+            &Self::control(),
+            None,
+        )
+        .expect("search candidates");
         SearchAnswer::of(batch)
     }
 }
@@ -1060,6 +1069,7 @@ fn an_expiring_request_still_delivers_the_baseline_with_the_named_fallback() {
         Strategy::Search,
         &control,
         false,
+        None,
     )
     .expect("the fallback is delivered before the request deadline");
     let elapsed = started.elapsed();
@@ -1676,6 +1686,7 @@ fn without_a_profile_requests_are_byte_identical_and_disabling_loses_no_source_o
             Strategy::Search,
             &Control::unbounded(),
             false,
+            None,
         )
         .unwrap();
         let packed = response::pack_context(
@@ -3967,6 +3978,7 @@ impl Corpus {
             strategy,
             &Self::control(),
             false,
+            None,
         )
         .expect("context candidates");
         Answer::of(combined.batch, tokens)
@@ -4751,6 +4763,7 @@ fn a_semantic_context_packed_for_mcp_is_capped_on_its_serialized_bytes() {
         Strategy::Auto,
         &Corpus::control(),
         false,
+        None,
     )
     .unwrap()
     .batch;
@@ -4936,21 +4949,33 @@ fn plain_single(engine: &Engine, op: Op, query: &str) -> String {
     .text
 }
 
-/// The same for the listed roots of a multi-root owner: each root's
-/// lexical batch, the 007 merge and the per-root header segments.
+/// The same for the listed roots of a multi-root owner: the anchors chosen
+/// once over every root, each root's lexical batch with them, the 007 merge
+/// and the per-root header segments.
 fn plain_roots(
     roots: &[(&context_foundry::roots::AdmittedRoot, &Engine)],
     op: Op,
     query: &str,
 ) -> String {
-    use context_foundry::roots::{RootBatch, merge_context, merge_search};
+    use context_foundry::roots::{RootBatch, merge_context, merge_search, select_anchors};
+    use context_foundry::store::ContextOptions;
     let unbounded = Control::unbounded();
+    let engines: Vec<&Engine> = roots.iter().map(|(_, engine)| *engine).collect();
+    let anchors = select_anchors(&engines, query, None, &unbounded).unwrap();
+    let options = ContextOptions {
+        anchors: Some(&anchors),
+        ..ContextOptions::default()
+    };
     let mut batches = Vec::new();
     let mut headers = Vec::new();
     for (root, engine) in roots {
         let batch = match op {
-            Op::Search => engine.search_candidates(query, None, 10, &unbounded),
-            Op::Context => engine.context_candidates(query, Strategy::Auto, &unbounded),
+            Op::Search => {
+                engine.search_candidates_with(query, None, 10, &unbounded, Some(&anchors))
+            }
+            Op::Context => engine
+                .context_candidates_with(query, Strategy::Auto, &unbounded, &options)
+                .map(|context| context.batch),
         }
         .unwrap();
         headers.push(response::RootHeader {

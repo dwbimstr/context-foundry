@@ -431,8 +431,10 @@ pub struct SearchOutcome {
 }
 
 /// One rendering of a ranked item (context-v2 § Forms): the exact unit bytes,
-/// the unit's signature form, a file's `outline` and `outline-min` forms, or
-/// a graph item's single line. Packing takes the first form that fits.
+/// the unit's signature form, a file's `outline` and `outline-min` forms, a
+/// graph item's single line, or an anchored definition's `[address]` form —
+/// its item line alone, navigation as a locator line is (§ Ladder for
+/// anchored definitions). Packing takes the first form that fits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenderedForm {
     Verbatim(String),
@@ -440,6 +442,7 @@ pub enum RenderedForm {
     Outline(String),
     OutlineMin(String),
     Line(String),
+    Address,
 }
 
 /// Ranking tiers: exact definitions, lexical hits, graph items, file outlines.
@@ -1285,6 +1288,20 @@ impl QueryAnchors {
     }
 }
 
+/// What a context request adds to its query and strategy
+/// ([`Engine::context_candidates_with`]): 008 memory, the 009 T002 dense
+/// window, a configured 013 policy routing an `auto` strategy, and the
+/// anchors a multi-root owner chose over every serving root (007; `None`
+/// chooses them from this store's index).
+#[derive(Clone, Copy, Default)]
+pub struct ContextOptions<'a> {
+    pub memory: bool,
+    #[cfg(feature = "semantic")]
+    pub dense: Option<&'a crate::neural::query::DenseWindow>,
+    pub policy: Option<&'a crate::policy::Policy>,
+    pub anchors: Option<&'a [AnchorCandidate]>,
+}
+
 /// The query's tokens for path detection: whitespace- and backtick-separated
 /// words with enclosing punctuation trimmed, as byte ranges.
 fn query_tokens(query: &str) -> Vec<(usize, usize)> {
@@ -1372,12 +1389,11 @@ impl Scored {
 }
 
 /// What one anchor's resolver search found: every matching definition
-/// counted, those named exactly as written counted, and the best
-/// [`TIER1_LIMIT`] by the resolver tuple then `key_hash`.
+/// counted, and the best [`TIER1_LIMIT`] by the resolver tuple then
+/// `key_hash`.
 #[derive(Default)]
 struct ResolverFruit {
     definitions: u64,
-    exact: u64,
     window: Vec<Scored>,
 }
 
@@ -1436,7 +1452,6 @@ impl tantivy::collector::Collector for ResolverCollector {
         let mut merged = ResolverFruit::default();
         for fruit in fruits {
             merged.definitions += fruit.definitions;
-            merged.exact += fruit.exact;
             merged.window.extend(fruit.window);
         }
         keep_window(&mut merged.window);
@@ -1459,7 +1474,6 @@ impl tantivy::collector::SegmentCollector for ResolverSegment {
             .count() as u64;
         let exact = self.names.first(doc) == Some(self.name_case);
         self.fruit.definitions += 1;
-        self.fruit.exact += u64::from(exact);
         self.fruit.window.push(Scored {
             qualifiers,
             exact,
@@ -1476,6 +1490,105 @@ impl tantivy::collector::SegmentCollector for ResolverSegment {
         keep_window(&mut self.fruit.window);
         self.fruit
     }
+}
+
+/// The group-3 admission probe (context-v2 § Anchors and qualifiers):
+/// whether a definition matching the anchor's `def_name` term carries its
+/// exact-case `name_case_hash`. It scores, counts and keeps nothing; only an
+/// admitted anchor's window is built.
+struct ExactCaseProbe {
+    name_case: u64,
+}
+
+struct ExactCaseSegment {
+    name_case: u64,
+    names: tantivy::columnar::Column<u64>,
+    found: bool,
+}
+
+impl tantivy::collector::Collector for ExactCaseProbe {
+    type Fruit = bool;
+    type Child = ExactCaseSegment;
+
+    fn for_segment(
+        &self,
+        _segment: tantivy::SegmentOrdinal,
+        reader: &SegmentReader,
+    ) -> tantivy::Result<ExactCaseSegment> {
+        Ok(ExactCaseSegment {
+            name_case: self.name_case,
+            names: reader.fast_fields().u64("name_case_hash")?,
+            found: false,
+        })
+    }
+
+    fn requires_scoring(&self) -> bool {
+        false
+    }
+
+    fn merge_fruits(&self, fruits: Vec<bool>) -> tantivy::Result<bool> {
+        Ok(fruits.into_iter().any(|found| found))
+    }
+}
+
+impl tantivy::collector::SegmentCollector for ExactCaseSegment {
+    type Fruit = bool;
+
+    fn collect(&mut self, doc: DocId, _score: Score) {
+        if !self.found {
+            self.found = self.names.first(doc) == Some(self.name_case);
+        }
+    }
+
+    fn harvest(self) -> bool {
+        self.found
+    }
+}
+
+/// `query` under tier 1's own restriction (context-v2 § Two-tier query): no
+/// memory document (008: both namespaces live in one index), and only the
+/// `dir` subtree of the path filter when there is one.
+fn tier_restricted(fields: &Fields, dir: Option<&str>, query: Box<dyn Query>) -> Box<dyn Query> {
+    let mut clauses = vec![
+        (Occur::Must, query),
+        (
+            Occur::MustNot,
+            Box::new(TermQuery::new(
+                Term::from_field_text(fields.kind, "memory"),
+                IndexRecordOption::Basic,
+            )) as Box<dyn Query>,
+        ),
+    ];
+    if let Some(dir) = dir {
+        clauses.push((
+            Occur::Must,
+            Box::new(TermQuery::new(
+                Term::from_field_text(fields.dir, dir),
+                IndexRecordOption::Basic,
+            )) as Box<dyn Query>,
+        ));
+    }
+    Box::new(BooleanQuery::new(clauses))
+}
+
+/// Whether the index under `searcher` defines `name` exactly as written,
+/// under tier 1's restriction: [`ExactCaseProbe`] over its `def_name` term.
+fn exact_case_defined(
+    searcher: &tantivy::Searcher,
+    fields: &Fields,
+    dir: Option<&str>,
+    name: &str,
+) -> FResult<bool> {
+    let term = TermQuery::new(
+        Term::from_field_text(fields.def_name, &name.to_lowercase()),
+        IndexRecordOption::Basic,
+    );
+    Ok(searcher.search(
+        tier_restricted(fields, dir, Box::new(term)).as_ref(),
+        &ExactCaseProbe {
+            name_case: hash64(name),
+        },
+    )?)
 }
 
 /// Registers the schema v2 tokenizers (they are per index instance, never
@@ -3640,6 +3753,34 @@ impl Engine {
         }
     }
 
+    /// Whether this store defines `name` exactly as written, under tier 1's
+    /// restriction (`path` as the search's path filter): the group-3
+    /// admission probe of context-v2 § Anchors and qualifiers, which a
+    /// multi-root owner asks of every serving root before any root builds a
+    /// window (007). It counts and keeps nothing.
+    pub fn defines_exact_case(&self, name: &str, path: Option<&str>) -> FResult<bool> {
+        let filter = path.map(path_filter).transpose()?;
+        let handles = self.require_search()?;
+        exact_case_defined(
+            &handles.reader.searcher(),
+            &handles.fields,
+            filter.as_deref(),
+            name,
+        )
+    }
+
+    /// [`Self::search_candidates_with`], the anchors chosen from this
+    /// store's own index.
+    pub fn search_candidates(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+        control: &crate::Control,
+    ) -> FResult<CandidateBatch> {
+        self.search_candidates_with(query, path, limit, control, None)
+    }
+
     /// Two-tier candidate selection for one store (context-v2 § Two-tier
     /// query, § Resolver order, § Hit materialization). Tier 1 is the
     /// anchors' resolver windows in anchor order or, without anchors, exact
@@ -3650,13 +3791,16 @@ impl Engine {
     /// directory subtree. Candidates are revalidated in one final read
     /// transaction, merged per delivery unit, capped at 4 per file and cut to
     /// `limit`; each anchor window's first [`ANCHOR_LIST`] definitions are
-    /// materialized beside them, without that cap or cut.
-    pub fn search_candidates(
+    /// materialized beside them, without that cap or cut. `anchors` are the
+    /// ones a multi-root owner chose over every serving root (007); `None`
+    /// chooses them from this store's index.
+    pub fn search_candidates_with(
         &self,
         query: &str,
         path: Option<&str>,
         limit: usize,
         control: &crate::Control,
+        anchors: Option<&[AnchorCandidate]>,
     ) -> FResult<CandidateBatch> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
@@ -3675,7 +3819,7 @@ impl Engine {
             second,
             candidates_full,
             windows,
-        } = self.collect_two_tier(query, path, control)?;
+        } = self.collect_two_tier(query, path, control, anchors)?;
 
         // Final read: revalidate, merge per delivery unit and cap per file over
         // the whole candidate window, then cut to `limit`; stale and capped
@@ -3777,42 +3921,23 @@ impl Engine {
     /// tier-1 runs (at most 64; runs by specificity, each contributing its
     /// smallest-`key_hash` definitions to the slots left, ordered by path and
     /// start within the run); tier 2 is lexical (at most 256 by score,
-    /// `key_hash` breaking cutoff ties, tier-1 units removed). Also returns
-    /// whether a window filled and each anchor's window range. No source is
-    /// read here; validation happens in the callers' final read.
+    /// `key_hash` breaking cutoff ties, tier-1 units removed). The anchors are
+    /// `anchors` when a multi-root owner chose them over every serving root
+    /// (007), otherwise this index's own choice: each capitalized candidate
+    /// costs one exact-case probe, and only admitted anchors get windows.
+    /// Also returns whether a window filled and each anchor's window range.
+    /// No source is read here; validation happens in the callers' final read.
     fn collect_two_tier(
         &self,
         query: &str,
         path: Option<&str>,
         control: &crate::Control,
+        anchors: Option<&[AnchorCandidate]>,
     ) -> FResult<TwoTier> {
         let filter = path.map(path_filter).transpose()?;
         let handles = self.require_search()?;
         let fields = &handles.fields;
-        let restrict = |query: Box<dyn Query>| -> Box<dyn Query> {
-            // Source tiers never see memory documents (008): both namespaces
-            // live in one index, so every source query excludes kind:"memory".
-            let mut clauses = vec![
-                (Occur::Must, query),
-                (
-                    Occur::MustNot,
-                    Box::new(TermQuery::new(
-                        Term::from_field_text(fields.kind, "memory"),
-                        IndexRecordOption::Basic,
-                    )) as Box<dyn Query>,
-                ),
-            ];
-            if let Some(dir) = &filter {
-                clauses.push((
-                    Occur::Must,
-                    Box::new(TermQuery::new(
-                        Term::from_field_text(fields.dir, dir),
-                        IndexRecordOption::Basic,
-                    )) as Box<dyn Query>,
-                ));
-            }
-            Box::new(BooleanQuery::new(clauses))
-        };
+        let restrict = |query: Box<dyn Query>| tier_restricted(fields, filter.as_deref(), query);
         let term = |field: Field, text: &str, option: IndexRecordOption| -> Box<dyn Query> {
             Box::new(TermQuery::new(Term::from_field_text(field, text), option))
         };
@@ -3827,34 +3952,29 @@ impl Engine {
         let mut tier1_full = false;
         let parsed = QueryAnchors::parse(query);
         let qualifiers: Vec<u64> = parsed.qualifiers.iter().map(|q| hash64(q)).collect();
-        // One anchor's window (context-v2 § Resolver order): every matching
-        // definition scored under tier 1's own restriction.
-        let resolve = |anchor: &str| -> FResult<ResolverFruit> {
-            Ok(searcher.search(
+        let anchors = match anchors {
+            Some(chosen) => chosen.to_vec(),
+            None => parsed.select(|candidate| {
+                control.check()?;
+                exact_case_defined(&searcher, fields, filter.as_deref(), &candidate.text)
+            })?,
+        };
+        for anchor in anchors {
+            // The anchor's window (context-v2 § Resolver order): every
+            // matching definition scored under tier 1's own restriction.
+            control.check()?;
+            let fruit = searcher.search(
                 restrict(term(
                     fields.def_name,
-                    &anchor.to_lowercase(),
+                    &anchor.text.to_lowercase(),
                     IndexRecordOption::Basic,
                 ))
                 .as_ref(),
                 &ResolverCollector {
                     qualifiers: qualifiers.clone(),
-                    name_case: hash64(anchor),
+                    name_case: hash64(&anchor.text),
                 },
-            )?)
-        };
-        let mut resolved: Vec<(String, ResolverFruit)> = Vec::new();
-        let anchors = parsed.select(|candidate| {
-            let fruit = resolve(&candidate.text)?;
-            let exact = fruit.exact > 0;
-            resolved.push((candidate.text.clone(), fruit));
-            Ok::<bool, FoundryError>(exact)
-        })?;
-        for anchor in anchors {
-            let fruit = match resolved.iter().position(|(text, _)| *text == anchor.text) {
-                Some(at) => resolved.swap_remove(at).1,
-                None => resolve(&anchor.text)?,
-            };
+            )?;
             tier1_full |= fruit.definitions > TIER1_LIMIT as u64;
             let order = (anchor.group, anchor.position);
             let documents = fruit
@@ -4079,6 +4199,7 @@ impl Engine {
     /// the packer); every other candidate renders exactly as the baseline
     /// does. The coverage word is `ready` only for a complete generation
     /// published at this read's source revision; otherwise `partial`.
+    /// `anchors` as in [`Self::search_candidates_with`].
     #[cfg(feature = "semantic")]
     pub fn search_candidates_semantic(
         &self,
@@ -4087,6 +4208,7 @@ impl Engine {
         limit: usize,
         control: &crate::Control,
         dense: &crate::neural::query::DenseWindow,
+        anchors: Option<&[AnchorCandidate]>,
     ) -> FResult<CandidateBatch> {
         use crate::neural::merge::MergeUnit;
         if query.trim().is_empty() || query.len() > 4096 {
@@ -4106,7 +4228,7 @@ impl Engine {
             second,
             candidates_full,
             windows,
-        } = self.collect_two_tier(query, path, control)?;
+        } = self.collect_two_tier(query, path, control, anchors)?;
 
         // Final read: every candidate is validated here, before fusion.
         let tx = self.db.begin_read()?;
@@ -4513,42 +4635,7 @@ impl Engine {
         control: &crate::Control,
     ) -> FResult<CandidateBatch> {
         Ok(self
-            .context_candidates_inner(
-                query,
-                strategy,
-                None,
-                control,
-                #[cfg(feature = "semantic")]
-                None,
-                None,
-            )?
-            .batch)
-    }
-
-    #[cfg(feature = "semantic")]
-    pub fn context_candidates_memory_semantic(
-        &self,
-        query: &str,
-        strategy: Strategy,
-        control: &crate::Control,
-        dense: &crate::neural::query::DenseWindow,
-    ) -> FResult<crate::memory::MemoryContext> {
-        let plan = self.memory_plan(query)?;
-        self.context_candidates_inner(query, strategy, Some(plan), control, Some(dense), None)
-    }
-
-    /// [`Self::context_candidates`] with the 009 T002 dense window fused
-    /// into the candidate ranking.
-    #[cfg(feature = "semantic")]
-    pub fn context_candidates_semantic(
-        &self,
-        query: &str,
-        strategy: Strategy,
-        control: &crate::Control,
-        dense: &crate::neural::query::DenseWindow,
-    ) -> FResult<CandidateBatch> {
-        Ok(self
-            .context_candidates_inner(query, strategy, None, control, Some(dense), None)?
+            .context_candidates_with(query, strategy, control, &ContextOptions::default())?
             .batch)
     }
 
@@ -4562,67 +4649,50 @@ impl Engine {
         strategy: Strategy,
         control: &crate::Control,
     ) -> FResult<crate::memory::MemoryContext> {
-        let plan = self.memory_plan(query)?;
-        self.context_candidates_inner(
-            query,
-            strategy,
-            Some(plan),
-            control,
-            #[cfg(feature = "semantic")]
-            None,
-            None,
-        )
+        let options = ContextOptions {
+            memory: true,
+            ..ContextOptions::default()
+        };
+        self.context_candidates_with(query, strategy, control, &options)
     }
 
-    /// [`Self::context_candidates`] with a configured 013 policy (and,
-    /// optionally, 008 memory and the 009 dense window): an `auto` strategy
-    /// is routed by [`crate::policy::Policy::route`] AFTER the 009 merge and
-    /// BEFORE graph expansion, outside every engine transaction and under
-    /// the request's own read deadline; the batch carries the route word.
-    pub fn context_candidates_routed(
+    /// [`Self::context_candidates`] with `options`: 008 memory, the 009 T002
+    /// dense window fused into the candidate ranking, a configured 013 policy
+    /// routing an `auto` strategy (AFTER the 009 merge and BEFORE graph
+    /// expansion, outside every engine transaction and under the request's
+    /// own read deadline; the batch carries the route word), and the anchors
+    /// a multi-root owner chose (007).
+    pub fn context_candidates_with(
         &self,
         query: &str,
         strategy: Strategy,
-        memory: bool,
         control: &crate::Control,
-        #[cfg(feature = "semantic")] dense: Option<&crate::neural::query::DenseWindow>,
-        policy: &crate::policy::Policy,
+        options: &ContextOptions,
     ) -> FResult<crate::memory::MemoryContext> {
-        let plan = memory.then(|| self.memory_plan(query)).transpose()?;
-        self.context_candidates_inner(
-            query,
-            strategy,
-            plan,
-            control,
-            #[cfg(feature = "semantic")]
-            dense,
-            Some(policy),
-        )
-    }
-
-    fn context_candidates_inner(
-        &self,
-        query: &str,
-        strategy: Strategy,
-        memory: Option<crate::memory::MemoryPlan>,
-        control: &crate::Control,
-        #[cfg(feature = "semantic")] dense: Option<&crate::neural::query::DenseWindow>,
-        policy: Option<&crate::policy::Policy>,
-    ) -> FResult<crate::memory::MemoryContext> {
+        let (policy, anchors) = (options.policy, options.anchors);
+        let memory = options
+            .memory
+            .then(|| self.memory_plan(query))
+            .transpose()?;
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
             ));
         }
         #[cfg(feature = "semantic")]
-        let search = match dense {
-            Some(dense) => {
-                self.search_candidates_semantic(query, None, CONTEXT_UNITS, control, dense)?
-            }
-            None => self.search_candidates(query, None, CONTEXT_UNITS, control)?,
+        let search = match options.dense {
+            Some(dense) => self.search_candidates_semantic(
+                query,
+                None,
+                CONTEXT_UNITS,
+                control,
+                dense,
+                anchors,
+            )?,
+            None => self.search_candidates_with(query, None, CONTEXT_UNITS, control, anchors)?,
         };
         #[cfg(not(feature = "semantic"))]
-        let search = self.search_candidates(query, None, CONTEXT_UNITS, control)?;
+        let search = self.search_candidates_with(query, None, CONTEXT_UNITS, control, anchors)?;
         control.check()?;
         // 013 T003: routing happens HERE, after the 009 merge and before
         // graph expansion. Only `auto` with a configured policy consults it;
@@ -5039,6 +5109,14 @@ impl Engine {
                 item.forms.push(RenderedForm::Signature(signature));
             }
         }
+        // An anchored definition's last rung (context-v2 § Ladder for
+        // anchored definitions): its item line alone, `[address]`.
+        for entry in anchors
+            .iter_mut()
+            .flat_map(|window| window.entries.iter_mut())
+        {
+            entry.forms.push(RenderedForm::Address);
+        }
         // 005 T003: source-first forms for the compiler units, from the same
         // verified bodies and outliners as the search units: the verbatim
         // unit text, then its signature when the language has units.
@@ -5161,7 +5239,7 @@ impl Engine {
         // earlier search read: a source committed in between moves the
         // revision past the serving generation, so `ready` cannot carry over.
         #[cfg(feature = "semantic")]
-        let semantic = match dense {
+        let semantic = match options.dense {
             Some(dense) => Some(dense.coverage_at(freshness.source_revision).to_owned()),
             None => search.semantic.clone(),
         };
