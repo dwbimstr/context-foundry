@@ -916,7 +916,11 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
   (profile-owned dimension, templates and card limit replacing the `DIMENSIONS`,
   `DOCUMENT_PREFIX`, `QUERY_PREFIX` and `DOCUMENT_UNIT_TOKENS` constants; descriptor v2;
   self-describing cache rows; generation v3; card partition), `src/bin/foundry_embed.rs`
-  rebuilt on a pinned, statically linked llama.cpp (Metal) with no Python, the pyo3/MLX
+  rebuilt on a pinned, statically linked llama.cpp (Metal) with no Python, which
+  `build.rs` builds from the pinned commit's tree (read from the git object store of
+  `LLAMA_CPP_DIR`) with CMake and fixed flags (static, embedded Metal library,
+  Accelerate, no OpenMP, `GGML_NATIVE=OFF` so the build is portable across Apple
+  silicon, rustc's deployment target), never from an external build; the pyo3/MLX
   worker and its runtime closure removed, `scripts/{package,install,embed-worker-bundle}.sh`,
   THIRD-PARTY (llama.cpp; at the pinned commit its LICENSE also covers the vendored
   ggml, which has no license file of its own), tests in
@@ -927,8 +931,10 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
     leading documentation, at most the profile's card limit (128 tokens by default),
     rendered with the profile's document template. A card's cache key is its exact
     rendered input; its provenance is the existing partition row (path, unit range,
-    source hash), so eligibility is recomputed from current sources and an edit
-    re-embeds only the cards whose text changed.
+    source hash), accepted only as the cards the verified body renders (every range
+    and key) and checked again against a fresh rendering for every card rendered into
+    a batch, so eligibility is recomputed from current sources and an edit re-embeds
+    only the cards whose text changed.
   - *Placement: only for queries without an anchor.* For such a query, dense retrieval
     returns the nearest cards; their units come first, in similarity order, each
     through the ordinary unit ladder (verbatim, then signature) and tagged as semantic
@@ -942,10 +948,15 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
     grouped by length). While one inference runs, the core may render and tokenize at
     most one next batch without holding the engine slot or a transaction; admission
     of that batch is decided afresh after the call ends, under T003's slot,
-    foreground-wait, pause and late-call rules, which are unchanged.
+    foreground-wait, pause and late-call rules, which are unchanged. Only that batch's
+    cards are rendered (a partly consumed source is parsed once per pass); a failed
+    prefetch stops the run after the in-flight batch commits, and that batch is
+    published at the stop.
   - *Data cutover.* Cache rows become self-describing: digest, dimension (u32 LE), then
     that many f32 values; a 2048-value row without a dimension is read as a descriptor
-    v1 row; accounting sums actual row lengths. A descriptor v1 (MLX) profile is refused
+    v1 row; accounting sums actual row lengths, and each run reconciles the recorded
+    total from the actual rows when it begins (a pre-T004 binary records 8,256 bytes
+    per row; nothing is purged). A descriptor v1 (MLX) profile is refused
     at load with `profile_unsupported`, semantic retrieval stays off, and its retained
     cache rows and generations are kept until an explicit `semantic purge`; a profile
     change never purges. Generation v3 records its geometry; a v2 generation is never
@@ -968,8 +979,10 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
     worker (`foundry-embed --notices DIR`, embedded at build), refuses a profile that
     pins another commit, and needs no llama.cpp checkout for a prebuilt worker. Signing
     remains the final step (sign, hash the executable, write the installed profile).
-  - *Model.* The profile pins a GGUF (SHA-256), the llama.cpp commit, pooling, dimension
-    (a supported Matryoshka truncation, renormalized) and the query and document
+  - *Model.* The profile pins a single-file GGUF (SHA-256; the worker refuses a GGUF
+    declaring `split.count` above 1 before llama.cpp loads it, since its other shards
+    lie outside the verified inventory), the llama.cpp commit, pooling, dimension (a
+    supported Matryoshka truncation, renormalized) and the query and document
     templates. G2 chooses between EmbeddingGemma 2
     (`ggml-org/embeddinggemma-2-GGUF@bfcd2987`, Apache-2.0) and a Nemotron 3 Embed 1B
     GGUF, on cards.
@@ -998,7 +1011,10 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
   installed worker links only system libraries and frameworks and passes the
   isolation, resource and numerical checks on the installed artifact; preparation
   time, peak footprint and tokens embedded are recorded on the library-only
-  rust-lang/rust store before and after.
+  rust-lang/rust store before and after; card acceptance refuses any tuple the body
+  does not render; a run's cap accounting starts from the actual rows; a failed
+  prefetch still publishes the committed batch; a partly consumed source renders only
+  its selected cards; a split GGUF is refused before loading.
 
 D001's model choice and chosen values were settled on 2026-10-03; T001–T003 were
 accepted on 2026-10-05 under development isolation and measured on 2026-10-06 (see
