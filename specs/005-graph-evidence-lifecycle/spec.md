@@ -454,8 +454,13 @@ expanded the wrong symbols.
   ceiling (995 of 1000 on 2026-10-06), or the owner raises it before the change lands.
 - **Verification:**
   - a same-name pair in two modules where only one is anchored by a qualifier: doors
-    come from that one alone; with the pair unqualified the anchor is ambiguous and
-    the response is `doors:ambiguous` with both in the directory;
+    come from that one alone; with the pair unqualified the anchor is ambiguous with a
+    tie group of two, and each gets its own exact door group after its entry
+    (`doors:each`); a tie group of five is `doors:ambiguous` with no doors; a stale
+    entry gets no group and no lower entry takes its place, in one root and across
+    roots; an entry with no definition occurrence gets no group, and with none for
+    every entry the name's approximate doors follow the list once (`doors:approx`);
+    groups are packed after the address pass and before signature upgrades;
   - exact doors equal `references` for the same symbol; a decorated Python function,
     an annotated Java method, a C++ template and a Rust `fn` whose name is on the next
     line all resolve by name range; a unit with no definition occurrence gives
@@ -463,9 +468,8 @@ expanded the wrong symbols.
     identities of one definition give one deduplicated set; a graph replacement during
     door collection is caught by the final read;
   - approximate doors: an importing file outranks a same-named mention elsewhere,
-    including when it is the 65th candidate by path; the 256-unit window and the
-    spread rule (at most 2 per file first, 16 lines) hold; a one-character name has no
-    doors;
+    including when it is the 65th candidate by path; the 256-unit window and one line
+    per file (16 lines) hold; a one-character name has no doors;
   - import keys for each language's import forms, including TS/JS named, default,
     namespace and type-only imports in a Bun workspace layout; an aliased import is
     not followed (named limitation);

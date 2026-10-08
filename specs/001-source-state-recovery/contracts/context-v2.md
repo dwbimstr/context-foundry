@@ -987,7 +987,11 @@ already ordered batch, is:
    followed by directory lines lose today's G1 ambiguous-bucket passes, and signatures
    alone lose its bodies). The materialization cap of 4 per file and the 32-unit
    context limit do not apply to these entries;
-2. then the door lines of § Doors when they apply;
+2. then the door lines of § Doors when they apply; for a first anchor with
+   `doors:each`, each entry's door group is packed after the first pass (every entry's
+   address line) and before the signature and verbatim passes, in list order, and is
+   rendered right after its entry (a group that does not fit is omitted, counted in
+   `omitted:<n>`, and the next entry's group is tried);
 3. nothing else, except opt-in 008 memory lines under their existing rule. Everything
    else is omitted and counted in `omitted:<n>`; `search` lists it. The pointers of the
    replaced compact context are not part of an anchored context: the city map answers
@@ -1015,16 +1019,40 @@ affects break breaks`; `strategy:graph` always requests them; `strategy:search` 
 does. "What does `X` use" (callees) is not supported: its words request doors for
 `X`'s callers, a named limitation.
 
-**Target.** Doors are built only for the query's first anchor, only when it is
-resolved: its definition `D`. When the first anchor is ambiguous, no doors are built
-(`doors:ambiguous`) and the directory lines name the candidates. A first anchor with no
-definition, or whose definition the final read drops as stale, gives `doors:none`. A
-query that requests doors but has no anchor gets `doors:none` and search packing: this
-changes today's anchor-less `auto` usage-word and `strategy:graph` responses, which lose
-the path-seeded graph expansion (`context_graph_units` over span occurrences, removed)
-and with it the `graph:<state>` header segment. G1's anchor-less usage wordings measure
-that change. In a multi-root owner the primary root's request decides whether doors are
-requested, and the merged first anchor's doors come from the root that resolved it.
+**Target.** Doors are built only for the query's first anchor. When it is resolved,
+for its definition `D`. When it is ambiguous, its **tie group** is the window entries
+whose resolver tuple equals the first entry's (§ Resolver order): the definitions the
+resolver cannot tell apart. A tie group of at most 4 gives each of its definitions its
+own exact doors (`doors:each`, below); a larger one gives no doors
+(`doors:ambiguous`), and the directory lines name the candidates. A first anchor with
+no definition, or whose definition the final read drops as stale, gives `doors:none`.
+A query that requests doors but has no anchor gets `doors:none` and search packing:
+this changes today's anchor-less `auto` usage-word and `strategy:graph` responses, which
+lose the path-seeded graph expansion (`context_graph_units` over span occurrences,
+removed) and with it the `graph:<state>` header segment. G1's anchor-less usage
+wordings measure that change. In a multi-root owner the primary root's request decides
+whether doors are requested, and the merged first anchor's doors come from the root
+that resolved it; a merged tie group is taken from the merged window, the bound of 4
+applies to it, and each entry's doors come from its own root's final read.
+
+**Doors of a tie group** (`doors:each`; 2026-10-08, after cross-lab refutation of a
+first-four-listed bound and of per-entry approximate groups). Each tie-group entry is a
+target with the exact-doors rule below, read in its root's one final read: at most 4
+references windows per request, each the resolved anchor's window (256 records, 64
+files), with the same cancellation checks. An entry gets a **group** only from exact
+doors: at most 4 door lines (16 in all, the resolved cap), then `⋯ <m> more files` when
+more remain; its complete list is `references {handle}` on the entry's handle. An entry
+without exact doors (no current scope, no matching occurrence) gets no group, and an
+entry the final read drops as stale gets none either; no other definition takes its
+place. When no entry has exact doors, the name's approximate doors are collected once
+and follow the list as one group attributed to no entry (`doors:approx`): the
+approximate rule with the shared name, every entry's own unit excluded and every
+entry's module key an import key; per-entry approximate groups would repeat one name's
+candidate files under every namesake. A site appears at most once in a response. The
+tie group is decided from the anchor's window as collected, before the final read
+validates it (as a resolved target is), so a stale entry never lets a lower one in.
+Collecting approximate candidates checks the request's cancellation as documents are
+read. The header says `doors:each` when at least one entry has exact doors.
 
 **Exact doors.** When a selected compiler scope (005) is current for `D`'s path, the
 symbols are those of the definition occurrences whose range equals `D`'s stored
