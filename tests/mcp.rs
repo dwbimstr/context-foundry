@@ -2078,6 +2078,65 @@ async fn open_session(http: &reqwest::Client, url: &str) -> String {
     session
 }
 
+/// Start `index` on `session` and hold its response stream until the engine
+/// slot is OBSERVED taken by it: `status` on the `observer` session answers
+/// `busy`. A fixed client timeout is load-sensitive (on a busy host the call
+/// may not even be dispatched before it fires), so the start is polled within
+/// a bound. A probe holds the slot briefly, and an index arriving meanwhile is
+/// refused as `busy` at once (zero queue): it is started again. An index that
+/// returns before it was ever observed running fails the test rather than
+/// letting it pass vacuously.
+async fn start_observed_index(
+    http: &reqwest::Client,
+    url: &str,
+    session: &str,
+    observer: &str,
+) -> tokio::task::JoinHandle<reqwest::Result<String>> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    // String ids stay disjoint from the numeric ids of the control traffic
+    // that follows on the same session.
+    let mut attempt = 0u32;
+    loop {
+        let call = raw_post(
+            http,
+            url,
+            Some(session),
+            serde_json::json!({
+                "jsonrpc": "2.0", "id": format!("index-{attempt}"), "method": "tools/call",
+                "params": {"name": "index", "arguments": {"timeout_ms": 120000}}
+            }),
+        );
+        let index = tokio::spawn(async move { call.send().await?.text().await });
+        let returned = loop {
+            let probe = tokio::time::timeout_at(deadline, async {
+                let response = raw_post(http, url, Some(observer), status_body(4))
+                    .send()
+                    .await
+                    .unwrap();
+                body_text(response).await
+            })
+            .await
+            .expect("the index was never observed holding the engine slot within 60 s");
+            if probe.contains("busy") {
+                return index;
+            }
+            if index.is_finished() {
+                break index.await.unwrap().expect("the index reply is readable");
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the index was never observed holding the engine slot within 60 s: {probe}"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert!(
+            returned.contains(r#"\"code\":\"busy\""#),
+            "the index returned without ever being observed running (if it completed, enlarge the fixture): {returned}"
+        );
+        attempt += 1;
+    }
+}
+
 #[tokio::test]
 async fn http_dropped_stream_keeps_slot_and_overload_keeps_control_traffic_serviceable() {
     let fixture = tempfile::tempdir().unwrap();
@@ -2092,19 +2151,13 @@ async fn http_dropped_stream_keeps_slot_and_overload_keeps_control_traffic_servi
     // A second session carries control traffic while the first is flooded.
     let session_b = open_session(&http, &server.url).await;
 
-    // Start a long index, then drop its response stream (client disconnect).
-    let index = raw_post(
-        &http,
-        &server.url,
-        Some(&session),
-        serde_json::json!({
-            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "index", "arguments": {"timeout_ms": 120000}}
-        }),
-    )
-    .send();
-    let outcome = tokio::time::timeout(Duration::from_millis(300), index).await;
-    drop(outcome);
+    // Start a long index, hold its response stream until the index is
+    // observed holding the engine slot, then drop the stream (client
+    // disconnect). Awaiting the aborted task guarantees the stream is gone
+    // before the probe below.
+    let index = start_observed_index(&http, &server.url, &session, &session_b).await;
+    index.abort();
+    let _ = index.await;
 
     // Stream loss alone must not release executing work or its slot.
     let probe = body_text(
