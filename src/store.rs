@@ -129,15 +129,24 @@ const PER_FILE_CAP: usize = 4;
 const CONTEXT_UNITS: usize = 32;
 /// Context adds at most this many file outlines.
 const CONTEXT_OUTLINES: usize = 3;
-/// Context graph expansion examines at most this many rows per seed and
-/// direction.
-const CONTEXT_GRAPH_EDGES: usize = 32;
-/// The META value naming the current search index format. `"4"` (001 T007,
-/// context-v2 § City map) puts `def_name` on one document per definition
-/// and adds `role`, `name_case_hash`, `addr_hash`, `name_start`/`name_end`
+/// Doors list at most this many files (context-v2 § Doors).
+pub(crate) const DOOR_FILES: usize = 16;
+/// A first anchor's tie group of at most this many definitions gets doors,
+/// each its own (context-v2 § Doors, Target and Doors of a tie group).
+pub(crate) const TIE_GROUP: usize = 4;
+/// A tie-group entry's door lines: the resolved cap over the largest group.
+pub(crate) const GROUP_FILES: usize = DOOR_FILES / TIE_GROUP;
+/// Approximate doors examine at most this many delivery units.
+const DOOR_WINDOW: usize = 256;
+/// The META value naming the current search index format. `"5"` (001 T008,
+/// context-v2 § City map › Languages) gives 15 more languages units,
+/// addresses and import keys and parses every source on the `tree-sitter`
+/// 0.26 runtime under a work budget; `"4"` (001 T007,
+/// context-v2 § City map) put `def_name` on one document per definition
+/// and added `role`, `name_case_hash`, `addr_hash`, `name_start`/`name_end`
 /// and `imports`; `"3"` added the unit's own start (its head) and the
 /// leading-run unit ranges (§ Unit forest).
-const SEARCH_SCHEMA: &str = "4";
+const SEARCH_SCHEMA: &str = "5";
 const SEARCH_SCHEMA_REASON: &str =
     "search_schema: search index format changed; run `foundry repair-index`";
 
@@ -161,7 +170,7 @@ pub struct Chunk {
 /// Full-identity source reference: full 64-hex `workspace_id` and `sha256`
 /// plus a half-open byte range. The wire form is the v2 string of
 /// [`HandleRef`]; the only empty range is `[0,0)` on an empty source.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SourceHandle {
     pub workspace_id: String,
     pub path: String,
@@ -431,32 +440,26 @@ pub struct SearchOutcome {
 }
 
 /// One rendering of a ranked item (context-v2 § Forms): the exact unit bytes,
-/// the unit's signature form, a file's `outline` and `outline-min` forms, a
-/// graph item's single line, or an anchored definition's `[address]` form —
-/// its item line alone, navigation as a locator line is (§ Ladder for
-/// anchored definitions). Packing takes the first form that fits.
+/// the unit's signature form, a file's `outline` and `outline-min` forms, or
+/// an anchored definition's `[address]` form — its item line alone,
+/// navigation as a locator line is (§ Ladder for anchored definitions).
+/// Packing takes the first form that fits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenderedForm {
     Verbatim(String),
     Signature(String),
     Outline(String),
     OutlineMin(String),
-    Line(String),
     Address,
 }
 
-/// Ranking tiers: exact definitions, lexical hits, graph items, file outlines.
-pub const TIER_GRAPH: u8 = 3;
+/// Ranking tiers: exact definitions (1), lexical hits (2), file outlines.
 pub const TIER_OUTLINE: u8 = 4;
-/// Source-bearing compiler-graph units (005 T003): delivery units that enclose
-/// an eligible reference of a uniquely resolved seed symbol. They are not
-/// graph edge lines, so the multi-root merge counts them with the units.
-pub const TIER_COMPILER: u8 = 5;
 
 /// One ranked, already revalidated candidate (context-v2 § Candidate seam).
-/// `handle` keeps the full identities of a source item and is `None` for a
-/// graph item; `start_line..=end_line` are the lines the handle's range
-/// touches and `line` the locator's best line.
+/// `handle` keeps the full identities of the source item;
+/// `start_line..=end_line` are the lines the handle's range touches and
+/// `line` the locator's best line.
 #[derive(Clone, Debug)]
 pub struct RankedItem {
     pub tier: u8,
@@ -491,6 +494,10 @@ pub struct Resolver {
     pub exact: bool,
     /// The definition's path role (context-v2 § Roles).
     pub role: u64,
+    /// The stored byte range of the definition's name node (`name_start`,
+    /// `name_end`): exact doors match compiler definitions at exactly this
+    /// range (context-v2 § Doors).
+    pub name: (u64, u64),
 }
 
 impl Resolver {
@@ -516,27 +523,182 @@ impl RankedItem {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SemanticEvidence {
     /// True when no lexical candidate shares the unit: it carries no
-    /// delivery-unit label (its locator says `semantic`) and never seeds
-    /// graph expansion.
+    /// delivery-unit label (its locator says `semantic`).
     pub dense_only: bool,
 }
 
 /// What candidate selection dropped or bounded.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CandidateCounters {
-    /// Candidates whose source changed or vanished since indexing, and graph
-    /// items whose row or endpoints changed.
+    /// Candidates whose source changed or vanished since indexing, and door
+    /// candidates or compiler records the final read dropped.
     pub stale: u64,
     /// Hits skipped by the per-file cap.
     pub capped: u64,
     /// A candidate window filled: search tier 1 at 64, tier 2 at 256, or a
-    /// context graph examination window at 32 rows.
+    /// context's doors window (context-v2 § Doors).
     pub candidates_full: bool,
     /// More hits survived materialization than the requested limit.
     pub truncated: bool,
-    /// `ok`, `graph_unavailable`, `graph_stale` or `graph_invalid` when the
-    /// context strategy resolved to graph.
-    pub graph: Option<&'static str>,
+}
+
+/// The doors state of a context that requested doors (context-v2 § Doors):
+/// `exact` (compiler references), `approx` (import keys and identifiers),
+/// `each` (a tie group whose entries have their own exact doors),
+/// `ambiguous` (a first anchor's tie group of more than [`TIE_GROUP`]: no
+/// doors) or `none` (no anchor, or no current definition for the first one).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DoorState {
+    Exact,
+    Approx,
+    Each,
+    Ambiguous,
+    None,
+}
+
+impl DoorState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Approx => "approx",
+            Self::Each => "each",
+            Self::Ambiguous => "ambiguous",
+            Self::None => "none",
+        }
+    }
+}
+
+/// One door line (context-v2 § Doors): a file's first site, as the
+/// enclosing delivery unit, the site's line and that line's text, with the
+/// count of the file's further sites.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DoorLine {
+    /// The delivery unit enclosing the site (full identities).
+    pub unit: SourceHandle,
+    /// One-based line of the site.
+    pub line: u64,
+    /// `<kind> <qualified name>`, or the kind alone.
+    pub label: String,
+    /// The site's whole line, without its terminator.
+    pub text: String,
+    /// The file's further sites.
+    pub more: usize,
+}
+
+/// The doors of a context that requested them, built in its final read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Doors {
+    pub state: DoorState,
+    /// The door groups in list order: for a resolved first anchor, one onto
+    /// its definition; under `each`, one per tie-group entry with exact
+    /// doors, onto that entry; for a tie group without exact doors, one onto
+    /// no entry (`approx`); none for `ambiguous` and `none`.
+    pub groups: Vec<DoorGroup>,
+}
+
+impl Doors {
+    /// Doors that were requested but not built.
+    pub fn unbuilt(state: DoorState) -> Self {
+        Self {
+            state,
+            groups: Vec::new(),
+        }
+    }
+}
+
+/// One door group (context-v2 § Doors): the doors of one target, summarized
+/// by file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DoorGroup {
+    /// The definition the group opens onto: `None` for the approximate
+    /// doors a tie group's name shares, attributed to no entry.
+    pub target: Option<SourceHandle>,
+    /// One line per file in door order: at most [`DOOR_FILES`] for a
+    /// resolved target, [`GROUP_FILES`] for a tie-group entry.
+    pub lines: Vec<DoorLine>,
+    /// Files with doors beyond the listed ones.
+    pub more_files: usize,
+}
+
+/// The first anchor's doors target (context-v2 § Doors, Target), decided
+/// from its window as collected, before the final read validates it.
+pub(crate) enum DoorTarget {
+    /// No anchor with a definition.
+    None,
+    /// The first anchor's tie group is larger than [`TIE_GROUP`].
+    Ambiguous,
+    /// The first anchor resolved to this definition, its window's first.
+    Resolved(SourceHandle),
+    /// The first anchor is ambiguous with this tie group, in window order:
+    /// the definitions whose resolver tuple equals the first's.
+    Tied(Vec<SourceHandle>),
+}
+
+/// A context's first anchor as collected, before its final read validates
+/// the windows: the doors target is decided from it, so that read can drop
+/// a target but never retarget the doors or let a lower namesake into a tie
+/// group. A 007 merge decides from every root's, so a definition one root
+/// dropped as stale never hands the doors to another root's namesake.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectedAnchor {
+    pub anchor: String,
+    pub definitions: u64,
+    /// The window's first [`TIE_GROUP`] + 1 definitions in window order:
+    /// enough to resolve and to know whether the tie group ends within the
+    /// bound (a merge's are among its roots').
+    pub head: Vec<(Option<SourceHandle>, Option<Resolver>)>,
+}
+
+impl CollectedAnchor {
+    pub(crate) fn of(window: &AnchorWindow) -> Self {
+        Self {
+            anchor: window.anchor.clone(),
+            definitions: window.definitions,
+            head: window
+                .entries
+                .iter()
+                .take(TIE_GROUP + 1)
+                .map(|entry| (entry.handle.clone(), entry.resolver))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn target(&self) -> DoorTarget {
+        if self.definitions == 0 {
+            return DoorTarget::None;
+        }
+        let tuple = |resolver: &Option<Resolver>| resolver.map(|resolver| resolver.key());
+        if resolves(self.definitions, self.head.iter().map(|(_, r)| *r)) {
+            return match self.head.first().and_then(|(handle, _)| handle.clone()) {
+                Some(handle) => DoorTarget::Resolved(handle),
+                None => DoorTarget::None,
+            };
+        }
+        let Some((_, first)) = self.head.first() else {
+            return DoorTarget::None;
+        };
+        let tied = || {
+            self.head
+                .iter()
+                .take_while(|(_, resolver)| tuple(resolver) == tuple(first))
+        };
+        if tied().count() > TIE_GROUP {
+            return DoorTarget::Ambiguous;
+        }
+        DoorTarget::Tied(tied().filter_map(|(handle, _)| handle.clone()).collect())
+    }
+}
+
+/// Resolved (context-v2 § Resolver order): exactly one definition, or a
+/// first definition (of `tuples`, in window order) whose tuple is strictly
+/// better than the second's.
+fn resolves(definitions: u64, mut tuples: impl Iterator<Item = Option<Resolver>>) -> bool {
+    let key = |resolver: Option<Resolver>| resolver.map(|resolver| resolver.key());
+    definitions == 1
+        || matches!(
+            (tuples.next(), tuples.next()),
+            (Some(first), Some(second)) if key(first) < key(second)
+        )
 }
 
 /// One anchor of the query and the head of its resolver window (context-v2
@@ -562,9 +724,10 @@ impl AnchorWindow {
     /// Resolved: exactly one definition, or a first definition whose tuple
     /// is strictly better than the second's; otherwise ambiguous.
     pub fn resolved(&self) -> bool {
-        let key = |item: &RankedItem| item.resolver.map(|resolver| resolver.key());
-        self.definitions == 1
-            || matches!(self.entries.as_slice(), [first, second, ..] if key(first) < key(second))
+        resolves(
+            self.definitions,
+            self.entries.iter().map(|entry| entry.resolver),
+        )
     }
 }
 
@@ -585,6 +748,13 @@ pub struct CandidateBatch {
     /// resolver window; empty for a query without anchors. Search ignores
     /// them; context packs the anchored selection from them.
     pub anchors: Vec<AnchorWindow>,
+    /// A context's doors (context-v2 § Doors) when it requested them;
+    /// `None` otherwise and for search.
+    pub doors: Option<Doors>,
+    /// A context that requested doors: its first anchor as collected, before
+    /// its final read (a 007 merge decides its doors target from every
+    /// root's); `None` otherwise, for search and for a merged batch.
+    pub collected: Option<CollectedAnchor>,
 }
 
 impl CandidateBatch {
@@ -638,8 +808,9 @@ pub struct StoreStatus {
     pub parse_failure_samples: Vec<String>,
 }
 
-/// Named parse panics (context-v2 § Parallel indexing): an exact count and at
-/// most 20 samples `<path>: parse_panicked: <detail>`.
+/// Named parse failures (context-v2 § Parallel indexing, § Languages): an
+/// exact count and at most 20 samples `<path>: parse_panicked: <detail>` or
+/// `<path>: parse_stopped: <detail>`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ParseFailures {
     pub count: u64,
@@ -647,11 +818,11 @@ pub struct ParseFailures {
 }
 
 impl ParseFailures {
-    fn push(&mut self, path: &str, detail: &str) {
+    /// `failure` is the labeled failure of [`SourceBuild::panic`].
+    fn push(&mut self, path: &str, failure: &str) {
         self.count = self.count.saturating_add(1);
         if self.samples.len() < PARSE_FAILURE_SAMPLES {
-            self.samples
-                .push(format!("{path}: parse_panicked: {detail}"));
+            self.samples.push(format!("{path}: {failure}"));
         }
     }
 }
@@ -1631,8 +1802,8 @@ fn open_search(dir: &Path) -> Result<SearchHandles, String> {
 enum Parsing {
     /// By its path's language.
     Parsed,
-    /// After its parse panicked: the plain blocks of an unmapped source,
-    /// the first with `kind` [`UNPARSED_KIND`].
+    /// After its parse panicked or exceeded its work budget: the plain
+    /// blocks of an unmapped source, the first with `kind` [`UNPARSED_KIND`].
     Unparsed,
 }
 
@@ -1641,14 +1812,15 @@ enum Parsing {
 /// carrying its delivery unit and its path's role. Exactly one document per
 /// definition — the one whose range holds the start of the unit's name node
 /// — carries `def_name`, `name_case_hash`, `addr_hash` and the name node's
-/// range; the file's first document carries its import keys.
+/// range; the file's first document carries its import keys. A parse that
+/// exceeds its work budget gives no documents but its stop.
 fn search_documents(
     fields: &Fields,
     path: &str,
     hash: &str,
     body: &str,
     parsing: Parsing,
-) -> Vec<TantivyDocument> {
+) -> Result<Vec<TantivyDocument>, crate::syntax::ParseStopped> {
     let lang = match parsing {
         Parsing::Parsed => crate::syntax::Lang::from_path(path),
         Parsing::Unparsed => None,
@@ -1657,9 +1829,9 @@ fn search_documents(
     dirs.push(path);
     let role = path_role(path);
     let path_segments = crate::syntax::path_segments(path);
-    let index = crate::syntax::index(body, lang);
+    let index = crate::syntax::index(body, lang)?;
     let imports = index.imports;
-    index
+    Ok(index
         .documents
         .into_iter()
         .enumerate()
@@ -1719,7 +1891,7 @@ fn search_documents(
             out.add_text(fields.body, text);
             out
         })
-        .collect()
+        .collect())
 }
 
 /// Test seam of the parallel refresh (feature `test-faults` only; release
@@ -1884,8 +2056,10 @@ struct BuildJob {
     body: String,
 }
 
-/// The documents built for one source, and the panic message when they are
-/// the plain blocks of an unmapped source because its parse panicked.
+/// The documents built for one source and, when they are the plain blocks
+/// of an unmapped source because its parse panicked or exceeded its work
+/// budget, the labeled failure: `parse_panicked: <message>` or
+/// `parse_stopped: <reason>`.
 struct SourceBuild {
     documents: Vec<TantivyDocument>,
     panic: Option<String>,
@@ -2274,9 +2448,11 @@ fn build_thread(queue: &HandOut, fields: &Fields, hooks: &IndexHooks) {
     }
 }
 
-/// The documents of one handed-out source. A panicking parse is caught: the
-/// source gets the plain-block documents of an unmapped source, the first of
-/// kind [`UNPARSED_KIND`], and the panic's message, so it is never dropped.
+/// The documents of one handed-out source. A panicking parse is caught, and
+/// a parse that exceeds its work budget (context-v2 § Languages) is handled
+/// the same way: the source gets the plain-block documents of an unmapped
+/// source, the first of kind [`UNPARSED_KIND`], and its labeled failure, so
+/// it is never dropped.
 fn build_source(
     fields: &Fields,
     job: &BuildJob,
@@ -2286,29 +2462,35 @@ fn build_source(
         index_event!(hooks, index_hooks::Event::Build(&job.path));
         search_documents(fields, &job.path, &job.hash, &job.body, Parsing::Parsed)
     }));
-    match parsed {
-        Ok(documents) => Ok(SourceBuild {
-            documents,
-            panic: None,
-        }),
-        Err(payload) => {
-            let message = panic_message(&*payload);
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                search_documents(fields, &job.path, &job.hash, &job.body, Parsing::Unparsed)
-            }))
-            .map(|documents| SourceBuild {
+    let failure = match parsed {
+        Ok(Ok(documents)) => {
+            return Ok(SourceBuild {
                 documents,
-                panic: Some(message),
-            })
-            .map_err(|fallback| {
-                format!(
-                    "{}: plain-block documents panicked: {}",
-                    job.path,
-                    panic_message(&*fallback)
-                )
-            })
+                panic: None,
+            });
         }
-    }
+        Ok(Err(stopped)) => format!("parse_stopped: {stopped}"),
+        Err(payload) => format!("parse_panicked: {}", panic_message(&*payload)),
+    };
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        search_documents(fields, &job.path, &job.hash, &job.body, Parsing::Unparsed)
+    }))
+    .map_err(|fallback| {
+        format!(
+            "{}: plain-block documents panicked: {}",
+            job.path,
+            panic_message(&*fallback)
+        )
+    })
+    .and_then(|documents| {
+        // Without a language nothing is parsed, so nothing can stop.
+        let documents = documents
+            .map_err(|stopped| format!("{}: plain-block documents {stopped}", job.path))?;
+        Ok(SourceBuild {
+            documents,
+            panic: Some(failure),
+        })
+    })
 }
 
 /// The text of a panic payload, when it carries one.
@@ -2321,7 +2503,9 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 }
 
 /// Sources left as the plain blocks of an unmapped source after a parse
-/// panic (context-v2 § Parallel indexing). Each one's first document, and
+/// panic or a parse over its work budget (context-v2 § Parallel indexing,
+/// § Languages); the scan report named which, the sample says `unparsed`.
+/// Each one's first document, and
 /// no other, is of kind [`UNPARSED_KIND`], so one term query counts them
 /// exactly without loading a document; samples load at most
 /// [`PARSE_FAILURE_SAMPLES`] documents, the smallest `key_hash` ones, and
@@ -2346,9 +2530,7 @@ fn unparsed_sources(searcher: &tantivy::Searcher, fields: &Fields) -> FResult<Pa
         count: count as u64,
         samples: paths
             .into_iter()
-            .map(|path| {
-                format!("{path}: parse_panicked: indexed as plain blocks until parsed again")
-            })
+            .map(|path| format!("{path}: unparsed: indexed as plain blocks until parsed again"))
             .collect(),
     })
 }
@@ -2752,6 +2934,117 @@ fn anchor_windows<C: ReadableTable<&'static str, &'static str>>(
         });
     }
     Ok(out)
+}
+
+/// One approximate-door candidate (context-v2 § Doors): a delivery unit
+/// whose `ident` holds the definition's name, with its door-order keys.
+struct DoorCandidate {
+    /// Its file's import keys hold the name or the definition's module.
+    importing: bool,
+    role: u64,
+    path: String,
+    hash: String,
+    unit_start: u64,
+    unit_end: u64,
+    /// `<kind> <qualified name>`, or the kind alone.
+    label: String,
+}
+
+/// One verified source an approximate-doors pass reads, with its line starts.
+struct DoorFile {
+    hash: String,
+    body: String,
+    line_starts: Vec<usize>,
+}
+
+impl DoorFile {
+    fn new(hash: String, body: String) -> Self {
+        let mut line_starts = vec![0];
+        line_starts.extend(body.match_indices('\n').map(|(at, _)| at + 1));
+        Self {
+            hash,
+            body,
+            line_starts,
+        }
+    }
+
+    /// One-based line of the byte `offset`.
+    fn line_of(&self, offset: usize) -> u64 {
+        self.line_starts.partition_point(|&start| start <= offset) as u64
+    }
+
+    /// The text of one-based `line`, without its LF or CRLF terminator.
+    fn line_text(&self, line: u64) -> &str {
+        let index = (line as usize).saturating_sub(1);
+        let start = self
+            .line_starts
+            .get(index)
+            .copied()
+            .unwrap_or(self.body.len());
+        let end = self
+            .line_starts
+            .get(index + 1)
+            .copied()
+            .unwrap_or(self.body.len());
+        let text = &self.body[start..end];
+        let text = text.strip_suffix('\n').unwrap_or(text);
+        text.strip_suffix('\r').unwrap_or(text)
+    }
+}
+
+/// `path`'s verified bytes, loaded into `files` once in the caller's read
+/// transaction; `None` when the source is absent or no longer carries
+/// `hash`.
+fn door_file<'f>(
+    files: &'f mut std::collections::HashMap<String, Option<DoorFile>>,
+    sources: &redb::ReadOnlyTable<&'static str, &'static str>,
+    stored: &redb::ReadOnlyTable<&'static str, &'static str>,
+    path: &str,
+    hash: &str,
+) -> FResult<Option<&'f DoorFile>> {
+    if !files.contains_key(path) {
+        let file = match sources.get(path)? {
+            Some(raw) => {
+                let meta = decode::<SourceMeta>(raw.value(), "source")?;
+                let body = reconstruct_verified(stored, path, &meta)?.body;
+                Some(DoorFile::new(meta.hash, body))
+            }
+            None => None,
+        };
+        files.insert(path.to_owned(), file);
+    }
+    Ok(files[path].as_ref().filter(|file| file.hash == hash))
+}
+
+/// The last segment of a definition's module (context-v2 § Doors): its file
+/// stem, or its directory for an `index`, `mod`, `lib` or `__init__` stem and
+/// for every Go file (its package).
+fn module_key(path: &str) -> Option<&str> {
+    let (directory, file) = match path.rsplit_once('/') {
+        Some((directory, file)) => (Some(directory), file),
+        None => (None, path),
+    };
+    let stem = Path::new(file).file_stem()?.to_str()?;
+    if path.ends_with(".go") || matches!(stem, "index" | "mod" | "lib" | "__init__") {
+        directory.map(|directory| directory.rsplit('/').next().unwrap_or(directory))
+    } else {
+        Some(stem)
+    }
+}
+
+/// The byte offset of the first occurrence of `name` in `text` exactly as
+/// written and as a whole identifier: no identifier character (alphanumeric,
+/// `_` or `$`) touches it on either side.
+fn find_word(text: &str, name: &str) -> Option<usize> {
+    let identifier = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    text.match_indices(name).find_map(|(at, _)| {
+        let before = text[..at].chars().next_back().is_some_and(identifier);
+        let after = text[at + name.len()..]
+            .chars()
+            .next()
+            .is_some_and(identifier);
+        (!before && !after).then_some(at)
+    })
 }
 
 /// Write schema last in the initializing transaction.
@@ -3897,6 +4190,8 @@ impl Engine {
             semantic: None,
             route: None,
             anchors,
+            doors: None,
+            collected: None,
         })
     }
 
@@ -3969,11 +4264,13 @@ impl Engine {
                 .window
                 .iter()
                 .map(|scored| {
+                    // The name range is read with the document below.
                     let resolver = Resolver {
                         anchor: order,
                         qualifiers: scored.qualifiers,
                         exact: scored.exact,
                         role: scored.role,
+                        name: (0, 0),
                     };
                     (scored.address, Some(resolver))
                 })
@@ -4081,40 +4378,50 @@ impl Engine {
         let candidates_full = tier1_full || tier2.len() >= CANDIDATE_LIMIT;
         control.check()?;
 
-        let read = |tier: u8, score: Score, address| -> FResult<Candidate> {
-            let doc: TantivyDocument = searcher.doc(address)?;
-            let invalid = || FoundryError::CorruptStore("invalid search document".into());
-            let text = |field| {
-                doc.get_first(field)
-                    .and_then(|v| v.as_str())
-                    .map(str::to_owned)
+        // A resolver-window document is a definition document: it carries
+        // the stored name range its resolver records.
+        let read =
+            |tier: u8, score: Score, address, resolver: Option<Resolver>| -> FResult<Candidate> {
+                let doc: TantivyDocument = searcher.doc(address)?;
+                let invalid = || FoundryError::CorruptStore("invalid search document".into());
+                let text = |field| {
+                    doc.get_first(field)
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned)
+                };
+                let number = |field| {
+                    doc.get_first(field)
+                        .and_then(|v| v.as_u64())
+                        .ok_or_else(invalid)
+                };
+                let resolver = match resolver {
+                    Some(resolver) => Some(Resolver {
+                        name: (number(fields.name_start)?, number(fields.name_end)?),
+                        ..resolver
+                    }),
+                    None => None,
+                };
+                Ok(Candidate {
+                    tier,
+                    score,
+                    path: text(fields.path).ok_or_else(invalid)?,
+                    hash: text(fields.hash).ok_or_else(invalid)?,
+                    start: number(fields.start)?,
+                    unit_start: number(fields.unit_start)?,
+                    unit_head: number(fields.unit_head)?,
+                    unit_end: number(fields.unit_end)?,
+                    // A parse-fallback document is a block to every reader.
+                    kind: text(fields.kind)
+                        .map(|kind| match kind.as_str() {
+                            UNPARSED_KIND => crate::syntax::UnitKind::Block.as_str().to_owned(),
+                            _ => kind,
+                        })
+                        .ok_or_else(invalid)?,
+                    lang: text(fields.lang),
+                    qname: text(fields.qname),
+                    resolver,
+                })
             };
-            let number = |field| {
-                doc.get_first(field)
-                    .and_then(|v| v.as_u64())
-                    .ok_or_else(invalid)
-            };
-            Ok(Candidate {
-                tier,
-                score,
-                path: text(fields.path).ok_or_else(invalid)?,
-                hash: text(fields.hash).ok_or_else(invalid)?,
-                start: number(fields.start)?,
-                unit_start: number(fields.unit_start)?,
-                unit_head: number(fields.unit_head)?,
-                unit_end: number(fields.unit_end)?,
-                // A parse-fallback document is a block to every reader.
-                kind: text(fields.kind)
-                    .map(|kind| match kind.as_str() {
-                        UNPARSED_KIND => crate::syntax::UnitKind::Block.as_str().to_owned(),
-                        _ => kind,
-                    })
-                    .ok_or_else(invalid)?,
-                lang: text(fields.lang),
-                qname: text(fields.qname),
-                resolver: None,
-            })
-        };
         // Tier 1: each anchor's window by the resolver tuple, then path and
         // start (today's tier-1 listing within a run); without anchors each
         // run's group by path and start.
@@ -4124,11 +4431,7 @@ impl Engine {
             let mut run: Vec<Candidate> = group
                 .documents
                 .into_iter()
-                .map(|(address, resolver)| {
-                    let mut candidate = read(1, 0.0, address)?;
-                    candidate.resolver = resolver;
-                    Ok(candidate)
-                })
+                .map(|(address, resolver)| read(1, 0.0, address, resolver))
                 .collect::<FResult<_>>()?;
             run.sort_by(|a, b| {
                 let key = |candidate: &Candidate| candidate.resolver.map(|r| r.key());
@@ -4151,7 +4454,7 @@ impl Engine {
         let units: std::collections::BTreeSet<_> = first.iter().map(Candidate::unit).collect();
         let mut second: Vec<Candidate> = Vec::new();
         for (score, address) in tier2 {
-            let candidate = read(2, score, address)?;
+            let candidate = read(2, score, address, None)?;
             if !units.contains(&candidate.unit()) {
                 second.push(candidate);
             }
@@ -4402,6 +4705,8 @@ impl Engine {
             semantic: Some(word.to_owned()),
             route: None,
             anchors,
+            doors: None,
+            collected: None,
         })
     }
 
@@ -4516,12 +4821,11 @@ impl Engine {
     }
 
     /// Context candidates (context-v2 § Context candidates and routing), in
-    /// order: the first of up to 32 delivery units from the two-tier ranking,
-    /// bounded graph items when the strategy resolves to graph (seeded by the
-    /// paths of the top 3 units), the compiler units of the first three
-    /// spans' symbols (005 T003), the remaining units, then up to 3 file
-    /// outlines for the first distinct files among the units. Every candidate
-    /// is revalidated, and its signature and outline forms are built, in one
+    /// order: up to 32 delivery units from the two-tier ranking, then up to
+    /// 3 file outlines for the first distinct files among the units; and,
+    /// when the strategy resolves to graph, the doors of the query's first
+    /// anchor (context-v2 § Doors). Every candidate is revalidated, its
+    /// signature and outline forms are built and its doors are read in one
     /// final read transaction.
     pub fn context_candidates(
         &self,
@@ -4553,10 +4857,10 @@ impl Engine {
 
     /// [`Self::context_candidates`] with `options`: 008 memory, the 009 T002
     /// dense window fused into the candidate ranking, a configured 013 policy
-    /// routing an `auto` strategy (AFTER the 009 merge and BEFORE graph
-    /// expansion, outside every engine transaction and under the request's
-    /// own read deadline; the batch carries the route word), and the anchors
-    /// a multi-root owner chose (007).
+    /// routing an `auto` strategy (AFTER the 009 merge and BEFORE doors are
+    /// built, outside every engine transaction and under the request's own
+    /// read deadline; the batch carries the route word), and the anchors a
+    /// multi-root owner chose (007).
     pub fn context_candidates_with(
         &self,
         query: &str,
@@ -4590,9 +4894,9 @@ impl Engine {
         let search = self.search_candidates_with(query, None, CONTEXT_UNITS, control, anchors)?;
         control.check()?;
         // 013 T003: routing happens HERE, after the 009 merge and before
-        // graph expansion. Only `auto` with a configured policy consults it;
+        // doors are built. Only `auto` with a configured policy consults it;
         // explicit strategies never do, and without a policy the
-        // deterministic rule decides exactly as before.
+        // deterministic rule (the doors request words) decides.
         let (resolved, route) = match (strategy, policy) {
             (Strategy::Auto, Some(policy)) => {
                 let (resolved, word) = policy.route(self, query, control)?;
@@ -4601,84 +4905,12 @@ impl Engine {
             (Strategy::Auto, None) => (response::strategy_for_query(query), None),
             (explicit, _) => (explicit, None),
         };
-        let mut edges: Vec<graph::GraphEvidence> = Vec::new();
-        let mut graph_state: Option<&'static str> = None;
-        // The graph examination window (32 rows per seed and direction) filled.
-        let mut graph_full = false;
-        // 005 T003: the compiler half of a graph context, filled only when
-        // the strategy resolves to graph; its units validate in the final
-        // read below either way.
-        let mut compiler = graph::ContextGraphUnits::empty();
-        if resolved == Strategy::Graph {
-            let mut seeds: Vec<&str> = Vec::new();
-            for item in &search.items {
-                if let Some(handle) = &item.handle
-                    && seeds.len() < 3
-                    && !item.is_dense_only()
-                    && !seeds.contains(&handle.path.as_str())
-                {
-                    seeds.push(&handle.path);
-                }
-            }
-            let mut seen = std::collections::BTreeSet::new();
-            let (mut fresh_edges, mut stale_edges, mut invalid) = (0usize, 0usize, false);
-            for path in seeds {
-                for reverse in [false, true] {
-                    match self.graph(path, reverse, 1, CONTEXT_GRAPH_EDGES) {
-                        Ok(graph) => {
-                            graph_full |=
-                                graph.truncated || graph.examined_edges >= CONTEXT_GRAPH_EDGES;
-                            fresh_edges += graph.edges.len();
-                            stale_edges += graph.stale_edges;
-                            for evidence in graph.edges {
-                                if seen.insert(evidence.raw.clone()) {
-                                    edges.push(evidence);
-                                }
-                            }
-                        }
-                        // Component-local: baseline source context survives.
-                        // Database errors keep their own named codes.
-                        Err(FoundryError::GraphInvalid(_)) => invalid = true,
-                        Err(other) => return Err(other),
-                    }
-                    control.check()?;
-                }
-            }
-            // 005 T003: the compiler half, seeded by the first three
-            // retrieved spans. Component-local like the manual edges: an
-            // invalid compiler graph never fails the call.
-            let mut spans: Vec<(String, u64, u64)> = Vec::new();
-            let mut taken = std::collections::BTreeSet::new();
-            for item in &search.items {
-                let Some(handle) = &item.handle else {
-                    continue;
-                };
-                taken.insert((handle.path.clone(), handle.start, handle.end));
-                if spans.len() < graph::CONTEXT_GRAPH_SPANS && !item.is_dense_only() {
-                    spans.push((handle.path.clone(), handle.start, handle.end));
-                }
-            }
-            if !spans.is_empty() {
-                match self.context_graph_units(&spans, &taken) {
-                    Ok(outcome) => compiler = outcome,
-                    Err(FoundryError::GraphInvalid(_)) => invalid = true,
-                    Err(other) => return Err(other),
-                }
-            }
-            graph_full |= compiler.full;
-            graph_state = Some(if invalid {
-                "graph_invalid"
-            } else if fresh_edges > 0
-                || !compiler.units.is_empty()
-                || !compiler.already_selected.is_empty()
-            {
-                "ok"
-            } else if stale_edges > 0 || compiler.stale > 0 || compiler.state_stale {
-                "graph_stale"
-            } else {
-                "graph_unavailable"
-            });
-        }
+        // A context resolved to graph requests doors (context-v2 § Doors),
+        // for the first anchor's target as resolved from the collected
+        // windows: the final read can drop that definition, never retarget.
+        // `Some(None)`: requested, but the query has no anchor.
+        let collected: Option<Option<CollectedAnchor>> =
+            (resolved == Strategy::Graph).then(|| search.anchors.first().map(CollectedAnchor::of));
         control.check()?;
         // Candidates are collected. Anything may commit before the final read.
         fault!(
@@ -4703,11 +4935,7 @@ impl Engine {
             current.insert(path.to_owned(), meta.clone());
             Ok(meta)
         };
-        let mut counters = CandidateCounters {
-            graph: graph_state,
-            candidates_full: search.counters.candidates_full || graph_full,
-            ..search.counters
-        };
+        let mut counters = search.counters;
         let mut units: Vec<RankedItem> = Vec::new();
         let mut dropped: std::collections::BTreeSet<(String, u64, u64)> =
             std::collections::BTreeSet::new();
@@ -4740,200 +4968,20 @@ impl Engine {
             }
             window.entries = fresh_entries;
         }
-        let mut graph_items: Vec<RankedItem> = Vec::new();
-        let mut graph_dropped = 0usize;
-        for evidence in &edges {
-            let edge = &evidence.edge;
-            let mut valid = graph::edge_row_present(&tx, &edge.from.path, &evidence.raw)?;
-            for endpoint in [&edge.from, &edge.to] {
-                valid &=
-                    current_meta(&endpoint.path)?.is_some_and(|meta| meta.hash == endpoint.hash);
+        // Doors, from the validated windows, in this same read.
+        let doors = match &collected {
+            Some(first) => {
+                let target = first
+                    .as_ref()
+                    .map_or(DoorTarget::None, CollectedAnchor::target);
+                Some(self.doors_in(&tx, &target, &anchors, &mut counters, control)?)
             }
-            if !valid {
-                counters.stale += 1;
-                graph_dropped += 1;
-                continue;
-            }
-            graph_items.push(RankedItem {
-                tier: TIER_GRAPH,
-                rank: 0,
-                score: 0.0,
-                handle: None,
-                start_line: 0,
-                end_line: 0,
-                line: 0,
-                label: String::new(),
-                lang: None,
-                semantic: None,
-                resolver: None,
-                forms: vec![RenderedForm::Line(format!(
-                    "{}:{} ({}) --{}--> {}:{} ({}) [{}; provider={}@{}]",
-                    edge.from.path,
-                    edge.from.line,
-                    edge.from.symbol,
-                    edge.kind,
-                    edge.to.path,
-                    edge.to.line,
-                    edge.to.symbol,
-                    edge.evidence,
-                    evidence.provider,
-                    evidence.revision
-                ))],
-            });
-        }
-        // 005 T003: the compiler evidence goes through the same final read.
-        // The DELIVERED units are selected FIRST, under the one 32-unit
-        // bound over the lexical ranking and the compiler candidates (the
-        // first unit keeps its place, the compiler units follow the graph
-        // edges, the lexical tail yields); only they are proven. One
-        // witness per delivered unit is revalidated in THIS transaction
-        // against the snapshot it was collected under (still selected,
-        // current for the revision) and against its witness rows, and every
-        // graph record that pass reads is charged to one shared allowance -
-        // a depleted allowance leaves the proof unfinished and drops the
-        // expansion with `candidates_full`. A failing unit is counted in
-        // `stale` and dropped. A malformed producer or scope row is
-        // component-local, like the collection phase: the compiler evidence
-        // is discarded and the graph reports `graph_invalid`, while valid
-        // source and manual-edge evidence survives.
-        let final_revision = self.freshness_in(&tx)?.source_revision;
-        let mut compiler_items: Vec<RankedItem> = Vec::new();
-        let compiler_collected =
-            !compiler.units.is_empty() || !compiler.already_selected.is_empty();
-        let mut compiler_used = false;
-        let mut compiler_invalid = false;
-        // The selection: candidates removed here are never probed.
-        let first = usize::from(!units.is_empty());
-        let delivered: Vec<&graph::ContextUnit> = {
-            let mut candidates: Vec<&graph::ContextUnit> = compiler.units.iter().collect();
-            if candidates.len() > CONTEXT_UNITS - first {
-                candidates.truncate(CONTEXT_UNITS - first);
-                counters.candidates_full = true;
-            }
-            candidates
+            None => None,
         };
-        let lexical_room = CONTEXT_UNITS - delivered.len();
-        if units.len() > lexical_room {
-            units.truncate(lexical_room);
-            counters.candidates_full = true;
-        }
-        // The verified-body cache context rendering uses below. The final
-        // relation proof fills it first - every source a relation stands on
-        // (seed, definition, reference) is reconstructed and hash-checked in
-        // this transaction - so each file is verified once, and a corrupt
-        // chunk is a named `corrupt_source`, never an empty graph.
-        let mut bodies: std::collections::BTreeMap<String, (String, String)> =
-            std::collections::BTreeMap::new();
-        if compiler_collected {
-            // One witness per delivered compiler unit, plus one for an
-            // already-selected lexical unit - but only where that unit STAYS
-            // delivered after the cut above.
-            let delivered_lexical: std::collections::BTreeSet<(&str, u64, u64)> = units
-                .iter()
-                .filter_map(|item| {
-                    item.handle
-                        .as_ref()
-                        .map(|handle| (handle.path.as_str(), handle.start, handle.end))
-                })
-                .collect();
-            let witnesses: Vec<&graph::ContextWitness> = delivered
-                .iter()
-                .map(|unit| &unit.witness)
-                .chain(compiler.already_selected.iter().filter(|witness| {
-                    delivered_lexical.contains(&(
-                        witness.unit.0.as_str(),
-                        witness.unit.1,
-                        witness.unit.2,
-                    ))
-                }))
-                .collect();
-            let verdicts = {
-                let mut proof =
-                    |path: &str, hash: &str, start: u64, end: u64| -> FResult<graph::SourceProof> {
-                        let Some(meta) = current_meta(path)? else {
-                            return Ok(graph::SourceProof::Missing);
-                        };
-                        if meta.hash != hash {
-                            return Ok(graph::SourceProof::Missing);
-                        }
-                        if !bodies.contains_key(path) {
-                            let verified = reconstruct_verified(&stored, path, &meta)?;
-                            bodies.insert(path.to_owned(), (meta.hash, verified.body));
-                        }
-                        let body = &bodies[path].1;
-                        let (start, end) = (start as usize, end as usize);
-                        Ok(
-                            if end <= body.len()
-                                && body.is_char_boundary(start)
-                                && body.is_char_boundary(end)
-                            {
-                                graph::SourceProof::Verified
-                            } else {
-                                graph::SourceProof::Outside
-                            },
-                        )
-                    };
-                match graph::witnesses_hold(&tx, final_revision, &witnesses, &mut proof) {
-                    Ok(verdicts) => verdicts,
-                    Err(FoundryError::GraphInvalid(_)) => {
-                        compiler_invalid = true;
-                        graph::WitnessVerdicts {
-                            holds: vec![false; witnesses.len()],
-                            unfinished: false,
-                        }
-                    }
-                    Err(other) => return Err(other),
-                }
-            };
-            if verdicts.unfinished {
-                counters.candidates_full = true;
-            }
-            compiler_used = verdicts.holds.iter().any(|&holds| holds);
-            for (unit, &holds) in delivered.iter().zip(&verdicts.holds) {
-                if compiler_invalid {
-                    break;
-                }
-                let fresh = current_meta(&unit.path)?.is_some_and(|meta| meta.hash == unit.sha256);
-                if !(holds && fresh) {
-                    counters.stale += 1;
-                    graph_dropped += 1;
-                    continue;
-                }
-                compiler_items.push(RankedItem {
-                    tier: TIER_COMPILER,
-                    rank: 0,
-                    score: 0.0,
-                    handle: Some(SourceHandle {
-                        workspace_id: self.workspace_id.clone().unwrap_or_default(),
-                        path: unit.path.clone(),
-                        sha256: unit.sha256.clone(),
-                        start: unit.start,
-                        end: unit.end,
-                    }),
-                    start_line: 0,
-                    end_line: 0,
-                    line: unit.line,
-                    label: unit.label.clone(),
-                    lang: crate::syntax::Lang::from_path(&unit.path)
-                        .map(|lang| lang.tag().to_owned()),
-                    semantic: None,
-                    resolver: None,
-                    forms: Vec::new(),
-                });
-            }
-        }
-        if compiler_invalid {
-            counters.graph = Some("graph_invalid");
-        } else if graph_state == Some("ok")
-            && graph_items.is_empty()
-            && !compiler_used
-            && (graph_dropped > 0 || compiler_collected)
-        {
-            counters.graph = Some("graph_stale");
-        }
-        // (The one 32-unit bound was applied above, before the final proof.)
         // Verified bodies, once per path, for the signature forms of units in
         // languages with units and for the first distinct files' outlines.
+        let mut bodies: std::collections::BTreeMap<String, (String, String)> =
+            std::collections::BTreeMap::new();
         let mut outline_paths: Vec<String> = Vec::new();
         for item in &units {
             let Some(handle) = &item.handle else {
@@ -4956,19 +5004,6 @@ impl Engine {
                 (has_units && item.label != "block") || outline_paths.contains(&handle.path);
             if wanted
                 && !bodies.contains_key(&handle.path)
-                && let Some(meta) = current_meta(&handle.path)?
-            {
-                let verified = reconstruct_verified(&stored, &handle.path, &meta)?;
-                bodies.insert(handle.path.clone(), (meta.hash, verified.body));
-            }
-        }
-        // 005 T003: the compiler units' bodies join the same verified map,
-        // so their forms render from the same bytes as every other unit.
-        for item in &compiler_items {
-            let Some(handle) = &item.handle else {
-                continue;
-            };
-            if !bodies.contains_key(&handle.path)
                 && let Some(meta) = current_meta(&handle.path)?
             {
                 let verified = reconstruct_verified(&stored, &handle.path, &meta)?;
@@ -5011,38 +5046,6 @@ impl Engine {
             .flat_map(|window| window.entries.iter_mut())
         {
             entry.forms.push(RenderedForm::Address);
-        }
-        // 005 T003: source-first forms for the compiler units, from the same
-        // verified bodies and outliners as the search units: the verbatim
-        // unit text, then its signature when the language has units.
-        for item in &mut compiler_items {
-            let Some(handle) = &item.handle else {
-                continue;
-            };
-            let Some((_, body)) = bodies.get(&handle.path) else {
-                continue;
-            };
-            let (start, end) = (handle.start as usize, handle.end as usize);
-            // The bounds cannot fail — the unit came from these same bytes
-            // (the hash was revalidated above) — but a unit that somehow
-            // cannot render is skipped rather than delivered empty.
-            if start >= end
-                || end > body.len()
-                || !body.is_char_boundary(start)
-                || !body.is_char_boundary(end)
-            {
-                continue;
-            }
-            item.start_line = 1 + body[..start].bytes().filter(|&b| b == b'\n').count() as u64;
-            item.end_line = 1 + body[..end - 1].bytes().filter(|&b| b == b'\n').count() as u64;
-            item.forms
-                .push(RenderedForm::Verbatim(body[start..end].to_owned()));
-            if item.label != "block"
-                && let Some(outliner) = outliners.get(handle.path.as_str())
-            {
-                item.forms
-                    .push(RenderedForm::Signature(outliner.render(start..end, 0, 0)));
-            }
         }
         let mut outlines: Vec<RankedItem> = Vec::new();
         for path in &outline_paths {
@@ -5140,16 +5143,8 @@ impl Engine {
         };
         #[cfg(not(feature = "semantic"))]
         let semantic = search.semantic.clone();
-        // The first unit, then graph items, then the compiler units, then
-        // the remaining units, then outlines: a fitting first unit precedes
-        // graph evidence, and compiler units sit between the graph edges and
-        // the remaining search units (they are graph evidence too, ranked
-        // after the manual edge lines by the same tier).
-        let mut rest = units.into_iter();
-        let mut items: Vec<RankedItem> = rest.next().into_iter().collect();
-        items.extend(graph_items);
-        items.extend(compiler_items);
-        items.extend(rest);
+        // The units, then the outlines.
+        let mut items = units;
         items.extend(outlines);
         for (rank, item) in items.iter_mut().enumerate() {
             item.rank = rank;
@@ -5162,12 +5157,331 @@ impl Engine {
                 items,
                 counters,
                 // The anchored selection packs from these windows (context-v2
-                // § Anchored context); ranking, routing and graph expansion
-                // above never read them.
+                // § Anchored context); ranking and routing above never read
+                // them.
                 anchors,
+                doors,
+                collected: collected.flatten(),
             },
             hits,
         })
+    }
+
+    /// The doors of a context that requested them (context-v2 § Doors),
+    /// built in its final read `tx` for `target`, decided from the first
+    /// anchor's window before this read. A target this read's validation of
+    /// the anchor windows dropped as stale gets no doors, and no other
+    /// definition takes its place: a resolved `D` gives `none`.
+    ///
+    /// Each surviving target reads one references window, exactly the
+    /// resolved anchor's (at most [`TIE_GROUP`] per request), with a
+    /// cancellation check before every window after the first. Exact doors
+    /// when a current compiler scope of a target's path holds definition
+    /// occurrences at its stored name range. A resolved `D` without them
+    /// gets approximate doors; a tie group's entry without them gets no
+    /// group, and only when no entry has exact doors does the name get
+    /// approximate doors once, attributed to no entry. A malformed compiler
+    /// row is component-local: it gives approximate doors, never a failed
+    /// context.
+    fn doors_in(
+        &self,
+        tx: &redb::ReadTransaction,
+        target: &DoorTarget,
+        anchors: &[AnchorWindow],
+        counters: &mut CandidateCounters,
+        control: &crate::Control,
+    ) -> FResult<Doors> {
+        let (targets, cap) = match target {
+            DoorTarget::None => return Ok(Doors::unbuilt(DoorState::None)),
+            DoorTarget::Ambiguous => return Ok(Doors::unbuilt(DoorState::Ambiguous)),
+            DoorTarget::Resolved(handle) => (std::slice::from_ref(handle), DOOR_FILES),
+            DoorTarget::Tied(handles) => (handles.as_slice(), GROUP_FILES),
+        };
+        // Validation only removes entries: a target survived exactly when it
+        // is still in the first anchor's window.
+        let surviving = |handle: &SourceHandle| {
+            anchors
+                .first()?
+                .entries
+                .iter()
+                .find(|entry| entry.handle.as_ref() == Some(handle))?
+                .resolver
+        };
+        let revision = self.freshness_in(tx)?.source_revision;
+        let bound = self.workspace_id.clone().unwrap_or_default();
+        let mut reads = graph::DoorReads::new(tx, revision, &bound);
+        let mut groups: Vec<DoorGroup> = Vec::new();
+        // The first surviving target names the approximate doors.
+        let mut named: Option<(&SourceHandle, Resolver)> = None;
+        for handle in targets {
+            let Some(resolver) = surviving(handle) else {
+                continue;
+            };
+            match named {
+                // Every window after the first checks the request's
+                // cancellation.
+                Some(_) => control.check()?,
+                None => named = Some((handle, resolver)),
+            }
+            match reads.exact_doors(&handle.path, &handle.sha256, resolver.name, cap) {
+                Ok(graph::ExactResolution::Doors(exact)) => {
+                    counters.stale += exact.stale as u64;
+                    counters.candidates_full |= exact.full;
+                    groups.push(DoorGroup {
+                        target: Some(handle.clone()),
+                        lines: exact.lines,
+                        more_files: exact.more_files,
+                    });
+                }
+                // A name scan that ran out of its allowance filled the
+                // window, whatever the approximate window does.
+                Ok(graph::ExactResolution::Approximate { exhausted }) => {
+                    counters.candidates_full |= exhausted;
+                }
+                Err(FoundryError::GraphInvalid(_)) => {}
+                Err(other) => return Err(other),
+            }
+        }
+        let resolved = matches!(target, DoorTarget::Resolved(_));
+        if !groups.is_empty() {
+            let state = if resolved {
+                DoorState::Exact
+            } else {
+                DoorState::Each
+            };
+            return Ok(Doors { state, groups });
+        }
+        let Some(group) = named
+            .map(|(handle, resolver)| {
+                self.approx_doors(tx, handle, resolver.name, targets, counters, control)
+            })
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(Doors::unbuilt(DoorState::None));
+        };
+        Ok(Doors {
+            state: DoorState::Approx,
+            groups: vec![DoorGroup {
+                target: resolved.then(|| targets[0].clone()),
+                ..group
+            }],
+        })
+    }
+
+    /// Approximate doors (context-v2 § Doors) for the name exactly as
+    /// written at `name` in `named`'s verified bytes, without a trailing
+    /// `?`, `!` or `'`: the units of `own` are excluded and their module keys
+    /// are import keys. One group, onto no target; `None` when `named`'s
+    /// source is gone from this read.
+    fn approx_doors(
+        &self,
+        tx: &redb::ReadTransaction,
+        named: &SourceHandle,
+        name: (u64, u64),
+        own: &[SourceHandle],
+        counters: &mut CandidateCounters,
+        control: &crate::Control,
+    ) -> FResult<Option<DoorGroup>> {
+        let bound = self.workspace_id.clone().unwrap_or_default();
+        let sources = tx.open_table(SOURCES)?;
+        let stored = tx.open_table(CHUNKS)?;
+        let mut files: std::collections::HashMap<String, Option<DoorFile>> =
+            std::collections::HashMap::new();
+        let Some(file) = door_file(&mut files, &sources, &stored, &named.path, &named.sha256)?
+        else {
+            return Ok(None);
+        };
+        let (start, end) = (name.0 as usize, name.1 as usize);
+        let name = file
+            .body
+            .get(start..end)
+            .ok_or_else(|| {
+                FoundryError::CorruptStore(format!(
+                    "a stored name range lies outside {}",
+                    named.path
+                ))
+            })?
+            .trim_end_matches(['?', '!', '\''])
+            .to_owned();
+        let mut doors = DoorGroup {
+            target: None,
+            lines: Vec::new(),
+            more_files: 0,
+        };
+        // Identifiers of one character have no doors.
+        if name.chars().count() < 2 {
+            return Ok(Some(doors));
+        }
+        let (candidates, full) = self.door_candidates(&name, own, control)?;
+        counters.candidates_full |= full;
+        // A candidate becomes a door where a line of it holds the name
+        // exactly as written; one site per unit, grouped by file in door
+        // order (a file's first candidate is its first site).
+        let mut groups: Vec<(DoorLine, usize)> = Vec::new();
+        let mut group_of: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for candidate in &candidates {
+            control.check()?;
+            let Some(file) = door_file(
+                &mut files,
+                &sources,
+                &stored,
+                &candidate.path,
+                &candidate.hash,
+            )?
+            else {
+                counters.stale += 1;
+                continue;
+            };
+            let (start, end) = (candidate.unit_start as usize, candidate.unit_end as usize);
+            let Some(text) = file.body.get(start..end) else {
+                return Err(FoundryError::CorruptStore(format!(
+                    "search document unit outside {}",
+                    candidate.path
+                )));
+            };
+            let Some(at) = find_word(text, &name) else {
+                continue;
+            };
+            match group_of.get(&candidate.path) {
+                Some(&index) => groups[index].1 += 1,
+                None => {
+                    group_of.insert(candidate.path.clone(), groups.len());
+                    let line = file.line_of(start + at);
+                    groups.push((
+                        DoorLine {
+                            unit: SourceHandle {
+                                workspace_id: bound.clone(),
+                                path: candidate.path.clone(),
+                                sha256: candidate.hash.clone(),
+                                start: candidate.unit_start,
+                                end: candidate.unit_end,
+                            },
+                            line,
+                            label: candidate.label.clone(),
+                            text: file.line_text(line).to_owned(),
+                            more: 0,
+                        },
+                        0,
+                    ));
+                }
+            }
+        }
+        doors.more_files = groups.len().saturating_sub(DOOR_FILES);
+        doors.lines = groups
+            .into_iter()
+            .take(DOOR_FILES)
+            .map(|(line, more)| DoorLine { more, ..line })
+            .collect();
+        Ok(Some(doors))
+    }
+
+    /// The approximate-door candidates of the definitions `own`, all named
+    /// `name` (context-v2 § Doors): the delivery units, other than theirs,
+    /// whose `ident` holds the name, in door order - importing files first (a
+    /// file whose index-time import keys hold the name or one of their
+    /// module keys), then role, path and start - cut to the first
+    /// [`DOOR_WINDOW`]; and whether more existed. The request's cancellation
+    /// is checked as each search document is read. Nothing is resolved, read
+    /// from configuration or executed: the keys were computed at indexing.
+    fn door_candidates(
+        &self,
+        name: &str,
+        own: &[SourceHandle],
+        control: &crate::Control,
+    ) -> FResult<(Vec<DoorCandidate>, bool)> {
+        let handles = self.require_search()?;
+        let fields = &handles.fields;
+        let searcher = handles.reader.searcher();
+        let term = |field: Field, text: &str| -> Box<dyn Query> {
+            Box::new(TermQuery::new(
+                Term::from_field_text(field, text),
+                IndexRecordOption::Basic,
+            ))
+        };
+        let mut modules: Vec<&str> = vec![name];
+        for module in own.iter().filter_map(|handle| module_key(&handle.path)) {
+            if !modules.contains(&module) {
+                modules.push(module);
+            }
+        }
+        let keys = modules
+            .into_iter()
+            .map(|key| term(fields.imports, key))
+            .collect();
+        let mut importing: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for address in searcher.search(
+            &BooleanQuery::union(keys),
+            &tantivy::collector::DocSetCollector,
+        )? {
+            control.check()?;
+            let doc: TantivyDocument = searcher.doc(address)?;
+            if let Some(path) = doc.get_first(fields.path).and_then(|v| v.as_str()) {
+                importing.insert(path.to_owned());
+            }
+        }
+        let mentions = BooleanQuery::new(vec![
+            (Occur::Must, term(fields.ident, &name.to_lowercase())),
+            (Occur::MustNot, term(fields.kind, "memory")),
+        ]);
+        let mut units: std::collections::BTreeMap<(String, u64, u64), DoorCandidate> =
+            std::collections::BTreeMap::new();
+        for address in searcher.search(&mentions, &tantivy::collector::DocSetCollector)? {
+            control.check()?;
+            let doc: TantivyDocument = searcher.doc(address)?;
+            let invalid = || FoundryError::CorruptStore("invalid search document".into());
+            let text = |field| doc.get_first(field).and_then(|v| v.as_str());
+            let number = |field| {
+                doc.get_first(field)
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(invalid)
+            };
+            let path = text(fields.path).ok_or_else(invalid)?;
+            let (unit_start, unit_end) = (number(fields.unit_start)?, number(fields.unit_end)?);
+            let own_unit = own.iter().any(|handle| {
+                handle.path == path && handle.start == unit_start && handle.end == unit_end
+            });
+            if own_unit {
+                continue;
+            }
+            let key = (path.to_owned(), unit_start, unit_end);
+            if units.contains_key(&key) {
+                continue;
+            }
+            let kind = match text(fields.kind).ok_or_else(invalid)? {
+                UNPARSED_KIND => crate::syntax::UnitKind::Block.as_str(),
+                kind => kind,
+            };
+            let label = match text(fields.qname) {
+                Some(qname) => format!("{kind} {qname}"),
+                None => kind.to_owned(),
+            };
+            units.insert(
+                key,
+                DoorCandidate {
+                    importing: importing.contains(path),
+                    role: number(fields.role)?,
+                    path: path.to_owned(),
+                    hash: text(fields.hash).ok_or_else(invalid)?.to_owned(),
+                    unit_start,
+                    unit_end,
+                    label,
+                },
+            );
+        }
+        let mut candidates: Vec<DoorCandidate> = units.into_values().collect();
+        candidates.sort_by(|a, b| {
+            (!a.importing, a.role, &a.path, a.unit_start).cmp(&(
+                !b.importing,
+                b.role,
+                &b.path,
+                b.unit_start,
+            ))
+        });
+        let full = candidates.len() > DOOR_WINDOW;
+        candidates.truncate(DOOR_WINDOW);
+        Ok((candidates, full))
     }
 
     /// Direct authoritative read in context-v2 contract order: syntax and

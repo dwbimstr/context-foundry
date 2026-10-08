@@ -7,8 +7,8 @@
 use crate::error::{FResult, FoundryError};
 use crate::graph::ReferencesOutcome;
 use crate::store::{
-    ANCHOR_LIST, CandidateBatch, HandleRef, OutlineOutcome, RankedItem, RenderedForm,
-    RetrieveOutcome, SearchOutcome, SourceHandle,
+    ANCHOR_LIST, CandidateBatch, DoorGroup, DoorState, HandleRef, OutlineOutcome, RankedItem,
+    RenderedForm, RetrieveOutcome, SearchOutcome, SourceHandle,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -63,18 +63,30 @@ pub fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
-const GRAPH_KEYWORDS: [&str; 11] = [
-    "calls",
-    "caller",
+/// The words that request doors under `auto` (context-v2 § Doors).
+const DOOR_WORDS: [&str; 22] = [
     "callers",
-    "depends",
-    "impact",
-    "dependency",
-    "dependencies",
-    "reference",
-    "references",
+    "caller",
+    "calls",
+    "called",
+    "invokes",
+    "invoked",
+    "invokers",
+    "uses",
+    "used",
     "usage",
     "usages",
+    "references",
+    "reference",
+    "referenced",
+    "dependents",
+    "depends",
+    "dependency",
+    "dependencies",
+    "impact",
+    "affects",
+    "break",
+    "breaks",
 ];
 
 /// The context retrieval strategy: `auto` routes (deterministically, or by
@@ -98,14 +110,15 @@ impl std::fmt::Display for Strategy {
 }
 
 /// Deterministic auto routing: ASCII-lowercase the query, tokenize maximal
-/// runs of ASCII letters, digits or `_`; any whole keyword token selects
-/// graph. Substring matches such as `preferences` or `calls_tracker` do not.
+/// runs of ASCII letters, digits or `_`; any whole token among the doors
+/// request words selects graph, which builds doors (context-v2 § Doors).
+/// Substring matches such as `preferences` or `calls_tracker` do not.
 pub fn strategy_for_query(query: &str) -> Strategy {
     let lowered = query.to_ascii_lowercase();
     let mut token = String::new();
     let mut graph = false;
     let flush = |token: &mut String, graph: &mut bool| {
-        if GRAPH_KEYWORDS.contains(&token.as_str()) {
+        if DOOR_WORDS.contains(&token.as_str()) {
             *graph = true;
         }
         token.clear();
@@ -272,7 +285,6 @@ struct HeaderV2<'a> {
     capped: u64,
     stale: u64,
     candidates_full: bool,
-    graph: Option<&'a str>,
     /// The 009 T002 semantic word: `ready`, `partial` or
     /// `fallback:<reason>`; `None` keeps the baseline header byte-for-byte.
     semantic: Option<&'a str>,
@@ -284,6 +296,9 @@ struct HeaderV2<'a> {
     /// definition count among its ambiguous anchors (context-v2 § Anchored
     /// context); `None` keeps the header unchanged.
     defs: Option<u64>,
+    /// `doors:<state>`: a context that requested doors (context-v2 § Doors);
+    /// `None` keeps the header unchanged.
+    doors: Option<&'static str>,
     /// The bare `anchored` segment, last: a context packed as the anchored
     /// selection; `false` keeps the header unchanged.
     anchored: bool,
@@ -336,9 +351,6 @@ impl HeaderV2<'_> {
         if self.candidates_full {
             segments.push("candidates:full".into());
         }
-        if let Some(graph) = self.graph {
-            segments.push(format!("graph:{graph}"));
-        }
         if let Some(semantic) = self.semantic {
             segments.push(format!("semantic:{}", single_line(semantic)));
         }
@@ -347,6 +359,9 @@ impl HeaderV2<'_> {
         }
         if let Some(defs) = self.defs {
             segments.push(format!("defs:{defs}"));
+        }
+        if let Some(doors) = self.doors {
+            segments.push(format!("doors:{doors}"));
         }
         if self.anchored {
             segments.push("anchored".into());
@@ -483,7 +498,6 @@ fn rendered_form(item: &RankedItem, form: &RenderedForm) -> String {
         RenderedForm::Outline(body) | RenderedForm::OutlineMin(body) => {
             source(Some("[outline]"), body)
         }
-        RenderedForm::Line(text) => edge_line(text),
         RenderedForm::Address => handle.map_or_else(String::new, |handle| {
             item_line(&handle.to_v2(), lines, &label, Some("[address]"))
         }),
@@ -497,11 +511,6 @@ fn ranked_forms(item: &RankedItem) -> Vec<String> {
         .map(|form| rendered_form(item, form))
         .filter(|rendered| !rendered.is_empty())
         .collect()
-}
-
-/// A graph item's one line, `edge <text>` (context-v2 § Evidence items).
-fn edge_line(text: &str) -> String {
-    format!("edge {}\n", single_line(text))
 }
 
 /// The fixed point of the most expensive limiter label's rendering: a budget
@@ -574,12 +583,12 @@ fn refusal_floor_impl(
         capped: longest,
         stale: longest,
         candidates_full: true,
-        graph: (op == "context").then_some("graph_unavailable"),
         semantic: None,
         route: None,
-        // Like `route:`, the hint reserves no room for `defs:` or `anchored`:
-        // the worst-case numbers above dominate them.
+        // Like `route:`, the hint reserves no room for `defs:`, `doors:` or
+        // `anchored`: the worst-case numbers above dominate them.
         defs: None,
+        doors: None,
         anchored: false,
     };
     let item = handle.map_or_else(String::new, |handle| {
@@ -762,10 +771,10 @@ fn pack_retrieve_impl(
         capped: 0,
         stale: 0,
         candidates_full: false,
-        graph: None,
         semantic: None,
         route: None,
         defs: None,
+        doors: None,
         anchored: false,
     };
     let render = |length: usize, shown: usize, limited_by: BudgetLimiter| {
@@ -851,10 +860,10 @@ fn pack_retrieve_outline_impl(
         capped: 0,
         stale: 0,
         candidates_full: false,
-        graph: None,
         semantic: None,
         route: None,
         defs: None,
+        doors: None,
         anchored: false,
     };
     let handle = out.requested.to_v2();
@@ -973,7 +982,8 @@ pub fn pack_context_roots_with_memory(
 const DIRECTORY_LINES: usize = 8;
 
 /// The context header over a batch's facts; `defs` and `anchored` are the
-/// anchored selection's last segments.
+/// anchored selection's last segments, and `doors:<state>` is present when
+/// the context requested doors.
 fn context_header<'a>(
     batch: &'a CandidateBatch,
     roots: Option<&'a [RootHeader]>,
@@ -991,10 +1001,10 @@ fn context_header<'a>(
         capped: batch.counters.capped,
         stale: batch.counters.stale,
         candidates_full: batch.counters.candidates_full,
-        graph: batch.counters.graph,
         semantic: batch.semantic.as_deref(),
         route: batch.route.as_deref(),
         defs,
+        doors: batch.doors.as_ref().map(|doors| doors.state.as_str()),
         anchored,
     }
 }
@@ -1064,6 +1074,23 @@ impl Slot {
     }
 }
 
+/// A tie-group entry's door group (context-v2 § Doors, `doors:each`): one
+/// door line per file, the last carrying the group's `⋯ <m> more files`
+/// line, so the group fits or is omitted whole.
+fn group_slots(group: &DoorGroup) -> Vec<Slot> {
+    let mut lines: Vec<String> = group
+        .lines
+        .iter()
+        .map(|door| door_line(door, false))
+        .collect();
+    if group.more_files > 0
+        && let Some(last) = lines.last_mut()
+    {
+        last.push_str(&format!("⋯ {} more files\n", group.more_files));
+    }
+    lines.into_iter().map(Slot::line).collect()
+}
+
 /// The anchored selection (context-v2 § Anchored context), per anchor in
 /// order: a resolved anchor's first definition through the ladder
 /// (verbatim, signature when it differs, `[address]`), then at most
@@ -1074,9 +1101,17 @@ impl Slot {
 /// upgraded to its signature (verbatim when it has none), then to verbatim,
 /// when the difference fits. Every decision is a trial of the whole response
 /// with the header updated for it; an entry is omitted only when not even
-/// its last form fits. Nothing else is packed: every other candidate is
-/// counted in `omitted:<n>`. Opt-in 008 memory lines then fill the remaining
-/// budget under their existing rule.
+/// its last form fits. Under `doors:each`, each of the first anchor's
+/// entries with a door group shows it right after the entry: the groups are
+/// tried in list order after the address pass (after the ladder of a first
+/// definition the final read left resolved) and before any upgrade, each
+/// placed whole or omitted with its lines counted, and an omitted entry's
+/// group with it. Otherwise the door lines of § Doors, when the context
+/// requested doors and they were built: each placed when it fits, then the
+/// `⋯ <m> more files` line when it fits (navigation, not an item). Nothing
+/// else is packed: every other candidate is counted in `omitted:<n>`.
+/// Opt-in 008 memory lines then fill the remaining budget under their
+/// existing rule.
 fn pack_anchored(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
@@ -1087,15 +1122,26 @@ fn pack_anchored(
     enum Plan {
         Resolved {
             first: usize,
+            group: std::ops::Range<usize>,
             directory: std::ops::Range<usize>,
         },
-        Ambiguous(std::ops::Range<usize>),
+        /// Each listed entry's slot, then its door group's slots.
+        Ambiguous(Vec<(usize, std::ops::Range<usize>)>),
     }
+    let doors = batch.doors.as_ref();
+    // `doors:each`: the first anchor's entries' own groups.
+    let each: &[DoorGroup] = match doors {
+        Some(doors) if doors.state == DoorState::Each => &doors.groups,
+        _ => &[],
+    };
     let mut slots: Vec<Slot> = Vec::new();
     let mut plans: Vec<Plan> = Vec::new();
     let mut selected: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut defs: Option<u64> = None;
-    for window in batch.anchors.iter().filter(|window| window.definitions > 0) {
+    for (index, window) in batch.anchors.iter().enumerate() {
+        if window.definitions == 0 {
+            continue;
+        }
         let resolved = window.resolved();
         if !resolved {
             defs = Some(defs.map_or(window.definitions, |most| most.max(window.definitions)));
@@ -1115,9 +1161,21 @@ fn pack_anchored(
                 .take(listed)
                 .filter_map(|entry| entry.handle.as_ref().map(SourceHandle::to_v2)),
         );
-        if resolved {
+        // An entry's slot, then its own door group's slots.
+        let entry_slots = |slots: &mut Vec<Slot>, entry: &RankedItem| {
             let at = slots.len();
-            slots.push(Slot::ladder(first));
+            slots.push(Slot::ladder(entry));
+            let group = slots.len();
+            if let Some(doors) = each
+                .iter()
+                .find(|group| index == 0 && group.target.is_some() && group.target == entry.handle)
+            {
+                slots.extend(group_slots(doors));
+            }
+            (at, group..slots.len())
+        };
+        if resolved {
+            let (at, group) = entry_slots(&mut slots, first);
             let directory = slots.len();
             slots.extend(
                 window.entries[1..]
@@ -1128,14 +1186,37 @@ fn pack_anchored(
             );
             plans.push(Plan::Resolved {
                 first: at,
+                group,
                 directory: directory..slots.len(),
             });
         } else {
-            let start = slots.len();
-            slots.extend(window.entries.iter().take(ANCHOR_LIST).map(Slot::ladder));
-            plans.push(Plan::Ambiguous(start..slots.len()));
+            let entries = window
+                .entries
+                .iter()
+                .take(ANCHOR_LIST)
+                .map(|entry| entry_slots(&mut slots, entry))
+                .collect();
+            plans.push(Plan::Ambiguous(entries));
         }
     }
+    // The door lines (context-v2 § Doors), after every anchor's entries,
+    // unless they are the entries' own groups.
+    let doors = doors.filter(|doors| doors.state != DoorState::Each);
+    let group = doors.and_then(|doors| doors.groups.first());
+    let door_slots = slots.len();
+    if let Some(group) = group {
+        let approx = doors.is_some_and(|doors| doors.state == DoorState::Approx);
+        slots.extend(
+            group
+                .lines
+                .iter()
+                .map(|door| Slot::line(door_line(door, approx))),
+        );
+    }
+    let door_slots = door_slots..slots.len();
+    let more_files = group
+        .filter(|group| group.more_files > 0)
+        .map(|group| format!("⋯ {} more files\n", group.more_files));
     // Everything outside the selection is omitted from the start.
     let outside = batch
         .items
@@ -1147,29 +1228,34 @@ fn pack_anchored(
         })
         .count();
     let header = context_header(batch, roots, defs, true);
-    let render = |slots: &[Slot], dropped: usize, tail_kept: &[usize], at_budget, limited_by| {
-        let shown = slots.iter().filter(|slot| slot.chosen.is_some()).count();
-        let mut text = header.line(
-            at_budget,
-            limited_by,
-            shown + tail_kept.len(),
-            outside + dropped,
-        );
-        for slot in slots {
-            if let Some(form) = slot.chosen {
-                text.push_str(&slot.forms[form]);
+    let render =
+        |slots: &[Slot], dropped: usize, more: bool, tail_kept: &[usize], at_budget, limited_by| {
+            let shown = slots.iter().filter(|slot| slot.chosen.is_some()).count();
+            let mut text = header.line(
+                at_budget,
+                limited_by,
+                shown + tail_kept.len(),
+                outside + dropped,
+            );
+            for slot in slots {
+                if let Some(form) = slot.chosen {
+                    text.push_str(&slot.forms[form]);
+                }
             }
-        }
-        for &index in tail_kept {
-            text.push_str(&tail[index]);
-        }
-        text
-    };
+            if more && let Some(line) = &more_files {
+                text.push_str(line);
+            }
+            for &index in tail_kept {
+                text.push_str(&tail[index]);
+            }
+            text
+        };
     let fits = |text: &str| boundary(text) <= BYTE_CAP && count_tokens(text) <= budget.tokens;
     let trial = |slots: &[Slot], dropped: usize| {
         fits(&render(
             slots,
             dropped,
+            false,
             &[],
             budget.tokens,
             budget.limited_by,
@@ -1186,22 +1272,44 @@ fn pack_anchored(
         slots[index].chosen = None;
         *dropped += 1;
     };
+    // A door group fits whole or is omitted, its lines counted; so is an
+    // omitted entry's.
+    let place_group =
+        |slots: &mut [Slot], entry: usize, group: &std::ops::Range<usize>, dropped: &mut usize| {
+            if !group.is_empty() && slots[entry].chosen.is_some() {
+                for index in group.clone() {
+                    slots[index].chosen = Some(0);
+                }
+                if trial(slots, *dropped) {
+                    return;
+                }
+                for index in group.clone() {
+                    slots[index].chosen = None;
+                }
+            }
+            *dropped += group.len();
+        };
     let mut dropped = 0usize;
     for plan in &plans {
         match plan {
-            Plan::Resolved { first, directory } => {
+            Plan::Resolved {
+                first,
+                group,
+                directory,
+            } => {
                 let ladder: Vec<usize> = (0..slots[*first].forms.len()).collect();
                 place(&mut slots, *first, &ladder, &mut dropped);
+                place_group(&mut slots, *first, group, &mut dropped);
                 for index in directory.clone() {
                     place(&mut slots, index, &[0], &mut dropped);
                 }
             }
-            Plan::Ambiguous(range) => {
+            Plan::Ambiguous(entries) => {
                 // Pass 1: every listed entry's address line, in list order.
                 // The first that does not fit is omitted with every entry
                 // after it.
                 let before = dropped;
-                for index in range.clone() {
+                for &(index, _) in entries {
                     if dropped > before {
                         dropped += 1;
                         continue;
@@ -1209,11 +1317,16 @@ fn pack_anchored(
                     let address = slots[index].address;
                     place(&mut slots, index, address.as_slice(), &mut dropped);
                 }
+                // `doors:each`: the entries' groups, in list order, before
+                // any upgrade.
+                for (index, group) in entries {
+                    place_group(&mut slots, *index, group, &mut dropped);
+                }
                 // Pass 2 upgrades to the signature (verbatim when there is
                 // none), pass 3 to verbatim: each in list order when the
                 // difference fits; one that does not keeps its form.
                 for verbatim in [false, true] {
-                    for index in range.clone() {
+                    for &(index, _) in entries {
                         let Some(previous) = slots[index].chosen else {
                             continue;
                         };
@@ -1229,16 +1342,35 @@ fn pack_anchored(
             }
         }
     }
+    for index in door_slots {
+        place(&mut slots, index, &[0], &mut dropped);
+    }
     // The final header carries the final counts: drop the last shown entry
-    // until the whole response fits.
+    // until the whole response fits. A door group goes whole, every line
+    // counted; it follows its entry, so an entry goes only after its group.
+    let mut group_of: Vec<Option<std::ops::Range<usize>>> = vec![None; slots.len()];
+    let mut mark = |group: &std::ops::Range<usize>| {
+        for index in group.clone() {
+            group_of[index] = Some(group.clone());
+        }
+    };
+    for plan in &plans {
+        match plan {
+            Plan::Resolved { group, .. } => mark(group),
+            Plan::Ambiguous(entries) => entries.iter().for_each(|(_, group)| mark(group)),
+        }
+    }
     let base_fits = loop {
         if trial(&slots, dropped) {
             break true;
         }
-        match slots.iter_mut().rev().find(|slot| slot.chosen.is_some()) {
-            Some(slot) => {
-                slot.chosen = None;
-                dropped += 1;
+        match slots.iter().rposition(|slot| slot.chosen.is_some()) {
+            Some(last) => {
+                let shown = group_of[last].clone().unwrap_or(last..last + 1);
+                for index in shown.clone() {
+                    slots[index].chosen = None;
+                }
+                dropped += shown.len();
             }
             None => break false,
         }
@@ -1248,6 +1380,16 @@ fn pack_anchored(
             header.line(at_budget, limited_by, 0, outside + slots.len())
         }));
     }
+    // The `⋯ <m> more files` line follows the door lines when it fits.
+    let more = more_files.is_some()
+        && fits(&render(
+            &slots,
+            dropped,
+            true,
+            &[],
+            budget.tokens,
+            budget.limited_by,
+        ));
     // 008: memory lines fill the remaining budget, as after the ladder.
     let mut tail_kept: Vec<usize> = Vec::new();
     for index in 0..tail.len() {
@@ -1255,6 +1397,7 @@ fn pack_anchored(
         if !fits(&render(
             &slots,
             dropped,
+            more,
             &tail_kept,
             budget.tokens,
             budget.limited_by,
@@ -1265,6 +1408,7 @@ fn pack_anchored(
     let text = render(
         &slots,
         dropped,
+        more,
         &tail_kept,
         budget.tokens,
         budget.limited_by,
@@ -1336,10 +1480,10 @@ fn pack_search_impl(
         capped: outcome.capped,
         stale: outcome.stale_candidates,
         candidates_full: outcome.candidate_limit_reached,
-        graph: None,
         semantic: outcome.semantic.as_deref(),
         route: None,
         defs: None,
+        doors: None,
         anchored: false,
     };
     pack(&items, &[], &header, budget, BYTE_CAP, boundary)
@@ -1370,10 +1514,10 @@ pub fn pack_memory_search(
         capped: 0,
         stale: outcome.stale_candidates,
         candidates_full: outcome.candidates_full,
-        graph: None,
         semantic: None,
         route: None,
         defs: None,
+        doors: None,
         anchored: false,
     };
     pack(&items, &[], &header, budget, BYTE_CAP, boundary)
@@ -1408,6 +1552,29 @@ const EXCERPT_BYTES: usize = 160;
 fn locator(handle: &SourceHandle, best: u64, label: &str, quote: &str) -> String {
     let label = single_line(label);
     format!("{} L{best} {label}: {quote}\n", handle.to_v2())
+}
+
+/// One door line (context-v2 § Doors): `<handle> L<line> in <label>:
+/// <excerpt>` for a file's first site - the enclosing unit's handle, the
+/// site's line and at most 160 bytes of it under the locator excerpt rules -
+/// suffixed ` (+<n>)` when the file has `n` more sites and ` [approx]` for an
+/// approximate door.
+fn door_line(door: &crate::store::DoorLine, approx: bool) -> String {
+    let mut line = format!(
+        "{} L{} in {}: {}",
+        door.unit.to_v2(),
+        door.line,
+        single_line(&door.label),
+        excerpt(&door.text, door.line, door.line)
+    );
+    if door.more > 0 {
+        line.push_str(&format!(" (+{})", door.more));
+    }
+    if approx {
+        line.push_str(" [approx]");
+    }
+    line.push('\n');
+    line
 }
 
 /// The best line of a delivery unit's `text`, whose first line is

@@ -216,12 +216,13 @@ segments appear only when not at their default:
 6. `shown:<k>`, the items rendered (search and context);
 7. `omitted:<n>` when packing dropped constructed candidates;
 8. `capped:<n>` when the per-file cap skipped hits;
-9. `stale:<n>` when the final read dropped stale source or graph candidates;
+9. `stale:<n>` when the final read dropped stale source candidates or door sites;
 10. `candidates:full` when a candidate window filled: search tier 1's 64 slots with
-    definitions left over, tier 2 at 256, or a context graph examination window (32
-    rows per seed and direction) that filled exactly or was truncated;
-11. `graph:<ok|graph_unavailable|graph_stale|graph_invalid>` when the strategy
-    resolved to graph;
+    definitions left over, tier 2 at 256, an exact-doors references window (256
+    records, 64 files) or its exact-name resolution, or the approximate-doors window of
+    256 units;
+11. (removed by 005 T004) `graph:<state>` reported path-seeded graph expansion; an
+    anchored context reports `doors:<state>` instead (§ Anchored context);
 12. `examined:<n>`: `foundry references` only, always present. Counts the graph records
     examined in this window, definition lookups included;
 13. `unresolved:<n>`: `foundry references` only, present when n > 0. Counts examined
@@ -240,11 +241,11 @@ held), segments 7–10 keep their meanings:
 absence. `coverage:complete` still covers only supported indexed input inside the
 examined window, so it never proves absence beyond it (§ Deduplication, no cross-call
 suppression). Database and store failures stay named errors, never a
-`coverage:unavailable` success. `graph:` stays context-only.
+`coverage:unavailable` success.
 
 Header segments amendment, 2026-10-05 (013 T003): a context whose strategy is `auto`
 on an owner or command started with a policy config that is not disabled (an invalid one included) adds one last segment,
-after `graph:` and 009's `semantic:` word: `route:policy` when the policy's choice was
+after 009's `semantic:` word: `route:policy` when the policy's choice was
 accepted, else `route:fallback:<reason>` with deterministic routing, the reason one of
 `policy_abstained`, `policy_busy`, `policy_timeout`, `policy_insufficient_time`,
 `policy_unavailable`, `policy_input_oversize`, `graph_unavailable` or `graph_stale`. An explicit strategy,
@@ -413,7 +414,7 @@ their names unanswerable):
 
 | Language | Unit nodes (rendered kind) |
 | --- | --- |
-| Rust | `function_item` (fn), `function_signature_item` (fn), `struct_item` (struct), `enum_item` (enum), `enum_variant` (variant), `union_item` (union), `trait_item` (trait), `impl_item` (impl), `mod_item` (mod), `macro_definition` (macro), `const_item` (const), `static_item` (static), `type_item` and `associated_type` (type) |
+| Rust | `function_item` (fn), `function_signature_item` (fn), `struct_item` (struct), `enum_item` (enum), `enum_variant` (variant), `union_item` (union), `trait_item` (trait), `impl_item` (impl), `mod_item` (mod), `macro_definition` (macro), `const_item` (const), `static_item` (static), `type_item`, `associated_type` and `trait_alias_item` (type; the last from the tree-sitter-rust fork, § Languages) |
 | Python | `function_definition` (fn), `class_definition` (class); a wrapping `decorated_definition` supplies the range; a module-level `assignment` whose left side is one identifier (static), its `expression_statement` supplying the range |
 | TypeScript, TSX, JavaScript | `function_declaration`, `generator_function_declaration` (fn); `class_declaration` (class); `method_definition` (method); `interface_declaration` (interface); `type_alias_declaration` (type); `enum_declaration` (enum) and each of its members (variant); each declarator of a module-level `lexical_declaration`/`variable_declaration` whose name is an identifier: fn when its value is `arrow_function`/`function_expression`, otherwise const (`const`) or static (`let`, `var`), the declaration supplying the range when it has one declarator; at any depth, as before the city map, a declaration with exactly one declarator whose value is `arrow_function`/`function_expression` (fn); a wrapping `export_statement` supplies the range |
 | Go | `function_declaration` (fn), `method_declaration` (method), `type_spec` and `type_alias` (type), module-level `const_spec` (const) and `var_spec` (static); a declaration with one spec supplies the range |
@@ -448,10 +449,14 @@ child of its nearest enclosing unit; a wrapper coextensive with its unit yields 
 unit; zero-width, invalid or partially overlapping ranges are not units (of two
 partially overlapping ranges, the later is dropped). Parse errors are tolerated: the
 error-recovered tree still yields units. Zero units, an unmapped language or a source
-over 1 MiB falls back to blocks. Parsing is deterministic, with no time-based limit.
-For tree-sitter languages, a unit's range is its node's (or wrapper's) byte range,
-extended backward over its leading run (below); no following line terminator is
-appended to that range. Markdown section ranges run to the next equal-or-higher-rank
+over 1 MiB falls back to blocks. Parsing is deterministic, with no time-based limit; it
+is bounded by work (§ Languages). For tree-sitter languages, a unit's range is its
+node's (or wrapper's) byte range, extended backward over its leading run (below); no
+following line terminator is appended to that range. A statement-form container (C#
+`namespace X;`, PHP `namespace X;`, Perl `package X;`, a Scala `package` clause) has no
+body node: its range runs from the statement to the next statement of its kind or to
+its parent's end, trailing whitespace trimmed, and the following declarations are its
+members (001 T008). Markdown section ranges run to the next equal-or-higher-rank
 heading or EOF and can include a trailing LF. A handle uses the range unchanged.
 
 **Leading run** (owner decision 2026-10-04, amending T005; implemented locally):
@@ -467,10 +472,14 @@ most one line terminator (no blank line):
 | Java | `block_comment` beginning `/**` (Javadoc); annotations are already inside the declaration |
 | TypeScript, TSX, JavaScript | `comment` beginning `/**` (JSDoc) |
 | Go | any `comment` (Go doc comments are ordinary comments directly above a declaration) |
+| VB.NET | attribute blocks (`<…>`) |
 
-Python, C, C++ and Markdown have no leading run. The run joins the unit's range, so
-it belongs to the unit's search documents (a container's own run lies in its residual
-region) and is retrieved with the unit; names and qualified names are unchanged.
+Python, C, C++, Markdown and the other § Languages additions have no leading run (for
+C#, Kotlin, Swift, PHP, Ruby and the rest, documentation comments above a declaration
+stay outside its range: a named limitation of 001 T008). The run joins the unit's
+range, so it belongs to the unit's search documents (a container's own run lies in its
+residual region) and is retrieved with the unit; names and qualified names are
+unchanged.
 
 ### Search documents
 
@@ -568,8 +577,9 @@ draws its units from this same materialized ranking.
 
 ### Index version gate
 
-The value is `"4"` since 001 T007 (§ City map: one definition document per unit and
-the § Definitions and addresses fields); every later change to search-document
+The value is `"5"` since 001 T008 (units, addresses and import keys of 15 more
+languages) and was `"4"` since 001 T007 (§ City map: one definition document per unit
+and the § Definitions and addresses fields); every later change to search-document
 content bumps it again. Before it, META key `search_schema = "3"` (it was `"2"` before
 the 2026-10-04 leading-run amendment changed search-document ranges). The key is
 written in the store-initialization transaction for
@@ -703,42 +713,32 @@ list. Single-root order is batch order; 007 merges batches, never packed respons
 Context candidates, in order:
 
 1. up to 32 delivery units from the two-tier ranking (§ Hit materialization);
-2. when the strategy resolves to graph, bounded graph items placed after the first
-   unit, seeded by the paths of the top 3 units as in v1;
-   (When 005 T004 is accepted, this item and the keyword routing below are replaced by
-   § Doors: graph and usage-intent requests build doors for a resolved anchor.)
-3. up to 3 file outlines for the first distinct files among those units, skipping an
+2. up to 3 file outlines for the first distinct files among those units, skipping an
    empty file and a file that one of those units spans (only whitespace lies outside
    the unit). Only mapped languages have outlines, read literally: a mapped
    language without units (`toml`, `json`, `yaml`, `bash`, `sql`, `html`, `css`) has an
    outline equal to its text; an unmapped extension has none.
 
-v1's `following_chunks` candidates are removed.
+v1's `following_chunks` candidates and the path-seeded graph items are removed (005
+T004): a request that asks who uses an anchored definition gets its doors (§ Doors),
+built in the response's final read.
 
 Anchored selection (§ Anchored context) happens at packing, over this already ordered
-list; this order, routing, graph expansion and 013's state composition do not change.
+list; this order, routing and 013's state composition do not change.
 
 For `auto`, ASCII-lowercase the query and tokenize maximal runs of ASCII letters,
-digits or `_`. Any whole token in `{calls,caller,callers,depends,impact,dependency,
-dependencies,reference,references,usage,usages}` selects graph, otherwise search. This
-replaces the prototype's substring rule: `preferences` and `calls_tracker` are not
-graph keywords, while a question about references can use 005's supported relation.
-Adding `uses`, `used`, `break`, `breaks` and `referenced` was tried and withdrawn on
-2026-10-06: after the tier-1 amendment, routing those questions to graph lowered the
-delivered required evidence on the rust-lang/rust checker tasks (dev 40.6% to 38.0%,
-held-out wordings 34.5% to 34.2%), because graph context places path-seeded neighbors,
-not the queried symbol's references ([validation](../../../docs/validation.md)).
-The owned policy can replace that choice only under 013's identity/threshold contract.
-Explicit search or graph never invokes the policy. Graph without eligible edges still
-returns source results and a graph coverage reason in the header. No claim that this
-heuristic is optimal.
+digits or `_`. Any whole token among § Doors' request words selects the graph strategy,
+which requests doors; otherwise search. This replaces the prototype's substring rule
+(`preferences` and `calls_tracker` request nothing) and the 2026-10-06 keyword set,
+whose graph context placed path-seeded neighbors rather than the queried symbol's
+references ([validation](../../../docs/validation.md)). The owned policy can replace
+that choice only under 013's identity/threshold contract. Explicit search or graph
+never invokes the policy. No claim that this heuristic is optimal.
 
 Before optional policy inference, check graph coverage metadata against the indexed
-source revision. If no supported graph scope is current, use search without a model
-call and report graph stale/unavailable; do not query a router to choose an unavailable
-branch. Current partial graph coverage permits bounded expansion, with its limitation
-retained. Explicit graph still reports the same limitation and never invents relations.
-This rule does not add graph storage to 001; before 005, compiler graph is unavailable.
+source revision. If no supported graph scope is current, doors are approximate
+(`doors:approx`) and no router chooses an unavailable branch; exact doors never invent
+relations.
 Candidate construction is the two-tier lexical ranking plus available 009 semantic
 candidates, followed by 009's bounded merge. The optional 013 ModernBERT decision head
 receives its own bounded state/question/option input after that merge; it does not
@@ -897,7 +897,10 @@ than from the qname text: each enclosing named unit's name and the scope parts o
 unit's own name, where a generic or template name contributes its base name only (its
 argument list is never read) and a scoped name each of its parts
 (`UnionFind<Key>::find` gives `unionfind`; `impl Mapper<fn() -> u8>` gives `mapper`;
-`impl a::b::Wrapper<T>` gives `a b wrapper`).
+`impl a::b::Wrapper<T>` gives `a b wrapper`). A unit keeps at most its 16 innermost
+qualifiers, within 256 bytes in all, as its qualified name keeps its tail: in a 200 KB
+source of 20,000 nested one-letter modules each unit otherwise held up to 256
+qualifiers (indexing peaked at 864 MB; 197 MB with the bound).
 
 ### Anchors and qualifiers
 
@@ -974,7 +977,11 @@ already ordered batch, is:
    followed by directory lines lose today's G1 ambiguous-bucket passes, and signatures
    alone lose its bodies). The materialization cap of 4 per file and the 32-unit
    context limit do not apply to these entries;
-2. then the door lines of § Doors when they apply;
+2. then the door lines of § Doors when they apply; for a first anchor with
+   `doors:each`, each entry's door group is packed after the first pass (every entry's
+   address line) and before the signature and verbatim passes, in list order, and is
+   rendered right after its entry (a group that does not fit is omitted, counted in
+   `omitted:<n>`, and the next entry's group is tried);
 3. nothing else, except opt-in 008 memory lines under their existing rule. Everything
    else is omitted and counted in `omitted:<n>`; `search` lists it. The pointers of the
    replaced compact context are not part of an anchored context: the city map answers
@@ -1002,20 +1009,53 @@ affects break breaks`; `strategy:graph` always requests them; `strategy:search` 
 does. "What does `X` use" (callees) is not supported: its words request doors for
 `X`'s callers, a named limitation.
 
-**Target.** Doors are built only for the query's first anchor, only when it is
-resolved: its definition `D`. When the first anchor is ambiguous, no doors are built
-(`doors:ambiguous`) and the directory lines name the candidates. A query that requests
-doors but has no anchor gets `doors:none` and search packing: this changes today's
-anchor-less `auto` usage-word and `strategy:graph` responses, which lose the path-seeded
-graph expansion (`context_graph_units` over span occurrences, removed) and with it the
-`graph:<state>` header segment. G1's anchor-less usage wordings measure that change.
+**Target.** Doors are built only for the query's first anchor. When it is resolved,
+for its definition `D`. When it is ambiguous, its **tie group** is the window entries
+whose resolver tuple equals the first entry's (§ Resolver order): the definitions the
+resolver cannot tell apart. A tie group of at most 4 gives each of its definitions its
+own exact doors (`doors:each`, below); a larger one gives no doors
+(`doors:ambiguous`), and the directory lines name the candidates. A first anchor with
+no definition, or whose definition the final read drops as stale, gives `doors:none`.
+A query that requests doors but has no anchor gets `doors:none` and search packing:
+this changes today's anchor-less `auto` usage-word and `strategy:graph` responses, which
+lose the path-seeded graph expansion (`context_graph_units` over span occurrences,
+removed) and with it the `graph:<state>` header segment. G1's anchor-less usage
+wordings measure that change. In a multi-root owner the primary root's request decides
+whether doors are requested, and the merged first anchor's doors come from the root
+that resolved it; a merged tie group is taken from the merged window, the bound of 4
+applies to it, and each entry's doors come from its own root's final read.
+
+**Doors of a tie group** (`doors:each`; 2026-10-08, after cross-lab refutation of a
+first-four-listed bound and of per-entry approximate groups). Each tie-group entry is a
+target with the exact-doors rule below, read in its root's one final read: at most 4
+references windows per root's final read, each the resolved anchor's window (256
+records, 64 files), with a cancellation check before every window after the first. A
+multi-root owner builds each root's doors before the merge, as for a resolved target,
+so a request reads at most 4 windows per serving root (at most 9 roots); deciding the
+merged tie group before the roots' reads would need a second pass over every root. An
+entry gets a **group** only from exact
+doors: at most 4 door lines (16 in all, the resolved cap), then `⋯ <m> more files` when
+more remain; its complete list is `references {handle}` on the entry's handle. An entry
+without exact doors (no current scope, no matching occurrence) gets no group, and an
+entry the final read drops as stale gets none either; no other definition takes its
+place. When no entry has exact doors, the name's approximate doors are collected once
+and follow the list as one group attributed to no entry (`doors:approx`): the
+approximate rule with the shared name, every entry's own unit excluded and every
+entry's module key an import key; per-entry approximate groups would repeat one name's
+candidate files under every namesake. A site appears at most once in a response. The
+tie group is decided from the anchor's window as collected, before the final read
+validates it (as a resolved target is), so a stale entry never lets a lower one in.
+Collecting approximate candidates checks the request's cancellation as documents are
+read. The header says `doors:each` when at least one entry has exact doors.
 
 **Exact doors.** When a selected compiler scope (005) is current for `D`'s path, the
 symbols are those of the definition occurrences whose range equals `D`'s stored
 `name_start..name_end`. One symbol, or several split identities of the same source
 definition, give exact doors: their references, deduplicated by site, read in the
-response's one final read with 005's scope, snapshot, revision and source checks.
-No such occurrence gives approximate doors with `doors:approx`.
+response's one final read with 005's scope, snapshot, revision and source checks, as one
+references window (256 records, 64 files); a filled window sets `candidates:full`. No
+such occurrence, or a malformed compiler row, gives approximate doors with
+`doors:approx`.
 
 **Approximate doors.** Each file's **import keys** are computed during indexing from
 its parse (the import node kinds of § Languages) and stored in `imports`: for every
@@ -1027,7 +1067,9 @@ directory for `index`, `mod`, `lib` and `__init__` stems). Approximate doors dra
 the delivery units, other than `D`'s own, whose `ident` contains `D`'s name, taken in
 the order: importing files first, then role, path and start; the first 256 are
 examined, and a candidate becomes a door only where its line contains `D`'s name
-exactly as written (checked on the line in the final read). Aliased imports (whose key
+exactly as written, as a whole identifier (checked on the line in the final read; a
+candidate gone stale counts in `stale:`); a candidate unit contributes its first such
+line. Aliased imports (whose key
 is the alias), re-exports, `tsconfig.json` paths and package `exports` are not followed; Rust glob
 imports (`use m::*`) give no key; a Go file's module key is its directory (its package),
 not its stem; a C#, F# or VB namespace in `using`/`open`/`Imports` matches only when its
@@ -1038,7 +1080,9 @@ limitations of `[approx]` lines.
 **Door lines summarize by file.** One line per file: `<handle> L<line> in <label>:
 <excerpt>`, the file's first site (its line, the enclosing unit's label and at most 160
 bytes of the line, § Search locator lines' excerpt rules), suffixed ` (+<n>)` when the
-file has `n` more sites and ` [approx]` for approximate doors. Files are listed in the
+file has `n` more sites (approximate: more candidate units) and ` [approx]` for
+approximate doors. Door lines follow the anchored selection; the `⋯ <m> more files` line
+is not counted as an item. Files are listed in the
 order above (exact: path order; approximate: importing files first, then role and
 path), at most 16, then `⋯ <m> more files` when more remain. Doors carry no cursor:
 the complete list is `references {handle}` on `D`'s handle (shown as the anchored
@@ -1090,15 +1134,120 @@ A 2026-10-07 feasibility spike (outside the repository) built all 23 grammars on
 7,357 of 7,358 real files (one mis-parsed C++ file lost 3 units) and their syntax tests
 pass unchanged. Grammar archives add about 48 MB to a release binary (F# 14.1 MB, C#
 5.3 MB, Swift 4.2 MB, Scala 4.0 MB, Haskell 3.9 MB, Kotlin 3.5 MB, the rest under 3 MB
-each). Parsing is bounded by work, not by time: every parse runs under a progress
-callback (`parse_with_options`) that counts its checks and stops the parse after a fixed
-budget per source, so identical inputs stop identically on any thread count or host
-load; T008 calibrates the budget so that no spike-corpus file that parses within a
-second on a quiet host is stopped, and a stopped parse is handled like a panic
-(§ Parallel indexing), because deeply nested Haskell and F# inputs take tens of
-seconds. Constructs the pinned grammars do not parse are named limitations: VB.NET
+each). Parsing is bounded by work, not by time: every parse runs through
+`parse_with_options` with an input callback that hands the parser one UTF-8 character
+per read and a progress callback; work is reads plus progress checks, and at 2^25
+units the input reports its end and the parse stops, so identical inputs stop
+identically on any thread count or host load. Progress checks alone cannot bound it:
+external scanners re-read input without checks (a 4,000-deep Haskell `let` takes 882
+checks, below a large ordinary file's 29,160). T008 calibrated the budget on 22,492
+real files, whose trees are byte-identical under per-character reads and whose work
+peaked at 3.5 million units (18.5 per byte). After the budget is spent the input reads a
+line break up to the stop byte, then its end, so a scanner waiting for a line break
+also stops. A stopped parse is handled like a panic (§ Parallel indexing) with its own
+scan-failure label, `parse_stopped`, because deeply nested Haskell and F# inputs take
+seconds to tens of seconds.
+
+Some grammar scanners fail natively on crafted input (stack overflow, buffer abort,
+endless loop) before any budget can stop them, and a native failure cannot be caught.
+An audit of all 22 scanners (call graphs, every loop and serializer, about 400,000
+fuzzed parses) found five; each source is measured by a linear pass before parsing and,
+over a limit, is `parse_stopped` with detail `over the scanner limit: <limit> at byte
+<n>`: F# block-comment nesting above 8,192; Perl quote-bracket nesting above 8,192;
+Perl heredoc words longer than 512 bytes; Python sources with more than 256 distinct
+indentation widths (the original grammar; its serializer overflows); Kotlin `@` with no
+line break after it. The Ruby scanner's heredoc serialization overflow and word-length
+byte are fixed instead, by pinning `tree-sitter-ruby` to the fork
+`dwbimstr/tree-sitter-ruby` at `1a594bf` (0.23.1 plus a one-line bound; owner,
+2026-10-08) until upstream releases the fix. The Perl scanner never freed its heredoc
+queues and left one 1,000-byte node per heredoc behind on every parse; `tree-sitter-perl`
+is pinned to the fork `dwbimstr/tree-sitter-perl` at `0686313` (its 1.1.2 publish
+commit `883ab51` plus a destructor that frees the queues and their nodes, and a
+completed heredoc that removes all three of its entries; owner, 2026-10-08). Each fork
+is a `[patch.crates-io]` git rev, and its license files come from that checkout.
+Constructs the pinned grammars do not parse are named limitations: VB.NET
 nested types, alias and XML imports; Perl `require "file"` and fully qualified
-`sub A::B::c`; F# signature-file member signatures; C++20 module imports.
+`sub A::B::c`; F# signature-file member signatures; C++20 module imports; Elixir
+`@doc`/`@spec` and Haskell type signatures and pragmas lie outside their unit's range;
+`.fs`, `.pl`, `.sc` and `.t` are taken as F#, Perl, Scala and Perl.
+
+Rust parses through the fork `dwbimstr/tree-sitter-rust`, branch `cf-nightly-syntax`
+at `d43cece` (0.24.2 plus the nightly syntax below; owner, 2026-10-08): 0.24.2, the
+latest release, rejects the nightly syntax of rustc 1.99's own sources, and one error
+can turn a whole file into an ERROR node (core's `slice/mod.rs`, from its line 574:
+132 of its 155 fns survived as units, `binary_search_by_key` not among them). The
+fork adds, keeping node kinds and fields: `const impl`, `const unsafe impl` and `impl
+const Trait for` (impls, so no definitions; their members qualify by the type as in
+any impl); `const`, `auto` and impl-restricted (`pub impl(crate) trait`) traits;
+macros 2.0, `macro m(…) {…}` and `macro m { … }` (`macro_definition`, macro units);
+`[const]`, `~const` and `const` trait bounds; `safe fn` and `safe`/`unsafe static`
+in `unsafe extern` blocks, and extern types `pub type T;` (fn, static and type
+units); `final fn`; associated type defaults; default field values and a bare `..`;
+`super let`; attributes on `let` values; const closures; `do yeet`; `${…}`
+metavariable expressions and `attr()`/`derive()` rules in `macro_rules!`;
+`f16`/`f128` literal suffixes; `~` in token trees; `box` patterns; attributes on
+struct pattern fields; negative literals as const arguments. A trait alias `trait A
+= B + C;` is the new node `trait_alias_item`, a type unit. `safe` and `auto` are keywords only
+before the item they modify and stay identifiers and type names elsewhere (`struct
+safe; fn f(x: safe) -> Vec<auto>`, `impl safe`, `a::safe::B`), as under 0.24.2. Every rust-lang/rust
+1.99.0 file that 0.24.2 parses without error keeps a byte-identical tree under the
+fork, except former silent mis-parses: the reserved `box` and `macro` taken as names
+(`box (a, b)` as a tuple-struct pattern) and `1f16` as two tokens. Files with errors
+fell from 188 to 1 under `library/`, 63 to 1 under `compiler/` and 458 to 362 under
+`src/tools/` (356 of them tool test fixtures). Rust's named limitations, still parse
+errors: `_` as a fn-pointer parameter type (`fn(&_)`), `$ name` with a space and
+`$$` in macro patterns, `macro_rules ! name`, `dyn 'a + Trait`, a primitive type's
+name as a binding (`char @ …`), and the nightly syntax the fork leaves out
+(`become`, `async` bounds, `for<…>` closure binders, `use` closures, `type const`,
+unsafe fields, `mut` restrictions, `builtin #`, `try bikeshed`, unsafe binder types,
+postfix `.match`, `&pin`, `gen fn`, guard patterns, return type notation, negative
+bounds, frontmatter).
+
+Units of the 15 added languages (001 T008) follow § Unit kinds' principle that every
+definition gets an address:
+
+- Functions, methods, types and enum members are units. Constructors are named method
+  units (C#, PowerShell and Dart take the class name or the named constructor's name;
+  Swift `init`, Kotlin `constructor`, VB `New`).
+- Module-level constants and variables are units: const for F# `let`, Kotlin and Scala
+  `val`, Swift `let`, Dart `const`/`final`, PHP top-level `const`, Perl `use constant`,
+  Ruby constants (top level or class/module body), shell `readonly`/`declare -r`, VB
+  `Module` `Const`, Elixir `@attr value` (doc, spec and type attributes excluded) and
+  Haskell top-level bindings; static for F# `let mutable`, Kotlin, Swift, Scala and
+  Dart `var`, VB `Module` fields, Lua chunk-level single assignments and other shell
+  top-level assignments. PowerShell has none.
+- A grouped declaration gives one unit per binding; the first keeps the declaration's
+  start, so ranges never overlap. Each binding of an F# `let rec … and …` group is its
+  own unit (functions at any depth, values only at module level), ranging from its
+  `and` to its body's end. Module-level Swift `let a = 1, b = 2` and the assignments of
+  a module-level shell `variable_assignments` give a unit per name; a `FOO=1 cmd`
+  prefix assignment and function locals do not. Named Dart local functions are `fn`
+  units at any depth.
+- Declaration-only members stay non-units: C#, VB, PHP and Kotlin interface members
+  without bodies, Swift protocol requirements, Scala abstract `def`, Dart abstract
+  signatures, F# `abstract member` and `.fsi` `val`, Haskell type and class-method
+  signatures, Elixir bodiless heads. Body-less non-interface methods (C# `extern` and
+  `abstract`, PHP `abstract`) are units.
+- A container that extends a type defined elsewhere is an `impl` without `def_name`
+  (§ Definitions and addresses): Swift and Dart `extension`, F# type extensions,
+  Elixir `defimpl` (for its `for:` type), Haskell `instance` (for its type). Unnamed
+  Kotlin companions, Ruby `class << self`, Scala `extension` and a Haskell lone or
+  newtype constructor are not units.
+- Qualified names join with `::` for Perl and Ruby and `.` for the rest (PHP `\` and
+  Lua `:` normalized to `.`); a Kotlin extension function takes its receiver type as a
+  qualifier.
+- Import keys: C# `using` and its alias; F# `open` and `#load`; VB `Imports`; PHP `use`
+  (alias, group, function) and literal include/require paths; Perl `use`, `require`,
+  `use parent`; shell `source`/`.`; PowerShell `using namespace`/`using module`,
+  `Import-Module` and dot-sourcing (an operand that is not a static literal, such as a
+  variable, a subexpression or a quoted string holding either (`"$name"`,
+  `"$(Get-X)"`), keeps its position and a preceding parameter's value but gives no key); Ruby
+  `require`, `require_relative`, `load` and
+  `autoload` stems; Kotlin imports and aliases (not `*`); Swift imports; Scala paths,
+  selectors and renames (not `_`); Lua `require` (last segment), `dofile`, `loadfile`;
+  Dart alias, else `show` names, else the URI stem, plus `part`; Elixir `alias`,
+  `import`, `require`, `use` (groups and `as:`); Haskell import lists, else the alias,
+  else the module's last segment.
 
 ### Parallel indexing
 

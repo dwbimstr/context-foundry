@@ -4,8 +4,10 @@ Status: T001–T003 complete and locally accepted, unreleased. T001 and T002 wer
 2026-10-04 (CLI `import-scip` and `references`, store schema 4). T003 was accepted
 2026-10-05: its agent surface (MCP `references`, `index {scip}`, compiler graph
 context) and its measured run on rust-lang/rust 1.99.0, which passed every criterion
-(see validation). T004 (doors, city map) was approved by the owner on 2026-10-07 and is
-proposed. Dependencies: 001; 003 only for the agent-facing part of T003.
+(see validation). T004 (doors, city map) was approved by the owner on 2026-10-07,
+implemented and merged 2026-10-08 (`d00fc19`, cross-lab SHIP, gates green), amended for
+tie groups (`483810a`, cross-lab SHIP); G1 passed with 001 T007 on 2026-10-08. Dependencies: 001; 003
+only for the agent-facing part of T003.
 Authorization: specification refinement.
 Spec-pass decisions recorded 2026-10-03: pinned producer release, UTF-8-only positions,
 the producer coverage rule, budgeted v2 `references` and MCP import through `index`.
@@ -238,10 +240,13 @@ source counts. Retire obsolete scopes only for source paths proven absent by the
 completed input manifest; never infer absence from a cancelled/failed run. A run with
 unresolved/unsupported inputs remains partial and cannot certify no references.
 
-Proposed `references` operation arguments are `{symbol_id?, handle?, byte_offset?,
-limit?, tokens?, after?}`: exactly one seed form, either a `symbol_id` (16-hex prefix)
-or a source `handle` plus an absolute `byte_offset` within it; unknown/null fields and
-both/neither forms are `invalid_argument`. Resolve the occurrence at that position
+`references` operation arguments are `{symbol_id?, handle?, byte_offset?, limit?,
+tokens?, after?}`: exactly one seed form — a `symbol_id` (16-hex prefix), a source
+`handle` plus an absolute `byte_offset` within it, or (T004) a `handle` alone, which
+means the symbols defined at that definition unit's stored name range (a handle that is
+not a definition unit, or defines no compiler symbol, is `invalid_argument` naming
+`no_compiler_definition`); unknown/null fields and conflicting forms are
+`invalid_argument`. With a `byte_offset`, resolve the occurrence at that position
 (refined 2026-10-04: rust-analyzer's module-definition occurrences span whole files):
 - among all occurrences whose range contains the offset, the narrowest range wins;
 - none→`symbol_not_found`;
@@ -282,23 +287,16 @@ document is counted accepted-empty. A failed or cancelled run retires no scope. 
 coverage means complete for supported indexed input, not all possible runtime
 references. Bounds do not remove facts.
 
-`context(strategy=graph)` expands at most three retrieved source spans' overlapping
-resolved symbols in that order, symbol-ID tie break. Reference occurrences contribute
-their enclosing delivery units (001's search documents), deduplicated into at most 32
-total units and 256 examined graph records, including definition lookups as well as
-reference occurrences. Amended 2026-10-05 (captain, T003 review): only symbols with a
-unique eligible, source-verified definition expand. The final read re-proves each
-expansion's snapshot, witness rows, uniqueness and source bodies in a separately bounded
-pass of at most 256 graph records. That pass discovers nothing new, so one response
-examines at most 512 graph records. A proof the pass cannot finish drops the expansion
-and sets `candidates:full`.
-Before 009 these seeds are lexical; when semantics is enabled its merged ordering
-applies, excluding unlocalized previews. Compiler occurrences are not embedding units,
-and graph arrival cannot repartition source embeddings or require a second vector set.
-Use 001's source-first packing. No eligible compiler graph yields source-only context
-with `graph_unavailable`, `graph_stale` or `graph_invalid`, never a false empty call
-graph. Existing file-neighborhood `graph PATH` remains explicitly separate from
-symbol references.
+`context(strategy=graph)` no longer expands retrieved spans (removed by T004): it
+requests doors for the query's first anchor when that anchor is resolved
+(001 context-v2 § Doors), exact doors from that definition's references inside the
+response's final read, approximate doors otherwise. The 2026-10-05 span-seeded
+expansion (three spans' overlapping symbols, 32 units, 256 plus 256 proof records)
+chose path neighbors rather than the queried symbol and was removed with its witness
+proof. Compiler occurrences are not embedding units, and graph arrival cannot
+repartition source embeddings or require a second vector set. No eligible compiler
+graph yields approximate doors, never a false empty call graph. Existing
+file-neighborhood `graph PATH` remains explicitly separate from symbol references.
 
 ### Import through the existing agent owner
 
@@ -435,7 +433,9 @@ T003's, each passing only with that task's verification.
 ### T004 — Doors: who uses an addressed definition (city map)
 
 **Status:** approved 2026-10-07 (owner), revised after cross-lab refutation the same
-day, proposed. Measured by G1 before and after. Evidence ([validation](../../docs/validation.md),
+day; implemented and merged 2026-10-08 (`d00fc19`; [validation](../../docs/validation.md)).
+Amended 2026-10-08 for tie groups of at most four namesakes (`483810a`). G1 judged it
+together with 001 T007: PASS on 2026-10-08. Evidence ([validation](../../docs/validation.md),
 § City-map evidence): given the intended definition, `references` covered the required
 sites of every failed usage task it was tried on (265 of 265, median about 185
 tokens); `context(strategy=graph)` seeds from every occurrence in the top units and
@@ -455,8 +455,13 @@ expanded the wrong symbols.
   ceiling (995 of 1000 on 2026-10-06), or the owner raises it before the change lands.
 - **Verification:**
   - a same-name pair in two modules where only one is anchored by a qualifier: doors
-    come from that one alone; with the pair unqualified the anchor is ambiguous and
-    the response is `doors:ambiguous` with both in the directory;
+    come from that one alone; with the pair unqualified the anchor is ambiguous with a
+    tie group of two, and each gets its own exact door group after its entry
+    (`doors:each`); a tie group of five is `doors:ambiguous` with no doors; a stale
+    entry gets no group and no lower entry takes its place, in one root and across
+    roots; an entry with no definition occurrence gets no group, and with none for
+    every entry the name's approximate doors follow the list once (`doors:approx`);
+    groups are packed after the address pass and before signature upgrades;
   - exact doors equal `references` for the same symbol; a decorated Python function,
     an annotated Java method, a C++ template and a Rust `fn` whose name is on the next
     line all resolve by name range; a unit with no definition occurrence gives
@@ -464,9 +469,8 @@ expanded the wrong symbols.
     identities of one definition give one deduplicated set; a graph replacement during
     door collection is caught by the final read;
   - approximate doors: an importing file outranks a same-named mention elsewhere,
-    including when it is the 65th candidate by path; the 256-unit window and the
-    spread rule (at most 2 per file first, 16 lines) hold; a one-character name has no
-    doors;
+    including when it is the 65th candidate by path; the 256-unit window and one line
+    per file (16 lines) hold; a one-character name has no doors;
   - import keys for each language's import forms, including TS/JS named, default,
     namespace and type-only imports in a Bun workspace layout; an aliased import is
     not followed (named limitation);

@@ -23,8 +23,9 @@ tiktoken-rs = "0.12.1"
 ureq = { version = "3.4", default-features = false, features = ["json"] }
 # 001 T005 syntax units (context-v2 § Dependencies and languages): one parser
 # runtime, the selected grammars and Markdown headings, each compatible with
-# the Rust 1.90 floor.
-tree-sitter = "0.25"
+# the Rust 1.90 floor. 001 T008 (context-v2 § City map › Languages) moves the
+# runtime to 0.26, which `tree-sitter-perl` requires, and adds 15 grammars.
+tree-sitter = "0.26"
 tree-sitter-rust = "0.24"
 tree-sitter-python = "0.25"
 tree-sitter-typescript = "0.23"
@@ -33,6 +34,21 @@ tree-sitter-go = "0.25"
 tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
 tree-sitter-java = "0.23"
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-fsharp = "0.3.12"
+tree-sitter-vb-dotnet = "0.1.0"
+tree-sitter-php = "0.25.1"
+tree-sitter-perl = "1.1.2"
+tree-sitter-bash = "0.25.1"
+tree-sitter-powershell = "0.26.4"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-kotlin-ng = "1.1.0"
+tree-sitter-swift = "0.7.4"
+tree-sitter-scala = "0.26.2"
+tree-sitter-lua = "0.5.0"
+tree-sitter-dart = "0.2.0"
+tree-sitter-elixir = "0.3.5"
+tree-sitter-haskell = "0.24.1"
 pulldown-cmark = { version = "0.13", default-features = false }
 
 # 005 T001 compiler-fact import: the SCIP protobuf types and the streaming
@@ -155,3 +171,20 @@ required-features = ["test-faults"]
 [[test]]
 name = "recovery"
 harness = false
+
+# 001 T008 review M1: tree-sitter-ruby 0.23.1 (the latest release) aborts in
+# its scanner's serialize/deserialize on a heredoc word of 256 bytes or more,
+# or one that brings its state to exactly 1,023 bytes. The fork is the
+# v0.23.1 tag plus a one-line bound on that word (cf-serialize-fix).
+[patch.crates-io]
+tree-sitter-ruby = { git = "https://github.com/dwbimstr/tree-sitter-ruby", rev = "1a594bfdaeddf672b6216d5008056efcbbe7b2b7" }
+# 001 T008 review R2: tree-sitter-perl 1.1.2's scanner never frees its
+# heredoc queues; the fork is its publish commit 883ab51 plus the lifetime
+# fix (cf-scanner-lifetime).
+tree-sitter-perl = { git = "https://github.com/dwbimstr/tree-sitter-perl", rev = "0686313f5e658ab93b4fa5c530f348d3bffbf927" }
+# 001 T008: tree-sitter-rust 0.24.2 (the latest release) cannot parse the
+# nightly syntax rustc 1.99's own sources use (`const impl`, `[const]` bounds,
+# const/auto/impl-restricted traits, macros 2.0, `safe` extern items, trait
+# aliases); the fork is the v0.24.2 tag plus those rules, with `safe` and
+# `auto` still identifiers and type names elsewhere (cf-nightly-syntax).
+tree-sitter-rust = { git = "https://github.com/dwbimstr/tree-sitter-rust", rev = "d43cece5fd9a1944c5a9e0bab58167b777b88300" }

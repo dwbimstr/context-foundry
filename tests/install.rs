@@ -1595,3 +1595,64 @@ fn an_upgrade_over_a_v1_semantic_profile_keeps_the_core_and_disables_semantic_by
     );
     assert_owned_files_match(&prefix);
 }
+
+/// THIRD-PARTY reads each package from the source Cargo resolved (001 T008
+/// review R1): the tree-sitter-ruby fork pinned by git comes from its
+/// checkout, even in a Cargo home with no unpacked registry copy of that
+/// name and version (one that shares the real home's index, crate cache and
+/// git checkouts, and links every other unpacked registry crate).
+#[test]
+fn third_party_reads_a_git_pinned_package_from_its_checkout() {
+    let (_dir, base) = scratch();
+    let real = std::env::var_os("CARGO_HOME").map_or_else(
+        || PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cargo"),
+        PathBuf::from,
+    );
+    let home = base.join("cargo-home");
+    std::fs::create_dir_all(home.join("registry/src")).unwrap();
+    for shared in ["git", "registry/index", "registry/cache"] {
+        std::os::unix::fs::symlink(real.join(shared), home.join(shared)).unwrap();
+    }
+    for index in std::fs::read_dir(real.join("registry/src")).unwrap() {
+        let index = index.unwrap().path();
+        let copy = home.join("registry/src").join(index.file_name().unwrap());
+        std::fs::create_dir(&copy).unwrap();
+        for entry in std::fs::read_dir(&index).unwrap() {
+            let entry = entry.unwrap();
+            if !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("tree-sitter-ruby-")
+            {
+                std::os::unix::fs::symlink(entry.path(), copy.join(entry.file_name())).unwrap();
+            }
+        }
+    }
+    let bin = base.join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    std::os::unix::fs::symlink(FOUNDRY, bin.join("foundry")).unwrap();
+    let out = base.join("packages");
+    ok(Command::new("/bin/sh")
+        .arg(script("package.sh"))
+        .arg("--out")
+        .arg(&out)
+        .arg("--bin-dir")
+        .arg(&bin)
+        .env("CARGO", env!("CARGO"))
+        .env("CARGO_HOME", &home)
+        .env_remove("CF_TEST_VERSION_LABEL")
+        .output()
+        .unwrap());
+    let package = out.join(format!("context-foundry-{VERSION}-macos-arm64.tar.gz"));
+    let index: Value =
+        serde_json::from_slice(&package_member(&package, "THIRD-PARTY/INDEX.json")).unwrap();
+    let ruby = index
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "tree-sitter-ruby")
+        .unwrap();
+    assert_eq!(ruby["version"], "0.23.1");
+    assert_eq!(ruby["files"], json!(["LICENSE"]));
+    assert!(!package_member(&package, "THIRD-PARTY/tree-sitter-ruby-0.23.1/LICENSE").is_empty());
+}

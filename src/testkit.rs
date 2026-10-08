@@ -486,18 +486,22 @@ pub enum V2Kind {
     /// An anchored definition's `[address]` form: its item line alone,
     /// `<handle> L<a>-<b>[ <label>] [address]`, with no fence.
     Address,
-    /// A graph item line, `edge <text>`.
-    Edge,
+    /// A door line of an anchored context that requested doors (005 T004),
+    /// `<handle> L<line> in <label>: <excerpt>[ (+<n>)][ [approx]]`: `body`
+    /// is everything after the first `: `, suffixes included.
+    Door,
+    /// The `⋯ <m> more files` line after the door lines; `body` is `m`.
+    MoreFiles,
     /// A references item line, `<handle> L<line> in <label>` (005).
     Reference,
 }
 
 /// One parsed context-v2 item. `body` is the fenced source bytes (framing LF
-/// removed), the locator excerpt or the edge text.
+/// removed), the locator excerpt or a door line's text after its label.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V2Item {
     pub kind: V2Kind,
-    /// Empty for edges.
+    /// Empty for a `⋯ <m> more files` line.
     pub handle: String,
     /// `L<a>-<b>` for fenced and address items, `L<line>` for locators.
     pub lines: Option<String>,
@@ -539,12 +543,13 @@ enum V2Tail {
 
 /// Strict context-v2 parser for tests. Every line ends with LF; line 1 is the
 /// ` · `-joined header naming the operation, which fixes the item grammar:
-/// search has locator lines only; context has fenced items and `edge` lines,
-/// plus `[address]` item lines and locator (directory) lines when its header
-/// carries the `anchored` segment;
+/// search has locator lines only; context has fenced items, plus
+/// `[address]` item lines and locator (directory) lines when its header
+/// carries the `anchored` segment, and door lines and the `⋯ <m> more files`
+/// line when it also carries a `doors:` segment;
 /// retrieve has fenced items and may end with `next: <handle>` (a valid
 /// handle). Item lines take precedence because a path may itself begin with
-/// `edge ` or `next: ` (a fenced item is recognized by the opening fence that
+/// `next: ` (a fenced item is recognized by the opening fence that
 /// must follow it). A verbatim body's length comes from its handle's range,
 /// then the framing LF (when the body does not end with LF) and the exact
 /// closing fence must follow.
@@ -572,6 +577,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
     // `[address]` item lines and directory lines; any other context refuses
     // them.
     let anchored = op == "context" && header.iter().any(|segment| segment == "anchored");
+    let doors = anchored && header.iter().any(|segment| segment.starts_with("doors:"));
     let mut items = Vec::new();
     let mut next = None;
     while pos < text.len() {
@@ -682,6 +688,52 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
             pos = after;
             continue;
         }
+        if doors {
+            if let Some(count) = line
+                .strip_prefix("⋯ ")
+                .and_then(|rest| rest.strip_suffix(" more files"))
+                .filter(|count| !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit()))
+            {
+                items.push(V2Item {
+                    kind: V2Kind::MoreFiles,
+                    handle: String::new(),
+                    lines: None,
+                    label: None,
+                    form: None,
+                    lang: None,
+                    semantic: false,
+                    body: count.to_owned(),
+                });
+                pos = after;
+                continue;
+            }
+            let mut readings: Vec<(&str, String, String, String)> = v2_reference_splits(line)
+                .into_iter()
+                .filter_map(|(handle, lines, rest)| {
+                    let (label, text) = rest.split_once(": ")?;
+                    (!label.is_empty()).then(|| (handle, lines, label.to_owned(), text.to_owned()))
+                })
+                .collect();
+            match readings.len() {
+                0 => {}
+                1 => {
+                    let (handle, lines, label, text) = readings.remove(0);
+                    items.push(V2Item {
+                        kind: V2Kind::Door,
+                        handle: handle.to_owned(),
+                        lines: Some(lines),
+                        label: Some(label),
+                        form: text.ends_with(" [approx]").then(|| "approx".to_owned()),
+                        lang: None,
+                        semantic: false,
+                        body: text,
+                    });
+                    pos = after;
+                    continue;
+                }
+                n => return Err(format!("ambiguous item line ({n} readings): {line:?}")),
+            }
+        }
         if anchored {
             let mut addresses: Vec<(&str, V2Tail)> = v2_splits(line, false)
                 .into_iter()
@@ -740,22 +792,7 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
                 n => return Err(format!("ambiguous item line ({n} readings): {line:?}")),
             }
         }
-        if op == "context"
-            && let Some(edge) = line.strip_prefix("edge ")
-        {
-            items.push(V2Item {
-                kind: V2Kind::Edge,
-                handle: String::new(),
-                lines: None,
-                label: None,
-                form: None,
-                lang: None,
-                semantic: false,
-                body: edge.to_owned(),
-            });
-            pos = after;
-            continue;
-        }
+
         return Err(format!("not a {op} item line: {line:?}"));
     }
     Ok(V2Response {

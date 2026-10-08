@@ -581,12 +581,12 @@ fn route(text: &str) -> Option<String> {
         .find_map(|segment| segment.strip_prefix("route:").map(str::to_owned))
 }
 
-/// True when the context resolved to graph (the `graph:` segment appears
-/// exactly then).
+/// True when the context resolved to graph: since 005 T004 a graph context
+/// requests doors, and the `doors:` segment appears exactly then.
 fn resolved_graph(text: &str) -> bool {
     header(text)
         .iter()
-        .any(|segment| segment.starts_with("graph:"))
+        .any(|segment| segment.starts_with("doors:"))
 }
 
 /// The predictions the fake worker received: `(request id, candidate)`.
@@ -1165,13 +1165,13 @@ fn missing_nemotron_does_not_disable_the_policy() {
         segments.contains(&"semantic:fallback:profile_invalid".to_owned()),
         "{text}"
     );
-    // The query anchors `alpha_one`, so `anchored` follows `route:`
-    // (context-v2 § Anchored context, 001 T007).
-    assert_eq!(
-        segments[segments.len().saturating_sub(2)..],
-        ["route:policy", "anchored"],
-        "{text}"
-    );
+    // The query anchors `alpha_one` and the policy chose graph, so the
+    // doors segment and `anchored` follow `route:` (context-v2 § Anchored
+    // context, § Doors).
+    let tail = &segments[segments.len().saturating_sub(3)..];
+    assert_eq!(tail[0], "route:policy", "{text}");
+    assert!(tail[1].starts_with("doors:"), "{text}");
+    assert_eq!(tail[2], "anchored", "{text}");
     assert!(resolved_graph(&text));
 }
 
@@ -2206,6 +2206,81 @@ async fn the_mcp_owner_serves_routes_reports_and_rolls_back_by_restart() {
     let client = mcp_owner(&env, &[]).await;
     assert_eq!(call(&client, "context", auto).await, baseline[0]);
     client.cancel().await.unwrap();
+}
+
+/// 005 T004 (review M2) through an in-process multi-root owner: the policy
+/// routes a query with no doors word to graph in the primary root, and the
+/// reference root holding the merged first anchor's definition builds its
+/// doors under that same decision - the policy is not consulted again.
+#[tokio::test]
+async fn a_policy_chosen_graph_reaches_the_reference_root_holding_the_definition() {
+    use rmcp::ServiceExt as _;
+    let env = Env::new(0.6);
+    let (_, config) = env.selected("seed-a");
+    let reference = env.path("reference");
+    std::fs::create_dir_all(reference.join("src")).unwrap();
+    std::fs::write(
+        reference.join("src/dock.rs"),
+        "pub fn ref_zephyr_dock() {}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        reference.join("src/user.rs"),
+        "pub fn user() {\n    crate::ref_zephyr_dock();\n}\n",
+    )
+    .unwrap();
+    let reference_store = env.path("reference-store");
+    let mut engine = Engine::initialize(&reference_store, &reference).unwrap();
+    engine.index(&reference, &Control::unbounded()).unwrap();
+    drop(engine);
+    let (client_io, server_io) = tokio::io::duplex(1 << 21);
+    let (input, output) = tokio::io::split(server_io);
+    let server = tokio::spawn(context_foundry::mcp::serve_streams(
+        context_foundry::mcp::ServerOptions {
+            store: env.store.clone(),
+            root: env.ws.clone(),
+            references: vec![context_foundry::roots::ReferenceSpec {
+                root: reference.clone(),
+                store: reference_store.clone(),
+            }],
+            budget: context_foundry::config::BudgetConfig::default(),
+            no_memory: false,
+            semantic: None,
+            policy: Some(PolicyServing::with_worker_args(
+                config.clone(),
+                hooks(&["--predict-tamper", "1:probs=0.1/0.9"]),
+            )),
+        },
+        input,
+        output,
+    ));
+    let client = ().serve(client_io).await.unwrap();
+    // No doors word: deterministic routing would request no doors anywhere.
+    let text = call(
+        &client,
+        "context",
+        json!({"query": "`ref_zephyr_dock`", "tokens": 2048}),
+    )
+    .await;
+    client.cancel().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(30), server)
+        .await
+        .expect("the owner exits after EOF")
+        .expect("the owner task")
+        .expect("a clean exit");
+    let segments = header(&text);
+    assert_eq!(
+        route(&text).as_deref(),
+        Some("policy; primary root only"),
+        "{text}"
+    );
+    assert!(segments.contains(&"doors:approx".to_owned()), "{text}");
+    assert!(
+        text.lines().any(|line| line.starts_with("src/user.rs#")
+            && line.contains(" L2 in ")
+            && line.ends_with("[approx]")),
+        "the reference root's caller is a door: {text}"
+    );
 }
 
 // ---------------------------------------------------------------------------
