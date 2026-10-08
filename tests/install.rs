@@ -1514,7 +1514,7 @@ fn an_upgrade_over_a_v1_semantic_profile_keeps_the_core_and_disables_semantic_by
         text(&refused.stderr).contains(&format!(
             "the profile pins llama.cpp {}; the worker is built from {}",
             "0".repeat(40),
-            context_foundry::neural::worker_runtime::LLAMA_CPP_COMMIT
+            context_foundry::neural::provider::LLAMA_CPP_COMMIT
         )),
         "{}",
         text(&refused.stderr)

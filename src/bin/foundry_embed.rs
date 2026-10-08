@@ -98,11 +98,10 @@ fn real_run(engine: &mut context_foundry::neural::worker_runtime::Engine) -> i32
 #[cfg(target_os = "macos")]
 mod llama {
     use context_foundry::neural::provider::{
-        FunctionDescriptor, MAX_DOCUMENT_BATCH, SERVING_LIMIT_TOKENS, TokenizedInput,
+        FunctionDescriptor, LLAMA_CPP_COMMIT, MAX_DOCUMENT_BATCH, SERVING_LIMIT_TOKENS,
+        TokenizedInput,
     };
-    use context_foundry::neural::worker_runtime::{
-        LLAMA_CPP_COMMIT, mark_phase, refuse_split_gguf,
-    };
+    use context_foundry::neural::worker_runtime::{mark_phase, refuse_split_gguf};
     use std::ffi::{CStr, CString, c_char, c_void};
     use std::io::Write as _;
     use std::os::unix::ffi::OsStrExt as _;

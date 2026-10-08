@@ -1284,13 +1284,13 @@ pub fn write_semantic_profile(
             },
         ],
         gguf: "model.gguf".into(),
-        llama_cpp: crate::neural::worker_runtime::LLAMA_CPP_COMMIT.into(),
+        llama_cpp: crate::neural::provider::LLAMA_CPP_COMMIT.into(),
         tokenizer: "fake-bytes 1".into(),
         add_special_tokens: true,
         pooling: "mean".into(),
         dimensions: FIXTURE_DIMENSIONS,
         output: "f32".into(),
-        adapter_revision: crate::neural::worker_runtime::REAL_ADAPTER_REVISION,
+        adapter_revision: crate::neural::provider::REAL_ADAPTER_REVISION,
         document_template: "doc: {text}".into(),
     };
     mutate(&mut descriptor);

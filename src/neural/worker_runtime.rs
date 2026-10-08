@@ -10,7 +10,9 @@
 //! through inference, the vector copy and the bounded reply write, and never
 //! released by a client timeout.
 use super::protocol::{self, FrameError, Header, Purpose};
-use super::provider::{FunctionDescriptor, TokenizedInput};
+use super::provider::{
+    FunctionDescriptor, LLAMA_CPP_COMMIT, REAL_ADAPTER_REVISION, TokenizedInput,
+};
 #[cfg(feature = "test-faults")]
 use sha2::{Digest, Sha256};
 use std::io;
@@ -33,16 +35,6 @@ pub const FRAME_EXIT: i32 = 101;
 /// Vocabulary bound the fake worker reports; test token IDs stay far below.
 pub const FAKE_VOCAB: u32 = 1 << 20;
 
-/// Revision of the first-party llama.cpp adapter in `foundry-embed` (batch
-/// construction, pooling read-out, truncation and renormalization). The
-/// descriptor's `adapter_revision` must equal it: the worker computes
-/// exactly this recipe and never anything a profile merely claims.
-pub const REAL_ADAPTER_REVISION: u32 = 1;
-/// The llama.cpp commit `foundry-embed` is built from (statically linked,
-/// Metal): `build.rs` exports exactly this commit's tree and builds it with
-/// fixed flags, and the worker refuses a descriptor that names another
-/// commit.
-pub const LLAMA_CPP_COMMIT: &str = "b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea";
 /// The core tokenizer's artifact: the worker takes token IDs, so the
 /// descriptor must pin the file they come from beside the GGUF.
 pub const REAL_TOKENIZER: &str = "tokenizer.json";

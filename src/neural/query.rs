@@ -465,23 +465,34 @@ impl QueryRuntime {
     /// Acquire the supervised worker (the profile is verified and the worker
     /// started, bounded by the profile's load timeout, before anything
     /// serves), then load the exact-input tokenizer. `Err` is the named
-    /// reason the baseline path reports.
+    /// reason the baseline path reports. The supervised worker exists only
+    /// on macOS; elsewhere this is `isolation_unavailable`.
     pub fn acquire(
         profile_path: &std::path::Path,
         development: bool,
     ) -> Result<Self, ProviderError> {
         let profile = Arc::new(SemanticProfile::load(profile_path)?);
-        let for_worker = Arc::clone(&profile);
-        Self::start(
-            profile,
-            Box::new(move || {
-                crate::neural::supervisor::acquire_until(
-                    &for_worker,
-                    development,
-                    &Control::unbounded(),
-                )
-            }),
-        )
+        #[cfg(target_os = "macos")]
+        {
+            let for_worker = Arc::clone(&profile);
+            Self::start(
+                profile,
+                Box::new(move || {
+                    crate::neural::supervisor::acquire_until(
+                        &for_worker,
+                        development,
+                        &Control::unbounded(),
+                    )
+                }),
+            )
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (profile, development);
+            Err(ProviderError::IsolationUnavailable(
+                "no accepted isolation profile admits model execution on this platform".into(),
+            ))
+        }
     }
 
     /// Start a runtime over `make` (the supervised worker, or a test

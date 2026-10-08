@@ -81,7 +81,7 @@ mod llama {
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
 
-    /// Must equal `neural::worker_runtime::LLAMA_CPP_COMMIT`; the worker
+    /// Must equal `neural::provider::LLAMA_CPP_COMMIT`; the worker
     /// binary asserts it at compile time from `FOUNDRY_LLAMA_CPP_COMMIT`.
     const COMMIT: &str = "b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea";
     const BIN: &str = "foundry-embed";

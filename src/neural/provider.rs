@@ -29,6 +29,16 @@ pub const POOLINGS: [&str; 3] = ["mean", "cls", "last"];
 /// digest encoding bumps it, which re-keys every cached vector. Version 1 was
 /// the MLX worker's layout; it is refused with `profile_unsupported`.
 pub const DESCRIPTOR_VERSION: u32 = 2;
+/// Revision of the first-party llama.cpp adapter in `foundry-embed` (batch
+/// construction, pooling read-out, truncation and renormalization). The
+/// descriptor's `adapter_revision` must equal it: the worker computes
+/// exactly this recipe and never anything a profile merely claims.
+pub const REAL_ADAPTER_REVISION: u32 = 1;
+/// The llama.cpp commit `foundry-embed` is built from (statically linked,
+/// Metal): `build.rs` exports exactly this commit's tree and builds it with
+/// fixed flags, and the worker refuses a descriptor that names another
+/// commit.
+pub const LLAMA_CPP_COMMIT: &str = "b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea";
 
 /// One artifact file the worker or the core tokenizer reads, verified
 /// before load.
