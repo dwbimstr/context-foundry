@@ -243,14 +243,15 @@ fn a_positively_matched_replacement_is_reset_and_completes() {
     assert_eq!(engine.status().unwrap().index_state, "ready");
 }
 
-/// 001 T005 index version gate (`search_schema = "3"` since the 2026-10-04
-/// leading-run amendment): a store indexed before T005 (no `search_schema`) or
-/// before the amendment (`"2"`) reports `repair_required` with reason
-/// `search_schema` while retrieve and status work; an ordinary open writes
-/// nothing; `repair-index` makes it ready with zero source changes.
+/// 001 index version gate (`search_schema = "4"` since 001 T007, context-v2
+/// § City map): a store indexed before T005 (no `search_schema`), before the
+/// 2026-10-04 leading-run amendment (`"2"`) or before T007 (`"3"`) reports
+/// `repair_required` with reason `search_schema` while retrieve and status
+/// work; an ordinary open writes nothing; `repair-index` makes it ready with
+/// zero source changes.
 #[test]
 fn a_store_without_the_current_search_schema_needs_repair_and_repair_publishes_it() {
-    for stale in [None, Some("2")] {
+    for stale in [None, Some("2"), Some("3")] {
         let dir = Scratch::new();
         let root = dir.path().join("ws");
         fs::create_dir(&root).unwrap();
@@ -266,8 +267,8 @@ fn a_store_without_the_current_search_schema_needs_repair_and_repair_publishes_i
         };
         assert_eq!(
             meta_value(&store, "search_schema").as_deref(),
-            Some("3"),
-            "a new store publishes search_schema 3 at initialization"
+            Some("4"),
+            "a new store publishes search_schema 4 at initialization"
         );
         context_foundry::testkit::set_meta(&store, "search_schema", stale);
         let before = snapshot(&store);
@@ -294,7 +295,7 @@ fn a_store_without_the_current_search_schema_needs_repair_and_repair_publishes_i
 
         let report = Engine::repair_index(&store, &Control::unbounded()).unwrap();
         assert!(report.repaired);
-        assert_eq!(meta_value(&store, "search_schema").as_deref(), Some("3"));
+        assert_eq!(meta_value(&store, "search_schema").as_deref(), Some("4"));
         assert_eq!(
             owned(&knowledge(&snapshot(&store))),
             owned(&knowledge(&before)),

@@ -2094,7 +2094,9 @@ fn a_stale_lexical_document_never_hides_a_current_dense_unit_of_the_same_span() 
     // Preparation reads the current source and leaves the lexical index.
     corpus.prepare();
     let slot = corpus.slot();
-    let answer = corpus.context(&slot, "freshness_probe", BUDGET);
+    // An anchor-less query: an anchored context places no dense units
+    // (context-v2 § Anchored context).
+    let answer = corpus.context(&slot, "freshness probe", BUDGET);
     let item = answer
         .item("src/fresh.rs")
         .unwrap_or_else(|| panic!("the current dense unit is served:\n{}", answer.packed.text));
@@ -4003,7 +4005,7 @@ fn owned(sources: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Two seeds for 005's graph context. `host_seed` (a lexical hit) calls
+/// Two seeds for 005's graph context. `hostseed` (a lexical hit) calls
 /// `target_fn`, which `caller_a` calls too; the evening unit (sundown
 /// concepts, no query word) calls `lantern_mark`, which `lantern_user` calls
 /// too. Each referring file holds a second function, so the delivery unit
@@ -4012,7 +4014,7 @@ fn owned(sources: &[(&str, &str)]) -> Vec<(String, String)> {
 const GRAPH_SOURCES: [(&str, &str); 6] = [
     (
         "src/host.rs",
-        "pub fn host_seed() { crate::target_fn(); }\n",
+        "pub fn hostseed() { crate::target_fn(); }\n",
     ),
     ("src/target.rs", "pub fn target_fn() {}\n"),
     (
@@ -4181,7 +4183,7 @@ impl Corpus {
                 revision: "r1".into(),
                 edges: vec![
                     calls(
-                        endpoint("src/host.rs", 1, "host_seed"),
+                        endpoint("src/host.rs", 1, "hostseed"),
                         endpoint("src/target.rs", 1, "target_fn"),
                     ),
                     calls(
@@ -4226,8 +4228,10 @@ fn dense_only_hits_seed_no_graph_or_compiler_expansion_and_survive_that_crowding
     corpus.import_graphs();
     let slot = corpus.slot();
 
-    // Control: `evening_bell` names the evening unit lexically.
-    let seeded = corpus.context_as(&slot, "evening_bell", Strategy::Graph, BUDGET);
+    // Control: `evening bell` names the evening unit lexically. Queries here
+    // are anchor-less: an anchored context has no edge lines and places no
+    // dense units (context-v2 § Anchored context).
+    let seeded = corpus.context_as(&slot, "evening bell", Strategy::Graph, BUDGET);
     assert_eq!(seeded.batch.counters.graph, Some("ok"));
     assert!(
         compiler_paths(&seeded.batch)
@@ -4245,10 +4249,10 @@ fn dense_only_hits_seed_no_graph_or_compiler_expansion_and_survive_that_crowding
         seeded.packed.text
     );
 
-    // Crowded: `host_seed` is the only lexical hit; the evening unit follows
-    // it on concepts alone, inside the first three units both expansions
-    // seed from.
-    let answer = corpus.context_as(&slot, "host_seed twilight", Strategy::Graph, BUDGET);
+    // Crowded: `hostseed` (one word, so a tier-1 run but no anchor) is the
+    // only lexical hit; the evening unit follows it on concepts alone,
+    // inside the first three units both expansions seed from.
+    let answer = corpus.context_as(&slot, "hostseed twilight", Strategy::Graph, BUDGET);
     let path_of = |item: &RankedItem| item.handle.as_ref().unwrap().path.clone();
     let units: Vec<&RankedItem> = answer
         .batch
@@ -4274,7 +4278,7 @@ fn dense_only_hits_seed_no_graph_or_compiler_expansion_and_survive_that_crowding
     let edges = edges_of(&answer.parsed);
     assert_eq!(edges.len(), 1, "{edges:?}");
     assert!(
-        edges[0].starts_with("src/host.rs:1 (host_seed) --calls--> src/target.rs:1"),
+        edges[0].starts_with("src/host.rs:1 (hostseed) --calls--> src/target.rs:1"),
         "{edges:?}"
     );
 
@@ -5022,7 +5026,9 @@ async fn without_a_usable_profile_cli_and_mcp_answers_are_the_plain_baseline_byt
         context_foundry::roots::validate_admission(&primary.root, &[secondary.reference()])
             .unwrap();
     let mut cases = Vec::new();
-    for query in ["parse_record", "shift lead rota", "fire lane"] {
+    // Anchor-less queries: an anchored context counts every candidate
+    // outside its selection in `omitted:` (context-v2 § Anchored context).
+    for query in ["parse record", "shift lead rota", "fire lane"] {
         for op in [Op::Search, Op::Context] {
             let single = plain_single(primary.engine(), op, query);
             let multi = plain_roots(
@@ -5113,7 +5119,9 @@ async fn without_a_usable_profile_cli_and_mcp_answers_are_the_plain_baseline_byt
 /// embedding and is the plain baseline byte for byte.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn semantic_evidence_stays_primary_only_in_a_multi_root_owner() {
-    const QUERY: &str = "parse_record twilight onset";
+    // Anchor-less: an anchored context places no dense units (context-v2
+    // § Anchored context).
+    const QUERY: &str = "parse record twilight onset";
     let mut primary = Corpus::new(&[]);
     let mut secondary = Corpus::new(&[]);
     assert!(

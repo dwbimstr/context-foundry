@@ -1164,9 +1164,11 @@ fn missing_nemotron_does_not_disable_the_policy() {
         segments.contains(&"semantic:fallback:profile_invalid".to_owned()),
         "{text}"
     );
+    // The query anchors `alpha_one`, so `anchored` follows `route:`
+    // (context-v2 § Anchored context, 001 T007).
     assert_eq!(
-        segments.last().map(String::as_str),
-        Some("route:policy"),
+        segments[segments.len().saturating_sub(2)..],
+        ["route:policy", "anchored"],
         "{text}"
     );
     assert!(resolved_graph(&text));

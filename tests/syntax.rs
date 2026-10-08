@@ -208,6 +208,8 @@ function plain() {}
             named("interface", "Shape", span(source, "export interface", "}")),
             named("type", "Id", "type Id = string;"),
             named("enum", "Color", "enum Color { Red, Green }"),
+            named("variant", "Color.Red", "Red"),
+            named("variant", "Color.Green", "Green"),
             named("fn", "make", span(source, "export const make", "};")),
             named("fn", "plain", "function plain() {}"),
         ]
@@ -273,13 +275,17 @@ let a = 1, b = () => 2;
                 "handler",
                 "const handler = function (e) { return e; };"
             ),
+            // Module-level declarators are units each (context-v2 § Unit
+            // kinds, amended for 001 T007): a function value is `fn`.
+            named("static", "a", "a = 1"),
+            named("fn", "b", "b = () => 2"),
         ]
     );
     assert_tiles(source, Some(Lang::JavaScript));
 }
 
 #[test]
-fn go_types_render_their_kind_without_a_name() {
+fn go_types_methods_and_functions_are_named_units() {
     let source = "package shapes
 
 type Point struct {
@@ -298,7 +304,8 @@ func Helper() {}
     assert_eq!(
         units(source, Lang::Go),
         [
-            ("type", None, span(source, "type Point", "}")),
+            // A Go type spec is named (amended for 001 T007).
+            named("type", "Point", span(source, "type Point", "}")),
             named(
                 "method",
                 "Len",
@@ -308,6 +315,29 @@ func Helper() {}
         ]
     );
     assert_tiles(source, Some(Lang::Go));
+}
+
+/// Rust 2024 `safe` foreign items: tree-sitter-rust 0.24 has no `safe`
+/// keyword, but its error recovery keeps the item a signature or static item
+/// with its name, so each is a unit. Items inside a macro body such as
+/// `cfg_select! { … }` are token trees, not units.
+#[test]
+fn rust_safe_foreign_items_are_units_outside_macro_bodies() {
+    let source = "unsafe extern \"C\" {
+    pub(crate) safe fn asinf(x: f32) -> f32;
+    pub safe static FLAG: u8;
+}
+cfg_select! {
+    _ => { unsafe extern \"C\" { pub safe fn acosf(x: f32) -> f32; } }
+}
+";
+    assert_eq!(
+        units(source, Lang::Rust),
+        [
+            named("fn", "asinf", "pub(crate) safe fn asinf(x: f32) -> f32;"),
+            named("static", "FLAG", "pub safe static FLAG: u8;"),
+        ]
+    );
 }
 
 #[test]
@@ -549,6 +579,8 @@ public class Account {
             ),
             named("method", "Account.Listener.on", "void on();"),
             named("enum", "Account.Kind", "enum Kind { A, B }"),
+            named("variant", "Account.Kind.A", "A"),
+            named("variant", "Account.Kind.B", "B"),
             named("class", "Account.Pair", "record Pair(int l, int r) {}"),
         ]
     );
@@ -1414,4 +1446,212 @@ fn leading_run_boundaries_whitespace_empty_jsdoc_and_inner_rust_items() {
             source.find("fn g").unwrap()
         )
     );
+}
+
+// --- 001 T007: name nodes, addresses and import keys (context-v2 § City map)
+
+/// Each definition records its name node's range; a Rust `impl` extends a
+/// type defined elsewhere, so it records none (and is no definition), while
+/// its members' qualified names keep the type.
+#[test]
+fn definitions_record_their_name_node_and_impls_none() {
+    let source = "pub struct Foo;\n\nimpl<T> Trait<T> for Foo {\n    fn bar(&self) {}\n}\n";
+    let named: Vec<(&str, Option<&str>, Option<&str>)> = syntax::units(source, Lang::Rust)
+        .iter()
+        .map(|unit| {
+            (
+                unit.kind.as_str(),
+                unit.qname.as_deref().map(|_| ""),
+                unit.name_range.map(|(start, end)| &source[start..end]),
+            )
+        })
+        .collect();
+    assert_eq!(
+        named,
+        [
+            ("struct", Some(""), Some("Foo")),
+            ("impl", Some(""), None),
+            ("fn", Some(""), Some("bar")),
+        ]
+    );
+    for (lang, source, name) in [
+        (Lang::Cpp, "void Box::grow(int n) {}\n", "grow"),
+        (Lang::TypeScript, "export const run = () => {};\n", "run"),
+        (Lang::Python, "@cached\ndef area(r):\n    return r\n", "area"),
+        (Lang::Go, "func (s *S) Close() error { return nil }\n", "Close"),
+    ] {
+        let unit = syntax::units(source, lang).remove(0);
+        let (start, end) = unit.name_range.expect("a definition");
+        assert_eq!(&source[start..end], name, "{source:?}");
+    }
+    let section = syntax::units("# Title\n\ntext\n", Lang::Markdown).remove(0);
+    assert_eq!(section.name_range, None, "a section is no definition");
+}
+
+#[test]
+fn address_segments_split_the_path_and_the_qualified_name() {
+    let path = syntax::path_segments("packages/coding-agent/src/tools/index.ts");
+    assert_eq!(path, ["packages", "coding", "agent", "src", "tools", "index"]);
+    assert_eq!(
+        syntax::address_segments(&[], Lang::Rust, "UnionFind<Key>::find"),
+        ["unionfind"]
+    );
+    assert_eq!(
+        syntax::address_segments(
+            &syntax::path_segments("src/graph/mod.rs"),
+            Lang::Rust,
+            "Outer<Vec<[u8; 4]>>::Graph::edges"
+        ),
+        ["src", "graph", "mod", "outer"]
+    );
+    assert_eq!(
+        syntax::address_segments(&[], Lang::Java, "Outer.Inner.run"),
+        ["outer", "inner"]
+    );
+    assert_eq!(syntax::path_segments(".gitignore"), ["gitignore"]);
+}
+
+/// Each file's import keys (context-v2 § Doors import keys): the bound names
+/// an import introduces, a path's last segment, an include's or require's
+/// file stem; glob imports give none.
+#[test]
+fn import_keys_name_what_each_import_binds() {
+    for (lang, source, keys) in [
+        (
+            Lang::Rust,
+            "use crate::store::Engine;\nuse std::io::{self, Read as R, prelude::*};\nuse a::b::*;\nuse helper;\nfn f() {}\n",
+            vec!["Engine", "io", "R", "helper"],
+        ),
+        (
+            Lang::Python,
+            "import os.path\nimport numpy as np\nfrom m import a, b as c\nfrom . import d\nfrom x import *\n",
+            vec!["path", "np", "a", "c", "d"],
+        ),
+        (
+            Lang::TypeScript,
+            "import Def, { A, B as C } from './m';\nimport * as ns from 'pkg';\nimport type { T } from './t';\nimport './side';\nimport x = require('./legacy');\n",
+            vec!["Def", "A", "C", "ns", "T", "x"],
+        ),
+        (
+            Lang::JavaScript,
+            "const tools = require('./tools/index.js');\nimport { run } from \"./run\";\n",
+            vec!["index", "run"],
+        ),
+        (
+            Lang::Go,
+            "package p\n\nimport (\n\t\"fmt\"\n\tf \"github.com/a/flags\"\n\t. \"strings\"\n\t_ \"embed\"\n)\n",
+            vec!["fmt", "f"],
+        ),
+        (
+            Lang::C,
+            "#include \"x/y.h\"\n#include <sys/types.h>\nint main(void) { return 0; }\n",
+            vec!["y", "types"],
+        ),
+        (
+            Lang::Cpp,
+            "#include <vector>\nusing namespace std;\nusing ns::Widget;\nint f() { return 0; }\n",
+            vec!["vector", "std", "Widget"],
+        ),
+        (
+            Lang::Java,
+            "import java.util.List;\nimport static org.junit.Assert.assertEquals;\nimport java.io.*;\nclass A {}\n",
+            vec!["List", "assertEquals"],
+        ),
+    ] {
+        assert_eq!(syntax::index(source, Some(lang)).imports, keys, "{lang:?}");
+    }
+    // Keys are distinct; documents are the plain document tiling.
+    let source = "use a::X;\nuse b::X;\nfn f() {}\n";
+    let index = syntax::index(source, Some(Lang::Rust));
+    assert_eq!(index.imports, ["X"]);
+    assert_eq!(index.documents, syntax::documents(source, Some(Lang::Rust)));
+    assert!(syntax::index(source, None).imports.is_empty());
+}
+
+/// Every definition gets an address (context-v2 § Unit kinds, amended for
+/// 001 T007): enum members, module-level bindings and Go specs are units
+/// with their name node and qualified name; fields and local bindings are
+/// not.
+#[test]
+fn enum_members_and_module_level_bindings_are_definitions() {
+    let cases: [(Lang, &str, &[(&str, &str, &str)]); 7] = [
+        (
+            Lang::Rust,
+            "enum Color {\n    Red,\n    Green(u8),\n}\nstruct P {\n    field: u8,\n}\nfn f() {\n    let local = 1;\n}\n",
+            &[("variant", "Color::Red", "Red"), ("variant", "Color::Green", "Green")],
+        ),
+        (
+            Lang::Python,
+            "LIMIT = 10\nclass A:\n    field = 1\ndef f():\n    local = 2\n",
+            &[("static", "LIMIT", "LIMIT")],
+        ),
+        (
+            Lang::TypeScript,
+            "export const LIMIT = 10;\nlet counter = 0, other = 1;\nconst run = () => {};\nenum Mode { Fast, Slow = 2 }\nclass K {\n  field = 1;\n}\nfunction g() {\n  const local = 1;\n}\n",
+            &[
+                ("const", "LIMIT", "LIMIT"),
+                ("static", "counter", "counter"),
+                ("static", "other", "other"),
+                ("fn", "run", "run"),
+                ("variant", "Mode.Fast", "Fast"),
+                ("variant", "Mode.Slow", "Slow"),
+            ],
+        ),
+        (
+            Lang::Go,
+            "package p\n\ntype Size int\n\ntype Alias = Size\n\nconst Max = 3\n\nvar count int\n\nfunc f() {\n\tvar local = 1\n\t_ = local\n}\n",
+            &[
+                ("type", "Size", "Size"),
+                ("type", "Alias", "Alias"),
+                ("const", "Max", "Max"),
+                ("static", "count", "count"),
+            ],
+        ),
+        (
+            Lang::C,
+            "enum color { RED, GREEN = 2 };\nstruct s {\n  int field;\n};\n",
+            &[("variant", "color.RED", "RED"), ("variant", "color.GREEN", "GREEN")],
+        ),
+        (
+            Lang::Cpp,
+            "enum class Mode { Fast };\n",
+            &[("variant", "Mode::Fast", "Fast")],
+        ),
+        (
+            Lang::Java,
+            "enum Mode { FAST, SLOW; }\nclass K {\n  int field;\n}\n",
+            &[("variant", "Mode.FAST", "FAST"), ("variant", "Mode.SLOW", "SLOW")],
+        ),
+    ];
+    for (lang, source, want) in cases {
+        let found = syntax::units(source, lang);
+        for &(kind, qname, name) in want {
+            let unit = found
+                .iter()
+                .find(|unit| unit.qname.as_deref() == Some(qname))
+                .unwrap_or_else(|| panic!("{lang:?}: no unit {qname} in {found:#?}"));
+            assert_eq!(unit.kind.as_str(), kind, "{lang:?} {qname}");
+            let (start, end) = unit.name_range.expect("a definition");
+            assert_eq!(&source[start..end], name, "{lang:?} {qname}");
+        }
+        for unit in &found {
+            let name = unit.name.as_deref().unwrap_or("");
+            assert!(
+                !matches!(name, "field" | "local"),
+                "{lang:?}: a field or local binding became a unit: {unit:?}"
+            );
+        }
+        assert_tiles(source, Some(lang));
+    }
+    // The single-declarator declaration (with its `export`) is the range.
+    let source = "export const LIMIT = 10;\n";
+    let unit = syntax::units(source, Lang::TypeScript).remove(0);
+    assert_eq!(&source[unit.start..unit.end], "export const LIMIT = 10;");
+    // An enum's outline still shows its variant lines.
+    let source = "enum Color {\n    Red,\n    Green,\n    Blue,\n    Cyan,\n    Magenta,\n}\n";
+    let shown = syntax::render_outline(
+        source,
+        &syntax::outline(source, Lang::Rust, 0..source.len(), 0, 0),
+    );
+    assert_eq!(shown, source);
 }

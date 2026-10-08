@@ -148,6 +148,7 @@ pub enum UnitKind {
     Interface,
     Section,
     Block,
+    Variant,
 }
 
 impl UnitKind {
@@ -169,6 +170,7 @@ impl UnitKind {
             Self::Interface => "interface",
             Self::Section => "section",
             Self::Block => "block",
+            Self::Variant => "variant",
         }
     }
 }
@@ -180,12 +182,16 @@ impl UnitKind {
 /// attribute of that run, else `head`. `head` is the node's (or wrapper's)
 /// own start, after the leading run. `body` is the `body` field (else the
 /// block/declaration_list child), `None` when the unit has no elidable
-/// interior. Units are stored in source (pre-)order.
+/// interior. `name_range` is the byte range of the unit's name node when the
+/// unit is a definition (context-v2 § Definitions and addresses): a
+/// programming-language unit with a name, except a Rust `impl`, which
+/// extends a type defined elsewhere. Units are stored in source (pre-)order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unit {
     pub kind: UnitKind,
     pub name: Option<String>,
     pub qname: Option<String>,
+    pub name_range: Option<(usize, usize)>,
     pub start: usize,
     pub decl: usize,
     pub head: usize,
@@ -207,6 +213,9 @@ pub struct DeliveryUnit {
     pub kind: UnitKind,
     pub name: Option<String>,
     pub qname: Option<String>,
+    /// The definition's name node (see [`Unit::name_range`]); `None` for a
+    /// block, a section and an `impl`.
+    pub name_range: Option<(usize, usize)>,
 }
 
 /// One search document: a byte range of the source and its delivery unit.
@@ -224,25 +233,38 @@ struct Candidate {
     end: usize,
     kind: UnitKind,
     name: Option<String>,
+    name_range: Option<(usize, usize)>,
     body: Option<(usize, usize)>,
 }
 
 /// The unit forest of `source`; empty for a language without units or a
 /// source over [`MAX_PARSE_BYTES`].
 pub fn units(source: &str, lang: Lang) -> Vec<Unit> {
-    analyze(source, lang, false).units
+    analyze(source, lang, Need::Units).units
+}
+
+/// What one parse collects besides the unit forest.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Need {
+    Units,
+    /// The comment and declaration-only member ranges of an outline.
+    Outline,
+    /// The file's import keys (context-v2 § Doors).
+    Imports,
 }
 
 /// One parse: the unit forest and, for outlines, the byte ranges of comments
-/// spanning at least [`COMMENT_LINES`] lines and of declaration-only members.
+/// spanning at least [`COMMENT_LINES`] lines and of declaration-only members;
+/// for indexing, the import keys.
 #[derive(Default)]
 struct Analysis {
     units: Vec<Unit>,
     comments: Vec<(usize, usize)>,
     members: Vec<(usize, usize)>,
+    imports: Vec<String>,
 }
 
-fn analyze(source: &str, lang: Lang, for_outline: bool) -> Analysis {
+fn analyze(source: &str, lang: Lang, need: Need) -> Analysis {
     if !lang.has_units() || source.len() > MAX_PARSE_BYTES {
         return Analysis::default();
     }
@@ -250,7 +272,7 @@ fn analyze(source: &str, lang: Lang, for_outline: bool) -> Analysis {
     let candidates = if lang == Lang::Markdown {
         markdown_sections(source)
     } else {
-        tree_units(source, lang, for_outline.then_some(&mut analysis))
+        tree_units(source, lang, need, &mut analysis)
     };
     analysis.units = forest(source, lang, candidates);
     analysis
@@ -261,12 +283,44 @@ fn analyze(source: &str, lang: Lang, for_outline: bool) -> Analysis {
 /// lies inside its delivery unit.
 pub fn documents(source: &str, lang: Option<Lang>) -> Vec<Document> {
     let units = lang.map_or_else(Vec::new, |lang| units(source, lang));
+    tile(source, &units)
+}
+
+/// What indexing reads from one parse of a source: its search documents
+/// (as [`documents`]) and its import keys (context-v2 § Doors), distinct in
+/// order of first appearance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceIndex {
+    pub documents: Vec<Document>,
+    pub imports: Vec<String>,
+}
+
+/// The [`SourceIndex`] of `source`.
+pub fn index(source: &str, lang: Option<Lang>) -> SourceIndex {
+    let analysis = lang.map_or_else(Analysis::default, |lang| {
+        analyze(source, lang, Need::Imports)
+    });
+    let mut seen = std::collections::HashSet::new();
+    let imports = analysis
+        .imports
+        .into_iter()
+        .filter(|key| seen.insert(key.clone()))
+        .collect();
+    SourceIndex {
+        documents: tile(source, &analysis.units),
+        imports,
+    }
+}
+
+/// Tiles `source` into documents: each top-level unit's regions, and blocks
+/// for the bytes outside them.
+fn tile(source: &str, units: &[Unit]) -> Vec<Document> {
     let mut documents = Vec::new();
     let mut cursor = 0;
     for (index, unit) in units.iter().enumerate() {
         if unit.parent.is_none() {
             blocks(source, cursor, unit.start, &mut documents);
-            unit_documents(source, &units, index, &mut documents);
+            unit_documents(source, units, index, &mut documents);
             cursor = unit.end;
         }
     }
@@ -361,7 +415,7 @@ impl<'a> Outliner<'a> {
             line_starts,
             spans: Vec::new(),
         };
-        let analysis = analyze(source, lang, true);
+        let analysis = analyze(source, lang, Need::Outline);
         outliner.spans = outliner.elidable_spans(&analysis);
         outliner
     }
@@ -669,9 +723,9 @@ impl<'a> Outliner<'a> {
     }
 }
 
-/// The unit candidates of one parse; with `extras`, also the comment and
-/// declaration-only member ranges an outline needs.
-fn tree_units(source: &str, lang: Lang, mut extras: Option<&mut Analysis>) -> Vec<Candidate> {
+/// The unit candidates of one parse; for an outline, also the comment and
+/// declaration-only member ranges it needs, and for indexing the import keys.
+fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Vec<Candidate> {
     let mut out = Vec::new();
     let Some(grammar) = lang.grammar() else {
         return out;
@@ -696,9 +750,14 @@ fn tree_units(source: &str, lang: Lang, mut extras: Option<&mut Analysis>) -> Ve
     let mut runs: Vec<Vec<(tree_sitter::Node, Leading)>> = vec![Vec::new()];
     loop {
         let node = cursor.node();
+        // A Rust declaration-only item is a unit and stays a mandatory
+        // outline member, so outlines keep its lines as before.
         if let Some(candidate) = candidate(lang, node, &ancestors, &runs, bytes) {
             out.push(candidate);
-        } else if let Some(extras) = extras.as_deref_mut() {
+        }
+        if need == Need::Imports {
+            import_keys(lang, node, bytes, &mut extras.imports);
+        } else if need == Need::Outline {
             if is_member_signature(lang, node) {
                 // A template wrapper's lines belong to the signature too.
                 let outer = outermost_wrapper(lang, node, &ancestors);
@@ -790,15 +849,23 @@ fn candidate(
     runs: &[Vec<(tree_sitter::Node, Leading)>],
     source: &[u8],
 ) -> Option<Candidate> {
-    let kind = unit_kind(lang, node)?;
-    let name = unit_name(lang, node, source);
+    let kind = unit_kind(lang, node, ancestors)?;
+    let name_node = unit_name(lang, node);
+    let name = name_node
+        .and_then(|name| name.utf8_text(source).ok())
+        .map(str::to_owned);
+    // A Rust `impl` names the type it extends: it is a container, not a
+    // definition of that type (context-v2 § Definitions and addresses).
+    let name_range = name_node
+        .filter(|_| kind != UnitKind::Impl && name.is_some())
+        .map(|name| (name.start_byte(), name.end_byte()));
     let body = body_range(lang, node);
     let outer = outermost_wrapper(lang, node, ancestors);
     // `outer` sits at the depth of the outermost wrapper (or of `node`).
     let wrappers = ancestors
         .iter()
         .rev()
-        .take_while(|ancestor| is_wrapper(lang, ancestor.kind()))
+        .take_while(|ancestor| is_wrapper(lang, **ancestor))
         .count();
     let (start, decl) = leading_run(outer, &runs[ancestors.len() - wrappers], source);
     Some(Candidate {
@@ -808,6 +875,7 @@ fn candidate(
         end: outer.end_byte(),
         kind,
         name,
+        name_range,
         body,
     })
 }
@@ -883,8 +951,9 @@ fn leading_run(
     (start, decl)
 }
 
-/// The outermost of the wrappers (decorator, `export`, `template`) directly
-/// enclosing `node`, or `node` itself; it supplies the range.
+/// The outermost of the wrappers (decorator, `export`, `template`, a
+/// declaration with one declarator or spec, a Python expression statement)
+/// directly enclosing `node`, or `node` itself; it supplies the range.
 fn outermost_wrapper<'t>(
     lang: Lang,
     node: tree_sitter::Node<'t>,
@@ -893,20 +962,33 @@ fn outermost_wrapper<'t>(
     ancestors
         .iter()
         .rev()
-        .take_while(|ancestor| is_wrapper(lang, ancestor.kind()))
+        .take_while(|ancestor| is_wrapper(lang, **ancestor))
         .last()
         .copied()
         .unwrap_or(node)
 }
 
-fn unit_kind(lang: Lang, node: tree_sitter::Node) -> Option<UnitKind> {
+/// The unit kind of `node` under `ancestors` (context-v2 § Unit kinds).
+fn unit_kind(
+    lang: Lang,
+    node: tree_sitter::Node,
+    ancestors: &[tree_sitter::Node],
+) -> Option<UnitKind> {
     use UnitKind::*;
     let kind = node.kind();
+    // The kind of the `n`th ancestor up (1: the parent).
+    let above = |n: usize| {
+        ancestors
+            .len()
+            .checked_sub(n)
+            .map(|at| ancestors[at].kind())
+    };
     match lang {
         Lang::Rust => Some(match kind {
             "function_item" => Fn,
             "struct_item" => Struct,
             "enum_item" => Enum,
+            "enum_variant" => Variant,
             "union_item" => Union,
             "trait_item" => Trait,
             "impl_item" => Impl,
@@ -915,13 +997,28 @@ fn unit_kind(lang: Lang, node: tree_sitter::Node) -> Option<UnitKind> {
             "const_item" => Const,
             "static_item" => Static,
             "type_item" => Type,
+            // Declaration-only trait and extern-block items: required
+            // methods and foreign `fn`s, and associated types. Valueless
+            // `const` and `static` items are `const_item`/`static_item`.
+            "function_signature_item" => Fn,
+            "associated_type" => Type,
             _ => return None,
         }),
-        Lang::Python => Some(match kind {
-            "function_definition" => Fn,
-            "class_definition" => Class,
-            _ => return None,
-        }),
+        Lang::Python => match kind {
+            "function_definition" => Some(Fn),
+            "class_definition" => Some(Class),
+            // A module-level assignment to one identifier.
+            "assignment"
+                if above(1) == Some("expression_statement")
+                    && above(2) == Some("module")
+                    && node
+                        .child_by_field_name("left")
+                        .is_some_and(|left| left.kind() == "identifier") =>
+            {
+                Some(Static)
+            }
+            _ => None,
+        },
         Lang::TypeScript | Lang::Tsx | Lang::JavaScript => match kind {
             "function_declaration" | "generator_function_declaration" => Some(Fn),
             "class_declaration" => Some(Class),
@@ -929,15 +1026,30 @@ fn unit_kind(lang: Lang, node: tree_sitter::Node) -> Option<UnitKind> {
             "interface_declaration" => Some(Interface),
             "type_alias_declaration" => Some(Type),
             "enum_declaration" => Some(Enum),
-            "lexical_declaration" | "variable_declaration" => function_declarator(node).map(|_| Fn),
+            "enum_assignment" => Some(Variant),
+            "property_identifier" if above(1) == Some("enum_body") => Some(Variant),
+            "variable_declarator" => declarator_kind(node, ancestors),
             _ => None,
         },
-        Lang::Go => Some(match kind {
-            "function_declaration" => Fn,
-            "method_declaration" => Method,
-            "type_declaration" => Type,
-            _ => return None,
-        }),
+        Lang::Go => match kind {
+            "function_declaration" => Some(Fn),
+            "method_declaration" => Some(Method),
+            "type_spec" | "type_alias" => Some(Type),
+            "const_spec"
+                if above(1) == Some("const_declaration") && above(2) == Some("source_file") =>
+            {
+                Some(Const)
+            }
+            "var_spec"
+                if (above(1) == Some("var_declaration") && above(2) == Some("source_file"))
+                    || (above(1) == Some("var_spec_list")
+                        && above(2) == Some("var_declaration")
+                        && above(3) == Some("source_file")) =>
+            {
+                Some(Static)
+            }
+            _ => None,
+        },
         Lang::C | Lang::Cpp => {
             let with_body = |kind| node.child_by_field_name("body").map(|_| kind);
             match kind {
@@ -946,6 +1058,7 @@ fn unit_kind(lang: Lang, node: tree_sitter::Node) -> Option<UnitKind> {
                 "class_specifier" => with_body(Class),
                 "union_specifier" => with_body(Union),
                 "enum_specifier" => with_body(Enum),
+                "enumerator" => Some(Variant),
                 "namespace_definition" => Some(Mod),
                 _ => None,
             }
@@ -954,6 +1067,7 @@ fn unit_kind(lang: Lang, node: tree_sitter::Node) -> Option<UnitKind> {
             "class_declaration" | "record_declaration" => Class,
             "interface_declaration" => Interface,
             "enum_declaration" => Enum,
+            "enum_constant" => Variant,
             "method_declaration" | "constructor_declaration" => Method,
             _ => return None,
         }),
@@ -961,35 +1075,72 @@ fn unit_kind(lang: Lang, node: tree_sitter::Node) -> Option<UnitKind> {
     }
 }
 
-/// A `lexical_declaration`/`variable_declaration` is a unit when it has
-/// exactly one declarator and that declarator's value is a function.
-fn function_declarator(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
-    let mut cursor = node.walk();
-    let mut declarators = node
-        .named_children(&mut cursor)
-        .filter(|child| child.kind() == "variable_declarator");
-    let declarator = declarators.next()?;
-    if declarators.next().is_some() {
+/// A JavaScript-family declarator with an identifier name: `fn` when its
+/// value is a function (anywhere, when its declaration has no other
+/// declarator; T005's rule) and, at module level, otherwise `const` for
+/// `const` and `static` for `let`/`var`.
+fn declarator_kind(
+    node: tree_sitter::Node,
+    ancestors: &[tree_sitter::Node],
+) -> Option<UnitKind> {
+    let declaration = *ancestors.last()?;
+    if !matches!(
+        declaration.kind(),
+        "lexical_declaration" | "variable_declaration"
+    ) || node
+        .child_by_field_name("name")
+        .is_none_or(|name| name.kind() != "identifier")
+    {
         return None;
     }
-    let value = declarator.child_by_field_name("value")?;
-    matches!(value.kind(), "arrow_function" | "function_expression").then_some(declarator)
+    let above = |n: usize| {
+        ancestors
+            .len()
+            .checked_sub(n)
+            .map(|at| ancestors[at].kind())
+    };
+    let module = above(2) == Some("program")
+        || (above(2) == Some("export_statement") && above(3) == Some("program"));
+    let function = node
+        .child_by_field_name("value")
+        .is_some_and(|value| matches!(value.kind(), "arrow_function" | "function_expression"));
+    if function && (module || declarators(declaration) == 1) {
+        return Some(UnitKind::Fn);
+    }
+    if !module {
+        return None;
+    }
+    let constant = declaration
+        .child_by_field_name("kind")
+        .is_some_and(|kind| kind.kind() == "const");
+    Some(if constant {
+        UnitKind::Const
+    } else {
+        UnitKind::Static
+    })
 }
 
-fn unit_name(lang: Lang, node: tree_sitter::Node, source: &[u8]) -> Option<String> {
-    let text = |node: tree_sitter::Node| node.utf8_text(source).ok().map(str::to_owned);
+fn declarators(declaration: tree_sitter::Node) -> usize {
+    let mut cursor = declaration.walk();
+    declaration
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "variable_declarator")
+        .count()
+}
+
+/// The node the language's name rule selects (context-v2 § Unit kinds): the
+/// `name` field; for a Rust `impl` the `type` field; for C/C++ the innermost
+/// identifier of the declarator chain; a bare TypeScript enum member is its
+/// own name; a Python assignment's left identifier.
+fn unit_name(lang: Lang, node: tree_sitter::Node) -> Option<tree_sitter::Node> {
     match (lang, node.kind()) {
-        (Lang::Rust, "impl_item") => node.child_by_field_name("type").and_then(text),
-        (
-            Lang::TypeScript | Lang::Tsx | Lang::JavaScript,
-            "lexical_declaration" | "variable_declaration",
-        ) => function_declarator(node)?
-            .child_by_field_name("name")
-            .and_then(text),
-        (Lang::C | Lang::Cpp, "function_definition") => text(innermost_declarator(
+        (Lang::Rust, "impl_item") => node.child_by_field_name("type"),
+        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "property_identifier") => Some(node),
+        (Lang::Python, "assignment") => node.child_by_field_name("left"),
+        (Lang::C | Lang::Cpp, "function_definition") => Some(innermost_declarator(
             node.child_by_field_name("declarator")?,
         )),
-        _ => node.child_by_field_name("name").and_then(text),
+        _ => node.child_by_field_name("name"),
     }
 }
 
@@ -1027,11 +1178,9 @@ fn unnamed_declarator(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
 
 fn body_range(lang: Lang, node: tree_sitter::Node) -> Option<(usize, usize)> {
     let body = match (lang, node.kind()) {
-        (
-            Lang::TypeScript | Lang::Tsx | Lang::JavaScript,
-            "lexical_declaration" | "variable_declaration",
-        ) => function_declarator(node)?
-            .child_by_field_name("value")?
+        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "variable_declarator") => node
+            .child_by_field_name("value")
+            .filter(|value| matches!(value.kind(), "arrow_function" | "function_expression"))?
             .child_by_field_name("body"),
         _ => node.child_by_field_name("body").or_else(|| {
             let mut cursor = node.walk();
@@ -1042,11 +1191,29 @@ fn body_range(lang: Lang, node: tree_sitter::Node) -> Option<(usize, usize)> {
     Some((body.start_byte(), body.end_byte()))
 }
 
-fn is_wrapper(lang: Lang, kind: &str) -> bool {
-    match lang {
-        Lang::Python => kind == "decorated_definition",
-        Lang::TypeScript | Lang::Tsx | Lang::JavaScript => kind == "export_statement",
-        Lang::Cpp => kind == "template_declaration",
+/// Whether `node` wraps the unit directly inside it, supplying its range: a
+/// decorator or Python expression statement, an `export`, a C++ `template`,
+/// a JavaScript-family declaration with one declarator and a Go declaration
+/// with one spec.
+fn is_wrapper(lang: Lang, node: tree_sitter::Node) -> bool {
+    let single = |kinds: &[&str]| {
+        let mut cursor = node.walk();
+        node.named_children(&mut cursor)
+            .filter(|child| kinds.contains(&child.kind()))
+            .count()
+            == 1
+    };
+    match (lang, node.kind()) {
+        (Lang::Python, "decorated_definition" | "expression_statement") => true,
+        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "export_statement") => true,
+        (
+            Lang::TypeScript | Lang::Tsx | Lang::JavaScript,
+            "lexical_declaration" | "variable_declaration",
+        ) => single(&["variable_declarator"]),
+        (Lang::Go, "type_declaration" | "const_declaration" | "var_declaration") => {
+            single(&["type_spec", "type_alias", "const_spec", "var_spec"])
+        }
+        (Lang::Cpp, "template_declaration") => true,
         _ => false,
     }
 }
@@ -1093,6 +1260,7 @@ fn markdown_sections(source: &str) -> Vec<Candidate> {
                 end,
                 kind: UnitKind::Section,
                 name: (!name.is_empty()).then(|| name.to_owned()),
+                name_range: None,
                 body: (*heading_end < end).then_some((*heading_end, end)),
             }
         })
@@ -1158,6 +1326,7 @@ fn forest(source: &str, lang: Lang, mut candidates: Vec<Candidate>) -> Vec<Unit>
             kind: candidate.kind,
             name: candidate.name,
             qname,
+            name_range: candidate.name_range,
             start: candidate.start,
             decl: candidate.decl,
             head: candidate.head,
@@ -1205,6 +1374,7 @@ fn delivery(unit: &Unit) -> DeliveryUnit {
         kind: unit.kind,
         name: unit.name.clone(),
         qname: unit.qname.clone(),
+        name_range: unit.name_range,
     }
 }
 
@@ -1275,6 +1445,7 @@ fn blocks(source: &str, start: usize, end: usize, out: &mut Vec<Document>) {
             kind: UnitKind::Block,
             name: None,
             qname: None,
+            name_range: None,
         };
         region(source, block_start, block_end, &unit, out);
     }
@@ -1380,6 +1551,252 @@ pub fn identifier_runs(text: &str) -> Vec<(usize, usize)> {
             // Leftmost matching: a byte that cannot start a run (a digit, a
             // non-identifier byte) is skipped on its own.
             i += 1;
+        }
+    }
+    out
+}
+
+/// The import keys one node contributes (context-v2 § Doors import keys):
+/// for an import statement, the bound names it introduces — a named import
+/// or its alias, the last segment of a `use`/`import` path, the names of
+/// `from m import a, b`, the last segment of a C++ `using` namespace or
+/// declaration, an `#include "x/y.h"` as `y` — and a JavaScript `require`
+/// path's file stem. Glob imports (`use m::*`, `import a.*`,
+/// `from m import *`) and Go's `.` and `_` imports give no key.
+fn import_keys(lang: Lang, node: tree_sitter::Node, source: &[u8], out: &mut Vec<String>) {
+    let text = |node: tree_sitter::Node| node.utf8_text(source).ok().map(str::to_owned);
+    let mut cursor = node.walk();
+    match (lang, node.kind()) {
+        (Lang::Rust, "use_declaration") => {
+            if let Some(argument) = node.child_by_field_name("argument") {
+                rust_use_keys(argument, source, out);
+            }
+        }
+        (Lang::Python, "import_statement" | "import_from_statement") => {
+            for name in node.children_by_field_name("name", &mut cursor) {
+                let bound = match name.kind() {
+                    "aliased_import" => name.child_by_field_name("alias"),
+                    // A dotted name binds its last segment.
+                    _ => last_named_child(name),
+                };
+                out.extend(bound.and_then(text));
+            }
+        }
+        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "import_statement") => {
+            for child in node.named_children(&mut cursor) {
+                match child.kind() {
+                    "import_clause" => {
+                        let mut parts = child.walk();
+                        for part in child.named_children(&mut parts) {
+                            match part.kind() {
+                                "identifier" => out.extend(text(part)),
+                                "namespace_import" => {
+                                    out.extend(last_named_child(part).and_then(text));
+                                }
+                                "named_imports" => {
+                                    let mut specifiers = part.walk();
+                                    for specifier in part.named_children(&mut specifiers) {
+                                        let bound = specifier.child_by_field_name("alias").or_else(
+                                            || {
+                                                specifier
+                                                    .child_by_field_name("name")
+                                                    .filter(|name| name.kind() == "identifier")
+                                            },
+                                        );
+                                        out.extend(bound.and_then(text));
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    "import_require_clause" => {
+                        let mut parts = child.walk();
+                        let bound = child
+                            .named_children(&mut parts)
+                            .find(|part| part.kind() == "identifier");
+                        out.extend(bound.and_then(text));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "call_expression") => {
+            let is_require = node
+                .child_by_field_name("function")
+                .is_some_and(|function| text(function).as_deref() == Some("require"));
+            let argument = node
+                .child_by_field_name("arguments")
+                .filter(|arguments| arguments.named_child_count() == 1)
+                .and_then(|arguments| arguments.named_child(0))
+                .filter(|argument| argument.kind() == "string");
+            if is_require && let Some(argument) = argument {
+                out.extend(text(argument).and_then(|path| file_stem(&path)));
+            }
+        }
+        (Lang::Go, "import_spec") => match node.child_by_field_name("name") {
+            Some(name) if name.kind() == "package_identifier" => out.extend(text(name)),
+            Some(_) => {}
+            None => {
+                let path = node.child_by_field_name("path").and_then(text);
+                out.extend(path.and_then(|path| {
+                    let path = path.trim_matches(|c| c == '"' || c == '`');
+                    let last = path.rsplit('/').next().unwrap_or(path);
+                    (!last.is_empty()).then(|| last.to_owned())
+                }));
+            }
+        },
+        (Lang::C | Lang::Cpp, "preproc_include") => {
+            let path = node
+                .child_by_field_name("path")
+                .filter(|path| matches!(path.kind(), "string_literal" | "system_lib_string"));
+            out.extend(path.and_then(text).and_then(|path| file_stem(&path)));
+        }
+        (Lang::Cpp, "using_declaration") => {
+            let named = node
+                .named_children(&mut cursor)
+                .filter(|child| matches!(child.kind(), "identifier" | "qualified_identifier"))
+                .last();
+            out.extend(named.and_then(text).and_then(|name| {
+                let last = name.rsplit("::").next().unwrap_or(&name).trim();
+                (!last.is_empty()).then(|| last.to_owned())
+            }));
+        }
+        (Lang::Java, "import_declaration") => {
+            let mut glob = false;
+            let mut path = None;
+            for child in node.named_children(&mut cursor) {
+                match child.kind() {
+                    "asterisk" => glob = true,
+                    "identifier" => path = Some(child),
+                    "scoped_identifier" => path = child.child_by_field_name("name"),
+                    _ => {}
+                }
+            }
+            if !glob {
+                out.extend(path.and_then(text));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The bound names of one Rust `use` argument: a path's last segment, an
+/// alias, each member of a list, and `self` in a list as its path's last
+/// segment; a glob gives none. Walked on the heap, like the unit walk.
+fn rust_use_keys(argument: tree_sitter::Node, source: &[u8], out: &mut Vec<String>) {
+    let text = |node: tree_sitter::Node| node.utf8_text(source).ok().map(str::to_owned);
+    let last_segment = |path: tree_sitter::Node| match path.kind() {
+        "identifier" => text(path),
+        "scoped_identifier" => path
+            .child_by_field_name("name")
+            .filter(|name| name.kind() == "identifier")
+            .and_then(text),
+        _ => None,
+    };
+    // Each node with the path of the list that holds it, if any.
+    let mut stack = vec![(argument, None)];
+    while let Some((node, list_path)) = stack.pop() {
+        match node.kind() {
+            "identifier" | "scoped_identifier" => out.extend(last_segment(node)),
+            "use_as_clause" => out.extend(node.child_by_field_name("alias").and_then(text)),
+            "self" => out.extend(list_path.and_then(last_segment)),
+            "scoped_use_list" => {
+                if let Some(list) = node.child_by_field_name("list") {
+                    stack.push((list, node.child_by_field_name("path")));
+                }
+            }
+            "use_list" => {
+                let mut cursor = node.walk();
+                let members: Vec<_> = node.named_children(&mut cursor).collect();
+                // Reversed onto the stack, so members are taken in order.
+                stack.extend(members.into_iter().rev().map(|member| (member, list_path)));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn last_named_child(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    node.named_child(node.named_child_count().checked_sub(1)?)
+}
+
+/// The file stem of a quoted or bracketed path (`"x/y.h"`, `<sys/types.h>`,
+/// `'./tools/index.js'`): its last component without its extension.
+fn file_stem(quoted: &str) -> Option<String> {
+    let path = quoted.trim_matches(|c| matches!(c, '"' | '\'' | '`' | '<' | '>'));
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let stem = without_extension(name);
+    (!stem.is_empty()).then(|| stem.to_owned())
+}
+
+/// A file name without its extension; a name whose only dot leads (a
+/// dotfile) or that has none is kept whole.
+fn without_extension(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem,
+        _ => name,
+    }
+}
+
+/// Whether `c` belongs to an address segment: `[A-Za-z0-9_$]`.
+fn segment_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '$'
+}
+
+/// The address segments of a path (context-v2 § Definitions and addresses):
+/// each component, the last without its extension, split on every character
+/// outside `[A-Za-z0-9_$]`; lowercased and distinct
+/// (`packages/coding-agent/src/tools/index.ts` gives `packages coding agent
+/// src tools index`). A query's path tokens split the same way.
+pub fn path_segments(path: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut components = path.split(['/', '\\']).peekable();
+    while let Some(component) = components.next() {
+        let component = if components.peek().is_none() {
+            without_extension(component)
+        } else {
+            component
+        };
+        for piece in component.split(|c: char| !segment_char(c)) {
+            let piece = piece.to_lowercase();
+            if !piece.is_empty() && !out.contains(&piece) {
+                out.push(piece);
+            }
+        }
+    }
+    out
+}
+
+/// A definition's address segments: `path`'s segments (from
+/// [`path_segments`]), then its qualified name's — every generic argument
+/// list (`<…>`, `[…]`, nested) removed first, split on the language's qname
+/// separator, minus the unit's own name (`UnionFind<Key>::find` gives
+/// `unionfind`) — lowercased and distinct.
+pub fn address_segments(path: &[String], lang: Lang, qname: &str) -> Vec<String> {
+    let mut out = path.to_vec();
+    let mut depth = 0usize;
+    let stripped: String = qname
+        .chars()
+        .filter(|&c| match c {
+            '<' | '[' => {
+                depth += 1;
+                false
+            }
+            '>' | ']' => {
+                depth = depth.saturating_sub(1);
+                false
+            }
+            _ => depth == 0,
+        })
+        .collect();
+    let mut parts: Vec<&str> = stripped.split(lang.qname_separator()).collect();
+    // The last part is the unit's own name.
+    parts.pop();
+    for part in parts {
+        let part = part.trim().to_lowercase();
+        if !part.is_empty() && !out.contains(&part) {
+            out.push(part);
         }
     }
     out

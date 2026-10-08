@@ -110,11 +110,19 @@ const CANDIDATE_LIMIT: usize = 256;
 /// Memory search examines at most this many derived documents before the
 /// live-row validation (008), the same window as the lexical tier.
 pub(crate) const MEMORY_CANDIDATE_WINDOW: usize = CANDIDATE_LIMIT;
-/// Search tier 1 (exact definitions) keeps at most this many documents.
+/// Search tier 1 (exact definitions) keeps at most this many documents; an
+/// anchor's resolver window keeps at most this many definitions.
 const TIER1_LIMIT: usize = 64;
 /// Search tier 1 ranks at most this many distinct identifier runs: the first
 /// by appearance in the query.
 const TIER1_RUNS: usize = 32;
+/// A query has at most this many anchors (context-v2 § Anchors and
+/// qualifiers).
+pub const MAX_ANCHORS: usize = 4;
+/// Each anchor window carries its first this-many definitions to context:
+/// an ambiguous anchor lists 16, a resolved one its first and 8 directory
+/// lines (context-v2 § Anchored context).
+pub const ANCHOR_LIST: usize = 16;
 /// At most this many hits per file survive materialization.
 const PER_FILE_CAP: usize = 4;
 /// Context draws at most this many delivery units from the ranking.
@@ -124,10 +132,12 @@ const CONTEXT_OUTLINES: usize = 3;
 /// Context graph expansion examines at most this many rows per seed and
 /// direction.
 const CONTEXT_GRAPH_EDGES: usize = 32;
-/// The META value naming the current search index format. `"3"` adds the
-/// unit's own start (its head) and the leading-run unit ranges (context-v2
-/// § Unit forest).
-const SEARCH_SCHEMA: &str = "3";
+/// The META value naming the current search index format. `"4"` (001 T007,
+/// context-v2 § City map) puts `def_name` on one document per definition
+/// and adds `role`, `name_case_hash`, `addr_hash`, `name_start`/`name_end`
+/// and `imports`; `"3"` added the unit's own start (its head) and the
+/// leading-run unit ranges (§ Unit forest).
+const SEARCH_SCHEMA: &str = "4";
 const SEARCH_SCHEMA_REASON: &str =
     "search_schema: search index format changed; run `foundry repair-index`";
 
@@ -458,6 +468,34 @@ pub struct RankedItem {
     pub forms: Vec<RenderedForm>,
     /// 009 T002 neural evidence; `None` for every non-dense candidate.
     pub semantic: Option<SemanticEvidence>,
+    /// The place of a tier-1 definition in its anchor's resolver window;
+    /// `None` for every other candidate and for an anchor-less query's tier 1.
+    pub resolver: Option<Resolver>,
+}
+
+/// One definition's place in its anchor's resolver window (context-v2
+/// § Resolver order): the anchor it answers and the resolver tuple.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Resolver {
+    /// The anchor's order: its group (1 marked chain names; 2 identifier-
+    /// shaped runs and unmarked chain names; 3 capitalized runs) and the
+    /// byte offset of its first appearance, equal in every root of a query.
+    pub anchor: (u8, usize),
+    /// Distinct query qualifiers equal to an address segment of the
+    /// definition (compared by hash).
+    pub qualifiers: u64,
+    /// The definition's name equals the anchor exactly as written.
+    pub exact: bool,
+    /// The definition's path role (context-v2 § Roles).
+    pub role: u64,
+}
+
+impl Resolver {
+    /// The resolver tuple as an ascending key: more qualifiers first, then
+    /// the exact-case name, then the smaller role.
+    pub fn key(&self) -> (Reverse<u64>, Reverse<bool>, u64) {
+        (Reverse(self.qualifiers), Reverse(self.exact), self.role)
+    }
 }
 
 impl RankedItem {
@@ -510,15 +548,33 @@ pub struct CandidateCounters {
     pub graph: Option<&'static str>,
 }
 
-/// One marked (backticked) tier-1 run of the query and the exact number of
-/// its definitions under tier 1's own restriction (context-v2 § Two-tier
-/// query, § Compact context). A multi-root merge sums each run's count over
-/// the roots it merges.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MarkedRun {
-    /// The lowercased run.
-    pub run: String,
+/// One anchor of the query and the head of its resolver window (context-v2
+/// § Anchors and qualifiers, § Resolver order).
+#[derive(Clone, Debug)]
+pub struct AnchorWindow {
+    /// The anchor exactly as written.
+    pub anchor: String,
+    /// The anchor's order (see [`Resolver::anchor`]).
+    pub order: (u8, usize),
+    /// Every matching definition under tier 1's own restriction (memory
+    /// documents excluded, the `path` filter's `dir` term); a 007 merge sums
+    /// it over the merged roots.
     pub definitions: u64,
+    /// The window's first [`ANCHOR_LIST`] definitions in window order — the
+    /// resolver tuple, then path and start; merged: the tuple, then root
+    /// order, then each root's order — revalidated, each with its verbatim
+    /// form and, in a context, its signature form when that differs.
+    pub entries: Vec<RankedItem>,
+}
+
+impl AnchorWindow {
+    /// Resolved: exactly one definition, or a first definition whose tuple
+    /// is strictly better than the second's; otherwise ambiguous.
+    pub fn resolved(&self) -> bool {
+        let key = |item: &RankedItem| item.resolver.map(|resolver| resolver.key());
+        self.definitions == 1
+            || matches!(self.entries.as_slice(), [first, second, ..] if key(first) < key(second))
+    }
 }
 
 /// The ordered candidates of one store, revalidated in its final read.
@@ -534,21 +590,17 @@ pub struct CandidateBatch {
     /// only when a context's `auto` strategy was routed with a configured
     /// policy; `None` keeps the baseline header byte-for-byte.
     pub route: Option<String>,
-    /// The query's marked tier-1 runs with their exact definition counts, in
-    /// order of first appearance; empty when the query marks no run. Search
-    /// ignores them; context packing applies [`Self::compact`].
-    pub marked: Vec<MarkedRun>,
+    /// The query's anchors in anchor order, each with the head of its
+    /// resolver window; empty for a query without anchors. Search ignores
+    /// them; context packs the anchored selection from them.
+    pub anchors: Vec<AnchorWindow>,
 }
 
 impl CandidateBatch {
-    /// The compact-context rule (context-v2 § Compact context): at least one
-    /// marked run has exactly one definition and no marked run has more. A
-    /// marked run without definitions neither triggers nor blocks it; an
-    /// unmarked query is never compact. When it holds, every tier-1 item of
-    /// the batch is a unique definition, at most one per marked run.
-    pub fn compact(&self) -> bool {
-        self.marked.iter().any(|run| run.definitions == 1)
-            && self.marked.iter().all(|run| run.definitions <= 1)
+    /// Anchored (context-v2 § Anchored context): the query has an anchor
+    /// with at least one definition.
+    pub fn anchored(&self) -> bool {
+        self.anchors.iter().any(|anchor| anchor.definitions > 0)
     }
 }
 
@@ -638,7 +690,8 @@ pub struct RepairReport {
     /// recorded profile.
     pub semantic_index: Option<crate::neural::index::SemanticIndexReport>,
 }
-/// The Tantivy schema v2 fields (context-v2 § Search index v2).
+/// The Tantivy schema fields (context-v2 § Search index v2, amended by
+/// § Definitions and addresses: schema `"4"`).
 struct Fields {
     key: Field,
     key_hash: Field,
@@ -657,6 +710,12 @@ struct Fields {
     def_name: Field,
     ident: Field,
     body: Field,
+    role: Field,
+    name_case_hash: Field,
+    addr_hash: Field,
+    name_start: Field,
+    name_end: Field,
+    imports: Field,
 }
 
 struct SearchHandles {
@@ -895,6 +954,13 @@ fn search_schema() -> Schema {
     schema.add_text_field("def_name", analyzed("foundry_lower", false));
     schema.add_text_field("ident", analyzed("foundry_ident", false));
     schema.add_text_field("body", analyzed("foundry_code", true));
+    // Schema "4" (context-v2 § Definitions and addresses).
+    schema.add_u64_field("role", FAST | STORED);
+    schema.add_u64_field("name_case_hash", FAST);
+    schema.add_u64_field("addr_hash", FAST);
+    schema.add_u64_field("name_start", STORED);
+    schema.add_u64_field("name_end", STORED);
+    schema.add_text_field("imports", STRING);
     schema.build()
 }
 
@@ -920,6 +986,12 @@ fn fields_of(schema: &Schema) -> Fields {
         def_name: field("def_name"),
         ident: field("ident"),
         body: field("body"),
+        role: field("role"),
+        name_case_hash: field("name_case_hash"),
+        addr_hash: field("addr_hash"),
+        name_start: field("name_start"),
+        name_end: field("name_end"),
+        imports: field("imports"),
     }
 }
 
@@ -981,13 +1053,11 @@ fn analyzed_terms(split: fn(&str) -> Vec<(usize, usize)>, text: &str) -> Vec<Str
         .collect()
 }
 
-/// The query's tier-1 runs (context-v2 § Two-tier query) and whether they are
-/// marked: the identifier runs inside its backtick code spans when it has
-/// any, otherwise all of them; lowercased, deduplicated, at most
-/// [`TIER1_RUNS`] by first appearance. A run of N backticks opens a span that
-/// the next run of exactly N backticks closes; an opener without such a
-/// closer is literal text.
-fn tier1_runs(query: &str) -> (Vec<String>, bool) {
+/// The content ranges of the query's backtick code spans (context-v2
+/// § Two-tier query): a run of N backticks opens a span that the next run of
+/// exactly N backticks closes; an opener without such a closer is literal
+/// text.
+fn code_spans(query: &str) -> Vec<(usize, usize)> {
     let bytes = query.as_bytes();
     let mut ticks: Vec<(usize, usize)> = Vec::new();
     let mut at = 0;
@@ -1017,14 +1087,21 @@ fn tier1_runs(query: &str) -> (Vec<String>, bool) {
             None => open += 1,
         }
     }
+    spans
+}
+
+/// The tier-1 runs of a query without anchors (context-v2 § Two-tier query,
+/// the 2026-10-06 rule): the identifier runs inside its code spans when it
+/// has any, otherwise all of them; lowercased, deduplicated, at most
+/// [`TIER1_RUNS`] by first appearance.
+fn tier1_runs(query: &str, spans: &[(usize, usize)]) -> Vec<String> {
     let all = crate::syntax::identifier_runs(query);
     let marked: Vec<(usize, usize)> = all
         .iter()
         .copied()
         .filter(|&(from, to)| spans.iter().any(|&(start, end)| start <= from && to <= end))
         .collect();
-    let is_marked = !marked.is_empty();
-    let chosen = if is_marked { marked } else { all };
+    let chosen = if marked.is_empty() { all } else { marked };
     let mut runs: Vec<String> = Vec::new();
     for (from, to) in chosen {
         let run = query[from..to].to_lowercase();
@@ -1036,7 +1113,369 @@ fn tier1_runs(query: &str) -> (Vec<String>, bool) {
         }
         runs.push(run);
     }
-    (runs, is_marked)
+    runs
+}
+
+/// One anchor candidate of a query: the name exactly as written, its group
+/// and the byte offset of its first appearance (context-v2 § Anchors and
+/// qualifiers).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AnchorCandidate {
+    pub text: String,
+    /// 1: a marked chain's name; 2: an identifier-shaped unmarked run or an
+    /// unmarked `::`/`->` chain's name; 3: a capitalized unmarked run.
+    pub group: u8,
+    pub position: usize,
+}
+
+/// A query's anchors and qualifiers before the index decides group 3
+/// (context-v2 § Anchors and qualifiers).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QueryAnchors {
+    /// Groups 1 and 2 in that order, each by first appearance, at most
+    /// [`MAX_ANCHORS`] in all: anchors whatever the index holds.
+    pub fixed: Vec<AnchorCandidate>,
+    /// Group 3 by first appearance: capitalized unmarked runs other than the
+    /// query's first word, each an anchor when it has an exact-case
+    /// definition and fewer than four anchors precede it.
+    pub capitalized: Vec<AnchorCandidate>,
+    /// Chain qualifiers, path segments and marked runs that are not
+    /// anchors, lowercased and distinct.
+    pub qualifiers: Vec<String>,
+}
+
+impl QueryAnchors {
+    /// Runs and code spans are those of § Two-tier query, except that inside
+    /// a code span a run may also hold `-` between letters. A chain is runs
+    /// joined only by `::` or `->` (inside a code span also by `.`); its last
+    /// run is its name, the others its qualifiers. A token (whitespace- and
+    /// backtick-separated, enclosing punctuation trimmed) holding `/` or `\`
+    /// or ending in a mapped or listed extension is a path: never a chain or
+    /// an anchor, its segments qualifiers. Anchors and candidates are
+    /// distinct ASCII-case-insensitively; the first appearance wins.
+    pub fn parse(query: &str) -> Self {
+        let spans = code_spans(query);
+        let span_of = |at: usize| spans.iter().position(|&(s, e)| s <= at && at < e);
+        let mut out = QueryAnchors::default();
+        let push_qualifier = |qualifiers: &mut Vec<String>, text: &str| {
+            let text = text.to_lowercase();
+            if !text.is_empty() && !qualifiers.contains(&text) {
+                qualifiers.push(text);
+            }
+        };
+        let mut paths: Vec<(usize, usize)> = Vec::new();
+        for (start, end) in query_tokens(query) {
+            let token = &query[start..end];
+            if is_path_token(token) {
+                paths.push((start, end));
+                for segment in crate::syntax::path_segments(token) {
+                    push_qualifier(&mut out.qualifiers, &segment);
+                }
+            }
+        }
+        // Runs outside paths; inside one code span, runs joined by a `-`
+        // between letters are one run.
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for (start, end) in crate::syntax::identifier_runs(query) {
+            if paths.iter().any(|&(s, e)| s <= start && start < e) {
+                continue;
+            }
+            if let Some(last) = runs.last_mut()
+                && last.1 + 1 == start
+                && query.as_bytes()[last.1] == b'-'
+                && query.as_bytes()[last.1 - 1].is_ascii_alphabetic()
+                && query.as_bytes()[start].is_ascii_alphabetic()
+                && span_of(start).is_some()
+                && span_of(start) == span_of(last.0)
+            {
+                last.1 = end;
+                continue;
+            }
+            runs.push((start, end));
+        }
+        // Chains of consecutive runs.
+        let mut chains: Vec<Vec<(usize, usize)>> = Vec::new();
+        for run in runs {
+            if let Some(chain) = chains.last_mut() {
+                let previous = *chain.last().expect("chains are never empty");
+                let joiner = &query[previous.1..run.0];
+                let span = span_of(run.0);
+                let joined = span == span_of(previous.0)
+                    && (matches!(joiner, "::" | "->") || (span.is_some() && joiner == "."));
+                if joined {
+                    chain.push(run);
+                    continue;
+                }
+            }
+            chains.push(vec![run]);
+        }
+        let first_word = {
+            let start = query.len() - query.trim_start().len();
+            let end = query[start..]
+                .find(char::is_whitespace)
+                .map_or(query.len(), |offset| start + offset);
+            (start, end)
+        };
+        let mut marked: Vec<AnchorCandidate> = Vec::new();
+        let mut shaped: Vec<AnchorCandidate> = Vec::new();
+        for chain in &chains {
+            let (name_start, name_end) = *chain.last().expect("chains are never empty");
+            for &(start, end) in &chain[..chain.len() - 1] {
+                push_qualifier(&mut out.qualifiers, &query[start..end]);
+            }
+            let candidate = |group: u8| AnchorCandidate {
+                text: query[name_start..name_end].to_owned(),
+                group,
+                position: name_start,
+            };
+            let name = &query[name_start..name_end];
+            if span_of(name_start).is_some() {
+                marked.push(candidate(1));
+            } else if chain.len() > 1 || (identifier_shaped(name) && !never_anchors(name)) {
+                shaped.push(candidate(2));
+            } else if name.as_bytes()[0].is_ascii_uppercase()
+                && !never_anchors(name)
+                && !(first_word.0 <= name_start && name_start < first_word.1)
+            {
+                out.capitalized.push(candidate(3));
+            }
+        }
+        let mut seen: Vec<String> = Vec::new();
+        for candidate in marked.into_iter().chain(shaped) {
+            let folded = candidate.text.to_ascii_lowercase();
+            if seen.contains(&folded) {
+                continue;
+            }
+            seen.push(folded);
+            if out.fixed.len() < MAX_ANCHORS {
+                out.fixed.push(candidate);
+            } else if candidate.group == 1 {
+                // A marked run that is not an anchor qualifies.
+                push_qualifier(&mut out.qualifiers, &candidate.text);
+            }
+        }
+        if out.fixed.len() == MAX_ANCHORS {
+            out.capitalized.clear();
+        }
+        out.capitalized.retain(|candidate| {
+            let folded = candidate.text.to_ascii_lowercase();
+            let new = !seen.contains(&folded);
+            seen.push(folded);
+            new
+        });
+        out
+    }
+
+    /// The anchors: [`Self::fixed`], then each capitalized candidate for
+    /// which `exact` finds an exact-case definition, at most four in all.
+    pub fn select<E>(
+        &self,
+        mut exact: impl FnMut(&AnchorCandidate) -> Result<bool, E>,
+    ) -> Result<Vec<AnchorCandidate>, E> {
+        let mut anchors = self.fixed.clone();
+        for candidate in &self.capitalized {
+            if anchors.len() == MAX_ANCHORS {
+                break;
+            }
+            if exact(candidate)? {
+                anchors.push(candidate.clone());
+            }
+        }
+        Ok(anchors)
+    }
+}
+
+/// The query's tokens for path detection: whitespace- and backtick-separated
+/// words with enclosing punctuation trimmed, as byte ranges.
+fn query_tokens(query: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (at, c) in query
+        .char_indices()
+        .chain(std::iter::once((query.len(), ' ')))
+    {
+        if c.is_whitespace() || c == '`' {
+            let word = &query[start..at];
+            let trimmed = word.trim_start_matches(['(', '[', '{', '<', '"', '\'']);
+            let from = start + word.len() - trimmed.len();
+            let trimmed =
+                trimmed.trim_end_matches([')', ']', '}', '>', '"', '\'', ',', ';', ':', '!', '?', '.']);
+            if !trimmed.is_empty() {
+                out.push((from, from + trimmed.len()));
+            }
+            start = at + c.len_utf8();
+        }
+    }
+    out
+}
+
+/// A path token: it holds `/` or `\`, or ends in `.<extension>` where the
+/// extension is one § Dependencies and languages maps or `md txt rst json
+/// yaml yml toml lock`.
+fn is_path_token(token: &str) -> bool {
+    token.contains(['/', '\\'])
+        || crate::syntax::Lang::from_path(token).is_some()
+        || token.rsplit_once('.').is_some_and(|(stem, extension)| {
+            !stem.is_empty()
+                && matches!(
+                    extension,
+                    "md" | "txt" | "rst" | "json" | "yaml" | "yml" | "toml" | "lock"
+                )
+        })
+}
+
+/// Group 2's shape: a run holding `_` or `$`, or a lowercase letter followed
+/// by an uppercase letter (`sleep_ms`, `toolSession`, `HttpServer`).
+fn identifier_shaped(run: &str) -> bool {
+    run.contains(['_', '$'])
+        || run
+            .as_bytes()
+            .windows(2)
+            .any(|pair| pair[0].is_ascii_lowercase() && pair[1].is_ascii_uppercase())
+}
+
+/// Unmarked runs that never anchor: single characters, all-uppercase runs
+/// without `_` (`MCP`, `WAL`) and runs of letters then digits (`v2`, `T002`,
+/// `utf8`). (`e.g.`/`i.e.` are single letters; URLs are paths.)
+fn never_anchors(run: &str) -> bool {
+    let bytes = run.as_bytes();
+    let letters = bytes.iter().take_while(|b| b.is_ascii_alphabetic()).count();
+    let letters_then_digits =
+        letters > 0 && letters < bytes.len() && bytes[letters..].iter().all(u8::is_ascii_digit);
+    let all_upper = !run.contains('_')
+        && bytes.iter().any(u8::is_ascii_alphabetic)
+        && !bytes.iter().any(u8::is_ascii_lowercase);
+    bytes.len() <= 1 || all_upper || letters_then_digits
+}
+
+/// One scored definition of an anchor (context-v2 § Resolver order).
+#[derive(Clone, Copy, Debug)]
+struct Scored {
+    qualifiers: u64,
+    exact: bool,
+    role: u64,
+    key_hash: u64,
+    address: tantivy::DocAddress,
+}
+
+impl Scored {
+    /// The resolver tuple, then `key_hash` ascending: the window's cut.
+    fn key(&self) -> (Reverse<u64>, Reverse<bool>, u64, u64, tantivy::DocAddress) {
+        (
+            Reverse(self.qualifiers),
+            Reverse(self.exact),
+            self.role,
+            self.key_hash,
+            self.address,
+        )
+    }
+}
+
+/// What one anchor's resolver search found: every matching definition
+/// counted, those named exactly as written counted, and the best
+/// [`TIER1_LIMIT`] by the resolver tuple then `key_hash`.
+#[derive(Default)]
+struct ResolverFruit {
+    definitions: u64,
+    exact: u64,
+    window: Vec<Scored>,
+}
+
+fn keep_window(window: &mut Vec<Scored>) {
+    window.sort_unstable_by_key(Scored::key);
+    window.truncate(TIER1_LIMIT);
+}
+
+/// Scores every definition matching one anchor's `def_name` term by the
+/// resolver tuple (context-v2 § Resolver order): distinct query qualifiers
+/// equal to an address segment (by hash), the exact-case name
+/// (`name_case_hash`), then the role.
+struct ResolverCollector {
+    qualifiers: Vec<u64>,
+    name_case: u64,
+}
+
+struct ResolverSegment {
+    segment: tantivy::SegmentOrdinal,
+    qualifiers: Vec<u64>,
+    name_case: u64,
+    key_hash: std::sync::Arc<dyn tantivy::columnar::ColumnValues<u64>>,
+    role: std::sync::Arc<dyn tantivy::columnar::ColumnValues<u64>>,
+    names: tantivy::columnar::Column<u64>,
+    addresses: tantivy::columnar::Column<u64>,
+    fruit: ResolverFruit,
+}
+
+impl tantivy::collector::Collector for ResolverCollector {
+    type Fruit = ResolverFruit;
+    type Child = ResolverSegment;
+
+    fn for_segment(
+        &self,
+        segment: tantivy::SegmentOrdinal,
+        reader: &SegmentReader,
+    ) -> tantivy::Result<ResolverSegment> {
+        let fast = reader.fast_fields();
+        Ok(ResolverSegment {
+            segment,
+            qualifiers: self.qualifiers.clone(),
+            name_case: self.name_case,
+            key_hash: fast.u64("key_hash")?.first_or_default_col(0),
+            role: fast.u64("role")?.first_or_default_col(0),
+            names: fast.u64("name_case_hash")?,
+            addresses: fast.u64("addr_hash")?,
+            fruit: ResolverFruit::default(),
+        })
+    }
+
+    fn requires_scoring(&self) -> bool {
+        false
+    }
+
+    fn merge_fruits(&self, fruits: Vec<ResolverFruit>) -> tantivy::Result<ResolverFruit> {
+        let mut merged = ResolverFruit::default();
+        for fruit in fruits {
+            merged.definitions += fruit.definitions;
+            merged.exact += fruit.exact;
+            merged.window.extend(fruit.window);
+        }
+        keep_window(&mut merged.window);
+        Ok(merged)
+    }
+}
+
+impl tantivy::collector::SegmentCollector for ResolverSegment {
+    type Fruit = ResolverFruit;
+
+    fn collect(&mut self, doc: DocId, _score: Score) {
+        let qualifiers = self
+            .qualifiers
+            .iter()
+            .filter(|&&qualifier| {
+                self.addresses
+                    .values_for_doc(doc)
+                    .any(|segment| segment == qualifier)
+            })
+            .count() as u64;
+        let exact = self.names.first(doc) == Some(self.name_case);
+        self.fruit.definitions += 1;
+        self.fruit.exact += u64::from(exact);
+        self.fruit.window.push(Scored {
+            qualifiers,
+            exact,
+            role: self.role.get_val(doc),
+            key_hash: self.key_hash.get_val(doc),
+            address: tantivy::DocAddress::new(self.segment, doc),
+        });
+        if self.fruit.window.len() >= 16 * TIER1_LIMIT {
+            keep_window(&mut self.fruit.window);
+        }
+    }
+
+    fn harvest(mut self) -> ResolverFruit {
+        keep_window(&mut self.fruit.window);
+        self.fruit
+    }
 }
 
 /// Registers the schema v2 tokenizers (they are per index instance, never
@@ -1096,10 +1535,12 @@ enum Parsing {
     Unparsed,
 }
 
-/// The schema v2 documents of one verified source (context-v2 § Search
-/// documents): one per syntax document, carrying its delivery unit; a
-/// document delivered as a named programming-language unit (not a Markdown
-/// section or block) also carries that unit's `def_name`.
+/// The search documents of one verified source (context-v2 § Search
+/// documents, § Definitions and addresses): one per syntax document,
+/// carrying its delivery unit and its path's role. Exactly one document per
+/// definition — the one whose range holds the start of the unit's name node
+/// — carries `def_name`, `name_case_hash`, `addr_hash` and the name node's
+/// range; the file's first document carries its import keys.
 fn search_documents(
     fields: &Fields,
     path: &str,
@@ -1107,22 +1548,26 @@ fn search_documents(
     body: &str,
     parsing: Parsing,
 ) -> Vec<TantivyDocument> {
-    use crate::syntax::UnitKind;
     let lang = match parsing {
         Parsing::Parsed => crate::syntax::Lang::from_path(path),
         Parsing::Unparsed => None,
     };
     let mut dirs: Vec<&str> = path.match_indices('/').map(|(i, _)| &path[..i]).collect();
     dirs.push(path);
-    crate::syntax::documents(body, lang)
+    let role = path_role(path);
+    let path_segments = crate::syntax::path_segments(path);
+    let index = crate::syntax::index(body, lang);
+    let imports = index.imports;
+    index
+        .documents
         .into_iter()
         .enumerate()
-        .map(|(index, document)| {
+        .map(|(position, document)| {
             let unit = &document.unit;
             let key = format!("{path}\0{}", document.start);
             let text = &body[document.start..document.end];
             let mut out = TantivyDocument::default();
-            out.add_u64(fields.key_hash, key_hash(&key));
+            out.add_u64(fields.key_hash, hash64(&key));
             out.add_text(fields.key, &key);
             out.add_text(fields.path, path);
             for dir in &dirs {
@@ -1137,17 +1582,33 @@ fn search_documents(
             // Without a language every document is a block; a parse
             // fallback's first one carries the term naming it unparsed.
             let kind = match parsing {
-                Parsing::Unparsed if index == 0 => UNPARSED_KIND,
+                Parsing::Unparsed if position == 0 => UNPARSED_KIND,
                 _ => unit.kind.as_str(),
             };
             out.add_text(fields.kind, kind);
+            out.add_u64(fields.role, role);
             if let Some(lang) = lang {
                 out.add_text(fields.lang, lang.tag());
             }
+            if position == 0 {
+                for key in &imports {
+                    out.add_text(fields.imports, key);
+                }
+            }
             if let Some(name) = &unit.name {
                 out.add_text(fields.name, name);
-                if !matches!(unit.kind, UnitKind::Section | UnitKind::Block) {
+                if let (Some((name_start, name_end)), Some(lang)) = (unit.name_range, lang)
+                    && document.start <= name_start
+                    && name_start < document.end
+                {
                     out.add_text(fields.def_name, name);
+                    out.add_u64(fields.name_case_hash, hash64(name));
+                    let qname = unit.qname.as_deref().unwrap_or(name);
+                    for segment in crate::syntax::address_segments(&path_segments, lang, qname) {
+                        out.add_u64(fields.addr_hash, hash64(&segment));
+                    }
+                    out.add_u64(fields.name_start, name_start as u64);
+                    out.add_u64(fields.name_end, name_end as u64);
                 }
             }
             if let Some(qname) = &unit.qname {
@@ -1831,7 +2292,7 @@ pub(crate) fn validate_link_span(tx: &WriteTransaction, bound: &str, handle: &st
 fn memory_document(fields: &Fields, id: &str, revision: u64, text: &str) -> TantivyDocument {
     let key = memory_pending_key(id);
     let mut out = TantivyDocument::default();
-    out.add_u64(fields.key_hash, key_hash(&key));
+    out.add_u64(fields.key_hash, hash64(&key));
     out.add_text(fields.key, &key);
     out.add_text(fields.path, "");
     out.add_text(fields.hash, revision.to_string());
@@ -1845,17 +2306,144 @@ fn memory_document(fields: &Fields, id: &str, revision: u64, text: &str) -> Tant
         out.add_u64(field, 0);
     }
     out.add_text(fields.kind, "memory");
+    out.add_u64(fields.role, path_role(""));
     out.add_text(fields.name, id);
     out.add_text(fields.ident, text);
     out.add_text(fields.body, text);
     out
 }
-/// The first 8 bytes of SHA-256 of `key`, big-endian: the deterministic
-/// cutoff tie-breaker of both search tiers.
-fn key_hash(key: &str) -> u64 {
-    let hex = crate::digest(key.as_bytes());
-    // SHA-256 hex is 64 lowercase hex digits, so the first 16 always parse.
-    u64::from_str_radix(&hex[..16], 16).unwrap_or(0)
+
+/// The first 8 bytes of SHA-256 of `text`, big-endian: `key_hash` (the
+/// deterministic cutoff tie-breaker of both search tiers), `name_case_hash`
+/// and `addr_hash`.
+fn hash64(text: &str) -> u64 {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(text.as_bytes());
+    let mut first = [0u8; 8];
+    first.copy_from_slice(&digest[..8]);
+    u64::from_be_bytes(first)
+}
+
+/// Roles order definitions in the resolver and nothing else (context-v2
+/// § Roles).
+pub mod role {
+    pub const SOURCE: u64 = 0;
+    pub const TEST: u64 = 1;
+    pub const GENERATED: u64 = 2;
+    pub const VENDORED: u64 = 3;
+    pub const LOCK: u64 = 4;
+    pub const SNAPSHOT: u64 = 5;
+}
+
+/// The role of a workspace-relative path: the first matching rule of
+/// context-v2 § Roles, components compared case-sensitively (every
+/// `/`-separated component, the basename included), basename patterns as
+/// written (`*` matches any run, the empty one included).
+pub fn path_role(path: &str) -> u64 {
+    let components: Vec<&str> = path.split('/').collect();
+    let basename = components.last().copied().unwrap_or("");
+    let component = |names: &[&str]| components.iter().any(|part| names.contains(part));
+    let matches = |patterns: &[&str]| patterns.iter().any(|pattern| glob(pattern, basename));
+    let lock = [
+        "bun.lock",
+        "bun.lockb",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "Cargo.lock",
+        "composer.lock",
+        "Gemfile.lock",
+        "poetry.lock",
+        "uv.lock",
+        "Pipfile.lock",
+        "go.sum",
+        "packages.lock.json",
+        "Podfile.lock",
+        "pubspec.lock",
+        "mix.lock",
+        "flake.lock",
+    ];
+    if lock.contains(&basename) {
+        return role::LOCK;
+    }
+    if matches(&["*.snap"]) || component(&["__snapshots__"]) {
+        return role::SNAPSHOT;
+    }
+    if matches(&[
+        "*.min.js",
+        "*.min.css",
+        "*.g.cs",
+        "*.Designer.cs",
+        "*.designer.cs",
+        "*_pb2.py",
+        "*.pb.go",
+        "*.generated.*",
+    ]) || component(&["generated", "__generated__", "obj"])
+    {
+        return role::GENERATED;
+    }
+    if component(&["vendor", "third_party", "third-party", "Pods"]) {
+        return role::VENDORED;
+    }
+    if component(&[
+        "test",
+        "tests",
+        "__tests__",
+        "testing",
+        "testdata",
+        "fixtures",
+        "e2e",
+        "spec",
+        "benches",
+    ]) || matches(&[
+        "tests.rs",
+        "conftest.py",
+        "*_test.go",
+        "test_*.py",
+        "*_test.py",
+        "*.test.*",
+        "*.spec.*",
+        "*_spec.rb",
+        "*Test.java",
+        "*Tests.java",
+        "*Test.kt",
+        "*Tests.kt",
+        "*Test.swift",
+        "*Tests.swift",
+        "*Test.cs",
+        "*Tests.cs",
+        "*Test.php",
+        "*_test.cc",
+        "*_test.cpp",
+        "*_unittest.cc",
+        "*.t",
+        "*.bats",
+    ]) {
+        return role::TEST;
+    }
+    role::SOURCE
+}
+
+/// Whether `text` matches `pattern`, whose `*` matches any run of
+/// characters (the empty run included) and every other character itself.
+fn glob(pattern: &str, text: &str) -> bool {
+    let mut pieces = pattern.split('*');
+    let first = pieces.next().unwrap_or("");
+    let Some(mut rest) = text.strip_prefix(first) else {
+        return false;
+    };
+    let pieces: Vec<&str> = pieces.collect();
+    let Some((last, middle)) = pieces.split_last() else {
+        return rest.is_empty();
+    };
+    for piece in middle {
+        match rest.find(piece) {
+            Some(at) => rest = &rest[at + piece.len()..],
+            None => return false,
+        }
+    }
+    rest.len() >= last.len() && rest.ends_with(last)
 }
 
 /// The `path` search input: one leading `./` and one trailing `/` stripped;
@@ -1909,6 +2497,8 @@ struct Candidate {
     kind: String,
     lang: Option<String>,
     qname: Option<String>,
+    /// A tier-1 definition's place in its anchor's resolver window.
+    resolver: Option<Resolver>,
 }
 
 impl Candidate {
@@ -1918,15 +2508,149 @@ impl Candidate {
     }
 }
 
+/// One revalidated candidate as a ranked item over its verified source
+/// `body` (context-v2 § Hit materialization): its delivery unit's handle and
+/// lines, its best line (a tier-1 hit's head line, otherwise the line with
+/// the most distinct query subtokens), its label and its verbatim form.
+fn ranked_item(
+    candidate: &Candidate,
+    rank: usize,
+    workspace_id: &str,
+    sha256: &str,
+    body: &str,
+    wanted: &std::collections::BTreeSet<String>,
+) -> FResult<RankedItem> {
+    let (from, to) = (candidate.unit_start as usize, candidate.unit_end as usize);
+    if !(from < to && to <= body.len() && body.is_char_boundary(from) && body.is_char_boundary(to))
+    {
+        return Err(FoundryError::CorruptStore(format!(
+            "search document unit outside {}",
+            candidate.path
+        )));
+    }
+    let text = &body[from..to];
+    let line_of = |at: usize| {
+        body.as_bytes()[..at]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count() as u64
+            + 1
+    };
+    let start_line = line_of(from);
+    let head = candidate.unit_head as usize;
+    if !(from <= head && head < to) {
+        return Err(FoundryError::CorruptStore(format!(
+            "search document head outside its unit in {}",
+            candidate.path
+        )));
+    }
+    let line = if candidate.tier == 1 {
+        line_of(head)
+    } else {
+        start_line + best_line_index(text, wanted)
+    };
+    let label = match &candidate.qname {
+        Some(qname) => format!("{} {qname}", candidate.kind),
+        None => candidate.kind.clone(),
+    };
+    let end_line = start_line
+        + text.as_bytes()[..text.len().saturating_sub(1)]
+            .iter()
+            .filter(|&&b| b == b'\n')
+            .count() as u64;
+    Ok(RankedItem {
+        tier: candidate.tier,
+        rank,
+        score: candidate.score,
+        handle: Some(SourceHandle {
+            workspace_id: workspace_id.to_owned(),
+            path: candidate.path.clone(),
+            sha256: sha256.to_owned(),
+            start: candidate.unit_start,
+            end: candidate.unit_end,
+        }),
+        start_line,
+        end_line,
+        line,
+        label,
+        lang: candidate.lang.clone(),
+        semantic: None,
+        resolver: candidate.resolver,
+        forms: vec![RenderedForm::Verbatim(text.to_owned())],
+    })
+}
+
+/// One anchor's resolver window within tier 1: the anchor, its definition
+/// count and its range of [`TwoTier::first`], in window order.
+struct WindowSlice {
+    anchor: String,
+    order: (u8, usize),
+    definitions: u64,
+    range: std::ops::Range<usize>,
+}
+
 /// The two-tier collection of one query, before revalidation.
 struct TwoTier {
     first: Vec<Candidate>,
     second: Vec<Candidate>,
     /// A tier window filled.
     candidates_full: bool,
-    /// The marked runs' exact definition counts (empty for an unmarked
-    /// query).
-    marked: Vec<MarkedRun>,
+    /// The anchors' windows in anchor order; empty for a query without
+    /// anchors.
+    windows: Vec<WindowSlice>,
+}
+
+/// The anchor windows of one store from its tier-1 candidates: each
+/// window's first [`ANCHOR_LIST`] current definitions, materialized from the
+/// verified sources the caller's final read loads (`current` holds every
+/// tier-1 path's metadata). Stale definitions are skipped here: the tier-1
+/// pass already counted them.
+#[allow(clippy::too_many_arguments)]
+fn anchor_windows<C: ReadableTable<&'static str, &'static str>>(
+    windows: &[WindowSlice],
+    first: &[Candidate],
+    current: &std::collections::BTreeMap<String, Option<SourceMeta>>,
+    stored: &C,
+    verified: &mut std::collections::BTreeMap<String, VerifiedSource>,
+    workspace_id: &str,
+    wanted: &std::collections::BTreeSet<String>,
+) -> FResult<Vec<AnchorWindow>> {
+    let mut out = Vec::with_capacity(windows.len());
+    for window in windows {
+        let mut entries = Vec::new();
+        for candidate in &first[window.range.clone()] {
+            if entries.len() == ANCHOR_LIST {
+                break;
+            }
+            let Some(Some(meta)) = current.get(&candidate.path) else {
+                continue;
+            };
+            if meta.hash != candidate.hash {
+                continue;
+            }
+            if !verified.contains_key(&candidate.path) {
+                let source = reconstruct_verified(stored, &candidate.path, meta)?;
+                verified.insert(candidate.path.clone(), source);
+            }
+            let body = &verified[&candidate.path].body;
+            let rank = entries.len();
+            entries.push(ranked_item(
+                candidate,
+                rank,
+                workspace_id,
+                &meta.hash,
+                body,
+                wanted,
+            )?);
+        }
+        out.push(AnchorWindow {
+            anchor: window.anchor.clone(),
+            order: window.order,
+            definitions: window.definitions,
+            entries,
+        });
+    }
+    Ok(out)
 }
 
 /// Write schema last in the initializing transaction.
@@ -2917,13 +3641,16 @@ impl Engine {
     }
 
     /// Two-tier candidate selection for one store (context-v2 § Two-tier
-    /// query, § Hit materialization). Tier 1 is exact definitions (at most
-    /// 64, the most specific tier-1 run first, smallest `key_hash` kept per
-    /// run, ordered by path and start within it); tier 2 is lexical (at most
-    /// 256 by score, `key_hash` breaking cutoff ties).
-    /// `path` restricts both tiers to a file or directory subtree. Candidates
-    /// are revalidated in one final read transaction, merged per delivery
-    /// unit, capped at 4 per file and cut to `limit`.
+    /// query, § Resolver order, § Hit materialization). Tier 1 is the
+    /// anchors' resolver windows in anchor order or, without anchors, exact
+    /// definitions of the tier-1 runs (at most 64, the most specific run
+    /// first, smallest `key_hash` kept per run, ordered by path and start
+    /// within it); tier 2 is lexical (at most 256 by score, `key_hash`
+    /// breaking cutoff ties). `path` restricts both tiers to a file or
+    /// directory subtree. Candidates are revalidated in one final read
+    /// transaction, merged per delivery unit, capped at 4 per file and cut to
+    /// `limit`; each anchor window's first [`ANCHOR_LIST`] definitions are
+    /// materialized beside them, without that cap or cut.
     pub fn search_candidates(
         &self,
         query: &str,
@@ -2947,7 +3674,7 @@ impl Engine {
             first,
             second,
             candidates_full,
-            marked,
+            windows,
         } = self.collect_two_tier(query, path, control)?;
 
         // Final read: revalidate, merge per delivery unit and cap per file over
@@ -2965,8 +3692,8 @@ impl Engine {
         let mut seen = std::collections::BTreeSet::new();
         let mut per_file: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
-        let mut kept: Vec<Candidate> = Vec::new();
-        for candidate in first.into_iter().chain(second) {
+        let mut kept: Vec<&Candidate> = Vec::new();
+        for candidate in first.iter().chain(&second) {
             if !current.contains_key(&candidate.path) {
                 let meta = match sources.get(candidate.path.as_str())? {
                     Some(raw) => Some(decode::<SourceMeta>(raw.value(), "source")?),
@@ -3012,67 +3739,24 @@ impl Engine {
                 verified.insert(candidate.path.clone(), source);
             }
             let body = &verified[&candidate.path].body;
-            let (from, to) = (candidate.unit_start as usize, candidate.unit_end as usize);
-            if !(from < to
-                && to <= body.len()
-                && body.is_char_boundary(from)
-                && body.is_char_boundary(to))
-            {
-                return Err(FoundryError::CorruptStore(format!(
-                    "search document unit outside {}",
-                    candidate.path
-                )));
-            }
-            let text = &body[from..to];
-            let line_of = |at: usize| {
-                body.as_bytes()[..at]
-                    .iter()
-                    .filter(|&&b| b == b'\n')
-                    .count() as u64
-                    + 1
-            };
-            let start_line = line_of(from);
-            let head = candidate.unit_head as usize;
-            if !(from <= head && head < to) {
-                return Err(FoundryError::CorruptStore(format!(
-                    "search document head outside its unit in {}",
-                    candidate.path
-                )));
-            }
-            let line = if candidate.tier == 1 {
-                line_of(head)
-            } else {
-                start_line + best_line_index(text, &wanted)
-            };
-            let label = match &candidate.qname {
-                Some(qname) => format!("{} {qname}", candidate.kind),
-                None => candidate.kind.clone(),
-            };
-            let end_line = start_line
-                + text.as_bytes()[..text.len().saturating_sub(1)]
-                    .iter()
-                    .filter(|&&b| b == b'\n')
-                    .count() as u64;
-            items.push(RankedItem {
-                tier: candidate.tier,
+            items.push(ranked_item(
+                candidate,
                 rank,
-                score: candidate.score,
-                handle: Some(SourceHandle {
-                    workspace_id: workspace_id.clone(),
-                    path: candidate.path,
-                    sha256: meta.hash.clone(),
-                    start: candidate.unit_start,
-                    end: candidate.unit_end,
-                }),
-                start_line,
-                end_line,
-                line,
-                label,
-                lang: candidate.lang,
-                semantic: None,
-                forms: vec![RenderedForm::Verbatim(text.to_owned())],
-            });
+                &workspace_id,
+                &meta.hash,
+                body,
+                &wanted,
+            )?);
         }
+        let anchors = anchor_windows(
+            &windows,
+            &first,
+            &current,
+            &stored,
+            &mut verified,
+            &workspace_id,
+            &wanted,
+        )?;
         let freshness = self.freshness_in(&tx)?;
         Ok(CandidateBatch {
             freshness,
@@ -3080,19 +3764,22 @@ impl Engine {
             counters,
             semantic: None,
             route: None,
-            marked,
+            anchors,
         })
     }
 
     /// The two-tier candidate collection shared by the baseline and the
-    /// semantic paths (context-v2 § Two-tier query): tier 1 exact
-    /// definitions of the query's tier-1 runs (at most 64; runs by
-    /// specificity, each contributing its smallest-`key_hash` definitions to
-    /// the slots left, ordered by path and start within the run), tier 2
-    /// lexical (at most 256 by score, `key_hash` breaking cutoff ties, tier-1
-    /// units removed), whether a window filled, and each marked run's exact
-    /// count (§ Compact context). No source is read here; validation happens
-    /// in the callers' final read.
+    /// semantic paths (context-v2 § Two-tier query, § Anchors and
+    /// qualifiers, § Resolver order): tier 1 is the anchors' windows in
+    /// anchor order (each the best 64 of every matching definition by the
+    /// resolver tuple, then `key_hash`, listed by the tuple, then path and
+    /// start) or, for a query without anchors, the exact definitions of its
+    /// tier-1 runs (at most 64; runs by specificity, each contributing its
+    /// smallest-`key_hash` definitions to the slots left, ordered by path and
+    /// start within the run); tier 2 is lexical (at most 256 by score,
+    /// `key_hash` breaking cutoff ties, tier-1 units removed). Also returns
+    /// whether a window filled and each anchor's window range. No source is
+    /// read here; validation happens in the callers' final read.
     fn collect_two_tier(
         &self,
         query: &str,
@@ -3130,57 +3817,113 @@ impl Engine {
             Box::new(TermQuery::new(Term::from_field_text(field, text), option))
         };
         let searcher = handles.reader.searcher();
-        // Tier 1: one exact count and the 64 smallest-`key_hash` definitions
-        // per run, under the same restriction as the documents it keeps.
-        let definitions = (
-            Count,
-            TopDocs::with_limit(TIER1_LIMIT).tweak_score(|reader: &SegmentReader| {
-                let key_hash = reader
-                    .fast_fields()
-                    .u64("key_hash")
-                    .expect("schema v2 fast field")
-                    .first_or_default_col(0);
-                move |doc: DocId, _score: Score| Reverse(key_hash.get_val(doc))
-            }),
-        );
-        let (selected, is_marked) = tier1_runs(query);
-        let mut marked: Vec<MarkedRun> = Vec::new();
-        let mut runs: Vec<(usize, String, Vec<tantivy::DocAddress>)> = Vec::new();
-        for run in selected {
-            let (count, top) = searcher.search(
-                restrict(term(fields.def_name, &run, IndexRecordOption::Basic)).as_ref(),
-                &definitions,
-            )?;
-            // The compact rule reads the same exact, restricted count.
-            if is_marked {
-                marked.push(MarkedRun {
-                    run: run.clone(),
-                    definitions: count as u64,
+        // Tier 1 groups in order, each its documents (with their resolver
+        // tuples in an anchor's window) and, for a window, its anchor.
+        struct Tier1Group {
+            anchor: Option<(String, (u8, usize), u64)>,
+            documents: Vec<(tantivy::DocAddress, Option<Resolver>)>,
+        }
+        let mut tier1: Vec<Tier1Group> = Vec::new();
+        let mut tier1_full = false;
+        let parsed = QueryAnchors::parse(query);
+        let qualifiers: Vec<u64> = parsed.qualifiers.iter().map(|q| hash64(q)).collect();
+        // One anchor's window (context-v2 § Resolver order): every matching
+        // definition scored under tier 1's own restriction.
+        let resolve = |anchor: &str| -> FResult<ResolverFruit> {
+            Ok(searcher.search(
+                restrict(term(
+                    fields.def_name,
+                    &anchor.to_lowercase(),
+                    IndexRecordOption::Basic,
+                ))
+                .as_ref(),
+                &ResolverCollector {
+                    qualifiers: qualifiers.clone(),
+                    name_case: hash64(anchor),
+                },
+            )?)
+        };
+        let mut resolved: Vec<(String, ResolverFruit)> = Vec::new();
+        let anchors = parsed.select(|candidate| {
+            let fruit = resolve(&candidate.text)?;
+            let exact = fruit.exact > 0;
+            resolved.push((candidate.text.clone(), fruit));
+            Ok::<bool, FoundryError>(exact)
+        })?;
+        for anchor in anchors {
+            let fruit = match resolved.iter().position(|(text, _)| *text == anchor.text) {
+                Some(at) => resolved.swap_remove(at).1,
+                None => resolve(&anchor.text)?,
+            };
+            tier1_full |= fruit.definitions > TIER1_LIMIT as u64;
+            let order = (anchor.group, anchor.position);
+            let documents = fruit
+                .window
+                .iter()
+                .map(|scored| {
+                    let resolver = Resolver {
+                        anchor: order,
+                        qualifiers: scored.qualifiers,
+                        exact: scored.exact,
+                        role: scored.role,
+                    };
+                    (scored.address, Some(resolver))
+                })
+                .collect();
+            tier1.push(Tier1Group {
+                anchor: Some((anchor.text, order, fruit.definitions)),
+                documents,
+            });
+        }
+        if tier1.is_empty() {
+            // Without anchors the 2026-10-06 rule stands: one exact count and
+            // the 64 smallest-`key_hash` definitions per run, under the same
+            // restriction as the documents it keeps.
+            let definitions = (
+                Count,
+                TopDocs::with_limit(TIER1_LIMIT).tweak_score(|reader: &SegmentReader| {
+                    let key_hash = reader
+                        .fast_fields()
+                        .u64("key_hash")
+                        .expect("schema v2 fast field")
+                        .first_or_default_col(0);
+                    move |doc: DocId, _score: Score| Reverse(key_hash.get_val(doc))
+                }),
+            );
+            let mut runs: Vec<(usize, String, Vec<tantivy::DocAddress>)> = Vec::new();
+            for run in tier1_runs(query, &code_spans(query)) {
+                let (count, top) = searcher.search(
+                    restrict(term(fields.def_name, &run, IndexRecordOption::Basic)).as_ref(),
+                    &definitions,
+                )?;
+                if count > 0 {
+                    let top = top.into_iter().map(|(_, address)| address).collect();
+                    runs.push((count, run, top));
+                }
+            }
+            // Specificity: fewer definitions first, then run text. Each run
+            // fills the slots left; a document already kept stays under its
+            // earlier run.
+            runs.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            let defined: usize = runs.iter().map(|(count, ..)| count).sum();
+            let mut kept: Vec<tantivy::DocAddress> = Vec::new();
+            for (_, _, top) in runs {
+                let room = TIER1_LIMIT - kept.len();
+                if room == 0 {
+                    break;
+                }
+                let group: Vec<tantivy::DocAddress> = top
+                    .into_iter()
+                    .filter(|address| !kept.contains(address))
+                    .take(room)
+                    .collect();
+                kept.extend(&group);
+                tier1.push(Tier1Group {
+                    anchor: None,
+                    documents: group.into_iter().map(|address| (address, None)).collect(),
                 });
             }
-            if count > 0 {
-                let top = top.into_iter().map(|(_, address)| address).collect();
-                runs.push((count, run, top));
-            }
-        }
-        // Specificity: fewer definitions first, then run text. Each run fills
-        // the slots left; a document already kept stays under its earlier run.
-        runs.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-        let defined: usize = runs.iter().map(|(count, ..)| count).sum();
-        let mut kept: Vec<tantivy::DocAddress> = Vec::new();
-        let mut tier1: Vec<Vec<tantivy::DocAddress>> = Vec::new();
-        for (_, _, top) in runs {
-            let room = TIER1_LIMIT - kept.len();
-            if room == 0 {
-                break;
-            }
-            let group: Vec<tantivy::DocAddress> = top
-                .into_iter()
-                .filter(|address| !kept.contains(address))
-                .take(room)
-                .collect();
-            kept.extend(&group);
-            tier1.push(group);
+            tier1_full = kept.len() == TIER1_LIMIT && defined > TIER1_LIMIT;
         }
         let mut clauses: Vec<Box<dyn Query>> = Vec::new();
         for part in query.split_whitespace() {
@@ -3225,10 +3968,9 @@ impl Engine {
             .into_iter()
             .map(|((score, _), address)| (score, address))
             .collect();
-        // A window filled: tier 1's 64 slots with definitions left over, or
-        // tier 2's limit.
-        let candidates_full =
-            (kept.len() == TIER1_LIMIT && defined > TIER1_LIMIT) || tier2.len() >= CANDIDATE_LIMIT;
+        // A window filled: tier 1's 64 slots with definitions left over (an
+        // anchor's window over more than 64 definitions), or tier 2's limit.
+        let candidates_full = tier1_full || tier2.len() >= CANDIDATE_LIMIT;
         control.check()?;
 
         let read = |tier: u8, score: Score, address| -> FResult<Candidate> {
@@ -3262,16 +4004,41 @@ impl Engine {
                     .ok_or_else(invalid)?,
                 lang: text(fields.lang),
                 qname: text(fields.qname),
+                resolver: None,
             })
         };
-        let mut first: Vec<Candidate> = Vec::with_capacity(kept.len());
+        // Tier 1: each anchor's window by the resolver tuple, then path and
+        // start (today's tier-1 listing within a run); without anchors each
+        // run's group by path and start.
+        let mut first: Vec<Candidate> = Vec::new();
+        let mut windows: Vec<WindowSlice> = Vec::new();
         for group in tier1 {
             let mut run: Vec<Candidate> = group
+                .documents
                 .into_iter()
-                .map(|address| read(1, 0.0, address))
+                .map(|(address, resolver)| {
+                    let mut candidate = read(1, 0.0, address)?;
+                    candidate.resolver = resolver;
+                    Ok(candidate)
+                })
                 .collect::<FResult<_>>()?;
-            run.sort_by(|a, b| a.path.cmp(&b.path).then(a.start.cmp(&b.start)));
+            run.sort_by(|a, b| {
+                let key = |candidate: &Candidate| candidate.resolver.map(|r| r.key());
+                key(a)
+                    .cmp(&key(b))
+                    .then_with(|| a.path.cmp(&b.path))
+                    .then(a.start.cmp(&b.start))
+            });
+            let range = first.len()..first.len() + run.len();
             first.extend(run);
+            if let Some((anchor, order, definitions)) = group.anchor {
+                windows.push(WindowSlice {
+                    anchor,
+                    order,
+                    definitions,
+                    range,
+                });
+            }
         }
         let units: std::collections::BTreeSet<_> = first.iter().map(Candidate::unit).collect();
         let mut second: Vec<Candidate> = Vec::new();
@@ -3291,7 +4058,7 @@ impl Engine {
             first,
             second,
             candidates_full,
-            marked,
+            windows,
         })
     }
 
@@ -3338,7 +4105,7 @@ impl Engine {
             first,
             second,
             candidates_full,
-            marked,
+            windows,
         } = self.collect_two_tier(query, path, control)?;
 
         // Final read: every candidate is validated here, before fusion.
@@ -3363,6 +4130,26 @@ impl Engine {
             }
             Ok(())
         };
+        let wanted: std::collections::BTreeSet<String> =
+            analyzed_terms(crate::syntax::code_subtokens, query)
+                .into_iter()
+                .collect();
+        let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
+            std::collections::BTreeMap::new();
+        // The anchor windows, from the tier-1 documents as collected; their
+        // stale definitions are counted with tier 1 below.
+        for candidate in &first {
+            load(&mut current, &candidate.path)?;
+        }
+        let anchors = anchor_windows(
+            &windows,
+            &first,
+            &current,
+            &stored,
+            &mut verified,
+            &workspace_id,
+            &wanted,
+        )?;
         // Lexical documents of the current source version only.
         let mut fresh: [Vec<Candidate>; 2] = [Vec::new(), Vec::new()];
         for (kept, documents) in fresh.iter_mut().zip([first, second]) {
@@ -3456,12 +4243,6 @@ impl Engine {
                 dense_rank: entry.dense_rank,
             });
         }
-        let wanted: std::collections::BTreeSet<String> =
-            analyzed_terms(crate::syntax::code_subtokens, query)
-                .into_iter()
-                .collect();
-        let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
-            std::collections::BTreeMap::new();
         let mut items = Vec::with_capacity(kept.len());
         for (rank, kept_one) in kept.into_iter().enumerate() {
             let Some(Some(meta)) = current.get(&kept_one.unit.path) else {
@@ -3539,6 +4320,7 @@ impl Engine {
                             unit_start_line: start_line,
                             dense_only: false,
                         }),
+                        resolver: candidate.resolver,
                         forms: vec![RenderedForm::Verbatim(text.to_owned())],
                     });
                 }
@@ -3586,6 +4368,7 @@ impl Engine {
                             unit_start_line: start_line,
                             dense_only: true,
                         }),
+                        resolver: None,
                         forms: vec![RenderedForm::Verbatim(text.to_owned())],
                     });
                 }
@@ -3601,7 +4384,7 @@ impl Engine {
             counters,
             semantic: Some(word.to_owned()),
             route: None,
-            marked,
+            anchors,
         })
     }
 
@@ -3961,6 +4744,8 @@ impl Engine {
             ..search.counters
         };
         let mut units: Vec<RankedItem> = Vec::new();
+        let mut dropped: std::collections::BTreeSet<(String, u64, u64)> =
+            std::collections::BTreeSet::new();
         for item in search.items {
             let Some(handle) = &item.handle else {
                 continue;
@@ -3969,8 +4754,26 @@ impl Engine {
             if fresh {
                 units.push(item);
             } else {
+                dropped.insert((handle.path.clone(), handle.start, handle.end));
                 counters.stale += 1;
             }
+        }
+        // The anchor windows' definitions validate in the same read; one the
+        // units above already dropped is counted once.
+        let mut anchors = search.anchors;
+        for window in &mut anchors {
+            let mut fresh_entries = Vec::with_capacity(window.entries.len());
+            for entry in std::mem::take(&mut window.entries) {
+                let Some(handle) = &entry.handle else {
+                    continue;
+                };
+                if current_meta(&handle.path)?.is_some_and(|meta| meta.hash == handle.sha256) {
+                    fresh_entries.push(entry);
+                } else if dropped.insert((handle.path.clone(), handle.start, handle.end)) {
+                    counters.stale += 1;
+                }
+            }
+            window.entries = fresh_entries;
         }
         let mut graph_items: Vec<RankedItem> = Vec::new();
         let mut graph_dropped = 0usize;
@@ -3997,6 +4800,7 @@ impl Engine {
                 label: String::new(),
                 lang: None,
                 semantic: None,
+                resolver: None,
                 forms: vec![RenderedForm::Line(format!(
                     "{}:{} ({}) --{}--> {}:{} ({}) [{}; provider={}@{}]",
                     edge.from.path,
@@ -4148,6 +4952,7 @@ impl Engine {
                     lang: crate::syntax::Lang::from_path(&unit.path)
                         .map(|lang| lang.tag().to_owned()),
                     semantic: None,
+                    resolver: None,
                     forms: Vec::new(),
                 });
             }
@@ -4173,7 +4978,10 @@ impl Engine {
                 outline_paths.push(handle.path.clone());
             }
         }
-        for item in &units {
+        // The anchor windows' definitions render their signatures from the
+        // same verified bodies.
+        let anchor_entries = anchors.iter().flat_map(|window| &window.entries);
+        for item in units.iter().chain(anchor_entries) {
             let Some(handle) = &item.handle else {
                 continue;
             };
@@ -4209,7 +5017,10 @@ impl Engine {
                     .map(|lang| (path.as_str(), crate::syntax::Outliner::new(body, lang)))
             })
             .collect();
-        for item in &mut units {
+        let anchor_entries = anchors
+            .iter_mut()
+            .flat_map(|window| window.entries.iter_mut());
+        for item in units.iter_mut().chain(anchor_entries) {
             let Some(handle) = &item.handle else {
                 continue;
             };
@@ -4300,6 +5111,7 @@ impl Engine {
                 label: String::new(),
                 lang: crate::syntax::Lang::from_path(path).map(|lang| lang.tag().to_owned()),
                 semantic: None,
+                resolver: None,
                 forms: vec![
                     RenderedForm::Outline(outliner.render(0..body.len(), 60, 120)),
                     RenderedForm::OutlineMin(outliner.render(0..body.len(), 0, 0)),
@@ -4376,10 +5188,10 @@ impl Engine {
                 freshness,
                 items,
                 counters,
-                // The packer decides compactness from these counts
-                // (context-v2 § Compact context); ranking, routing and graph
-                // expansion above never read them.
-                marked: search.marked,
+                // The anchored selection packs from these windows (context-v2
+                // § Anchored context); ranking, routing and graph expansion
+                // above never read them.
+                anchors,
             },
             hits,
         })

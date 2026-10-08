@@ -1506,9 +1506,10 @@ fn tier_one_keeps_the_64_definitions_with_the_smallest_key_hash() {
 }
 
 /// The 013 corpus defect: an English word of the query (`find`) has more than
-/// 64 definitions and the intended identifier sorts last by path. A
-/// backtick-marked run alone feeds tier 1; unmarked runs are ranked by how
-/// few definitions they have. Search and context share that ranking.
+/// 64 definitions and the intended identifier sorts last by path. An anchor
+/// — a marked run or an identifier-shaped one — alone feeds tier 1; without
+/// anchors, runs are ranked by how few definitions they have. Search and
+/// context share that ranking.
 #[test]
 fn tier_one_puts_the_marked_or_most_specific_run_before_a_common_word() {
     let fixture = tempfile::tempdir().unwrap();
@@ -1521,6 +1522,9 @@ fn tier_one_puts_the_marked_or_most_specific_run_before_a_common_word() {
     }
     engine
         .replace_source("z/sleep.rs", "fn sleep_ms() {}\n")
+        .unwrap();
+    engine
+        .replace_source("z/sleepy.rs", "fn sleepms() {}\n")
         .unwrap();
     drain(&mut engine);
     let first = |batch: &context_foundry::store::CandidateBatch| {
@@ -1537,35 +1541,40 @@ fn tier_one_puts_the_marked_or_most_specific_run_before_a_common_word() {
             .collect()
     };
 
-    // Marked runs only: the unmarked word's definitions are not tier 1. A
-    // double-backtick span marks too.
-    for query in ["find `sleep_ms`", "``sleep_ms`` find"] {
+    // Anchors only: the plain word's definitions are not tier 1. A
+    // double-backtick span marks too, and an unclosed backtick is literal.
+    for query in [
+        "find `sleep_ms`",
+        "``sleep_ms`` find",
+        "find sleep_ms",
+        "sleep_ms `find",
+    ] {
         let batch = engine
             .search_candidates(query, None, 64, &Control::unbounded())
             .unwrap();
         assert_eq!(first(&batch), sleep_ms, "{query}");
         assert_eq!(tier_one(&batch), ["fn sleep_ms"], "{query}");
+        assert!(!batch.counters.candidates_full, "{query}");
     }
     let context = engine
         .context_candidates("find `sleep_ms`", Strategy::Search, &Control::unbounded())
         .unwrap();
     assert_eq!(first(&context), sleep_ms, "the first context unit");
 
-    // Unmarked (an unclosed backtick is literal): 1 definition before 70, then
-    // `find` fills the 63 slots left, with definitions left over.
-    for query in ["find sleep_ms", "sleep_ms `find"] {
-        let batch = engine
-            .search_candidates(query, None, 64, &Control::unbounded())
-            .unwrap();
-        assert_eq!(first(&batch), sleep_ms, "{query}");
-        let labels = tier_one(&batch);
-        assert_eq!(labels.len(), 64, "{query}");
-        assert!(
-            labels[1..].iter().all(|label| label == "fn find"),
-            "{query}"
-        );
-        assert!(batch.counters.candidates_full, "{query}");
-    }
+    // Without anchors: 1 definition before 70, then `find` fills the 63
+    // slots left, with definitions left over.
+    let batch = engine
+        .search_candidates("find sleepms", None, 64, &Control::unbounded())
+        .unwrap();
+    assert!(batch.anchors.is_empty());
+    assert_eq!(
+        first(&batch),
+        (1, "z/sleepy.rs".to_owned(), "fn sleepms".to_owned())
+    );
+    let labels = tier_one(&batch);
+    assert_eq!(labels.len(), 64);
+    assert!(labels[1..].iter().all(|label| label == "fn find"));
+    assert!(batch.counters.candidates_full);
 }
 
 /// Runs with equally many definitions order by run text (not query order or
@@ -1577,10 +1586,10 @@ fn tier_one_breaks_count_ties_by_run_text_and_counts_within_the_path_filter() {
     let root = fixture.path().join("ws");
     let (_store, mut engine) = setup(&root);
     engine
-        .replace_source("ties/a.rs", "fn beta_tie() {}\n")
+        .replace_source("ties/a.rs", "fn betatie() {}\n")
         .unwrap();
     engine
-        .replace_source("ties/b.rs", "fn alpha_tie() {}\n")
+        .replace_source("ties/b.rs", "fn alphatie() {}\n")
         .unwrap();
     // `wide`: 6 definitions, 1 under `app/`; `narrow`: 2, both under `app/`.
     for i in 0..5 {
@@ -1609,11 +1618,12 @@ fn tier_one_breaks_count_ties_by_run_text_and_counts_within_the_path_filter() {
             .collect()
     };
     let unit = |label: &str, path: &str| (label.to_owned(), path.to_owned());
+    // Plain words, no anchors: the 2026-10-06 rule.
     assert_eq!(
-        tier_one("beta_tie alpha_tie", None),
+        tier_one("betatie alphatie", None),
         [
-            unit("fn alpha_tie", "ties/b.rs"),
-            unit("fn beta_tie", "ties/a.rs"),
+            unit("fn alphatie", "ties/b.rs"),
+            unit("fn betatie", "ties/a.rs"),
         ]
     );
     let everywhere = tier_one("wide narrow", None);
@@ -1636,8 +1646,10 @@ fn tier_one_breaks_count_ties_by_run_text_and_counts_within_the_path_filter() {
     );
 }
 
-/// Tier 1 ranks the first 32 distinct runs only (a repeat uses no slot), and
-/// reports a full window only when definitions are left over after 64.
+/// Without anchors, tier 1 ranks the first 32 distinct runs only (a repeat
+/// uses no slot), and reports a full window only when definitions are left
+/// over after 64. (`edgedef` and the `w00` fillers are plain words, never
+/// anchors.)
 #[test]
 fn tier_one_bounds_its_runs_and_fills_only_with_definitions_left_over() {
     let fixture = tempfile::tempdir().unwrap();
@@ -1645,7 +1657,7 @@ fn tier_one_bounds_its_runs_and_fills_only_with_definitions_left_over() {
     let (_store, mut engine) = setup(&root);
     for i in 0..64 {
         engine
-            .replace_source(&format!("d{i:02}.rs"), "fn edge_def() {}\n")
+            .replace_source(&format!("d{i:02}.rs"), "fn edgedef() {}\n")
             .unwrap();
     }
     drain(&mut engine);
@@ -1653,6 +1665,7 @@ fn tier_one_bounds_its_runs_and_fills_only_with_definitions_left_over() {
         let batch = engine
             .search_candidates(query, None, 64, &Control::unbounded())
             .unwrap();
+        assert!(batch.anchors.is_empty(), "{query}");
         let count = batch.items.iter().filter(|item| item.tier == 1).count();
         (count, batch.counters.candidates_full)
     };
@@ -1662,27 +1675,27 @@ fn tier_one_bounds_its_runs_and_fills_only_with_definitions_left_over() {
             .collect::<Vec<_>>()
             .join(" ")
     };
-    assert_eq!(tier_one(&engine, "edge_def"), (64, false), "exactly 64");
+    assert_eq!(tier_one(&engine, "edgedef"), (64, false), "exactly 64");
     assert_eq!(
-        tier_one(&engine, &format!("edge_def {}", filler(32))).0,
+        tier_one(&engine, &format!("edgedef {}", filler(32))).0,
         64,
         "the first 32 distinct runs are ranked"
     );
     assert_eq!(
-        tier_one(&engine, &format!("{} edge_def", filler(32))).0,
+        tier_one(&engine, &format!("{} edgedef", filler(32))).0,
         0,
         "the 33rd distinct run is not ranked"
     );
     assert_eq!(
-        tier_one(&engine, &format!("{} w00 edge_def", filler(31))).0,
+        tier_one(&engine, &format!("{} w00 edgedef", filler(31))).0,
         64,
         "a repeated run is the same run"
     );
     engine
-        .replace_source("d64.rs", "fn edge_def() {}\n")
+        .replace_source("d64.rs", "fn edgedef() {}\n")
         .unwrap();
     drain(&mut engine);
-    assert_eq!(tier_one(&engine, "edge_def"), (64, true), "65 overflow");
+    assert_eq!(tier_one(&engine, "edgedef"), (64, true), "65 overflow");
 }
 
 #[test]
@@ -2166,271 +2179,694 @@ fn a_documented_definition_owns_its_doc_and_tier_one_names_its_definition() {
     );
 }
 
-// --- Compact context (context-v2 § Compact context, 2026-10-06) -----------
+// --- City map (context-v2 § City map; 001 T007) -----------------------------
 
 use context_foundry::response::{RootHeader, stdout_bytes};
 use context_foundry::roots::{RootBatch, merge_context};
-use context_foundry::store::{CandidateBatch, TIER_OUTLINE};
+use context_foundry::store::{AnchorWindow, CandidateBatch, QueryAnchors, path_role, role};
 use context_foundry::testkit::{V2Kind, V2Response};
 
-/// `fn sleep_ms`, defined once with its doc, alone in its file (so that file
-/// has no outline).
-const CLOCK: &str = "/// Sleeps for `ms` milliseconds.\npub fn sleep_ms(ms: u64) {\n    let micros = ms * 1000;\n    std::thread::sleep(std::time::Duration::from_micros(micros));\n}\n";
-
-/// The `i`th caller of `sleep_ms`: one unit calling it, then a second
-/// function, so the caller's file has an outline.
-fn caller_source(i: usize) -> String {
-    format!("fn w{i}() {{\n    sleep_ms({i});\n}}\nfn x{i}() {{}}\n")
-}
-
-/// `sleep_ms` defined once and called from twelve files; `alpha_one` and
-/// `beta_two` defined once and called together from `both`; `retry_twice`
-/// defined twice and `gamma_three` three times.
-fn compact_fixture(root: &Path) -> (tempfile::TempDir, Engine) {
-    let (store, mut engine) = setup(root);
-    engine.replace_source("src/clock.rs", CLOCK).unwrap();
-    for i in 0..12 {
-        engine
-            .replace_source(&format!("src/use{i:02}.rs"), &caller_source(i))
-            .unwrap();
-    }
-    for (path, body) in [
-        ("src/alpha.rs", "fn alpha_one() {}\n"),
-        ("src/beta.rs", "fn beta_two() {}\n"),
-        ("src/both.rs", "fn both() { alpha_one(); beta_two(); }\n"),
-        ("src/retry/a.rs", "fn retry_twice() {}\n"),
-        ("src/retry/b.rs", "fn retry_twice() {}\n"),
-        ("src/gamma/a.rs", "fn gamma_three() {}\n"),
-        ("src/gamma/b.rs", "fn gamma_three() {}\n"),
-        ("src/gamma/c.rs", "fn gamma_three() {}\n"),
-    ] {
-        engine.replace_source(path, body).unwrap();
-    }
-    drain(&mut engine);
-    (store, engine)
-}
-
-/// One context at 2048 tokens: its candidate batch, packed text and parse.
-fn context_of(
+/// One context at `tokens`: its candidate batch, packed text and parse.
+fn context_at(
     engine: &Engine,
     query: &str,
-    strategy: Strategy,
+    tokens: usize,
 ) -> (CandidateBatch, response::PackedText, V2Response) {
     let batch = engine
-        .context_candidates(query, strategy, &Control::unbounded())
+        .context_candidates(query, Strategy::Search, &Control::unbounded())
         .unwrap();
-    let packed =
-        response::pack_context(&batch, Budget::request(2048), &response::stdout_bytes).unwrap();
+    let packed = response::pack_context(&batch, Budget::request(tokens), &stdout_bytes).unwrap();
     let parsed = parse_v2(&packed.text).unwrap_or_else(|e| panic!("{e}\n{}", packed.text));
     (batch, packed, parsed)
-}
-
-/// The pre-amendment rendering of a batch: without its marked counts the
-/// compact rule cannot apply.
-fn packed_without_marks(batch: &CandidateBatch) -> String {
-    let mut plain = batch.clone();
-    plain.marked.clear();
-    response::pack_context(&plain, Budget::request(2048), &response::stdout_bytes)
-        .unwrap()
-        .text
-}
-
-fn says_compact(parsed: &V2Response) -> bool {
-    parsed.header.iter().any(|segment| segment == "compact")
 }
 
 fn kinds(parsed: &V2Response) -> Vec<V2Kind> {
     parsed.items.iter().map(|item| item.kind).collect()
 }
 
-/// A query whose one marked name has exactly one definition gets that
-/// definition verbatim, then the next 8 candidates in context order as one
-/// locator line each; file outlines and the rest are omitted and counted,
-/// and the answer costs fewer tokens than the same question unmarked.
-#[test]
-fn a_unique_marked_definition_packs_compact_with_at_most_eight_pointers() {
-    let fixture = tempfile::tempdir().unwrap();
-    let (_store, engine) = compact_fixture(&fixture.path().join("ws"));
-    let (batch, packed, parsed) = context_of(&engine, "find `sleep_ms`", Strategy::Search);
-    assert!(batch.compact());
-    let header = packed.text.lines().next().unwrap();
-    assert!(says_compact(&parsed), "{header}");
-    assert!(response::count_tokens(header) <= 40, "{header}");
-
-    let definition = &parsed.items[0];
-    let unit = source(&batch.items[0]);
-    assert_eq!(definition.kind, V2Kind::Source);
-    assert_eq!(definition.handle, unit.to_v2());
-    assert_eq!(definition.label.as_deref(), Some("fn sleep_ms"));
-    assert_eq!(definition.form, None);
-    let bytes = &CLOCK[unit.start as usize..unit.end as usize];
-    assert_eq!(definition.body, bytes);
-
-    // The pointers: the first 8 candidates past the definition, outlines
-    // skipped, each a locator line quoting its best line.
-    let pointed: Vec<String> = batch
-        .items
-        .iter()
-        .filter(|item| item.tier != 1 && item.tier != TIER_OUTLINE)
-        .take(8)
-        .map(|item| source(item).to_v2())
-        .collect();
-    let pointers = &parsed.items[1..];
-    assert_eq!(pointers.len(), 8);
-    assert_eq!(pointed.len(), 8);
-    for (pointer, handle) in pointers.iter().zip(&pointed) {
-        assert_eq!(pointer.kind, V2Kind::Locator);
-        assert_eq!(&pointer.handle, handle);
-        assert!(pointer.body.starts_with("sleep_ms("), "{pointer:?}");
-    }
-
-    // Four more callers and the two caller-file outlines are omitted.
-    assert!(batch.items.iter().any(|item| item.tier == TIER_OUTLINE));
-    assert_eq!(packed.omitted, batch.items.len() - 9);
-    let omitted = format!("omitted:{}", packed.omitted);
-    assert!(parsed.header.contains(&omitted), "{header}");
-
-    // The same question unmarked fills the budget as before.
-    let (plain_batch, plain, _) = context_of(&engine, "find sleep_ms", Strategy::Search);
-    assert!(!plain_batch.compact());
-    assert!(!plain.text.lines().next().unwrap().contains("compact"));
-    let (compact, full) = (packed.tokens, plain.tokens);
-    assert!(compact < full, "{compact} vs {full}");
+fn says(parsed: &V2Response, segment: &str) -> bool {
+    parsed.header.iter().any(|known| known == segment)
 }
 
-/// Compact exactly when some marked run has one definition and none has
-/// more; a marked run without definitions neither triggers nor blocks it,
-/// and an unmarked query never is. Every other response is the
-/// pre-amendment rendering, byte for byte.
+/// The anchors of `query` when exactly the capitalized runs in `exact` have
+/// an exact-case definition.
+fn anchors_of(query: &str, exact: &[&str]) -> Vec<String> {
+    QueryAnchors::parse(query)
+        .select(|candidate| {
+            Ok::<_, std::convert::Infallible>(exact.contains(&candidate.text.as_str()))
+        })
+        .unwrap()
+        .into_iter()
+        .map(|candidate| candidate.text)
+        .collect()
+}
+
+/// The anchor windows a search builds for `query`.
+fn windows(engine: &Engine, query: &str) -> Vec<AnchorWindow> {
+    engine
+        .search_candidates(query, None, 64, &Control::unbounded())
+        .unwrap()
+        .anchors
+}
+
+fn paths(window: &AnchorWindow) -> Vec<String> {
+    window
+        .entries
+        .iter()
+        .map(|entry| source(entry).path.clone())
+        .collect()
+}
+
 #[test]
-fn the_compact_rule_reads_every_marked_run_count() {
-    let fixture = tempfile::tempdir().unwrap();
-    let (_store, engine) = compact_fixture(&fixture.path().join("ws"));
-    // Each query and the unique definitions it delivers, which arrive in
-    // tier-1 order (equal counts order by run text).
-    let cases = [
-        ("`alpha_one`", 1),
-        ("`beta_two` and `alpha_one`", 2),
-        ("`alpha_one` `no_such_name`", 1),
-        ("`no_such_name`", 0),
-        ("`retry_twice`", 0),
-        ("`alpha_one` `gamma_three`", 0),
-        ("alpha_one", 0),
+fn roles_take_the_first_matching_rule_on_the_relative_path() {
+    use role::{GENERATED, LOCK, SNAPSHOT, SOURCE, TEST, VENDORED};
+    let table: &[(&str, u64)] = &[
+        // lock: every listed basename, before every later rule.
+        ("bun.lock", LOCK),
+        ("web/bun.lockb", LOCK),
+        ("package-lock.json", LOCK),
+        ("npm-shrinkwrap.json", LOCK),
+        ("yarn.lock", LOCK),
+        ("pnpm-lock.yaml", LOCK),
+        ("Cargo.lock", LOCK),
+        ("composer.lock", LOCK),
+        ("Gemfile.lock", LOCK),
+        ("poetry.lock", LOCK),
+        ("uv.lock", LOCK),
+        ("Pipfile.lock", LOCK),
+        ("go.sum", LOCK),
+        ("packages.lock.json", LOCK),
+        ("Podfile.lock", LOCK),
+        ("pubspec.lock", LOCK),
+        ("mix.lock", LOCK),
+        ("flake.lock", LOCK),
+        ("tests/vendor/Cargo.lock", LOCK),
+        // snapshot, before generated and test.
+        ("src/view.snap", SNAPSHOT),
+        ("src/__snapshots__/view.ts", SNAPSHOT),
+        ("tests/__snapshots__/app.min.js", SNAPSHOT),
+        // generated, before vendored and test.
+        ("web/app.min.js", GENERATED),
+        ("web/app.min.css", GENERATED),
+        ("App.g.cs", GENERATED),
+        ("Form.Designer.cs", GENERATED),
+        ("Form.designer.cs", GENERATED),
+        ("api_pb2.py", GENERATED),
+        ("api.pb.go", GENERATED),
+        ("schema.generated.ts", GENERATED),
+        ("generated/x.rs", GENERATED),
+        ("src/__generated__/x.ts", GENERATED),
+        ("bin/obj/x.cs", GENERATED),
+        ("vendor/lib.min.js", GENERATED),
+        // vendored, before test.
+        ("vendor/x.go", VENDORED),
+        ("third_party/x.c", VENDORED),
+        ("third-party/x.c", VENDORED),
+        ("ios/Pods/x.swift", VENDORED),
+        ("vendor/tests/x.rs", VENDORED),
+        // test components.
+        ("test/x.rs", TEST),
+        ("tests/x.rs", TEST),
+        ("src/__tests__/x.ts", TEST),
+        ("testing/x.go", TEST),
+        ("testdata/x.json", TEST),
+        ("fixtures/x.json", TEST),
+        ("e2e/x.ts", TEST),
+        ("spec/x.rb", TEST),
+        ("benches/x.rs", TEST),
+        // test basenames.
+        ("src/tests.rs", TEST),
+        ("conftest.py", TEST),
+        ("x_test.go", TEST),
+        ("test_x.py", TEST),
+        ("x_test.py", TEST),
+        ("a.test.ts", TEST),
+        ("a.spec.js", TEST),
+        ("x_spec.rb", TEST),
+        ("FooTest.java", TEST),
+        ("FooTests.java", TEST),
+        ("FooTest.kt", TEST),
+        ("FooTests.kt", TEST),
+        ("FooTest.swift", TEST),
+        ("FooTests.swift", TEST),
+        ("FooTest.cs", TEST),
+        ("FooTests.cs", TEST),
+        ("FooTest.php", TEST),
+        ("x_test.cc", TEST),
+        ("x_test.cpp", TEST),
+        ("x_unittest.cc", TEST),
+        ("x.t", TEST),
+        ("x.bats", TEST),
+        // source: components compare case-sensitively; near misses.
+        ("src/lib.rs", SOURCE),
+        ("Tests/x.rs", SOURCE),
+        ("Vendor/x.go", SOURCE),
+        ("src/test.rs", SOURCE),
+        ("src/testing_util.rs", SOURCE),
+        ("src/contest.py", SOURCE),
+        ("src/latest.ts", SOURCE),
     ];
-    let labels = ["fn alpha_one", "fn beta_two"];
-    for (query, unique) in cases {
-        let (batch, packed, parsed) = context_of(&engine, query, Strategy::Search);
-        let compact = unique > 0;
-        assert_eq!(batch.compact(), compact, "{query}");
-        assert_eq!(says_compact(&parsed), compact, "{query}");
-        if compact {
-            // The definitions, then `both`, the one other candidate, as a
-            // pointer.
-            let mut want = vec![V2Kind::Source; unique];
-            want.push(V2Kind::Locator);
-            assert_eq!(kinds(&parsed), want, "{query}");
-            for (item, label) in parsed.items.iter().zip(&labels[..unique]) {
-                assert_eq!(item.label.as_deref(), Some(*label), "{query}");
-                assert_eq!(item.form, None, "{query}");
-            }
-        } else {
-            assert_eq!(packed.text, packed_without_marks(&batch), "{query}");
-            assert!(!kinds(&parsed).contains(&V2Kind::Locator), "{query}");
+    for &(path, want) in table {
+        assert_eq!(path_role(path), want, "{path}");
+    }
+}
+
+/// Exactly one document per definition carries `def_name`: a 20 KiB
+/// interface (one leaf split into parts), a container with residuals and a
+/// 70-part region each count once; `struct Foo` with two `impl Foo` blocks is
+/// one definition of `Foo`, and the impls' methods keep `Foo` as an address
+/// qualifier.
+#[test]
+fn one_definition_document_per_unit() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    let fields: String = (0..1_000)
+        .map(|i| format!("  field_{i:04}: string;\n"))
+        .collect();
+    let interface = format!("export interface Wide {{\n{fields}}}\n");
+    assert!(interface.len() > 20 * 1024);
+    let lets: String = (0..13_500)
+        .map(|i| format!("    let v{i:05} = {i};\n"))
+        .collect();
+    let long = format!("fn long_one() {{\n{lets}}}\n");
+    let parts =
+        context_foundry::syntax::documents(&long, Some(context_foundry::syntax::Lang::Rust)).len();
+    assert!(parts >= 70, "{parts} parts");
+    for (path, body) in [
+        ("src/wide.ts", interface.as_str()),
+        (
+            "src/boxed.ts",
+            "class Boxed {\n  a(): void {}\n\n  b(): void {}\n}\n",
+        ),
+        ("src/long.rs", long.as_str()),
+        (
+            "src/foo.rs",
+            "pub struct Foo;\n\nimpl Foo {\n    pub fn first(&self) {}\n}\n\nimpl Foo {\n    pub fn second(&self) {}\n}\n",
+        ),
+    ] {
+        engine.replace_source(path, body).unwrap();
+    }
+    drain(&mut engine);
+    for (query, path, label) in [
+        ("`Wide`", "src/wide.ts", "interface Wide"),
+        ("`Boxed`", "src/boxed.ts", "class Boxed"),
+        ("`long_one`", "src/long.rs", "fn long_one"),
+        ("`Foo`", "src/foo.rs", "struct Foo"),
+    ] {
+        let found = windows(&engine, query);
+        assert_eq!(found.len(), 1, "{query}");
+        assert_eq!(found[0].definitions, 1, "{query}");
+        assert!(found[0].resolved(), "{query}");
+        assert_eq!(paths(&found[0]), [path], "{query}");
+        assert_eq!(found[0].entries[0].label, label, "{query}");
+    }
+    let method = &windows(&engine, "`Foo::second`")[0];
+    assert_eq!(method.entries[0].label, "fn Foo::second");
+    assert_eq!(method.entries[0].resolver.unwrap().qualifiers, 1);
+}
+
+/// Rust declaration-only items are definitions (context-v2 § Unit kinds, as
+/// amended for 001 T007): a trait's required method and associated type and
+/// an extern block's `fn` resolve; a trait method with an implementation
+/// gives one definition per declaration site.
+#[test]
+fn rust_declaration_only_items_are_definitions() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    let source = "pub trait Store {\n    /// The archive kind.\n    type Archive;\n    fn load(&self) -> u8;\n}\n\npub trait MetadataExt {\n    fn atime(&self) -> i64;\n    fn defaulted(&self) -> u8 {\n        0\n    }\n}\n\nimpl MetadataExt for Meta {\n    fn atime(&self) -> i64 {\n        1\n    }\n}\n\nextern \"C\" {\n    fn c_sleep(ms: u32);\n    static C_ERRNO: i32;\n}\n";
+    engine.replace_source("src/os.rs", source).unwrap();
+    drain(&mut engine);
+    for (query, label) in [
+        ("`Archive`", "type Store::Archive"),
+        ("`load`", "fn Store::load"),
+        ("`c_sleep`", "fn c_sleep"),
+        ("`C_ERRNO`", "static C_ERRNO"),
+        ("`defaulted`", "fn MetadataExt::defaulted"),
+        ("`MetadataExt::atime`", "fn MetadataExt::atime"),
+    ] {
+        let window = &windows(&engine, query)[0];
+        assert!(window.resolved(), "{query}");
+        assert_eq!(window.entries[0].label, label, "{query}");
+    }
+    let atime = &windows(&engine, "`atime`")[0];
+    assert_eq!(atime.definitions, 2);
+    let labels: Vec<&str> = atime
+        .entries
+        .iter()
+        .map(|entry| entry.label.as_str())
+        .collect();
+    assert_eq!(labels, ["fn MetadataExt::atime", "fn Meta::atime"]);
+    // The required method's unit covers its doc-less declaration only.
+    let (_, _, parsed) = context_at(&engine, "`load`", 2048);
+    assert_eq!(parsed.items[0].body, "fn load(&self) -> u8;");
+}
+
+#[test]
+fn anchors_split_names_from_qualifiers_and_skip_paths_and_words() {
+    let names = |query: &str| -> Vec<String> {
+        QueryAnchors::parse(query)
+            .fixed
+            .into_iter()
+            .map(|candidate| candidate.text)
+            .collect()
+    };
+    // Marked chains: the last run is the name, the others qualify.
+    for (query, name, qualifiers) in [
+        ("`Vec::push`", "push", vec!["vec"]),
+        ("`Foo.bar`", "bar", vec!["foo"]),
+        ("`Get-ChildItem`", "Get-ChildItem", vec![]),
+        ("`a::b->c`", "c", vec!["a", "b"]),
+    ] {
+        assert_eq!(names(query), [name], "{query}");
+        assert_eq!(QueryAnchors::parse(query).qualifiers, qualifiers, "{query}");
+    }
+    // Paths never anchor; their segments qualify.
+    for (query, qualifiers) in [
+        ("see a/b.rs", vec!["a", "b"]),
+        ("open learning.rs", vec!["learning"]),
+        ("run package.sh, then", vec!["package"]),
+        ("`src/store_x.rs`", vec!["src", "store_x"]),
+    ] {
+        let parsed = QueryAnchors::parse(query);
+        assert!(
+            parsed.fixed.is_empty() && parsed.capitalized.is_empty(),
+            "{query}: {parsed:?}"
+        );
+        assert_eq!(parsed.qualifiers, qualifiers, "{query}");
+    }
+    // Unmarked identifier-shaped runs and chain names anchor.
+    for (run, name) in [
+        ("sleep_ms", "sleep_ms"),
+        ("READY_RECEIVE_ENTERED", "READY_RECEIVE_ENTERED"),
+        ("toolSession", "toolSession"),
+        ("HttpServer", "HttpServer"),
+        ("a::b", "b"),
+    ] {
+        assert_eq!(names(&format!("where is {run} used")), [name], "{run}");
+    }
+    // Words, acronyms, ids, abbreviations and URLs never anchor.
+    for word in [
+        "find",
+        "spawn",
+        "MCP",
+        "WAL",
+        "v2",
+        "T002",
+        "e.g.",
+        "https://example.com/a_b/C",
+    ] {
+        let parsed = QueryAnchors::parse(&format!("how does {word} work"));
+        assert!(
+            parsed.fixed.is_empty() && parsed.capitalized.is_empty(),
+            "{word}: {parsed:?}"
+        );
+    }
+    // A capitalized run anchors only when not first and an exact-case
+    // definition exists.
+    assert_eq!(
+        anchors_of("where is the Engine struct", &["Engine"]),
+        ["Engine"]
+    );
+    assert!(anchors_of("where is the Engine struct", &[]).is_empty());
+    assert!(anchors_of("Engine refresh path", &["Engine"]).is_empty());
+    // Marked first, then identifier-shaped, then capitalized; at most four.
+    assert_eq!(
+        anchors_of("how does `Engine` handle refresh_index errors", &[]),
+        ["Engine", "refresh_index"]
+    );
+    assert_eq!(
+        anchors_of("why Store calls refresh_index on `Engine`", &["Store"]),
+        ["Engine", "refresh_index", "Store"]
+    );
+    assert_eq!(
+        anchors_of("`one` `two` three_x four_y five_z Sixth", &["Sixth"]),
+        ["one", "two", "three_x", "four_y"]
+    );
+    // A marked run past the fourth anchor qualifies.
+    assert_eq!(
+        QueryAnchors::parse("`a1` `b2` `c3` `d4` `e5`").qualifiers,
+        ["e5"]
+    );
+}
+
+/// The 27 recorded agent queries of the 2026-10-07 refutation, kept outside
+/// Git with their expected anchors against this repository at `2513748`.
+#[test]
+fn the_recorded_agent_queries_give_exactly_their_expected_anchors() {
+    let path = std::env::var_os("CITYMAP_ANCHOR_QUERIES")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(&std::env::var_os("HOME").unwrap_or_default())
+                .join("VSC_DEV/datasets/context-foundry-citymap/anchor-queries.json")
+        });
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        eprintln!(
+            "skipped: {} is absent (kept outside Git)",
+            path.display()
+        );
+        return;
+    };
+    let recorded: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let exact: Vec<&str> = recorded["exact_case_definitions_at_2513748"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, defined)| defined.as_bool() == Some(true))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    let queries = recorded["queries"].as_array().unwrap();
+    assert_eq!(queries.len(), 27);
+    for entry in queries {
+        let query = entry["query"].as_str().unwrap();
+        let want: Vec<&str> = entry["anchors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|anchor| anchor.as_str().unwrap())
+            .collect();
+        assert_eq!(anchors_of(query, &exact), want, "{query}");
+    }
+}
+
+/// A qualifier beats exact case, exact case beats role, role beats path.
+#[test]
+fn the_resolver_orders_by_qualifier_then_exact_case_then_role_then_path() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    for (path, body) in [
+        ("aaa/lower.rs", "fn widget() {}\n"),
+        ("tests/exact.rs", "struct Widget;\n"),
+        ("zzz/lower.rs", "fn widget() {}\n"),
+        ("tests/lower.rs", "fn widget() {}\n"),
+    ] {
+        engine.replace_source(path, body).unwrap();
+    }
+    drain(&mut engine);
+    let exact = &windows(&engine, "`Widget`")[0];
+    assert_eq!(
+        paths(exact),
+        [
+            "tests/exact.rs",
+            "aaa/lower.rs",
+            "zzz/lower.rs",
+            "tests/lower.rs"
+        ]
+    );
+    assert!(exact.resolved(), "exact case is strictly better");
+    let lower = &windows(&engine, "`widget`")[0];
+    assert_eq!(
+        paths(lower),
+        [
+            "aaa/lower.rs",
+            "zzz/lower.rs",
+            "tests/lower.rs",
+            "tests/exact.rs"
+        ]
+    );
+    assert!(!lower.resolved(), "two source definitions tie");
+    assert_eq!(lower.definitions, 4);
+    let qualified = &windows(&engine, "`zzz::Widget`")[0];
+    assert_eq!(paths(qualified)[0], "zzz/lower.rs");
+    assert!(qualified.resolved());
+    // Search lists tier 1 in resolver order.
+    let batch = engine
+        .search_candidates("`Widget`", None, 10, &Control::unbounded())
+        .unwrap();
+    assert_eq!(source(&batch.items[0]).path, "tests/exact.rs");
+}
+
+/// Every matching definition is scored, so a window over more than 64
+/// definitions still finds the qualified one; unqualified, the name is
+/// ambiguous and the header reports its count.
+#[test]
+fn a_window_over_64_definitions_finds_the_intended_one() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    for i in 0..70 {
+        engine
+            .replace_source(&format!("pool/d{i:02}.rs"), "fn find_me() {}\n")
+            .unwrap();
+    }
+    engine
+        .replace_source("special/x.rs", "fn find_me() {}\n")
+        .unwrap();
+    drain(&mut engine);
+    let batch = engine
+        .search_candidates("`special::find_me`", None, 64, &Control::unbounded())
+        .unwrap();
+    assert_eq!(batch.anchors[0].definitions, 71);
+    assert!(batch.anchors[0].resolved());
+    assert_eq!(paths(&batch.anchors[0])[0], "special/x.rs");
+    assert_eq!(source(&batch.items[0]).path, "special/x.rs");
+    assert!(batch.counters.candidates_full);
+
+    let (batch, packed, parsed) = context_at(&engine, "where is `find_me`", 2048);
+    assert!(!batch.anchors[0].resolved());
+    let header = packed.text.lines().next().unwrap();
+    assert!(header.ends_with(" · defs:71 · anchored"), "{header}");
+    assert!(response::count_tokens(header) <= 40, "{header}");
+    assert_eq!(kinds(&parsed), [V2Kind::Source; 16]);
+    // The header bound holds at the largest definition count.
+    let mut largest = batch.clone();
+    largest.anchors[0].definitions = u64::MAX;
+    let packed = response::pack_context(&largest, Budget::request(32_768), &stdout_bytes).unwrap();
+    let header = packed.text.lines().next().unwrap();
+    assert!(
+        header.ends_with(" · defs:18446744073709551615 · anchored"),
+        "{header}"
+    );
+    assert!(response::count_tokens(header) <= 40, "{header}");
+}
+
+/// A resolved anchor: its definition through the ladder, then at most 8
+/// directory lines naming its other definitions, and nothing else.
+#[test]
+fn a_resolved_anchor_packs_its_definition_and_eight_directory_lines() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    engine
+        .replace_source("ui/render.rs", "pub fn render() {\n    draw();\n}\n")
+        .unwrap();
+    for i in 0..12 {
+        engine
+            .replace_source(&format!("other/r{i:02}.rs"), "fn render() {}\n")
+            .unwrap();
+    }
+    engine
+        .replace_source("app/main.rs", "fn main() {\n    ui::render();\n}\n")
+        .unwrap();
+    drain(&mut engine);
+    let (batch, packed, parsed) = context_at(&engine, "where is `ui::render`", 2048);
+    assert!(batch.anchors[0].resolved());
+    assert!(says(&parsed, "anchored"));
+    assert!(!packed.text.lines().next().unwrap().contains("defs:"));
+    let mut want = vec![V2Kind::Source];
+    want.resize(9, V2Kind::Locator);
+    assert_eq!(kinds(&parsed), want);
+    assert_eq!(parsed.items[0].label.as_deref(), Some("fn render"));
+    assert!(parsed.items[0].handle.starts_with("ui/render.rs#"));
+    for line in &parsed.items[1..] {
+        assert!(line.handle.starts_with("other/r"), "{line:?}");
+        assert_eq!(line.label.as_deref(), Some("fn render"));
+    }
+    // No pointer to the caller or anything else: it is omitted and counted.
+    assert!(!packed.text.contains("app/main.rs"));
+    assert!(packed.omitted > 0);
+    assert!(says(&parsed, &format!("omitted:{}", packed.omitted)));
+}
+
+/// An ambiguous anchor lists the first 16 of its window, even 20 definitions
+/// in one file (no per-file cap), in three passes: every address line, then
+/// signatures, then bodies, each in list order while the budget fits. The
+/// boundaries are computed from the response text itself, so the result does
+/// not depend on how the random root's workspace id tokenizes.
+#[test]
+fn an_ambiguous_anchor_shows_every_name_before_any_body() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    let body = "        let a = 0;\n        let b = 1;\n        let c = 2;\n        let d = 3;\n        let e = 4;\n";
+    let mods: String = (0..20)
+        .map(|i| format!("mod m{i:02} {{\n    pub fn dup() {{\n{body}    }}\n}}\n\n"))
+        .collect();
+    engine.replace_source("lib/dups.rs", &mods).unwrap();
+    drain(&mut engine);
+    let batch = engine
+        .context_candidates("`dup`", Strategy::Search, &Control::unbounded())
+        .unwrap();
+    let pack = |tokens: usize| {
+        let packed =
+            response::pack_context(&batch, Budget::request(tokens), &stdout_bytes).unwrap();
+        let parsed = parse_v2(&packed.text).unwrap_or_else(|e| panic!("{e}\n{}", packed.text));
+        assert!(says(&parsed, "defs:20"), "{}", packed.text);
+        (packed.text, parsed)
+    };
+    let verbatim = (V2Kind::Source, None);
+    let signature = (V2Kind::Source, Some("signature".to_owned()));
+    let address = (V2Kind::Address, Some("address".to_owned()));
+    let (full, listed) = pack(32_768);
+    assert_eq!(listed.items.len(), 16);
+    assert!(
+        listed
+            .items
+            .iter()
+            .all(|item| (item.kind, item.form.clone()) == verbatim)
+    );
+    // The exact cost of the 16-entry response at `tokens` whose entries
+    // render as `items`, and the least budget that fits it (a fixed point:
+    // the header changes only with the budget's digits).
+    let header = format!("{}\n", full.lines().next().unwrap());
+    let cost = |tokens: usize, items: &str| {
+        let header = header.replace("budget:32768", &format!("budget:{tokens}"));
+        response::count_tokens(&format!("{header}{items}"))
+    };
+    let least = |items: &str| {
+        let tokens = (0..4).fold(32_768, |tokens, _| cost(tokens, items));
+        assert!(cost(tokens, items) <= tokens && cost(tokens - 1, items) > tokens - 1);
+        tokens
+    };
+    let addresses: String = listed
+        .items
+        .iter()
+        .map(|item| {
+            let lines = item.lines.as_deref().unwrap();
+            let label = item.label.as_deref().unwrap();
+            format!("{} {lines} {label} [address]\n", item.handle)
+        })
+        .collect();
+    let all_addresses = least(&addresses);
+    let all_bodies = least(&full[header.len()..]);
+    let (mut mixed, mut addressed) = (false, false);
+    // Every 40th budget up to the one that fits every body, and both
+    // boundaries exactly.
+    let budgets = (200..all_bodies).step_by(40);
+    for tokens in budgets.chain([all_addresses, all_bodies - 1, all_bodies]) {
+        let (text, parsed) = pack(tokens);
+        let shown: Vec<_> = parsed
+            .items
+            .iter()
+            .map(|item| (item.kind, item.form.clone()))
+            .collect();
+        // The first entries of the list, in list order: nothing is placed
+        // after an omitted entry.
+        for (item, entry) in parsed.items.iter().zip(&listed.items) {
+            assert_eq!(
+                (&item.handle, &item.label),
+                (&entry.handle, &entry.label),
+                "{text}"
+            );
+        }
+        // Bodies, then signatures, then address lines.
+        let bodies = shown.iter().take_while(|form| **form == verbatim).count();
+        let signatures = shown[bodies..]
+            .iter()
+            .take_while(|form| **form == signature)
+            .count();
+        assert!(
+            shown[bodies + signatures..]
+                .iter()
+                .all(|form| *form == address),
+            "{text}"
+        );
+        // Every listed entry is shown whenever the 16 address lines fit, and
+        // every body whenever the 16 bodies fit.
+        if cost(tokens, &addresses) <= tokens {
+            assert_eq!(shown.len(), 16, "{text}");
+        }
+        if tokens >= all_bodies {
+            assert_eq!(bodies, 16, "{text}");
+        }
+        // No entry is omitted while any entry has a body: an omitted entry's
+        // address line did not fit, and the signature pass leaves less than
+        // one of these bodies.
+        if shown.len() < 16 {
+            assert_eq!(bodies, 0, "{text}");
+        }
+        mixed |= shown.len() == 16 && bodies > 0 && signatures > 0;
+        addressed |= shown.len() == 16 && shown.contains(&address);
+    }
+    assert!(mixed && addressed);
+}
+
+/// The oh-my-pi `ToolSession` shape: a 349-line interface fits in no form
+/// but its `[address]` line, which is never omitted while it fits.
+#[test]
+fn a_349_line_interface_degrades_to_its_address_line() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    let members: String = (0..347)
+        .map(|i| format!("  member{i:03}(input: string, options?: Options): Promise<void>;\n"))
+        .collect();
+    let interface = format!("export interface ToolSession {{\n{members}}}\n");
+    assert_eq!(interface.lines().count(), 349);
+    engine
+        .replace_source("packages/agent/src/session.ts", &interface)
+        .unwrap();
+    engine
+        .replace_source(
+            "packages/agent/test/helpers.ts",
+            "export function toolSession(): void {}\n",
+        )
+        .unwrap();
+    drain(&mut engine);
+    let (batch, packed, parsed) = context_at(&engine, "where is `ToolSession` defined", 2048);
+    assert_eq!(kinds(&parsed), [V2Kind::Address, V2Kind::Locator]);
+    let address = &parsed.items[0];
+    assert_eq!(address.label.as_deref(), Some("interface ToolSession"));
+    assert_eq!(address.lines.as_deref(), Some("L1-349"));
+    let address_line = packed.text.lines().nth(1).unwrap().to_owned();
+    for tokens in (1..=160).chain([512, 1024]) {
+        let Ok(packed) = response::pack_context(&batch, Budget::request(tokens), &stdout_bytes)
+        else {
+            continue;
+        };
+        let parsed = parse_v2(&packed.text).unwrap();
+        if parsed.items.first().map(|item| item.kind) != Some(V2Kind::Address) {
+            let header = packed.text.lines().next().unwrap();
+            let alone = format!("{}\n{address_line}\n", header.replace("shown:0", "shown:1"));
+            assert!(
+                response::count_tokens(&alone) > tokens,
+                "{tokens}: the address line fits but was omitted"
+            );
         }
     }
 }
 
-/// Under the graph strategy the edge lines follow the definition as
-/// pointers, inside the eight.
+/// A query without anchors packs as before; its tier 1 counts definitions,
+/// so a container with residuals counts once.
 #[test]
-fn a_compact_graph_context_points_with_its_edge_lines() {
+fn a_query_without_anchors_keeps_todays_packing() {
     let fixture = tempfile::tempdir().unwrap();
-    let (_store, engine) = compact_fixture(&fixture.path().join("ws"));
-    let bundle = GraphBundle {
-        provider: "fixture".into(),
-        revision: "r1".into(),
-        edges: vec![Edge {
-            from: endpoint("src/use00.rs", &caller_source(0)),
-            to: endpoint("src/clock.rs", CLOCK),
-            kind: "calls".into(),
-            evidence: "manual".into(),
-        }],
-    };
-    engine.import_graph(&bundle).unwrap();
-    let (batch, _, parsed) = context_of(&engine, "find `sleep_ms`", Strategy::Graph);
-    assert_eq!(batch.counters.graph, Some("ok"));
-    assert!(says_compact(&parsed));
-    let mut want = vec![V2Kind::Source, V2Kind::Edge];
-    want.resize(1 + 8, V2Kind::Locator);
-    assert_eq!(kinds(&parsed), want);
-    assert!(parsed.items[1].body.contains("--calls--> src/clock.rs"));
-}
-
-/// A definition too large to fit verbatim takes its signature form exactly
-/// as an unmarked context delivers it; a budget below the header refuses.
-#[test]
-fn a_compact_definition_keeps_the_ladder_and_the_refusal() {
-    let fixture = tempfile::tempdir().unwrap();
-    let root = fixture.path().join("ws");
-    let (_store, mut engine) = setup(&root);
-    let lets: String = (0..200)
-        .map(|j| format!("    let v{j} = a + {j};\n"))
-        .collect();
-    engine
-        .replace_source(
-            "huge.rs",
-            &format!("pub fn huge_unit(a: u8) -> u8 {{\n{lets}    a\n}}\n"),
-        )
-        .unwrap();
-    drain(&mut engine);
-    let control = Control::unbounded();
-    let pack = |query: &str, tokens: usize| {
-        let batch = engine
-            .context_candidates(query, Strategy::Search, &control)
-            .unwrap();
-        response::pack_context(&batch, Budget::request(tokens), &response::stdout_bytes)
-    };
-    let compact = parse_v2(&pack("`huge_unit`", 256).unwrap().text).unwrap();
-    let plain = parse_v2(&pack("huge_unit", 256).unwrap().text).unwrap();
-    assert!(says_compact(&compact));
-    assert!(!says_compact(&plain));
-    assert_eq!(compact.items, plain.items);
-    assert_eq!(compact.items[0].form.as_deref(), Some("signature"));
-    let refused = pack("`huge_unit`", 1).unwrap_err();
-    assert_eq!(code(&refused), "budget_too_small");
-}
-
-/// The rule reads tier 1's exact count, so the `path` filter that restricts
-/// tier 1 also decides which definitions count.
-#[test]
-fn the_path_filter_decides_which_definitions_count() {
-    let fixture = tempfile::tempdir().unwrap();
-    let root = fixture.path().join("ws");
-    let (_store, mut engine) = setup(&root);
-    for path in ["app/wide.rs", "other/wide.rs"] {
-        engine.replace_source(path, "fn wide() {}\n").unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    for (path, body) in [
+        ("lib/alpha.rs", "mod alpha {\n    fn x() {}\n\n    fn y() {}\n}\n"),
+        ("lib/beta1.rs", "fn beta() {}\n"),
+        ("lib/beta2.rs", "fn beta() {}\n"),
+    ] {
+        engine.replace_source(path, body).unwrap();
     }
     drain(&mut engine);
-    let control = Control::unbounded();
-    let batch = |query: &str, filter: Option<&str>| {
-        engine
-            .search_candidates(query, filter, 10, &control)
-            .unwrap()
-    };
-    let counts = |path: Option<&str>| -> Vec<u64> {
-        let marked = batch("`wide` `absent`", path).marked;
-        marked.iter().map(|run| run.definitions).collect()
-    };
-    assert_eq!(counts(None), [2, 0]);
-    assert_eq!(counts(Some("app")), [1, 0]);
-    assert!(!batch("`wide`", None).compact());
-    assert!(batch("`wide`", Some("app")).compact());
-    assert!(!batch("wide", Some("app")).compact(), "unmarked");
+    let (batch, packed, parsed) = context_at(&engine, "alpha beta", 2048);
+    assert!(batch.anchors.is_empty());
+    let tier_one: Vec<&str> = batch
+        .items
+        .iter()
+        .filter(|item| item.tier == 1)
+        .map(|item| item.label.as_str())
+        .collect();
+    assert_eq!(tier_one, ["mod alpha", "fn beta", "fn beta"]);
+    let header = packed.text.lines().next().unwrap();
+    assert!(!header.contains("anchored") && !header.contains("defs:"), "{header}");
+    assert!(
+        kinds(&parsed)
+            .iter()
+            .all(|kind| matches!(kind, V2Kind::Source)),
+        "{}",
+        packed.text
+    );
 }
 
-/// Context over the 007 merge of `roots`: the merged batch's compactness and
-/// the packed response, parsed.
-fn merged_context(roots: &[(&str, Engine)], query: &str) -> (bool, V2Response) {
+/// Context over the 007 merge of `roots`, packed at 2048 tokens.
+fn merged_context(roots: &[(&str, Engine)], query: &str) -> (CandidateBatch, V2Response) {
     let control = Control::unbounded();
     let mut batches = Vec::new();
     let mut headers = Vec::new();
@@ -2438,11 +2874,10 @@ fn merged_context(roots: &[(&str, Engine)], query: &str) -> (bool, V2Response) {
         let batch = engine
             .context_candidates(query, Strategy::Search, &control)
             .unwrap();
-        let revision = batch.freshness.source_revision;
         headers.push(RootHeader {
             alias: (*alias).to_owned(),
             label: (*alias).to_owned(),
-            serving: Some((revision, "complete".to_owned(), 0)),
+            serving: Some((batch.freshness.source_revision, "complete".to_owned(), 0)),
             coverage: None,
         });
         batches.push(RootBatch {
@@ -2451,46 +2886,61 @@ fn merged_context(roots: &[(&str, Engine)], query: &str) -> (bool, V2Response) {
         });
     }
     let merged = merge_context(&batches);
-    let budget = Budget::request(2048);
-    let packed = response::pack_context_roots(&merged, &headers, budget, &stdout_bytes);
-    let text = packed.unwrap().text;
-    (merged.compact(), parse_v2(&text).unwrap())
+    let packed =
+        response::pack_context_roots(&merged, &headers, Budget::request(2048), &stdout_bytes)
+            .unwrap();
+    let parsed = parse_v2(&packed.text).unwrap_or_else(|e| panic!("{e}\n{}", packed.text));
+    (merged, parsed)
 }
 
-/// A multi-root run's count is summed over the merged roots: a name defined
-/// once in each of two roots is not unique, while one defined in a single
-/// root is.
+/// 007: an anchor's definitions are summed over the merged roots, and the
+/// merged window orders by the tuple, then root order.
 #[test]
-fn multi_root_compactness_sums_each_marked_run_over_the_roots() {
+fn multi_root_windows_sum_counts_and_order_by_tuple_then_root() {
     let fixture = tempfile::tempdir().unwrap();
     let mut stores = Vec::new();
     let mut roots = Vec::new();
-    for (alias, body) in [
-        ("primary", "fn shared_name() {}\n\nfn only_here() {}\n"),
-        ("ref1", "fn shared_name() {}\n"),
+    for (alias, files) in [
+        (
+            "primary",
+            [
+                ("src/lib.rs", "fn shared_name() {}\n"),
+                ("tests/t.rs", "fn ranked_one() {}\n"),
+            ],
+        ),
+        (
+            "ref1",
+            [
+                ("src/lib.rs", "fn shared_name() {}\n"),
+                ("src/r.rs", "fn ranked_one() {}\n"),
+            ],
+        ),
     ] {
         let (store, mut engine) = setup(&fixture.path().join(alias));
-        engine.replace_source("src/lib.rs", body).unwrap();
+        for (path, body) in files {
+            engine.replace_source(path, body).unwrap();
+        }
         drain(&mut engine);
         stores.push(store);
         roots.push((alias, engine));
     }
-    let control = Control::unbounded();
     for (alias, engine) in &roots {
-        let alone = engine
-            .context_candidates("`shared_name`", Strategy::Search, &control)
-            .unwrap();
-        assert!(alone.compact(), "{alias} alone defines it once");
+        let alone = &windows(engine, "`shared_name`")[0];
+        assert!(alone.resolved(), "{alias} alone defines it once");
     }
-    let (compact, parsed) = merged_context(&roots, "`shared_name`");
-    assert!(!compact);
-    assert!(!says_compact(&parsed));
-    assert_eq!(kinds(&parsed)[..2], [V2Kind::Source, V2Kind::Source]);
-
-    let (compact, parsed) = merged_context(&roots, "`only_here`");
-    assert!(compact);
-    assert!(says_compact(&parsed));
-    assert_eq!(parsed.items[0].label.as_deref(), Some("fn only_here"));
+    let ws16 = |engine: &Engine| engine.workspace_id().unwrap()[..16].to_owned();
+    let (merged, parsed) = merged_context(&roots, "`shared_name`");
+    assert_eq!(merged.anchors[0].definitions, 2);
+    assert!(!merged.anchors[0].resolved());
+    assert!(says(&parsed, "defs:2") && says(&parsed, "anchored"));
+    assert_eq!(kinds(&parsed), [V2Kind::Source, V2Kind::Source]);
+    assert!(parsed.items[0].handle.ends_with(&ws16(&roots[0].1)));
+    assert!(parsed.items[1].handle.ends_with(&ws16(&roots[1].1)));
+    // The reference's source definition beats the primary's test one.
+    let (merged, parsed) = merged_context(&roots, "`ranked_one`");
+    assert!(merged.anchors[0].resolved());
+    assert_eq!(kinds(&parsed), [V2Kind::Source, V2Kind::Locator]);
+    assert!(parsed.items[0].handle.ends_with(&ws16(&roots[1].1)));
 }
 
 // ---------------------------------------------------------------------------

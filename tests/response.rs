@@ -689,13 +689,11 @@ fn v2_context_packs_in_order_with_exact_counts_and_quoted_bodies() {
             }],
         })
         .unwrap();
+    // An anchor-less query: an anchored context has no edge lines
+    // (context-v2 § Anchored context).
     let outcome = fx
         .engine
-        .context_candidates(
-            "no_lf_probe callers",
-            Strategy::Graph,
-            &Control::unbounded(),
-        )
+        .context_candidates("no lf probe callers", Strategy::Graph, &Control::unbounded())
         .unwrap();
     let packed = response::pack_context(&outcome, Budget::request(32768), CLI).unwrap();
     let parsed = assert_v2_success(&packed, 32768, "context");
@@ -827,10 +825,12 @@ fn graph_items_follow_the_first_source_and_outrank_later_sources() {
             }],
         })
         .unwrap();
+    // An anchor-less query: an anchored context has no edge lines
+    // (context-v2 § Anchored context).
     let outcome = fx
         .engine
         .context_candidates(
-            "references to parse_record",
+            "references to parse record",
             Strategy::Auto,
             &Control::unbounded(),
         )

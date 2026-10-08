@@ -2915,15 +2915,16 @@ fn three_locator_lines_follow_the_two_tier_order_byte_exact() {
     );
     let query = "alpha_one alpha_two alpha_three";
     let state = graph.compose(query).unwrap();
-    // Each run has one definition, so tier 1 orders them by run text
-    // (context-v2 § Two-tier query, 2026-10-06).
+    // Each name is an anchor with one definition, so tier 1 lists the
+    // definitions in anchor order, which is the query order (context-v2
+    // § Anchors and qualifiers, § Resolver order, 001 T007).
     assert_eq!(
         state,
         "alpha_one alpha_two alpha_three\n\
          graph: complete\n\
          src/a.rs fn alpha_one\n\
-         src/c.rs fn alpha_three\n\
-         src/b.rs fn alpha_two"
+         src/b.rs fn alpha_two\n\
+         src/c.rs fn alpha_three"
     );
     assert!(!state.ends_with('\n'), "no trailing LF");
     // Composition is deterministic.
@@ -2951,15 +2952,17 @@ fn at_most_three_locator_lines_are_named() {
     let state = graph
         .compose("alpha_one alpha_two alpha_three alpha_four")
         .unwrap();
+    // Four anchors in query order and three locator lines: the fourth
+    // anchor's definition is not named.
     assert_eq!(
         state,
         "alpha_one alpha_two alpha_three alpha_four\n\
          graph: complete\n\
-         src/d.rs fn alpha_four\n\
          src/a.rs fn alpha_one\n\
+         src/b.rs fn alpha_two\n\
          src/c.rs fn alpha_three"
     );
-    assert!(!state.contains("src/b.rs"), "the fourth unit is not named");
+    assert!(!state.contains("src/d.rs"), "the fourth unit is not named");
 }
 
 #[test]

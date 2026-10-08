@@ -480,9 +480,12 @@ pub fn pending_value(dir: &Path, key: &str) -> Option<String> {
 pub enum V2Kind {
     /// An item line followed by a fenced body (context and retrieve).
     Source,
-    /// A search locator line, `<handle> L<line>[ <label>]: <excerpt>` (also a
-    /// compact context's pointer to a source item).
+    /// A search locator line, `<handle> L<line>[ <label>]: <excerpt>` (also an
+    /// anchored context's directory line).
     Locator,
+    /// An anchored definition's `[address]` form: its item line alone,
+    /// `<handle> L<a>-<b>[ <label>] [address]`, with no fence.
+    Address,
     /// A graph item line, `edge <text>`.
     Edge,
     /// A references item line, `<handle> L<line> in <label>` (005).
@@ -496,10 +499,11 @@ pub struct V2Item {
     pub kind: V2Kind,
     /// Empty for edges.
     pub handle: String,
-    /// `L<a>-<b>` for fenced items, `L<line>` for locators.
+    /// `L<a>-<b>` for fenced and address items, `L<line>` for locators.
     pub lines: Option<String>,
     pub label: Option<String>,
-    /// `signature` or `outline` for non-verbatim forms.
+    /// `signature` or `outline` for non-verbatim forms, `address` for an
+    /// address line.
     pub form: Option<String>,
     /// The fence info string.
     pub lang: Option<String>,
@@ -546,7 +550,8 @@ enum V2Tail {
 /// Strict context-v2 parser for tests. Every line ends with LF; line 1 is the
 /// ` · `-joined header naming the operation, which fixes the item grammar:
 /// search has locator lines only; context has fenced items and `edge` lines,
-/// plus locator lines when its header carries the `compact` segment;
+/// plus `[address]` item lines and locator (directory) lines when its header
+/// carries the `anchored` segment;
 /// retrieve has fenced items and may end with `next: <handle>` (a valid
 /// handle). Item lines take precedence because a path may itself begin with
 /// `edge ` or `next: ` (a fenced item is recognized by the opening fence that
@@ -573,9 +578,10 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
         return Err(format!("not a v2 header: {header:?}"));
     };
     let header: Vec<String> = header.split(" · ").map(str::to_owned).collect();
-    // A compact context (context-v2 § Compact context) points with search
-    // locator lines after its definitions; any other context refuses them.
-    let compact = op == "context" && header.iter().any(|segment| segment == "compact");
+    // An anchored context (context-v2 § Anchored context) also carries
+    // `[address]` item lines and directory lines; any other context refuses
+    // them.
+    let anchored = op == "context" && header.iter().any(|segment| segment == "anchored");
     let mut items = Vec::new();
     let mut next = None;
     while pos < text.len() {
@@ -706,7 +712,35 @@ pub fn parse_v2(text: &str) -> Result<V2Response, String> {
             pos = after;
             continue;
         }
-        if compact {
+        if anchored {
+            let mut addresses: Vec<(&str, V2Tail)> = v2_splits(line, false)
+                .into_iter()
+                .filter(|(_, tail)| {
+                    matches!(tail, V2Tail::Fenced { form: Some(form), .. } if form == "address")
+                })
+                .collect();
+            match addresses.len() {
+                0 => {}
+                1 => {
+                    let (handle, tail) = addresses.remove(0);
+                    let V2Tail::Fenced { lines, label, .. } = tail else {
+                        return Err(format!("not an address line: {line:?}"));
+                    };
+                    items.push(V2Item {
+                        kind: V2Kind::Address,
+                        handle: handle.to_owned(),
+                        lines,
+                        label,
+                        form: Some("address".to_owned()),
+                        lang: None,
+                        neural: None,
+                        body: String::new(),
+                    });
+                    pos = after;
+                    continue;
+                }
+                n => return Err(format!("ambiguous item line ({n} readings): {line:?}")),
+            }
             let mut readings = v2_splits(line, true);
             match readings.len() {
                 0 => {}
@@ -780,13 +814,22 @@ fn v2_fenced_item(
 ) -> Result<(V2Item, usize), String> {
     let V2Tail::Fenced {
         lines,
-        label,
-        form,
+        mut label,
+        mut form,
         neural,
     } = tail
     else {
         return Err("not a fenced item".into());
     };
+    // An `[address]` line has no fence: before a fence the tag is label
+    // text of a verbatim item.
+    if form.as_deref() == Some("address") {
+        form = None;
+        label = Some(match label {
+            Some(label) => format!("{label} [address]"),
+            None => "[address]".to_owned(),
+        });
+    }
     let (open, body_start) = v2_line(text, after)?;
     let ticks = open.bytes().take_while(|&b| b == b'`').count();
     if ticks < 3 {
@@ -935,7 +978,11 @@ fn v2_label_and_form(remainder: &str) -> Option<(Option<String>, Option<String>)
         return Some((None, None));
     }
     let rest = remainder.strip_prefix(' ')?;
-    for (tag, form) in [("[signature]", "signature"), ("[outline]", "outline")] {
+    for (tag, form) in [
+        ("[signature]", "signature"),
+        ("[outline]", "outline"),
+        ("[address]", "address"),
+    ] {
         if rest == tag {
             return Some((None, Some(form.to_owned())));
         }

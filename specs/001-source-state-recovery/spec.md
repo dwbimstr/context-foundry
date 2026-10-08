@@ -466,9 +466,9 @@ day, proposed. Measured by G1 before and after.
     anchors: none from an extension, acronym, id, abbreviation or URL;
   - resolver: a qualifier beats exact case, exact case beats role, role beats path; a
     window over more than 64 definitions finds the intended one; resolved selection
-    (1 ladder entry, 8 directory lines) and ambiguous selection (16 entries whose
-    name lines are all shown before any body, then upgraded to verbatim in list order
-    while the budget fits; address lines when the budget runs out) across several
+    (1 ladder entry, 8 directory lines) and ambiguous selection (16 entries: address
+    lines for all first, then signature and then verbatim upgrades in list order while
+    the budget fits; no entry is omitted while any shows a body, across a budget sweep)
     definitions in one file; an anchored context carries no pointer lines;
   - the ladder: the oh-my-pi `ToolSession` shape (a 349-line interface) degrades to
     `[address]` and is never omitted while the remaining budget fits that line;

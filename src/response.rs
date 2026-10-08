@@ -7,8 +7,8 @@
 use crate::error::{FResult, FoundryError};
 use crate::graph::ReferencesOutcome;
 use crate::store::{
-    CandidateBatch, HandleRef, OutlineOutcome, RankedItem, RenderedForm, RetrieveOutcome,
-    SearchOutcome, SourceHandle, TIER_OUTLINE,
+    ANCHOR_LIST, CandidateBatch, HandleRef, OutlineOutcome, RankedItem, RenderedForm,
+    RetrieveOutcome, SearchOutcome, SourceHandle,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -280,9 +280,13 @@ struct HeaderV2<'a> {
     /// only when a configured policy routed an `auto` context; `None` keeps
     /// the baseline header byte-for-byte.
     route: Option<&'a str>,
-    /// The bare `compact` segment: a context packed under the compact rule
-    /// (context-v2 § Compact context); `false` keeps the header unchanged.
-    compact: bool,
+    /// `defs:<n>`: an anchored context with an ambiguous anchor, the largest
+    /// definition count among its ambiguous anchors (context-v2 § Anchored
+    /// context); `None` keeps the header unchanged.
+    defs: Option<u64>,
+    /// The bare `anchored` segment, last: a context packed as the anchored
+    /// selection; `false` keeps the header unchanged.
+    anchored: bool,
 }
 
 impl HeaderV2<'_> {
@@ -341,8 +345,11 @@ impl HeaderV2<'_> {
         if let Some(route) = self.route {
             segments.push(format!("route:{}", single_line(route)));
         }
-        if self.compact {
-            segments.push("compact".into());
+        if let Some(defs) = self.defs {
+            segments.push(format!("defs:{defs}"));
+        }
+        if self.anchored {
+            segments.push("anchored".into());
         }
         let mut line = segments.join(" · ");
         line.push('\n');
@@ -678,9 +685,10 @@ fn refusal_floor_impl(
         graph: (op == "context").then_some("graph_unavailable"),
         semantic: None,
         route: None,
-        // Like `route:`, the hint reserves no room for `compact`: the
-        // worst-case numbers above dominate it.
-        compact: false,
+        // Like `route:`, the hint reserves no room for `defs:` or `anchored`:
+        // the worst-case numbers above dominate them.
+        defs: None,
+        anchored: false,
     };
     let item = handle.map_or_else(String::new, |handle| {
         let widest = HandleRef {
@@ -887,7 +895,8 @@ fn pack_retrieve_impl(
         graph: None,
         semantic: None,
         route: None,
-        compact: false,
+        defs: None,
+        anchored: false,
     };
     let render = |length: usize, shown: usize, limited_by: BudgetLimiter| {
         let split = out.requested.start + length as u64;
@@ -975,7 +984,8 @@ fn pack_retrieve_outline_impl(
         graph: None,
         semantic: None,
         route: None,
-        compact: false,
+        defs: None,
+        anchored: false,
     };
     let handle = out.requested.to_v2();
     let lines = (out.requested.start < out.requested.end).then_some((out.start_line, out.end_line));
@@ -1037,10 +1047,10 @@ pub fn outline_refusal_floor() -> usize {
 }
 
 /// v2 context: the batch's candidates in order (the first unit, graph items,
-/// the remaining units, file outlines), ladder-packed over their forms; a
-/// batch under the compact rule packs its compact selection instead
-/// (context-v2 § Compact context). Without memory this is byte-identical to
-/// the pre-008 rendering.
+/// the remaining units, file outlines), ladder-packed over their forms; an
+/// anchored batch packs its anchored selection instead (context-v2
+/// § Anchored context). Without memory this is byte-identical to the
+/// pre-008 rendering.
 pub fn pack_context(
     batch: &CandidateBatch,
     budget: Budget,
@@ -1088,32 +1098,20 @@ pub fn pack_context_roots_with_memory(
     pack_context_impl(batch, Some(roots), &tail, budget, boundary)
 }
 
-/// At most this many one-line pointers follow a compact context's
-/// definitions (context-v2 § Compact context).
-const COMPACT_POINTERS: usize = 8;
+/// A resolved anchor lists at most this many of its other definitions as
+/// directory lines (context-v2 § Anchored context).
+const DIRECTORY_LINES: usize = 8;
 
-fn pack_context_impl(
-    batch: &CandidateBatch,
-    roots: Option<&[RootHeader]>,
-    tail: &[String],
-    budget: Budget,
-    boundary: ByteMeasure,
-) -> FResult<PackedText> {
-    let compact = batch.compact();
-    let (items, identities): (Vec<Vec<String>>, Vec<Vec<Option<String>>>) = if compact {
-        compact_choices(&batch.items)
-            .into_iter()
-            .map(|forms| forms.into_iter().unzip())
-            .unzip()
-    } else {
-        batch
-            .items
-            .iter()
-            .map(|item| semantic_forms(item).into_iter().unzip())
-            .unzip()
-    };
+/// The context header over a batch's facts; `defs` and `anchored` are the
+/// anchored selection's last segments.
+fn context_header<'a>(
+    batch: &'a CandidateBatch,
+    roots: Option<&'a [RootHeader]>,
+    defs: Option<u64>,
+    anchored: bool,
+) -> HeaderV2<'a> {
     let f = &batch.freshness;
-    let header = HeaderV2 {
+    HeaderV2 {
         op: "context",
         roots,
         revision: f.source_revision,
@@ -1126,8 +1124,27 @@ fn pack_context_impl(
         graph: batch.counters.graph,
         semantic: batch.semantic.as_deref(),
         route: batch.route.as_deref(),
-        compact,
-    };
+        defs,
+        anchored,
+    }
+}
+
+fn pack_context_impl(
+    batch: &CandidateBatch,
+    roots: Option<&[RootHeader]>,
+    tail: &[String],
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    if batch.anchored() {
+        return pack_anchored(batch, roots, tail, budget, boundary);
+    }
+    let (items, identities): (Vec<Vec<String>>, Vec<Vec<Option<String>>>) = batch
+        .items
+        .iter()
+        .map(|item| semantic_forms(item).into_iter().unzip())
+        .unzip();
+    let header = context_header(batch, roots, None, false);
     // 001 § Deduplication: a neural candidate can deliver a full identity a
     // lexical candidate also names (a dense unit's lexical span equal to a
     // lexical hit), in either order; the later delivery merges into the
@@ -1141,57 +1158,287 @@ fn pack_context_impl(
     pack(&items, tail, &header, budget, BYTE_CAP, boundary, claims)
 }
 
-/// The compact selection (context-v2 § Compact context) over the batch's
-/// already ordered candidates: the unique marked definitions — the batch's
-/// tier-1 items, at most one per marked run when the rule holds — in their
-/// usual ladder forms, then at most [`COMPACT_POINTERS`] further candidates
-/// in batch order, each as one line: a source item as its search locator
-/// line, a graph item as its edge line. File outlines and every candidate
-/// past the pointers get no form, so the ladder counts them as omitted
-/// exactly like a candidate that fits no form; they come first, so every
-/// trial header already carries their count.
-fn compact_choices(items: &[RankedItem]) -> Vec<Vec<RenderedChoice>> {
-    let mut definitions: Vec<Vec<RenderedChoice>> = Vec::new();
-    let mut pointers: Vec<Vec<RenderedChoice>> = Vec::new();
-    let mut skipped = 0usize;
-    for item in items {
-        if item.tier == 1 {
-            definitions.push(semantic_forms(item));
-        } else if item.tier != TIER_OUTLINE && pointers.len() < COMPACT_POINTERS {
-            let line = pointer_line(item).map(|text| (text, None));
-            pointers.push(line.into_iter().collect());
-        } else {
-            skipped += 1;
-        }
-    }
-    let mut choices: Vec<Vec<RenderedChoice>> = Vec::with_capacity(items.len());
-    choices.resize_with(skipped, Vec::new);
-    choices.append(&mut definitions);
-    choices.append(&mut pointers);
-    choices
+/// One entry of the anchored selection: its renderings in ladder order —
+/// verbatim, the signature when it differs, then the `[address]` line; or a
+/// directory line alone — and the one it shows.
+struct Slot {
+    forms: Vec<String>,
+    /// An ambiguous entry's second-pass form: its signature, else verbatim.
+    preferred: usize,
+    chosen: Option<usize>,
 }
 
-/// One compact pointer: a source item's search locator line (a dense-only
-/// unit labeled `semantic`, as search labels it) or a graph item's edge
-/// line; `None` for an item with nothing to point with (no verbatim bytes).
-fn pointer_line(item: &RankedItem) -> Option<String> {
-    let Some(handle) = &item.handle else {
-        return item.forms.iter().find_map(|form| match form {
-            RenderedForm::Line(text) => Some(edge_line(text)),
-            _ => None,
-        });
+impl Slot {
+    /// An anchored definition's ladder.
+    fn ladder(entry: &RankedItem) -> Self {
+        let mut forms: Vec<String> = Vec::with_capacity(3);
+        let mut preferred = 0;
+        for (form, (rendered, _)) in entry.forms.iter().zip(ranked_forms(entry)) {
+            if matches!(form, RenderedForm::Signature(_)) {
+                preferred = forms.len();
+            }
+            forms.push(rendered);
+        }
+        forms.extend(address_line(entry));
+        Slot {
+            forms,
+            preferred,
+            chosen: None,
+        }
+    }
+
+    /// A directory line.
+    fn line(line: String) -> Self {
+        Slot {
+            forms: vec![line],
+            preferred: 0,
+            chosen: None,
+        }
+    }
+}
+
+/// The anchored selection (context-v2 § Anchored context), per anchor in
+/// order: a resolved anchor's first definition through the ladder
+/// (verbatim, signature when it differs, `[address]`), then at most
+/// [`DIRECTORY_LINES`] of its other definitions as directory lines; an
+/// ambiguous anchor's first [`ANCHOR_LIST`] definitions in three passes —
+/// each takes its `[address]` line in list order (the first that does not
+/// fit is omitted with every entry after it), then in list order each is
+/// upgraded to its signature (verbatim when it has none), then to verbatim,
+/// when the difference fits. Every decision is a trial of the whole response
+/// with the header updated for it; an entry is omitted only when not even
+/// its last form fits. Nothing else is packed: every other candidate is
+/// counted in `omitted:<n>`. Opt-in 008 memory lines then fill the remaining
+/// budget under their existing rule.
+fn pack_anchored(
+    batch: &CandidateBatch,
+    roots: Option<&[RootHeader]>,
+    tail: &[String],
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    enum Plan {
+        Resolved {
+            first: usize,
+            directory: std::ops::Range<usize>,
+        },
+        Ambiguous(std::ops::Range<usize>),
+    }
+    let mut slots: Vec<Slot> = Vec::new();
+    let mut plans: Vec<Plan> = Vec::new();
+    let mut selected: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut defs: Option<u64> = None;
+    for window in batch.anchors.iter().filter(|window| window.definitions > 0) {
+        let resolved = window.resolved();
+        if !resolved {
+            defs = Some(defs.map_or(window.definitions, |most| most.max(window.definitions)));
+        }
+        let Some(first) = window.entries.first() else {
+            continue;
+        };
+        let listed = if resolved {
+            1 + DIRECTORY_LINES
+        } else {
+            ANCHOR_LIST
+        };
+        selected.extend(
+            window
+                .entries
+                .iter()
+                .take(listed)
+                .filter_map(|entry| entry.handle.as_ref().map(SourceHandle::to_v2)),
+        );
+        if resolved {
+            let at = slots.len();
+            slots.push(Slot::ladder(first));
+            let directory = slots.len();
+            slots.extend(
+                window.entries[1..]
+                    .iter()
+                    .take(DIRECTORY_LINES)
+                    .filter_map(locator_line)
+                    .map(Slot::line),
+            );
+            plans.push(Plan::Resolved {
+                first: at,
+                directory: directory..slots.len(),
+            });
+        } else {
+            let start = slots.len();
+            slots.extend(window.entries.iter().take(ANCHOR_LIST).map(Slot::ladder));
+            plans.push(Plan::Ambiguous(start..slots.len()));
+        }
+    }
+    // Everything outside the selection is omitted from the start.
+    let outside = batch
+        .items
+        .iter()
+        .filter(|item| {
+            item.handle
+                .as_ref()
+                .is_none_or(|handle| !selected.contains(&handle.to_v2()))
+        })
+        .count();
+    let header = context_header(batch, roots, defs, true);
+    let render = |slots: &[Slot], dropped: usize, tail_kept: &[usize], at_budget, limited_by| {
+        let shown = slots.iter().filter(|slot| slot.chosen.is_some()).count();
+        let mut text = header.line(
+            at_budget,
+            limited_by,
+            shown + tail_kept.len(),
+            outside + dropped,
+        );
+        for slot in slots {
+            if let Some(form) = slot.chosen {
+                text.push_str(&slot.forms[form]);
+            }
+        }
+        for &index in tail_kept {
+            text.push_str(&tail[index]);
+        }
+        text
     };
+    let fits = |text: &str| boundary(text) <= BYTE_CAP && count_tokens(text) <= budget.tokens;
+    let trial = |slots: &[Slot], dropped: usize| {
+        fits(&render(
+            slots,
+            dropped,
+            &[],
+            budget.tokens,
+            budget.limited_by,
+        ))
+    };
+    // The first of `order`'s forms that fits, else the entry is omitted.
+    let place = |slots: &mut [Slot], index: usize, order: &[usize], dropped: &mut usize| {
+        for &form in order {
+            slots[index].chosen = Some(form);
+            if trial(slots, *dropped) {
+                return;
+            }
+        }
+        slots[index].chosen = None;
+        *dropped += 1;
+    };
+    let mut dropped = 0usize;
+    for plan in &plans {
+        match plan {
+            Plan::Resolved { first, directory } => {
+                let ladder: Vec<usize> = (0..slots[*first].forms.len()).collect();
+                place(&mut slots, *first, &ladder, &mut dropped);
+                for index in directory.clone() {
+                    place(&mut slots, index, &[0], &mut dropped);
+                }
+            }
+            Plan::Ambiguous(range) => {
+                // Pass 1: every listed entry's address line, in list order.
+                // The first that does not fit is omitted with every entry
+                // after it.
+                let before = dropped;
+                for index in range.clone() {
+                    if dropped > before {
+                        dropped += 1;
+                        continue;
+                    }
+                    let address = slots[index].forms.len() - 1;
+                    place(&mut slots, index, &[address], &mut dropped);
+                }
+                // Pass 2 upgrades to the signature (verbatim when there is
+                // none), pass 3 to verbatim: each in list order when the
+                // difference fits; one that does not keeps its form.
+                for verbatim in [false, true] {
+                    for index in range.clone() {
+                        let Some(previous) = slots[index].chosen else {
+                            continue;
+                        };
+                        let form = if verbatim { 0 } else { slots[index].preferred };
+                        if form < previous {
+                            slots[index].chosen = Some(form);
+                            if !trial(&slots, dropped) {
+                                slots[index].chosen = Some(previous);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // The final header carries the final counts: drop the last shown entry
+    // until the whole response fits.
+    let base_fits = loop {
+        if trial(&slots, dropped) {
+            break true;
+        }
+        match slots.iter_mut().rev().find(|slot| slot.chosen.is_some()) {
+            Some(slot) => {
+                slot.chosen = None;
+                dropped += 1;
+            }
+            None => break false,
+        }
+    };
+    if !base_fits {
+        return Err(too_small(budget.tokens, &|at_budget, limited_by| {
+            header.line(at_budget, limited_by, 0, outside + slots.len())
+        }));
+    }
+    // 008: memory lines fill the remaining budget, as after the ladder.
+    let mut tail_kept: Vec<usize> = Vec::new();
+    for index in 0..tail.len() {
+        tail_kept.push(index);
+        if !fits(&render(
+            &slots,
+            dropped,
+            &tail_kept,
+            budget.tokens,
+            budget.limited_by,
+        )) {
+            tail_kept.pop();
+        }
+    }
+    let text = render(
+        &slots,
+        dropped,
+        &tail_kept,
+        budget.tokens,
+        budget.limited_by,
+    );
+    let tokens = count_tokens(&text);
+    let omitted = outside + dropped;
+    Ok(PackedText {
+        text,
+        tokens,
+        omitted,
+        truncated: omitted > 0,
+    })
+}
+
+/// An anchored definition's `[address]` form: its item line alone, suffixed
+/// ` [address]`, with no fence (context-v2 § Ladder for anchored
+/// definitions).
+fn address_line(item: &RankedItem) -> Option<String> {
+    let handle = item.handle.as_ref()?;
+    let mut line = handle.to_v2();
+    if handle.start < handle.end {
+        line.push_str(&format!(" L{}-{}", item.start_line, item.end_line));
+    }
+    if !item.label.is_empty() {
+        line.push(' ');
+        line.push_str(&single_line(&item.label));
+    }
+    line.push_str(" [address]\n");
+    Some(line)
+}
+
+/// A source item's search locator line (context-v2 § Search locator lines):
+/// an anchored context's directory line. `None` without verbatim bytes.
+fn locator_line(item: &RankedItem) -> Option<String> {
+    let handle = item.handle.as_ref()?;
     let text = item.forms.iter().find_map(|form| match form {
         RenderedForm::Verbatim(text) => Some(text.as_str()),
         _ => None,
     })?;
-    let label = if item.is_dense_only() {
-        "semantic"
-    } else {
-        item.label.as_str()
-    };
     let quote = excerpt(text, item.start_line, item.line);
-    Some(locator(handle, item.line, label, &quote))
+    Some(locator(handle, item.line, &item.label, &quote))
 }
 
 /// v2 search: one locator line per hit, `<handle> L<line> <label>:
@@ -1242,7 +1489,8 @@ fn pack_search_impl(
         graph: None,
         semantic: outcome.semantic.as_deref(),
         route: None,
-        compact: false,
+        defs: None,
+        anchored: false,
     };
     pack(&items, &[], &header, budget, BYTE_CAP, boundary, None)
 }
@@ -1275,7 +1523,8 @@ pub fn pack_memory_search(
         graph: None,
         semantic: None,
         route: None,
-        compact: false,
+        defs: None,
+        anchored: false,
     };
     pack(&items, &[], &header, budget, BYTE_CAP, boundary, None)
 }
@@ -1304,8 +1553,8 @@ const EXCERPT_BYTES: usize = 160;
 
 /// One search locator line (context-v2 § Search locator lines),
 /// `<handle> L<best> <label>: <excerpt>`, where `best` is the delivery
-/// unit's best line and `quote` its [`excerpt`]. Search hits and compact
-/// context pointers share it.
+/// unit's best line and `quote` its [`excerpt`]. Search hits and an
+/// anchored context's directory lines share it.
 fn locator(handle: &SourceHandle, best: u64, label: &str, quote: &str) -> String {
     let label = single_line(label);
     format!("{} L{best} {label}: {quote}\n", handle.to_v2())

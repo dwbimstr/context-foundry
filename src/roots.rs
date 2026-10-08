@@ -14,8 +14,8 @@
 
 use crate::FoundryError;
 use crate::store::{
-    CandidateBatch, CandidateCounters, Hit, MarkedRun, RankedItem, RenderedForm, SearchOutcome,
-    TIER_COMPILER, TIER_GRAPH, TIER_OUTLINE,
+    ANCHOR_LIST, AnchorWindow, CandidateBatch, CandidateCounters, Hit, MAX_ANCHORS, RankedItem,
+    RenderedForm, SearchOutcome, TIER_COMPILER, TIER_GRAPH, TIER_OUTLINE,
 };
 use std::path::{Path, PathBuf};
 
@@ -320,28 +320,42 @@ fn summed_counters(batches: &[RootBatch]) -> CandidateCounters {
     counters
 }
 
-/// Each marked tier-1 run's definitions summed over the merged roots
-/// (context-v2 § Compact context): a name defined once in each of two roots
-/// is not unique, so the merged response is not compact for it.
-fn summed_marked(batches: &[RootBatch]) -> Vec<MarkedRun> {
-    let mut marked: Vec<MarkedRun> = Vec::new();
+/// The merged anchor windows (context-v2 § Resolver order; 007): one per
+/// anchor in anchor order, at most four; each anchor's definitions summed
+/// over the merged roots, and its entries ordered by the resolver tuple,
+/// then root order, then each root's own order — `key_hash` decided only
+/// inside a root — cut to [`ANCHOR_LIST`].
+fn merged_anchors(batches: &[RootBatch]) -> Vec<AnchorWindow> {
+    let mut merged: Vec<AnchorWindow> = Vec::new();
     for root in batches {
-        for run in &root.batch.marked {
-            match marked.iter_mut().find(|known| known.run == run.run) {
+        for window in &root.batch.anchors {
+            match merged.iter_mut().find(|known| known.anchor == window.anchor) {
                 Some(known) => {
-                    known.definitions = known.definitions.saturating_add(run.definitions);
+                    known.definitions = known.definitions.saturating_add(window.definitions);
+                    known.entries.extend(window.entries.iter().cloned());
                 }
-                None => marked.push(run.clone()),
+                None => merged.push(window.clone()),
             }
         }
     }
-    marked
+    merged.sort_by_key(|window| window.order);
+    merged.truncate(MAX_ANCHORS);
+    for window in &mut merged {
+        // Stable: equal tuples keep root order, then each root's order.
+        window
+            .entries
+            .sort_by_key(|entry| entry.resolver.map(|resolver| resolver.key()));
+        window.entries.truncate(ANCHOR_LIST);
+    }
+    merged
 }
 
 /// The merged delivery-unit order over every root's batch:
 ///
-/// 1. tier-1 items from all roots first, by root order, then in each root's
-///    own tier-1 order (context-v2 § Two-tier query: most specific run first,
+/// 1. tier-1 items from all roots first: an anchored query's by anchor, then
+///    the resolver tuple, then root order, then each root's own order
+///    (context-v2 § Resolver order); otherwise by root order, then in each
+///    root's own tier-1 order (§ Two-tier query: most specific run first,
 ///    then path, start within a run);
 /// 2. tier-2 items by reciprocal-rank fusion `1/(60 + rank)`, where `rank` is
 ///    the item's 1-based position in its root's tier-2 list; ties break by
@@ -383,6 +397,15 @@ fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
             }
         }
     }
+    // Stable: an anchored query's tier 1 by anchor and tuple, equal keys (and
+    // an anchor-less tier 1) keeping root order, then each root's order.
+    tier1.sort_by_key(|unit| {
+        let resolver = unit.item.resolver;
+        (
+            resolver.is_none(),
+            resolver.map(|resolver| (resolver.anchor, resolver.key())),
+        )
+    });
     tier2.sort_by(|a, b| {
         b.rrf
             .total_cmp(&a.rrf)
@@ -474,9 +497,9 @@ pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
 /// remaining merged units and the outlines of the first
 /// [`CONTEXT_OUTLINES`] distinct (root, path) files. The lexical units and the
 /// compiler units share ONE [`CONTEXT_UNITS`] bound across all roots, so the
-/// lexical tail yields; a cut sets `candidates_full`. Counters and the marked
-/// runs' definition counts are summed across roots; graph takes the worst
-/// coverage.
+/// lexical tail yields; a cut sets `candidates_full`. Counters are summed
+/// across roots; graph takes the worst coverage; the anchor windows merge as
+/// [`merged_anchors`] describes.
 pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
     let merged = merged_units(batches);
     let mut units: Vec<RankedItem> = merged
@@ -576,7 +599,7 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
         // 013 T003: the policy routes the PRIMARY root only (its store
         // composes the state), with the same scope suffix as semantics.
         route: primary_word(batches[0].batch.route.as_ref(), batches.len()),
-        marked: summed_marked(batches),
+        anchors: merged_anchors(batches),
     }
 }
 
@@ -632,6 +655,7 @@ mod tests {
             label: "fn x".to_owned(),
             lang: None,
             semantic: None,
+            resolver: None,
             forms: vec![RenderedForm::Verbatim("fn x() {}".to_owned())],
         }
     }
@@ -643,7 +667,7 @@ mod tests {
             counters: CandidateCounters::default(),
             semantic: None,
             route: None,
-            marked: Vec::new(),
+            anchors: Vec::new(),
         }
     }
 
@@ -879,5 +903,105 @@ mod tests {
         let merged = merge_context(&[root("primary", 3, 2, 0), root("ref1", 2, 1, 0)]);
         assert_eq!(source_units(&merged), (5, 3));
         assert!(!merged.counters.candidates_full);
+    }
+
+    /// One tier-1 definition of the anchor at `order`, with its tuple.
+    fn definition(path: &str, order: (u8, usize), qualifiers: u64, exact: bool) -> RankedItem {
+        RankedItem {
+            resolver: Some(crate::store::Resolver {
+                anchor: order,
+                qualifiers,
+                exact,
+                role: 0,
+            }),
+            ..unit(1, path, 0)
+        }
+    }
+
+    /// A root whose windows (anchor, order, definitions, entries in the
+    /// root's own order) are also its tier-1 items.
+    fn anchored(alias: &str, windows: Vec<(&str, (u8, usize), u64, Vec<RankedItem>)>) -> RootBatch {
+        let items = windows
+            .iter()
+            .flat_map(|(_, _, _, entries)| entries.clone())
+            .collect();
+        let anchors = windows
+            .into_iter()
+            .map(|(anchor, order, definitions, entries)| AnchorWindow {
+                anchor: anchor.to_owned(),
+                order,
+                definitions,
+                entries,
+            })
+            .collect();
+        RootBatch {
+            alias: alias.to_owned(),
+            batch: CandidateBatch {
+                anchors,
+                ..batch(items)
+            },
+        }
+    }
+
+    /// 007 (context-v2 § Resolver order): an anchor's definitions are summed
+    /// over the roots, and its merged window orders by the tuple, then root
+    /// order, then each root's own order — a root's `key_hash` cut and path
+    /// listing are never compared across roots. Anchors merge in anchor
+    /// order, one taken from a single root included.
+    #[test]
+    fn merged_windows_order_by_tuple_then_root_then_each_roots_order() {
+        let dup = (1, 0);
+        let engine = (3, 20);
+        let roots = || {
+            [
+                anchored(
+                    "primary",
+                    vec![(
+                        "dup",
+                        dup,
+                        70,
+                        vec![
+                            definition("z.rs", dup, 0, true),
+                            definition("a.rs", dup, 0, true),
+                            definition("t.rs", dup, 0, false),
+                        ],
+                    )],
+                ),
+                anchored(
+                    "ref1",
+                    vec![
+                        (
+                            "dup",
+                            dup,
+                            5,
+                            vec![
+                                definition("q.rs", dup, 1, false),
+                                definition("c.rs", dup, 0, true),
+                            ],
+                        ),
+                        ("Engine", engine, 1, vec![definition("e.rs", engine, 0, true)]),
+                    ],
+                ),
+            ]
+        };
+        let merged = merge_context(&roots());
+        let anchors: Vec<(&str, u64)> = merged
+            .anchors
+            .iter()
+            .map(|window| (window.anchor.as_str(), window.definitions))
+            .collect();
+        assert_eq!(anchors, [("dup", 75), ("Engine", 1)]);
+        let paths = |items: &[RankedItem]| -> Vec<String> {
+            items
+                .iter()
+                .map(|item| item.handle.as_ref().unwrap().path.clone())
+                .collect()
+        };
+        let want = ["q.rs", "z.rs", "a.rs", "c.rs", "t.rs"];
+        assert_eq!(paths(&merged.anchors[0].entries), want);
+        // Search's merged tier 1 follows the windows in anchor order.
+        let search = merge_search(&roots(), 10);
+        let hits: Vec<&str> = search.hits.iter().map(|hit| hit.path.as_str()).collect();
+        assert_eq!(hits, ["q.rs", "z.rs", "a.rs", "c.rs", "t.rs", "e.rs"]);
     }
 }

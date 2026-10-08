@@ -754,11 +754,13 @@ async fn identical_graph_rows_in_two_roots_stay_distinct() {
         &[],
     )
     .await;
+    // An anchor-less query: an anchored context has no edge lines
+    // (context-v2 § Anchored context).
     let context = call(
         client.peer(),
         "context",
         Some(serde_json::json!({
-            "query": "graph_seed_port",
+            "query": "graph seed port",
             "strategy": "graph",
             "tokens": 2048
         })),

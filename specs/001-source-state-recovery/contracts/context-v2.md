@@ -8,9 +8,9 @@ decisions and implemented details from T005/T006 review. The 2026-10-06 amendmen
 (owner-approved after the 013 corpus analysis) changes tier-1 run selection and order,
 accepts an MCP `lines` array and makes the empty `lines` refusal name the handle's
 lines; five proposed route keywords were measured and withdrawn (§ Context candidates
-and routing). A second owner-approved 2026-10-06 amendment adds compact context
-(§ Compact context): a context whose marked identifiers each have exactly one
-definition returns them plus at most 8 one-line pointers instead of filling its budget.
+and routing). A second owner-approved 2026-10-06 amendment added compact context,
+replaced by the city map's anchored context (§ City map, 001 T007): a context whose
+query names a defined identifier returns that definition, its namesakes or its doors.
 It replaces [v1](context-v1.md), whose JSON wire is historical at
 `6bb81e6`, and carries forward every still-valid v1 rule. Source/CLI owner:
 [001](../spec.md); MCP adapter owner:
@@ -28,8 +28,8 @@ implementing MCP. Limits are selected engineering bounds, not measured capacity 
 | Outlines, forms ladder, candidate seam, retrieve `view` | 001 T006 | Locally implemented and accepted (r3 SHIP); unreleased |
 | Multi-root identity, `roots`/`root`, per-root header | 007 T001 | Locally implemented and accepted 2026-10-04 (delta SHIP), committed in `cc402e0`; unreleased |
 | Tier-1 marked runs and specificity order, MCP `lines` array, empty-selection message (2026-10-06 amendment) | 001 (amendment) | Accepted locally 2026-10-06 (cross-lab SHIP; gates green), committed in `c3437e6`; route keywords withdrawn after measurement; unreleased |
-| Compact context: trigger, content, `compact` header segment, multi-root count sum (2026-10-06 amendment) | 001 (amendment) | Accepted locally 2026-10-06 (cross-lab SHIP; gates green), committed in `844796c`; replaced by § Anchored context when 001 T007 is accepted; unreleased |
-| City map: roles, definitions and addresses, anchors, resolver, `[address]`, anchored context, doors, languages, parallel indexing (2026-10-07) | 001 T007–T009, 005 T004 | Approved 2026-10-07, revised after cross-lab refutation; proposed |
+| Compact context (2026-10-06 amendment) | 001 (amendment) | Committed in `844796c`; replaced by § Anchored context in 001 T007 |
+| City map: roles, definitions and addresses, anchors, resolver, `[address]`, anchored context, doors, languages, parallel indexing (2026-10-07) | 001 T007–T009, 005 T004 | Approved 2026-10-07, revised after cross-lab refutation. T009 accepted locally 2026-10-08 (`89a8c54`); T007 implemented, under review; T008 and 005 T004 proposed |
 | `foundry references` header segments 12–14, `next: after=<path>#<start>-<end>` cursor; MCP `references`, `index.scip`, compiler graph context | 005 T002, T003 | Locally implemented and accepted (CLI 2026-10-04; MCP and graph context 2026-10-05); unreleased |
 
 ## Identity and reference validation
@@ -254,10 +254,11 @@ the policy routes the primary root only and its word carries `; primary root onl
 when other roots serve, as `semantic:` does. Budget-refusal hints do not reserve room
 for it (the hint header's worst-case numbers dominate).
 
-Header segment amendment, 2026-10-06 (compact context): a context packed under
-§ Compact context adds the bare segment `compact` last, after `route:` when present.
-Every other response is byte-identical to its rendering before this amendment.
-Budget-refusal hints do not reserve room for it, as for `route:`.
+Header segment amendment, city map (001 T007): an anchored context (§ Anchored context)
+ends with `defs:<n>` when an anchor is ambiguous, `doors:<state>` when doors were
+requested (005 T004) and the bare segment `anchored`, after `route:` when present; it
+replaces the 2026-10-06 `compact` segment. Budget-refusal hints do not reserve room for
+them, as for `route:`.
 
 Removed from v1: `format_version`, `tokenizer`, `boundary`, `budget_satisfied`,
 `indexed_snapshot`, `candidate_limit`, per-item `workspace_id`, `strategy` (except the
@@ -335,10 +336,10 @@ multi-root owner and `<text>` is the existing edge rendering
 `<from path>:<line> (<symbol>) --<kind>--> <to path>:<line> (<symbol>) [<evidence>; provider=<provider>@<revision>]`.
 Graph items follow the first source item (§ Context candidates). Retrieve's text view
 ends with `next: <handle>` while bytes of the requested range remain. An empty search
-or context result is the header alone. A compact context (§ Compact context, amended
-2026-10-06) follows its definitions with one-line pointers: search locator lines
-(§ Search locator lines) and `edge` lines; `testkit::parse_v2` accepts a locator line in
-a context only when its header carries `compact`.
+or context result is the header alone. An anchored context (§ Anchored context) lists
+directory lines, which are search locator lines (§ Search locator lines), and
+`[address]` lines; `testkit::parse_v2` accepts a locator line in a context only when
+its header carries `anchored`.
 
 ~~~text
 foundry context · r6 · budget:2048 · shown:3 · omitted:1
@@ -370,9 +371,9 @@ Search shows one line per hit, without fences:
 The handle covers the hit's delivery unit (§ Search documents), `L<line>` is its best
 line (§ Hit materialization) and `<excerpt>` is that line without its LF or CRLF
 terminator and leading whitespace, cut at a UTF-8 boundary to at most 160 bytes with
-`…` appended when cut. A compact context's pointer to a source item is the same line,
-from the same renderer (2026-10-06): the item's delivery-unit handle, best line, label
-(`semantic` for a dense-only unit, as in search) and excerpt.
+`…` appended when cut. An anchored context's directory line is the same line, from the
+same renderer: the item's delivery-unit handle, best line, label (`semantic` for a
+dense-only unit, as in search) and excerpt.
 
 ### Single-line fields
 
@@ -415,24 +416,28 @@ Every other extension is unmapped: no tag, no units, blocks only.
 ### Unit kinds
 
 Rendered kinds are `fn struct enum union trait impl mod macro const static type class
-method interface section block`. Unit nodes map to them by node kind:
+method interface variant section block`. Unit nodes map to them by node kind (the city
+map, 001 T007, added declaration-only Rust trait and extern items, enum members and
+module-level named bindings, because every definition needs an address; G1 found
+their names unanswerable):
 
 | Language | Unit nodes (rendered kind) |
 | --- | --- |
-| Rust | `function_item` (fn), `struct_item` (struct), `enum_item` (enum), `union_item` (union), `trait_item` (trait), `impl_item` (impl), `mod_item` (mod), `macro_definition` (macro), `const_item` (const), `static_item` (static), `type_item` (type) |
-| Python | `function_definition` (fn), `class_definition` (class); a wrapping `decorated_definition` supplies the range |
-| TypeScript, TSX, JavaScript | `function_declaration`, `generator_function_declaration` (fn); `class_declaration` (class); `method_definition` (method); `interface_declaration` (interface); `type_alias_declaration` (type); `enum_declaration` (enum); `lexical_declaration`/`variable_declaration` with exactly one declarator whose value is `arrow_function`/`function_expression` (fn); a wrapping `export_statement` supplies the range |
-| Go | `function_declaration` (fn), `method_declaration` (method), `type_declaration` (type; it has no `name` field, so it renders as an unnamed `type` under the Name rule below) |
-| C, C++ | `function_definition` (fn); `struct_specifier` (struct), `class_specifier` (class), `union_specifier` (union) and `enum_specifier` (enum) that have a body; `namespace_definition` (mod); a wrapping `template_declaration` supplies the range |
-| Java | `class_declaration` (class), `interface_declaration` (interface), `enum_declaration` (enum), `record_declaration` (class), `method_declaration` and `constructor_declaration` (method) |
+| Rust | `function_item` (fn), `function_signature_item` (fn), `struct_item` (struct), `enum_item` (enum), `enum_variant` (variant), `union_item` (union), `trait_item` (trait), `impl_item` (impl), `mod_item` (mod), `macro_definition` (macro), `const_item` (const), `static_item` (static), `type_item` and `associated_type` (type) |
+| Python | `function_definition` (fn), `class_definition` (class); a wrapping `decorated_definition` supplies the range; a module-level `assignment` whose left side is one identifier (static), its `expression_statement` supplying the range |
+| TypeScript, TSX, JavaScript | `function_declaration`, `generator_function_declaration` (fn); `class_declaration` (class); `method_definition` (method); `interface_declaration` (interface); `type_alias_declaration` (type); `enum_declaration` (enum) and each of its members (variant); each declarator of a module-level `lexical_declaration`/`variable_declaration` whose name is an identifier: fn when its value is `arrow_function`/`function_expression`, otherwise const (`const`) or static (`let`, `var`), the declaration supplying the range when it has one declarator; at any depth, as before the city map, a declaration with exactly one declarator whose value is `arrow_function`/`function_expression` (fn); a wrapping `export_statement` supplies the range |
+| Go | `function_declaration` (fn), `method_declaration` (method), `type_spec` and `type_alias` (type), module-level `const_spec` (const) and `var_spec` (static); a declaration with one spec supplies the range |
+| C, C++ | `function_definition` (fn); `struct_specifier` (struct), `class_specifier` (class), `union_specifier` (union) and `enum_specifier` (enum) that have a body, and an enum's `enumerator`s (variant); `namespace_definition` (mod); a wrapping `template_declaration` supplies the range |
+| Java | `class_declaration` (class), `interface_declaration` (interface), `enum_declaration` (enum) and its `enum_constant`s (variant), `record_declaration` (class), `method_declaration` and `constructor_declaration` (method) |
 | Markdown | heading section (section): from a heading to the next heading of equal or lower level number (equal or higher rank), or EOF; subsections are children; headings inside code fences do not count |
 
 Name: the `name` field; for C/C++ the innermost identifier of the declarator chain,
-including through parenthesized declarators; for a Rust `impl` the `type` field's text;
-for Markdown the heading text with surrounding whitespace trimmed, cut at a UTF-8
-boundary to at most 120 bytes. A unit with no such field is unnamed (accepted
-limitation: Go type declarations; changing it needs a contract amendment and a
-ranking test). The qualified name joins ancestor unit names and the name with `::`
+including through parenthesized declarators; for a Rust `impl` the `type` field's text
+(an `impl` carries no `def_name`, § Definitions and addresses); for a TypeScript enum
+member its property name; for a declarator, assignment or Go spec its identifier; for
+Markdown the heading text with surrounding whitespace trimmed, cut at a UTF-8
+boundary to at most 120 bytes. Struct and class fields stay non-units (outline
+members). The qualified name joins ancestor unit names and the name with `::`
 (rust, cpp) or `.` (all others). When it exceeds 256 bytes it keeps its last 256
 bytes, starting at the first UTF-8 boundary at or after that point, so the unit's own
 name and its nearest ancestors survive; it carries no cut marker. It is built from the
@@ -519,9 +524,9 @@ Tantivy schema v2:
   boundaries; lowercased; length ≥ 2.
 
 Definition documents are those whose delivery unit is a programming-language unit
-(not a Markdown section or block): a leaf's document, or each residual of a
-container, carries that unit's `def_name` (until 001 T007: then only the document
-holding the unit's name node, § City map). Source bytes are not stored in Tantivy;
+(not a Markdown section or block). Since 001 T007 exactly one document per definition
+carries its `def_name`: the one holding the unit's name node (§ Definitions and
+addresses). Source bytes are not stored in Tantivy;
 hits reconstruct verified source from `CHUNKS`.
 
 ### Two-tier query
@@ -536,8 +541,9 @@ closer is literal text, and scanning resumes after it.
 when the query has at least one, otherwise all runs, lowercased and deduplicated; only
 the first 32 distinct runs by first appearance are used. Each run's count is the exact
 number of its definitions (documents whose `def_name` equals the run) under tier 1's
-own restriction (memory documents excluded, the `path` filter's `dir` term); each
-marked run's count, zero included, also decides § Compact context. Runs are
+own restriction (memory documents excluded, the `path` filter's `dir` term). This
+rule applies to queries without anchors; a query with anchors uses its anchor windows
+(§ Resolver order). Runs are
 ordered by count ascending, then run text ascending. Walking that order, each run
 contributes its definitions, smallest `key_hash` first
 (`TopDocs::with_limit(64).tweak_score(|reader| move |doc, _| Reverse(key_hash))`), up to
@@ -572,11 +578,11 @@ draws its units from this same materialized ranking.
 
 ### Index version gate
 
-When 001 T007 is accepted, the value becomes `"4"` (§ City map), and every later change
-to search-document content bumps it again.
-
-META key `search_schema = "3"` (it was `"2"` before the 2026-10-04 leading-run
-amendment changed search-document ranges) is written in the store-initialization transaction for
+The value is `"4"` since 001 T007 (§ City map: one definition document per unit and
+the § Definitions and addresses fields); every later change to search-document
+content bumps it again. Before it, META key `search_schema = "3"` (it was `"2"` before
+the 2026-10-04 leading-run amendment changed search-document ranges). The key is
+written in the store-initialization transaction for
 new stores and, for rebuilds, in the same authoritative transaction that clears
 `search_rebuild_required` after a successful commit/reload with an empty pending table.
 Open also checks the actual Tantivy field set. A missing or other value, or a field
@@ -598,12 +604,17 @@ bytes. It is an independent implementation; the design reference is recorded in 
 - Mandatory kept lines: every unit's signature lines (so an ancestor's multi-line
   signature stays visible); a body's closing line when its closing delimiter (`}`,
   `)` or `]`) has only whitespace before it on its line; and every line of a
-  declaration-only member. Declaration-only members stay non-units, so ranking is
-  unchanged: Rust `function_signature_item` and `associated_type`; Go `method_elem`;
+  declaration-only member. Declaration-only members stay non-units: Go `method_elem`;
   TypeScript/TSX `method_signature`, `property_signature`, `abstract_method_signature`,
   `call_signature`, `construct_signature` and `index_signature`; C/C++ `declaration`
-  and `field_declaration` with a function declarator. A member takes the range of its
-  directly enclosing wrapper (a C++ `template` keeps its parameter lines).
+  and `field_declaration` with a function declarator. Rust trait and `extern`-block
+  declarations are units since the city map (001 T007, 2026-10-08): a
+  `function_signature_item` (a trait's required method, a foreign or intrinsic
+  function), an `associated_type`, an associated `const` without a value and a foreign
+  `static` are the only place their names are declared, so § Definitions and addresses
+  needs them (G1: 27 of 44 sampled definition failures were such declarations). A
+  member takes the range of its directly enclosing wrapper (a C++ `template` keeps its
+  parameter lines).
 - Elidable spans are maximal runs of non-mandatory lines, so every mandatory line
   splits them: body interiors of leaf units and container gaps (container interior
   lines outside member units), each at least 4 lines; Markdown section-body runs of
@@ -682,11 +693,13 @@ query, strategy, control) -> FResult<CandidateBatch>` and settles the shared typ
 - `CandidateCounters { stale, capped, candidates_full, truncated, graph }`, where
   `graph` is `ok`, `graph_unavailable`, `graph_stale` or `graph_invalid` when the
   strategy resolved to graph.
-- `CandidateBatch::marked` (2026-10-06): one `MarkedRun { run, definitions }` per marked
-  tier-1 run of the query, in order of first appearance, carrying tier 1's exact count
-  under its own restriction (§ Two-tier query); empty for an unmarked query. Search
-  ignores it. A 007 merge sums each run's count over the merged roots, and
-  `CandidateBatch::compact()` is the § Compact context trigger the packer applies.
+- `CandidateBatch` anchor windows (city map, 001 T007): one `AnchorWindow` per anchor
+  of the query (§ Anchors and qualifiers), in anchor order, carrying the anchor's exact
+  definition count under tier 1's restriction and its window entries in resolver order
+  (§ Resolver order); empty for a query without anchors. Search orders its anchored
+  locator lines by them. A 007 merge sums each anchor's count over the merged roots and
+  merges entries by tuple, then root order, then each root's order;
+  `CandidateBatch::anchored()` tells the packer to apply § Anchored context.
 
 The `tokens` range (1..32768) is validated at the boundaries — CLI before opening the
 store, MCP in its argument parser — so `context_candidates` takes no budget.
@@ -712,9 +725,8 @@ Context candidates, in order:
 
 v1's `following_chunks` candidates are removed.
 
-Compact selection (§ Compact context, 2026-10-06) happens at packing, over this already
-ordered list; this order, routing, graph expansion and 013's state composition do not
-change.
+Anchored selection (§ Anchored context) happens at packing, over this already ordered
+list; this order, routing, graph expansion and 013's state composition do not change.
 
 For `auto`, ASCII-lowercase the query and tokenize maximal runs of ASCII letters,
 digits or `_`. Any whole token in `{calls,caller,callers,depends,impact,dependency,
@@ -756,7 +768,7 @@ budget and the byte cap; otherwise omit the candidate and count it. After the pa
 render the final header; if the final rendering no longer fits, remove the last-added
 items, counting them as omitted, until it fits. A fitting first unit precedes graph
 items: the graph-first starvation rule. Search packs its locator lines the same way, and
-a compact context (§ Compact context) its compact selection.
+an anchored context (§ Anchored context) its anchored selection.
 
 Source bytes are never rewritten or summarized. The only non-verbatim forms are the
 deterministic outlines above, which keep every shown line verbatim and mark each elided
@@ -766,54 +778,13 @@ advertised as a mathematical token minimum.
 
 ### Compact context
 
-When 001 T007 is accepted, § Anchored context replaces this section, and the header
-word `compact` becomes `anchored`.
-
-Amended 2026-10-06 (owner-approved). Without this rule every `context` fills its budget:
-on the rust-lang/rust checker tasks responses averaged about 2,015 of 2,048 o200k tokens
-even when the answer was one small definition. An agent host re-sends every delivered
-token on each later turn, while a missed answer costs about one extra turn (about
-12.4–13k tokens); a measured run at a 512-token budget kept 56–58% of the definition
-successes at about 480 tokens. The owner chose a deterministic rule first.
-
-**Trigger.** A `context` (CLI and MCP, every strategy, single- or multi-root) is compact
-when its query has at least one marked tier-1 run (§ Two-tier query), at least one
-marked run has exactly one definition, and no marked run has more than one. The counts
-are tier 1's exact counts under its own restriction: memory documents excluded and,
-where the caller passes one, the `path` filter's `dir` term (`context` itself takes no
-`path`). They count search documents, so a definition split into several (a container's
-residual pieces, a region over 8192 bytes) is never unique. A marked run without
-definitions neither triggers nor blocks the rule; an unmarked query is never compact.
-In a multi-root owner ([007](../../007-multi-workspace-context/spec.md)) a run's count
-is the sum over the roots the response merges, so a name defined once in each of two
-roots is not unique. `search` and `retrieve` are unchanged.
-
-**Content.** The ladder (§ Ladder packing) runs over this selection of the already
-ordered batch:
-
-1. the unique definitions — the batch's tier-1 items, which under the trigger are at
-   most one per marked run — in tier-1 order (the merged tier-1 order in a multi-root
-   owner), each in its first form that fits, as for any candidate (verbatim, else
-   signature; a neural item keeps the 009 ladder);
-2. then at most 8 further candidates in context order (§ Context candidates and
-   routing: graph items and compiler units, then the remaining lexical or semantic
-   units), each as one line: a source item as its search locator line (§ Search locator
-   lines), a graph item as its `edge` line. File outlines are skipped.
-
-Every other candidate — the file outlines and everything past the eighth pointer — is
-omitted and counted in `omitted:<n>`. The budget stays an upper bound: a candidate that
-does not fit is omitted, a budget below the header is `budget_too_small`, and compact
-mode never adds candidates to fill the budget. A definition the final read drops is
-counted in `stale:<n>` as before, and the response stays compact. Opt-in 008 memory
-lines follow the pointers under their existing rule.
-
-**Header.** A compact response's header ends with the bare segment `compact` (§ Header
-line); every other response is byte-identical to its rendering before this amendment.
-
-**Order of operations.** Selection happens at packing, over the already ordered batch:
-ranking, routing, graph expansion and 013's state composition are unchanged. The batch
-carries each marked run's count (`CandidateBatch::marked`, § Candidate seam); 007
-merges batches, summing those counts, and never packed responses.
+Replaced by § Anchored context in 001 T007 (2026-10-08). The 2026-10-06 rule returned
+a context's uniquely defined marked identifiers plus at most 8 one-line pointers
+instead of filling the budget (committed in `844796c`); its trigger, `compact` header
+segment and `CandidateBatch::marked` seam were removed. Its motivation stands: on the
+rust-lang/rust checker tasks every context filled about 2,015 of 2,048 o200k tokens
+even when the answer was one small definition, and an agent host re-sends every
+delivered token on each later turn.
 
 ### Retrieve views
 
@@ -873,12 +844,11 @@ losing on `search`).
 A codebase is a city: every definition has an address; a query names a place; the
 answer is that building, a short directory of buildings that share the name, or the
 building's doors. Everything here is built during ordinary indexing: no model, no
-compiler run, no configuration file is read for it, and nothing is executed. When
-accepted, § Anchored context replaces § Compact context (its header word `compact`
-becomes `anchored`), § Doors replaces the path-seeded graph expansion and the graph
-keyword routing of § Context candidates and routing, and search schema `"4"` replaces
-`"3"` in § Index version gate. Every later change to what a search document contains
-bumps the schema again.
+compiler run, no configuration file is read for it, and nothing is executed. § Anchored
+context replaced § Compact context and search schema `"4"` replaced `"3"` in § Index
+version gate (001 T007); when 005 T004 is accepted, § Doors replaces the path-seeded
+graph expansion and the graph keyword routing of § Context candidates and routing.
+Every later change to what a search document contains bumps the schema again.
 
 ### Roles
 
@@ -917,7 +887,7 @@ that extends a type defined elsewhere (a Rust `impl` block, a Swift `extension`)
 container, not a definition of that type: it carries no `def_name`, and its members'
 addresses keep the type as a qualifier (otherwise `struct Foo` and each `impl Foo`
 would tie in § Resolver order and no Rust type with an impl could resolve). Counts in
-§ Two-tier query and § Compact context are therefore definitions, not documents.
+§ Two-tier query and § Resolver order are therefore definitions, not documents.
 Search schema `"4"` adds:
 
 | Field | Options | Content |
@@ -956,8 +926,12 @@ in all:
 3. unmarked capitalized runs other than the query's first word that have an exact-case
    definition (`where is the Engine struct`).
 
-Unmarked, these never anchor: all-uppercase runs without `_` (`MCP`, `WAL`), runs of
-letters then digits (`v2`, `T002`, `utf8`), single letters, `e.g.`/`i.e.` and URLs.
+Unmarked, these lone runs never anchor: all-uppercase runs without `_` (`MCP`, `WAL`),
+runs of letters then digits (`v2`, `T002`, `utf8`), single letters, `e.g.`/`i.e.` and
+URLs; the name of a `::` or `->` chain anchors regardless (`a::b`). An anchor that
+repeats an earlier one ignoring ASCII case is dropped (first appearance wins). In a
+multi-root owner, group 3's exact-case test is made per root, and the merged anchors
+are the union by text in group and position order, at most four.
 **Qualifiers** are chain qualifiers, path segments and marked runs that are not
 anchors, lowercased; plain unmarked words are never qualifiers. When a query has
 anchors, its tier-1 runs are its anchors; otherwise the 2026-10-06 rule stands.
@@ -995,21 +969,24 @@ already ordered batch, is:
 
 1. per anchor, in order: when resolved, its first definition through the ladder above,
    then its other definitions as directory lines (their search locator lines), at most
-   8; when ambiguous, the first 16 of its window in two passes: first each takes its
-   signature form (verbatim when it has no shorter signature) or, when the remaining
-   budget cannot fit that, its address line, so every listed candidate's name line is
-   shown; then, in list order, an entry is upgraded to verbatim while the remaining
-   budget fits the difference. An ambiguous name has no single answer, so no body is
-   shown at the expense of another candidate's name line, and bodies still fill the
+   8; when ambiguous, the first 16 of its window in three passes: first every entry
+   takes its address line (an entry that cannot fit it is omitted, and so is every
+   later one), so every listed candidate is shown; then, in list order, each entry is
+   upgraded to its signature form (verbatim when it has no shorter signature) when the
+   remaining budget fits the difference; then, in list order, to verbatim the same way
+   (an entry that does not fit keeps its form and the next is tried). An ambiguous name
+   has no single answer, so no body is shown at the expense of another candidate, and
+   bodies still fill the
    budget as today's context does (2026-10-07, after refutation: three expanded bodies
    followed by directory lines lose today's G1 ambiguous-bucket passes, and signatures
    alone lose its bodies). The materialization cap of 4 per file and the 32-unit
    context limit do not apply to these entries;
 2. then the door lines of § Doors when they apply;
-3. nothing else. Everything else is omitted and counted in `omitted:<n>`; `search`
-   lists it. The pointers of § Compact context are not part of an anchored context:
-   the city map answers with the named definition, its namesakes or its doors (G1:
-   with pointers, a resolved definition costs more tokens than grep's two calls).
+3. nothing else, except opt-in 008 memory lines under their existing rule. Everything
+   else is omitted and counted in `omitted:<n>`; `search` lists it. The pointers of the
+   replaced compact context are not part of an anchored context: the city map answers
+   with the named definition, its namesakes or its doors (G1: with pointers, a resolved
+   definition costs more tokens than grep's two calls).
 
 The header's last segments are, in order, `defs:<n>` (when an anchor is ambiguous; the
 largest count among them), `doors:<state>` (when doors were requested) and `anchored`;
@@ -1055,8 +1032,8 @@ directory for `index`, `mod`, `lib` and `__init__` stems). Approximate doors dra
 the delivery units, other than `D`'s own, whose `ident` contains `D`'s name, taken in
 the order: importing files first, then role, path and start; the first 256 are
 examined, and a candidate becomes a door only where its line contains `D`'s name
-exactly as written (checked on the line in the final read). Aliased imports,
-re-exports, `tsconfig.json` paths and package `exports` are not followed; Rust glob
+exactly as written (checked on the line in the final read). Aliased imports (whose key
+is the alias), re-exports, `tsconfig.json` paths and package `exports` are not followed; Rust glob
 imports (`use m::*`) give no key; a Go file's module key is its directory (its package),
 not its stem; a C#, F# or VB namespace in `using`/`open`/`Imports` matches only when its
 last segment equals a file stem or container name; occurrences in comments and strings
