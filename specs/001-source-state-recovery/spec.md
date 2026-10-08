@@ -514,8 +514,9 @@ merged 2026-10-08 (`3e0a117`; [validation](../../docs/validation.md)).
 ### T009 — Parallel indexing
 
 **Status:** approved 2026-10-07 (owner), revised after refutation; implemented and
-accepted locally 2026-10-08 (`89a8c54`, [validation](../../docs/validation.md)); the
-timing record waits for the measurement batch.
+accepted locally 2026-10-08 (`89a8c54`, [validation](../../docs/validation.md)). Its
+timing record moved to the [measurement handoff](../../docs/measurement-handoff.md)
+(owner, 2026-10-08); it is a record, not an acceptance condition.
 
 - **Depends:** T005. **Scope:** `src/store.rs` refresh (bounded parse fan-out ahead of
   the one Tantivy writer), `tests/recovery.rs` and `tests/core.rs`.
@@ -529,8 +530,8 @@ timing record waits for the measurement batch.
   not yet added (tested at a bound reduced through a test-only hook, so the test stays
   fast); G1 results (§ G1) on a store rebuilt by the T009 binary are identical to the
   baseline's. Index time and peak memory for oh-my-pi (8,436 files, 65 s
-  single-threaded on 2026-10-07) and rust-lang/rust are recorded before and after in
-  the measurement batch (timing waits for signing under the measurement freeze).
+  single-threaded on 2026-10-07) and rust-lang/rust before and after are recorded by
+  the [measurement handoff](../../docs/measurement-handoff.md).
 
 ### G1 — city-map measurement
 

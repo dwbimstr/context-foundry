@@ -40,5 +40,8 @@ The current repository has no release. A local `v0.1.0` tag and artifact made on
 when the owner adopted this policy; their checklist record remains in
 [validation](validation.md) as history. The owner selected the destination on
 2026-10-08: a GitHub release on `dwbimstr/context-foundry` carrying the macOS arm64
-package, the source archive and `SHA256SUMS`, after Developer ID signing and the
-measurement batch; the tag and publication still need the owner's go-ahead.
+package, the source archive and `SHA256SUMS`, after Developer ID signing; the tag and
+publication still need the owner's go-ahead. The remaining real-model and timing
+measurements moved to the [measurement handoff](measurement-handoff.md); while it is
+open the package is built without `--with-semantic` and advertises no semantic
+retrieval, as with learning while 013 is frozen off.

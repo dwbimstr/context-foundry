@@ -1046,7 +1046,11 @@ candidate files under every namesake. A site appears at most once in a response.
 tie group is decided from the anchor's window as collected, before the final read
 validates it (as a resolved target is), so a stale entry never lets a lower one in.
 Collecting approximate candidates checks the request's cancellation as documents are
-read. The header says `doors:each` when at least one entry has exact doors.
+read. The header says `doors:each` when at least one entry has exact doors. When the
+final read drops entries so that one definition of the tie group remains, it shows
+through the resolved ladder with its own group right after it and before any
+directory lines (`doors:each`, no `defs:`); a group, with its `⋯` line, is kept or
+omitted whole, also when the final fit removes items.
 
 **Exact doors.** When a selected compiler scope (005) is current for `D`'s path, the
 symbols are those of the definition occurrences whose range equals `D`'s stored

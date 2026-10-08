@@ -7,9 +7,10 @@ only (see validation). T003's real lifecycle exercise passed its predeclared bou
 the measurement phase (2026-10-06); package acceptance needs signing. T004 (address
 cards on a llama.cpp worker, city map) was approved on 2026-10-07 and implemented and
 merged on 2026-10-08 (`fd01489`, cross-lab SHIP, gates green); it replaces the MLX worker
-and the fused merge. The owner lifted the measurement freeze for G2 alone on 2026-10-08
-(run on development bundles, with a Nemotron GGUF converted offline from the local
-safetensors); its other real-model checks run in the measurement batch after signing.
+and the fused merge. Its real-model and timing checks (G2, G1 with a profile, vector
+parity, the installed artifact, preparation cost) moved to the
+[measurement handoff](../../docs/measurement-handoff.md) (owner, 2026-10-08); until
+they pass, semantic retrieval stays off by default and a release advertises none.
 D001 recorded 2026-09-29; its chosen values were
 recorded 2026-10-03 (below). Reactivated for planning by the owner's preparation-cost
 concern. Dependencies:
@@ -122,7 +123,7 @@ prepare the corpus from this smoke.
 | Query-embedding ceiling | min(1500 ms, remaining read deadline) |
 | Candidate merge | 001 tier-1 exact definitions first, then reciprocal-rank fusion with k = 60 over the lexical top 256 and the dense top 64 |
 | Vector encoding | cache stays float32 (settled); USearch index `ScalarKind::F16` |
-| Cache cap | 2 GiB per workspace by default |
+| Cache cap | 2 GiB per workspace by default; an operator sets another per run with `semantic prepare --cache-cap BYTES` or `mcp --semantic-cache-cap BYTES` (owner, 2026-10-08: T004's one card per definition gives the full rust-lang/rust store 332,732 cards, 2.74 GB at 2,048 dimensions), recorded in the state row and reported by `status` |
 | Matryoshka (MRL) prefix slicing | a later explicit profile change, not in this tranche |
 
 The model family/checkpoint choice is resolved by the owner. After 001 D001, pin
@@ -392,8 +393,9 @@ cache entries under their original function/input keys. Rollback restores the pr
 configuration and rebuilds that profile's derived index from retained cache; no instant
 rollback or zero calls for inputs never cached is promised. Old cached inputs
 may support branch reversions until explicit cleanup. At the disk cap (2 GiB of cache
-per workspace by default), preparation stops with `cache_full`, without a silent
-eviction/recompute cycle.
+per workspace by default, or the operator's per-run setting), preparation stops with
+`cache_full`, without a silent eviction/recompute cycle; a later run under a larger
+cap resumes from the kept rows.
 Deletion immediately removes search eligibility; retained orphan vectors are disclosed
 as cache retention, with explicit workspace-cache purge, not secure-erasure claims.
 Purge is offline maintenance under sole store ownership, with no in-flight worker
@@ -908,10 +910,11 @@ T003's, each passing only with that task's verification.
 
 **Status:** approved 2026-10-07 (owner: "llama.cpp worker + cards"), revised after
 cross-lab refutation the same day; implemented and merged 2026-10-08 (`fd01489`;
-[validation](../../docs/validation.md)); G2 runs before signing (owner, 2026-10-08) and
-the other real-model checks of its verification (batched against single-sequence
-vectors, the installed artifact, preparation time) in the post-signing measurement
-batch. Evidence ([validation](../../docs/validation.md)):
+[validation](../../docs/validation.md)); accepted on its implementation evidence, with
+its real-model and timing checks (G2, G1 with a profile, batched against
+single-sequence vectors, the installed artifact, preparation cost) moved to the
+[measurement handoff](../../docs/measurement-handoff.md) (owner, 2026-10-08); they
+decide enablement, not this task's acceptance. Evidence ([validation](../../docs/validation.md)):
 fused into the final ranking, both Nemotron and EmbeddingGemma 2 delivered less
 required evidence than lexical retrieval alone on the identifier-named checker tasks,
 mostly on usage questions; Nemotron's only gain was on `graph` for dev (51 / 21), the
@@ -981,7 +984,8 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
     counted corrupt, the v3 generation unavailable by name, source status and search
     intact, `semantic purge` removing every row (it reports four fixed 8,256-byte rows,
     not their actual bytes); re-embedding under its own v1 profile needs the MLX model
-    and runs with the measurement batch. § Identity and reusable work's rollback
+    and is in the [measurement handoff](../../docs/measurement-handoff.md), needed only
+    if a pre-T004 build was ever distributed. § Identity and reusable work's rollback
     promise holds within one binary generation.
   - *Package cutover.* `install.sh upgrade` with an installed descriptor v1 profile
     keeps the core upgrade, disables semantic retrieval by name and asks for a v2
@@ -1016,19 +1020,21 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
   768/512/256/128 end to end (cache, generation geometry, frame size) with a wrong
   length refused; mixed retained 2048/768/256 rows open and account correctly; a v1
   profile is refused with its cache intact, and an interrupted cutover or publication
-  restarts cleanly; a template change re-keys cards; batched and single-sequence
-  vectors agree (cosine ≥ 0.9999); the prefetched batch is dropped on pause, owner
-  death and EOF and re-admitted only after a foreground query that arrived first; the
-  installed worker links only system libraries and frameworks and passes the
-  isolation, resource and numerical checks on the installed artifact; preparation
-  time, peak footprint and tokens embedded are recorded on the library-only
-  rust-lang/rust store before and after; card acceptance refuses any tuple the body
-  does not render; a run's cap accounting starts from the actual rows; a failed
-  prefetch still publishes the committed batch; a partly consumed source renders only
-  its selected cards; a split GGUF is refused before loading.
+  restarts cleanly; a template change re-keys cards; the prefetched batch is dropped
+  on pause, owner death and EOF and re-admitted only after a foreground query that
+  arrived first; card acceptance refuses any tuple the body does not render; a run's
+  cap accounting starts from the actual rows; a failed prefetch still publishes the
+  committed batch; a partly consumed source renders only its selected cards; a split
+  GGUF is refused before loading. In the
+  [measurement handoff](../../docs/measurement-handoff.md): batched and
+  single-sequence vectors agree (cosine ≥ 0.9999); the installed worker links only
+  system libraries and frameworks and passes the isolation, resource and numerical
+  checks on the installed artifact; preparation time, peak footprint and tokens
+  embedded are recorded on the library-only rust-lang/rust store before and after.
 
 D001's model choice and chosen values were settled on 2026-10-03; T001–T003 were
 accepted on 2026-10-05 under development isolation and measured on 2026-10-06 (see
 validation). T004 (merged 2026-10-08) reopens the model choice through G2 and
-replaces the MLX worker; signing and installed-package acceptance remain open. The
-owned learning head (013, frozen off) cannot substitute for this proof.
+replaces the MLX worker; G2, signing and installed-package acceptance remain open in
+the measurement handoff. The owned learning head (013, frozen off) cannot substitute
+for this proof.
