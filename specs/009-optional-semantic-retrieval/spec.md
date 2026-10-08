@@ -35,7 +35,9 @@ Owner answers, 2026-10-04:
   executable SHA-256 filled in; an upgrade rebuilds it for the new version.
   `disable-semantic` removes only those files. Caches and stores stay through disable,
   rollback and uninstall. Package acceptance with the real bundle remains open with
-  signing.
+  signing. T004 replaces the Python closure: `PACKAGE.json` records the llama.cpp
+  commit, and THIRD-PARTY takes llama.cpp's license from the worker
+  (`foundry-embed --notices DIR`).
 - **Model comparison, 2026-10-07 (owner-authorized exception to the measurement
   freeze).** Google EmbeddingGemma 2 (`914f7f89`, run through llama.cpp because no MLX
   release supports it) was compared with the pinned Nemotron on the frozen checker tasks
@@ -278,6 +280,9 @@ campaign. Source access remains available where authoritative storage is healthy
 
 ### Documents, embedding units and returned evidence
 
+(Superseded by T004's cards and placement for the embedded text, the returned items
+and their line form; the rest of this section stays as history of T001–T003.)
+
 Keep three units separate: the complete authoritative source, the text encoded into
 one vector, and the source span returned to the agent. Existing storage blocks are
 an internal representation; neither their 2048-byte size nor symbol-occurrence counts
@@ -465,6 +470,9 @@ disable a separately available policy. Its exact input/cost contract remains 013
 Preparation does not await policy training, generated summaries or graph completion.
 
 ### Ordering without another required model
+
+(T004 replaces the D001 merge below with placement: dense candidates only for queries
+without an anchor, ahead of the lexical ones.)
 
 Candidate generation, ordering, graph expansion and packing have one retrieval owner.
 The D001 merge is deterministic: 001's tier-1 exact-definition candidates first, then
@@ -910,7 +918,9 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
   self-describing cache rows; generation v3; card partition), `src/bin/foundry_embed.rs`
   rebuilt on a pinned, statically linked llama.cpp (Metal) with no Python, the pyo3/MLX
   worker and its runtime closure removed, `scripts/{package,install,embed-worker-bundle}.sh`,
-  THIRD-PARTY (llama.cpp, ggml), tests in `tests/{embed_worker,neural_retrieval}.rs`.
+  THIRD-PARTY (llama.cpp; at the pinned commit its LICENSE also covers the vendored
+  ggml, which has no license file of its own), tests in
+  `tests/{embed_worker,neural_retrieval}.rs`.
 - **Outcome/acceptance:**
   - *Cards, not bodies.* One card per definition (001 T007's one definition document per
     unit) and per Markdown section: its address, its signature or head lines and its
@@ -943,14 +953,21 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
     feedback and graph are untouched by every refusal. Rollback across this task is
     binary plus profile: the pre-T004 binary with its v1 profile. That binary reads a
     self-describing row as a corrupt cache row (counted, re-embedded under its own
-    profile or removed by `semantic purge`), never as source damage; T004 verifies this
-    once with the released pre-T004 binary on a store written by T004. § Identity and
-    reusable work's rollback promise holds within one binary generation.
+    profile or removed by `semantic purge`), never as source damage. No release exists,
+    so T004 verified this on 2026-10-08 with the 005 T004 release build (its semantic
+    code equals `7da1125`) on a store written by T004 with the fake worker: four rows
+    counted corrupt, the v3 generation unavailable by name, source status and search
+    intact, `semantic purge` removing every row (it reports four fixed 8,256-byte rows,
+    not their actual bytes); re-embedding under its own v1 profile needs the MLX model
+    and runs with the measurement batch. § Identity and reusable work's rollback
+    promise holds within one binary generation.
   - *Package cutover.* `install.sh upgrade` with an installed descriptor v1 profile
     keeps the core upgrade, disables semantic retrieval by name and asks for a v2
     profile; the bundle's Python and site-packages grants and `PACKAGE.json`'s Python
-    closure are removed; signing remains the final step (sign, hash the executable,
-    write the installed profile).
+    closure are removed. `package.sh` takes the llama.cpp commit and license from the
+    worker (`foundry-embed --notices DIR`, embedded at build), refuses a profile that
+    pins another commit, and needs no llama.cpp checkout for a prebuilt worker. Signing
+    remains the final step (sign, hash the executable, write the installed profile).
   - *Model.* The profile pins a GGUF (SHA-256), the llama.cpp commit, pooling, dimension
     (a supported Matryoshka truncation, renormalized) and the query and document
     templates. G2 chooses between EmbeddingGemma 2

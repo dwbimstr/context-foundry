@@ -280,29 +280,19 @@ Each context and retrieve item is an item line followed by a fenced block:
 - `[signature]` marks the signature form; `[outline]` marks the `outline` and
   `outline-min` forms; verbatim bodies carry no tag.
 
-Semantic evidence items (009 T002; decided 2026-10-04, revised after cross-lab
-refutation) put a selection tag in a fixed slot: immediately after `L<a>-<b>` and
-before the optional label.
+Semantic evidence items (009 T004, replacing the 2026-10-04 T002 forms) put the tag
+`[semantic]` in a fixed slot: immediately after `L<a>-<b>` and before the optional
+label, so a source-derived label ending in `[semantic]` stays label text.
 
-- The three forms:
-  - `<handle> L<a>-<b> [whole_unit][ <kind> <qualified name>]`;
-  - `<handle> L<a>-<b> [lexical_span <matched handle>][ <kind> <qualified name>]`;
-  - `<handle> L<a>-<b> [preview <matched handle>][ <kind> <qualified name>]`.
-- The item handle names the returned bytes. `whole_unit` returns the matched unit
-  itself, so its handle is not repeated.
-- Because the tag never trails the label, a source-derived label such as a Markdown
-  heading ending in `[whole_unit]` stays label text.
-- Only neural candidates carry a selection tag; exact-definition, lexical and graph
-  items render as above.
-- Semantic bodies are verbatim bytes of the returned handle. The packer tries the whole
-  unit, then the selected lexical span, then a bounded prefix labeled `preview`;
-  `[signature]`/`[outline]` forms do not participate.
-- After a preview's closing fence, a line `next: <handle>` names its remaining range
-  while bytes of that range remain. The item, its fence and that line pack as one
-  indivisible rendering, and final backtracking removes them together.
+- The form: `<handle> L<a>-<b> [semantic][ <kind> <qualified name>][ [signature]]`. A
+  dense candidate is a delivery unit placed by 009 T004 (anchor-less queries only) and
+  takes the ordinary ladder, verbatim then signature; a unit that is also a lexical
+  candidate keeps its label, and a dense-only unit carries none.
+- Only placed dense candidates carry the tag; exact-definition, lexical and graph items
+  render as above. There is no semantic preview, lexical-span form or continuation line.
 
 Parsers dispatch by operation:
-- a context `next:` line belongs to the immediately preceding preview;
+- a context has no `next:` line;
 - retrieve keeps its single final `next: <handle>`;
 - references ends with `next: after=<path>#<start>-<end>` (005);
 - with the city map, a context also carries `[address]` item lines and directory lines
