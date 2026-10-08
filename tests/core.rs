@@ -2492,3 +2492,861 @@ fn multi_root_compactness_sums_each_marked_run_over_the_roots() {
     assert!(says_compact(&parsed));
     assert_eq!(parsed.items[0].label.as_deref(), Some("fn only_here"));
 }
+
+// ---------------------------------------------------------------------------
+// 001 T009: parallel indexing (context-v2 § Parallel indexing).
+
+use context_foundry::store::fault_names as index_points;
+use context_foundry::store::index_hooks::{self, Event, Hooks, committed_documents};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+const KIB: usize = 1024;
+/// Every T009 barrier and bounded run gives up after this long: a timeout is
+/// a test failure, never a hang.
+const T009_WAIT: Duration = Duration::from_secs(10);
+
+/// What hooked refreshes observed: every added document as JSON in add
+/// order, the paths in build-completion order, the hand-out accounting.
+#[derive(Default)]
+struct Observed {
+    added: Vec<String>,
+    built: Vec<String>,
+    max_outstanding: usize,
+    /// `(outstanding, next, sources built so far)` at each wait for room.
+    waits: Vec<(usize, usize, usize)>,
+    /// A wait for room first lets this many builds finish.
+    built_before_release: usize,
+    /// A wait for room happened.
+    released: bool,
+    /// A barrier gave up waiting.
+    timed_out: bool,
+}
+
+#[derive(Default)]
+struct Watch {
+    observed: Mutex<Observed>,
+    changed: Condvar,
+}
+
+impl Watch {
+    /// Record every event; `on_build` runs first on each build, inside the
+    /// parse panic boundary.
+    fn hooks(
+        self: &Arc<Self>,
+        threads: usize,
+        on_build: impl Fn(&Watch, &str) + Send + Sync + 'static,
+    ) -> Hooks {
+        let watch = Arc::clone(self);
+        Hooks {
+            threads: Some(threads),
+            handout_bytes: None,
+            observer: Some(Arc::new(move |event: &Event<'_>| match event {
+                Event::Build(path) => on_build(&watch, path),
+                Event::Built(path) => {
+                    watch
+                        .observed
+                        .lock()
+                        .unwrap()
+                        .built
+                        .push((*path).to_owned());
+                    watch.changed.notify_all();
+                }
+                Event::HandedOut { outstanding, .. } => {
+                    let mut observed = watch.observed.lock().unwrap();
+                    observed.max_outstanding = observed.max_outstanding.max(*outstanding);
+                }
+                Event::Wait { outstanding, next } => {
+                    let mut observed =
+                        watch.wait_until(|seen| seen.built.len() >= seen.built_before_release);
+                    let built = observed.built.len();
+                    observed.waits.push((*outstanding, *next, built));
+                    observed.released = true;
+                    watch.changed.notify_all();
+                }
+                Event::Add(json) => watch
+                    .observed
+                    .lock()
+                    .unwrap()
+                    .added
+                    .push((*json).to_owned()),
+            })),
+        }
+    }
+
+    /// Wait until `ready`, at most [`T009_WAIT`]; giving up is recorded and
+    /// fails the test at [`Self::take`].
+    fn wait_until(&self, ready: impl Fn(&Observed) -> bool) -> MutexGuard<'_, Observed> {
+        let deadline = Instant::now() + T009_WAIT;
+        let mut observed = self.observed.lock().unwrap();
+        while !ready(&observed) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                observed.timed_out = true;
+                break;
+            }
+            observed = self.changed.wait_timeout(observed, left).unwrap().0;
+        }
+        observed
+    }
+
+    fn take(&self) -> Observed {
+        let observed = std::mem::take(&mut *self.observed.lock().unwrap());
+        assert!(!observed.timed_out, "a T009 barrier timed out");
+        observed
+    }
+}
+
+/// Run `f` on its own thread (hooks and faults are per thread) and return
+/// its outcome, an unwind included; not finishing within [`T009_WAIT`] fails
+/// the test instead of hanging it.
+fn within<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> std::thread::Result<T> {
+    let (done, outcome) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
+    });
+    outcome
+        .recv_timeout(T009_WAIT)
+        .unwrap_or_else(|_| panic!("did not finish within {T009_WAIT:?}"))
+}
+
+/// A store bound to `<fixture>/<name>` with `sources` pending, closed: the
+/// store path, ready to reopen.
+fn pending_store(fixture: &Path, name: &str, sources: &[(&str, &str)]) -> std::path::PathBuf {
+    let root = fixture.join(name);
+    let store = fixture.join(format!("{name}-store"));
+    std::fs::create_dir(&root).unwrap();
+    let engine = Engine::initialize(&store, &root).unwrap();
+    for (path, body) in sources {
+        engine.replace_source(path, body).unwrap();
+    }
+    store
+}
+
+/// Every document shape — units in eight languages, Markdown sections, a
+/// mapped language without units, plain blocks, an empty source — and
+/// enough tiny generated sources for two pages. The earliest key is
+/// `a/first.rs`.
+fn t009_sources() -> Vec<(String, String)> {
+    let mut sources: Vec<(String, String)> = [
+        (
+            "a/first.rs",
+            "pub mod outer {\n    pub struct Holder {\n        v: u32,\n    }\n    impl Holder {\n        pub fn first_unit(&self) -> u32 {\n            self.v\n        }\n    }\n}\n",
+        ),
+        (
+            "b/tool.py",
+            "class Tool:\n    def run(self, x):\n        return x\n\n\ndef helper():\n    return Tool()\n",
+        ),
+        (
+            "c/app.ts",
+            "export interface Shape {\n  area(): number;\n}\nexport class Square implements Shape {\n  area(): number {\n    return 4;\n  }\n}\n",
+        ),
+        (
+            "c/view.tsx",
+            "export function View() {\n  return <div>view</div>;\n}\n",
+        ),
+        (
+            "c/util.js",
+            "function util(a) {\n  return a + 1;\n}\nmodule.exports = { util };\n",
+        ),
+        (
+            "d/main.go",
+            "package main\n\nfunc main() {\n\tprintln(\"go\")\n}\n",
+        ),
+        ("d/x.c", "int add(int a, int b) {\n  return a + b;\n}\n"),
+        ("d/Main.java", "class Main {\n  void run() {}\n}\n"),
+        (
+            "docs/guide.md",
+            "# Guide\n\nIntro text.\n\n## Usage\n\nRun it.\n",
+        ),
+        ("conf.toml", "[package]\nname = \"x\"\n"),
+        ("notes.txt", "plain words here\n\nanother paragraph\n"),
+        ("empty.rs", ""),
+    ]
+    .into_iter()
+    .map(|(path, body)| (path.to_owned(), body.to_owned()))
+    .collect();
+    for i in 0..140 {
+        sources.push((format!("gen/f{i:03}.rs"), format!("fn g{i}() {{}}\n")));
+    }
+    sources
+}
+
+/// The documents added for `path`, parsed.
+fn added_for(added: &[String], path: &str) -> Vec<serde_json::Value> {
+    added
+        .iter()
+        .map(|json| serde_json::from_str::<serde_json::Value>(json).unwrap())
+        .filter(|doc| doc["path"][0] == path)
+        .collect()
+}
+
+#[test]
+fn one_and_eight_build_threads_give_equal_documents_and_tables_even_out_of_order() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    std::fs::create_dir(&root).unwrap();
+    let sources = t009_sources();
+    let mut runs = Vec::new();
+    for threads in [1usize, 8] {
+        let store = fixture.path().join(format!("store{threads}"));
+        let mut engine = Engine::initialize(&store, &root).unwrap();
+        for (path, body) in &sources {
+            engine.replace_source(path, body).unwrap();
+        }
+        let watch = Arc::new(Watch::default());
+        // On 8 threads the earliest key finishes last on its page: its build
+        // waits until the page's 127 other sources were built.
+        let hooks = watch.hooks(threads, move |watch, path| {
+            if threads > 1 && path == "a/first.rs" {
+                drop(watch.wait_until(|seen| seen.built.len() >= 127));
+            }
+        });
+        index_hooks::install(hooks);
+        let drained = engine.refresh(&Control::unbounded()).unwrap();
+        index_hooks::clear();
+        assert_eq!(drained, (sources.len(), 0));
+        assert_eq!(engine.status().unwrap().parse_failures, Some(0));
+        drop(engine);
+        runs.push((threads, watch.take(), testkit::snapshot(&store)));
+    }
+    let (_, one, one_tables) = &runs[0];
+    let (_, eight, eight_tables) = &runs[1];
+    // Completions arrived out of order on 8 threads, in key order on 1.
+    assert_eq!(one.built[0], "a/first.rs");
+    assert_ne!(eight.built[0], "a/first.rs");
+    assert_eq!(
+        eight.built.iter().position(|path| path == "a/first.rs"),
+        Some(127),
+        "the earliest key completed last on its page"
+    );
+    // The same documents, field for field, in the same (key) order.
+    assert_eq!(one.added, eight.added);
+    let first: Vec<String> = one
+        .added
+        .iter()
+        .map(|json| {
+            serde_json::from_str::<serde_json::Value>(json).unwrap()["path"][0]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    let mut in_key_order = first.clone();
+    in_key_order.sort();
+    assert_eq!(first, in_key_order, "documents are added in key order");
+    in_key_order.dedup();
+    let mut with_documents: Vec<&str> = sources
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .filter(|path| *path != "empty.rs")
+        .collect();
+    with_documents.sort_unstable();
+    assert_eq!(in_key_order, with_documents, "every non-empty source");
+    // Every document shape is present.
+    let kinds: std::collections::BTreeSet<String> = one
+        .added
+        .iter()
+        .map(|json| serde_json::from_str::<serde_json::Value>(json).unwrap()["kind"][0].to_string())
+        .collect();
+    for kind in [
+        "\"fn\"",
+        "\"struct\"",
+        "\"class\"",
+        "\"section\"",
+        "\"block\"",
+    ] {
+        assert!(kinds.contains(kind), "{kind} in {kinds:?}");
+    }
+    // The same store tables.
+    assert_eq!(one_tables, eight_tables);
+}
+
+#[test]
+fn a_panic_in_the_earliest_keys_build_names_it_and_indexes_every_other_key() {
+    // Two plain blocks: the filler takes the first past the 2 KiB merge.
+    let first_body = format!(
+        "fn first_unit() -> u32 {{\n    1\n}}\n\n{}\nfn first_other() {{}}\n",
+        "// first filler line\n".repeat(110)
+    );
+    let first_body = first_body.as_str();
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (store, mut engine) = setup(&root);
+    for (path, body) in [
+        ("a/first.rs", first_body),
+        // The same bytes as an unmapped source: the expected plain blocks.
+        ("a/first.txt", first_body),
+        ("b/second.rs", "fn second_unit() {}\n"),
+        ("c/third.py", "def third_unit():\n    return 3\n"),
+        ("d/fourth.md", "# Fourth heading\n\ntext\n"),
+    ] {
+        engine.replace_source(path, body).unwrap();
+    }
+    let panicking = |watch: &Arc<Watch>| {
+        watch.hooks(8, |_, path| {
+            if path == "a/first.rs" {
+                panic!("injected parse panic");
+            }
+        })
+    };
+    let watch = Arc::new(Watch::default());
+    index_hooks::install(panicking(&watch));
+    assert_eq!(engine.refresh(&Control::unbounded()).unwrap(), (5, 0));
+    index_hooks::clear();
+    let observed = watch.take();
+    // A named scan failure for the drain, and every pending key cleared.
+    assert_eq!(
+        engine.take_parse_failures(),
+        context_foundry::store::ParseFailures {
+            count: 1,
+            samples: vec!["a/first.rs: parse_panicked: injected parse panic".into()],
+        }
+    );
+    assert_eq!(engine.take_parse_failures().count, 0, "taken once");
+    assert_eq!(engine.pending().unwrap(), 0);
+    // The panicked source got the plain blocks of an unmapped source, field
+    // for field, except that the first one's kind is `unparsed`.
+    let first = added_for(&observed.added, "a/first.rs");
+    let plain = added_for(&observed.added, "a/first.txt");
+    assert!(first.len() >= 2, "{first:?}");
+    let kinds = |docs: &[serde_json::Value]| -> Vec<String> {
+        docs.iter()
+            .map(|doc| doc["kind"][0].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let mut expected = vec!["block".to_owned(); first.len()];
+    expected[0] = "unparsed".to_owned();
+    assert_eq!(kinds(&first), expected);
+    assert_eq!(kinds(&plain), vec!["block".to_owned(); plain.len()]);
+    let without = |docs: &[serde_json::Value]| -> Vec<serde_json::Value> {
+        docs.iter()
+            .map(|doc| {
+                let mut doc = doc.clone();
+                let fields = doc.as_object_mut().unwrap();
+                for name in ["key", "key_hash", "path", "dir", "kind"] {
+                    fields.remove(name);
+                }
+                doc
+            })
+            .collect()
+    };
+    assert_eq!(without(&first), without(&plain));
+    // Every reader treats them as blocks.
+    let hits = engine.search("first_unit", 5).unwrap().hits;
+    let hit = hits
+        .iter()
+        .find(|hit| hit.path == "a/first.rs")
+        .expect("its bytes stay searchable");
+    assert_eq!(hit.label, "block");
+    // Every other key of the page is indexed with its units.
+    for (path, unit) in [("b/second.rs", "second_unit"), ("c/third.py", "third_unit")] {
+        let docs = added_for(&observed.added, path);
+        assert!(
+            docs.iter()
+                .any(|doc| doc["def_name"][0] == unit && doc.get("lang").is_some()),
+            "{path}: {docs:?}"
+        );
+        assert_eq!(engine.search(unit, 5).unwrap().hits[0].path, path);
+    }
+    assert!(
+        added_for(&observed.added, "d/fourth.md")
+            .iter()
+            .any(|doc| doc["kind"][0] == "section")
+    );
+    // Status names the source, also after a restart, until it is parsed again.
+    let named = vec!["a/first.rs: parse_panicked: indexed as plain blocks until parsed again"];
+    let status = engine.status().unwrap();
+    assert_eq!(status.parse_failures, Some(1));
+    assert_eq!(status.parse_failure_samples, named);
+    drop(engine);
+    let engine = Engine::open_existing(store.path()).unwrap();
+    let status = engine.status().unwrap();
+    assert_eq!(
+        (status.parse_failures, status.parse_failure_samples),
+        (Some(1), named.iter().map(|s| (*s).to_owned()).collect())
+    );
+    drop(engine);
+    // `repair-index` rebuilds every source's documents: parsed again.
+    Engine::repair_index(store.path(), &Control::unbounded()).unwrap();
+    let mut engine = Engine::open_existing(store.path()).unwrap();
+    assert_eq!(engine.status().unwrap().parse_failures, Some(0));
+    // A change that panics again is named again; its next change parses.
+    let watch = Arc::new(Watch::default());
+    index_hooks::install(panicking(&watch));
+    engine
+        .replace_source("a/first.rs", "fn first_unit() {}\n")
+        .unwrap();
+    drain(&mut engine);
+    index_hooks::clear();
+    assert_eq!(engine.take_parse_failures().count, 1);
+    assert_eq!(engine.status().unwrap().parse_failures, Some(1));
+    engine
+        .replace_source("a/first.rs", "fn first_unit() { }\n")
+        .unwrap();
+    drain(&mut engine);
+    assert_eq!(engine.take_parse_failures().count, 0);
+    let status = engine.status().unwrap();
+    assert_eq!(
+        (status.parse_failures, status.parse_failure_samples.len()),
+        (Some(0), 0)
+    );
+    assert_eq!(
+        engine.search("first_unit", 5).unwrap().hits[0].label,
+        "fn first_unit"
+    );
+}
+
+/// Without a parse panic nothing is named, also for sources legitimately
+/// without units: over the 1 MiB parse bound, unmapped, of a mapped
+/// language without units, and empty.
+#[test]
+fn status_names_no_source_without_a_parse_panic() {
+    // Just over the 1 MiB parse bound; one-letter lines index cheaply.
+    let big = "a\n".repeat(512 * KIB + 1);
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    for (path, body) in [
+        ("big.rs", big.as_str()),
+        ("notes.txt", "plain words\n"),
+        ("conf.toml", "[package]\nname = \"x\"\n"),
+        ("empty.rs", ""),
+        ("unit.rs", "fn unit() {}\n"),
+    ] {
+        engine.replace_source(path, body).unwrap();
+    }
+    drain(&mut engine);
+    assert_eq!(engine.take_parse_failures().count, 0);
+    let status = engine.status().unwrap();
+    assert_eq!(
+        (status.parse_failures, status.parse_failure_samples.len()),
+        (Some(0), 0)
+    );
+}
+
+/// When every build panics, every panic is a named scan failure and every
+/// key is acknowledged, but `status` names only the sources that have
+/// `unparsed` documents: an empty or whitespace-only source has none.
+#[test]
+fn every_parse_panic_is_a_scan_failure_and_status_names_the_sources_with_text() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (_store, mut engine) = setup(&root);
+    for (path, body) in [
+        ("a.rs", "fn a_unit() {}\n"),
+        ("empty.rs", ""),
+        ("blank.rs", " \n\n\t\n"),
+        ("notes.txt", "plain words\n"),
+    ] {
+        std::fs::write(root.join(path), body).unwrap();
+    }
+    let watch = Arc::new(Watch::default());
+    index_hooks::install(watch.hooks(8, |_, _| panic!("injected parse panic")));
+    let report = engine.index(&root, &Control::unbounded()).unwrap();
+    index_hooks::clear();
+    drop(watch.take());
+    assert_eq!(report.failures, 4);
+    let mut samples = report.failure_samples.clone();
+    samples.sort();
+    assert_eq!(
+        samples,
+        [
+            "a.rs: parse_panicked: injected parse panic",
+            "blank.rs: parse_panicked: injected parse panic",
+            "empty.rs: parse_panicked: injected parse panic",
+            "notes.txt: parse_panicked: injected parse panic",
+        ]
+    );
+    assert_eq!(report.reason_code, Some("scan_failures"));
+    assert_eq!(report.pending_sources, 0);
+    assert_eq!(engine.pending().unwrap(), 0);
+    let status = engine.status().unwrap();
+    assert_eq!(status.parse_failures, Some(2));
+    assert_eq!(
+        status.parse_failure_samples,
+        [
+            "a.rs: parse_panicked: indexed as plain blocks until parsed again",
+            "notes.txt: parse_panicked: indexed as plain blocks until parsed again",
+        ]
+    );
+}
+
+/// Under the hand-out bound (64 MiB, overridden to 64 KiB here) a source's
+/// bytes count until the writer has added its documents: built is not
+/// consumed.
+#[test]
+fn the_hand_out_bound_counts_sources_built_but_not_yet_added() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (_store, mut engine) = setup(&root);
+    // 33 sources of 2 KiB: one more than the bound holds.
+    let body = "a\n".repeat(KIB);
+    for i in 0..33 {
+        engine
+            .replace_source(&format!("s{i:02}.txt"), &body)
+            .unwrap();
+    }
+    let watch = Arc::new(Watch::default());
+    // The earliest key's build is held until the hand-out must make room,
+    // so the writer can add nothing in key order. The wait first lets the
+    // 31 other handed-out sources finish building.
+    watch.observed.lock().unwrap().built_before_release = 31;
+    let hooks = watch.hooks(8, |watch, path| {
+        if path == "s00.txt" {
+            drop(watch.wait_until(|seen| seen.released));
+        }
+    });
+    index_hooks::install(Hooks {
+        handout_bytes: Some(64 * KIB),
+        ..hooks
+    });
+    assert_eq!(engine.refresh(&Control::unbounded()).unwrap(), (33, 0));
+    index_hooks::clear();
+    let observed = watch.take();
+    assert_eq!(observed.max_outstanding, 64 * KIB, "reached, never passed");
+    assert_eq!(
+        observed.waits,
+        [(64 * KIB, 2 * KIB, 31)],
+        "one wait, while 31 built sources were not yet added"
+    );
+    assert_eq!(engine.pending().unwrap(), 0);
+    let mut paths: Vec<String> = observed
+        .added
+        .iter()
+        .map(|json| serde_json::from_str::<serde_json::Value>(json).unwrap()["path"][0].to_string())
+        .collect();
+    paths.dedup();
+    assert_eq!(paths.len(), 33);
+}
+
+/// One injected interruption of a refresh: where, what, the error code it
+/// gives, and whether the page's search commit happened.
+struct Interruption {
+    label: &'static str,
+    point: &'static str,
+    skip: usize,
+    action: fn() -> Action,
+    code: &'static str,
+    committed: bool,
+}
+
+/// Add, commit and reload failures and cancellation before and after the
+/// search commit lose no pending key and acknowledge none early; a replay
+/// (after a restart in one case) converges with exactly one live committed
+/// document per source, counted in the index itself. A cancellation after
+/// the page's last hand-out lets the page commit and leaves its keys
+/// pending.
+#[test]
+fn index_failures_and_cancellation_acknowledge_no_pending_key_early() {
+    fn case(
+        label: &'static str,
+        point: &'static str,
+        skip: usize,
+        action: fn() -> Action,
+        code: &'static str,
+        committed: bool,
+    ) -> Interruption {
+        Interruption {
+            label,
+            point,
+            skip,
+            action,
+            code,
+            committed,
+        }
+    }
+    let cases = [
+        case(
+            "handout",
+            index_points::INDEX_HANDOUT,
+            1,
+            || Action::Cancel,
+            "cancelled",
+            false,
+        ),
+        case(
+            "handout_fail",
+            index_points::INDEX_HANDOUT,
+            2,
+            || Action::Fail("read".into()),
+            "internal",
+            false,
+        ),
+        case(
+            "add",
+            index_points::INDEX_BEFORE_ADD,
+            1,
+            || Action::Fail("add".into()),
+            "internal",
+            false,
+        ),
+        case(
+            "last_handout",
+            index_points::INDEX_BEFORE_COMMIT,
+            0,
+            || Action::Cancel,
+            "cancelled",
+            true,
+        ),
+        case(
+            "commit",
+            index_points::INDEX_BEFORE_COMMIT,
+            0,
+            || Action::Fail("commit".into()),
+            "internal",
+            false,
+        ),
+        case(
+            "reload",
+            index_points::INDEX_BEFORE_RELOAD,
+            0,
+            || Action::Fail("reload".into()),
+            "internal",
+            true,
+        ),
+        case(
+            "after_commit",
+            names::INDEX_AFTER_SEARCH_COMMIT,
+            0,
+            || Action::Cancel,
+            "cancelled",
+            true,
+        ),
+    ];
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (store, mut engine) = setup(&root);
+    let paths = ["a.rs", "b.rs", "c.rs"];
+    for Interruption {
+        label,
+        point,
+        skip,
+        action,
+        code: expected,
+        committed,
+    } in cases
+    {
+        let body = |version: &str, path: &str| {
+            format!(
+                "fn {label}_{version}_{}() {{}}\n",
+                path.trim_end_matches(".rs")
+            )
+        };
+        // Each case starts from its own indexed first version.
+        for path in paths {
+            engine.replace_source(path, &body("one", path)).unwrap();
+        }
+        drain(&mut engine);
+        for path in paths {
+            engine.replace_source(path, &body("two", path)).unwrap();
+        }
+        index_hooks::install(Hooks {
+            threads: Some(8),
+            handout_bytes: None,
+            observer: None,
+        });
+        fault::arm(point, skip, action());
+        let err = engine.refresh(&Control::unbounded()).unwrap_err();
+        fault::disarm_all();
+        index_hooks::clear();
+        assert_eq!(code(&err), expected, "{label}");
+        assert_eq!(engine.pending().unwrap(), 3, "{label}: no key acknowledged");
+        // Exactly the committed version is live: the first one unless the
+        // failure came after the commit.
+        let live = if committed { "two" } else { "one" };
+        for path in paths {
+            assert_eq!(
+                committed_documents(store.path(), path),
+                [(digest(body(live, path).as_bytes()), 0)],
+                "{label}: {path}"
+            );
+        }
+        if committed {
+            // The commit happened; a reload-failed reader sees it on reopen.
+            drop(engine);
+            engine = Engine::open_existing(store.path()).unwrap();
+        }
+        // Shared subtokens make other units lexical hits; count the exact one.
+        let exact = |engine: &Engine, name: &str| {
+            let outcome = engine.search(name, 5).unwrap();
+            let exact = outcome
+                .hits
+                .iter()
+                .filter(|hit| hit.text.contains(name))
+                .count();
+            (exact, outcome.stale_candidates)
+        };
+        assert_eq!(
+            exact(&engine, &format!("{label}_two_a")).0,
+            usize::from(committed),
+            "{label}"
+        );
+        if label == "commit" {
+            // A restart replays from the durable pending keys.
+            drop(engine);
+            engine = Engine::open_existing(store.path()).unwrap();
+        }
+        drain(&mut engine);
+        assert_eq!(engine.pending().unwrap(), 0, "{label}");
+        for path in paths {
+            let unit = path.trim_end_matches(".rs");
+            let two = exact(&engine, &format!("{label}_two_{unit}"));
+            assert_eq!(two, (1, 0), "{label}: {path} once, nothing stale");
+            let one = exact(&engine, &format!("{label}_one_{unit}"));
+            assert_eq!(one, (0, 0), "{label}: {path}");
+            // One live committed document: the replay's, no duplicate of
+            // an earlier uncommitted add the same writer later committed.
+            assert_eq!(
+                committed_documents(store.path(), path),
+                [(digest(body("two", path).as_bytes()), 0)],
+                "{label}: {path}"
+            );
+        }
+    }
+}
+
+const THREE: [(&str, &str); 3] = [
+    ("a.rs", "fn a_unit() {}\n"),
+    ("b.rs", "fn b_unit() {}\n"),
+    ("c.rs", "fn c_unit() {}\n"),
+];
+
+/// Eight build threads whose observer runs `on_event` on every event.
+fn observing(on_event: impl Fn(&Event<'_>) + Send + Sync + 'static) -> Hooks {
+    Hooks {
+        threads: Some(8),
+        handout_bytes: None,
+        observer: Some(Arc::new(on_event)),
+    }
+}
+
+/// A build thread that panics outside its parse boundary is joined and
+/// names the page's failure; the refresh returns instead of unwinding and
+/// acknowledges nothing.
+#[test]
+fn a_build_thread_panic_outside_the_parse_boundary_fails_the_page_by_name() {
+    let fixture = tempfile::tempdir().unwrap();
+    let store = pending_store(fixture.path(), "ws", &THREE);
+    let (refreshed, pending) = within(move || {
+        let mut engine = Engine::open_existing(&store).unwrap();
+        index_hooks::install(observing(|event| {
+            if matches!(event, Event::Built("b.rs")) {
+                panic!("injected build-thread panic");
+            }
+        }));
+        // Returning at all means every build thread was joined.
+        let refreshed = engine.refresh(&Control::unbounded());
+        index_hooks::clear();
+        (
+            refreshed.map_err(|e| e.to_string()),
+            engine.pending().unwrap(),
+        )
+    })
+    .expect("the refresh returns instead of unwinding");
+    let message = refreshed.unwrap_err();
+    assert!(
+        message.starts_with("internal: an index build thread panicked")
+            && message.contains("injected build-thread panic"),
+        "{message}"
+    );
+    assert_eq!(pending, 3, "no key acknowledged");
+}
+
+/// A panic of the writer itself closes the hand-out, so every build thread
+/// finishes and the panic propagates instead of the scope waiting forever.
+#[test]
+fn a_writer_panic_closes_the_hand_out_and_propagates() {
+    let fixture = tempfile::tempdir().unwrap();
+    let store = pending_store(fixture.path(), "ws", &THREE);
+    let (unwound, pending) = within(move || {
+        let mut engine = Engine::open_existing(&store).unwrap();
+        index_hooks::install(observing(|event| {
+            if matches!(event, Event::HandedOut { path: "b.rs", .. }) {
+                panic!("injected writer panic");
+            }
+        }));
+        let refreshed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            engine.refresh(&Control::unbounded())
+        }));
+        index_hooks::clear();
+        (refreshed.is_err(), engine.pending().unwrap())
+    })
+    .expect("the bounded run finishes");
+    assert!(unwound, "the writer's panic propagates");
+    assert_eq!(pending, 3, "no key acknowledged");
+}
+
+/// A recorded length past the 2 MiB bound is `corrupt_source` before any
+/// hand-out arithmetic, never an overflow panic, also while an earlier
+/// source is still handed out.
+#[test]
+fn a_corrupt_recorded_length_is_named_before_the_bound_arithmetic() {
+    let fixture = tempfile::tempdir().unwrap();
+    let store = pending_store(fixture.path(), "ws", &THREE[..2]);
+    testkit::write_store(&store, |tx| {
+        use redb::ReadableTable;
+        let mut sources = tx
+            .open_table(redb::TableDefinition::<&str, &str>::new("sources"))
+            .unwrap();
+        let raw = sources.get("b.rs").unwrap().unwrap().value().to_owned();
+        let mut meta: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        meta["bytes"] = serde_json::json!(usize::MAX);
+        sources.insert("b.rs", meta.to_string().as_str()).unwrap();
+    });
+    let (refreshed, pending) = within(move || {
+        let mut engine = Engine::open_existing(&store).unwrap();
+        // a.rs's build lingers, so it is normally still outstanding when
+        // b.rs's length is read.
+        index_hooks::install(observing(|event| {
+            if matches!(event, Event::Build("a.rs")) {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }));
+        let refreshed = engine.refresh(&Control::unbounded());
+        index_hooks::clear();
+        (
+            refreshed.map_err(|e| e.to_string()),
+            engine.pending().unwrap(),
+        )
+    })
+    .expect("named, not a panic");
+    let message = refreshed.unwrap_err();
+    assert!(
+        message.starts_with("corrupt_source:")
+            && message.contains("b.rs: recorded length exceeds the 2 MiB bound"),
+        "{message}"
+    );
+    assert_eq!(pending, 2, "no key acknowledged");
+}
+
+/// A parse panic whose documents were committed is a named scan failure of
+/// the index run even when cancellation stops it before the pending clear;
+/// the pending key stays.
+#[test]
+fn a_committed_parse_panic_is_named_although_the_run_is_cancelled_after_commit() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("ws");
+    let (_store, mut engine) = setup(&root);
+    std::fs::write(root.join("a.rs"), "fn panicked_unit() {}\n").unwrap();
+    std::fs::write(root.join("b.rs"), "fn quiet_unit() {}\n").unwrap();
+    let watch = Arc::new(Watch::default());
+    index_hooks::install(watch.hooks(8, |_, path| {
+        if path == "a.rs" {
+            panic!("injected parse panic");
+        }
+    }));
+    fault::arm(names::INDEX_AFTER_SEARCH_COMMIT, 0, Action::Cancel);
+    let report = engine.index(&root, &Control::unbounded()).unwrap();
+    fault::disarm_all();
+    index_hooks::clear();
+    drop(watch.take());
+    assert!(report.partial);
+    assert_eq!(report.reason_code, Some("cancelled"));
+    assert_eq!(report.failures, 1);
+    assert_eq!(
+        report.failure_samples,
+        ["a.rs: parse_panicked: injected parse panic"]
+    );
+    assert_eq!(report.pending_sources, 2, "the page was not acknowledged");
+    assert_eq!(engine.status().unwrap().parse_failures, Some(1));
+}

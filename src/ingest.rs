@@ -548,6 +548,14 @@ pub fn index(engine: &mut Engine, root: &Path, control: &Control) -> FResult<Ind
         Err(FoundryError::RepairRequired(_)) => drain_reason = Some("repair_required"),
         Err(e) => return Err(e),
     }
+    // A parse panic is a named scan failure (context-v2 § Parallel indexing):
+    // the drained source was indexed as the plain blocks of an unmapped
+    // source and `status` names it until it is parsed again.
+    let panics = engine.take_parse_failures();
+    report.failures += panics.count;
+    for sample in panics.samples {
+        push_sample(&mut report.failure_samples, sample);
+    }
     // Source-scan completion is independent of the derived-index drain: it
     // means complete enumeration AND a finished sweep. A cancelled or failed
     // drain keeps the operation partial and nonzero but does not make a

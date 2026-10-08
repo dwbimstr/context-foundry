@@ -35,6 +35,76 @@ pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("f
 pub const SCHEMA_VERSION: u32 = 6;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
+/// Refresh builds a page's search documents on at most this many threads,
+/// fewer when the machine has less available parallelism (context-v2
+/// § Parallel indexing).
+const MAX_INDEX_THREADS: usize = 8;
+/// At most this many source bytes are handed out to the build threads and
+/// not yet consumed: a source is consumed once the writer has added its
+/// documents.
+const HANDOUT_BYTES: usize = 64 * 1024 * 1024;
+/// Named parse failures keep at most this many samples, the bound of every
+/// other failure-sample list.
+const PARSE_FAILURE_SAMPLES: usize = 20;
+/// The `kind` term of the first document of a parse-fallback source: its
+/// documents are the plain blocks of an unmapped source, read everywhere as
+/// `block`. Only a parse panic writes the term, once per source, so its
+/// documents count exactly the sources left unparsed.
+const UNPARSED_KIND: &str = "unparsed";
+
+/// Named fault points of the parallel refresh (test-faults only; release
+/// builds carry no hook code and no fault-name strings). The detail is the
+/// source path for the hand-out, the pending key before an add, and empty
+/// otherwise.
+#[cfg(feature = "test-faults")]
+pub mod fault_names {
+    /// Before a source is handed out to a build thread.
+    pub const INDEX_HANDOUT: &str = "ctxfoundry-fault/index.handout";
+    /// Before the writer deletes and adds one pending key's documents.
+    pub const INDEX_BEFORE_ADD: &str = "ctxfoundry-fault/index.before_add";
+    /// Every document of the page added, before the search commit.
+    pub const INDEX_BEFORE_COMMIT: &str = "ctxfoundry-fault/index.before_commit";
+    /// Search committed, before the reader reload.
+    pub const INDEX_BEFORE_RELOAD: &str = "ctxfoundry-fault/index.before_reload";
+}
+
+#[cfg(feature = "test-faults")]
+macro_rules! index_fault {
+    ($name:ident, $control:expr, $detail:expr) => {
+        crate::fault::hit(
+            fault_names::$name,
+            &crate::fault::Ctx {
+                engine: None,
+                control: Some($control),
+                detail: $detail,
+            },
+        )
+    };
+}
+
+#[cfg(not(feature = "test-faults"))]
+macro_rules! index_fault {
+    ($name:ident, $control:expr, $detail:expr) => {
+        Ok::<(), FoundryError>(())
+    };
+}
+
+/// Report one [`index_hooks::Event`] to the test seam; without the feature
+/// the event is not even compiled.
+#[cfg(feature = "test-faults")]
+macro_rules! index_event {
+    ($hooks:expr, $event:expr) => {
+        $hooks.emit(&$event)
+    };
+}
+
+#[cfg(not(feature = "test-faults"))]
+macro_rules! index_event {
+    ($hooks:expr, $event:expr) => {{
+        let _ = &$hooks;
+    }};
+}
+
 /// Search tier 2 (lexical) examines at most this many candidates.
 const CANDIDATE_LIMIT: usize = 256;
 /// Memory search examines at most this many derived documents before the
@@ -517,6 +587,30 @@ pub struct StoreStatus {
     pub index_state: String,
     pub index_reason: Option<String>,
     pub scan_state: String,
+    /// Sources left as the plain blocks of an unmapped source after a parse
+    /// panic, until parsed again (context-v2 § Parallel indexing). Derived
+    /// from the derived index; `None` when that index is not serving.
+    pub parse_failures: Option<u64>,
+    /// At most 20 of them, in path order.
+    pub parse_failure_samples: Vec<String>,
+}
+
+/// Named parse panics (context-v2 § Parallel indexing): an exact count and at
+/// most 20 samples `<path>: parse_panicked: <detail>`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ParseFailures {
+    pub count: u64,
+    pub samples: Vec<String>,
+}
+
+impl ParseFailures {
+    fn push(&mut self, path: &str, detail: &str) {
+        self.count = self.count.saturating_add(1);
+        if self.samples.len() < PARSE_FAILURE_SAMPLES {
+            self.samples
+                .push(format!("{path}: parse_panicked: {detail}"));
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -579,6 +673,9 @@ pub struct Engine {
     workspace: Option<String>,
     workspace_id: Option<String>,
     schema: u32,
+    /// The parse panics of the current drain, acknowledged page by page; the
+    /// index run that drained them names each as a scan failure.
+    parse_panics: ParseFailures,
     /// The store directory, held as a descriptor opened (`O_DIRECTORY |
     /// O_NOFOLLOW`) exactly once at bind time and kept for the Engine's
     /// life. Semantic purge, publication and validation duplicate it (see
@@ -687,6 +784,16 @@ pub(crate) struct VerifiedSource {
     pub(crate) body: String,
 }
 
+/// A recorded source length past the 2 MiB source bound is `corrupt_source`.
+fn check_recorded_length(path: &str, meta: &SourceMeta) -> FResult<()> {
+    if meta.bytes > MAX_SOURCE_BYTES {
+        return Err(FoundryError::CorruptSource(format!(
+            "{path}: recorded length exceeds the 2 MiB bound"
+        )));
+    }
+    Ok(())
+}
+
 /// Reconstruct a source inside the caller's transaction and verify every
 /// chunk key/ownership plus the full length and hash before anything is
 /// sliced. Any inconsistency is `corrupt_source`, never partial evidence.
@@ -696,9 +803,7 @@ pub(crate) fn reconstruct_verified<C: ReadableTable<&'static str, &'static str>>
     meta: &SourceMeta,
 ) -> FResult<VerifiedSource> {
     let corrupt = |what: &str| FoundryError::CorruptSource(format!("{path}: {what}"));
-    if meta.bytes > MAX_SOURCE_BYTES {
-        return Err(corrupt("recorded length exceeds the 2 MiB bound"));
-    }
+    check_recorded_length(path, meta)?;
     let first = chunk_key(path, 0);
     let end = chunk_key(path, meta.chunks);
     let mut body = String::with_capacity(meta.bytes);
@@ -981,18 +1086,38 @@ fn open_search(dir: &Path) -> Result<SearchHandles, String> {
     search_handles(index).map_err(|e| format!("derived index open: {e}"))
 }
 
+/// How a source's search documents are built.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Parsing {
+    /// By its path's language.
+    Parsed,
+    /// After its parse panicked: the plain blocks of an unmapped source,
+    /// the first with `kind` [`UNPARSED_KIND`].
+    Unparsed,
+}
+
 /// The schema v2 documents of one verified source (context-v2 § Search
 /// documents): one per syntax document, carrying its delivery unit; a
 /// document delivered as a named programming-language unit (not a Markdown
 /// section or block) also carries that unit's `def_name`.
-fn search_documents(fields: &Fields, path: &str, hash: &str, body: &str) -> Vec<TantivyDocument> {
+fn search_documents(
+    fields: &Fields,
+    path: &str,
+    hash: &str,
+    body: &str,
+    parsing: Parsing,
+) -> Vec<TantivyDocument> {
     use crate::syntax::UnitKind;
-    let lang = crate::syntax::Lang::from_path(path);
+    let lang = match parsing {
+        Parsing::Parsed => crate::syntax::Lang::from_path(path),
+        Parsing::Unparsed => None,
+    };
     let mut dirs: Vec<&str> = path.match_indices('/').map(|(i, _)| &path[..i]).collect();
     dirs.push(path);
     crate::syntax::documents(body, lang)
         .into_iter()
-        .map(|document| {
+        .enumerate()
+        .map(|(index, document)| {
             let unit = &document.unit;
             let key = format!("{path}\0{}", document.start);
             let text = &body[document.start..document.end];
@@ -1009,7 +1134,13 @@ fn search_documents(fields: &Fields, path: &str, hash: &str, body: &str) -> Vec<
             out.add_u64(fields.unit_start, unit.start as u64);
             out.add_u64(fields.unit_head, unit.head as u64);
             out.add_u64(fields.unit_end, unit.end as u64);
-            out.add_text(fields.kind, unit.kind.as_str());
+            // Without a language every document is a block; a parse
+            // fallback's first one carries the term naming it unparsed.
+            let kind = match parsing {
+                Parsing::Unparsed if index == 0 => UNPARSED_KIND,
+                _ => unit.kind.as_str(),
+            };
+            out.add_text(fields.kind, kind);
             if let Some(lang) = lang {
                 out.add_text(fields.lang, lang.tag());
             }
@@ -1027,6 +1158,637 @@ fn search_documents(fields: &Fields, path: &str, hash: &str, body: &str) -> Vec<
             out
         })
         .collect()
+}
+
+/// Test seam of the parallel refresh (feature `test-faults` only; release
+/// builds carry none). Hooks are installed on the thread that calls
+/// [`Engine::refresh`]; each page reads them once and shares them with its
+/// build threads.
+#[cfg(feature = "test-faults")]
+pub mod index_hooks {
+    use std::cell::RefCell;
+    use std::sync::Arc;
+
+    /// One step of a page build, reported to [`Hooks::observer`].
+    #[derive(Debug)]
+    pub enum Event<'a> {
+        /// A build thread starts the source at this path, inside the parse
+        /// panic boundary: an observer that panics here is a parse panic.
+        Build(&'a str),
+        /// A build thread finished the source at this path.
+        Built(&'a str),
+        /// The source at `path` was handed out; `outstanding` bytes are now
+        /// handed out and not yet consumed (their documents not yet added),
+        /// this source's included.
+        HandedOut { path: &'a str, outstanding: usize },
+        /// The hand-out must make room: `outstanding` bytes plus the `next`
+        /// source's would pass the bound, so the writer adds finished
+        /// sources in key order first.
+        Wait { outstanding: usize, next: usize },
+        /// The writer adds one document, rendered as JSON, in add order.
+        Add(&'a str),
+    }
+
+    pub type Observer = Arc<dyn Fn(&Event<'_>) + Send + Sync>;
+
+    #[derive(Clone, Default)]
+    pub struct Hooks {
+        /// Build threads per page instead of min(available parallelism, 8).
+        pub threads: Option<usize>,
+        /// The hand-out bound instead of 64 MiB.
+        pub handout_bytes: Option<usize>,
+        pub observer: Option<Observer>,
+    }
+
+    thread_local! {
+        static HOOKS: RefCell<Hooks> = const {
+            RefCell::new(Hooks {
+                threads: None,
+                handout_bytes: None,
+                observer: None,
+            })
+        };
+    }
+
+    /// Install `hooks` for the refreshes this thread runs.
+    pub fn install(hooks: Hooks) {
+        HOOKS.with(|slot| *slot.borrow_mut() = hooks);
+    }
+
+    /// Remove this thread's hooks.
+    pub fn clear() {
+        install(Hooks::default());
+    }
+
+    /// The live committed search documents of `path` in the derived index
+    /// on disk under `store_dir`, as sorted `(hash, start)` rows, read
+    /// through a fresh reader: a duplicate or a stale version is an extra
+    /// row.
+    pub fn committed_documents(store_dir: &std::path::Path, path: &str) -> Vec<(String, u64)> {
+        use tantivy::schema::Value;
+        let index =
+            tantivy::Index::open_in_dir(store_dir.join("search")).expect("the derived index opens");
+        let fields = super::fields_of(&index.schema());
+        let reader: tantivy::IndexReader = index
+            .reader_builder()
+            .reload_policy(tantivy::ReloadPolicy::Manual)
+            .try_into()
+            .expect("a reader");
+        let searcher = reader.searcher();
+        let query = tantivy::query::TermQuery::new(
+            tantivy::Term::from_field_text(fields.path, path),
+            tantivy::schema::IndexRecordOption::Basic,
+        );
+        let mut documents: Vec<(String, u64)> = searcher
+            .search(&query, &tantivy::collector::DocSetCollector)
+            .expect("the path query runs")
+            .into_iter()
+            .map(|address| {
+                let doc: tantivy::TantivyDocument = searcher.doc(address).expect("a stored doc");
+                let hash = doc.get_first(fields.hash).and_then(|v| v.as_str());
+                let start = doc.get_first(fields.start).and_then(|v| v.as_u64());
+                (
+                    hash.unwrap_or_default().to_owned(),
+                    start.unwrap_or(u64::MAX),
+                )
+            })
+            .collect();
+        documents.sort();
+        documents
+    }
+
+    impl Hooks {
+        pub(super) fn current() -> Self {
+            HOOKS.with(|slot| slot.borrow().clone())
+        }
+
+        pub(super) fn threads(&self) -> Option<usize> {
+            self.threads
+        }
+
+        pub(super) fn handout_bytes(&self) -> Option<usize> {
+            self.handout_bytes
+        }
+
+        pub(super) fn emit(&self, event: &Event<'_>) {
+            if let Some(observer) = &self.observer {
+                observer(event);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "test-faults")]
+use index_hooks::Hooks as IndexHooks;
+
+/// Without the test seam a page has no hooks.
+#[cfg(not(feature = "test-faults"))]
+#[derive(Clone, Copy, Default)]
+struct IndexHooks;
+
+#[cfg(not(feature = "test-faults"))]
+impl IndexHooks {
+    fn current() -> Self {
+        Self
+    }
+
+    fn threads(&self) -> Option<usize> {
+        None
+    }
+
+    fn handout_bytes(&self) -> Option<usize> {
+        None
+    }
+}
+
+/// The build threads of one page: min(available parallelism, 8).
+fn index_threads(hooks: &IndexHooks) -> usize {
+    hooks
+        .threads()
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map_or(1, std::num::NonZeroUsize::get)
+                .min(MAX_INDEX_THREADS)
+        })
+        .max(1)
+}
+
+/// One source handed out to a build thread: its page position and its
+/// verified bytes.
+struct BuildJob {
+    position: usize,
+    path: String,
+    hash: String,
+    body: String,
+}
+
+/// The documents built for one source, and the panic message when they are
+/// the plain blocks of an unmapped source because its parse panicked.
+struct SourceBuild {
+    documents: Vec<TantivyDocument>,
+    panic: Option<String>,
+}
+
+/// A build thread's outcome for one source; `Err` only when even its
+/// plain-block documents panicked.
+type BuildOutcome = Result<SourceBuild, String>;
+
+#[derive(Default)]
+struct HandOutState {
+    jobs: std::collections::VecDeque<BuildJob>,
+    /// Finished builds the writer has not taken yet, by page position.
+    built: std::collections::BTreeMap<usize, BuildOutcome>,
+    /// Nothing more will be handed out.
+    closed: bool,
+    /// A build thread unwound outside its panic boundary: the writer never
+    /// waits for a build it can no longer get.
+    broken: bool,
+}
+
+/// The hand-out between the calling thread and the build threads of one
+/// page (context-v2 § Parallel indexing): queued jobs one way, finished
+/// builds by page position the other.
+#[derive(Default)]
+struct HandOut {
+    state: std::sync::Mutex<HandOutState>,
+    /// A job was queued or the hand-out closed.
+    work: std::sync::Condvar,
+    /// A build finished or a build thread failed.
+    finished: std::sync::Condvar,
+}
+
+impl HandOut {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HandOutState> {
+        // The critical sections never panic; a poisoned guard is recovered.
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn push(&self, job: BuildJob) {
+        self.lock().jobs.push_back(job);
+        self.work.notify_one();
+    }
+
+    /// The next job, waiting for one; `None` once the hand-out is closed and
+    /// every job was taken.
+    fn take(&self) -> Option<BuildJob> {
+        let mut state = self.lock();
+        loop {
+            if let Some(job) = state.jobs.pop_front() {
+                return Some(job);
+            }
+            if state.closed {
+                return None;
+            }
+            state = self
+                .work
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    fn finish(&self, position: usize, outcome: BuildOutcome) {
+        self.lock().built.insert(position, outcome);
+        self.finished.notify_one();
+    }
+
+    /// The finished build at `position`, waiting for it when `wait`;
+    /// without `wait`, `None` while it is unfinished.
+    fn built(&self, position: usize, wait: bool) -> FResult<Option<BuildOutcome>> {
+        let mut state = self.lock();
+        loop {
+            if let Some(outcome) = state.built.remove(&position) {
+                return Ok(Some(outcome));
+            }
+            if state.broken {
+                return Err(FoundryError::Internal(anyhow::anyhow!(
+                    "an index build thread failed"
+                )));
+            }
+            if !wait {
+                return Ok(None);
+            }
+            state = self
+                .finished
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    /// Stop handing out and drop the jobs no thread has taken.
+    fn close(&self) {
+        let mut state = self.lock();
+        state.closed = true;
+        state.jobs.clear();
+        drop(state);
+        self.work.notify_all();
+    }
+}
+
+/// Marks the hand-out broken when its build thread unwinds outside the
+/// parse panic boundary, so the writer never waits for it.
+struct BuildThread<'a>(&'a HandOut);
+
+impl Drop for BuildThread<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            let mut state = self.0.lock();
+            state.broken = true;
+            state.closed = true;
+            drop(state);
+            self.0.finished.notify_all();
+            self.0.work.notify_all();
+        }
+    }
+}
+
+/// Closes the hand-out when dropped, an unwind of the writer included, so no
+/// build thread waits for work that never comes and the scope can finish.
+struct Closing<'a>(&'a HandOut);
+
+impl Drop for Closing<'_> {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
+/// Index one pending page (context-v2 § Parallel indexing). Its sources are
+/// handed out in key order to at most [`index_threads`] build threads, while
+/// the one writer, on this thread, adds every key's documents in key order
+/// as they become ready. At most [`HANDOUT_BYTES`] of source bytes are handed
+/// out and not yet consumed — a source's bytes are consumed once the writer
+/// has added its documents. Every build thread has finished when this
+/// returns, and nothing is committed here.
+///
+/// The control is checked before each hand-out: a cancellation or deadline
+/// seen there, or any failure, stops the hand-out and returns the error with
+/// the page uncommitted. A cancellation after the page's last hand-out is
+/// not seen here: the page's documents are added, and the caller commits
+/// them and sees it after the commit. A build thread that panicked outside
+/// its parse boundary fails the page by name. Returns the parse panics of
+/// the page by position.
+#[allow(clippy::too_many_arguments)]
+fn index_page<S, C, M>(
+    writer: &mut IndexWriter,
+    fields: &Fields,
+    pending: &[(String, String)],
+    sources: &S,
+    stored: &C,
+    memory: &M,
+    control: &crate::Control,
+    hooks: &IndexHooks,
+) -> FResult<Vec<(usize, String)>>
+where
+    S: ReadableTable<&'static str, &'static str>,
+    C: ReadableTable<&'static str, &'static str>,
+    M: ReadableTable<&'static str, &'static str>,
+{
+    let jobs = pending
+        .iter()
+        .filter(|(key, _)| key.starts_with("source:"))
+        .count();
+    let threads = index_threads(hooks).min(jobs);
+    let queue = HandOut::default();
+    let mut page = PageWriter {
+        writer,
+        fields,
+        memory,
+        pending,
+        queue: &queue,
+        control,
+        hooks,
+        charged: vec![None; pending.len()],
+        outstanding: 0,
+        next: 0,
+        panics: Vec::new(),
+    };
+    std::thread::scope(|scope| {
+        let _closing = Closing(&queue);
+        let mut workers = Vec::with_capacity(threads);
+        let mut started = Ok(());
+        for _ in 0..threads {
+            let queue = &queue;
+            match std::thread::Builder::new()
+                .name("foundry-index".into())
+                .spawn_scoped(scope, move || build_thread(queue, fields, hooks))
+            {
+                Ok(worker) => workers.push(worker),
+                Err(error) => {
+                    started = Err(FoundryError::from(error));
+                    break;
+                }
+            }
+        }
+        let indexed = started.and_then(|()| page.hand_out(sources, stored));
+        // Stop handing out. After a failure or cancellation the work no
+        // thread has taken is dropped; each thread finishes its current
+        // source and exits. Every one is joined here, so a panic outside
+        // its parse boundary is this page's named failure, not an unwind.
+        queue.close();
+        let mut joined = Ok(());
+        for worker in workers {
+            if let Err(payload) = worker.join() {
+                joined = Err(FoundryError::Internal(anyhow::anyhow!(
+                    "an index build thread panicked: {}",
+                    panic_message(&*payload)
+                )));
+            }
+        }
+        joined.and(indexed)
+    })?;
+    Ok(page.panics)
+}
+
+/// The page's one writer, on the calling thread.
+struct PageWriter<'a, M> {
+    writer: &'a mut IndexWriter,
+    fields: &'a Fields,
+    memory: &'a M,
+    pending: &'a [(String, String)],
+    queue: &'a HandOut,
+    control: &'a crate::Control,
+    hooks: &'a IndexHooks,
+    /// Per position: the bytes of a handed-out source, until its documents
+    /// are added.
+    charged: Vec<Option<usize>>,
+    /// Source bytes handed out whose documents are not yet added.
+    outstanding: usize,
+    /// The next position to add.
+    next: usize,
+    panics: Vec<(usize, String)>,
+}
+
+impl<M: ReadableTable<&'static str, &'static str>> PageWriter<'_, M> {
+    /// Hand out the page's existing sources in key order, adding finished
+    /// ones in key order as it goes, then add the rest.
+    fn hand_out<S, C>(&mut self, sources: &S, stored: &C) -> FResult<()>
+    where
+        S: ReadableTable<&'static str, &'static str>,
+        C: ReadableTable<&'static str, &'static str>,
+    {
+        let limit = self.hooks.handout_bytes().unwrap_or(HANDOUT_BYTES);
+        let pending = self.pending;
+        for (position, (key, _)) in pending.iter().enumerate() {
+            let Some(path) = key.strip_prefix("source:") else {
+                continue;
+            };
+            let meta: SourceMeta = match sources.get(path)? {
+                Some(raw) => decode(raw.value(), "source")?,
+                None => continue,
+            };
+            // A recorded length past the source bound is corruption, named
+            // before any bound arithmetic.
+            check_recorded_length(path, &meta)?;
+            // Make room: the writer adds sources in key order, releasing
+            // their bytes. Every earlier key is decided and the earliest one
+            // not yet added was handed out or needs no build, so this always
+            // progresses; a lone source always fits.
+            let bytes = meta.bytes;
+            let fits =
+                |outstanding: usize| outstanding == 0 || outstanding.saturating_add(bytes) <= limit;
+            if !fits(self.outstanding) {
+                index_event!(
+                    self.hooks,
+                    index_hooks::Event::Wait {
+                        outstanding: self.outstanding,
+                        next: bytes,
+                    }
+                );
+                while !fits(self.outstanding) && self.next < position {
+                    self.add_until(self.next + 1, true)?;
+                }
+            }
+            index_fault!(INDEX_HANDOUT, self.control, path)?;
+            // Cancellation and the deadline stop the hand-out here.
+            self.control.check()?;
+            // Documents are built from the verified source bytes.
+            let verified = reconstruct_verified(stored, path, &meta)?;
+            self.charged[position] = Some(bytes);
+            self.outstanding = self.outstanding.saturating_add(bytes);
+            index_event!(
+                self.hooks,
+                index_hooks::Event::HandedOut {
+                    path,
+                    outstanding: self.outstanding,
+                }
+            );
+            self.queue.push(BuildJob {
+                position,
+                path: path.to_owned(),
+                hash: meta.hash,
+                body: verified.body,
+            });
+            // Add whatever is ready, in key order, without waiting.
+            self.add_until(position + 1, false)?;
+        }
+        self.add_until(pending.len(), true)
+    }
+
+    /// Add the keys before `upto` in key order. A handed-out source's build
+    /// is awaited when `wait`; otherwise adding stops at the first
+    /// unfinished one.
+    fn add_until(&mut self, upto: usize, wait: bool) -> FResult<()> {
+        while self.next < upto {
+            let position = self.next;
+            let build = match self.charged[position] {
+                None => None,
+                Some(_) => match self.queue.built(position, wait)? {
+                    Some(outcome) => {
+                        Some(outcome.map_err(|e| FoundryError::Internal(anyhow::anyhow!(e)))?)
+                    }
+                    None => return Ok(()),
+                },
+            };
+            self.add(position, build)?;
+            // Consumed: the source's documents are added.
+            if let Some(bytes) = self.charged[position].take() {
+                self.outstanding = self.outstanding.saturating_sub(bytes);
+            }
+            self.next += 1;
+        }
+        Ok(())
+    }
+
+    /// Delete and add one pending key's documents.
+    fn add(&mut self, position: usize, build: Option<SourceBuild>) -> FResult<()> {
+        let (pending, memory) = (self.pending, self.memory);
+        let key = pending[position].0.as_str();
+        index_fault!(INDEX_BEFORE_ADD, self.control, key)?;
+        if let Some(path) = key.strip_prefix("source:") {
+            self.writer
+                .delete_term(Term::from_field_text(self.fields.path, path));
+            if let Some(build) = build {
+                for document in build.documents {
+                    self.add_document(document)?;
+                }
+                if let Some(message) = build.panic {
+                    self.panics.push((position, message));
+                }
+            }
+        } else if let Some(id) = key.strip_prefix("memory:") {
+            // The key field is unique per memory record and no source key
+            // can equal it (source keys always contain NUL).
+            self.writer
+                .delete_term(Term::from_field_text(self.fields.key, key));
+            if let Some(raw) = memory.get(id)? {
+                // An undecodable row gets no document (it is named at get,
+                // search validation and export) so one corrupt record can
+                // never stall source indexing behind it.
+                if let Ok(record) = serde_json::from_str::<MemoryRecord>(raw.value()) {
+                    let document =
+                        memory_document(self.fields, &record.id, record.revision, &record.text);
+                    self.add_document(document)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn add_document(&mut self, document: TantivyDocument) -> FResult<()> {
+        index_event!(
+            self.hooks,
+            index_hooks::Event::Add(&tantivy::Document::to_json(
+                &document,
+                &self.writer.index().schema()
+            ))
+        );
+        self.writer.add_document(document)?;
+        Ok(())
+    }
+}
+
+/// One build thread: take sources until the hand-out closes. Its copy of a
+/// source's bytes is dropped once the documents exist; the bytes stay
+/// charged until the writer adds those documents.
+fn build_thread(queue: &HandOut, fields: &Fields, hooks: &IndexHooks) {
+    let _unwinding = BuildThread(queue);
+    while let Some(job) = queue.take() {
+        let outcome = build_source(fields, &job, hooks);
+        index_event!(hooks, index_hooks::Event::Built(&job.path));
+        let position = job.position;
+        drop(job);
+        queue.finish(position, outcome);
+    }
+}
+
+/// The documents of one handed-out source. A panicking parse is caught: the
+/// source gets the plain-block documents of an unmapped source, the first of
+/// kind [`UNPARSED_KIND`], and the panic's message, so it is never dropped.
+fn build_source(
+    fields: &Fields,
+    job: &BuildJob,
+    hooks: &IndexHooks,
+) -> Result<SourceBuild, String> {
+    let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        index_event!(hooks, index_hooks::Event::Build(&job.path));
+        search_documents(fields, &job.path, &job.hash, &job.body, Parsing::Parsed)
+    }));
+    match parsed {
+        Ok(documents) => Ok(SourceBuild {
+            documents,
+            panic: None,
+        }),
+        Err(payload) => {
+            let message = panic_message(&*payload);
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                search_documents(fields, &job.path, &job.hash, &job.body, Parsing::Unparsed)
+            }))
+            .map(|documents| SourceBuild {
+                documents,
+                panic: Some(message),
+            })
+            .map_err(|fallback| {
+                format!(
+                    "{}: plain-block documents panicked: {}",
+                    job.path,
+                    panic_message(&*fallback)
+                )
+            })
+        }
+    }
+}
+
+/// The text of a panic payload, when it carries one.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "the parse panicked".to_owned())
+}
+
+/// Sources left as the plain blocks of an unmapped source after a parse
+/// panic (context-v2 § Parallel indexing). Each one's first document, and
+/// no other, is of kind [`UNPARSED_KIND`], so one term query counts them
+/// exactly without loading a document; samples load at most
+/// [`PARSE_FAILURE_SAMPLES`] documents, the smallest `key_hash` ones, and
+/// name them in path order.
+fn unparsed_sources(searcher: &tantivy::Searcher, fields: &Fields) -> FResult<ParseFailures> {
+    let query = TermQuery::new(
+        Term::from_field_text(fields.kind, UNPARSED_KIND),
+        IndexRecordOption::Basic,
+    );
+    let first = TopDocs::with_limit(PARSE_FAILURE_SAMPLES)
+        .order_by_u64_field("key_hash", tantivy::Order::Asc);
+    let (count, addresses) = searcher.search(&query, &(Count, first))?;
+    let mut paths = Vec::with_capacity(addresses.len());
+    for (_, address) in addresses {
+        let doc: TantivyDocument = searcher.doc(address)?;
+        if let Some(path) = doc.get_first(fields.path).and_then(|v| v.as_str()) {
+            paths.push(path.to_owned());
+        }
+    }
+    paths.sort_unstable();
+    Ok(ParseFailures {
+        count: count as u64,
+        samples: paths
+            .into_iter()
+            .map(|path| {
+                format!("{path}: parse_panicked: indexed as plain blocks until parsed again")
+            })
+            .collect(),
+    })
 }
 
 /// Validate one memory source link against the write transaction's own
@@ -1266,6 +2028,7 @@ impl Engine {
             workspace,
             workspace_id,
             schema: SCHEMA_VERSION,
+            parse_panics: ParseFailures::default(),
             semantic_dir,
         })
     }
@@ -1380,6 +2143,7 @@ impl Engine {
             workspace,
             workspace_id,
             schema,
+            parse_panics: ParseFailures::default(),
             semantic_dir,
         })
     }
@@ -1544,6 +2308,16 @@ impl Engine {
                 Some("derived index unavailable".into()),
             )
         };
+        // Sources left as plain blocks after a parse panic stay named until
+        // parsed again. The derivation reads the serving index only; a read
+        // failure leaves the field unknown, never an invented zero, and
+        // status itself stays available.
+        let parse_failures = match (&self.search, &self.repair_reason) {
+            (Some(handles), None) if self.schema == SCHEMA_VERSION => {
+                unparsed_sources(&handles.reader.searcher(), &handles.fields).ok()
+            }
+            _ => None,
+        };
         Ok(StoreStatus {
             schema: self.schema,
             workspace_id: self.workspace_id.clone(),
@@ -1553,7 +2327,19 @@ impl Engine {
             index_state,
             index_reason,
             scan_state,
+            parse_failures: parse_failures.as_ref().map(|named| named.count),
+            parse_failure_samples: parse_failures
+                .map(|named| named.samples)
+                .unwrap_or_default(),
         })
+    }
+
+    /// The parse panics of the latest [`Self::refresh`], each a named scan
+    /// failure of the index run that drained it (context-v2 § Parallel
+    /// indexing). A page's panics are recorded once its search commit
+    /// succeeded; taking them leaves none.
+    pub fn take_parse_failures(&mut self) -> ParseFailures {
+        std::mem::take(&mut self.parse_panics)
     }
 
     pub fn workspace_id(&self) -> Option<String> {
@@ -1920,8 +2706,17 @@ impl Engine {
         Ok(())
     }
 
-    /// One index batch: at most `PAGE` pending keys. Search commit precedes
-    /// clearing durable pending work; only the indexed version is cleared.
+    /// One index batch: at most `PAGE` pending keys. The page's sources are
+    /// built on at most [`index_threads`] threads while the one writer adds
+    /// their documents in key order ([`index_page`], context-v2 § Parallel
+    /// indexing); every thread has finished before the commit. Search commit
+    /// precedes clearing durable pending work; only the indexed version is
+    /// cleared.
+    ///
+    /// The control is checked before each hand-out and after the commit. A
+    /// cancellation after the page's last hand-out lets the page add and
+    /// commit its documents, then stops before the pending clear: its keys
+    /// stay pending, a later refresh clears them, and replay converges.
     pub fn refresh_index(&mut self, control: &crate::Control) -> FResult<(usize, usize)> {
         if let Some(reason) = &self.repair_reason {
             return Err(FoundryError::RepairRequired(reason.clone()));
@@ -1942,6 +2737,17 @@ impl Engine {
         if pending.is_empty() {
             return Ok((0, 0));
         }
+        // Typed pending keys (008): the drain dispatches on the prefix. An
+        // untyped key cannot exist in a v3 store — the upgrade migrated them
+        // all — so it names authoritative corruption, before any work.
+        if let Some((key, _)) = pending
+            .iter()
+            .find(|(key, _)| !key.starts_with("source:") && !key.starts_with("memory:"))
+        {
+            return Err(FoundryError::CorruptStore(format!(
+                "pending key {key:?} is not typed (source:/memory:)"
+            )));
+        }
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
         let Some(handles) = self.search.as_mut() else {
@@ -1949,53 +2755,33 @@ impl Engine {
                 "derived index unavailable".into(),
             ));
         };
+        let hooks = IndexHooks::current();
         let memory = tx.open_table(MEMORY)?;
-        for (key, _) in &pending {
-            // Typed pending keys (008): the drain dispatches on the prefix.
-            // An untyped key cannot exist in a v3 store — the upgrade
-            // migrated them all — so it names authoritative corruption.
-            if let Some(path) = key.strip_prefix("source:") {
-                handles
-                    .writer
-                    .delete_term(Term::from_field_text(handles.fields.path, path));
-                if let Some(source) = sources.get(path)? {
-                    let source: SourceMeta = decode(source.value(), "source")?;
-                    // Documents are built from the verified source bytes.
-                    let verified = reconstruct_verified(&stored, path, &source)?;
-                    for document in
-                        search_documents(&handles.fields, path, &source.hash, &verified.body)
-                    {
-                        handles.writer.add_document(document)?;
-                    }
-                }
-            } else if let Some(id) = key.strip_prefix("memory:") {
-                // The key field is unique per memory record and no source
-                // key can equal it (source keys always contain NUL).
-                handles
-                    .writer
-                    .delete_term(Term::from_field_text(handles.fields.key, key));
-                if let Some(raw) = memory.get(id)? {
-                    // An undecodable row gets no document (it is named at get,
-                    // search validation and export) so one corrupt record can
-                    // never stall source indexing behind it.
-                    if let Ok(record) = serde_json::from_str::<MemoryRecord>(raw.value()) {
-                        handles.writer.add_document(memory_document(
-                            &handles.fields,
-                            &record.id,
-                            record.revision,
-                            &record.text,
-                        ))?;
-                    }
-                }
-            } else {
-                return Err(FoundryError::CorruptStore(format!(
-                    "pending key {key:?} is not typed (source:/memory:)"
-                )));
-            }
-        }
+        let SearchHandles {
+            reader,
+            writer,
+            fields,
+        } = handles;
+        // Every build thread has finished here. A page stopped at a hand-out,
+        // or failed while building or adding, returns here uncommitted; one
+        // cancelled after its last hand-out is committed below and stops
+        // after the commit.
+        let panics = index_page(
+            writer, fields, &pending, &sources, &stored, &memory, control, &hooks,
+        )?;
         drop(memory);
-        handles.writer.commit()?;
-        handles.reader.reload()?;
+        index_fault!(INDEX_BEFORE_COMMIT, control, "")?;
+        writer.commit()?;
+        // The page's documents are committed: its parse panics are this
+        // drain's named scan failures, whatever stops it from here on (a
+        // replayed page names them again when it replays).
+        for (position, message) in &panics {
+            let key = &pending[*position].0;
+            self.parse_panics
+                .push(key.strip_prefix("source:").unwrap_or(key), message);
+        }
+        index_fault!(INDEX_BEFORE_RELOAD, control, "")?;
+        reader.reload()?;
         drop(stored);
         drop(sources);
         drop(tx);
@@ -2036,7 +2822,9 @@ impl Engine {
     }
 
     /// Drain pending index work in bounded batches until empty or cancelled.
+    /// [`Self::take_parse_failures`] then names this drain's parse panics.
     pub fn refresh(&mut self, control: &crate::Control) -> FResult<(usize, usize)> {
+        self.parse_panics = ParseFailures::default();
         let mut total = (0usize, 0usize);
         loop {
             // Cooperative cancellation between index batches.
@@ -2465,7 +3253,13 @@ impl Engine {
                 unit_start: number(fields.unit_start)?,
                 unit_head: number(fields.unit_head)?,
                 unit_end: number(fields.unit_end)?,
-                kind: text(fields.kind).ok_or_else(invalid)?,
+                // A parse-fallback document is a block to every reader.
+                kind: text(fields.kind)
+                    .map(|kind| match kind.as_str() {
+                        UNPARSED_KIND => crate::syntax::UnitKind::Block.as_str().to_owned(),
+                        _ => kind,
+                    })
+                    .ok_or_else(invalid)?,
                 lang: text(fields.lang),
                 qname: text(fields.qname),
             })

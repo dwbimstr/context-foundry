@@ -9,6 +9,8 @@
 use context_foundry::fault::{self, Action, names};
 use context_foundry::graph::{Edge, Endpoint, GraphBundle};
 use context_foundry::learning::Feedback;
+use context_foundry::store::fault_names as index_points;
+use context_foundry::store::index_hooks::{self, Event, Hooks, committed_documents};
 use context_foundry::testkit;
 use context_foundry::testkit::{
     CORRUPT_INDEX_BYTES, KEPT_BODY, Snapshot, corrupt_search_index, craft_v1_store, knowledge,
@@ -18,6 +20,10 @@ use context_foundry::{Control, Engine, Strategy, digest};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Arc, Condvar, Mutex};
+
+/// A crash child's bounded wait for a build to start.
+const CHILD_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 type Owned = BTreeMap<String, Vec<(String, String)>>;
 
@@ -124,6 +130,62 @@ fn child_fault(stage: &str) -> ! {
                     let _ = engine.refresh(&Control::unbounded());
                 }
             }
+        }
+        "index_before_commit" | "index_mid_handout" => {
+            seed(&work, 0);
+            let mut engine = Engine::open_existing(&store).unwrap();
+            engine.replace_source("a.rs", V2).unwrap();
+            if stage == "index_before_commit" {
+                // Every document of the page added, the commit not reached.
+                fault::arm(index_points::INDEX_BEFORE_COMMIT, 0, Action::Abort);
+            } else {
+                for i in 0..3 {
+                    engine
+                        .replace_source(&format!("n{i}.rs"), &format!("fn added_unit_{i}() {{}}\n"))
+                        .unwrap();
+                }
+                // Eight build threads. a.rs's build is entered and held, never
+                // released; the exit before the third hand-out waits (bounded)
+                // for that entry, so it comes with a build in flight. A hold
+                // that outlives its bound fails the child without SIGABRT.
+                let entered = Arc::new((Mutex::new(false), Condvar::new()));
+                let held = Arc::clone(&entered);
+                index_hooks::install(Hooks {
+                    threads: Some(8),
+                    handout_bytes: None,
+                    observer: Some(Arc::new(move |event: &Event<'_>| {
+                        if matches!(event, Event::Build("a.rs")) {
+                            let (flag, changed) = &*held;
+                            let mut flag = flag.lock().unwrap();
+                            *flag = true;
+                            changed.notify_all();
+                            let _hold = changed
+                                .wait_timeout_while(flag, CHILD_WAIT, |_| true)
+                                .unwrap();
+                            eprintln!("the exit never came while a.rs's build was held");
+                            std::process::exit(8);
+                        }
+                    })),
+                });
+                fault::arm(
+                    index_points::INDEX_HANDOUT,
+                    2,
+                    Action::Call(Box::new(move |_| {
+                        let (flag, changed) = &*entered;
+                        let (flag, waited) = changed
+                            .wait_timeout_while(flag.lock().unwrap(), CHILD_WAIT, |entered| {
+                                !*entered
+                            })
+                            .unwrap();
+                        if waited.timed_out() || !*flag {
+                            eprintln!("a.rs's build never started");
+                            std::process::exit(8);
+                        }
+                        std::process::abort();
+                    })),
+                );
+            }
+            let _ = engine.refresh(&Control::unbounded());
         }
         "upgrade_before_commit" | "upgrade_after_commit" => {
             craft_v1_store(&store, Some(&work.join("ws")));
@@ -286,6 +348,71 @@ fn exit_between_search_commit_and_pending_clear_replays_idempotently() {
             .span,
         V2_UNIT.as_bytes()
     );
+}
+
+/// The new version is durable and pending but not searchable; the old
+/// indexed version is stale. A reopened engine replays to exactly one
+/// searchable version.
+fn assert_replays_to_v2(store: &Path, pending: u64) {
+    let mut engine = Engine::open_existing(store).unwrap();
+    assert_eq!(engine.pending().unwrap(), pending, "no key acknowledged");
+    assert_eq!(
+        engine.source("a.rs").unwrap().unwrap().hash,
+        digest(V2.as_bytes())
+    );
+    // Only the first version's document is committed.
+    assert_eq!(
+        committed_documents(store, "a.rs"),
+        [(digest(V1.as_bytes()), 0)]
+    );
+    let old = engine.search("child_version_one", 5).unwrap();
+    assert!(old.hits.is_empty() && old.stale_candidates == 1);
+    assert!(
+        engine
+            .search("child_version_two", 5)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
+    engine.refresh(&Control::unbounded()).unwrap();
+    assert_eq!(engine.pending().unwrap(), 0);
+    let two = engine.search("child_version_two", 5).unwrap();
+    assert_eq!((two.hits.len(), two.stale_candidates), (1, 0));
+    assert_eq!(two.hits[0].text, V2_UNIT);
+    let one = engine.search("child_version_one", 5).unwrap();
+    assert_eq!((one.hits.len(), one.stale_candidates), (0, 0));
+    assert_eq!(engine.status().unwrap().parse_failures, Some(0));
+    // Exactly one live committed document, the replayed version's.
+    assert_eq!(
+        committed_documents(store, "a.rs"),
+        [(digest(V2.as_bytes()), 0)]
+    );
+}
+
+fn exit_before_parallel_search_commit_replays() {
+    let work = crash_at("index_before_commit");
+    let store = work.path().join("store");
+    assert_replays_to_v2(&store, 1);
+}
+
+fn exit_while_builds_are_in_flight_replays() {
+    let work = crash_at("index_mid_handout");
+    let store = work.path().join("store");
+    assert_replays_to_v2(&store, 4);
+    let engine = Engine::open_existing(&store).unwrap();
+    for i in 0..3 {
+        // Shared subtokens make the other added units lexical hits too.
+        let name = format!("added_unit_{i}");
+        let hits = engine.search(&name, 5).unwrap().hits;
+        let exact: Vec<_> = hits.iter().filter(|hit| hit.text.contains(&name)).collect();
+        assert_eq!(exact.len(), 1, "n{i}.rs");
+        assert_eq!(exact[0].path, format!("n{i}.rs"));
+        let body = format!("fn added_unit_{i}() {{}}\n");
+        assert_eq!(
+            committed_documents(&store, &format!("n{i}.rs")),
+            [(digest(body.as_bytes()), 0)]
+        );
+    }
 }
 
 /// After every repair abort: sources, chunks, graph rows and feedback are
@@ -584,6 +711,14 @@ fn main() {
             exit_between_search_commit_and_pending_clear_replays_idempotently,
         ),
         (
+            "exit_before_parallel_search_commit_replays",
+            exit_before_parallel_search_commit_replays,
+        ),
+        (
+            "exit_while_builds_are_in_flight_replays",
+            exit_while_builds_are_in_flight_replays,
+        ),
+        (
             "exit_after_marker_before_any_move",
             exit_after_marker_before_any_move,
         ),
@@ -636,8 +771,16 @@ fn main() {
             global_arming_fires_on_worker_threads_for_spawned_processes,
         ),
     ];
+    // Positional arguments filter by substring, as libtest does.
+    let filters: Vec<String> = std::env::args()
+        .skip(1)
+        .filter(|arg| !arg.starts_with('-'))
+        .collect();
     let mut failed = 0usize;
     for (name, test) in tests {
+        if !filters.is_empty() && !filters.iter().any(|filter| name.contains(filter.as_str())) {
+            continue;
+        }
         print!("test {name} ... ");
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(test)) {
             Ok(()) => println!("ok"),
