@@ -4246,7 +4246,8 @@ fn import_keys(lang: Lang, node: tree_sitter::Node, source: &[u8], out: &mut Vec
 
 /// One element of a PowerShell command: a parameter (`-Name`, lowercased,
 /// without its `-` and a trailing `:`), or an argument's values (a bare
-/// token; a quoted literal, or each of a list of them, without quotes).
+/// token; a static quoted literal, or each of a list of them, without
+/// quotes).
 enum PowerShellElement {
     Parameter(String),
     Argument(Vec<String>),
@@ -4265,9 +4266,10 @@ const IMPORT_MODULE_SWITCHES: &[&str] = &[
 ];
 
 /// One command element: `None` for a separator or a redirection, which take
-/// no position; any operand that is not a literal (`$prefix`, `(Get-X)`) is
-/// an argument without values, so it still takes its position and a
-/// preceding parameter's value (001 T008 review R4).
+/// no position; any operand that is not a static literal (`$prefix`,
+/// `(Get-X)`, `"$name"`, `"$(Get-X)"`) is an argument without values, so it
+/// still takes its position and a preceding parameter's value (001 T008
+/// review R4, R8).
 fn powershell_element(element: tree_sitter::Node, source: &[u8]) -> Option<PowerShellElement> {
     let parameter = |text: &str| {
         PowerShellElement::Parameter(
@@ -4288,14 +4290,24 @@ fn powershell_element(element: tree_sitter::Node, source: &[u8]) -> Option<Power
                 PowerShellElement::Argument(vec![token.to_owned()])
             })
         }
-        // `'./Store.psm1'`, `"Store"`, `'A', 'B'`: string literals, each
-        // inside a unary expression of an array literal; anything else in
-        // the list makes the whole operand nonliteral.
+        // `'./Store.psm1'`, `"Store"`, `'A', 'B'`: static string literals,
+        // each inside a unary expression of an array literal; anything else
+        // in the list, a string holding a variable or a subexpression
+        // (`"$name"`, `"$(Get-X)"`) included, makes the whole operand
+        // unknown (001 T008 review R8).
         "array_literal_expression" => {
+            let expands = |literal: &tree_sitter::Node| {
+                named_children(*literal).any(|string| {
+                    matches!(
+                        string.kind(),
+                        "expandable_string_literal" | "expandable_here_string_literal"
+                    ) && string.named_child_count() > 0
+                })
+            };
             let mut literals = Vec::new();
             for item in named_children(element) {
                 let Some(literal) = named_child_of(item, &["string_literal"])
-                    .filter(|_| item.named_child_count() == 1)
+                    .filter(|literal| item.named_child_count() == 1 && !expands(literal))
                     .and_then(|literal| text(literal, source))
                 else {
                     return Some(PowerShellElement::Argument(Vec::new()));

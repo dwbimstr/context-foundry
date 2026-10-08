@@ -182,5 +182,6 @@ tree-sitter-perl = { git = "https://github.com/dwbimstr/tree-sitter-perl", rev =
 # 001 T008: tree-sitter-rust 0.24.2 (the latest release) cannot parse the
 # nightly syntax rustc 1.99's own sources use (`const impl`, `[const]` bounds,
 # const/auto/impl-restricted traits, macros 2.0, `safe` extern items, trait
-# aliases); the fork is the v0.24.2 tag plus those rules (cf-nightly-syntax).
-tree-sitter-rust = { git = "https://github.com/dwbimstr/tree-sitter-rust", rev = "8a5695efe03f477596d2c50e9227dc102ec6c238" }
+# aliases); the fork is the v0.24.2 tag plus those rules, with `safe` and
+# `auto` still identifiers and type names elsewhere (cf-nightly-syntax).
+tree-sitter-rust = { git = "https://github.com/dwbimstr/tree-sitter-rust", rev = "d43cece5fd9a1944c5a9e0bab58167b777b88300" }

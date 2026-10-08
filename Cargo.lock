@@ -3766,7 +3766,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-rust"
 version = "0.24.2"
-source = "git+https://github.com/dwbimstr/tree-sitter-rust?rev=8a5695efe03f477596d2c50e9227dc102ec6c238#8a5695efe03f477596d2c50e9227dc102ec6c238"
+source = "git+https://github.com/dwbimstr/tree-sitter-rust?rev=d43cece5fd9a1944c5a9e0bab58167b777b88300#d43cece5fd9a1944c5a9e0bab58167b777b88300"
 dependencies = [
  "cc",
  "tree-sitter-language",

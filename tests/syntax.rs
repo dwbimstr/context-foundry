@@ -3887,7 +3887,8 @@ fn dart_local_functions_are_units() {
 
 /// A PowerShell module operand gives its key quoted or not, by position or
 /// as `-Name`'s value; another parameter's value and other commands give
-/// none (review M6).
+/// none (review M6). A string holding a variable or a subexpression is an
+/// unknown operand: it keeps its position and gives no key (review R8).
 #[test]
 fn powershell_module_operands_give_keys_quoted_or_not() {
     for (source, keys) in [
@@ -3915,6 +3916,15 @@ fn powershell_module_operands_give_keys_quoted_or_not() {
         ("using namespace System.IO\n", &["IO"]),
         ("Write-Host 'Store.psm1'\n", &[]),
         ("Get-Module -Name 'Store'\n", &[]),
+        ("Import-Module \"Store\"\n", &["Store"]),
+        ("Import-Module \"$name\"\n", &[]),
+        ("Import-Module -Name \"$dir/Store.psm1\"\n", &[]),
+        ("Import-Module \"$(Get-ModulePath)\"\n", &[]),
+        ("Import-Module 'A', \"$b\"\n", &[]),
+        ("using module \"$name\"\n", &[]),
+        ("using module \"$($root)\\Store.psm1\"\n", &[]),
+        ("Import-Module -Prefix \"$p\" './Store.psm1'\n", &["Store"]),
+        ("Import-Module \"$path\" './Store.psm1'\n", &[]),
     ] {
         assert_eq!(
             syntax::index(source, Some(Lang::PowerShell))
@@ -4202,5 +4212,87 @@ auto trait Freeze {}
     .map(|(kind, qname)| (kind, Some(qname.to_owned())))
     .collect();
     assert_eq!(found, want);
+    assert_tiles(source, Some(Lang::Rust));
+}
+
+/// `safe` and `auto` are keywords only before the items they modify: types,
+/// impls, generic arguments, paths, bindings and macros of those names parse
+/// without error under the fork, as under 0.24.2, and give units qualified
+/// by the type (001 T008 review R7).
+#[test]
+fn rust_safe_and_auto_stay_identifiers_and_type_names() {
+    let source = "\
+pub struct Wrap<T>(T);
+pub struct safe;
+pub struct auto(pub safe);
+
+impl safe {
+    pub fn f(x: auto) -> safe {
+        x.0
+    }
+}
+
+impl From<safe> for auto {
+    fn from(s: safe) -> auto {
+        auto(s)
+    }
+}
+
+impl Default for Wrap<safe> {
+    fn default() -> Self {
+        Wrap(safe)
+    }
+}
+
+pub fn pick(v: Vec<safe>, w: Option<&auto>, p: a::safe::Mode) -> Result<safe, auto> {
+    let safe = v.len();
+    let auto = safe + 1;
+    match w {
+        Some(auto(inner)) => helpers::safe::check(auto),
+        None => safe::<u8>(),
+    }
+}
+
+const SAFE: safe = safe;
+type Pair = (safe, Wrap<auto>);
+
+macro_rules! auto {
+    () => {};
+}
+";
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_rust::LANGUAGE.into())
+        .unwrap();
+    let tree = parser.parse(source, None).unwrap();
+    let root = tree.root_node();
+    assert!(!root.has_error(), "{}", root.to_sexp());
+    let found: Vec<(&str, Option<String>)> = units(source, Lang::Rust)
+        .into_iter()
+        .map(|(kind, qname, _)| (kind, qname))
+        .collect();
+    let want: Vec<(&str, Option<String>)> = [
+        ("struct", "Wrap"),
+        ("struct", "safe"),
+        ("struct", "auto"),
+        ("impl", "safe"),
+        ("fn", "safe::f"),
+        ("impl", "auto"),
+        ("fn", "auto::from"),
+        ("impl", "Wrap<safe>"),
+        ("fn", "Wrap<safe>::default"),
+        ("fn", "pick"),
+        ("const", "SAFE"),
+        ("type", "Pair"),
+        ("macro", "auto"),
+    ]
+    .into_iter()
+    .map(|(kind, qname)| (kind, Some(qname.to_owned())))
+    .collect();
+    assert_eq!(found, want);
+    assert_eq!(
+        qualifiers(source, Lang::Rust, "Wrap<safe>::default"),
+        ["wrap"]
+    );
     assert_tiles(source, Some(Lang::Rust));
 }

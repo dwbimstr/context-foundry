@@ -66,7 +66,7 @@ license files from the git checkout Cargo resolved:
 | --- | --- | --- | --- |
 | tree-sitter-ruby | 0.23.1 | `dwbimstr/tree-sitter-ruby` `1a594bf` | heredoc serialization bound |
 | tree-sitter-perl | 1.1.2 | `dwbimstr/tree-sitter-perl` `0686313` | scanner frees its heredoc queues |
-| tree-sitter-rust | 0.24.2 | `dwbimstr/tree-sitter-rust` `8a5695e` | rustc 1.99 nightly syntax |
+| tree-sitter-rust | 0.24.2 | `dwbimstr/tree-sitter-rust` `d43cece` | rustc 1.99 nightly syntax |
 
 The current lock contains 300 packages including Foundry: **299 third-party**
 packages, up from the historical 286 by these 13 additions. Declared expressions are permissive

@@ -1150,7 +1150,7 @@ nested types, alias and XML imports; Perl `require "file"` and fully qualified
 `.fs`, `.pl`, `.sc` and `.t` are taken as F#, Perl, Scala and Perl.
 
 Rust parses through the fork `dwbimstr/tree-sitter-rust`, branch `cf-nightly-syntax`
-at `8a5695e` (0.24.2 plus the nightly syntax below; owner, 2026-10-08): 0.24.2, the
+at `d43cece` (0.24.2 plus the nightly syntax below; owner, 2026-10-08): 0.24.2, the
 latest release, rejects the nightly syntax of rustc 1.99's own sources, and one error
 can turn a whole file into an ERROR node (core's `slice/mod.rs`, from its line 574:
 132 of its 155 fns survived as units, `binary_search_by_key` not among them). The
@@ -1165,7 +1165,9 @@ units); `final fn`; associated type defaults; default field values and a bare `.
 metavariable expressions and `attr()`/`derive()` rules in `macro_rules!`;
 `f16`/`f128` literal suffixes; `~` in token trees; `box` patterns; attributes on
 struct pattern fields; negative literals as const arguments. A trait alias `trait A
-= B + C;` is the new node `trait_alias_item`, a type unit. Every rust-lang/rust
+= B + C;` is the new node `trait_alias_item`, a type unit. `safe` and `auto` are keywords only
+before the item they modify and stay identifiers and type names elsewhere (`struct
+safe; fn f(x: safe) -> Vec<auto>`, `impl safe`, `a::safe::B`), as under 0.24.2. Every rust-lang/rust
 1.99.0 file that 0.24.2 parses without error keeps a byte-identical tree under the
 fork, except former silent mis-parses: the reserved `box` and `macro` taken as names
 (`box (a, b)` as a tuple-struct pattern) and `1f16` as two tokens. Files with errors
@@ -1215,8 +1217,9 @@ definition gets an address:
 - Import keys: C# `using` and its alias; F# `open` and `#load`; VB `Imports`; PHP `use`
   (alias, group, function) and literal include/require paths; Perl `use`, `require`,
   `use parent`; shell `source`/`.`; PowerShell `using namespace`/`using module`,
-  `Import-Module` and dot-sourcing (an operand that is not a literal, such as a
-  variable, keeps its position and a preceding parameter's value but gives no key); Ruby
+  `Import-Module` and dot-sourcing (an operand that is not a static literal, such as a
+  variable, a subexpression or a quoted string holding either (`"$name"`,
+  `"$(Get-X)"`), keeps its position and a preceding parameter's value but gives no key); Ruby
   `require`, `require_relative`, `load` and
   `autoload` stems; Kotlin imports and aliases (not `*`); Swift imports; Scala paths,
   selectors and renames (not `_`); Lua `require` (last segment), `dofile`, `loadfile`;
