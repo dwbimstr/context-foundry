@@ -1298,8 +1298,8 @@ fn query_tokens(query: &str) -> Vec<(usize, usize)> {
             let word = &query[start..at];
             let trimmed = word.trim_start_matches(['(', '[', '{', '<', '"', '\'']);
             let from = start + word.len() - trimmed.len();
-            let trimmed =
-                trimmed.trim_end_matches([')', ']', '}', '>', '"', '\'', ',', ';', ':', '!', '?', '.']);
+            let trimmed = trimmed
+                .trim_end_matches([')', ']', '}', '>', '"', '\'', ',', ';', ':', '!', '?', '.']);
             if !trimmed.is_empty() {
                 out.push((from, from + trimmed.len()));
             }

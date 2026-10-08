@@ -329,7 +329,10 @@ fn merged_anchors(batches: &[RootBatch]) -> Vec<AnchorWindow> {
     let mut merged: Vec<AnchorWindow> = Vec::new();
     for root in batches {
         for window in &root.batch.anchors {
-            match merged.iter_mut().find(|known| known.anchor == window.anchor) {
+            match merged
+                .iter_mut()
+                .find(|known| known.anchor == window.anchor)
+            {
                 Some(known) => {
                     known.definitions = known.definitions.saturating_add(window.definitions);
                     known.entries.extend(window.entries.iter().cloned());
@@ -918,9 +921,12 @@ mod tests {
         }
     }
 
-    /// A root whose windows (anchor, order, definitions, entries in the
-    /// root's own order) are also its tier-1 items.
-    fn anchored(alias: &str, windows: Vec<(&str, (u8, usize), u64, Vec<RankedItem>)>) -> RootBatch {
+    /// One window: anchor, order, definitions, entries in the root's own
+    /// order.
+    type Window<'a> = (&'a str, (u8, usize), u64, Vec<RankedItem>);
+
+    /// A root whose windows are also its tier-1 items.
+    fn anchored(alias: &str, windows: Vec<Window<'_>>) -> RootBatch {
         let items = windows
             .iter()
             .flat_map(|(_, _, _, entries)| entries.clone())
@@ -979,7 +985,12 @@ mod tests {
                                 definition("c.rs", dup, 0, true),
                             ],
                         ),
-                        ("Engine", engine, 1, vec![definition("e.rs", engine, 0, true)]),
+                        (
+                            "Engine",
+                            engine,
+                            1,
+                            vec![definition("e.rs", engine, 0, true)],
+                        ),
                     ],
                 ),
             ]

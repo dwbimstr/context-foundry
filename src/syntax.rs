@@ -1079,10 +1079,7 @@ fn unit_kind(
 /// value is a function (anywhere, when its declaration has no other
 /// declarator; T005's rule) and, at module level, otherwise `const` for
 /// `const` and `static` for `let`/`var`.
-fn declarator_kind(
-    node: tree_sitter::Node,
-    ancestors: &[tree_sitter::Node],
-) -> Option<UnitKind> {
+fn declarator_kind(node: tree_sitter::Node, ancestors: &[tree_sitter::Node]) -> Option<UnitKind> {
     let declaration = *ancestors.last()?;
     if !matches!(
         declaration.kind(),
@@ -1596,13 +1593,12 @@ fn import_keys(lang: Lang, node: tree_sitter::Node, source: &[u8], out: &mut Vec
                                 "named_imports" => {
                                     let mut specifiers = part.walk();
                                     for specifier in part.named_children(&mut specifiers) {
-                                        let bound = specifier.child_by_field_name("alias").or_else(
-                                            || {
+                                        let bound =
+                                            specifier.child_by_field_name("alias").or_else(|| {
                                                 specifier
                                                     .child_by_field_name("name")
                                                     .filter(|name| name.kind() == "identifier")
-                                            },
-                                        );
+                                            });
                                         out.extend(bound.and_then(text));
                                     }
                                 }

@@ -693,7 +693,11 @@ fn v2_context_packs_in_order_with_exact_counts_and_quoted_bodies() {
     // (context-v2 § Anchored context).
     let outcome = fx
         .engine
-        .context_candidates("no lf probe callers", Strategy::Graph, &Control::unbounded())
+        .context_candidates(
+            "no lf probe callers",
+            Strategy::Graph,
+            &Control::unbounded(),
+        )
         .unwrap();
     let packed = response::pack_context(&outcome, Budget::request(32768), CLI).unwrap();
     let parsed = assert_v2_success(&packed, 32768, "context");

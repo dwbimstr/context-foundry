@@ -1477,8 +1477,16 @@ fn definitions_record_their_name_node_and_impls_none() {
     for (lang, source, name) in [
         (Lang::Cpp, "void Box::grow(int n) {}\n", "grow"),
         (Lang::TypeScript, "export const run = () => {};\n", "run"),
-        (Lang::Python, "@cached\ndef area(r):\n    return r\n", "area"),
-        (Lang::Go, "func (s *S) Close() error { return nil }\n", "Close"),
+        (
+            Lang::Python,
+            "@cached\ndef area(r):\n    return r\n",
+            "area",
+        ),
+        (
+            Lang::Go,
+            "func (s *S) Close() error { return nil }\n",
+            "Close",
+        ),
     ] {
         let unit = syntax::units(source, lang).remove(0);
         let (start, end) = unit.name_range.expect("a definition");
@@ -1491,7 +1499,10 @@ fn definitions_record_their_name_node_and_impls_none() {
 #[test]
 fn address_segments_split_the_path_and_the_qualified_name() {
     let path = syntax::path_segments("packages/coding-agent/src/tools/index.ts");
-    assert_eq!(path, ["packages", "coding", "agent", "src", "tools", "index"]);
+    assert_eq!(
+        path,
+        ["packages", "coding", "agent", "src", "tools", "index"]
+    );
     assert_eq!(
         syntax::address_segments(&[], Lang::Rust, "UnionFind<Key>::find"),
         ["unionfind"]
@@ -1568,17 +1579,23 @@ fn import_keys_name_what_each_import_binds() {
     assert!(syntax::index(source, None).imports.is_empty());
 }
 
+/// Expected units of one source: `(kind, qualified name, name text)`.
+type ExpectedUnits = &'static [(&'static str, &'static str, &'static str)];
+
 /// Every definition gets an address (context-v2 § Unit kinds, amended for
 /// 001 T007): enum members, module-level bindings and Go specs are units
 /// with their name node and qualified name; fields and local bindings are
 /// not.
 #[test]
 fn enum_members_and_module_level_bindings_are_definitions() {
-    let cases: [(Lang, &str, &[(&str, &str, &str)]); 7] = [
+    let cases: [(Lang, &str, ExpectedUnits); 7] = [
         (
             Lang::Rust,
             "enum Color {\n    Red,\n    Green(u8),\n}\nstruct P {\n    field: u8,\n}\nfn f() {\n    let local = 1;\n}\n",
-            &[("variant", "Color::Red", "Red"), ("variant", "Color::Green", "Green")],
+            &[
+                ("variant", "Color::Red", "Red"),
+                ("variant", "Color::Green", "Green"),
+            ],
         ),
         (
             Lang::Python,
@@ -1610,7 +1627,10 @@ fn enum_members_and_module_level_bindings_are_definitions() {
         (
             Lang::C,
             "enum color { RED, GREEN = 2 };\nstruct s {\n  int field;\n};\n",
-            &[("variant", "color.RED", "RED"), ("variant", "color.GREEN", "GREEN")],
+            &[
+                ("variant", "color.RED", "RED"),
+                ("variant", "color.GREEN", "GREEN"),
+            ],
         ),
         (
             Lang::Cpp,
@@ -1620,7 +1640,10 @@ fn enum_members_and_module_level_bindings_are_definitions() {
         (
             Lang::Java,
             "enum Mode { FAST, SLOW; }\nclass K {\n  int field;\n}\n",
-            &[("variant", "Mode.FAST", "FAST"), ("variant", "Mode.SLOW", "SLOW")],
+            &[
+                ("variant", "Mode.FAST", "FAST"),
+                ("variant", "Mode.SLOW", "SLOW"),
+            ],
         ),
     ];
     for (lang, source, want) in cases {

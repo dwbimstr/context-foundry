@@ -1212,12 +1212,12 @@ mod tests {
         use crate::syntax::UnitKind::*;
         let kinds = vec![
             Fn, Struct, Enum, Union, Trait, Impl, Mod, Macro, Const, Static, Type, Class, Method,
-            Interface, Section, Block,
+            Interface, Variant, Section, Block,
         ];
         for kind in &kinds {
             match kind {
                 Fn | Struct | Enum | Union | Trait | Impl | Mod | Macro | Const | Static | Type
-                | Class | Method | Interface | Section | Block => {}
+                | Class | Method | Interface | Variant | Section | Block => {}
             }
         }
         kinds

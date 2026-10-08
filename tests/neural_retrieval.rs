@@ -4012,10 +4012,7 @@ fn owned(sources: &[(&str, &str)]) -> Vec<(String, String)> {
 /// enclosing the reference is narrower than the file's embedding unit and an
 /// expansion delivers it as its own compiler item.
 const GRAPH_SOURCES: [(&str, &str); 6] = [
-    (
-        "src/host.rs",
-        "pub fn hostseed() { crate::target_fn(); }\n",
-    ),
+    ("src/host.rs", "pub fn hostseed() { crate::target_fn(); }\n"),
     ("src/target.rs", "pub fn target_fn() {}\n"),
     (
         "src/caller.rs",

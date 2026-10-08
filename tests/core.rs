@@ -2520,10 +2520,7 @@ fn the_recorded_agent_queries_give_exactly_their_expected_anchors() {
                 .join("VSC_DEV/datasets/context-foundry-citymap/anchor-queries.json")
         });
     let Ok(raw) = std::fs::read_to_string(&path) else {
-        eprintln!(
-            "skipped: {} is absent (kept outside Git)",
-            path.display()
-        );
+        eprintln!("skipped: {} is absent (kept outside Git)", path.display());
         return;
     };
     let recorded: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -2838,7 +2835,10 @@ fn a_query_without_anchors_keeps_todays_packing() {
     let fixture = tempfile::tempdir().unwrap();
     let (_store, mut engine) = setup(&fixture.path().join("ws"));
     for (path, body) in [
-        ("lib/alpha.rs", "mod alpha {\n    fn x() {}\n\n    fn y() {}\n}\n"),
+        (
+            "lib/alpha.rs",
+            "mod alpha {\n    fn x() {}\n\n    fn y() {}\n}\n",
+        ),
         ("lib/beta1.rs", "fn beta() {}\n"),
         ("lib/beta2.rs", "fn beta() {}\n"),
     ] {
@@ -2855,7 +2855,10 @@ fn a_query_without_anchors_keeps_todays_packing() {
         .collect();
     assert_eq!(tier_one, ["mod alpha", "fn beta", "fn beta"]);
     let header = packed.text.lines().next().unwrap();
-    assert!(!header.contains("anchored") && !header.contains("defs:"), "{header}");
+    assert!(
+        !header.contains("anchored") && !header.contains("defs:"),
+        "{header}"
+    );
     assert!(
         kinds(&parsed)
             .iter()
