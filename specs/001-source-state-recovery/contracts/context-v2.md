@@ -1117,10 +1117,25 @@ identically on any thread count or host load. Progress checks alone cannot bound
 external scanners re-read input without checks (a 4,000-deep Haskell `let` takes 882
 checks, below a large ordinary file's 29,160). T008 calibrated the budget on 22,492
 real files, whose trees are byte-identical under per-character reads and whose work
-peaked at 3.5 million units (18.5 per byte). A stopped parse is handled like a panic
-(§ Parallel indexing) with its own scan-failure label, `parse_stopped`, because
-deeply nested Haskell and F# inputs take seconds to tens of
-seconds. Constructs the pinned grammars do not parse are named limitations: VB.NET
+peaked at 3.5 million units (18.5 per byte). After the budget is spent the input reads a
+line break up to the stop byte, then its end, so a scanner waiting for a line break
+also stops. A stopped parse is handled like a panic (§ Parallel indexing) with its own
+scan-failure label, `parse_stopped`, because deeply nested Haskell and F# inputs take
+seconds to tens of seconds.
+
+Some grammar scanners fail natively on crafted input (stack overflow, buffer abort,
+endless loop) before any budget can stop them, and a native failure cannot be caught.
+An audit of all 22 scanners (call graphs, every loop and serializer, about 400,000
+fuzzed parses) found five; each source is measured by a linear pass before parsing and,
+over a limit, is `parse_stopped` with detail `over the scanner limit: <limit> at byte
+<n>`: F# block-comment nesting above 8,192; Perl quote-bracket nesting above 8,192;
+Perl heredoc words longer than 512 bytes; Python sources with more than 256 distinct
+indentation widths (the original grammar; its serializer overflows); Kotlin `@` with no
+line break after it. The Ruby scanner's heredoc serialization overflow and word-length
+byte are fixed instead, by pinning `tree-sitter-ruby` to the fork
+`dwbimstr/tree-sitter-ruby` at `1a594bf` (0.23.1 plus a one-line bound; owner,
+2026-10-08) until upstream releases the fix. Constructs the pinned grammars do not parse
+are named limitations: VB.NET
 nested types, alias and XML imports; Perl `require "file"` and fully qualified
 `sub A::B::c`; F# signature-file member signatures; C++20 module imports; Elixir
 `@doc`/`@spec` and Haskell type signatures and pragmas lie outside their unit's range;
@@ -1139,6 +1154,13 @@ definition gets an address:
   Haskell top-level bindings; static for F# `let mutable`, Kotlin, Swift, Scala and
   Dart `var`, VB `Module` fields, Lua chunk-level single assignments and other shell
   top-level assignments. PowerShell has none.
+- A grouped declaration gives one unit per binding; the first keeps the declaration's
+  start, so ranges never overlap. Each binding of an F# `let rec … and …` group is its
+  own unit (functions at any depth, values only at module level), ranging from its
+  `and` to its body's end. Module-level Swift `let a = 1, b = 2` and the assignments of
+  a module-level shell `variable_assignments` give a unit per name; a `FOO=1 cmd`
+  prefix assignment and function locals do not. Named Dart local functions are `fn`
+  units at any depth.
 - Declaration-only members stay non-units: C#, VB, PHP and Kotlin interface members
   without bodies, Swift protocol requirements, Scala abstract `def`, Dart abstract
   signatures, F# `abstract member` and `.fsi` `val`, Haskell type and class-method

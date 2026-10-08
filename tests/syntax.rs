@@ -1906,6 +1906,27 @@ fn a_grouped_go_declaration_with_one_spec_is_the_range() {
     assert_tiles(source, Some(Lang::Go));
 }
 
+/// Perl's last block runs over the file's trailing whitespace and comments;
+/// its package statement still contains it, so the sub keeps its unit.
+#[test]
+fn a_perl_package_keeps_a_last_sub_whose_block_runs_to_the_end() {
+    for tail in ["\n", "\n\n# trailing comment\n", ""] {
+        let source = format!("package A::B;\nsub f {{\n  return 1;\n}}{tail}");
+        let found = units(&source, Lang::Perl);
+        let kinds: Vec<_> = found
+            .iter()
+            .map(|(kind, qname, _)| (*kind, qname.as_deref()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [("mod", Some("A::B")), ("fn", Some("A::B::f"))],
+            "{tail:?}"
+        );
+        assert!(found[1].2.starts_with("sub f {"), "{tail:?}");
+        assert_tiles(&source, Some(Lang::Perl));
+    }
+}
+
 // --- 001 T008: languages beyond the first eight (context-v2 § City map ›
 // Languages)
 
@@ -3534,4 +3555,441 @@ fn a_parse_over_the_work_budget_stops_at_the_same_byte_on_one_and_eight_threads(
         .collect();
     assert_eq!(starts, blocks, "the plain blocks of an unmapped source");
     assert_eq!(*normal, 1, "a normal source keeps its unit");
+}
+
+// --- 001 T008 review: scanner limits (M1), wide lists (M2), binding groups
+// (M3, M4), Dart local functions (M5), PowerShell module operands (M6)
+
+const HAZARD: &str = "FOUNDRY_TEST_SCANNER_HAZARD";
+const HAZARDS: [&str; 10] = [
+    "fsharp-comments",
+    "fsharp-comments-indexed",
+    "perl-brackets",
+    "perl-heredoc-identifier",
+    "perl-heredoc-line",
+    "python-indentation",
+    "kotlin-trailing-at",
+    "kotlin-forced-end",
+    "ruby-heredoc-1023",
+    "ruby-heredoc-300",
+];
+
+/// `source` is a stopped parse over `limit` and falls back to the plain
+/// blocks of an unmapped source.
+fn assert_stopped(source: &str, lang: Lang, limit: syntax::ScannerLimit) {
+    let stopped = syntax::index(source, Some(lang)).unwrap_err();
+    assert_eq!(stopped.stop, syntax::Stop::Scanner(limit), "{stopped}");
+    assert!(stopped.at < source.len());
+    assert_eq!(
+        syntax::documents(source, Some(lang)),
+        syntax::documents(source, None)
+    );
+}
+
+/// Runs one hazard (the child's side of the test below).
+fn run_hazard(case: &str) {
+    use syntax::ScannerLimit::*;
+    let nested = |open: &str, close: &str, depth: usize| open.repeat(depth) + &close.repeat(depth);
+    let ruby = |word: usize| {
+        let word = "A".repeat(word);
+        format!("X = <<{word}\nbody\n{word}\n\ndef after\nend\n")
+    };
+    match case {
+        // The review's trigger: 250,000 nested comments, about 1 MB.
+        "fsharp-comments" => {
+            let source = nested("(*", "*)", 250_000) + "\nlet x = 1\n";
+            assert_stopped(&source, Lang::FSharp, FSharpCommentDepth);
+            assert_stopped(&source, Lang::FSharpSignature, FSharpCommentDepth);
+        }
+        // The same through indexing's own build threads: a named failure.
+        "fsharp-comments-indexed" => {
+            use context_foundry::{Control, Engine};
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("ws");
+            std::fs::create_dir(&root).unwrap();
+            let store = fixture.path().join("store");
+            let mut engine = Engine::initialize(&store, &root).unwrap();
+            let source = nested("(*", "*)", 250_000) + "\nlet x = 1\n";
+            engine.replace_source("deep.fs", &source).unwrap();
+            engine.replace_source("ok.fs", "let f x = x\n").unwrap();
+            assert_eq!(engine.refresh(&Control::unbounded()).unwrap(), (2, 0));
+            let failures = engine.take_parse_failures();
+            assert_eq!(
+                failures.samples,
+                [
+                    "deep.fs: parse_stopped: over the scanner limit: F# comments nest deeper than 8192 at byte 16384"
+                ]
+            );
+        }
+        "perl-brackets" => assert_stopped(
+            &format!("my $x = q{{{}}};\n", nested("{", "}", 250_000)),
+            Lang::Perl,
+            PerlBracketDepth,
+        ),
+        "perl-heredoc-identifier" => assert_stopped(
+            &format!("my $x = <<{};\n", "A".repeat(5000)),
+            Lang::Perl,
+            PerlHeredocWord,
+        ),
+        "perl-heredoc-line" => assert_stopped(
+            &format!("my $x = <<EOT;\n{}\nEOT\n", "a".repeat(5000)),
+            Lang::Perl,
+            PerlHeredocWord,
+        ),
+        // 600 indentation levels, then strings at the deepest.
+        "python-indentation" => {
+            let mut source: String = (0..600)
+                .map(|level| format!("{}if x:\n", " ".repeat(level)))
+                .collect();
+            source += &format!("{}y = 'a' + \"b\"\n", " ".repeat(600));
+            assert_stopped(&source, Lang::Python, PythonIndentWidths);
+        }
+        "kotlin-trailing-at" => {
+            for source in [
+                "class A {\n  val x: Int\n    @Foo",
+                "class A {\n  val x: Int\n    @Foo(",
+            ] {
+                assert_stopped(source, Lang::Kotlin, KotlinTrailingAt);
+            }
+        }
+        // Every budget, so that some run out inside the run after `@`: the
+        // forced end of input reads as a line break, and each parse ends.
+        "kotlin-forced-end" => {
+            let source = format!(
+                "class A {{\n  val x: Int\n    @{}\n  val y = 1\n}}\n",
+                "a".repeat(300)
+            );
+            let mut budget = 1;
+            loop {
+                syntax::parse_hooks::set_budget(Some(budget));
+                let done = syntax::index(&source, Some(Lang::Kotlin)).is_ok();
+                syntax::parse_hooks::set_budget(None);
+                if done {
+                    break;
+                }
+                budget += 1;
+            }
+            assert!(budget > 300, "{budget}");
+        }
+        // The fork's fix (Cargo.toml [patch.crates-io]): a state of exactly
+        // 1,023 bytes, and a word over 255 bytes, parse.
+        "ruby-heredoc-1023" | "ruby-heredoc-300" => {
+            let source = ruby(if case.ends_with("1023") { 1019 } else { 300 });
+            assert_eq!(
+                units(&source, Lang::Ruby)
+                    .iter()
+                    .map(|(kind, qname, _)| (*kind, qname.clone().unwrap_or_default()))
+                    .collect::<Vec<_>>(),
+                [("const", "X".to_owned()), ("method", "after".to_owned())]
+            );
+            assert_tiles(&source, Some(Lang::Ruby));
+        }
+        other => panic!("unknown hazard {other}"),
+    }
+}
+
+/// Each scanner hazard of the 001 T008 audit (review M1) runs in a child
+/// process on a 2 MiB stack: the process must neither crash nor hang, and
+/// the source falls back (a limit) or parses (the patched Ruby scanner).
+#[test]
+fn scanner_hazards_fall_back_in_a_child_process_on_a_two_mib_stack() {
+    if let Ok(case) = std::env::var(HAZARD) {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(move || run_hazard(&case))
+            .unwrap()
+            .join()
+            .unwrap();
+        println!("hazard finished");
+        return;
+    }
+    for case in HAZARDS {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "scanner_hazards_fall_back_in_a_child_process_on_a_two_mib_stack",
+                "--nocapture",
+            ])
+            .env(HAZARD, case)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if started.elapsed() > std::time::Duration::from_secs(300) {
+                child.kill().unwrap();
+                panic!("{case}: no end in 300 s");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        let output = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            status.success() && stdout.contains("hazard finished"),
+            "{case}: {status:?}\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// Wide lists are read once per list, not once per member (review M2): a
+/// 20,000-constructor Haskell sum type, Go `var` block, JavaScript
+/// declaration and shell `export` give one unit per member; a lone
+/// constructor stays part of its type.
+#[test]
+fn wide_lists_give_a_unit_per_member() {
+    let count = 20_000;
+    let haskell = format!(
+        "data T = {}\n",
+        (0..count)
+            .map(|i| format!("C{i:05}"))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+    let go = format!(
+        "package p\n\nvar (\n{})\n",
+        (0..count)
+            .map(|i| format!("\tv{i} = {i}\n"))
+            .collect::<String>()
+    );
+    let javascript = format!(
+        "var {};\n",
+        (0..count)
+            .map(|i| format!("f{i} = () => {i}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let shell = format!(
+        "export {}\n",
+        (0..count)
+            .map(|i| format!("V{i}={i}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    for (lang, source, kind, members) in [
+        (Lang::Haskell, &haskell, "variant", count),
+        (Lang::Go, &go, "static", count),
+        (Lang::JavaScript, &javascript, "fn", count),
+        (Lang::Bash, &shell, "static", count),
+    ] {
+        let started = std::time::Instant::now();
+        let found = syntax::units(source, lang);
+        let elapsed = started.elapsed();
+        assert_eq!(
+            found
+                .iter()
+                .filter(|unit| unit.kind.as_str() == kind)
+                .count(),
+            members,
+            "{lang:?}"
+        );
+        println!("{lang:?}: {} units in {elapsed:?}", found.len());
+    }
+    assert_eq!(
+        units("data P = P Int\n", Lang::Haskell),
+        [named("type", "P", "data P = P Int")]
+    );
+}
+
+/// Each binding of an F# `let rec … and …` group is a unit with its own
+/// range (review M3): a function at any depth, a value at module level.
+#[test]
+fn fsharp_recursive_groups_give_a_unit_per_binding() {
+    let source = "let rec even n = n = 0 || odd (n - 1)\nand odd n = n <> 0 && even (n - 1)\n\nmodule M =\n    let rec a x = b x\n    and b x = a x\n    and c = 3\n";
+    assert_eq!(
+        units(source, Lang::FSharp),
+        [
+            named("fn", "even", "let rec even n = n = 0 || odd (n - 1)"),
+            named("fn", "odd", "and odd n = n <> 0 && even (n - 1)"),
+            named("mod", "M", span(source, "module M", "and c = 3")),
+            named("fn", "M.a", "let rec a x = b x"),
+            named("fn", "M.b", "and b x = a x"),
+            named("const", "M.c", "and c = 3"),
+        ]
+    );
+    for unit in syntax::units(source, Lang::FSharp) {
+        let (start, end) = unit.name_range.unwrap();
+        assert_eq!(Some(&source[start..end]), unit.name.as_deref());
+    }
+    // A local group: its functions are units, its value is not.
+    let local =
+        "let outer () =\n    let rec f x = g x\n    and g x = f x\n    and v = 1\n    f 0\n";
+    let qnames: Vec<_> = units(local, Lang::FSharp)
+        .into_iter()
+        .map(|(_, qname, _)| qname.unwrap())
+        .collect();
+    assert_eq!(qnames, ["outer", "outer.f", "outer.g"]);
+    assert_tiles(source, Some(Lang::FSharp));
+    assert_tiles(local, Some(Lang::FSharp));
+}
+
+/// Grouped module-level bindings are a unit each (review M4): Swift
+/// `let a = 1, b = 2` (a tuple pattern among them is skipped, locals are
+/// none) and shell `A=1 B=2`; a command's prefix assignment and a
+/// function's assignments are none.
+#[test]
+fn grouped_swift_and_shell_bindings_give_a_unit_each() {
+    let swift = "let first = 1, second = 2\nvar count: Int = 0, total = 1\nlet (x, y) = (1, 2), z = 3\nfunc f() {\n    let a = 1, b = 2\n}\n";
+    assert_eq!(
+        units(swift, Lang::Swift),
+        [
+            named("const", "first", "let first = 1"),
+            named("const", "second", "second = 2"),
+            named("static", "count", "var count: Int = 0"),
+            named("static", "total", "total = 1"),
+            named("const", "z", "z = 3"),
+            named("fn", "f", span(swift, "func f", "}")),
+        ]
+    );
+    let shell = "FIRST=1 SECOND=2\nFOO=1 cmd\nf() {\n  A=1 B=2\n  local C=3\n}\nexport X=1 Y=2\nreadonly R=1 S=2\ndeclare -r T=1\n";
+    assert_eq!(
+        units(shell, Lang::Bash),
+        [
+            named("static", "FIRST", "FIRST=1"),
+            named("static", "SECOND", "SECOND=2"),
+            named("fn", "f", span(shell, "f()", "}")),
+            named("static", "X", "X=1"),
+            named("static", "Y", "Y=2"),
+            named("const", "R", "R=1"),
+            named("const", "S", "S=2"),
+            named("const", "T", "declare -r T=1"),
+        ]
+    );
+    assert_tiles(swift, Some(Lang::Swift));
+    assert_tiles(shell, Some(Lang::Bash));
+}
+
+/// A named Dart local function is a function unit nested in its enclosing
+/// one, with its body; a local variable is not a unit (review M5).
+#[test]
+fn dart_local_functions_are_units() {
+    let source = "void outer() {\n  int inner() => 1;\n  var x = 2;\n  void deeper() {\n    String innermost() => '';\n  }\n  print(inner());\n}\n";
+    assert_eq!(
+        units(source, Lang::Dart),
+        [
+            named("fn", "outer", source.trim_end()),
+            named("fn", "outer.inner", "int inner() => 1;"),
+            named("fn", "outer.deeper", span(source, "void deeper", "\n  }")),
+            named("fn", "outer.deeper.innermost", "String innermost() => '';"),
+        ]
+    );
+    let inner = &syntax::units(source, Lang::Dart)[1];
+    let (start, end) = inner.name_range.unwrap();
+    assert_eq!(&source[start..end], "inner");
+    let (start, end) = inner.body.unwrap();
+    assert_eq!(&source[start..end], "=> 1;");
+    assert_tiles(source, Some(Lang::Dart));
+}
+
+/// A PowerShell module operand gives its key quoted or not, by position or
+/// as `-Name`'s value; another parameter's value and other commands give
+/// none (review M6).
+#[test]
+fn powershell_module_operands_give_keys_quoted_or_not() {
+    for (source, keys) in [
+        ("Import-Module './Store.psm1'\n", &["Store"][..]),
+        ("using module './Store.psm1'\n", &["Store"]),
+        ("using module \"C:\\Mods\\Store.psm1\"\n", &["Store"]),
+        ("Import-Module -Name \"Store\"\n", &["Store"]),
+        (
+            "Import-Module -Name './lib/Tools.psd1' -Force\n",
+            &["Tools"],
+        ),
+        ("Import-Module -Force 'Store'\n", &["Store"]),
+        ("Import-Module -Prefix X Store\n", &["Store"]),
+        ("Import-Module 'A', 'B'\n", &["A", "B"]),
+        ("Import-Module Tools\n", &["Tools"]),
+        ("using module Tools\n", &["Tools"]),
+        ("using namespace System.IO\n", &["IO"]),
+        ("Write-Host 'Store.psm1'\n", &[]),
+        ("Get-Module -Name 'Store'\n", &[]),
+    ] {
+        assert_eq!(
+            syntax::index(source, Some(Lang::PowerShell))
+                .unwrap()
+                .imports,
+            keys,
+            "{source}"
+        );
+    }
+}
+
+/// New languages' address qualifiers come from the syntax tree (001 T007's
+/// name addresses): scoped and qualified names give each part, a receiver
+/// or extended type its own parts, never its arguments.
+#[test]
+fn new_language_qualifiers_come_from_the_tree() {
+    for (lang, source, qname, want) in [
+        (
+            Lang::Ruby,
+            "class Outer::Inner::Store\n  def get\n  end\nend\n",
+            "Outer::Inner::Store::get",
+            &["outer", "inner", "store"][..],
+        ),
+        (
+            Lang::Lua,
+            "function M.inner:make()\nend\n",
+            "M.inner.make",
+            &["m", "inner"],
+        ),
+        (
+            Lang::Php,
+            "<?php\nnamespace App\\Models;\nfunction f() {}\n",
+            "App.Models.f",
+            &["app", "models"],
+        ),
+        (
+            Lang::Perl,
+            include_str!("fixtures/syntax/shape.pl"),
+            "Outer::Shape::new",
+            &["outer", "shape"],
+        ),
+        (
+            Lang::CSharp,
+            "namespace Outer.Space { class C {} }\n",
+            "Outer.Space.C",
+            &["outer", "space"],
+        ),
+        (
+            Lang::Elixir,
+            "defmodule Shapes.Inner do\n  def area(x), do: x\nend\n",
+            "Shapes.Inner.area",
+            &["shapes", "inner"],
+        ),
+        (
+            Lang::Kotlin,
+            "fun List<Int>.total() = 0\n",
+            "List<Int>.total",
+            &["list"],
+        ),
+        (
+            Lang::Swift,
+            "extension Outer.Inner {\n    func f() {}\n}\n",
+            "Outer.Inner.f",
+            &["outer", "inner"],
+        ),
+        (
+            Lang::Dart,
+            "extension on List<int> {\n  void f() {}\n}\n",
+            "List<int>.f",
+            &["list"],
+        ),
+        (
+            Lang::Haskell,
+            "instance Show (Maybe a) where\n  show _ = \"\"\n",
+            "(Maybe a).show",
+            &["maybe"],
+        ),
+    ] {
+        let found = syntax::units(source, lang);
+        let unit = found
+            .iter()
+            .find(|unit| unit.qname.as_deref() == Some(qname))
+            .unwrap_or_else(|| panic!("no {qname} in {found:#?}"));
+        assert_eq!(unit.qualifiers, want, "{qname}");
+    }
 }

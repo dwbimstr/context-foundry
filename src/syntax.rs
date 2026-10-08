@@ -435,22 +435,41 @@ pub struct SourceIndex {
     pub imports: Vec<String>,
 }
 
-/// A parse stopped by [`PARSE_WORK_BUDGET`] (context-v2 § Languages). Indexing
-/// handles it as a parse panic (§ Parallel indexing): the plain blocks of an
-/// unmapped source and a named failure. `at` is the byte offset the parser
-/// had reached when the budget ran out: the same on every run and thread.
+/// A parse stopped before it finished (context-v2 § Languages): by its work
+/// budget, or before it ran, by a source over one of the limits an external
+/// scanner needs ([`ScannerLimit`]). Indexing handles it as a parse panic
+/// (§ Parallel indexing): the plain blocks of an unmapped source and a named
+/// failure. `at` is the byte offset the parser had reached when the budget
+/// ran out, or where the source first reaches the scanner limit: the same on
+/// every run and thread.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ParseStopped {
     pub at: usize,
+    pub stop: Stop,
+}
+
+/// What stopped a parse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stop {
+    /// The work budget, in units ([`PARSE_WORK_BUDGET`]).
+    Budget(u64),
+    Scanner(ScannerLimit),
 }
 
 impl std::fmt::Display for ParseStopped {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "exceeded the parse work budget of {PARSE_WORK_BUDGET} units at byte {}",
-            self.at
-        )
+        let at = self.at;
+        match self.stop {
+            Stop::Budget(units) => {
+                write!(
+                    f,
+                    "exceeded the parse work budget of {units} units at byte {at}"
+                )
+            }
+            Stop::Scanner(limit) => {
+                write!(f, "over the scanner limit: {limit} at byte {at}")
+            }
+        }
     }
 }
 
@@ -888,11 +907,17 @@ impl<'a> Outliner<'a> {
 
 /// The unit candidates of one parse; for an outline, also the comment and
 /// declaration-only member ranges it needs, and for indexing the import keys.
+/// A source over a [`ScannerLimit`] is stopped before the parser runs.
 fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Vec<Candidate> {
     let mut out = Vec::new();
     let Some(grammar) = lang.grammar() else {
         return out;
     };
+    let bytes = source.as_bytes();
+    if let Some(stopped) = over_scanner_limit(lang, bytes) {
+        extras.stopped = Some(stopped);
+        return out;
+    }
     let tree = match parse(source, &grammar) {
         Ok(Some(tree)) => tree,
         Ok(None) => return out,
@@ -901,14 +926,15 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
             return out;
         }
     };
-    let bytes = source.as_bytes();
     // Iterative pre-order walk: error-recovered trees can be deep. The
     // ancestors of the current node are kept on the heap, because
     // `Node::parent` (and so `prev_sibling`) re-descends from the root. Per
     // depth, `runs` holds the consecutive leading-run nodes (§ Unit forest)
-    // just before the current node at that depth.
+    // just before the current node at that depth, and `facts` what the
+    // ancestor at that depth says about its children ([`Facts`]), read once.
     let mut cursor = tree.walk();
     let mut ancestors: Vec<tree_sitter::Node> = Vec::new();
+    let mut facts: Vec<Facts> = Vec::new();
     let mut runs: Vec<Vec<(tree_sitter::Node, Leading)>> = vec![Vec::new()];
     'walk: loop {
         let node = cursor.node();
@@ -917,15 +943,19 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
         if node.is_named() {
             // A Rust declaration-only item is a unit and stays a mandatory
             // outline member, so outlines keep its lines as before.
-            if let Some(candidate) = candidate(lang, node, &ancestors, &runs, bytes, need) {
-                out.push(candidate);
-            }
+            let at = Walk {
+                lang,
+                ancestors: &ancestors,
+                facts: &facts,
+                source: bytes,
+            };
+            candidates(&at, node, &runs, need, &mut out);
             if need == Need::Imports {
                 import_keys(lang, node, bytes, &mut extras.imports);
             } else if need == Need::Outline {
-                if is_member_signature(lang, node, &ancestors, bytes) {
+                if is_member_signature(&at, node) {
                     // A template wrapper's lines belong to the signature too.
-                    let outer = outermost_wrapper(lang, node, &ancestors);
+                    let outer = at.outermost_wrapper(node);
                     extras.members.push((outer.start_byte(), outer.end_byte()));
                 } else if node.kind().ends_with("comment")
                     && node.end_position().row + 1 >= node.start_position().row + COMMENT_LINES
@@ -935,6 +965,7 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
             }
         }
         if cursor.goto_first_child() {
+            facts.push(Facts::of(lang, node));
             ancestors.push(node);
             runs.push(Vec::new());
             continue;
@@ -954,6 +985,7 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
                 break 'walk;
             }
             ancestors.pop();
+            facts.pop();
             runs.pop();
         }
     }
@@ -961,10 +993,112 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
     out
 }
 
-/// One parse under [`PARSE_WORK_BUDGET`]: the source is handed to the parser
-/// one UTF-8 character per read, and each read and each progress check
-/// spends one unit. Once the budget is spent, reads return end of input and
-/// the next progress check stops the parse; its tree, if any, is dropped.
+/// Where the walk stands: the language, the current node's ancestors
+/// (outermost first), their [`Facts`] and the source.
+struct Walk<'a, 't> {
+    lang: Lang,
+    ancestors: &'a [tree_sitter::Node<'t>],
+    facts: &'a [Facts],
+    source: &'a [u8],
+}
+
+impl<'t> Walk<'_, 't> {
+    /// The kind of the `n`th ancestor up (1: the parent).
+    fn above(&self, n: usize) -> Option<&'static str> {
+        let at = self.ancestors.len().checked_sub(n)?;
+        Some(self.ancestors[at].kind())
+    }
+
+    /// How many ancestors, innermost first, wrap the current node
+    /// ([`is_wrapper`]).
+    fn wrappers(&self) -> usize {
+        self.facts
+            .iter()
+            .rev()
+            .take_while(|facts| facts.wrapper)
+            .count()
+    }
+
+    /// The outermost of the wrappers (decorator, `export`, `template`, a
+    /// declaration with one declarator or spec, a Python expression
+    /// statement) directly enclosing `node`, or `node` itself; it supplies
+    /// the range.
+    fn outermost_wrapper(&self, node: tree_sitter::Node<'t>) -> tree_sitter::Node<'t> {
+        match self.wrappers() {
+            0 => node,
+            wrappers => self.ancestors[self.ancestors.len() - wrappers],
+        }
+    }
+}
+
+/// What a node says about its children, read once when the walk enters it:
+/// a node with many children is never rescanned per child (001 T008 review
+/// M2). `wrapper`: [`is_wrapper`]; `constructors`: a Haskell sum type's
+/// constructor list has more than one constructor.
+#[derive(Clone, Copy)]
+struct Facts {
+    wrapper: bool,
+    constructors: bool,
+}
+
+impl Facts {
+    fn of(lang: Lang, node: tree_sitter::Node) -> Self {
+        Self {
+            wrapper: is_wrapper(lang, node),
+            constructors: lang == Lang::Haskell
+                && node.kind() == "data_constructors"
+                && count_named_up_to(node, &["data_constructor"], 2) == 2,
+        }
+    }
+}
+
+/// The work budget of one parse: [`PARSE_WORK_BUDGET`], or a test's own.
+fn work_budget() -> u64 {
+    #[cfg(feature = "test-faults")]
+    if let Some(budget) = parse_hooks::budget() {
+        return budget;
+    }
+    PARSE_WORK_BUDGET
+}
+
+/// Test hooks for the parse (built with the `test-faults` feature only).
+#[cfg(feature = "test-faults")]
+pub mod parse_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        static BUDGET: Cell<Option<u64>> = const { Cell::new(None) };
+    }
+
+    /// Sets this thread's parse work budget; `None` restores
+    /// [`super::PARSE_WORK_BUDGET`].
+    pub fn set_budget(budget: Option<u64>) {
+        BUDGET.with(|cell| cell.set(budget));
+    }
+
+    pub(super) fn budget() -> Option<u64> {
+        BUDGET.with(Cell::get)
+    }
+
+    /// Each scanner limit that applies to `lang`, with `source`'s measure
+    /// against it (the corpus calibration of 001 T008 review M1).
+    pub fn scanner_measures(source: &str, lang: super::Lang) -> Vec<(super::ScannerLimit, usize)> {
+        super::ScannerLimit::ALL
+            .iter()
+            .filter(|limit| limit.applies(lang))
+            .map(|&limit| (limit, limit.measure(source.as_bytes()).value))
+            .collect()
+    }
+}
+
+/// One parse under the work budget ([`PARSE_WORK_BUDGET`]): the source is
+/// handed to the parser one UTF-8 character per read, and each read and
+/// each progress check spends one unit. Once the budget is spent, the
+/// parser reads a line break at every offset up to the one it stopped at and
+/// end of input after it, and the next progress check stops the parse; its
+/// tree, if any, is dropped. A line break rather than end of input, so that
+/// a scanner loop only a line break ends (Kotlin's after `@`) cannot run
+/// forever at a forced end of input.
 /// `Ok(None)`: the grammar did not load or the parser returned no tree.
 fn parse(
     source: &str,
@@ -979,6 +1113,7 @@ fn parse(
         return Ok(None);
     }
     let bytes = source.as_bytes();
+    let budget = work_budget();
     let used = Cell::new(0u64);
     let stopped: Cell<Option<usize>> = Cell::new(None);
     // Spends one unit at byte `at`; false once the budget is spent, the
@@ -987,7 +1122,7 @@ fn parse(
         if stopped.get().is_some() {
             return false;
         }
-        if used.get() >= PARSE_WORK_BUDGET {
+        if used.get() >= budget {
             stopped.set(Some(at));
             return false;
         }
@@ -995,8 +1130,14 @@ fn parse(
         true
     };
     let mut read = |at: usize, _: tree_sitter::Point| -> &[u8] {
-        if at >= bytes.len() || !spend(at) {
+        if at >= bytes.len() {
             return &[];
+        }
+        if !spend(at) {
+            return match stopped.get() {
+                Some(stop) if at <= stop => b"\n",
+                _ => &[],
+            };
         }
         // One character: the lead byte and its continuation bytes.
         let mut end = at + 1;
@@ -1018,23 +1159,383 @@ fn parse(
         Some(tree_sitter::ParseOptions::new().progress_callback(&mut progress)),
     );
     match stopped.get() {
-        Some(at) => Err(ParseStopped { at }),
+        Some(at) => Err(ParseStopped {
+            at,
+            stop: Stop::Budget(budget),
+        }),
         None => Ok(tree),
     }
 }
 
+/// A limit a grammar's external scanner needs that the work budget cannot
+/// enforce, because the scanner breaks inside one call, where no read or
+/// progress check can stop it (context-v2 § Languages; the audit of every
+/// grammar's scanner is 001 T008 review M1). A source over a limit is a
+/// stopped parse ([`Stop::Scanner`]) before the parser runs: a linear pass
+/// over its bytes that over-approximates what the scanner would do, so a
+/// source under every limit cannot reach the breakage. Each limit lies above
+/// the largest measure in the T008 corpus and well below the breakage (the
+/// constants' docs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScannerLimit {
+    /// F#'s scanner reads a nested `(* … *)` comment by native recursion,
+    /// one frame per level: an unbounded nesting overflows the thread's
+    /// stack. Measure: the deepest `(*` nesting, counted as the scanner does
+    /// inside a comment wherever it appears ([`FSHARP_COMMENT_DEPTH`]).
+    FSharpCommentDepth,
+    /// Perl's scanner reads bracket delimiters nested inside a quote-like
+    /// body (`q{ { … } }`) by native recursion. Measure: the deepest nesting
+    /// of each bracket pair over the whole source, escapes skipped as the
+    /// scanner skips them ([`PERL_BRACKET_DEPTH`]).
+    PerlBracketDepth,
+    /// Perl's heredoc scanner copies a heredoc's identifier, and the first
+    /// word of each heredoc line, into 1,000-byte stack buffers without a
+    /// bound. Measure: the longest such word ([`PERL_HEREDOC_WORD`]).
+    PerlHeredocWord,
+    /// Python's scanner serializes two bytes per indentation level after
+    /// its open string delimiters into tree-sitter's 1,024-byte state
+    /// buffer and writes one byte past it at 383 levels or more. Measure:
+    /// the distinct indentation widths the scanner can compute
+    /// ([`PYTHON_INDENT_WIDTHS`]).
+    PythonIndentWidths,
+    /// Kotlin's scanner skips from an `@` to the next whitespace (to the
+    /// next line break after a `(`) and never stops at end of input.
+    /// Measure: 1 when an `@` has no line break after it (limit 0).
+    KotlinTrailingAt,
+}
+
+/// [`ScannerLimit::FSharpCommentDepth`] and [`ScannerLimit::PerlBracketDepth`]:
+/// either scanner's recursion overflows a 2 MiB stack between 32,768 and
+/// 49,152 levels (about 50 bytes a frame, debug and release builds), so
+/// 8,192 levels take about 400 KiB. The T008 corpus's deepest measures are
+/// 0 (8 F# sources) and 1,855 (5,182 Perl sources; a binary blob after
+/// `__DATA__`, which the measure counts like code).
+const FSHARP_COMMENT_DEPTH: usize = 8192;
+const PERL_BRACKET_DEPTH: usize = 8192;
+/// [`ScannerLimit::PerlHeredocWord`]: about half the 1,000-byte buffers;
+/// the corpus's longest such word is 135 bytes.
+const PERL_HEREDOC_WORD: usize = 512;
+/// [`ScannerLimit::PythonIndentWidths`]: 256 widths keep the serialized
+/// state under 770 bytes whatever the open string delimiters; the corpus
+/// (17,247 Python sources) has at most 56.
+const PYTHON_INDENT_WIDTHS: usize = 256;
+
+impl ScannerLimit {
+    const ALL: [Self; 5] = [
+        Self::FSharpCommentDepth,
+        Self::PerlBracketDepth,
+        Self::PerlHeredocWord,
+        Self::PythonIndentWidths,
+        Self::KotlinTrailingAt,
+    ];
+
+    fn applies(self, lang: Lang) -> bool {
+        match self {
+            Self::FSharpCommentDepth => matches!(lang, Lang::FSharp | Lang::FSharpSignature),
+            Self::PerlBracketDepth | Self::PerlHeredocWord => lang == Lang::Perl,
+            Self::PythonIndentWidths => lang == Lang::Python,
+            Self::KotlinTrailingAt => lang == Lang::Kotlin,
+        }
+    }
+
+    /// The largest measure a source may have.
+    pub fn limit(self) -> usize {
+        match self {
+            Self::FSharpCommentDepth => FSHARP_COMMENT_DEPTH,
+            Self::PerlBracketDepth => PERL_BRACKET_DEPTH,
+            Self::PerlHeredocWord => PERL_HEREDOC_WORD,
+            Self::PythonIndentWidths => PYTHON_INDENT_WIDTHS,
+            Self::KotlinTrailingAt => 0,
+        }
+    }
+
+    fn measure(self, source: &[u8]) -> Peak {
+        let peak = Peak::new(self.limit());
+        match self {
+            Self::FSharpCommentDepth => fsharp_comment_depth(source, peak),
+            Self::PerlBracketDepth => perl_bracket_depth(source, peak),
+            Self::PerlHeredocWord => perl_heredoc_word(source, peak),
+            Self::PythonIndentWidths => python_indent_widths(source, peak),
+            Self::KotlinTrailingAt => kotlin_trailing_at(source, peak),
+        }
+    }
+}
+
+impl std::fmt::Display for ScannerLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let limit = self.limit();
+        match self {
+            Self::FSharpCommentDepth => write!(f, "F# comments nest deeper than {limit}"),
+            Self::PerlBracketDepth => write!(f, "Perl brackets nest deeper than {limit}"),
+            Self::PerlHeredocWord => write!(f, "a Perl heredoc word is longer than {limit} bytes"),
+            Self::PythonIndentWidths => {
+                write!(f, "Python indentation has more than {limit} widths")
+            }
+            Self::KotlinTrailingAt => write!(f, "a Kotlin `@` has no line break after it"),
+        }
+    }
+}
+
+/// The stop of a source over a scanner limit of its language, at the first
+/// byte where its measure exceeds the limit.
+fn over_scanner_limit(lang: Lang, source: &[u8]) -> Option<ParseStopped> {
+    ScannerLimit::ALL
+        .into_iter()
+        .filter(|limit| limit.applies(lang))
+        .find_map(|limit| {
+            limit.measure(source).over.map(|at| ParseStopped {
+                at,
+                stop: Stop::Scanner(limit),
+            })
+        })
+}
+
+/// A measure's largest value, and the first byte where it exceeds `limit`.
+#[derive(Clone, Copy)]
+struct Peak {
+    limit: usize,
+    value: usize,
+    over: Option<usize>,
+}
+
+impl Peak {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            value: 0,
+            over: None,
+        }
+    }
+
+    fn raise(&mut self, value: usize, at: usize) {
+        self.value = self.value.max(value);
+        if value > self.limit && self.over.is_none() {
+            self.over = Some(at);
+        }
+    }
+}
+
+/// The deepest F# comment nesting. Outside a comment a `(*` opens one
+/// unless `)` follows it (`(*)` is an operator); inside one, every `(*`
+/// opens a level (the scanner recurses on it, `(*)` included) and every
+/// `*)` closes one. Strings are not skipped: a `(*` in a string can only
+/// raise the measure.
+fn fsharp_comment_depth(source: &[u8], mut peak: Peak) -> Peak {
+    let mut depth = 0usize;
+    let mut at = 0;
+    while at + 1 < source.len() {
+        match (source[at], source[at + 1]) {
+            (b'(', b'*') if depth > 0 || source.get(at + 2) != Some(&b')') => {
+                depth += 1;
+                peak.raise(depth, at);
+                at += 2;
+            }
+            (b'*', b')') if depth > 0 => {
+                depth -= 1;
+                at += 2;
+            }
+            _ => at += 1,
+        }
+    }
+    peak
+}
+
+/// The deepest nesting of any one bracket pair (`()`, `[]`, `{}`, `<>`)
+/// over the whole source, a close below zero ignored, and a backslash
+/// skipping the byte after it, as the scanner skips an escaped character
+/// inside a quote-like body. Inside such a body the scanner's recursion
+/// depth is at most this nesting.
+fn perl_bracket_depth(source: &[u8], mut peak: Peak) -> Peak {
+    let mut depth = [0usize; 4];
+    let mut at = 0;
+    while at < source.len() {
+        let byte = source[at];
+        if byte == b'\\' {
+            at += 2;
+            continue;
+        }
+        if let Some(pair) = b"([{<".iter().position(|&open| open == byte) {
+            depth[pair] += 1;
+            peak.raise(depth[pair], at);
+        } else if let Some(pair) = b")]}>".iter().position(|&close| close == byte) {
+            depth[pair] = depth[pair].saturating_sub(1);
+        }
+        at += 1;
+    }
+    peak
+}
+
+/// The longest word Perl's heredoc scanner can copy, in bytes: an
+/// identifier after `<<` (past `~`, `\`, whitespace and an opening quote);
+/// and, after the first such identifier, each whitespace-delimited word
+/// that starts a line (an indented heredoc skips the indentation), and the
+/// rest of a word after its first `\` or `$` (a non-interpolating heredoc
+/// reads on from there).
+fn perl_heredoc_word(source: &[u8], mut peak: Peak) -> Peak {
+    let identifier = |byte: &u8| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte >= 0x80;
+    let mut first = None;
+    let mut at = 0;
+    while let Some(found) = source[at..].windows(2).position(|pair| pair == b"<<") {
+        let opener = at + found;
+        let mut word = opener + 2;
+        if source.get(word) == Some(&b'~') {
+            word += 1;
+        }
+        if source.get(word) == Some(&b'\\') {
+            word += 1;
+        }
+        while source.get(word).is_some_and(u8::is_ascii_whitespace) {
+            word += 1;
+        }
+        if matches!(source.get(word), Some(b'"' | b'\'' | b'`')) {
+            word += 1;
+        }
+        let length = source[word..]
+            .iter()
+            .take_while(|byte| identifier(byte))
+            .count();
+        if length > 0 {
+            first.get_or_insert(opener);
+            peak.raise(length, word);
+        }
+        at = opener + 2;
+    }
+    let Some(first) = first else {
+        return peak;
+    };
+    // Whitespace-delimited words after the first heredoc opener.
+    let mut line_start = false;
+    let mut at = first;
+    while at < source.len() {
+        if source[at].is_ascii_whitespace() {
+            line_start |= source[at] == b'\n';
+            at += 1;
+            continue;
+        }
+        let end = at
+            + source[at..]
+                .iter()
+                .take_while(|byte| !byte.is_ascii_whitespace())
+                .count();
+        if line_start {
+            peak.raise(end - at, at);
+        }
+        if let Some(escape) = source[at..end]
+            .iter()
+            .position(|&byte| matches!(byte, b'\\' | b'$'))
+        {
+            peak.raise(end - at - escape - 1, at + escape);
+        }
+        line_start = false;
+        at = end;
+    }
+    peak
+}
+
+/// How many distinct non-zero indentation widths Python's scanner can
+/// compute, each where its first new width appears. After each line break
+/// the scanner counts a space as 1 and a tab as 8, restarts at a line
+/// break, carriage return or form feed, skips comment lines and continues
+/// across a backslash line continuation; every width it pushes is one of
+/// these (also computed as if restarted at each continuation, and before
+/// each comment), and its indentation stack holds distinct widths.
+fn python_indent_widths(source: &[u8], mut peak: Peak) -> Peak {
+    let mut widths = std::collections::HashSet::new();
+    let mut record = |width: u16, at: usize| {
+        if width != 0 && widths.insert(width) {
+            peak.raise(widths.len(), at);
+        }
+    };
+    let mut at = 0;
+    while let Some(found) = source[at..].iter().position(|&byte| byte == b'\n') {
+        let mut next = at + found;
+        // `width` as the scanner counts from this line break; `fresh` as if
+        // it had started at the latest one, continuations included.
+        let (mut width, mut fresh) = (0u16, 0u16);
+        loop {
+            match source.get(next) {
+                Some(b'\n' | b'\r' | b'\x0c') => {
+                    width = 0;
+                    fresh = 0;
+                    next += 1;
+                }
+                Some(b' ') => {
+                    width = width.wrapping_add(1);
+                    fresh = fresh.wrapping_add(1);
+                    next += 1;
+                }
+                Some(b'\t') => {
+                    width = width.wrapping_add(8);
+                    fresh = fresh.wrapping_add(8);
+                    next += 1;
+                }
+                Some(b'#') => {
+                    record(width, next);
+                    record(fresh, next);
+                    next += source[next..]
+                        .iter()
+                        .position(|&byte| byte == b'\n')
+                        .unwrap_or(source.len() - next);
+                }
+                Some(b'\\') => {
+                    let mut after = next + 1;
+                    if source.get(after) == Some(&b'\r') {
+                        after += 1;
+                    }
+                    match source.get(after) {
+                        Some(b'\n') => {
+                            fresh = 0;
+                            next = after + 1;
+                        }
+                        None => next = after,
+                        Some(_) => break,
+                    }
+                }
+                _ => break,
+            }
+        }
+        record(width, next);
+        record(fresh, next);
+        at = next.max(at + found + 1);
+    }
+    peak
+}
+
+/// 1, at the first `@` with no line break after it; else 0.
+fn kotlin_trailing_at(source: &[u8], mut peak: Peak) -> Peak {
+    let last_line = source
+        .iter()
+        .rposition(|&byte| byte == b'\n')
+        .map_or(0, |at| at + 1);
+    if let Some(at) = source[last_line..].iter().position(|&byte| byte == b'@') {
+        peak.raise(1, last_line + at);
+    }
+    peak
+}
+
 /// Extends each statement-form container (see [`Open`]) over its members:
 /// to the next container's start in the same parent, or (chained, or the
-/// last) to the parent's end, without the whitespace before that point.
-/// The bytes after its own statement are its body.
+/// last) to the parent's end, without the whitespace before that point
+/// unless a member's range covers it (Perl's last block runs over the
+/// file's trailing whitespace and comments). The bytes after its own
+/// statement are its body.
 fn close_statement_forms(source: &[u8], candidates: &mut [Candidate]) {
     let mut open: Vec<(usize, usize, usize)> = candidates
         .iter()
         .enumerate()
         .filter_map(|(index, c)| c.open.map(|open| (open.parent, c.start, index)))
         .collect();
+    if open.is_empty() {
+        return;
+    }
     open.sort_unstable();
-    for (position, &(parent, _, index)) in open.iter().enumerate() {
+    let mut spans: Vec<(usize, usize)> = candidates.iter().map(|c| (c.start, c.end)).collect();
+    spans.sort_unstable();
+    // Latest member end of the next chained container of the same parent,
+    // whose window lies inside this one's; walking backwards reads each
+    // member once.
+    let mut carried = 0;
+    for (position, &(parent, start, index)) in open.iter().enumerate().rev() {
         let Some(Open {
             parent_end, form, ..
         }) = candidates[index].open
@@ -1045,14 +1546,27 @@ fn close_statement_forms(source: &[u8], candidates: &mut [Candidate]) {
             .get(position + 1)
             .filter(|next| next.0 == parent)
             .map(|next| next.1);
-        let end = match form {
-            Form::Block => continue,
-            Form::Statement => next.unwrap_or(parent_end),
-            Form::Chained => parent_end,
+        let (end, inherited) = match form {
+            Form::Block => {
+                carried = 0;
+                continue;
+            }
+            Form::Statement => (next.unwrap_or(parent_end), 0),
+            Form::Chained => (parent_end, if next.is_some() { carried } else { 0 }),
         };
         let own = candidates[index].end;
         let mut end = end.max(own);
-        while end > own && source[end - 1].is_ascii_whitespace() {
+        let members = spans.partition_point(|span| span.0 < start)
+            ..spans.partition_point(|span| span.0 < next.unwrap_or(end).min(end));
+        let reach = spans[members]
+            .iter()
+            .map(|span| span.1)
+            .max()
+            .unwrap_or(0)
+            .max(inherited);
+        carried = reach;
+        let floor = reach.clamp(own, end);
+        while end > floor && source[end - 1].is_ascii_whitespace() {
             end -= 1;
         }
         candidates[index].end = end;
@@ -1076,18 +1590,9 @@ fn statement_form(lang: Lang, node: tree_sitter::Node) -> Option<Form> {
 /// A declaration-only member (a trait method without a body, an interface,
 /// protocol or abstract member, a C/C++ prototype, a Haskell or F#
 /// signature): not a unit, yet a signature that an outline never hides.
-fn is_member_signature(
-    lang: Lang,
-    node: tree_sitter::Node,
-    ancestors: &[tree_sitter::Node],
-    source: &[u8],
-) -> bool {
-    let above = |n: usize| {
-        ancestors
-            .len()
-            .checked_sub(n)
-            .map(|at| ancestors[at].kind())
-    };
+fn is_member_signature(at: &Walk, node: tree_sitter::Node) -> bool {
+    let (lang, source) = (at.lang, at.source);
+    let above = |n: usize| at.above(n);
     let bodiless = || node.child_by_field_name("body").is_none();
     match lang {
         Lang::Rust => matches!(node.kind(), "function_signature_item" | "associated_type"),
@@ -1178,17 +1683,94 @@ fn declares_function(node: tree_sitter::Node) -> bool {
         })
 }
 
-fn candidate(
-    lang: Lang,
+/// The candidates `node` gives: none, itself, or for a declaration that
+/// binds several names ([`bindings`]) one per binding.
+fn candidates(
+    at: &Walk,
     node: tree_sitter::Node,
-    ancestors: &[tree_sitter::Node],
     runs: &[Vec<(tree_sitter::Node, Leading)>],
+    need: Need,
+    out: &mut Vec<Candidate>,
+) {
+    let (lang, source) = (at.lang, at.source);
+    let outer = at.outermost_wrapper(node);
+    // `outer` sits at the depth of the outermost wrapper (or of `node`).
+    let (start, decl) = leading_run(outer, &runs[at.ancestors.len() - at.wrappers()], source);
+    if let Some(bindings) = bindings(at, node) {
+        // The declaration's first binding keeps its start and leading run;
+        // each binding ends where its own text does.
+        for binding in bindings {
+            let (start, decl, head) = match binding.start {
+                None => (start, decl, outer.start_byte()),
+                Some(own) => (own, own, own),
+            };
+            out.push(named_candidate(
+                lang,
+                binding.kind,
+                Some(Named::whole(binding.name)),
+                source,
+                need,
+                Candidate {
+                    start,
+                    decl,
+                    head,
+                    end: binding.end,
+                    kind: binding.kind,
+                    name: None,
+                    qualifier: None,
+                    name_range: None,
+                    address: Vec::new(),
+                    body: binding.body,
+                    open: None,
+                },
+            ));
+        }
+        return;
+    }
+    let Some(kind) = unit_kind(at, node) else {
+        return;
+    };
+    let open = statement_form(lang, node).and_then(|form| {
+        let parent = at.ancestors.last()?;
+        Some(Open {
+            parent: parent.id(),
+            parent_end: parent.end_byte(),
+            form,
+        })
+    });
+    out.push(named_candidate(
+        lang,
+        kind,
+        unit_name(lang, node, source),
+        source,
+        need,
+        Candidate {
+            start,
+            decl,
+            head: outer.start_byte(),
+            end: outer.end_byte(),
+            kind,
+            name: None,
+            qualifier: None,
+            name_range: None,
+            address: Vec::new(),
+            body: body_range(lang, node, source),
+            open,
+        },
+    ));
+}
+
+/// `candidate` with its name, name range, qualifier and address filled in
+/// from `named` ([`resolve_name`]).
+fn named_candidate(
+    lang: Lang,
+    kind: UnitKind,
+    named: Option<Named>,
     source: &[u8],
     need: Need,
-) -> Option<Candidate> {
-    let kind = unit_kind(lang, node, ancestors, source)?;
-    let resolved = unit_name(lang, node, source)
-        .and_then(|named| resolve_name(lang, named, source, need));
+    candidate: Candidate,
+) -> Candidate {
+    let resolved = named.and_then(|named| resolve_name(lang, named, source, need));
     let name = resolved
         .as_ref()
         .and_then(|resolved| {
@@ -1207,36 +1789,150 @@ fn candidate(
         Some(resolved) if name.is_some() => (resolved.qualifier, resolved.address),
         _ => (None, Vec::new()),
     };
-    let body = body_range(lang, node, source);
-    let outer = outermost_wrapper(lang, node, ancestors);
-    // `outer` sits at the depth of the outermost wrapper (or of `node`).
-    let wrappers = ancestors
-        .iter()
-        .rev()
-        .take_while(|ancestor| is_wrapper(lang, **ancestor))
-        .count();
-    let (start, decl) = leading_run(outer, &runs[ancestors.len() - wrappers], source);
-    let open = statement_form(lang, node).and_then(|form| {
-        let parent = ancestors.last()?;
-        Some(Open {
-            parent: parent.id(),
-            parent_end: parent.end_byte(),
-            form,
-        })
-    });
-    Some(Candidate {
-        start,
-        decl,
-        head: outer.start_byte(),
-        end: outer.end_byte(),
-        kind,
+    Candidate {
         name,
         qualifier,
         name_range,
         address,
-        body,
-        open,
-    })
+        ..candidate
+    }
+}
+
+/// One name a declaration binds among several ([`bindings`]).
+struct Binding<'t> {
+    /// Where the binding's own text starts (its `and`, or its name); `None`
+    /// for the declaration's first, which starts with the declaration.
+    start: Option<usize>,
+    end: usize,
+    name: tree_sitter::Node<'t>,
+    kind: UnitKind,
+    body: Option<(usize, usize)>,
+}
+
+/// The bindings of a declaration that binds several names, each a unit with
+/// its own range (001 T008 review M3, M4): an F# `let rec f … and g …`
+/// group, one per head and body (a function at any depth; a value at module
+/// level, as a lone `let`); a module-level Swift `let a = 1, b = 2`, one per
+/// name and its type and value. The first binding starts with the
+/// declaration; each later one at its `and` (F#) or its name (Swift), and
+/// each ends with its body (F#) or before the comma after it (Swift). `None`
+/// for a declaration with fewer than two bindings, which stays one unit.
+fn bindings<'t>(at: &Walk<'_, 't>, node: tree_sitter::Node<'t>) -> Option<Vec<Binding<'t>>> {
+    match (at.lang, node.kind()) {
+        (Lang::FSharp | Lang::FSharpSignature, "function_or_value_defn") => {
+            const HEADS: [&str; 2] = ["function_declaration_left", "value_declaration_left"];
+            if count_named_up_to(node, &HEADS, 2) < 2 {
+                return None;
+            }
+            let module_level = at.above(1) == Some("declaration_expression")
+                && matches!(
+                    at.above(2),
+                    Some("module_defn" | "namespace" | "named_module" | "file")
+                );
+            let mut out = Vec::new();
+            // The current binding's `and` and head, until its body.
+            let mut and = None;
+            let mut head = None;
+            let mut cursor = node.walk();
+            let mut more = cursor.goto_first_child();
+            while more {
+                let child = cursor.node();
+                match child.kind() {
+                    "and" => and = Some(child.start_byte()),
+                    kind if HEADS.contains(&kind) => head = Some(child),
+                    _ if cursor.field_name() == Some("body") => {
+                        if let Some(left) = head.take() {
+                            let start = and.take();
+                            let binding = |kind, name| Binding {
+                                start,
+                                end: child.end_byte(),
+                                name,
+                                kind,
+                                body: Some((child.start_byte(), child.end_byte())),
+                            };
+                            if left.kind() == "function_declaration_left" {
+                                out.extend(
+                                    named_child_of(left, &["identifier"])
+                                        .map(|name| binding(UnitKind::Fn, name)),
+                                );
+                            } else if module_level {
+                                let kind = if has_child_kind(left, "mutable") {
+                                    UnitKind::Static
+                                } else {
+                                    UnitKind::Const
+                                };
+                                out.extend(
+                                    named_child_of(left, &["identifier_pattern"])
+                                        .and_then(|pattern| {
+                                            named_child_of(pattern, &["long_identifier_or_op"])
+                                        })
+                                        .and_then(|name| named_child_of(name, &["identifier"]))
+                                        .map(|name| binding(kind, name)),
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                more = cursor.goto_next_sibling();
+            }
+            Some(out)
+        }
+        (Lang::Swift, "property_declaration") if at.above(1) == Some("source_file") => {
+            let mut cursor = node.walk();
+            let names = node
+                .children_by_field_name("name", &mut cursor)
+                .take(2)
+                .count();
+            if names < 2 {
+                return None;
+            }
+            cursor.reset(node);
+            let kind = swift_binding_kind(node, at.source);
+            let mut out: Vec<Binding> = Vec::new();
+            // Whether the latest name is a binding (a plain name, not a
+            // tuple pattern): its type, value and so on extend it.
+            let mut current = false;
+            let mut first = true;
+            let mut more = cursor.goto_first_child();
+            while more {
+                let child = cursor.node();
+                if cursor.field_name() == Some("name") {
+                    current = false;
+                    if let Some(name) = child.child_by_field_name("bound_identifier") {
+                        out.push(Binding {
+                            start: (!first).then_some(child.start_byte()),
+                            end: child.end_byte(),
+                            name,
+                            kind,
+                            body: None,
+                        });
+                        current = true;
+                    }
+                    first = false;
+                } else if current
+                    && child.kind() != ","
+                    && let Some(last) = out.last_mut()
+                {
+                    last.end = child.end_byte();
+                }
+                more = cursor.goto_next_sibling();
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// A module-level Swift property is a `const` when bound with `let`.
+fn swift_binding_kind(declaration: tree_sitter::Node, source: &[u8]) -> UnitKind {
+    let constant = named_child_of(declaration, &["value_binding_pattern"])
+        .is_some_and(|binding| text(binding, source) == Some("let"));
+    if constant {
+        UnitKind::Const
+    } else {
+        UnitKind::Static
+    }
 }
 
 /// A definition's stored name: without a trailing run of `?`, `!` and `'`
@@ -1325,40 +2021,14 @@ fn leading_run(
     (start, decl)
 }
 
-/// The outermost of the wrappers (decorator, `export`, `template`, a
-/// declaration with one declarator or spec, a Python expression statement)
-/// directly enclosing `node`, or `node` itself; it supplies the range.
-fn outermost_wrapper<'t>(
-    lang: Lang,
-    node: tree_sitter::Node<'t>,
-    ancestors: &[tree_sitter::Node<'t>],
-) -> tree_sitter::Node<'t> {
-    ancestors
-        .iter()
-        .rev()
-        .take_while(|ancestor| is_wrapper(lang, **ancestor))
-        .last()
-        .copied()
-        .unwrap_or(node)
-}
-
-/// The unit kind of `node` under `ancestors` (context-v2 § Unit kinds and
-/// § Languages).
-fn unit_kind(
-    lang: Lang,
-    node: tree_sitter::Node,
-    ancestors: &[tree_sitter::Node],
-    source: &[u8],
-) -> Option<UnitKind> {
+/// The unit kind of `node` where the walk stands (context-v2 § Unit kinds
+/// and § Languages).
+fn unit_kind(at: &Walk, node: tree_sitter::Node) -> Option<UnitKind> {
     use UnitKind::*;
+    let (lang, source, ancestors) = (at.lang, at.source, at.ancestors);
     let kind = node.kind();
     // The kind of the `n`th ancestor up (1: the parent).
-    let above = |n: usize| {
-        ancestors
-            .len()
-            .checked_sub(n)
-            .map(|at| ancestors[at].kind())
-    };
+    let above = |n: usize| at.above(n);
     match lang {
         Lang::Rust => Some(match kind {
             "function_item" => Fn,
@@ -1406,7 +2076,7 @@ fn unit_kind(
             // A bare member: the enum body's `name` field, an identifier or
             // a quoted name.
             "property_identifier" | "string" if above(1) == Some("enum_body") => Some(Variant),
-            "variable_declarator" => declarator_kind(node, ancestors),
+            "variable_declarator" => declarator_kind(at, node),
             _ => None,
         },
         Lang::Go => match kind {
@@ -1513,7 +2183,7 @@ fn unit_kind(
             "const_declaration" if above(1) == Some("module_block") => Const,
             "field_declaration"
                 if above(1) == Some("module_block")
-                    && count_named(node, &["variable_declarator"]) == 1 =>
+                    && count_named_up_to(node, &["variable_declarator"], 2) == 1 =>
             {
                 Static
             }
@@ -1554,24 +2224,33 @@ fn unit_kind(
         }),
         Lang::Bash => match kind {
             "function_definition" => Some(Fn),
-            // A script-level assignment (bare or declared, not `local`).
-            "variable_assignment" if above(1) == Some("program") => Some(Static),
+            // A script-level assignment: bare, one of several on one line
+            // (`A=1 B=2`), or declared, not `local`. An assignment before a
+            // command (`A=1 cmd`) only sets that command's environment.
+            "variable_assignment"
+                if above(1) == Some("program")
+                    || (above(1) == Some("variable_assignments")
+                        && above(2) == Some("program")) =>
+            {
+                Some(Static)
+            }
             "variable_assignment"
                 if above(1) == Some("declaration_command") && above(2) == Some("program") =>
             {
+                // The keyword comes first, then the options (bash reads
+                // options only before the first name), then the names.
                 let declaration = *ancestors.last()?;
-                if has_child_kind(declaration, "local") {
-                    None
-                } else if has_child_kind(declaration, "readonly")
-                    || named_children(declaration).any(|flag| {
-                        flag.kind() == "word"
-                            && text(flag, source)
-                                .is_some_and(|flag| flag.starts_with('-') && flag.contains('r'))
-                    })
-                {
-                    Some(Const)
-                } else {
-                    Some(Static)
+                let mut parts = children(declaration);
+                let keyword = parts.next().map(|keyword| keyword.kind());
+                let read_only = keyword == Some("readonly")
+                    || parts.take_while(|part| part.kind() == "word").any(|flag| {
+                        text(flag, source)
+                            .is_some_and(|flag| flag.starts_with('-') && flag.contains('r'))
+                    });
+                match keyword {
+                    Some("local") => None,
+                    _ if read_only => Some(Const),
+                    _ => Some(Static),
                 }
             }
             _ => None,
@@ -1657,9 +2336,7 @@ fn unit_kind(
                 // Each name of `case a, b` is a member.
                 "simple_identifier" if above(1) == Some("enum_entry") => Variant,
                 "property_declaration" if above(1) == Some("source_file") => {
-                    let constant = named_child_of(node, &["value_binding_pattern"])
-                        .is_some_and(|binding| text(binding, source) == Some("let"));
-                    if constant { Const } else { Static }
+                    swift_binding_kind(node, source)
                 }
                 _ => return None,
             })
@@ -1740,7 +2417,9 @@ fn unit_kind(
             "enum_declaration" => Enum,
             "enum_constant" => Variant,
             "type_alias" => Type,
-            "function_declaration" => Fn,
+            // A named function at any depth: a block's
+            // `local_function_declaration` too (001 T008 review M5).
+            "function_declaration" | "local_function_declaration" => Fn,
             "method_declaration" => Method,
             // A bodiless constructor (`A.named();`).
             "constructor_signature"
@@ -1754,12 +2433,17 @@ fn unit_kind(
             "static_final_declaration" | "initialized_identifier"
                 if above(2) == Some("top_level_variable_declaration") =>
             {
+                // `const`/`final` come before the declaration's list.
                 let declaration = ancestors[ancestors.len() - 2];
-                if has_child_kind(declaration, "const") || has_child_kind(declaration, "final") {
-                    Const
-                } else {
-                    Static
-                }
+                let constant = children(declaration)
+                    .take_while(|part| {
+                        !matches!(
+                            part.kind(),
+                            "static_final_declaration_list" | "initialized_identifier_list"
+                        )
+                    })
+                    .any(|part| matches!(part.kind(), "const" | "final"));
+                if constant { Const } else { Static }
             }
             _ => return None,
         }),
@@ -1814,8 +2498,9 @@ fn unit_kind(
             }
             "data_type" | "newtype" | "type_synonym" | "type_family" | "data_family" => Type,
             // Constructors of a sum type are its members; a lone constructor
-            // shares its type's name and stays part of it.
-            "data_constructor" if count_named(*ancestors.last()?, &["data_constructor"]) > 1 => {
+            // shares its type's name and stays part of it. The list is
+            // classified once, when the walk enters it ([`Facts`]).
+            "data_constructor" if at.facts.last().is_some_and(|facts| facts.constructors) => {
                 Variant
             }
             "class" => Interface,
@@ -1899,8 +2584,24 @@ fn elixir_body<'t>(call: tree_sitter::Node<'t>, source: &[u8]) -> Option<tree_si
     })
 }
 
-fn named_children(node: tree_sitter::Node) -> impl Iterator<Item = tree_sitter::Node> {
-    (0..node.named_child_count()).filter_map(move |index| node.named_child(index as u32))
+/// `node`'s children in order, by one cursor walk: tree-sitter's indexed
+/// child access rescans the sibling list on each call (001 T008 review M2).
+fn children<'t>(node: tree_sitter::Node<'t>) -> impl Iterator<Item = tree_sitter::Node<'t>> {
+    let mut cursor = node.walk();
+    let mut started = false;
+    std::iter::from_fn(move || {
+        let moved = if started {
+            cursor.goto_next_sibling()
+        } else {
+            started = true;
+            cursor.goto_first_child()
+        };
+        moved.then(|| cursor.node())
+    })
+}
+
+fn named_children<'t>(node: tree_sitter::Node<'t>) -> impl Iterator<Item = tree_sitter::Node<'t>> {
+    children(node).filter(|child| child.is_named())
 }
 
 /// The first named child of one of `kinds`.
@@ -1911,20 +2612,19 @@ fn named_child_of<'t>(
     named_children(node).find(|child| kinds.contains(&child.kind()))
 }
 
-/// How many named children are of one of `kinds`.
-fn count_named(node: tree_sitter::Node, kinds: &[&str]) -> usize {
+/// How many named children are of one of `kinds`, counting no further than
+/// `limit`.
+fn count_named_up_to(node: tree_sitter::Node, kinds: &[&str], limit: usize) -> usize {
     named_children(node)
         .filter(|child| kinds.contains(&child.kind()))
+        .take(limit)
         .count()
 }
 
 /// Whether a child (named or not) is of `kind`: an anonymous keyword token
-/// such as `mutable`, `readonly` or `interface`.
+/// such as `mutable` or `interface`.
 fn has_child_kind(node: tree_sitter::Node, kind: &str) -> bool {
-    (0..node.child_count()).any(|index| {
-        node.child(index as u32)
-            .is_some_and(|child| child.kind() == kind)
-    })
+    children(node).any(|child| child.kind() == kind)
 }
 
 fn text<'s>(node: tree_sitter::Node, source: &'s [u8]) -> Option<&'s str> {
@@ -1935,8 +2635,8 @@ fn text<'s>(node: tree_sitter::Node, source: &'s [u8]) -> Option<&'s str> {
 /// value is a function (anywhere, when its declaration has no other
 /// declarator; T005's rule) and, at module level, otherwise `const` for
 /// `const` and `static` for `let`/`var`.
-fn declarator_kind(node: tree_sitter::Node, ancestors: &[tree_sitter::Node]) -> Option<UnitKind> {
-    let declaration = *ancestors.last()?;
+fn declarator_kind(at: &Walk, node: tree_sitter::Node) -> Option<UnitKind> {
+    let declaration = *at.ancestors.last()?;
     if !matches!(
         declaration.kind(),
         "lexical_declaration" | "variable_declaration"
@@ -1946,18 +2646,14 @@ fn declarator_kind(node: tree_sitter::Node, ancestors: &[tree_sitter::Node]) -> 
     {
         return None;
     }
-    let above = |n: usize| {
-        ancestors
-            .len()
-            .checked_sub(n)
-            .map(|at| ancestors[at].kind())
-    };
-    let module = above(2) == Some("program")
-        || (above(2) == Some("export_statement") && above(3) == Some("program"));
+    let module = at.above(2) == Some("program")
+        || (at.above(2) == Some("export_statement") && at.above(3) == Some("program"));
     let function = node
         .child_by_field_name("value")
         .is_some_and(|value| matches!(value.kind(), "arrow_function" | "function_expression"));
-    if function && (module || declarators(declaration) == 1) {
+    // A declaration with one declarator wraps it ([`is_wrapper`]).
+    let alone = at.facts.last().is_some_and(|facts| facts.wrapper);
+    if function && (module || alone) {
         return Some(UnitKind::Fn);
     }
     if !module {
@@ -1971,14 +2667,6 @@ fn declarator_kind(node: tree_sitter::Node, ancestors: &[tree_sitter::Node]) -> 
     } else {
         UnitKind::Static
     })
-}
-
-fn declarators(declaration: tree_sitter::Node) -> usize {
-    let mut cursor = declaration.walk();
-    declaration
-        .named_children(&mut cursor)
-        .filter(|child| child.kind() == "variable_declarator")
-        .count()
 }
 
 /// A unit's name (context-v2 § Unit kinds and § Languages): the node the
@@ -2060,10 +2748,15 @@ fn resolve_name(lang: Lang, named: Named, source: &[u8], need: Need) -> Option<R
                 Some((&last, scope)) => Resolved {
                     span: last,
                     qualifier: (!scope.is_empty()).then(|| {
-                        let scope: Vec<&str> = scope.iter().filter_map(|&part| text(part)).collect();
+                        let scope: Vec<&str> =
+                            scope.iter().filter_map(|&part| text(part)).collect();
                         scope.join(lang.qname_separator())
                     }),
-                    address: if addresses { lowercase(&parts) } else { Vec::new() },
+                    address: if addresses {
+                        lowercase(&parts)
+                    } else {
+                        Vec::new()
+                    },
                 },
                 // A name with no address parts (Lua's `M["x"]`) is whole.
                 None => Resolved {
@@ -2111,11 +2804,7 @@ fn resolve_name(lang: Lang, named: Named, source: &[u8], need: Need) -> Option<R
 /// enum member is its own name; a Python assignment's left identifier; and
 /// the per-kind rules of the languages whose definitions have no `name`
 /// field or a qualified one.
-fn unit_name<'t>(
-    lang: Lang,
-    node: tree_sitter::Node<'t>,
-    source: &[u8],
-) -> Option<Named<'t>> {
+fn unit_name<'t>(lang: Lang, node: tree_sitter::Node<'t>, source: &[u8]) -> Option<Named<'t>> {
     let field = |name: &str| node.child_by_field_name(name);
     let whole = Named::whole;
     match (lang, node.kind()) {
@@ -2209,8 +2898,7 @@ fn unit_name<'t>(
         (Lang::Ruby, "assignment") => field("left").map(whole),
         (Lang::Kotlin, "type_alias") => field("type").map(whole),
         (Lang::Kotlin, "enum_entry") => named_child_of(node, &["identifier"]).map(whole),
-        (Lang::Kotlin, "secondary_constructor") => (0..node.child_count())
-            .filter_map(|index| node.child(index as u32))
+        (Lang::Kotlin, "secondary_constructor") => children(node)
             .find(|child| child.kind() == "constructor")
             .map(whole),
         (Lang::Kotlin, "property_declaration") => named_child_of(
@@ -2231,8 +2919,7 @@ fn unit_name<'t>(
             })
         }
         (Lang::Swift, "simple_identifier") => Some(whole(node)),
-        (Lang::Swift, "deinit_declaration") => (0..node.child_count())
-            .filter_map(|index| node.child(index as u32))
+        (Lang::Swift, "deinit_declaration") => children(node)
             .find(|child| child.kind() == "deinit")
             .map(whole),
         (Lang::Swift, "property_declaration") => field("name")?
@@ -2249,6 +2936,9 @@ fn unit_name<'t>(
         (Lang::Dart, "type_alias") => named_child_of(node, &["type_identifier"]).map(whole),
         (Lang::Dart, "extension_declaration") => field("class").map(whole),
         (Lang::Dart, "function_declaration") => dart_signature_name(field("signature")?),
+        (Lang::Dart, "local_function_declaration") => {
+            dart_signature_name(named_child_of(node, &["function_signature"])?)
+        }
         (Lang::Dart, "method_declaration") => {
             dart_signature_name(field("signature")?.named_child(0)?)
         }
@@ -2375,6 +3065,22 @@ fn name_parts(lang: Lang, name: tree_sitter::Node, source: &[u8]) -> Vec<(usize,
                 pending.extend(parts.into_iter().rev());
             }
             "reference_type" | "pointer_type" => pending.extend(node.child_by_field_name("type")),
+            // Dart: a type's name before its arguments (`List` of
+            // `List<int>`).
+            "type" if lang == Lang::Dart => pending.extend(node.named_child(0)),
+            // Haskell: an instance's first type, and of an applied type its
+            // constructor (`Maybe` of `(Maybe a)`).
+            "type_patterns" | "parens" if lang == Lang::Haskell => {
+                pending.extend(node.named_child(0));
+            }
+            "apply" if lang == Lang::Haskell => {
+                pending.extend(node.child_by_field_name("constructor"));
+            }
+            // Elixir: `__MODULE__.Inner`.
+            "dot" if lang == Lang::Elixir => {
+                pending.extend(node.child_by_field_name("right"));
+                pending.extend(node.child_by_field_name("left"));
+            }
             "nullable_type" => {
                 let mut cursor = node.walk();
                 let referent = node
@@ -2385,7 +3091,10 @@ fn name_parts(lang: Lang, name: tree_sitter::Node, source: &[u8]) -> Vec<(usize,
             "alias" if lang == Lang::Elixir => {
                 let mut at = node.start_byte();
                 for segment in source[at..node.end_byte()].split(|&b| b == b'.') {
-                    let lead = segment.iter().take_while(|b| b.is_ascii_whitespace()).count();
+                    let lead = segment
+                        .iter()
+                        .take_while(|b| b.is_ascii_whitespace())
+                        .count();
                     let trail = segment[lead..]
                         .iter()
                         .rev()
@@ -2486,8 +3195,7 @@ fn body_range(lang: Lang, node: tree_sitter::Node, source: &[u8]) -> Option<(usi
             interior_lines(source, header_end, node.end_byte())
         }
         (Lang::PowerShell, _) => {
-            let braces: Vec<_> = (0..node.child_count())
-                .filter_map(|index| node.child(index as u32))
+            let braces: Vec<_> = children(node)
                 .filter(|child| matches!(child.kind(), "{" | "}"))
                 .collect();
             let (open, close) = (braces.first()?, braces.last()?);
@@ -2505,6 +3213,9 @@ fn body_range(lang: Lang, node: tree_sitter::Node, source: &[u8]) -> Option<(usi
             )?
             .child_by_field_name("body")?,
         ),
+        (Lang::Dart, "local_function_declaration") => {
+            span(named_child_of(node, &["function_body"])?)
+        }
         (Lang::Elixir, "call") => {
             let block = named_child_of(node, &["do_block"])?;
             let open = block.child(0).filter(|open| open.kind() == "do")?;
@@ -2553,7 +3264,7 @@ fn interior_lines(source: &[u8], header_end: usize, end: usize) -> Option<(usize
 /// `case` with one name, a Lua `local`, a Dart class member or top-level
 /// variable with one name).
 fn is_wrapper(lang: Lang, node: tree_sitter::Node) -> bool {
-    let single = |kinds: &[&str]| count_named(node, kinds) == 1;
+    let single = |kinds: &[&str]| count_named_up_to(node, kinds, 2) == 1;
     let one_method = |list: tree_sitter::Node| {
         list.named_child_count() == 1
             && list
@@ -2590,6 +3301,7 @@ fn is_wrapper(lang: Lang, node: tree_sitter::Node) -> bool {
         (Lang::FSharp | Lang::FSharpSignature, "type_definition") => {
             named_children(node)
                 .filter(|child| child.kind().ends_with("_defn") || child.kind() == "type_extension")
+                .take(2)
                 .count()
                 == 1
         }
@@ -3273,32 +3985,53 @@ fn import_keys(lang: Lang, node: tree_sitter::Node, source: &[u8], out: &mut Vec
             let Some(command) = node.child_by_field_name("command_name").and_then(text) else {
                 return;
             };
-            let arguments: Vec<String> = node
+            let elements: Vec<PowerShellElement> = node
                 .child_by_field_name("command_elements")
                 .map(|elements| {
                     named_children(elements)
-                        .filter(|element| element.kind() == "generic_token")
-                        .filter_map(text)
+                        .filter_map(|element| powershell_element(element, source))
                         .collect()
                 })
                 .unwrap_or_default();
             match command.to_ascii_lowercase().as_str() {
-                "using" => match arguments.as_slice() {
-                    [kind, name, ..] if kind.eq_ignore_ascii_case("namespace") => {
-                        out.extend(last_segment(name, &["."]));
+                "using" => {
+                    if let [
+                        PowerShellElement::Argument(kind),
+                        PowerShellElement::Argument(names),
+                        ..,
+                    ] = elements.as_slice()
+                        && let (Some(kind), Some(name)) = (kind.first(), names.first())
+                    {
+                        if kind.eq_ignore_ascii_case("namespace") {
+                            out.extend(last_segment(name, &["."]));
+                        } else if kind.eq_ignore_ascii_case("module") {
+                            out.extend(module(name));
+                        }
                     }
-                    [kind, name, ..] if kind.eq_ignore_ascii_case("module") => {
-                        out.extend(module(name));
-                    }
-                    _ => {}
-                },
+                }
+                // The `-Name` operand, else the first argument no other
+                // parameter takes as its value.
                 "import-module" => {
-                    out.extend(
-                        arguments
-                            .iter()
-                            .find(|argument| !argument.starts_with('-'))
-                            .and_then(|name| module(name)),
-                    );
+                    let mut elements = elements.iter();
+                    while let Some(element) = elements.next() {
+                        match element {
+                            PowerShellElement::Parameter(parameter) if parameter == "name" => {
+                                if let Some(PowerShellElement::Argument(names)) = elements.next() {
+                                    out.extend(names.iter().filter_map(|name| module(name)));
+                                }
+                                return;
+                            }
+                            PowerShellElement::Parameter(parameter)
+                                if IMPORT_MODULE_SWITCHES.contains(&parameter.as_str()) => {}
+                            PowerShellElement::Parameter(_) => {
+                                elements.next();
+                            }
+                            PowerShellElement::Argument(names) => {
+                                out.extend(names.iter().filter_map(|name| module(name)));
+                                return;
+                            }
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -3488,6 +4221,63 @@ fn import_keys(lang: Lang, node: tree_sitter::Node, source: &[u8], out: &mut Vec
     }
 }
 
+/// One element of a PowerShell command: a parameter (`-Name`, lowercased,
+/// without its `-` and a trailing `:`), or an argument's values (a bare
+/// token; a quoted literal, or each of a list of them, without quotes).
+enum PowerShellElement {
+    Parameter(String),
+    Argument(Vec<String>),
+}
+
+/// `Import-Module`'s parameters that take no value.
+const IMPORT_MODULE_SWITCHES: &[&str] = &[
+    "ascustomobject",
+    "disablenamechecking",
+    "force",
+    "global",
+    "noclobber",
+    "passthru",
+    "skipeditioncheck",
+    "usewindowspowershell",
+];
+
+fn powershell_element(element: tree_sitter::Node, source: &[u8]) -> Option<PowerShellElement> {
+    let parameter = |text: &str| {
+        PowerShellElement::Parameter(
+            text.trim_start_matches('-')
+                .trim_end_matches(':')
+                .to_ascii_lowercase(),
+        )
+    };
+    match element.kind() {
+        "command_parameter" => Some(parameter(text(element, source)?)),
+        "generic_token" => {
+            let token = text(element, source)?;
+            Some(if token.starts_with('-') {
+                parameter(token)
+            } else {
+                PowerShellElement::Argument(vec![token.to_owned()])
+            })
+        }
+        // `'./Store.psm1'`, `"Store"`, `'A', 'B'`: string literals, each
+        // inside a unary expression of an array literal.
+        "array_literal_expression" => {
+            let literals: Vec<String> = named_children(element)
+                .filter_map(|item| named_child_of(item, &["string_literal"]))
+                .filter_map(|literal| text(literal, source))
+                .map(|literal| {
+                    let inner = literal
+                        .strip_prefix(['\'', '"'])
+                        .and_then(|rest| rest.strip_suffix(['\'', '"']));
+                    inner.unwrap_or(literal).to_owned()
+                })
+                .collect();
+            (!literals.is_empty()).then_some(PowerShellElement::Argument(literals))
+        }
+        _ => None,
+    }
+}
+
 /// The last non-empty piece of `path` split at each of `separators`.
 fn last_segment(path: &str, separators: &[&str]) -> Option<String> {
     let mut last = path;
@@ -3618,13 +4408,82 @@ pub fn address_segments(path: &[String], qualifiers: &[String]) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// Every node of `tree` in pre-order: its kind (id and name), whether it
+    /// is named, missing, an error, an extra or holds an error, its byte and
+    /// point ranges, the field it fills in its parent and its child count.
+    fn shape(tree: &tree_sitter::Tree) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cursor = tree.walk();
+        loop {
+            let node = cursor.node();
+            out.push(format!(
+                "{} {} named={} missing={} error={} extra={} has_error={} {:?} {}-{} field={:?} children={}",
+                node.kind_id(),
+                node.kind(),
+                node.is_named(),
+                node.is_missing(),
+                node.is_error(),
+                node.is_extra(),
+                node.has_error(),
+                node.byte_range(),
+                node.start_position(),
+                node.end_position(),
+                cursor.field_name(),
+                node.child_count(),
+            ));
+            if cursor.goto_first_child() {
+                continue;
+            }
+            loop {
+                if cursor.goto_next_sibling() {
+                    break;
+                }
+                if !cursor.goto_parent() {
+                    return out;
+                }
+            }
+        }
+    }
+
     /// One character per read gives the parser the same tree as the whole
     /// buffer at once (the calibration found byte-identical trees on 22,492
-    /// real files): one source per grammar, this file for Rust.
+    /// real files; 001 T008 review m1): node for node — kind, named,
+    /// missing, error and extra status, byte and point ranges, field and
+    /// children — for one source per grammar (this file for Rust), as
+    /// written, with CRLF line ends, behind a byte-order mark, and empty.
     #[test]
     fn per_character_reads_give_the_whole_buffer_tree() {
-        let sources: [(&str, &str); 19] = [
+        let sources: [(&str, &str); 25] = [
             ("syntax.rs", include_str!("syntax.rs")),
+            ("multi.py", "# é ü\ndef f(a):\n    return 'ñ' + a  # 漢字\n"),
+            (
+                "store.ts",
+                "export class Store<T> {\n  get(key: string): T | undefined { return undefined; } // é\n}\n",
+            ),
+            (
+                "view.tsx",
+                "export const V = () => <div>é {\"漢\"}</div>;\n",
+            ),
+            (
+                "tools.js",
+                "const f = (a) => `x ${a} ü`;\nfunction g() { return /é+/.test('ñ'); }\n",
+            ),
+            (
+                "main.go",
+                "package main\n\n// Ü\nfunc main() {\n\ts := \"漢\"\n\t_ = s\n}\n",
+            ),
+            (
+                "lib.c",
+                "#include <stdio.h>\n/* é */\nint main(void) { printf(\"ñ\\n\"); return 0; }\n",
+            ),
+            (
+                "lib.cpp",
+                "namespace a::b {\ntemplate<typename T> struct Box { T v; }; // 漢\n}\n",
+            ),
+            (
+                "Main.java",
+                "/** é */\npublic class Main {\n    public static void main(String[] a) { System.out.println(\"ü\"); }\n}\n",
+            ),
             (
                 "store.cs",
                 include_str!("../tests/fixtures/syntax/store.cs"),
@@ -3689,22 +4548,77 @@ mod tests {
                 "Shapes.hs",
                 include_str!("../tests/fixtures/syntax/Shapes.hs"),
             ),
-            ("multi.py", "# é ü\ndef f(a):\n    return 'ñ' + a  # 漢字\n"),
-            (
-                "view.tsx",
-                "export const V = () => <div>é {\"漢\"}</div>;\n",
-            ),
         ];
+        let mut grammars = std::collections::HashSet::new();
         for (path, source) in sources {
-            let grammar = Lang::from_path(path).and_then(Lang::grammar).unwrap();
-            let chars = parse(source, &grammar).unwrap().unwrap();
-            let mut parser = tree_sitter::Parser::new();
-            parser.set_language(&grammar).unwrap();
-            let whole = parser.parse(source, None).unwrap();
-            assert_eq!(
-                chars.root_node().to_sexp(),
-                whole.root_node().to_sexp(),
-                "{path}"
+            let lang = Lang::from_path(path).unwrap();
+            grammars.insert(lang.tag().to_owned() + path.rsplit('.').next().unwrap());
+            let grammar = lang.grammar().unwrap();
+            let crlf = source.replace('\n', "\r\n");
+            let bom = format!("\u{feff}{source}");
+            for (form, text) in [
+                ("as written", source),
+                ("CRLF", &crlf),
+                ("BOM", &bom),
+                ("empty", ""),
+            ] {
+                let chars = parse(text, &grammar).unwrap().unwrap();
+                let mut parser = tree_sitter::Parser::new();
+                parser.set_language(&grammar).unwrap();
+                let whole = parser.parse(text, None).unwrap();
+                assert_eq!(shape(&chars), shape(&whole), "{path} {form}");
+            }
+        }
+        // Every grammar: TypeScript and TSX, F# and its signatures apart.
+        assert_eq!(grammars.len(), 25);
+    }
+
+    /// An outline-only analysis reads no address segments: its units carry
+    /// no qualifiers and are otherwise the units, while units and indexing
+    /// keep their qualifiers (001 T007 review m1).
+    #[test]
+    fn an_outline_only_analysis_carries_no_qualifiers() {
+        for (lang, source) in [
+            (
+                Lang::Rust,
+                "mod graph {\n    impl<T> a::b::Outer<T> {\n        fn edges(&self) {}\n    }\n}\n",
+            ),
+            (
+                Lang::Ruby,
+                "class Outer::Inner::Store\n  def get\n  end\nend\n",
+            ),
+            (
+                Lang::Cpp,
+                "namespace a::b {\nstruct ns::Box {\n    void run() {}\n};\n}\n",
+            ),
+        ] {
+            let units = analyze(source, lang, Need::Units).units;
+            let outline = analyze(source, lang, Need::Outline).units;
+            assert!(
+                units.iter().any(|unit| !unit.qualifiers.is_empty()),
+                "{source}"
+            );
+            assert!(
+                outline.iter().all(|unit| unit.qualifiers.is_empty()),
+                "{source}"
+            );
+            let without = |units: Vec<Unit>| -> Vec<Unit> {
+                units
+                    .into_iter()
+                    .map(|unit| Unit {
+                        qualifiers: Vec::new(),
+                        ..unit
+                    })
+                    .collect()
+            };
+            assert_eq!(without(units.clone()), outline, "{source}");
+            let indexed = index(source, Some(lang)).unwrap();
+            assert!(
+                indexed
+                    .documents
+                    .iter()
+                    .any(|document| !document.unit.qualifiers.is_empty()),
+                "{source}"
             );
         }
     }

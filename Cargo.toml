@@ -168,3 +168,10 @@ required-features = ["test-faults"]
 [[test]]
 name = "recovery"
 harness = false
+
+# 001 T008 review M1: tree-sitter-ruby 0.23.1 (the latest release) aborts in
+# its scanner's serialize/deserialize on a heredoc word of 256 bytes or more,
+# or one that brings its state to exactly 1,023 bytes. The fork is the
+# v0.23.1 tag plus a one-line bound on that word (cf-serialize-fix).
+[patch.crates-io]
+tree-sitter-ruby = { git = "https://github.com/dwbimstr/tree-sitter-ruby", rev = "1a594bfdaeddf672b6216d5008056efcbbe7b2b7" }

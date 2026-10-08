@@ -1,7 +1,7 @@
-//! 009 retrieval partition, recipe `nemotron-units-v1` (spec 009 § Documents,
+//! 009 retrieval partition, recipe `nemotron-units-v2` (spec 009 § Documents,
 //! embedding units and returned evidence).
 //!
-//! The recipe pins: the 001 T005 grammar versions this crate builds
+//! The recipe pins: the 001 T005 and T008 grammar versions this crate builds
 //! (tree-sitter/pulldown-cmark as pinned by `Cargo.toml`), the tokenizer
 //! identity string, the 1024-token document-unit limit including the
 //! `passage: ` rendered prefix and special tokens, and the tie-breaks below.
