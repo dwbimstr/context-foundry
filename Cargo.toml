@@ -95,7 +95,7 @@ bytes = "1"
 # the pinned artifact's tokenizer.json and the USearch F16 index. Default on;
 # `--no-default-features` builds the lexical-only core.
 tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
-usearch = { version = "=2.26.2", optional = true }
+usearch = { version = "=2.26.3", optional = true }
 # 013 T002 learning worker only (`learning-worker`): LibTorch through tch,
 # the pin D001 accepted on Rust 1.90 (torch-sys 0.24.0 checks for LibTorch
 # 2.11.0). `foundry` and the default build never link it. `LIBTORCH` names
