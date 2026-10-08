@@ -1,14 +1,28 @@
 //! Syntax units and search documents (context-v2 § Syntax units and search
-//! documents; 001 T005). The language is chosen by file extension only;
-//! tree-sitter grammars (Markdown: pulldown-cmark headings) yield a
-//! source-ordered interval forest of units, and every source is tiled into
-//! search documents that each name their delivery unit. Parsing is
-//! deterministic, error-tolerant and has no time-based limit; zero units, an
-//! unmapped language or a source over 1 MiB falls back to blocks.
+//! documents; 001 T005; 001 T008's languages, context-v2 § City map ›
+//! Languages). The language is chosen by file extension (and the `Rakefile`
+//! and `Gemfile` basenames); tree-sitter grammars (Markdown: pulldown-cmark
+//! headings) yield a source-ordered interval forest of units, and every
+//! source is tiled into search documents that each name their delivery
+//! unit. Parsing is deterministic and error-tolerant; it is bounded by a
+//! fixed work budget, never by time. Zero units, an unmapped language or a
+//! source over 1 MiB falls back to blocks; so does a parse stopped by its
+//! budget, which indexing names as a failure ([`index`]).
 
 /// Sources above this size are not parsed: their outline equals their text
 /// and their documents are blocks.
 pub const MAX_PARSE_BYTES: usize = 1024 * 1024;
+/// The work one parse may do (context-v2 § Languages): the parser reads its
+/// source one UTF-8 character per input callback and calls its progress
+/// callback every 100 parser operations; each read and each progress check
+/// is one unit. Lexer lookahead and backtracking re-read characters, so
+/// reads measure the external scanners' work, which progress checks alone
+/// do not (a 4,000-deep Haskell `let` needs under 900 checks but about 296
+/// million reads). A parse that would exceed the budget stops at the same
+/// unit on every run and thread count. Calibration (001 T008): 22,492 real
+/// files need at most 3,539,528 units (at most 18.5 per byte), so a 1 MiB
+/// source at that density fits as well.
+pub const PARSE_WORK_BUDGET: u64 = 1 << 25;
 /// Blocks merge consecutive blank-line pieces up to this many bytes.
 const BLOCK_BYTES: usize = 2048;
 /// Regions above this size split into parts.
@@ -22,7 +36,7 @@ const NAME_BYTES: usize = 120;
 /// its nearest ancestors survive, and deep named nesting stays linear.
 const QNAME_BYTES: usize = 256;
 
-/// A source language, chosen by file extension only.
+/// A source language, chosen by file extension (or basename).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lang {
     Rust,
@@ -34,6 +48,23 @@ pub enum Lang {
     C,
     Cpp,
     Java,
+    CSharp,
+    /// F# implementation files and scripts.
+    FSharp,
+    /// F# signature files (`.fsi`): the crate's second grammar.
+    FSharpSignature,
+    VbNet,
+    Php,
+    Perl,
+    PowerShell,
+    Ruby,
+    Kotlin,
+    Swift,
+    Scala,
+    Lua,
+    Dart,
+    Elixir,
+    Haskell,
     Markdown,
     Toml,
     Json,
@@ -45,10 +76,14 @@ pub enum Lang {
 }
 
 impl Lang {
-    /// The extension map; every other extension (and a dotfile without a
-    /// stem) is unmapped: no tag, no units, blocks only.
+    /// The extension map, plus the `Rakefile` and `Gemfile` basenames; every
+    /// other extension (and a dotfile without a stem) is unmapped: no tag,
+    /// no units, blocks only.
     pub fn from_path(path: &str) -> Option<Self> {
         let name = path.rsplit('/').next().unwrap_or(path);
+        if matches!(name, "Rakefile" | "Gemfile") {
+            return Some(Self::Ruby);
+        }
         let (stem, extension) = name.rsplit_once('.')?;
         if stem.is_empty() {
             return None;
@@ -63,11 +98,26 @@ impl Lang {
             "c" => Self::C,
             "h" | "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => Self::Cpp,
             "java" => Self::Java,
+            "cs" => Self::CSharp,
+            "fs" | "fsx" => Self::FSharp,
+            "fsi" => Self::FSharpSignature,
+            "vb" => Self::VbNet,
+            "php" | "phtml" => Self::Php,
+            "pl" | "pm" | "t" | "psgi" => Self::Perl,
+            "ps1" | "psm1" | "psd1" => Self::PowerShell,
+            "rb" | "rake" => Self::Ruby,
+            "kt" | "kts" => Self::Kotlin,
+            "swift" => Self::Swift,
+            "scala" | "sc" => Self::Scala,
+            "lua" => Self::Lua,
+            "dart" => Self::Dart,
+            "ex" | "exs" => Self::Elixir,
+            "hs" => Self::Haskell,
             "md" | "markdown" => Self::Markdown,
             "toml" => Self::Toml,
             "json" => Self::Json,
             "yaml" | "yml" => Self::Yaml,
-            "sh" | "bash" => Self::Bash,
+            "sh" | "bash" | "zsh" => Self::Bash,
             "sql" => Self::Sql,
             "html" => Self::Html,
             "css" => Self::Css,
@@ -87,6 +137,20 @@ impl Lang {
             Self::C => "c",
             Self::Cpp => "cpp",
             Self::Java => "java",
+            Self::CSharp => "csharp",
+            Self::FSharp | Self::FSharpSignature => "fsharp",
+            Self::VbNet => "vbnet",
+            Self::Php => "php",
+            Self::Perl => "perl",
+            Self::PowerShell => "powershell",
+            Self::Ruby => "ruby",
+            Self::Kotlin => "kotlin",
+            Self::Swift => "swift",
+            Self::Scala => "scala",
+            Self::Lua => "lua",
+            Self::Dart => "dart",
+            Self::Elixir => "elixir",
+            Self::Haskell => "haskell",
             Self::Markdown => "markdown",
             Self::Toml => "toml",
             Self::Json => "json",
@@ -102,7 +166,7 @@ impl Lang {
     pub fn has_units(self) -> bool {
         !matches!(
             self,
-            Self::Toml | Self::Json | Self::Yaml | Self::Bash | Self::Sql | Self::Html | Self::Css
+            Self::Toml | Self::Json | Self::Yaml | Self::Sql | Self::Html | Self::Css
         )
     }
 
@@ -117,15 +181,43 @@ impl Lang {
             Self::C => tree_sitter_c::LANGUAGE.into(),
             Self::Cpp => tree_sitter_cpp::LANGUAGE.into(),
             Self::Java => tree_sitter_java::LANGUAGE.into(),
+            Self::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            Self::FSharp => tree_sitter_fsharp::LANGUAGE_FSHARP.into(),
+            Self::FSharpSignature => tree_sitter_fsharp::LANGUAGE_SIGNATURE.into(),
+            Self::VbNet => tree_sitter_vb_dotnet::LANGUAGE.into(),
+            Self::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+            Self::Perl => tree_sitter_perl::LANGUAGE.into(),
+            Self::Bash => tree_sitter_bash::LANGUAGE.into(),
+            Self::PowerShell => tree_sitter_powershell::LANGUAGE.into(),
+            Self::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+            Self::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+            Self::Swift => tree_sitter_swift::LANGUAGE.into(),
+            Self::Scala => tree_sitter_scala::LANGUAGE.into(),
+            Self::Lua => tree_sitter_lua::LANGUAGE.into(),
+            Self::Dart => tree_sitter_dart::LANGUAGE.into(),
+            Self::Elixir => tree_sitter_elixir::LANGUAGE.into(),
+            Self::Haskell => tree_sitter_haskell::LANGUAGE.into(),
             _ => return None,
         })
     }
 
+    /// Qualified names join with `::` where the languages' own qualified
+    /// names do (Rust, C++, Perl, Ruby), else `.`.
     fn qname_separator(self) -> &'static str {
         match self {
-            Self::Rust | Self::Cpp => "::",
+            Self::Rust | Self::Cpp | Self::Perl | Self::Ruby => "::",
             _ => ".",
         }
+    }
+
+    /// A definition name ending in `?`, `!` or `'` (Ruby, Elixir, Haskell,
+    /// F#) is stored and matched without that suffix (context-v2
+    /// § Languages); a name made only of them is kept.
+    fn strips_name_suffix(self) -> bool {
+        matches!(
+            self,
+            Self::Ruby | Self::Elixir | Self::Haskell | Self::FSharp | Self::FSharpSignature
+        )
     }
 }
 
@@ -181,14 +273,17 @@ impl UnitKind {
 /// declaration start, where an outline's signature lines begin: the first
 /// attribute of that run, else `head`. `head` is the node's (or wrapper's)
 /// own start, after the leading run. `body` is the `body` field (else the
-/// block/declaration_list child), `None` when the unit has no elidable
+/// language's body child, or for a keyword-closed body the lines between its
+/// header and its closing line), `None` when the unit has no elidable
 /// interior. `name_range` is the byte range of the unit's name when the unit
 /// is a definition (context-v2 § Definitions and addresses): a
-/// programming-language unit with a name, except a Rust `impl`, which
-/// extends a type defined elsewhere; a quoted name's range is the text inside
-/// its quotes. `qualifiers` are its qualified name's address segments minus
-/// its own name, taken from the syntax tree ([`address_segments`]). Units are
-/// stored in source (pre-)order.
+/// programming-language unit with a name, except a Rust `impl` and the other
+/// containers that extend a type defined elsewhere (a Swift or Dart
+/// `extension`, an F# type extension, an Elixir `defimpl`, a Haskell
+/// `instance`); a quoted name's range is the text inside its quotes.
+/// `qualifiers` are its qualified name's address segments minus its own
+/// name, taken from the syntax tree ([`address_segments`]). Units are stored
+/// in source (pre-)order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unit {
     pub kind: UnitKind,
@@ -239,14 +334,42 @@ struct Candidate {
     end: usize,
     kind: UnitKind,
     name: Option<String>,
+    /// The qualifier its qualified name puts before the name ([`Resolved`]):
+    /// `Outer::Inner` of Ruby's `class Outer::Inner::Store`.
+    qualifier: Option<String>,
     name_range: Option<(usize, usize)>,
-    /// The name's own address segments ([`name_address`]), lowercased.
+    /// The name's own address segments ([`name_parts`]), lowercased; none
+    /// for an outline-only analysis.
     address: Vec<String>,
     body: Option<(usize, usize)>,
+    /// A statement-form container's open range (see [`Open`]).
+    open: Option<Open>,
 }
 
-/// The unit forest of `source`; empty for a language without units or a
-/// source over [`MAX_PARSE_BYTES`].
+/// A namespace or package container that statement-form siblings divide
+/// (C# `namespace X;`, PHP `namespace X;`, Perl `package X;`, Scala
+/// `package x`): a statement form's members are its following siblings.
+#[derive(Clone, Copy)]
+struct Open {
+    parent: usize,
+    parent_end: usize,
+    form: Form,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Form {
+    /// Runs to the next [`Form`] in the same parent, or to the parent's end.
+    Statement,
+    /// Runs to the parent's end: Scala's successive clauses nest.
+    Chained,
+    /// A braced block (Perl `package X { … }`, PHP `namespace X { … }`):
+    /// keeps its range and ends the statement form before it.
+    Block,
+}
+
+/// The unit forest of `source`; empty for a language without units, a
+/// source over [`MAX_PARSE_BYTES`] or a parse stopped by
+/// [`PARSE_WORK_BUDGET`].
 pub fn units(source: &str, lang: Lang) -> Vec<Unit> {
     analyze(source, lang, Need::Units).units
 }
@@ -263,13 +386,15 @@ enum Need {
 
 /// One parse: the unit forest and, for outlines, the byte ranges of comments
 /// spanning at least [`COMMENT_LINES`] lines and of declaration-only members;
-/// for indexing, the import keys.
+/// for indexing, the import keys. A parse stopped by its budget yields
+/// nothing but `stopped`.
 #[derive(Default)]
 struct Analysis {
     units: Vec<Unit>,
     comments: Vec<(usize, usize)>,
     members: Vec<(usize, usize)>,
     imports: Vec<String>,
+    stopped: Option<ParseStopped>,
 }
 
 fn analyze(source: &str, lang: Lang, need: Need) -> Analysis {
@@ -282,13 +407,20 @@ fn analyze(source: &str, lang: Lang, need: Need) -> Analysis {
     } else {
         tree_units(source, lang, need, &mut analysis)
     };
-    analysis.units = forest(source, lang, candidates);
+    if analysis.stopped.is_some() {
+        return Analysis {
+            stopped: analysis.stopped,
+            ..Analysis::default()
+        };
+    }
+    analysis.units = forest(source, lang, need, candidates);
     analysis
 }
 
 /// The search documents of `source`, in source order. Document ranges plus
 /// whitespace-only gaps tile `[0, len)` without overlap, and each document
-/// lies inside its delivery unit.
+/// lies inside its delivery unit. A parse stopped by its budget gives the
+/// blocks of an unmapped source, as indexing's fallback does.
 pub fn documents(source: &str, lang: Option<Lang>) -> Vec<Document> {
     let units = lang.map_or_else(Vec::new, |lang| units(source, lang));
     tile(source, &units)
@@ -303,21 +435,44 @@ pub struct SourceIndex {
     pub imports: Vec<String>,
 }
 
-/// The [`SourceIndex`] of `source`.
-pub fn index(source: &str, lang: Option<Lang>) -> SourceIndex {
+/// A parse stopped by [`PARSE_WORK_BUDGET`] (context-v2 § Languages). Indexing
+/// handles it as a parse panic (§ Parallel indexing): the plain blocks of an
+/// unmapped source and a named failure. `at` is the byte offset the parser
+/// had reached when the budget ran out: the same on every run and thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParseStopped {
+    pub at: usize,
+}
+
+impl std::fmt::Display for ParseStopped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "exceeded the parse work budget of {PARSE_WORK_BUDGET} units at byte {}",
+            self.at
+        )
+    }
+}
+
+/// The [`SourceIndex`] of `source`, or the stop of a parse that exceeded its
+/// work budget.
+pub fn index(source: &str, lang: Option<Lang>) -> Result<SourceIndex, ParseStopped> {
     let analysis = lang.map_or_else(Analysis::default, |lang| {
         analyze(source, lang, Need::Imports)
     });
+    if let Some(stopped) = analysis.stopped {
+        return Err(stopped);
+    }
     let mut seen = std::collections::HashSet::new();
     let imports = analysis
         .imports
         .into_iter()
         .filter(|key| seen.insert(key.clone()))
         .collect();
-    SourceIndex {
+    Ok(SourceIndex {
         documents: tile(source, &analysis.units),
         imports,
-    }
+    })
 }
 
 /// Tiles `source` into documents: each top-level unit's regions, and blocks
@@ -738,14 +893,13 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
     let Some(grammar) = lang.grammar() else {
         return out;
     };
-    let mut parser = tree_sitter::Parser::new();
-    // Every grammar is a locked dependency whose ABI the tests load; a
-    // failure here would be a build defect, surfaced by those tests.
-    if parser.set_language(&grammar).is_err() {
-        return out;
-    }
-    let Some(tree) = parser.parse(source, None) else {
-        return out;
+    let tree = match parse(source, &grammar) {
+        Ok(Some(tree)) => tree,
+        Ok(None) => return out,
+        Err(stopped) => {
+            extras.stopped = Some(stopped);
+            return out;
+        }
     };
     let bytes = source.as_bytes();
     // Iterative pre-order walk: error-recovered trees can be deep. The
@@ -756,24 +910,28 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
     let mut cursor = tree.walk();
     let mut ancestors: Vec<tree_sitter::Node> = Vec::new();
     let mut runs: Vec<Vec<(tree_sitter::Node, Leading)>> = vec![Vec::new()];
-    loop {
+    'walk: loop {
         let node = cursor.node();
-        // A Rust declaration-only item is a unit and stays a mandatory
-        // outline member, so outlines keep its lines as before.
-        if let Some(candidate) = candidate(lang, node, &ancestors, &runs, bytes) {
-            out.push(candidate);
-        }
-        if need == Need::Imports {
-            import_keys(lang, node, bytes, &mut extras.imports);
-        } else if need == Need::Outline {
-            if is_member_signature(lang, node) {
-                // A template wrapper's lines belong to the signature too.
-                let outer = outermost_wrapper(lang, node, &ancestors);
-                extras.members.push((outer.start_byte(), outer.end_byte()));
-            } else if node.kind().ends_with("comment")
-                && node.end_position().row + 1 >= node.start_position().row + COMMENT_LINES
-            {
-                extras.comments.push((node.start_byte(), node.end_byte()));
+        // Units, members and imports are named nodes; keyword tokens such
+        // as F#'s `namespace` or Haskell's `import` share their kind names.
+        if node.is_named() {
+            // A Rust declaration-only item is a unit and stays a mandatory
+            // outline member, so outlines keep its lines as before.
+            if let Some(candidate) = candidate(lang, node, &ancestors, &runs, bytes, need) {
+                out.push(candidate);
+            }
+            if need == Need::Imports {
+                import_keys(lang, node, bytes, &mut extras.imports);
+            } else if need == Need::Outline {
+                if is_member_signature(lang, node, &ancestors, bytes) {
+                    // A template wrapper's lines belong to the signature too.
+                    let outer = outermost_wrapper(lang, node, &ancestors);
+                    extras.members.push((outer.start_byte(), outer.end_byte()));
+                } else if node.kind().ends_with("comment")
+                    && node.end_position().row + 1 >= node.start_position().row + COMMENT_LINES
+                {
+                    extras.comments.push((node.start_byte(), node.end_byte()));
+                }
             }
         }
         if cursor.goto_first_child() {
@@ -793,18 +951,144 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
                 break;
             }
             if !cursor.goto_parent() {
-                return out;
+                break 'walk;
             }
             ancestors.pop();
             runs.pop();
         }
     }
+    close_statement_forms(bytes, &mut out);
+    out
 }
 
-/// A declaration-only member (a trait method without a body, an interface or
-/// abstract member, a C/C++ prototype): not a unit, yet a signature that an
-/// outline never hides.
-fn is_member_signature(lang: Lang, node: tree_sitter::Node) -> bool {
+/// One parse under [`PARSE_WORK_BUDGET`]: the source is handed to the parser
+/// one UTF-8 character per read, and each read and each progress check
+/// spends one unit. Once the budget is spent, reads return end of input and
+/// the next progress check stops the parse; its tree, if any, is dropped.
+/// `Ok(None)`: the grammar did not load or the parser returned no tree.
+fn parse(
+    source: &str,
+    grammar: &tree_sitter::Language,
+) -> Result<Option<tree_sitter::Tree>, ParseStopped> {
+    use std::cell::Cell;
+    use std::ops::ControlFlow;
+    let mut parser = tree_sitter::Parser::new();
+    // Every grammar is a locked dependency whose ABI the tests load; a
+    // failure here would be a build defect, surfaced by those tests.
+    if parser.set_language(grammar).is_err() {
+        return Ok(None);
+    }
+    let bytes = source.as_bytes();
+    let used = Cell::new(0u64);
+    let stopped: Cell<Option<usize>> = Cell::new(None);
+    // Spends one unit at byte `at`; false once the budget is spent, the
+    // first refusal recording where.
+    let spend = |at: usize| {
+        if stopped.get().is_some() {
+            return false;
+        }
+        if used.get() >= PARSE_WORK_BUDGET {
+            stopped.set(Some(at));
+            return false;
+        }
+        used.set(used.get() + 1);
+        true
+    };
+    let mut read = |at: usize, _: tree_sitter::Point| -> &[u8] {
+        if at >= bytes.len() || !spend(at) {
+            return &[];
+        }
+        // One character: the lead byte and its continuation bytes.
+        let mut end = at + 1;
+        while end < bytes.len() && bytes[end] & 0xC0 == 0x80 {
+            end += 1;
+        }
+        &bytes[at..end]
+    };
+    let mut progress = |state: &tree_sitter::ParseState| {
+        if spend(state.current_byte_offset()) {
+            ControlFlow::Continue(())
+        } else {
+            ControlFlow::Break(())
+        }
+    };
+    let tree = parser.parse_with_options(
+        &mut read,
+        None,
+        Some(tree_sitter::ParseOptions::new().progress_callback(&mut progress)),
+    );
+    match stopped.get() {
+        Some(at) => Err(ParseStopped { at }),
+        None => Ok(tree),
+    }
+}
+
+/// Extends each statement-form container (see [`Open`]) over its members:
+/// to the next container's start in the same parent, or (chained, or the
+/// last) to the parent's end, without the whitespace before that point.
+/// The bytes after its own statement are its body.
+fn close_statement_forms(source: &[u8], candidates: &mut [Candidate]) {
+    let mut open: Vec<(usize, usize, usize)> = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, c)| c.open.map(|open| (open.parent, c.start, index)))
+        .collect();
+    open.sort_unstable();
+    for (position, &(parent, _, index)) in open.iter().enumerate() {
+        let Some(Open {
+            parent_end, form, ..
+        }) = candidates[index].open
+        else {
+            continue;
+        };
+        let next = open
+            .get(position + 1)
+            .filter(|next| next.0 == parent)
+            .map(|next| next.1);
+        let end = match form {
+            Form::Block => continue,
+            Form::Statement => next.unwrap_or(parent_end),
+            Form::Chained => parent_end,
+        };
+        let own = candidates[index].end;
+        let mut end = end.max(own);
+        while end > own && source[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        candidates[index].end = end;
+        candidates[index].body = (own < end).then_some((own, end));
+    }
+}
+
+/// Whether `node` is a namespace or package container of [`Open`]'s kind.
+fn statement_form(lang: Lang, node: tree_sitter::Node) -> Option<Form> {
+    let braced = node.child_by_field_name("body").is_some();
+    match (lang, node.kind()) {
+        (Lang::CSharp, "file_scoped_namespace_declaration") => Some(Form::Statement),
+        (Lang::Php, "namespace_definition") | (Lang::Perl, "package_statement") => {
+            Some(if braced { Form::Block } else { Form::Statement })
+        }
+        (Lang::Scala, "package_clause") if !braced => Some(Form::Chained),
+        _ => None,
+    }
+}
+
+/// A declaration-only member (a trait method without a body, an interface,
+/// protocol or abstract member, a C/C++ prototype, a Haskell or F#
+/// signature): not a unit, yet a signature that an outline never hides.
+fn is_member_signature(
+    lang: Lang,
+    node: tree_sitter::Node,
+    ancestors: &[tree_sitter::Node],
+    source: &[u8],
+) -> bool {
+    let above = |n: usize| {
+        ancestors
+            .len()
+            .checked_sub(n)
+            .map(|at| ancestors[at].kind())
+    };
+    let bodiless = || node.child_by_field_name("body").is_none();
     match lang {
         Lang::Rust => matches!(node.kind(), "function_signature_item" | "associated_type"),
         Lang::Go => node.kind() == "method_elem",
@@ -820,6 +1104,50 @@ fn is_member_signature(lang: Lang, node: tree_sitter::Node) -> bool {
         Lang::C | Lang::Cpp => {
             matches!(node.kind(), "declaration" | "field_declaration") && declares_function(node)
         }
+        Lang::CSharp => {
+            above(1) == Some("declaration_list")
+                && above(2) == Some("interface_declaration")
+                && match node.kind() {
+                    "method_declaration" => bodiless(),
+                    kind => matches!(
+                        kind,
+                        "property_declaration" | "event_declaration" | "indexer_declaration"
+                    ),
+                }
+        }
+        Lang::FSharp => node.kind() == "member_signature",
+        Lang::FSharpSignature => matches!(node.kind(), "member_signature" | "value_definition"),
+        Lang::VbNet => {
+            matches!(node.kind(), "method_declaration" | "property_declaration")
+                && above(1) == Some("interface_block")
+        }
+        Lang::Php => node.kind() == "method_declaration" && bodiless(),
+        Lang::Kotlin => {
+            node.kind() == "function_declaration"
+                && named_child_of(node, &["function_body"]).is_none()
+                && matches!(above(1), Some("class_body" | "enum_class_body"))
+        }
+        Lang::Swift => matches!(
+            node.kind(),
+            "protocol_function_declaration" | "protocol_property_declaration"
+        ),
+        Lang::Scala => node.kind() == "function_declaration",
+        Lang::Dart => {
+            node.kind() == "declaration"
+                && node.named_child(0).is_some_and(|first| {
+                    matches!(
+                        first.kind(),
+                        "function_signature" | "getter_signature" | "setter_signature"
+                    )
+                })
+        }
+        Lang::Elixir => {
+            node.kind() == "call"
+                && elixir_definition(node, source).is_some_and(|(keyword, _)| {
+                    matches!(keyword, ElixirDef::Function) && elixir_body(node, source).is_none()
+                })
+        }
+        Lang::Haskell => node.kind() == "signature",
         _ => false,
     }
 }
@@ -856,22 +1184,30 @@ fn candidate(
     ancestors: &[tree_sitter::Node],
     runs: &[Vec<(tree_sitter::Node, Leading)>],
     source: &[u8],
+    need: Need,
 ) -> Option<Candidate> {
-    let kind = unit_kind(lang, node, ancestors)?;
-    let name_node = unit_name(lang, node);
-    let span = name_node.map(|name| name_span(lang, name));
-    let name = span
-        .and_then(|(start, end)| std::str::from_utf8(&source[start..end]).ok())
-        .filter(|name| !name.is_empty())
-        .map(str::to_owned);
-    // A Rust `impl` names the type it extends: it is a container, not a
-    // definition of that type (context-v2 § Definitions and addresses).
-    let name_range = span.filter(|_| kind != UnitKind::Impl && name.is_some());
-    let address = match (name_node, &name) {
-        (Some(node), Some(_)) => name_address(lang, node, source),
-        _ => Vec::new(),
+    let kind = unit_kind(lang, node, ancestors, source)?;
+    let resolved = unit_name(lang, node, source)
+        .and_then(|named| resolve_name(lang, named, source, need));
+    let name = resolved
+        .as_ref()
+        .and_then(|resolved| {
+            std::str::from_utf8(source.get(resolved.span.0..resolved.span.1)?).ok()
+        })
+        .map(|text| definition_name(lang, text).to_owned())
+        .filter(|name| !name.is_empty());
+    // A Rust `impl` (and each container like it) names the type it extends:
+    // it is a container, not a definition of that type (context-v2
+    // § Definitions and addresses).
+    let name_range = resolved
+        .as_ref()
+        .filter(|_| kind != UnitKind::Impl && name.is_some())
+        .map(|resolved| resolved.span);
+    let (qualifier, address) = match resolved {
+        Some(resolved) if name.is_some() => (resolved.qualifier, resolved.address),
+        _ => (None, Vec::new()),
     };
-    let body = body_range(lang, node);
+    let body = body_range(lang, node, source);
     let outer = outermost_wrapper(lang, node, ancestors);
     // `outer` sits at the depth of the outermost wrapper (or of `node`).
     let wrappers = ancestors
@@ -880,6 +1216,14 @@ fn candidate(
         .take_while(|ancestor| is_wrapper(lang, **ancestor))
         .count();
     let (start, decl) = leading_run(outer, &runs[ancestors.len() - wrappers], source);
+    let open = statement_form(lang, node).and_then(|form| {
+        let parent = ancestors.last()?;
+        Some(Open {
+            parent: parent.id(),
+            parent_end: parent.end_byte(),
+            form,
+        })
+    });
     Some(Candidate {
         start,
         decl,
@@ -887,10 +1231,24 @@ fn candidate(
         end: outer.end_byte(),
         kind,
         name,
+        qualifier,
         name_range,
         address,
         body,
+        open,
     })
+}
+
+/// A definition's stored name: without a trailing run of `?`, `!` and `'`
+/// where the language strips it, unless nothing would be left.
+fn definition_name(lang: Lang, text: &str) -> &str {
+    if !lang.strips_name_suffix() {
+        return text;
+    }
+    match text.trim_end_matches(['?', '!', '\'']) {
+        "" => text,
+        stripped => stripped,
+    }
 }
 
 /// What a node can be in a unit's leading run (context-v2 § Unit forest).
@@ -915,6 +1273,9 @@ fn leading_kind(lang: Lang, node: tree_sitter::Node, source: &[u8]) -> Option<Le
             doc_block().then_some(Leading::Doc)
         }
         (Lang::Go, "comment") => Some(Leading::Doc),
+        // A type's `<Attribute>` block precedes its declaration as a sibling
+        // (a member's is inside it).
+        (Lang::VbNet, "attribute_block") => Some(Leading::Attribute),
         _ => None,
     }
 }
@@ -981,11 +1342,13 @@ fn outermost_wrapper<'t>(
         .unwrap_or(node)
 }
 
-/// The unit kind of `node` under `ancestors` (context-v2 § Unit kinds).
+/// The unit kind of `node` under `ancestors` (context-v2 § Unit kinds and
+/// § Languages).
 fn unit_kind(
     lang: Lang,
     node: tree_sitter::Node,
     ancestors: &[tree_sitter::Node],
+    source: &[u8],
 ) -> Option<UnitKind> {
     use UnitKind::*;
     let kind = node.kind();
@@ -1086,8 +1449,486 @@ fn unit_kind(
             "method_declaration" | "constructor_declaration" => Method,
             _ => return None,
         }),
+        Lang::CSharp => Some(match kind {
+            "namespace_declaration" | "file_scoped_namespace_declaration" => Mod,
+            "class_declaration" | "record_declaration" => Class,
+            "struct_declaration" => Struct,
+            "interface_declaration" => Interface,
+            "enum_declaration" => Enum,
+            "enum_member_declaration" => Variant,
+            "delegate_declaration" => Type,
+            // An interface's bodiless members are signatures; elsewhere a
+            // bodiless method (`extern`, `abstract`, `partial`) is the only
+            // declaration of its body-less API.
+            "method_declaration"
+                if node.child_by_field_name("body").is_none()
+                    && above(2) == Some("interface_declaration") =>
+            {
+                return None;
+            }
+            "method_declaration" | "constructor_declaration" | "destructor_declaration" => Method,
+            "local_function_statement" => Fn,
+            _ => return None,
+        }),
+        Lang::FSharp | Lang::FSharpSignature => Some(match kind {
+            "namespace" | "named_module" | "module_defn" => Mod,
+            "anon_type_defn" | "record_type_defn" => Class,
+            "union_type_defn" | "enum_type_defn" => Enum,
+            "union_type_case" | "enum_type_case" => Variant,
+            "interface_type_defn" => Interface,
+            "type_abbrev_defn" | "delegate_type_defn" | "exception_definition" => Type,
+            // `type T with …` extends a type defined elsewhere.
+            "type_extension" => Impl,
+            "method_or_prop_defn" => Method,
+            // A `let` function at any depth; a value only at module level.
+            "function_or_value_defn" => {
+                if named_child_of(node, &["function_declaration_left"]).is_some() {
+                    Fn
+                } else if above(1) == Some("declaration_expression")
+                    && matches!(
+                        above(2),
+                        Some("module_defn" | "namespace" | "named_module" | "file")
+                    )
+                {
+                    let mutable = named_child_of(node, &["value_declaration_left"])
+                        .is_some_and(|left| has_child_kind(left, "mutable"));
+                    if mutable { Static } else { Const }
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        }),
+        Lang::VbNet => Some(match kind {
+            "namespace_block" | "module_block" => Mod,
+            "class_block" => Class,
+            "structure_block" => Struct,
+            "interface_block" => Interface,
+            "enum_block" => Enum,
+            "enum_member" => Variant,
+            "delegate_declaration" => Type,
+            "method_declaration" if above(1) == Some("interface_block") => return None,
+            "method_declaration" | "constructor_declaration" => Method,
+            // A `Module`'s constants and fields are module-level.
+            "const_declaration" if above(1) == Some("module_block") => Const,
+            "field_declaration"
+                if above(1) == Some("module_block")
+                    && count_named(node, &["variable_declarator"]) == 1 =>
+            {
+                Static
+            }
+            _ => return None,
+        }),
+        Lang::Php => Some(match kind {
+            "namespace_definition" => Mod,
+            "class_declaration" => Class,
+            "interface_declaration" => Interface,
+            "trait_declaration" => Trait,
+            "enum_declaration" => Enum,
+            "enum_case" => Variant,
+            "function_definition" => Fn,
+            "method_declaration"
+                if node.child_by_field_name("body").is_none()
+                    && above(2) == Some("interface_declaration") =>
+            {
+                return None;
+            }
+            "method_declaration" => Method,
+            // A top-level (or namespace-level) `const`; class constants are
+            // members, like fields.
+            "const_element"
+                if above(1) == Some("const_declaration")
+                    && (above(2) == Some("program")
+                        || (above(2) == Some("compound_statement")
+                            && above(3) == Some("namespace_definition"))) =>
+            {
+                Const
+            }
+            _ => return None,
+        }),
+        Lang::Perl => Some(match kind {
+            "package_statement" => Mod,
+            "function_definition" | "function_definition_without_sub" => Fn,
+            "use_constant_statement" => Const,
+            _ => return None,
+        }),
+        Lang::Bash => match kind {
+            "function_definition" => Some(Fn),
+            // A script-level assignment (bare or declared, not `local`).
+            "variable_assignment" if above(1) == Some("program") => Some(Static),
+            "variable_assignment"
+                if above(1) == Some("declaration_command") && above(2) == Some("program") =>
+            {
+                let declaration = *ancestors.last()?;
+                if has_child_kind(declaration, "local") {
+                    None
+                } else if has_child_kind(declaration, "readonly")
+                    || named_children(declaration).any(|flag| {
+                        flag.kind() == "word"
+                            && text(flag, source)
+                                .is_some_and(|flag| flag.starts_with('-') && flag.contains('r'))
+                    })
+                {
+                    Some(Const)
+                } else {
+                    Some(Static)
+                }
+            }
+            _ => None,
+        },
+        Lang::PowerShell => Some(match kind {
+            "function_statement" => Fn,
+            "class_statement" => Class,
+            "class_method_definition" => Method,
+            "enum_statement" => Enum,
+            "enum_member" => Variant,
+            _ => return None,
+        }),
+        Lang::Ruby => Some(match kind {
+            "module" => Mod,
+            "class" => Class,
+            "method" | "singleton_method" => Method,
+            // A constant assigned at top level or in a class or module body.
+            "assignment"
+                if node
+                    .child_by_field_name("left")
+                    .is_some_and(|left| left.kind() == "constant")
+                    && (above(1) == Some("program")
+                        || (above(1) == Some("body_statement")
+                            && matches!(above(2), Some("class" | "module")))) =>
+            {
+                Const
+            }
+            _ => return None,
+        }),
+        Lang::Kotlin => {
+            let member = matches!(above(1), Some("class_body" | "enum_class_body"));
+            Some(match kind {
+                "class_declaration" => {
+                    if has_child_kind(node, "interface") {
+                        Interface
+                    } else if named_child_of(node, &["modifiers"]).is_some_and(|modifiers| {
+                        named_children(modifiers).any(|modifier| {
+                            modifier.kind() == "class_modifier"
+                                && text(modifier, source) == Some("enum")
+                        })
+                    }) {
+                        Enum
+                    } else {
+                        Class
+                    }
+                }
+                "object_declaration" => Class,
+                // An unnamed companion is no unit: its members belong to
+                // the class.
+                "companion_object" if node.child_by_field_name("name").is_some() => Class,
+                "function_declaration" if member => {
+                    named_child_of(node, &["function_body"])?;
+                    Method
+                }
+                "function_declaration" => Fn,
+                "secondary_constructor" => Method,
+                "type_alias" => Type,
+                "enum_entry" => Variant,
+                "property_declaration" if above(1) == Some("source_file") => {
+                    let constant = has_child_kind(node, "val")
+                        || named_child_of(node, &["modifiers"])
+                            .is_some_and(|modifiers| text(modifiers, source) == Some("const"));
+                    if constant { Const } else { Static }
+                }
+                _ => return None,
+            })
+        }
+        Lang::Swift => {
+            let member = matches!(above(1), Some("class_body" | "enum_class_body"));
+            Some(match kind {
+                "class_declaration" => match node.child_by_field_name("declaration_kind")?.kind() {
+                    "struct" => Struct,
+                    "enum" => Enum,
+                    // An `extension` extends a type defined elsewhere.
+                    "extension" => Impl,
+                    _ => Class,
+                },
+                "protocol_declaration" => Interface,
+                "function_declaration" if member => Method,
+                "function_declaration" => Fn,
+                "init_declaration" | "deinit_declaration" => Method,
+                "typealias_declaration" => Type,
+                // Each name of `case a, b` is a member.
+                "simple_identifier" if above(1) == Some("enum_entry") => Variant,
+                "property_declaration" if above(1) == Some("source_file") => {
+                    let constant = named_child_of(node, &["value_binding_pattern"])
+                        .is_some_and(|binding| text(binding, source) == Some("let"));
+                    if constant { Const } else { Static }
+                }
+                _ => return None,
+            })
+        }
+        Lang::Scala => {
+            let member = above(1) == Some("template_body")
+                && matches!(
+                    above(2),
+                    Some(
+                        "class_definition"
+                            | "object_definition"
+                            | "trait_definition"
+                            | "enum_definition"
+                            | "package_object"
+                            | "given_definition"
+                            | "extension_definition"
+                    )
+                );
+            let top = above(1) == Some("compilation_unit")
+                || (above(1) == Some("template_body") && above(2) == Some("package_clause"));
+            Some(match kind {
+                "package_clause" | "package_object" => Mod,
+                "class_definition" | "object_definition" => Class,
+                "trait_definition" => Trait,
+                "enum_definition" => Enum,
+                "simple_enum_case" | "full_enum_case" => Variant,
+                "function_definition" if member => Method,
+                "function_definition" => Fn,
+                "type_definition" => Type,
+                "val_definition" if top => Const,
+                "var_definition" if top => Static,
+                _ => return None,
+            })
+        }
+        Lang::Lua => match kind {
+            "function_declaration" => Some(
+                if node
+                    .child_by_field_name("name")
+                    .is_some_and(|name| name.kind() == "method_index_expression")
+                {
+                    Method
+                } else {
+                    Fn
+                },
+            ),
+            // One target and one value: a function value anywhere; else a
+            // chunk-level (`local` or global) variable.
+            "assignment_statement" => {
+                let targets = named_child_of(node, &["variable_list"])?;
+                let values = named_child_of(node, &["expression_list"])?;
+                if targets.named_child_count() != 1 || values.named_child_count() != 1 {
+                    return None;
+                }
+                let function = values
+                    .named_child(0)
+                    .is_some_and(|value| value.kind() == "function_definition");
+                let chunk = above(1) == Some("chunk")
+                    || (above(1) == Some("variable_declaration") && above(2) == Some("chunk"));
+                if function {
+                    Some(Fn)
+                } else if chunk
+                    && targets
+                        .named_child(0)
+                        .is_some_and(|target| target.kind() == "identifier")
+                {
+                    Some(Static)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        },
+        Lang::Dart => Some(match kind {
+            "class_declaration" | "extension_type_declaration" => Class,
+            "mixin_declaration" => Trait,
+            // An `extension … on T` extends a type defined elsewhere.
+            "extension_declaration" => Impl,
+            "enum_declaration" => Enum,
+            "enum_constant" => Variant,
+            "type_alias" => Type,
+            "function_declaration" => Fn,
+            "method_declaration" => Method,
+            // A bodiless constructor (`A.named();`).
+            "constructor_signature"
+            | "constant_constructor_signature"
+            | "factory_constructor_signature"
+            | "redirecting_factory_constructor_signature"
+                if above(1) == Some("declaration") =>
+            {
+                Method
+            }
+            "static_final_declaration" | "initialized_identifier"
+                if above(2) == Some("top_level_variable_declaration") =>
+            {
+                let declaration = ancestors[ancestors.len() - 2];
+                if has_child_kind(declaration, "const") || has_child_kind(declaration, "final") {
+                    Const
+                } else {
+                    Static
+                }
+            }
+            _ => return None,
+        }),
+        Lang::Elixir => match kind {
+            "call" => match elixir_definition(node, source)?.0 {
+                ElixirDef::Module => Some(Mod),
+                ElixirDef::Protocol => Some(Interface),
+                ElixirDef::Implementation => Some(Impl),
+                ElixirDef::Macro => Some(Macro),
+                ElixirDef::Delegate => Some(Fn),
+                // A bodiless head (a protocol function, a default-argument
+                // head) is a signature.
+                ElixirDef::Function => elixir_body(node, source).map(|_| Fn),
+            },
+            // A module attribute holding a value (`@timeout 5000`).
+            "unary_operator" if above(1) == Some("do_block") => {
+                let operand = node.child_by_field_name("operand")?;
+                let attribute = text(operand.child_by_field_name("target")?, source)?;
+                (text(node.child_by_field_name("operator")?, source) == Some("@")
+                    && operand.kind() == "call"
+                    && !ELIXIR_RESERVED_ATTRIBUTES.contains(&attribute))
+                .then_some(Const)
+            }
+            _ => None,
+        },
+        Lang::Haskell => Some(match kind {
+            // An equation where declarations stand (top level, a class or
+            // instance, `where`/`let` bindings); `function` is also the
+            // kind of a function type `a -> b`.
+            "function"
+                if matches!(
+                    above(1),
+                    Some(
+                        "declarations"
+                            | "class_declarations"
+                            | "instance_declarations"
+                            | "local_binds"
+                    )
+                ) =>
+            {
+                Fn
+            }
+            // A top-level value; a class or instance method's equation.
+            "bind" if above(1) == Some("declarations") => Const,
+            "bind"
+                if matches!(
+                    above(1),
+                    Some("class_declarations" | "instance_declarations")
+                ) =>
+            {
+                Fn
+            }
+            "data_type" | "newtype" | "type_synonym" | "type_family" | "data_family" => Type,
+            // Constructors of a sum type are its members; a lone constructor
+            // shares its type's name and stays part of it.
+            "data_constructor" if count_named(*ancestors.last()?, &["data_constructor"]) > 1 => {
+                Variant
+            }
+            "class" => Interface,
+            // An `instance` implements a class for a type defined elsewhere.
+            "instance" => Impl,
+            _ => return None,
+        }),
         _ => None,
     }
+}
+
+/// Module attributes that document, type or configure a module rather than
+/// hold a named value.
+const ELIXIR_RESERVED_ATTRIBUTES: &[&str] = &[
+    "after_compile",
+    "after_verify",
+    "before_compile",
+    "behaviour",
+    "callback",
+    "compile",
+    "deprecated",
+    "derive",
+    "dialyzer",
+    "doc",
+    "enforce_keys",
+    "external_resource",
+    "file",
+    "impl",
+    "macrocallback",
+    "moduledoc",
+    "on_definition",
+    "on_load",
+    "opaque",
+    "optional_callbacks",
+    "spec",
+    "type",
+    "typedoc",
+    "typep",
+    "vsn",
+];
+
+/// What an Elixir definition call (`target` text) defines.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ElixirDef {
+    Module,
+    Protocol,
+    Implementation,
+    Function,
+    Macro,
+    Delegate,
+}
+
+/// An Elixir call that defines something, with its first argument (the
+/// module alias or the function head).
+fn elixir_definition<'t>(
+    call: tree_sitter::Node<'t>,
+    source: &[u8],
+) -> Option<(ElixirDef, tree_sitter::Node<'t>)> {
+    let definition = match text(call.child_by_field_name("target")?, source)? {
+        "defmodule" => ElixirDef::Module,
+        "defprotocol" => ElixirDef::Protocol,
+        "defimpl" => ElixirDef::Implementation,
+        "def" | "defp" | "defguard" | "defguardp" | "defn" | "defnp" => ElixirDef::Function,
+        "defmacro" | "defmacrop" => ElixirDef::Macro,
+        "defdelegate" => ElixirDef::Delegate,
+        _ => return None,
+    };
+    let arguments = named_child_of(call, &["arguments"])?;
+    Some((definition, arguments.named_child(0)?))
+}
+
+/// An Elixir definition's `do … end` block, or its `do:` keyword pair.
+fn elixir_body<'t>(call: tree_sitter::Node<'t>, source: &[u8]) -> Option<tree_sitter::Node<'t>> {
+    named_child_of(call, &["do_block"]).or_else(|| {
+        let keywords = named_child_of(named_child_of(call, &["arguments"])?, &["keywords"])?;
+        named_children(keywords).find(|pair| {
+            pair.child_by_field_name("key")
+                .and_then(|key| text(key, source))
+                .is_some_and(|key| key.trim() == "do:")
+        })
+    })
+}
+
+fn named_children(node: tree_sitter::Node) -> impl Iterator<Item = tree_sitter::Node> {
+    (0..node.named_child_count()).filter_map(move |index| node.named_child(index as u32))
+}
+
+/// The first named child of one of `kinds`.
+fn named_child_of<'t>(
+    node: tree_sitter::Node<'t>,
+    kinds: &[&str],
+) -> Option<tree_sitter::Node<'t>> {
+    named_children(node).find(|child| kinds.contains(&child.kind()))
+}
+
+/// How many named children are of one of `kinds`.
+fn count_named(node: tree_sitter::Node, kinds: &[&str]) -> usize {
+    named_children(node)
+        .filter(|child| kinds.contains(&child.kind()))
+        .count()
+}
+
+/// Whether a child (named or not) is of `kind`: an anonymous keyword token
+/// such as `mutable`, `readonly` or `interface`.
+fn has_child_kind(node: tree_sitter::Node, kind: &str) -> bool {
+    (0..node.child_count()).any(|index| {
+        node.child(index as u32)
+            .is_some_and(|child| child.kind() == kind)
+    })
+}
+
+fn text<'s>(node: tree_sitter::Node, source: &'s [u8]) -> Option<&'s str> {
+    node.utf8_text(source).ok()
 }
 
 /// A JavaScript-family declarator with an identifier name: `fn` when its
@@ -1140,21 +1981,331 @@ fn declarators(declaration: tree_sitter::Node) -> usize {
         .count()
 }
 
-/// The node the language's name rule selects (context-v2 § Unit kinds): the
-/// `name` field; for a Rust `impl` the `type` field; for C/C++ the innermost
-/// identifier of the declarator chain; a bare TypeScript enum member is its
-/// own name; a Python assignment's left identifier.
-fn unit_name(lang: Lang, node: tree_sitter::Node) -> Option<tree_sitter::Node> {
-    match (lang, node.kind()) {
-        (Lang::Rust, "impl_item") => node.child_by_field_name("type"),
-        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "property_identifier" | "string") => {
-            Some(node)
+/// A unit's name (context-v2 § Unit kinds and § Languages): the node the
+/// language's name rule selects, and which of it names the unit.
+#[derive(Clone, Copy)]
+struct Named<'t> {
+    node: tree_sitter::Node<'t>,
+    form: NameForm<'t>,
+}
+
+#[derive(Clone, Copy)]
+enum NameForm<'t> {
+    /// The whole node; a quoted JavaScript-family name is the text inside
+    /// its quotes ([`name_span`]).
+    Whole,
+    /// The node's last address part ([`name_parts`]); the parts before it
+    /// qualify the unit (`Store` of Ruby's `Outer::Inner::Store`, `make` of
+    /// Lua's `M.inner:make`, `Models` of PHP's `App\Models`).
+    Last,
+    /// A byte range the grammar keeps no node for (VB.NET's `New`).
+    Range(usize, usize),
+    /// The whole node, qualified by a receiver type (a Kotlin extension
+    /// function's `String` of `fun String.shout()`).
+    Receiver(tree_sitter::Node<'t>),
+}
+
+impl<'t> Named<'t> {
+    fn whole(node: tree_sitter::Node<'t>) -> Self {
+        Self {
+            node,
+            form: NameForm::Whole,
         }
-        (Lang::Python, "assignment") => node.child_by_field_name("left"),
-        (Lang::C | Lang::Cpp, "function_definition") => Some(innermost_declarator(
-            node.child_by_field_name("declarator")?,
-        )),
-        _ => node.child_by_field_name("name"),
+    }
+
+    fn last(node: tree_sitter::Node<'t>) -> Self {
+        Self {
+            node,
+            form: NameForm::Last,
+        }
+    }
+}
+
+/// What a [`Named`] gives its candidate: the name's byte range; the
+/// qualifier its qualified name puts before the name (`Outer::Inner` of
+/// Ruby's `Outer::Inner::Store`, joined with the language's separator; a
+/// Kotlin receiver as written); and the name's own address segments,
+/// lowercased (context-v2 § Definitions and addresses), all read from the
+/// syntax tree. An outline-only analysis computes no address segments.
+struct Resolved {
+    span: (usize, usize),
+    qualifier: Option<String>,
+    address: Vec<String>,
+}
+
+fn resolve_name(lang: Lang, named: Named, source: &[u8], need: Need) -> Option<Resolved> {
+    let text = |(start, end): (usize, usize)| std::str::from_utf8(source.get(start..end)?).ok();
+    let addresses = need != Need::Outline;
+    let lowercase = |parts: &[(usize, usize)]| -> Vec<String> {
+        parts
+            .iter()
+            .filter_map(|&part| text(part))
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let whole = name_span(lang, named.node);
+    let mut resolved = match named.form {
+        NameForm::Whole => Resolved {
+            span: whole,
+            qualifier: None,
+            address: if addresses {
+                lowercase(&name_parts(lang, named.node, source))
+            } else {
+                Vec::new()
+            },
+        },
+        NameForm::Last => {
+            let parts = name_parts(lang, named.node, source);
+            match parts.split_last() {
+                Some((&last, scope)) => Resolved {
+                    span: last,
+                    qualifier: (!scope.is_empty()).then(|| {
+                        let scope: Vec<&str> = scope.iter().filter_map(|&part| text(part)).collect();
+                        scope.join(lang.qname_separator())
+                    }),
+                    address: if addresses { lowercase(&parts) } else { Vec::new() },
+                },
+                // A name with no address parts (Lua's `M["x"]`) is whole.
+                None => Resolved {
+                    span: whole,
+                    qualifier: None,
+                    address: Vec::new(),
+                },
+            }
+        }
+        NameForm::Range(start, end) => Resolved {
+            span: (start, end),
+            qualifier: None,
+            address: if addresses {
+                lowercase(&[(start, end)])
+            } else {
+                Vec::new()
+            },
+        },
+        NameForm::Receiver(receiver) => Resolved {
+            span: whole,
+            qualifier: text((receiver.start_byte(), receiver.end_byte())).map(str::to_owned),
+            address: if addresses {
+                let mut parts = name_parts(lang, receiver, source);
+                parts.extend(name_parts(lang, named.node, source));
+                lowercase(&parts)
+            } else {
+                Vec::new()
+            },
+        },
+    };
+    text(resolved.span)?;
+    // The unit's own segment is its stored name's (no `?`/`!`/`'` suffix).
+    if let Some(last) = resolved.address.last_mut() {
+        let stripped = definition_name(lang, last);
+        if stripped.len() < last.len() {
+            *last = stripped.to_owned();
+        }
+    }
+    Some(resolved)
+}
+
+/// The name the language's rule selects (context-v2 § Unit kinds and
+/// § Languages): the `name` field; for a Rust `impl` the `type` field; for
+/// C/C++ the innermost identifier of the declarator chain; a bare TypeScript
+/// enum member is its own name; a Python assignment's left identifier; and
+/// the per-kind rules of the languages whose definitions have no `name`
+/// field or a qualified one.
+fn unit_name<'t>(
+    lang: Lang,
+    node: tree_sitter::Node<'t>,
+    source: &[u8],
+) -> Option<Named<'t>> {
+    let field = |name: &str| node.child_by_field_name(name);
+    let whole = Named::whole;
+    match (lang, node.kind()) {
+        (Lang::Rust, "impl_item") => field("type").map(whole),
+        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "property_identifier" | "string") => {
+            Some(whole(node))
+        }
+        (Lang::Python, "assignment") => field("left").map(whole),
+        (Lang::C | Lang::Cpp, "function_definition") => {
+            Some(whole(innermost_declarator(field("declarator")?)))
+        }
+        (Lang::CSharp, "namespace_declaration" | "file_scoped_namespace_declaration") => {
+            field("name").map(Named::last)
+        }
+        (Lang::FSharp | Lang::FSharpSignature, kind) => match kind {
+            "namespace" | "named_module" => field("name").map(Named::last),
+            "exception_definition" => field("exception_name").map(Named::last),
+            "module_defn" | "union_type_case" | "enum_type_case" => {
+                named_child_of(node, &["identifier"]).map(whole)
+            }
+            // The extended type, dotted or not: an `impl`'s name.
+            "type_extension" => named_child_of(node, &["type_name"]).map(whole),
+            "anon_type_defn"
+            | "record_type_defn"
+            | "union_type_defn"
+            | "enum_type_defn"
+            | "interface_type_defn"
+            | "type_abbrev_defn"
+            | "delegate_type_defn" => named_child_of(node, &["type_name"])?
+                .child_by_field_name("type_name")
+                .map(whole),
+            "function_or_value_defn" => {
+                match named_child_of(node, &["function_declaration_left"]) {
+                    Some(left) => named_child_of(left, &["identifier"]).map(whole),
+                    None => {
+                        let pattern = named_child_of(
+                            named_child_of(node, &["value_declaration_left"])?,
+                            &["identifier_pattern"],
+                        )?;
+                        let name = named_child_of(pattern, &["long_identifier_or_op"])?;
+                        named_child_of(name, &["identifier"]).map(whole)
+                    }
+                }
+            }
+            "method_or_prop_defn" => {
+                let name = field("name")?;
+                match name.kind() {
+                    "property_or_ident" => name.child_by_field_name("method").map(whole),
+                    _ => Some(whole(name)),
+                }
+            }
+            _ => field("name").map(whole),
+        },
+        (Lang::VbNet, "namespace_block") => field("name").map(Named::last),
+        (Lang::VbNet, "field_declaration") => named_child_of(node, &["variable_declarator"])?
+            .child_by_field_name("name")
+            .map(whole),
+        // `Sub New`: the grammar keeps no keyword node, so the name is the
+        // `New` before the parameter list.
+        (Lang::VbNet, "constructor_declaration") => {
+            let from = field("modifiers").map_or(node.start_byte(), |m| m.end_byte());
+            let to = field("parameters").map_or(node.end_byte(), |p| p.start_byte());
+            let header =
+                text(node, source)?.get(from - node.start_byte()..to - node.start_byte())?;
+            let at = header.to_ascii_lowercase().rfind("new")?;
+            let start = from + at;
+            Some(Named {
+                node,
+                form: NameForm::Range(start, start + 3),
+            })
+        }
+        (Lang::Php, "namespace_definition") => field("name").map(Named::last),
+        (Lang::Php, "const_element") => named_child_of(node, &["name"]).map(whole),
+        (Lang::Perl, "package_statement") => {
+            named_child_of(node, &["package_name"]).map(Named::last)
+        }
+        (Lang::Perl, "use_constant_statement") => field("constant").map(whole),
+        (Lang::PowerShell, "function_statement") => {
+            named_child_of(node, &["function_name"]).map(whole)
+        }
+        (Lang::PowerShell, _) => named_child_of(node, &["simple_name"]).map(whole),
+        (Lang::Ruby, "class" | "module") => field("name").map(Named::last),
+        // A setter `name=` is named `name`.
+        (Lang::Ruby, "method" | "singleton_method") => {
+            let name = field("name")?;
+            match name.kind() {
+                "setter" => name.child_by_field_name("name").map(whole),
+                _ => Some(whole(name)),
+            }
+        }
+        (Lang::Ruby, "assignment") => field("left").map(whole),
+        (Lang::Kotlin, "type_alias") => field("type").map(whole),
+        (Lang::Kotlin, "enum_entry") => named_child_of(node, &["identifier"]).map(whole),
+        (Lang::Kotlin, "secondary_constructor") => (0..node.child_count())
+            .filter_map(|index| node.child(index as u32))
+            .find(|child| child.kind() == "constructor")
+            .map(whole),
+        (Lang::Kotlin, "property_declaration") => named_child_of(
+            named_child_of(node, &["variable_declaration"])?,
+            &["identifier"],
+        )
+        .map(whole),
+        // An extension function keeps its receiver type as a qualifier.
+        (Lang::Kotlin, "function_declaration") => {
+            let name = field("name")?;
+            let receiver = named_children(node)
+                .take_while(|child| child.end_byte() <= name.start_byte())
+                .filter(|child| matches!(child.kind(), "user_type" | "nullable_type"))
+                .last();
+            Some(Named {
+                node: name,
+                form: receiver.map_or(NameForm::Whole, NameForm::Receiver),
+            })
+        }
+        (Lang::Swift, "simple_identifier") => Some(whole(node)),
+        (Lang::Swift, "deinit_declaration") => (0..node.child_count())
+            .filter_map(|index| node.child(index as u32))
+            .find(|child| child.kind() == "deinit")
+            .map(whole),
+        (Lang::Swift, "property_declaration") => field("name")?
+            .child_by_field_name("bound_identifier")
+            .map(whole),
+        (Lang::Scala, "package_clause") => field("name").map(Named::last),
+        (Lang::Scala, "val_definition" | "var_definition") => field("pattern")
+            .filter(|pattern| pattern.kind() == "identifier")
+            .map(whole),
+        (Lang::Lua, "function_declaration") => field("name").map(Named::last),
+        (Lang::Lua, "assignment_statement") => named_child_of(node, &["variable_list"])?
+            .child_by_field_name("name")
+            .map(Named::last),
+        (Lang::Dart, "type_alias") => named_child_of(node, &["type_identifier"]).map(whole),
+        (Lang::Dart, "extension_declaration") => field("class").map(whole),
+        (Lang::Dart, "function_declaration") => dart_signature_name(field("signature")?),
+        (Lang::Dart, "method_declaration") => {
+            dart_signature_name(field("signature")?.named_child(0)?)
+        }
+        (
+            Lang::Dart,
+            "constructor_signature"
+            | "constant_constructor_signature"
+            | "factory_constructor_signature"
+            | "redirecting_factory_constructor_signature",
+        ) => dart_signature_name(node),
+        (Lang::Elixir, "call") => {
+            let (definition, first) = elixir_definition(node, source)?;
+            match definition {
+                ElixirDef::Module | ElixirDef::Protocol => Some(Named::last(first)),
+                // The implementing type (`for:`), else the protocol.
+                ElixirDef::Implementation => {
+                    let target = named_child_of(node, &["arguments"])
+                        .and_then(|arguments| named_child_of(arguments, &["keywords"]))
+                        .and_then(|keywords| {
+                            named_children(keywords).find(|pair| {
+                                pair.child_by_field_name("key")
+                                    .and_then(|key| text(key, source))
+                                    .is_some_and(|key| key.trim() == "for:")
+                            })
+                        })
+                        .and_then(|pair| pair.child_by_field_name("value"));
+                    Some(whole(target.unwrap_or(first)))
+                }
+                ElixirDef::Function | ElixirDef::Macro | ElixirDef::Delegate => {
+                    // `f(a)`, `f(a) when guard`, or a zero-arity `f`.
+                    let head = match first.kind() {
+                        "binary_operator" => first.child_by_field_name("left")?,
+                        _ => first,
+                    };
+                    match head.kind() {
+                        "call" => head.child_by_field_name("target").map(whole),
+                        "identifier" => Some(whole(head)),
+                        _ => None,
+                    }
+                }
+            }
+        }
+        (Lang::Elixir, "unary_operator") => {
+            field("operand")?.child_by_field_name("target").map(whole)
+        }
+        // An infix equation `a <+> b = …` is named by its operator.
+        (Lang::Haskell, "function") => field("name").map(whole).or_else(|| {
+            named_child_of(node, &["infix"])?
+                .child_by_field_name("operator")
+                .map(whole)
+        }),
+        (Lang::Haskell, "data_constructor") => {
+            field("constructor")?.child_by_field_name("name").map(whole)
+        }
+        // The type an instance is for: an `impl`'s name.
+        (Lang::Haskell, "instance") => field("patterns").map(whole),
+        _ => field("name").map(whole),
     }
 }
 
@@ -1171,17 +2322,20 @@ fn name_span(lang: Lang, name: tree_sitter::Node) -> (usize, usize) {
     }
 }
 
-/// A name node's address segments (context-v2 § Definitions and addresses),
-/// read from the syntax tree, never from the name's text, lowercased: a
-/// plain name is itself, a quoted one the text inside its quotes
+/// A name node's address parts (context-v2 § Definitions and addresses),
+/// as byte ranges in order, read from the syntax tree, never from the name's
+/// text: a plain name is itself, a quoted one the text inside its quotes
 /// ([`name_span`]); a generic type or template (`Mapper<fn() -> u8>`,
-/// `Box<1 << 2>`) is its base's, so its argument list is never read; a
-/// scoped or qualified name (`a::b::Foo`, `ns::Box`) is its parts' in order;
-/// a reference or pointer type is its referent's; any other type (a tuple,
-/// an array, a function or trait-object type) has none. The walk keeps its
-/// pending nodes on the heap: a path's nesting is bounded only by the
-/// source.
-fn name_address(lang: Lang, name: tree_sitter::Node, source: &[u8]) -> Vec<String> {
+/// `Box<1 << 2>`, F#'s `List<'T>`) is its base's, so its argument list is
+/// never read; a scoped or qualified name (`a::b::Foo`, `ns::Box`, C#'s
+/// `Outer.Space`, Ruby's `Outer::Inner`, Lua's `M.inner:make`, PHP's
+/// `App\Models`, a Kotlin or Swift `Outer.Inner<T>` type) is its parts' in
+/// order; a reference, pointer or nullable type is its referent's; an
+/// Elixir alias (`Shapes.Inner`, one token) is each of its dotted segments;
+/// any other node (a tuple, an array, a function or trait-object type, a
+/// type argument list) has none. The walk keeps its pending nodes on the
+/// heap: a path's nesting is bounded only by the source.
+fn name_parts(lang: Lang, name: tree_sitter::Node, source: &[u8]) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     let mut pending = vec![name];
     while let Some(node) = pending.pop() {
@@ -1193,13 +2347,26 @@ fn name_address(lang: Lang, name: tree_sitter::Node, source: &[u8]) -> Vec<Strin
                     .or_else(|| node.named_child(0));
                 pending.extend(base);
             }
+            // F#: the `type_name` field of a type's head (`List<'T>`).
+            "type_name" if matches!(lang, Lang::FSharp | Lang::FSharpSignature) => {
+                pending.extend(node.child_by_field_name("type_name"));
+            }
             "scoped_type_identifier"
             | "scoped_identifier"
             | "qualified_identifier"
             | "nested_type_identifier"
             | "nested_namespace_specifier"
             | "nested_identifier"
-            | "qualified_type" => {
+            | "qualified_type"
+            | "qualified_name"
+            | "long_identifier"
+            | "namespace_name"
+            | "package_name"
+            | "package_identifier"
+            | "scope_resolution"
+            | "dot_index_expression"
+            | "method_index_expression"
+            | "user_type" => {
                 let mut cursor = node.walk();
                 let parts: Vec<_> = node
                     .named_children(&mut cursor)
@@ -1208,18 +2375,49 @@ fn name_address(lang: Lang, name: tree_sitter::Node, source: &[u8]) -> Vec<Strin
                 pending.extend(parts.into_iter().rev());
             }
             "reference_type" | "pointer_type" => pending.extend(node.child_by_field_name("type")),
+            "nullable_type" => {
+                let mut cursor = node.walk();
+                let referent = node
+                    .named_children(&mut cursor)
+                    .find(|part| part.kind() != "type_modifiers");
+                pending.extend(referent);
+            }
+            "alias" if lang == Lang::Elixir => {
+                let mut at = node.start_byte();
+                for segment in source[at..node.end_byte()].split(|&b| b == b'.') {
+                    let lead = segment.iter().take_while(|b| b.is_ascii_whitespace()).count();
+                    let trail = segment[lead..]
+                        .iter()
+                        .rev()
+                        .take_while(|b| b.is_ascii_whitespace())
+                        .count();
+                    if lead + trail < segment.len() {
+                        out.push((at + lead, at + segment.len() - trail));
+                    }
+                    at += segment.len() + 1;
+                }
+            }
             _ if node.named_child_count() == 0 || node.kind() == "string" => {
                 let (start, end) = name_span(lang, node);
-                if let Ok(text) = std::str::from_utf8(&source[start..end])
-                    && !text.is_empty()
-                {
-                    out.push(text.to_lowercase());
+                if start < end && std::str::from_utf8(&source[start..end]).is_ok() {
+                    out.push((start, end));
                 }
             }
             _ => {}
         }
     }
     out
+}
+
+/// A Dart signature's name: its last named `name` child (`make` of
+/// `factory A.make()`); a method signature's inner signature first.
+fn dart_signature_name(signature: tree_sitter::Node) -> Option<Named> {
+    let mut cursor = signature.walk();
+    let name = signature
+        .children_by_field_name("name", &mut cursor)
+        .filter(|name| name.is_named())
+        .last();
+    name.map(Named::whole)
 }
 
 /// C/C++: the innermost identifier of the declarator chain (through pointer,
@@ -1254,33 +2452,113 @@ fn unnamed_declarator(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
         .last()
 }
 
-fn body_range(lang: Lang, node: tree_sitter::Node) -> Option<(usize, usize)> {
-    let body = match (lang, node.kind()) {
-        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "variable_declarator") => node
-            .child_by_field_name("value")
-            .filter(|value| matches!(value.kind(), "arrow_function" | "function_expression"))?
-            .child_by_field_name("body"),
-        _ => node.child_by_field_name("body").or_else(|| {
+fn body_range(lang: Lang, node: tree_sitter::Node, source: &[u8]) -> Option<(usize, usize)> {
+    let field = |name: &str| node.child_by_field_name(name);
+    let span = |body: tree_sitter::Node| Some((body.start_byte(), body.end_byte()));
+    match (lang, node.kind()) {
+        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "variable_declarator") => span(
+            field("value")
+                .filter(|value| matches!(value.kind(), "arrow_function" | "function_expression"))?
+                .child_by_field_name("body")?,
+        ),
+        // F#: members follow the header; types and modules hold `block`s.
+        (Lang::FSharp | Lang::FSharpSignature, kind) => match kind {
+            "namespace" | "named_module" => Some((field("name")?.end_byte(), node.end_byte())),
+            "function_or_value_defn" => span(field("body")?),
+            "method_or_prop_defn" => Some((
+                field("args").or_else(|| field("name"))?.end_byte(),
+                node.end_byte(),
+            )),
+            "type_extension" => span(named_child_of(node, &["type_extension_elements"])?),
+            _ => {
+                let mut cursor = node.walk();
+                let blocks: Vec<_> = node.children_by_field_name("block", &mut cursor).collect();
+                Some((blocks.first()?.start_byte(), blocks.last()?.end_byte()))
+            }
+        },
+        // VB.NET: the lines between a header and its `End` line.
+        (Lang::VbNet, _) => {
+            let header_end = ["name", "parameters", "return_type", "type_parameters"]
+                .iter()
+                .filter_map(|name| field(name))
+                .map(|part| part.end_byte())
+                .max()?;
+            interior_lines(source, header_end, node.end_byte())
+        }
+        (Lang::PowerShell, _) => {
+            let braces: Vec<_> = (0..node.child_count())
+                .filter_map(|index| node.child(index as u32))
+                .filter(|child| matches!(child.kind(), "{" | "}"))
+                .collect();
+            let (open, close) = (braces.first()?, braces.last()?);
+            (open.kind() == "{" && close.kind() == "}" && open.start_byte() < close.start_byte())
+                .then(|| (open.start_byte(), close.end_byte()))
+        }
+        (Lang::Kotlin, _) => span(named_child_of(
+            node,
+            &["class_body", "enum_class_body", "function_body", "block"],
+        )?),
+        (Lang::Lua, "assignment_statement") => span(
+            named_child_of(
+                named_child_of(node, &["expression_list"])?,
+                &["function_definition"],
+            )?
+            .child_by_field_name("body")?,
+        ),
+        (Lang::Elixir, "call") => {
+            let block = named_child_of(node, &["do_block"])?;
+            let open = block.child(0).filter(|open| open.kind() == "do")?;
+            interior_lines(source, open.end_byte(), block.end_byte())
+        }
+        (Lang::Elixir, _) => None,
+        (Lang::Haskell, "function" | "bind") => {
+            Some((field("match")?.start_byte(), node.end_byte()))
+        }
+        (Lang::Haskell, "data_type") => span(field("constructors")?),
+        (Lang::Haskell, "newtype") => span(field("constructor")?),
+        (Lang::Haskell, "class" | "instance") => span(field("declarations")?),
+        (Lang::Haskell, _) => None,
+        _ => span(field("body").or_else(|| {
             let mut cursor = node.walk();
             node.named_children(&mut cursor)
                 .find(|child| matches!(child.kind(), "block" | "declaration_list"))
-        }),
-    }?;
-    Some((body.start_byte(), body.end_byte()))
+        })?),
+    }
+}
+
+/// A keyword-closed body: from the end of the header's line to the start of
+/// the closing line (`End Sub`, `end`), when lines lie between them.
+fn interior_lines(source: &[u8], header_end: usize, end: usize) -> Option<(usize, usize)> {
+    let start = header_end
+        + source
+            .get(header_end..end)?
+            .iter()
+            .position(|&b| b == b'\n')?;
+    let content_end = source[..end]
+        .iter()
+        .rposition(|b| !b.is_ascii_whitespace())?
+        + 1;
+    let close = source[..content_end].iter().rposition(|&b| b == b'\n')? + 1;
+    (start < close).then_some((start, close))
 }
 
 /// Whether `node` wraps the unit directly inside it, supplying its range: a
 /// decorator or Python expression statement, an `export`, a C++ `template`,
-/// a JavaScript-family declaration with one declarator and a Go declaration
+/// a JavaScript-family declaration with one declarator, a Go declaration
 /// with one spec — for a grouped `var ( … )`, through the `var_spec_list`
-/// the grammar puts between the declaration and its specs.
+/// the grammar puts between the declaration and its specs — and the new
+/// languages' declaration and modifier wrappers (an F# module-level `let`
+/// or attributed type, a VB.NET type declaration, a PHP `const` or shell
+/// declaration with one name, Ruby's `private def`, a Swift `case` or Scala
+/// `case` with one name, a Lua `local`, a Dart class member or top-level
+/// variable with one name).
 fn is_wrapper(lang: Lang, node: tree_sitter::Node) -> bool {
-    let single = |kinds: &[&str]| {
-        let mut cursor = node.walk();
-        node.named_children(&mut cursor)
-            .filter(|child| kinds.contains(&child.kind()))
-            .count()
-            == 1
+    let single = |kinds: &[&str]| count_named(node, kinds) == 1;
+    let one_method = |list: tree_sitter::Node| {
+        list.named_child_count() == 1
+            && list
+                .named_child(0)
+                .is_some_and(|only| matches!(only.kind(), "method" | "singleton_method"))
     };
     match (lang, node.kind()) {
         (Lang::Python, "decorated_definition" | "expression_statement") => true,
@@ -1304,6 +2582,55 @@ fn is_wrapper(lang: Lang, node: tree_sitter::Node) -> bool {
             }
         }
         (Lang::Cpp, "template_declaration") => true,
+        // A local `let … in …` continues past its binding; a module-level
+        // one holds just its attributes and binding.
+        (Lang::FSharp | Lang::FSharpSignature, "declaration_expression") => {
+            node.child_by_field_name("in").is_none()
+        }
+        (Lang::FSharp | Lang::FSharpSignature, "type_definition") => {
+            named_children(node)
+                .filter(|child| child.kind().ends_with("_defn") || child.kind() == "type_extension")
+                .count()
+                == 1
+        }
+        (Lang::FSharp | Lang::FSharpSignature, "member_defn") => true,
+        (Lang::VbNet, "type_declaration") => true,
+        (Lang::Php, "const_declaration") => single(&["const_element"]),
+        (Lang::Bash, "declaration_command") => single(&["variable_assignment"]),
+        (Lang::Ruby, "argument_list") => one_method(node),
+        (Lang::Ruby, "call") => {
+            node.child_by_field_name("receiver").is_none()
+                && node.child_by_field_name("block").is_none()
+                && node
+                    .child_by_field_name("arguments")
+                    .is_some_and(|arguments| {
+                        arguments.kind() == "argument_list" && one_method(arguments)
+                    })
+        }
+        (Lang::Swift, "enum_entry") => single(&["simple_identifier"]),
+        (Lang::Scala, "enum_case_definitions") => single(&["simple_enum_case", "full_enum_case"]),
+        (Lang::Lua, "variable_declaration") => true,
+        (Lang::Dart, "class_member") => true,
+        (Lang::Dart, "declaration") => node.named_child(0).is_some_and(|first| {
+            matches!(
+                first.kind(),
+                "constructor_signature"
+                    | "constant_constructor_signature"
+                    | "factory_constructor_signature"
+                    | "redirecting_factory_constructor_signature"
+            )
+        }),
+        (Lang::Dart, "top_level_variable_declaration") => named_child_of(
+            node,
+            &[
+                "static_final_declaration_list",
+                "initialized_identifier_list",
+            ],
+        )
+        .is_some_and(|list| list.named_child_count() == 1),
+        (Lang::Dart, "static_final_declaration_list" | "initialized_identifier_list") => {
+            node.named_child_count() == 1
+        }
         _ => false,
     }
 }
@@ -1350,9 +2677,11 @@ fn markdown_sections(source: &str) -> Vec<Candidate> {
                 end,
                 kind: UnitKind::Section,
                 name: (!name.is_empty()).then(|| name.to_owned()),
+                qualifier: None,
                 name_range: None,
                 address: Vec::new(),
                 body: (*heading_end < end).then_some((*heading_end, end)),
+                open: None,
             }
         })
         .collect()
@@ -1372,8 +2701,8 @@ fn cut_utf8(text: &str, limit: usize) -> &str {
 /// Builds the forest: a unit strictly nested in another is a child of its
 /// nearest enclosing unit; zero-width or invalid ranges, a duplicate of an
 /// identical range and the later of two partially overlapping ranges are not
-/// units.
-fn forest(source: &str, lang: Lang, mut candidates: Vec<Candidate>) -> Vec<Unit> {
+/// units. An outline-only analysis propagates no address qualifiers.
+fn forest(source: &str, lang: Lang, need: Need, mut candidates: Vec<Candidate>) -> Vec<Unit> {
     candidates.retain(|c| {
         c.start < c.end
             && c.end <= source.len()
@@ -1407,9 +2736,15 @@ fn forest(source: &str, lang: Lang, mut candidates: Vec<Candidate>) -> Vec<Unit>
         }
         let parent = stack.last().copied();
         let enclosing_named = parent.and_then(|parent| nearest_named[parent]);
+        let separator = lang.qname_separator();
         let qname = candidate.name.as_deref().map(|name| {
             let prefix = enclosing_named.and_then(|named| units[named].qname.as_deref());
-            qualified(prefix, lang.qname_separator(), name)
+            match candidate.qualifier.as_deref() {
+                Some(qualifier) => {
+                    qualified(prefix, separator, &format!("{qualifier}{separator}{name}"))
+                }
+                None => qualified(prefix, separator, name),
+            }
         });
         // The qualified name's address segments minus the unit's own name:
         // the enclosing named unit's qualifiers and own segment, then the
@@ -1418,6 +2753,7 @@ fn forest(source: &str, lang: Lang, mut candidates: Vec<Candidate>) -> Vec<Unit>
         let last = address.pop();
         let qualifiers = match candidate.name {
             None => Vec::new(),
+            Some(_) if need == Need::Outline => Vec::new(),
             Some(_) => {
                 let mut qualifiers = enclosing_named.map_or_else(Vec::new, |named| {
                     let mut inherited = units[named].qualifiers.clone();
@@ -1690,10 +3026,11 @@ pub fn identifier_runs(text: &str) -> Vec<(usize, usize)> {
 /// The import keys one node contributes (context-v2 § Doors import keys):
 /// for an import statement, the bound names it introduces — a named import
 /// or its alias, the last segment of a `use`/`import` path, the names of
-/// `from m import a, b`, the last segment of a C++ `using` namespace or
-/// declaration, an `#include "x/y.h"` as `y` — and a JavaScript `require`
-/// path's file stem. Glob imports (`use m::*`, `import a.*`,
-/// `from m import *`) and Go's `.` and `_` imports give no key.
+/// `from m import a, b`, the last segment of a `using`/`open`/`Imports`
+/// namespace or declaration, an `#include "x/y.h"` as `y` — and a
+/// `require`/`source`/`include` path's file stem (a Lua module path's last
+/// segment). Glob imports (`use m::*`, `import a.*`, `from m import *`,
+/// `import x._`) and Go's `.` and `_` imports give no key.
 fn import_keys(lang: Lang, node: tree_sitter::Node, source: &[u8], out: &mut Vec<String>) {
     let text = |node: tree_sitter::Node| node.utf8_text(source).ok().map(str::to_owned);
     let mut cursor = node.walk();
@@ -1807,8 +3144,368 @@ fn import_keys(lang: Lang, node: tree_sitter::Node, source: &[u8], out: &mut Vec
                 out.extend(path.and_then(text));
             }
         }
+        (Lang::CSharp, "using_directive") => match node.child_by_field_name("name") {
+            Some(alias) => out.extend(text(alias)),
+            None => out.extend(
+                node.named_children(&mut cursor)
+                    .filter(|child| {
+                        matches!(
+                            child.kind(),
+                            "identifier" | "qualified_name" | "alias_qualified_name"
+                        )
+                    })
+                    .last()
+                    .and_then(text)
+                    .and_then(|path| last_segment(&path, &[".", "::"])),
+            ),
+        },
+        (Lang::FSharp | Lang::FSharpSignature, "import_decl") => out.extend(
+            named_child_of(node, &["long_identifier"])
+                .and_then(text)
+                .and_then(|path| last_segment(&path, &["."])),
+        ),
+        (Lang::FSharp, "fsi_directive_decl") => {
+            if text(node).is_some_and(|directive| directive.starts_with("#load")) {
+                for path in node.named_children(&mut cursor) {
+                    out.extend(text(path).and_then(|path| file_stem(&path)));
+                }
+            }
+        }
+        (Lang::VbNet, "imports_statement") => {
+            for path in node.children_by_field_name("namespace", &mut cursor) {
+                out.extend(text(path).and_then(|path| last_segment(&path, &["."])));
+            }
+        }
+        (Lang::Php, "namespace_use_clause") => {
+            let bound = node
+                .child_by_field_name("alias")
+                .or_else(|| named_child_of(node, &["qualified_name", "name"]));
+            out.extend(
+                bound
+                    .and_then(text)
+                    .and_then(|name| last_segment(&name, &["\\"])),
+            );
+        }
+        (
+            Lang::Php,
+            "include_expression"
+            | "include_once_expression"
+            | "require_expression"
+            | "require_once_expression",
+        ) => {
+            // A literal path, or one concatenated onto `__DIR__`.
+            let path = node.named_child(0).and_then(|path| match path.kind() {
+                "binary_expression" => path.child_by_field_name("right"),
+                _ => Some(path),
+            });
+            out.extend(
+                path.filter(|path| matches!(path.kind(), "string" | "encapsed_string"))
+                    .and_then(text)
+                    .and_then(|path| file_stem(&path)),
+            );
+        }
+        (Lang::Perl, "use_no_statement" | "require_statement") => {
+            let used = node.kind() == "require_statement" || has_child_kind(node, "use");
+            if used {
+                out.extend(
+                    node.child_by_field_name("package_name")
+                        .and_then(text)
+                        .and_then(|name| last_segment(&name, &["::"])),
+                );
+            }
+        }
+        (Lang::Perl, "use_parent_statement") => {
+            for child in node.named_children(&mut cursor) {
+                let names: Vec<tree_sitter::Node> = match child.kind() {
+                    "word_list_qw" => named_children(child)
+                        .filter(|item| item.kind() == "list_item")
+                        .collect(),
+                    kind if kind.starts_with("string") => vec![child],
+                    _ => Vec::new(),
+                };
+                for name in names {
+                    out.extend(
+                        text(name)
+                            .and_then(|name| last_segment(name.trim_matches(['\'', '"']), &["::"])),
+                    );
+                }
+            }
+        }
+        (Lang::Bash, "command") => {
+            let sources = node
+                .child_by_field_name("name")
+                .and_then(text)
+                .is_some_and(|name| matches!(name.as_str(), "source" | "."));
+            if sources {
+                out.extend(
+                    node.child_by_field_name("argument")
+                        .and_then(text)
+                        .and_then(|path| file_stem(&path)),
+                );
+            }
+        }
+        (Lang::PowerShell, "command") => {
+            let module = |name: &str| {
+                if name.contains(['/', '\\'])
+                    || name.to_ascii_lowercase().ends_with(".psm1")
+                    || name.to_ascii_lowercase().ends_with(".psd1")
+                    || name.to_ascii_lowercase().ends_with(".ps1")
+                    || name.to_ascii_lowercase().ends_with(".dll")
+                {
+                    file_stem(name)
+                } else {
+                    last_segment(name, &["."])
+                }
+            };
+            // `. ./x.ps1` dot-sources a script.
+            if named_child_of(node, &["command_invokation_operator"])
+                .and_then(text)
+                .as_deref()
+                == Some(".")
+            {
+                out.extend(
+                    node.child_by_field_name("command_name")
+                        .and_then(text)
+                        .and_then(|path| file_stem(&path)),
+                );
+                return;
+            }
+            let Some(command) = node.child_by_field_name("command_name").and_then(text) else {
+                return;
+            };
+            let arguments: Vec<String> = node
+                .child_by_field_name("command_elements")
+                .map(|elements| {
+                    named_children(elements)
+                        .filter(|element| element.kind() == "generic_token")
+                        .filter_map(text)
+                        .collect()
+                })
+                .unwrap_or_default();
+            match command.to_ascii_lowercase().as_str() {
+                "using" => match arguments.as_slice() {
+                    [kind, name, ..] if kind.eq_ignore_ascii_case("namespace") => {
+                        out.extend(last_segment(name, &["."]));
+                    }
+                    [kind, name, ..] if kind.eq_ignore_ascii_case("module") => {
+                        out.extend(module(name));
+                    }
+                    _ => {}
+                },
+                "import-module" => {
+                    out.extend(
+                        arguments
+                            .iter()
+                            .find(|argument| !argument.starts_with('-'))
+                            .and_then(|name| module(name)),
+                    );
+                }
+                _ => {}
+            }
+        }
+        (Lang::Ruby, "call") => {
+            if node.child_by_field_name("receiver").is_some() {
+                return;
+            }
+            let method = node.child_by_field_name("method").and_then(text);
+            let loads = matches!(
+                method.as_deref(),
+                Some("require" | "require_relative" | "load" | "autoload")
+            );
+            if loads {
+                out.extend(
+                    node.child_by_field_name("arguments")
+                        .and_then(|arguments| {
+                            named_children(arguments).find(|argument| argument.kind() == "string")
+                        })
+                        .and_then(text)
+                        .and_then(|path| file_stem(&path)),
+                );
+            }
+        }
+        (Lang::Kotlin, "import") => {
+            if has_child_kind(node, "*") {
+                return;
+            }
+            let alias = named_child_of(node, &["identifier"]);
+            out.extend(match alias {
+                Some(alias) => text(alias),
+                None => named_child_of(node, &["qualified_identifier"])
+                    .and_then(last_named_child)
+                    .and_then(text),
+            });
+        }
+        (Lang::Swift, "import_declaration") => out.extend(
+            named_child_of(node, &["identifier"])
+                .and_then(last_named_child)
+                .and_then(text),
+        ),
+        (Lang::Scala, "import_declaration") => {
+            let mut path_last = None;
+            let mut bound = Vec::new();
+            let mut glob = false;
+            let renamed = |renamed: tree_sitter::Node| {
+                renamed
+                    .child_by_field_name("alias")
+                    .and_then(text)
+                    .filter(|alias| alias != "_")
+            };
+            for child in node.named_children(&mut cursor) {
+                match child.kind() {
+                    "identifier" => path_last = Some(child),
+                    "namespace_wildcard" => glob = true,
+                    "arrow_renamed_identifier" | "as_renamed_identifier" => {
+                        bound.extend(renamed(child));
+                    }
+                    "namespace_selectors" => {
+                        for selector in named_children(child) {
+                            match selector.kind() {
+                                "identifier" => bound.extend(text(selector)),
+                                "arrow_renamed_identifier" | "as_renamed_identifier" => {
+                                    bound.extend(renamed(selector));
+                                }
+                                _ => {}
+                            }
+                        }
+                        glob = true;
+                    }
+                    _ => {}
+                }
+            }
+            if bound.is_empty() && !glob {
+                bound.extend(path_last.and_then(text));
+            }
+            out.extend(bound);
+        }
+        (Lang::Lua, "function_call") => {
+            let function = node.child_by_field_name("name").and_then(text);
+            let path = node
+                .child_by_field_name("arguments")
+                .and_then(|arguments| {
+                    named_children(arguments).find(|argument| argument.kind() == "string")
+                })
+                .and_then(text);
+            match function.as_deref() {
+                Some("require") => out.extend(path.and_then(|path| {
+                    last_segment(path.trim_matches(['"', '\'', '[', ']']), &[".", "/"])
+                })),
+                Some("dofile" | "loadfile") => out.extend(path.and_then(|path| file_stem(&path))),
+                _ => {}
+            }
+        }
+        (Lang::Dart, "import_specification") => {
+            if let Some(alias) = node.child_by_field_name("alias") {
+                out.extend(text(alias));
+                return;
+            }
+            let shown: Vec<String> = named_children(node)
+                .filter(|combinator| {
+                    combinator.kind() == "combinator"
+                        && text(*combinator).is_some_and(|text| text.starts_with("show"))
+                })
+                .flat_map(named_children)
+                .filter_map(text)
+                .collect();
+            if shown.is_empty() {
+                out.extend(
+                    node.child_by_field_name("uri")
+                        .and_then(text)
+                        .and_then(|uri| dart_stem(&uri)),
+                );
+            } else {
+                out.extend(shown);
+            }
+        }
+        (Lang::Dart, "part_directive") => {
+            out.extend(
+                node.child_by_field_name("uri")
+                    .and_then(text)
+                    .and_then(|uri| dart_stem(&uri)),
+            );
+        }
+        (Lang::Elixir, "call") => {
+            let directive = node.child_by_field_name("target").and_then(text);
+            if !matches!(
+                directive.as_deref(),
+                Some("alias" | "import" | "require" | "use")
+            ) {
+                return;
+            }
+            let Some(arguments) = named_child_of(node, &["arguments"]) else {
+                return;
+            };
+            let alias = named_child_of(arguments, &["keywords"]).and_then(|keywords| {
+                named_children(keywords)
+                    .find(|pair| {
+                        pair.child_by_field_name("key")
+                            .and_then(text)
+                            .is_some_and(|key| key.trim() == "as:")
+                    })
+                    .and_then(|pair| pair.child_by_field_name("value"))
+            });
+            if let Some(alias) = alias {
+                out.extend(text(alias));
+                return;
+            }
+            let Some(first) = arguments.named_child(0) else {
+                return;
+            };
+            let modules: Vec<tree_sitter::Node> = match first.kind() {
+                "alias" => vec![first],
+                // `alias Outer.{Alpha, Beta}`
+                "dot" => first
+                    .child_by_field_name("right")
+                    .filter(|right| right.kind() == "tuple")
+                    .map(|tuple| named_children(tuple).collect())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            for module in modules {
+                out.extend(text(module).and_then(|name| last_segment(&name, &["."])));
+            }
+        }
+        (Lang::Haskell, "import") => {
+            let names = node
+                .child_by_field_name("names")
+                .filter(|names| !has_child_kind(*names, "hiding"));
+            if let Some(names) = names {
+                let mut listed = names.walk();
+                for name in names.children_by_field_name("name", &mut listed) {
+                    out.extend(name.named_child(0).and_then(text));
+                }
+                return;
+            }
+            let module = node
+                .child_by_field_name("alias")
+                .or_else(|| node.child_by_field_name("module"));
+            out.extend(
+                module
+                    .and_then(text)
+                    .and_then(|name| last_segment(&name, &["."])),
+            );
+        }
         _ => {}
     }
+}
+
+/// The last non-empty piece of `path` split at each of `separators`.
+fn last_segment(path: &str, separators: &[&str]) -> Option<String> {
+    let mut last = path;
+    for separator in separators {
+        if let Some((_, after)) = last.rsplit_once(separator) {
+            last = after;
+        }
+    }
+    let last = last.trim();
+    (!last.is_empty()).then(|| last.to_owned())
+}
+
+/// A Dart URI's file stem: `package:a/b.dart` gives `b`, `dart:async`
+/// gives `async`.
+fn dart_stem(uri: &str) -> Option<String> {
+    let uri = uri.trim_matches(['\'', '"']);
+    let uri = uri.rsplit_once(':').map_or(uri, |(_, path)| path);
+    file_stem(uri)
 }
 
 /// The bound names of one Rust `use` argument: a path's last segment, an
@@ -1848,7 +3545,7 @@ fn rust_use_keys(argument: tree_sitter::Node, source: &[u8], out: &mut Vec<Strin
 }
 
 fn last_named_child(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
-    node.named_child(node.named_child_count().checked_sub(1)?)
+    node.named_child(u32::try_from(node.named_child_count().checked_sub(1)?).ok()?)
 }
 
 /// The file stem of a quoted or bracketed path (`"x/y.h"`, `<sys/types.h>`,
@@ -1915,4 +3612,100 @@ pub fn address_segments(path: &[String], qualifiers: &[String]) -> Vec<String> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One character per read gives the parser the same tree as the whole
+    /// buffer at once (the calibration found byte-identical trees on 22,492
+    /// real files): one source per grammar, this file for Rust.
+    #[test]
+    fn per_character_reads_give_the_whole_buffer_tree() {
+        let sources: [(&str, &str); 19] = [
+            ("syntax.rs", include_str!("syntax.rs")),
+            (
+                "store.cs",
+                include_str!("../tests/fixtures/syntax/store.cs"),
+            ),
+            (
+                "shapes.fs",
+                include_str!("../tests/fixtures/syntax/shapes.fs"),
+            ),
+            (
+                "shapes.fsi",
+                include_str!("../tests/fixtures/syntax/shapes.fsi"),
+            ),
+            (
+                "shapes.vb",
+                include_str!("../tests/fixtures/syntax/shapes.vb"),
+            ),
+            (
+                "account.php",
+                include_str!("../tests/fixtures/syntax/account.php"),
+            ),
+            (
+                "shape.pl",
+                include_str!("../tests/fixtures/syntax/shape.pl"),
+            ),
+            (
+                "tools.sh",
+                include_str!("../tests/fixtures/syntax/tools.sh"),
+            ),
+            (
+                "tools.ps1",
+                include_str!("../tests/fixtures/syntax/tools.ps1"),
+            ),
+            (
+                "store.rb",
+                include_str!("../tests/fixtures/syntax/store.rb"),
+            ),
+            (
+                "Store.kt",
+                include_str!("../tests/fixtures/syntax/Store.kt"),
+            ),
+            (
+                "Store.swift",
+                include_str!("../tests/fixtures/syntax/Store.swift"),
+            ),
+            (
+                "shapes.scala",
+                include_str!("../tests/fixtures/syntax/shapes.scala"),
+            ),
+            (
+                "module.lua",
+                include_str!("../tests/fixtures/syntax/module.lua"),
+            ),
+            (
+                "store.dart",
+                include_str!("../tests/fixtures/syntax/store.dart"),
+            ),
+            (
+                "inner.ex",
+                include_str!("../tests/fixtures/syntax/inner.ex"),
+            ),
+            (
+                "Shapes.hs",
+                include_str!("../tests/fixtures/syntax/Shapes.hs"),
+            ),
+            ("multi.py", "# é ü\ndef f(a):\n    return 'ñ' + a  # 漢字\n"),
+            (
+                "view.tsx",
+                "export const V = () => <div>é {\"漢\"}</div>;\n",
+            ),
+        ];
+        for (path, source) in sources {
+            let grammar = Lang::from_path(path).and_then(Lang::grammar).unwrap();
+            let chars = parse(source, &grammar).unwrap().unwrap();
+            let mut parser = tree_sitter::Parser::new();
+            parser.set_language(&grammar).unwrap();
+            let whole = parser.parse(source, None).unwrap();
+            assert_eq!(
+                chars.root_node().to_sexp(),
+                whole.root_node().to_sexp(),
+                "{path}"
+            );
+        }
+    }
 }

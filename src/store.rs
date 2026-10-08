@@ -133,12 +133,15 @@ const CONTEXT_OUTLINES: usize = 3;
 pub(crate) const DOOR_FILES: usize = 16;
 /// Approximate doors examine at most this many delivery units.
 const DOOR_WINDOW: usize = 256;
-/// The META value naming the current search index format. `"4"` (001 T007,
-/// context-v2 § City map) puts `def_name` on one document per definition
-/// and adds `role`, `name_case_hash`, `addr_hash`, `name_start`/`name_end`
+/// The META value naming the current search index format. `"5"` (001 T008,
+/// context-v2 § City map › Languages) gives 15 more languages units,
+/// addresses and import keys and parses every source on the `tree-sitter`
+/// 0.26 runtime under a work budget; `"4"` (001 T007,
+/// context-v2 § City map) put `def_name` on one document per definition
+/// and added `role`, `name_case_hash`, `addr_hash`, `name_start`/`name_end`
 /// and `imports`; `"3"` added the unit's own start (its head) and the
 /// leading-run unit ranges (§ Unit forest).
-const SEARCH_SCHEMA: &str = "4";
+const SEARCH_SCHEMA: &str = "5";
 const SEARCH_SCHEMA_REASON: &str =
     "search_schema: search index format changed; run `foundry repair-index`";
 
@@ -785,8 +788,9 @@ pub struct StoreStatus {
     pub parse_failure_samples: Vec<String>,
 }
 
-/// Named parse panics (context-v2 § Parallel indexing): an exact count and at
-/// most 20 samples `<path>: parse_panicked: <detail>`.
+/// Named parse failures (context-v2 § Parallel indexing, § Languages): an
+/// exact count and at most 20 samples `<path>: parse_panicked: <detail>` or
+/// `<path>: parse_stopped: <detail>`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ParseFailures {
     pub count: u64,
@@ -794,11 +798,11 @@ pub struct ParseFailures {
 }
 
 impl ParseFailures {
-    fn push(&mut self, path: &str, detail: &str) {
+    /// `failure` is the labeled failure of [`SourceBuild::panic`].
+    fn push(&mut self, path: &str, failure: &str) {
         self.count = self.count.saturating_add(1);
         if self.samples.len() < PARSE_FAILURE_SAMPLES {
-            self.samples
-                .push(format!("{path}: parse_panicked: {detail}"));
+            self.samples.push(format!("{path}: {failure}"));
         }
     }
 }
@@ -1778,8 +1782,8 @@ fn open_search(dir: &Path) -> Result<SearchHandles, String> {
 enum Parsing {
     /// By its path's language.
     Parsed,
-    /// After its parse panicked: the plain blocks of an unmapped source,
-    /// the first with `kind` [`UNPARSED_KIND`].
+    /// After its parse panicked or exceeded its work budget: the plain
+    /// blocks of an unmapped source, the first with `kind` [`UNPARSED_KIND`].
     Unparsed,
 }
 
@@ -1788,14 +1792,15 @@ enum Parsing {
 /// carrying its delivery unit and its path's role. Exactly one document per
 /// definition — the one whose range holds the start of the unit's name node
 /// — carries `def_name`, `name_case_hash`, `addr_hash` and the name node's
-/// range; the file's first document carries its import keys.
+/// range; the file's first document carries its import keys. A parse that
+/// exceeds its work budget gives no documents but its stop.
 fn search_documents(
     fields: &Fields,
     path: &str,
     hash: &str,
     body: &str,
     parsing: Parsing,
-) -> Vec<TantivyDocument> {
+) -> Result<Vec<TantivyDocument>, crate::syntax::ParseStopped> {
     let lang = match parsing {
         Parsing::Parsed => crate::syntax::Lang::from_path(path),
         Parsing::Unparsed => None,
@@ -1804,9 +1809,9 @@ fn search_documents(
     dirs.push(path);
     let role = path_role(path);
     let path_segments = crate::syntax::path_segments(path);
-    let index = crate::syntax::index(body, lang);
+    let index = crate::syntax::index(body, lang)?;
     let imports = index.imports;
-    index
+    Ok(index
         .documents
         .into_iter()
         .enumerate()
@@ -1866,7 +1871,7 @@ fn search_documents(
             out.add_text(fields.body, text);
             out
         })
-        .collect()
+        .collect())
 }
 
 /// Test seam of the parallel refresh (feature `test-faults` only; release
@@ -2031,8 +2036,10 @@ struct BuildJob {
     body: String,
 }
 
-/// The documents built for one source, and the panic message when they are
-/// the plain blocks of an unmapped source because its parse panicked.
+/// The documents built for one source and, when they are the plain blocks
+/// of an unmapped source because its parse panicked or exceeded its work
+/// budget, the labeled failure: `parse_panicked: <message>` or
+/// `parse_stopped: <reason>`.
 struct SourceBuild {
     documents: Vec<TantivyDocument>,
     panic: Option<String>,
@@ -2421,9 +2428,11 @@ fn build_thread(queue: &HandOut, fields: &Fields, hooks: &IndexHooks) {
     }
 }
 
-/// The documents of one handed-out source. A panicking parse is caught: the
-/// source gets the plain-block documents of an unmapped source, the first of
-/// kind [`UNPARSED_KIND`], and the panic's message, so it is never dropped.
+/// The documents of one handed-out source. A panicking parse is caught, and
+/// a parse that exceeds its work budget (context-v2 § Languages) is handled
+/// the same way: the source gets the plain-block documents of an unmapped
+/// source, the first of kind [`UNPARSED_KIND`], and its labeled failure, so
+/// it is never dropped.
 fn build_source(
     fields: &Fields,
     job: &BuildJob,
@@ -2433,29 +2442,35 @@ fn build_source(
         index_event!(hooks, index_hooks::Event::Build(&job.path));
         search_documents(fields, &job.path, &job.hash, &job.body, Parsing::Parsed)
     }));
-    match parsed {
-        Ok(documents) => Ok(SourceBuild {
-            documents,
-            panic: None,
-        }),
-        Err(payload) => {
-            let message = panic_message(&*payload);
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                search_documents(fields, &job.path, &job.hash, &job.body, Parsing::Unparsed)
-            }))
-            .map(|documents| SourceBuild {
+    let failure = match parsed {
+        Ok(Ok(documents)) => {
+            return Ok(SourceBuild {
                 documents,
-                panic: Some(message),
-            })
-            .map_err(|fallback| {
-                format!(
-                    "{}: plain-block documents panicked: {}",
-                    job.path,
-                    panic_message(&*fallback)
-                )
-            })
+                panic: None,
+            });
         }
-    }
+        Ok(Err(stopped)) => format!("parse_stopped: {stopped}"),
+        Err(payload) => format!("parse_panicked: {}", panic_message(&*payload)),
+    };
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        search_documents(fields, &job.path, &job.hash, &job.body, Parsing::Unparsed)
+    }))
+    .map_err(|fallback| {
+        format!(
+            "{}: plain-block documents panicked: {}",
+            job.path,
+            panic_message(&*fallback)
+        )
+    })
+    .and_then(|documents| {
+        // Without a language nothing is parsed, so nothing can stop.
+        let documents = documents
+            .map_err(|stopped| format!("{}: plain-block documents {stopped}", job.path))?;
+        Ok(SourceBuild {
+            documents,
+            panic: Some(failure),
+        })
+    })
 }
 
 /// The text of a panic payload, when it carries one.
@@ -2468,7 +2483,9 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 }
 
 /// Sources left as the plain blocks of an unmapped source after a parse
-/// panic (context-v2 § Parallel indexing). Each one's first document, and
+/// panic or a parse over its work budget (context-v2 § Parallel indexing,
+/// § Languages); the scan report named which, the sample says `unparsed`.
+/// Each one's first document, and
 /// no other, is of kind [`UNPARSED_KIND`], so one term query counts them
 /// exactly without loading a document; samples load at most
 /// [`PARSE_FAILURE_SAMPLES`] documents, the smallest `key_hash` ones, and
@@ -2493,9 +2510,7 @@ fn unparsed_sources(searcher: &tantivy::Searcher, fields: &Fields) -> FResult<Pa
         count: count as u64,
         samples: paths
             .into_iter()
-            .map(|path| {
-                format!("{path}: parse_panicked: indexed as plain blocks until parsed again")
-            })
+            .map(|path| format!("{path}: unparsed: indexed as plain blocks until parsed again"))
             .collect(),
     })
 }

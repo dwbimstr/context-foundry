@@ -28,8 +28,10 @@ use crate::neural::provider::{self, DOCUMENT_PREFIX, DOCUMENT_UNIT_TOKENS, Provi
 use crate::syntax::{self, Lang, Unit};
 use std::collections::HashMap;
 
-/// The pinned recipe grammar version.
-pub const RECIPE_GRAMMAR: &str = "nemotron-units-v1";
+/// The pinned recipe grammar version. `-v2` (001 T008): 15 more languages
+/// have units and every grammar parses on the `tree-sitter` 0.26 runtime,
+/// so partitions made under `-v1` are stale.
+pub const RECIPE_GRAMMAR: &str = "nemotron-units-v2";
 
 /// The partition recipe id for one tokenizer identity. It participates in
 /// mapping eligibility: a partition row under another recipe is stale.
@@ -515,6 +517,45 @@ mod tests {
     #[test]
     fn empty_source_is_zero_units() {
         assert!(units_of("", Some(Lang::Rust)).is_empty());
+    }
+
+    /// 001 T008 gave Ruby (and 14 more languages) units: a partition made
+    /// before it, under the `-v1` recipe, is not current under this one, so
+    /// preparation partitions the source again.
+    #[test]
+    fn a_partition_made_before_t008_languages_is_not_current() {
+        use crate::neural::cache::{PartitionRecord, PartitionUnit, partition_is_current};
+        let source = "class Store\n  def put(a)\n    a\n  end\nend\n";
+        assert!(!syntax::units(source, Lang::Ruby).is_empty());
+        let units = units_of(source, Some(Lang::Ruby));
+        let meta = crate::store::SourceMeta {
+            hash: "h".into(),
+            chunks: 1,
+            bytes: source.len(),
+            lines: 5,
+        };
+        let record = |recipe: String| PartitionRecord {
+            source_hash: "h".into(),
+            recipe_id: recipe,
+            function_digest: DIGEST.into(),
+            units: units
+                .iter()
+                .map(|unit| PartitionUnit {
+                    start: unit.start,
+                    end: unit.end,
+                    input_key: unit.input_key.clone(),
+                })
+                .collect(),
+        };
+        let current = recipe_id("tok");
+        assert!(partition_is_current(
+            &record(current.clone()),
+            &meta,
+            &current,
+            DIGEST
+        ));
+        let before = record("nemotron-units-v1+tok".into());
+        assert!(!partition_is_current(&before, &meta, &current, DIGEST));
     }
 
     #[test]

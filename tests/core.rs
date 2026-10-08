@@ -3710,7 +3710,7 @@ fn a_panic_in_the_earliest_keys_build_names_it_and_indexes_every_other_key() {
             .any(|doc| doc["kind"][0] == "section")
     );
     // Status names the source, also after a restart, until it is parsed again.
-    let named = vec!["a/first.rs: parse_panicked: indexed as plain blocks until parsed again"];
+    let named = vec!["a/first.rs: unparsed: indexed as plain blocks until parsed again"];
     let status = engine.status().unwrap();
     assert_eq!(status.parse_failures, Some(1));
     assert_eq!(status.parse_failure_samples, named);
@@ -3820,8 +3820,8 @@ fn every_parse_panic_is_a_scan_failure_and_status_names_the_sources_with_text() 
     assert_eq!(
         status.parse_failure_samples,
         [
-            "a.rs: parse_panicked: indexed as plain blocks until parsed again",
-            "notes.txt: parse_panicked: indexed as plain blocks until parsed again",
+            "a.rs: unparsed: indexed as plain blocks until parsed again",
+            "notes.txt: unparsed: indexed as plain blocks until parsed again",
         ]
     );
 }

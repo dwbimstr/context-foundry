@@ -459,10 +459,14 @@ child of its nearest enclosing unit; a wrapper coextensive with its unit yields 
 unit; zero-width, invalid or partially overlapping ranges are not units (of two
 partially overlapping ranges, the later is dropped). Parse errors are tolerated: the
 error-recovered tree still yields units. Zero units, an unmapped language or a source
-over 1 MiB falls back to blocks. Parsing is deterministic, with no time-based limit.
-For tree-sitter languages, a unit's range is its node's (or wrapper's) byte range,
-extended backward over its leading run (below); no following line terminator is
-appended to that range. Markdown section ranges run to the next equal-or-higher-rank
+over 1 MiB falls back to blocks. Parsing is deterministic, with no time-based limit; it
+is bounded by work (§ Languages). For tree-sitter languages, a unit's range is its
+node's (or wrapper's) byte range, extended backward over its leading run (below); no
+following line terminator is appended to that range. A statement-form container (C#
+`namespace X;`, PHP `namespace X;`, Perl `package X;`, a Scala `package` clause) has no
+body node: its range runs from the statement to the next statement of its kind or to
+its parent's end, trailing whitespace trimmed, and the following declarations are its
+members (001 T008). Markdown section ranges run to the next equal-or-higher-rank
 heading or EOF and can include a trailing LF. A handle uses the range unchanged.
 
 **Leading run** (owner decision 2026-10-04, amending T005; implemented locally):
@@ -478,10 +482,14 @@ most one line terminator (no blank line):
 | Java | `block_comment` beginning `/**` (Javadoc); annotations are already inside the declaration |
 | TypeScript, TSX, JavaScript | `comment` beginning `/**` (JSDoc) |
 | Go | any `comment` (Go doc comments are ordinary comments directly above a declaration) |
+| VB.NET | attribute blocks (`<…>`) |
 
-Python, C, C++ and Markdown have no leading run. The run joins the unit's range, so
-it belongs to the unit's search documents (a container's own run lies in its residual
-region) and is retrieved with the unit; names and qualified names are unchanged.
+Python, C, C++, Markdown and the other § Languages additions have no leading run (for
+C#, Kotlin, Swift, PHP, Ruby and the rest, documentation comments above a declaration
+stay outside its range: a named limitation of 001 T008). The run joins the unit's
+range, so it belongs to the unit's search documents (a container's own run lies in its
+residual region) and is retrieved with the unit; names and qualified names are
+unchanged.
 
 ### Search documents
 
@@ -579,8 +587,9 @@ draws its units from this same materialized ranking.
 
 ### Index version gate
 
-The value is `"4"` since 001 T007 (§ City map: one definition document per unit and
-the § Definitions and addresses fields); every later change to search-document
+The value is `"5"` since 001 T008 (units, addresses and import keys of 15 more
+languages) and was `"4"` since 001 T007 (§ City map: one definition document per unit
+and the § Definitions and addresses fields); every later change to search-document
 content bumps it again. Before it, META key `search_schema = "3"` (it was `"2"` before
 the 2026-10-04 leading-run amendment changed search-document ranges). The key is
 written in the store-initialization transaction for
@@ -1100,15 +1109,58 @@ A 2026-10-07 feasibility spike (outside the repository) built all 23 grammars on
 7,357 of 7,358 real files (one mis-parsed C++ file lost 3 units) and their syntax tests
 pass unchanged. Grammar archives add about 48 MB to a release binary (F# 14.1 MB, C#
 5.3 MB, Swift 4.2 MB, Scala 4.0 MB, Haskell 3.9 MB, Kotlin 3.5 MB, the rest under 3 MB
-each). Parsing is bounded by work, not by time: every parse runs under a progress
-callback (`parse_with_options`) that counts its checks and stops the parse after a fixed
-budget per source, so identical inputs stop identically on any thread count or host
-load; T008 calibrates the budget so that no spike-corpus file that parses within a
-second on a quiet host is stopped, and a stopped parse is handled like a panic
-(§ Parallel indexing), because deeply nested Haskell and F# inputs take tens of
+each). Parsing is bounded by work, not by time: every parse runs through
+`parse_with_options` with an input callback that hands the parser one UTF-8 character
+per read and a progress callback; work is reads plus progress checks, and at 2^25
+units the input reports its end and the parse stops, so identical inputs stop
+identically on any thread count or host load. Progress checks alone cannot bound it:
+external scanners re-read input without checks (a 4,000-deep Haskell `let` takes 882
+checks, below a large ordinary file's 29,160). T008 calibrated the budget on 22,492
+real files, whose trees are byte-identical under per-character reads and whose work
+peaked at 3.5 million units (18.5 per byte). A stopped parse is handled like a panic
+(§ Parallel indexing) with its own scan-failure label, `parse_stopped`, because
+deeply nested Haskell and F# inputs take seconds to tens of
 seconds. Constructs the pinned grammars do not parse are named limitations: VB.NET
 nested types, alias and XML imports; Perl `require "file"` and fully qualified
-`sub A::B::c`; F# signature-file member signatures; C++20 module imports.
+`sub A::B::c`; F# signature-file member signatures; C++20 module imports; Elixir
+`@doc`/`@spec` and Haskell type signatures and pragmas lie outside their unit's range;
+`.fs`, `.pl`, `.sc` and `.t` are taken as F#, Perl, Scala and Perl.
+
+Units of the 15 added languages (001 T008) follow § Unit kinds' principle that every
+definition gets an address:
+
+- Functions, methods, types and enum members are units. Constructors are named method
+  units (C#, PowerShell and Dart take the class name or the named constructor's name;
+  Swift `init`, Kotlin `constructor`, VB `New`).
+- Module-level constants and variables are units: const for F# `let`, Kotlin and Scala
+  `val`, Swift `let`, Dart `const`/`final`, PHP top-level `const`, Perl `use constant`,
+  Ruby constants (top level or class/module body), shell `readonly`/`declare -r`, VB
+  `Module` `Const`, Elixir `@attr value` (doc, spec and type attributes excluded) and
+  Haskell top-level bindings; static for F# `let mutable`, Kotlin, Swift, Scala and
+  Dart `var`, VB `Module` fields, Lua chunk-level single assignments and other shell
+  top-level assignments. PowerShell has none.
+- Declaration-only members stay non-units: C#, VB, PHP and Kotlin interface members
+  without bodies, Swift protocol requirements, Scala abstract `def`, Dart abstract
+  signatures, F# `abstract member` and `.fsi` `val`, Haskell type and class-method
+  signatures, Elixir bodiless heads. Body-less non-interface methods (C# `extern` and
+  `abstract`, PHP `abstract`) are units.
+- A container that extends a type defined elsewhere is an `impl` without `def_name`
+  (§ Definitions and addresses): Swift and Dart `extension`, F# type extensions,
+  Elixir `defimpl` (for its `for:` type), Haskell `instance` (for its type). Unnamed
+  Kotlin companions, Ruby `class << self`, Scala `extension` and a Haskell lone or
+  newtype constructor are not units.
+- Qualified names join with `::` for Perl and Ruby and `.` for the rest (PHP `\` and
+  Lua `:` normalized to `.`); a Kotlin extension function takes its receiver type as a
+  qualifier.
+- Import keys: C# `using` and its alias; F# `open` and `#load`; VB `Imports`; PHP `use`
+  (alias, group, function) and literal include/require paths; Perl `use`, `require`,
+  `use parent`; shell `source`/`.`; PowerShell `using namespace`/`using module`,
+  `Import-Module` and dot-sourcing; Ruby `require`, `require_relative`, `load` and
+  `autoload` stems; Kotlin imports and aliases (not `*`); Swift imports; Scala paths,
+  selectors and renames (not `_`); Lua `require` (last segment), `dofile`, `loadfile`;
+  Dart alias, else `show` names, else the URI stem, plus `part`; Elixir `alias`,
+  `import`, `require`, `use` (groups and `as:`); Haskell import lists, else the alias,
+  else the module's last segment.
 
 ### Parallel indexing
 
