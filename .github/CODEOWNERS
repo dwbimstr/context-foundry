@@ -1,0 +1,6 @@
+# CI, release scripts and the build inputs require the repository owner's review.
+/.github/ @dwbimstr
+/scripts/ @dwbimstr
+/build.rs @dwbimstr
+/Cargo.toml @dwbimstr
+/Cargo.lock @dwbimstr

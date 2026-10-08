@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/dwbimstr/context-foundry/security/advisories/new
+    about: Report vulnerabilities privately; do not open a public issue (see SECURITY.md).
+  - name: Specs and design status
+    url: https://github.com/dwbimstr/context-foundry/blob/main/specs/README.md
+    about: Read the spec portfolio before proposing a change to behavior or formats.

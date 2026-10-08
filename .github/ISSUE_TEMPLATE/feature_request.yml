@@ -1,0 +1,58 @@
+name: Feature request
+description: Propose a capability or a change in behavior
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Context Foundry is spec-driven: a change to behavior, a format or the MCP tools starts as a discussion
+        here and is then written into the owning spec (see specs/README.md and CONTRIBUTING.md).
+        Do not paste private source code, datasets, transcripts, credentials or model files.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what fails or costs too much today? Concrete commands and outputs help.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What you would like to happen, as a user or agent would observe it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Simpler options, workarounds, or what you do today.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Indexing and languages
+        - search, context, retrieve
+        - MCP server and agent setup (bootstrap, connect)
+        - Compiler references and graph
+        - Project memory
+        - Multi-root context
+        - Semantic retrieval (optional)
+        - Package and install scripts
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit you tried
+      description: Output of `foundry --version` or `git rev-parse --short HEAD`, and your OS.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Data check
+      options:
+        - label: This request contains no private source code, datasets, transcripts, credentials or model files.
+          required: true

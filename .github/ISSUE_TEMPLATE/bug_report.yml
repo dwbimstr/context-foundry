@@ -1,0 +1,84 @@
+name: Bug report
+description: A reproducible defect in foundry (CLI, MCP server, store, package or install scripts)
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security vulnerabilities do not belong here: report them privately (see SECURITY.md).
+        Do not paste private source code, datasets, transcripts, credentials or model files.
+        A small public or synthetic reproduction is the most useful thing you can attach.
+  - type: input
+    id: version
+    attributes:
+      label: Version and commit
+      description: Output of `foundry --version` and the commit you built (`git rev-parse --short HEAD`).
+      placeholder: "foundry --version output; commit abc1234"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS arm64
+        - macOS x86_64
+        - Linux x86_64
+        - Linux arm64
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os-detail
+    attributes:
+      label: OS version and Rust version
+      description: For example the macOS or distribution release, and `rustc --version` if you built from source.
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - Built from source (cargo build / cargo install)
+        - Package installed with scripts/install.sh
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or MCP call
+      description: The exact command line, or the MCP tool name and arguments, that misbehaves.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened, including any named error code (for example `store_busy` or `repair_required`) and its message.
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Store status
+      description: The `schema`, `index_state` and `index_reason` fields from `foundry --store DIR status` (the other fields are optional).
+      render: json
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce and other context
+      description: Repository shape (languages, size), how the store was created, logs. Public or synthetic files only.
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Data check
+      options:
+        - label: This report contains no private source code, datasets, transcripts, credentials or model files.
+          required: true

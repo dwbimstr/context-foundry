@@ -1,17 +1,16 @@
 # Bootstrap, isolated workers and deployment
 
-Status: bootstrap/connect and both MCP transports (003 T001–T003) were implemented and
-verified locally on 2026-10-01 ([validation](validation.md)). Worker isolation, 005, 009
-and 013 remain proposed. The token-economics tranche (001 T004–T006, 003 T005, 007
-T001) was approved on 2026-10-03. 001 T004–T006 are locally implemented, accepted and
-committed (`5edf32c`). 003 T005 and 007 T001 were implemented and accepted on
-2026-10-04 and committed locally (`5e99ffd`, `cc402e0`). 008 explicit memory and the
-003 T004 owned model gateway (`foundry gateway`, `foundry gateway-omp`) were
-implemented and accepted on 2026-10-04 as well. None is released.
+Status (2026-10-08): bootstrap/connect and both MCP transports (003), compiler
+references (005), multi-root context (007), explicit memory (008) and the owned model
+gateway (003 T004) are implemented and accepted ([validation](validation.md)). The
+package and its install/upgrade/rollback/uninstall lifecycle are implemented and
+checked with ad-hoc-signed development bundles. The semantic and learning workers run
+only under development isolation; production isolation waits for Developer ID signing
+and package acceptance, and owned learning (013) is frozen off. Nothing is released.
 This is the shared deployment boundary for 003
 adapter onboarding, 005 explicit producer execution, 009 embeddings and 013 owned
-learning — not another product, daemon or spec stage. No production installation,
-worker package or publication is claimed. [Bounded scratch feasibility](review/feasibility.md)
+learning — not another product, daemon or spec stage. No signed installation or
+publication is claimed. [Bounded scratch feasibility](review/feasibility.md)
 is recorded separately.
 
 ## User flow and ownership
@@ -31,8 +30,8 @@ is recorded separately.
    owner. Refresh through `index`, not another CLI writer. Each repository gets a
    separate store/configuration; shared mode is not a federation service. One owner
    may also admit outside repositories as references at launch for one budgeted
-   multi-root response ([007](../specs/007-multi-workspace-context/spec.md), approved
-   2026-10-03, not implemented); each reference keeps its own store.
+   multi-root response ([007](../specs/007-multi-workspace-context/spec.md),
+   implemented 2026-10-04); each reference keeps its own store.
 4. Request semantic preparation under an explicit profile/budget when useful. Baseline
    context stays available while coverage arrives; missing runtime/weights/jail are
    named setup requirements. Compiler artifacts follow the explicit 005 import route.
