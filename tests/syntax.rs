@@ -3925,6 +3925,14 @@ fn powershell_module_operands_give_keys_quoted_or_not() {
         ("using module \"$($root)\\Store.psm1\"\n", &[]),
         ("Import-Module -Prefix \"$p\" './Store.psm1'\n", &["Store"]),
         ("Import-Module \"$path\" './Store.psm1'\n", &[]),
+        // Dot-sourcing: only a static script name gives a key.
+        (". ./Store.ps1\n", &["Store"]),
+        (". './Store.ps1'\n", &["Store"]),
+        (". \"./Store.ps1\"\n", &["Store"]),
+        (". $path\n", &[]),
+        (". \"$name\"\n", &[]),
+        (". \"$(Get-X)\"\n", &[]),
+        (". $PSScriptRoot/Store.ps1\n", &[]),
     ] {
         assert_eq!(
             syntax::index(source, Some(Lang::PowerShell))

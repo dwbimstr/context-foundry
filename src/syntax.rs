@@ -3992,16 +3992,35 @@ fn import_keys(lang: Lang, node: tree_sitter::Node, source: &[u8], out: &mut Vec
                     last_segment(name, &["."])
                 }
             };
-            // `. ./x.ps1` dot-sources a script.
+            // `. ./x.ps1` dot-sources a script. Only a static name gives a
+            // key: a bare path or a string holding no variable or
+            // subexpression (`. $path`, `. "$name"`, `. "$(Get-X)"` give
+            // none; 001 T008 review R8).
             if named_child_of(node, &["command_invokation_operator"])
                 .and_then(text)
                 .as_deref()
                 == Some(".")
             {
+                let script = node
+                    .child_by_field_name("command_name")
+                    .and_then(|name| match name.kind() {
+                        "command_name_expr" if name.named_child_count() == 1 => name.named_child(0),
+                        _ => Some(name),
+                    })
+                    .filter(|name| match name.kind() {
+                        "command_name" => true,
+                        "string_literal" => !named_children(*name).any(|string| {
+                            matches!(
+                                string.kind(),
+                                "expandable_string_literal" | "expandable_here_string_literal"
+                            ) && string.named_child_count() > 0
+                        }),
+                        _ => false,
+                    });
                 out.extend(
-                    node.child_by_field_name("command_name")
+                    script
                         .and_then(text)
-                        .and_then(|path| file_stem(&path)),
+                        .and_then(|path| file_stem(path.trim_matches(['\'', '"']))),
                 );
                 return;
             }
