@@ -957,8 +957,11 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
     (`ggml-org/embeddinggemma-2-GGUF@bfcd2987`, Apache-2.0) and a Nemotron 3 Embed 1B
     GGUF, on cards.
   - *G2 and enablement.* G2 is a frozen set of at least 300 questions that name no
-    identifier, each with one ground-truth definition, built from a source the owner
-    approves before T004 code, on a corpus with SCIP coverage; its harness scores
+    identifier, each with one ground-truth definition, on a corpus with SCIP coverage:
+    written from the code and documentation of rust-lang/rust and oh-my-pi (owner,
+    2026-10-08), frozen with their expected definitions before any T004 code, and
+    checked by a cross-lab refuter for identifiers or paths leaking into the wording;
+    its harness scores
     delivered evidence as G1 v2 does. Semantic retrieval stays optional and off by
     default; a profile is enabled for anchor-less queries only when, on G2, its
     delivered evidence exceeds the same queries without it (exact McNemar p < 0.05) at

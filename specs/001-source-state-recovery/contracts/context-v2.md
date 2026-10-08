@@ -969,9 +969,11 @@ qualifiers equal to an address segment (descending; compared by hash); name equa
 the anchor exactly as written (`name_case_hash`, exact first); role (ascending). The
 window keeps the best 64 by that tuple, then `key_hash` ascending; every matching
 definition is scored. Within the window, definitions are ordered by the tuple, then
-path and start ascending: for equally scored definitions this is today's tier-1 order
-(a `key_hash` selection of 64, listed by path and start), on which the G1 baselines
-were measured. Tier 1 is the windows in anchor order. An anchor is **resolved** when
+path and start ascending: the same mechanism as today's tier 1 (a `key_hash` selection
+of 64, listed by path and start), on which the G1 baselines were measured; the lists
+differ where role or case separates definitions and where one document per definition
+and excluded `impl` blocks change which 64 survive. Tier 1 is the windows in anchor
+order. An anchor is **resolved** when
 it has exactly one definition, or when its first definition's tuple is strictly
 better than its second's; otherwise **ambiguous**. `defs:<n>` reports definitions
 (after this amendment, one document each).
@@ -1132,17 +1134,19 @@ Refresh builds the search documents of each page's pending sources on at most
 min(available parallelism, 8) threads, with at most 64 MiB of source bytes handed out
 and not yet consumed (a source is consumed when its documents are added; one source
 always fits). Each source has one outcome: its documents, or, when its parse panics
-or is stopped, a named scan failure and the plain-block documents of an unmapped source
-with the `kind` term `unparsed` (rendered and searched exactly as blocks); it is never
-dropped. The one writer adds documents in key order as their builds finish; after
+or is stopped, a named scan failure and the plain-block documents of an unmapped
+source, whose first document carries the `kind` term `unparsed` (all are rendered and
+searched exactly as blocks); it is never dropped. The one writer adds documents in key
+order as their builds finish; after
 every thread has finished it commits and reloads, and only then are matching pending
 keys cleared, as before. Cancellation is checked at each hand-out and after the commit:
 it stops handing out work and waits for the threads; a page whose sources were all
 handed out may still be added and committed, and its pending keys then stay pending
 until a later refresh, whose replay converges. A refresh on 8 threads yields the same
 documents (field values, in key order) and the same store tables as on 1 thread;
-physical file bytes are not compared. `status` names the sources whose documents carry
-`unparsed` (one term query, work proportional to the failures) until each is parsed
+physical file bytes are not compared. `status` counts the documents carrying
+`unparsed` (one per source, counted without loading them) and samples at most 20 of
+them, so its work stays proportional to the failures, until each source is parsed
 again: on its next change, or on `repair-index`, which rebuilds every source's
 documents. A source with no searchable text (empty or whitespace only) has no
 documents either way and is named only in the scan report of the refresh that hit it.

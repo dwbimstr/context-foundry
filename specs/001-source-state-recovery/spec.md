@@ -502,8 +502,8 @@ day, proposed. Measured by G1 before and after.
   the same point on 1 and 8 threads and becomes a named failure with `unparsed` blocks;
   each grammar loads at runtime on Rust
   1.90; the release binary size before and after is recorded (the spike measured about
-  +48 MB for all 15) and the owner accepts it, or names grammars to drop, before T008
-  is accepted; a grammar that fails is dropped with its reason recorded.
+  +48 MB for all 15; the owner accepted all 15 on 2026-10-08); a grammar that fails is
+  dropped with its reason recorded.
 
 ### T009 — Parallel indexing
 
@@ -599,7 +599,7 @@ statistics).
     targeted groups included), pass≤4, and for definition groups also pass@1 and body,
     fall by at most min(2.0 points, 10% of the baseline value) against the Foundry
     baseline. This is a fixed rule on the frozen census, not a statistical claim of
-    non-regression. Equally scored definitions keep today's tier-1 order (§ Resolver
+    non-regression. Equally scored definitions use today's tier-1 mechanism (§ Resolver
     order).
 - **Protocol:** a copy of the baseline store (rust-lang/rust with the same imported
   SCIP artifact; oh-my-pi) is brought to the candidate's schema with its
