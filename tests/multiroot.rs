@@ -899,6 +899,115 @@ fn a_stale_merged_winner_gives_no_doors_and_promotes_no_other_roots_namesake() {
     }
 }
 
+/// 007 (context-v2 § Doors, Doors of a tie group): namesakes tied across
+/// roots with no compiler facts share one approximate group onto no entry,
+/// joined from every tie entry's root's own approximate doors in root
+/// order, each line under its own root's handle. The primary's empty group
+/// never hides the reference root's door, and with doors in both roots
+/// both are listed. Each root resolved its own namesake.
+#[test]
+fn namesakes_tied_across_roots_share_every_roots_approximate_doors() {
+    use context_foundry::store::{ContextOptions, DoorState};
+    use context_foundry::testkit::V2Kind;
+    use context_foundry::{Control, Engine, Strategy, response, roots};
+    let pivot = "pub fn pivot_dock() {}\n";
+    let user = "fn user() { pivot_dock(); }\n";
+    let query = "who calls `pivot_dock`";
+    type Files<'a> = Vec<(&'a str, &'a str)>;
+    // The primary's files, the reference root's, and the shared doors as
+    // (root, path).
+    let cases: [(Files<'_>, Files<'_>, Vec<(usize, &str)>); 2] = [
+        (
+            vec![("src/alpha/one.rs", pivot)],
+            vec![("src/alpha/two.rs", pivot), ("src/user.rs", user)],
+            vec![(1, "src/user.rs")],
+        ),
+        (
+            vec![("src/alpha/one.rs", pivot), ("src/user.rs", user)],
+            vec![("src/alpha/two.rs", pivot), ("src/user.rs", user)],
+            vec![(0, "src/user.rs"), (1, "src/user.rs")],
+        ),
+    ];
+    for (primary, reference, expected) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let repos = [
+            repo_with(dir.path(), "ws0", &primary),
+            repo_with(dir.path(), "ref0", &reference),
+        ];
+        let engines: Vec<Engine> = repos
+            .iter()
+            .map(|repo| Engine::open_existing(&repo.store).unwrap())
+            .collect();
+        let control = Control::unbounded();
+        let serving: Vec<&Engine> = engines.iter().collect();
+        let anchors = roots::select_anchors(&serving, query, None, &control).unwrap();
+        let options = ContextOptions {
+            anchors: Some(&anchors),
+            ..ContextOptions::default()
+        };
+        let batches: Vec<roots::RootBatch> = engines
+            .iter()
+            .enumerate()
+            .map(|(i, engine)| roots::RootBatch {
+                alias: format!("r{i}"),
+                batch: engine
+                    .context_candidates_with(query, Strategy::Auto, &control, &options)
+                    .unwrap()
+                    .batch,
+            })
+            .collect();
+        for root in &batches {
+            let built = root.batch.doors.as_ref().unwrap();
+            assert_eq!(built.state, DoorState::Approx, "{built:?}");
+            assert!(built.groups[0].target.is_some(), "each root resolved");
+        }
+        let merged = roots::merge_context(&batches);
+        let doors = merged.doors.as_ref().expect("the primary requested doors");
+        assert_eq!(doors.state, DoorState::Approx, "{doors:?}");
+        assert_eq!(doors.groups.len(), 1, "{doors:?}");
+        let group = &doors.groups[0];
+        assert!(group.target.is_none(), "attributed to no entry");
+        let ws = |root: usize| engines[root].workspace_id().unwrap();
+        let lines: Vec<(String, &str)> = group
+            .lines
+            .iter()
+            .map(|line| (line.unit.workspace_id.clone(), line.unit.path.as_str()))
+            .collect();
+        let want: Vec<(String, &str)> = expected
+            .iter()
+            .map(|(root, path)| (ws(*root), *path))
+            .collect();
+        assert_eq!(lines, want);
+        assert_eq!(group.more_files, 0);
+        // Packed: both namesakes, then the shared doors, each door's handle
+        // naming its own root.
+        let packed = response::pack_context(
+            &merged,
+            response::Budget::request(4096),
+            &response::stdout_bytes,
+        )
+        .unwrap();
+        let parsed = parse_v2(&packed.text).unwrap_or_else(|e| panic!("{e}\n{}", packed.text));
+        let items: Vec<(V2Kind, &str)> = parsed
+            .items
+            .iter()
+            .map(|item| (item.kind, item.handle.as_str()))
+            .collect();
+        assert_eq!(items.len(), 2 + expected.len(), "{}", packed.text);
+        assert!(
+            items[..2].iter().all(|(kind, _)| *kind == V2Kind::Source),
+            "{}",
+            packed.text
+        );
+        for ((kind, handle), (root, path)) in items[2..].iter().zip(&expected) {
+            assert_eq!(*kind, V2Kind::Door, "{}", packed.text);
+            let parsed = HandleRef::parse(handle).unwrap();
+            assert_eq!(parsed.path, *path);
+            assert_eq!(parsed.ws16, ws(*root)[..16], "{}", packed.text);
+        }
+    }
+}
+
 /// 007 group 3 through the owner: the reference defines no exact-case
 /// `Engine`, yet the owner chooses the anchor once over every root, so the
 /// reference's `motor` definition, which the query's path qualifies, resolves

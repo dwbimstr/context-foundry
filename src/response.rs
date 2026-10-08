@@ -1509,15 +1509,31 @@ fn pack_anchored(
         place(&mut slots, index, &[0], &mut dropped);
     }
     // The final header carries the final counts: drop the last shown entry
-    // until the whole response fits.
+    // until the whole response fits. A door group goes whole, every line
+    // counted; it follows its entry, so an entry goes only after its group.
+    let mut group_of: Vec<Option<std::ops::Range<usize>>> = vec![None; slots.len()];
+    let mut mark = |group: &std::ops::Range<usize>| {
+        for index in group.clone() {
+            group_of[index] = Some(group.clone());
+        }
+    };
+    for plan in &plans {
+        match plan {
+            Plan::Resolved { group, .. } => mark(group),
+            Plan::Ambiguous(entries) => entries.iter().for_each(|(_, group)| mark(group)),
+        }
+    }
     let base_fits = loop {
         if trial(&slots, dropped) {
             break true;
         }
-        match slots.iter_mut().rev().find(|slot| slot.chosen.is_some()) {
-            Some(slot) => {
-                slot.chosen = None;
-                dropped += 1;
+        match slots.iter().rposition(|slot| slot.chosen.is_some()) {
+            Some(last) => {
+                let shown = group_of[last].clone().unwrap_or(last..last + 1);
+                for index in shown.clone() {
+                    slots[index].chosen = None;
+                }
+                dropped += shown.len();
             }
             None => break false,
         }

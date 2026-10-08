@@ -835,6 +835,173 @@ fn an_anchorless_usage_query_gets_doors_none_and_search_packing() {
     }
 }
 
+/// 005 T004 (context-v2 § Doors, Doors of a tie group): a door group fits
+/// whole or is omitted whole, through the final backtracking too. Under a
+/// boundary that emits 128 bytes per text byte (2 KiB of text), the first
+/// anchor's two tied entries and both their groups fill the cap exactly
+/// under `omitted:9`. The second anchor's entry then does not fit, and
+/// counting it grows the header to `omitted:10`, one byte past the cap: the
+/// final trial must drop the second group whole, its `⋯` line with it and
+/// its four lines counted, never its last line alone.
+#[test]
+fn the_final_backtracking_never_splits_a_door_group() {
+    use context_foundry::response::Freshness;
+    use context_foundry::store::{
+        AnchorWindow, CandidateBatch, CandidateCounters, DoorGroup, DoorLine, DoorState, Doors,
+        RankedItem, RenderedForm, Resolver,
+    };
+    let inflated = |text: &str| text.len() * 128;
+    let cap = BYTE_CAP / 128;
+    let handle = |path: &str, end: u64| SourceHandle {
+        workspace_id: "a".repeat(64),
+        path: path.to_owned(),
+        sha256: "b".repeat(64),
+        start: 0,
+        end,
+    };
+    let unit = |tier: u8, path: &str, label: &str, body: String, resolver| RankedItem {
+        tier,
+        rank: 0,
+        score: 0.0,
+        handle: Some(handle(path, body.len() as u64)),
+        start_line: 1,
+        end_line: 1,
+        line: 1,
+        label: label.to_owned(),
+        lang: Some("rust".to_owned()),
+        semantic: None,
+        resolver,
+        forms: vec![RenderedForm::Verbatim(body), RenderedForm::Address],
+    };
+    let resolver = |anchor| {
+        Some(Resolver {
+            anchor,
+            qualifiers: 0,
+            exact: true,
+            role: 0,
+            name: (7, 17),
+        })
+    };
+    let group = |target: &RankedItem, prefix: &str, more_files| DoorGroup {
+        target: target.handle.clone(),
+        lines: (0..4)
+            .map(|n| DoorLine {
+                unit: handle(&format!("src/{prefix}_use{n}.rs"), 27),
+                line: 1,
+                label: "fn user".to_owned(),
+                text: "fn user() { pivot_dock(); }".to_owned(),
+                more: 0,
+            })
+            .collect(),
+        more_files,
+    };
+    // `pad` bytes widen the second entry's body; `second` adds the second
+    // anchor.
+    let batch = |pad: usize, second: bool| {
+        let tie = resolver((1, 0));
+        let one = unit(
+            1,
+            "src/one.rs",
+            "fn pivot_dock",
+            "pub fn pivot_dock() {}\n".into(),
+            tie,
+        );
+        let body = format!("pub fn pivot_dock() {{ /* {} */ }}\n", "x".repeat(pad));
+        let two = unit(1, "src/two.rs", "fn pivot_dock", body, tie);
+        let other = unit(
+            1,
+            "src/other.rs",
+            "fn other_dock",
+            "pub fn other_dock() {}\n".into(),
+            resolver((2, 40)),
+        );
+        let mut anchors = vec![AnchorWindow {
+            anchor: "pivot_dock".to_owned(),
+            order: (1, 0),
+            definitions: 2,
+            entries: vec![one.clone(), two.clone()],
+        }];
+        let mut items = vec![one.clone(), two.clone()];
+        if second {
+            anchors.push(AnchorWindow {
+                anchor: "other_dock".to_owned(),
+                order: (2, 40),
+                definitions: 1,
+                entries: vec![other.clone()],
+            });
+            items.push(other);
+        }
+        // Nine candidates outside the anchored selection.
+        items.extend((0..9).map(|i| {
+            unit(
+                2,
+                &format!("src/out{i}.rs"),
+                "fn out",
+                "fn out() {}\n".into(),
+                None,
+            )
+        }));
+        CandidateBatch {
+            freshness: Freshness {
+                workspace_id: "a".repeat(64),
+                source_revision: 7,
+                scan_state: "complete".to_owned(),
+                pending_sources: 0,
+                indexed_snapshot: "revision=7".to_owned(),
+            },
+            items,
+            counters: CandidateCounters::default(),
+            semantic: None,
+            route: None,
+            anchors,
+            doors: Some(Doors {
+                state: DoorState::Each,
+                groups: vec![group(&one, "a", 0), group(&two, "b", 2)],
+            }),
+            collected: None,
+        }
+    };
+    // The first anchor alone, complete, under `omitted:9`.
+    let first_alone = |pad: usize| {
+        response::pack_context(
+            &batch(pad, false),
+            Budget::request(32768),
+            &response::stdout_bytes,
+        )
+        .unwrap()
+    };
+    let mut pad = 0;
+    for _ in 0..4 {
+        let length = first_alone(pad).text.len();
+        pad = (pad + cap).checked_sub(length).unwrap();
+    }
+    let alone = first_alone(pad);
+    assert_eq!(alone.text.len(), cap, "{}", alone.text);
+    assert_eq!(alone.omitted, 9);
+    assert_eq!(parse_v2(&alone.text).unwrap().items.len(), 2 + 4 + 4 + 1);
+
+    let packed =
+        response::pack_context(&batch(pad, true), Budget::request(32768), &inflated).unwrap();
+    assert!(inflated(&packed.text) <= BYTE_CAP);
+    let parsed = parse_v2(&packed.text).unwrap_or_else(|e| panic!("{e}\n{}", packed.text));
+    let items: Vec<(V2Kind, String)> = parsed
+        .items
+        .iter()
+        .map(|item| match item.kind {
+            V2Kind::MoreFiles => (item.kind, item.body.clone()),
+            kind => (kind, item.handle.split('#').next().unwrap().to_owned()),
+        })
+        .collect();
+    let mut expected = vec![(V2Kind::Source, "src/one.rs".to_owned())];
+    expected.extend((0..4).map(|n| (V2Kind::Door, format!("src/a_use{n}.rs"))));
+    expected.push((V2Kind::Source, "src/two.rs".to_owned()));
+    assert_eq!(items, expected, "{}", packed.text);
+    // Nine outside, the second anchor's entry, the second group's four
+    // lines.
+    assert_eq!(packed.omitted, 9 + 1 + 4, "{}", packed.text);
+    assert_eq!(header_count(&parsed, "omitted"), Some(14));
+}
+
 /// Paths may begin with `edge ` or `next: ` unescaped (context-v2 § Source
 /// handles); every wire and the shared parser keep them as items.
 #[test]

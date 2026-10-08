@@ -14,8 +14,8 @@
 
 use crate::store::{
     ANCHOR_LIST, AnchorCandidate, AnchorWindow, CandidateBatch, CandidateCounters, CollectedAnchor,
-    DoorGroup, DoorState, DoorTarget, Doors, GROUP_FILES, Hit, MAX_ANCHORS, QueryAnchors,
-    RankedItem, RenderedForm, SearchOutcome, TIE_GROUP, TIER_OUTLINE,
+    DOOR_FILES, DoorGroup, DoorState, DoorTarget, Doors, GROUP_FILES, Hit, MAX_ANCHORS,
+    QueryAnchors, RankedItem, RenderedForm, SearchOutcome, TIE_GROUP, TIER_OUTLINE,
 };
 use crate::{Control, Engine, FoundryError, error::FResult};
 use std::path::{Path, PathBuf};
@@ -578,24 +578,26 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
 /// the root whose own first anchor resolved to that same definition; a
 /// merged tie group of at most [`TIE_GROUP`] takes each entry's exact group
 /// from its own root, cut to [`GROUP_FILES`] lines (`each`), and only when
-/// no entry has one the approximate group of the first entry's root that
-/// collected one, attributed to no entry; a larger merged tie group gives
-/// `ambiguous`. No merged anchor with a definition, or targets their roots'
-/// final reads dropped as stale, give `none`: another root's namesake is
-/// never promoted.
+/// no entry has one, one approximate group attributed to no entry, joined
+/// from the approximate doors every tie entry's root built
+/// ([`shared_approx`]); a larger merged tie group gives `ambiguous`. No
+/// merged anchor with a definition, or targets their roots' final reads
+/// dropped as stale, give `none`: another root's namesake is never
+/// promoted.
 fn merged_doors(batches: &[RootBatch], anchors: &[AnchorWindow]) -> Option<Doors> {
     batches[0].batch.doors.as_ref()?;
     let Some(window) = anchors.first().filter(|window| window.definitions > 0) else {
         return Some(Doors::unbuilt(DoorState::None));
     };
+    // Each root's first anchor as collected and its doors, with its index.
     let firsts = || {
-        batches
-            .iter()
-            .filter_map(|root| Some((root.batch.collected.as_ref()?, root.batch.doors.as_ref()?)))
-            .filter(|(first, _)| first.anchor == window.anchor)
+        batches.iter().enumerate().filter_map(|(root, batch)| {
+            let first = batch.batch.collected.as_ref()?;
+            (first.anchor == window.anchor).then_some((root, first, batch.batch.doors.as_ref()?))
+        })
     };
     let mut head: Vec<_> = firsts()
-        .flat_map(|(first, _)| first.head.iter().cloned())
+        .flat_map(|(_, first, _)| first.head.iter().cloned())
         .collect();
     // Stable: equal tuples keep root order, then each root's order.
     head.sort_by_key(|(_, resolver)| resolver.map(|resolver| resolver.key()));
@@ -609,7 +611,7 @@ fn merged_doors(batches: &[RootBatch], anchors: &[AnchorWindow]) -> Option<Doors
     // survived that root's read): a group onto it, or the approximate group
     // onto no entry of that root's own tie group.
     let built_for = |target: &crate::store::SourceHandle| {
-        let (_, doors) = firsts().find(|(first, _)| {
+        let (root, _, doors) = firsts().find(|(_, first, _)| {
             first
                 .head
                 .iter()
@@ -619,13 +621,13 @@ fn merged_doors(batches: &[RootBatch], anchors: &[AnchorWindow]) -> Option<Doors
             .groups
             .iter()
             .find(|group| group.target.as_ref().is_none_or(|onto| onto == target))?;
-        Some((doors.state, group))
+        Some((root, doors.state, group))
     };
     Some(match collected.target() {
         DoorTarget::None => Doors::unbuilt(DoorState::None),
         DoorTarget::Ambiguous => Doors::unbuilt(DoorState::Ambiguous),
         DoorTarget::Resolved(target) => match built_for(&target) {
-            Some((state, group)) if group.target.is_some() => Doors {
+            Some((_, state, group)) if group.target.is_some() => Doors {
                 state,
                 groups: vec![group.clone()],
             },
@@ -635,7 +637,7 @@ fn merged_doors(batches: &[RootBatch], anchors: &[AnchorWindow]) -> Option<Doors
             let exact: Vec<DoorGroup> = tied
                 .iter()
                 .filter_map(|target| match built_for(target)? {
-                    (DoorState::Exact | DoorState::Each, group) if group.target.is_some() => {
+                    (_, DoorState::Exact | DoorState::Each, group) if group.target.is_some() => {
                         let mut group = group.clone();
                         group.more_files += group.lines.len().saturating_sub(GROUP_FILES);
                         group.lines.truncate(GROUP_FILES);
@@ -645,18 +647,7 @@ fn merged_doors(batches: &[RootBatch], anchors: &[AnchorWindow]) -> Option<Doors
                 })
                 .collect();
             if exact.is_empty() {
-                match tied.iter().find_map(|target| {
-                    built_for(target).filter(|(state, _)| *state == DoorState::Approx)
-                }) {
-                    Some((_, group)) => Doors {
-                        state: DoorState::Approx,
-                        groups: vec![DoorGroup {
-                            target: None,
-                            ..group.clone()
-                        }],
-                    },
-                    None => Doors::unbuilt(DoorState::None),
-                }
+                shared_approx(tied.iter().filter_map(|target| built_for(target)))
             } else {
                 Doors {
                     state: DoorState::Each,
@@ -665,6 +656,50 @@ fn merged_doors(batches: &[RootBatch], anchors: &[AnchorWindow]) -> Option<Doors
             }
         }
     })
+}
+
+/// The one approximate group of a merged tie group without exact doors,
+/// attributed to no entry, from the groups its entries' roots built, as
+/// `(root, state, group)` in merged order (root order, then each root's
+/// order): each root's approximate group once, one line per file (a line
+/// keeps its root's handle), at most [`DOOR_FILES`] lines; every root's
+/// further files and every line past the cap count in `more_files`. `none`
+/// when no root built approximate doors.
+fn shared_approx<'a>(built: impl Iterator<Item = (usize, DoorState, &'a DoorGroup)>) -> Doors {
+    let mut roots: Vec<usize> = Vec::new();
+    let mut shared = DoorGroup {
+        target: None,
+        lines: Vec::new(),
+        more_files: 0,
+    };
+    for (root, state, group) in built {
+        if state != DoorState::Approx || roots.contains(&root) {
+            continue;
+        }
+        roots.push(root);
+        shared.more_files += group.more_files;
+        for line in &group.lines {
+            let listed = shared.lines.iter().any(|known| {
+                known.unit.workspace_id == line.unit.workspace_id
+                    && known.unit.path == line.unit.path
+            });
+            if listed {
+                continue;
+            }
+            if shared.lines.len() == DOOR_FILES {
+                shared.more_files += 1;
+            } else {
+                shared.lines.push(line.clone());
+            }
+        }
+    }
+    if roots.is_empty() {
+        return Doors::unbuilt(DoorState::None);
+    }
+    Doors {
+        state: DoorState::Approx,
+        groups: vec![shared],
+    }
 }
 
 /// 009 T002: semantic evidence exists only for the PRIMARY root's store.
@@ -917,14 +952,40 @@ mod tests {
         }
     }
 
+    /// Approximate doors of one group onto `target` (`None`: onto no entry)
+    /// built in the root whose workspace is `root`: `lines` door lines and
+    /// `more_files` more.
+    fn approx(target: Option<&RankedItem>, root: &str, lines: usize, more_files: usize) -> Doors {
+        let mut doors = one_group(DoorState::Approx, target, lines);
+        let group = &mut doors.groups[0];
+        for line in &mut group.lines {
+            line.unit.workspace_id = root.to_owned();
+        }
+        group.more_files = more_files;
+        doors
+    }
+
+    /// The approximate doors onto no entry of `parts`' lines in order.
+    fn shared(parts: &[(&str, usize)], more_files: usize) -> Doors {
+        let mut doors = approx(None, "", 0, more_files);
+        for (root, lines) in parts {
+            let part = approx(None, root, *lines, 0);
+            doors.groups[0]
+                .lines
+                .extend(part.groups[0].lines.iter().cloned());
+        }
+        doors
+    }
+
     /// 007 (context-v2 § Doors): the merged first anchor decides; a merged
     /// resolution takes the doors of the root that resolved to the same
     /// definition; a merged tie group of at most four takes each entry's
     /// exact group from its own root, cut to four lines (`each`), even when
-    /// each root resolved on its own, and the approximate group of the first
-    /// entry's root, onto no entry, when none has exact doors; five tied
-    /// across roots are `ambiguous`; an entry its root dropped as stale gets
-    /// no group and no lower namesake takes its place.
+    /// each root resolved on its own; when none has exact doors, one
+    /// approximate group onto no entry joins every tie entry's root's own
+    /// approximate doors (each root's once, in root order, sixteen lines);
+    /// five tied across roots are `ambiguous`; an entry its root dropped as
+    /// stale gets no group and no lower namesake takes its place.
     #[test]
     fn merged_doors_follow_the_merged_first_anchor() {
         use DoorState::{Approx, Each, Exact};
@@ -978,13 +1039,39 @@ mod tests {
         );
         assert_eq!(doors.state, Each);
         assert_eq!(doors.groups, one_group(Exact, Some(&other), 2).groups);
-        // No entry has exact doors: the first entry's root's approximate
-        // group, onto no entry.
+        // No entry has exact doors: one approximate group onto no entry,
+        // every tie entry's root's lines in root order, their more files
+        // summed.
         let doors = pair(
-            one_group(Approx, Some(&plain), 1),
-            one_group(Approx, Some(&other), 2),
+            approx(Some(&plain), "p", 1, 3),
+            approx(Some(&other), "r", 2, 3),
         );
-        assert_eq!(doors, one_group(Approx, None, 1));
+        assert_eq!(doors, shared(&[("p", 1), ("r", 2)], 6));
+        // An empty group in the primary hides nothing.
+        let doors = pair(
+            approx(Some(&plain), "p", 0, 0),
+            approx(Some(&other), "r", 2, 3),
+        );
+        assert_eq!(doors, shared(&[("r", 2)], 3));
+        // Sixteen lines in all; the rest are counted.
+        let doors = pair(
+            approx(Some(&plain), "p", 10, 3),
+            approx(Some(&other), "r", 10, 3),
+        );
+        assert_eq!(doors, shared(&[("p", 10), ("r", 6)], 3 + 3 + 4));
+        // Two tied entries in one root: that root's group once.
+        let twin = definition("c2.rs", (1, 0), 0, true);
+        let doors = merge_context(&[
+            with_doors(
+                "primary",
+                vec![plain.clone()],
+                approx(Some(&plain), "p", 1, 0),
+            ),
+            with_doors("ref1", vec![other.clone(), twin], approx(None, "r", 2, 0)),
+        ])
+        .doors
+        .expect("the primary requested doors");
+        assert_eq!(doors, shared(&[("p", 1), ("r", 2)], 0));
         // The primary dropped its entry as stale: it gets no group, and the
         // lower namesake in ref1 never takes its place.
         let doors = pair(
