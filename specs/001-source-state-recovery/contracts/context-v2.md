@@ -1038,8 +1038,12 @@ applies to it, and each entry's doors come from its own root's final read.
 **Doors of a tie group** (`doors:each`; 2026-10-08, after cross-lab refutation of a
 first-four-listed bound and of per-entry approximate groups). Each tie-group entry is a
 target with the exact-doors rule below, read in its root's one final read: at most 4
-references windows per request, each the resolved anchor's window (256 records, 64
-files), with the same cancellation checks. An entry gets a **group** only from exact
+references windows per root's final read, each the resolved anchor's window (256
+records, 64 files), with a cancellation check before every window after the first. A
+multi-root owner builds each root's doors before the merge, as for a resolved target,
+so a request reads at most 4 windows per serving root (at most 9 roots); deciding the
+merged tie group before the roots' reads would need a second pass over every root. An
+entry gets a **group** only from exact
 doors: at most 4 door lines (16 in all, the resolved cap), then `⋯ <m> more files` when
 more remain; its complete list is `references {handle}` on the entry's handle. An entry
 without exact doors (no current scope, no matching occurrence) gets no group, and an
