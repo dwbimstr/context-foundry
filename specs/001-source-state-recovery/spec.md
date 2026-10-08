@@ -16,7 +16,9 @@ locally at the cross-lab SHIP and committed (`844796c`); unreleased. The owner a
 the city-map design on 2026-10-07 (T007–T009 below; [context v2](contracts/context-v2.md#city-map)):
 T009 implemented and accepted locally 2026-10-08 (`89a8c54`); T007 implemented and
 merged 2026-10-08 (`4e23dee`, cross-lab SHIP, gates green), its G1 verdict pending with
-005 T004 (merged `d00fc19`) on the final city-map binary; T008 in review.
+005 T004 (merged `d00fc19`) on the final city-map binary; T008 implemented and merged
+2026-10-08 (`3e0a117`, cross-lab SHIP, gates green) with owner-approved forks of the Ruby,
+Perl and Rust grammars.
 
 ## Outcome and baseline
 
@@ -484,7 +486,8 @@ G1 judges it together with 005 T004.
 
 ### T008 — Languages beyond the first eight
 
-**Status:** approved 2026-10-07 (owner), revised after refutation, proposed.
+**Status:** approved 2026-10-07 (owner), revised after refutation; implemented and
+merged 2026-10-08 (`3e0a117`; [validation](../../docs/validation.md)).
 
 - **Depends:** T007 (schema and import keys). **Scope:** `Cargo.toml` (the grammar
   crates of the contract's § Languages and `tree-sitter` 0.25 → 0.26), `src/syntax.rs`
