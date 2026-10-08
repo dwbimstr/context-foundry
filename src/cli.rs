@@ -122,12 +122,14 @@ enum Command {
         snapshot: PathBuf,
     },
     /// 005: budgeted compiler references of one symbol, as v2 text. Seed with
-    /// `--symbol-id` (16 hex) or with `--handle` plus `--byte-offset`.
+    /// `--symbol-id` (16 hex), with `--handle` plus `--byte-offset`, or with
+    /// `--handle` alone: the symbols of its definition unit (context-v2
+    /// § Doors).
     #[command(group(clap::ArgGroup::new("seed").required(true).args(["symbol_id", "handle"])))]
     References {
         #[arg(long)]
         symbol_id: Option<String>,
-        #[arg(long, requires = "byte_offset")]
+        #[arg(long)]
         handle: Option<String>,
         /// Absolute byte offset inside the handle's range.
         #[arg(long, requires = "handle")]
@@ -762,7 +764,7 @@ fn run() -> AResult<()> {
                     "stdout_tokens": packed.tokens,
                     "tokenizer": response::TOKENIZER,
                     "omitted": packed.omitted,
-                    "strategy": if batch.counters.graph.is_some() { "graph" } else { "search" },
+                    "strategy": if batch.doors.is_some() { "graph" } else { "search" },
                 })
             );
         }
@@ -874,9 +876,11 @@ fn run() -> AResult<()> {
                     handle,
                     byte_offset,
                 },
+                (None, Some(handle), None) => ReferencesSeed::Handle(handle),
                 _ => {
                     return Err(FoundryError::InvalidArgument(
-                        "exactly one seed form: --symbol-id, or --handle with --byte-offset".into(),
+                        "exactly one seed form: --symbol-id, or --handle with an optional --byte-offset"
+                            .into(),
                     )
                     .into());
                 }

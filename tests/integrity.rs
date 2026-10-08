@@ -12,16 +12,15 @@ use context_foundry::testkit::{
 };
 use context_foundry::{Control, Engine, FoundryError, Strategy, digest};
 
-/// Whether any candidate's first form (a unit's bytes, an outline or a graph
-/// line) contains `needle`; an `[address]` form carries no text.
+/// Whether any candidate's first form (a unit's bytes or an outline)
+/// contains `needle`; an `[address]` form carries no text.
 fn mentions(batch: &CandidateBatch, needle: &str) -> bool {
     batch.items.iter().any(|item| {
         item.forms.first().is_some_and(|form| match form {
             RenderedForm::Verbatim(text)
             | RenderedForm::Signature(text)
             | RenderedForm::Outline(text)
-            | RenderedForm::OutlineMin(text)
-            | RenderedForm::Line(text) => text.contains(needle),
+            | RenderedForm::OutlineMin(text) => text.contains(needle),
             RenderedForm::Address => false,
         })
     })
@@ -208,51 +207,40 @@ fn scan_never_commits_a_path_the_handle_rules_reject() {
     assert!(fx.engine.source("bad\nname.rs").unwrap().is_none());
 }
 
+/// 005 T004: a graph context requests doors; it no longer expands the
+/// manual file-neighborhood graph, so neither a fresh nor an undecodable edge
+/// row changes it, while the direct `graph` request still names the
+/// component-local failure.
 #[test]
-fn graph_context_names_invalid_stale_and_unavailable_without_losing_source() {
+fn graph_context_builds_doors_and_never_reads_the_manual_graph() {
     const A: &str = "fn alpha_probe() { beta_probe(); }\n";
     const B: &str = "fn beta_probe() {}\n";
-    // Unavailable: no edges at all.
     let mut fx = new_fixture();
     fx.add(&[("a.rs", A), ("b.rs", B)]);
-    let outcome = fx
-        .engine
-        .context_candidates("alpha_probe", Strategy::Graph, &Control::unbounded())
-        .unwrap();
-    assert_eq!(outcome.counters.graph, Some("graph_unavailable"));
-    assert!(mentions(&outcome, "alpha_probe"));
-    // Healthy: a fresh edge, no reason.
+    let context = |engine: &Engine| {
+        engine
+            .context_candidates("alpha_probe", Strategy::Graph, &Control::unbounded())
+            .unwrap()
+    };
+    let before = context(&fx.engine);
+    assert_eq!(
+        before.doors.as_ref().map(|doors| doors.state),
+        Some(context_foundry::store::DoorState::Approx)
+    );
+    assert!(mentions(&before, "alpha_probe"));
     fx.engine
         .import_graph(&edge_bundle("p", ("a.rs", A), ("b.rs", B)))
         .unwrap();
-    let outcome = fx
-        .engine
-        .context_candidates("alpha_probe", Strategy::Graph, &Control::unbounded())
-        .unwrap();
-    assert_eq!(outcome.counters.graph, Some("ok"));
-    assert!(mentions(&outcome, "--calls-->"));
-    // Stale only: every stored edge no longer matches its source hashes.
-    fx.engine
-        .replace_source("b.rs", "fn beta_probe() { changed(); }\n")
-        .unwrap();
-    fx.drain();
-    let outcome = fx
-        .engine
-        .context_candidates("alpha_probe", Strategy::Graph, &Control::unbounded())
-        .unwrap();
-    assert_eq!(outcome.counters.graph, Some("graph_stale"));
-    assert!(!mentions(&outcome, "--calls-->"));
-    assert!(mentions(&outcome, "alpha_probe"));
-    // Invalid: an undecodable edge row degrades only the graph component.
+    let with_edges = context(&fx.engine);
+    assert_eq!(with_edges.items.len(), before.items.len());
+    assert_eq!(with_edges.doors, before.doors);
     let (_dir, store, _root) = fx.close();
     insert_raw_edge(&store, "a.rs", "{\"not\": \"an edge\"");
     let engine = Engine::open_existing(&store).unwrap();
-    let outcome = engine
-        .context_candidates("alpha_probe", Strategy::Graph, &Control::unbounded())
-        .unwrap();
-    assert_eq!(outcome.counters.graph, Some("graph_invalid"));
-    assert!(mentions(&outcome, "alpha_probe"));
-    // The direct graph request names the same component-local failure.
+    let invalid = context(&engine);
+    assert_eq!(invalid.doors, before.doors);
+    assert!(mentions(&invalid, "alpha_probe"));
+    // The direct graph request names the component-local failure.
     assert_eq!(
         engine.graph("a.rs", false, 1, 8).unwrap_err().code(),
         "graph_invalid"
@@ -533,42 +521,6 @@ fn delete_between_candidate_collection_and_final_validation_is_omitted() {
     assert!(!mentions(&outcome, "mutation_probe_two"));
     assert!(outcome.counters.stale >= 1);
     assert!(mentions(&outcome, "mutation_probe() "));
-}
-
-#[test]
-fn graph_replacement_between_candidate_collection_and_final_validation_is_omitted() {
-    const A: &str = "fn graph_inject() { dep_inject(); }\n";
-    const B: &str = "fn dep_inject() {}\n";
-    let mut fx = new_fixture();
-    fx.add(&[("a.rs", A), ("b.rs", B)]);
-    fx.engine
-        .import_graph(&edge_bundle("p", ("a.rs", A), ("b.rs", B)))
-        .unwrap();
-    // The graph row still matches its source hashes; only the producer's
-    // bundle is replaced inside the response.
-    fault::arm(
-        names::CONTEXT_BEFORE_FINAL_VALIDATION,
-        0,
-        Action::Call(Box::new(|ctx| {
-            ctx.engine
-                .unwrap()
-                .import_graph(&GraphBundle {
-                    provider: "p".into(),
-                    revision: "r2".into(),
-                    edges: vec![],
-                })
-                .unwrap();
-        })),
-    );
-    let outcome = fx
-        .engine
-        .context_candidates("graph_inject", Strategy::Graph, &Control::unbounded())
-        .unwrap();
-    fault::disarm_all();
-    assert!(!mentions(&outcome, "--calls-->"));
-    assert!(mentions(&outcome, "graph_inject"));
-    assert!(outcome.counters.stale >= 1);
-    assert_eq!(outcome.counters.graph, Some("graph_stale"));
 }
 
 #[test]

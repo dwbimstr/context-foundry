@@ -1028,6 +1028,29 @@ fn auto_strategy_uses_whole_keywords_not_substrings() {
         response::strategy_for_query("callers! of main"),
         Strategy::Graph
     );
+    // 005 T004: every doors request word, whole and case-insensitive.
+    for query in [
+        "what uses it",
+        "where is it USED",
+        "who invokes it",
+        "what affects it",
+        "what breaks if it changes",
+        "its dependents",
+        "what referenced it",
+    ] {
+        assert_eq!(
+            response::strategy_for_query(query),
+            Strategy::Graph,
+            "{query}"
+        );
+    }
+    for query in ["the user table", "a useful helper", "breakfast"] {
+        assert_eq!(
+            response::strategy_for_query(query),
+            Strategy::Search,
+            "{query}"
+        );
+    }
 }
 
 #[test]
@@ -1076,73 +1099,157 @@ fn context_packs_source_first_budgets_and_metadata() {
     );
 }
 
+/// One context's doors, packed text and parse.
+fn doors_at(
+    engine: &Engine,
+    query: &str,
+) -> (context_foundry::store::Doors, CandidateBatch, String) {
+    let batch = engine
+        .context_candidates(query, Strategy::Auto, &Control::unbounded())
+        .unwrap();
+    let packed = response::pack_context(&batch, Budget::request(4096), &stdout_bytes).unwrap();
+    parse_v2(&packed.text).unwrap_or_else(|e| panic!("{e}\n{}", packed.text));
+    (
+        batch.doors.clone().expect("doors requested"),
+        batch,
+        packed.text,
+    )
+}
+
+fn door_paths(doors: &context_foundry::store::Doors) -> Vec<&str> {
+    doors
+        .lines
+        .iter()
+        .map(|line| line.unit.path.as_str())
+        .collect()
+}
+
+/// 005 T004 approximate doors: an importing file outranks same-named
+/// mentions elsewhere even as the 65th candidate by path; one line per
+/// file (`(+n)` for its further sites), at most 16, then `⋯ m more files`.
 #[test]
-fn graph_annotations_never_starve_a_fitting_source_span() {
+fn approximate_doors_rank_importing_files_first_and_summarize_by_file() {
     let fixture = tempfile::tempdir().unwrap();
-    let root = fixture.path().join("ws");
-    let (_store, mut engine) = setup(&root);
-    for path in ["a.rs", "b.rs"] {
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    engine
+        .replace_source("lib/session.ts", "export function toolSession() {}\n")
+        .unwrap();
+    for i in 0..64 {
+        let mut body = format!("export const x{i:02} = toolSession;\n");
+        if i == 0 {
+            body.push_str("export function y00() { return toolSession; }\n");
+        }
         engine
-            .replace_source(path, "fn parse_record() { caller marker }\n")
+            .replace_source(&format!("a/m{i:02}.ts"), &body)
+            .unwrap();
+    }
+    engine
+        .replace_source(
+            "z/user.ts",
+            "import { toolSession } from \"../lib/session\";\ntoolSession();\n",
+        )
+        .unwrap();
+    drain(&mut engine);
+    let (doors, batch, text) = doors_at(&engine, "what uses `toolSession`");
+    assert_eq!(doors.state, context_foundry::store::DoorState::Approx);
+    assert_eq!(doors.target.as_ref().unwrap().path, "lib/session.ts");
+    let paths = door_paths(&doors);
+    assert_eq!(paths.len(), 16);
+    assert_eq!(paths[0], "z/user.ts", "{text}");
+    assert_eq!(doors.lines[0].line, 1);
+    assert_eq!(&paths[1..4], ["a/m00.ts", "a/m01.ts", "a/m02.ts"]);
+    assert_eq!(doors.lines[1].more, 1, "a/m00.ts has a second site");
+    assert_eq!(doors.more_files, 65 - 16);
+    assert!(!batch.counters.candidates_full);
+    assert!(text.contains("doors:approx"), "{text}");
+    assert!(text.contains(" (+1) [approx]\n"), "{text}");
+    assert!(text.contains("⋯ 49 more files\n"), "{text}");
+}
+
+/// The approximate window examines the first 256 candidate units; a
+/// one-character name has no doors.
+#[test]
+fn the_approximate_window_is_256_units_and_one_character_names_have_none() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    engine
+        .replace_source(
+            "lib/marker.ts",
+            "export function markerFn() {}\nexport function q() {}\n",
+        )
+        .unwrap();
+    for i in 0..300 {
+        engine
+            .replace_source(&format!("use/u{i:03}.ts"), "markerFn();\nq();\n")
             .unwrap();
     }
     drain(&mut engine);
-    let bundle = GraphBundle {
-        provider: "fixture".into(),
-        revision: "r1".into(),
-        edges: vec![Edge {
-            from: endpoint("a.rs", "fn parse_record() { caller marker }\n"),
-            to: endpoint("b.rs", "fn parse_record() { caller marker }\n"),
-            kind: "calls".into(),
-            evidence: "manual".into(),
-        }],
-    };
-    engine.import_graph(&bundle).unwrap();
-    // Graph keyword query with graph present: source span precedes graph lines.
-    let outcome = engine
-        .context_candidates(
-            "references to parse_record",
-            Strategy::Auto,
-            &Control::unbounded(),
-        )
-        .unwrap();
-    assert_eq!(outcome.counters.graph, Some("ok"), "auto resolved to graph");
-    let packed =
-        response::pack_context(&outcome, Budget::request(1024), &response::stdout_bytes).unwrap();
-    let source_pos = packed
-        .text
-        .find("fn parse_record")
-        .expect("source evidence");
-    let graph_pos = packed.text.find("\nedge ").unwrap_or(packed.text.len());
-    assert!(
-        source_pos < graph_pos,
-        "a fitting source span must precede graph annotations"
+    let (doors, batch, _) = doors_at(&engine, "what uses `markerFn`");
+    assert_eq!(doors.lines.len(), 16);
+    assert_eq!(doors.more_files, 256 - 16);
+    assert!(batch.counters.candidates_full, "the window filled");
+    let (doors, _, _) = doors_at(&engine, "what uses `q`");
+    assert_eq!(doors.state, context_foundry::store::DoorState::Approx);
+    assert!(doors.lines.is_empty());
+}
+
+/// Import keys in a Bun workspace layout: named, default, namespace (the
+/// module's file stem) and type-only imports mark importing files, which
+/// precede every mention; an aliased import binds the alias and is not
+/// followed (a named limitation), so that file ranks as a mention.
+#[test]
+fn bun_workspace_import_forms_mark_importing_files_and_aliases_are_not_followed() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    let sources = [
+        (
+            "packages/agent/src/session.ts",
+            "export interface ToolSession {\n    id: string;\n}\n",
+        ),
+        (
+            "packages/a-docs/src/early.ts",
+            "// ToolSession is documented elsewhere\nexport const early = 1;\n",
+        ),
+        (
+            "packages/cli/src/named.ts",
+            "import { ToolSession } from \"@oh/agent\";\nexport let a: ToolSession;\n",
+        ),
+        (
+            "packages/cli/src/default.ts",
+            "import ToolSession from \"@oh/agent/session\";\nexport let b: ToolSession;\n",
+        ),
+        (
+            "packages/cli/src/typeonly.ts",
+            "import type { ToolSession } from \"@oh/agent\";\nexport let c: ToolSession;\n",
+        ),
+        (
+            "packages/cli/src/namespace.ts",
+            "import * as session from \"@oh/agent/session\";\nexport let d: session.ToolSession;\n",
+        ),
+        (
+            "packages/cli/src/aliased.ts",
+            "import { ToolSession as TS } from \"@oh/agent\";\nexport let e: TS;\n",
+        ),
+    ];
+    for (path, body) in sources {
+        engine.replace_source(path, body).unwrap();
+    }
+    drain(&mut engine);
+    let (doors, _, text) = doors_at(&engine, "what uses `ToolSession`");
+    assert_eq!(
+        door_paths(&doors),
+        [
+            "packages/cli/src/default.ts",
+            "packages/cli/src/named.ts",
+            "packages/cli/src/namespace.ts",
+            "packages/cli/src/typeonly.ts",
+            "packages/a-docs/src/early.ts",
+            "packages/cli/src/aliased.ts",
+        ],
+        "{text}"
     );
-    // Explicit graph without edges returns source results and a reason.
-    let outcome = engine
-        .context_candidates(
-            "usage of parse_record",
-            Strategy::Graph,
-            &Control::unbounded(),
-        )
-        .unwrap();
-    assert_eq!(outcome.counters.graph, Some("ok"));
-    engine
-        .import_graph(&GraphBundle {
-            provider: "fixture".into(),
-            revision: "r2".into(),
-            edges: vec![],
-        })
-        .unwrap();
-    let outcome = engine
-        .context_candidates(
-            "usage of parse_record",
-            Strategy::Graph,
-            &Control::unbounded(),
-        )
-        .unwrap();
-    assert_eq!(outcome.counters.graph, Some("graph_unavailable"));
-    assert!(!outcome.items.is_empty());
+    let namespace = &doors.lines[2];
+    assert_eq!(namespace.line, 2, "its first site holds the name");
 }
 
 #[test]
@@ -2042,51 +2149,6 @@ fn a_python_unit_signature_form_markers_retrieve_through_its_clipped_handle() {
         .unwrap();
     let from = text.find('\n').unwrap() + 1;
     assert_eq!(read.span, &text.as_bytes()[from..text.len() - 1]);
-}
-
-#[test]
-fn a_filled_graph_examination_window_reports_candidates_full() {
-    for (count, full) in [(31usize, false), (32, true), (33, true)] {
-        let fixture = tempfile::tempdir().unwrap();
-        let root = fixture.path().join("ws");
-        let (_store, mut engine) = setup(&root);
-        const HUB: &str = "fn hub_probe() {}\n";
-        engine.replace_source("hub.rs", HUB).unwrap();
-        let mut edges = Vec::new();
-        for i in 0..count {
-            let (path, body) = (format!("leaf_{i}.rs"), format!("fn leaf_{i}() {{}}\n"));
-            engine.replace_source(&path, &body).unwrap();
-            edges.push(Edge {
-                from: endpoint("hub.rs", HUB),
-                to: endpoint(&path, &body),
-                kind: "calls".into(),
-                evidence: "manual".into(),
-            });
-        }
-        drain(&mut engine);
-        engine
-            .import_graph(&GraphBundle {
-                provider: "fixture".into(),
-                revision: "r1".into(),
-                edges,
-            })
-            .unwrap();
-        let batch = engine
-            .context_candidates("hub_probe", Strategy::Graph, &Control::unbounded())
-            .unwrap();
-        assert_eq!(batch.counters.graph, Some("ok"));
-        assert_eq!(batch.counters.candidates_full, full, "{count} edges");
-        let packed =
-            response::pack_context(&batch, Budget::request(32768), &response::stdout_bytes)
-                .unwrap();
-        let parsed = parse_v2(&packed.text).unwrap();
-        assert_eq!(
-            parsed.header.contains(&"candidates:full".to_owned()),
-            full,
-            "{count} edges: {:?}",
-            parsed.header
-        );
-    }
 }
 
 #[test]

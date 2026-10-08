@@ -581,12 +581,12 @@ fn route(text: &str) -> Option<String> {
         .find_map(|segment| segment.strip_prefix("route:").map(str::to_owned))
 }
 
-/// True when the context resolved to graph (the `graph:` segment appears
-/// exactly then).
+/// True when the context resolved to graph: since 005 T004 a graph context
+/// requests doors, and the `doors:` segment appears exactly then.
 fn resolved_graph(text: &str) -> bool {
     header(text)
         .iter()
-        .any(|segment| segment.starts_with("graph:"))
+        .any(|segment| segment.starts_with("doors:"))
 }
 
 /// The predictions the fake worker received: `(request id, candidate)`.
@@ -1165,13 +1165,13 @@ fn missing_nemotron_does_not_disable_the_policy() {
         segments.contains(&"semantic:fallback:profile_invalid".to_owned()),
         "{text}"
     );
-    // The query anchors `alpha_one`, so `anchored` follows `route:`
-    // (context-v2 § Anchored context, 001 T007).
-    assert_eq!(
-        segments[segments.len().saturating_sub(2)..],
-        ["route:policy", "anchored"],
-        "{text}"
-    );
+    // The query anchors `alpha_one` and the policy chose graph, so the
+    // doors segment and `anchored` follow `route:` (context-v2 § Anchored
+    // context, § Doors).
+    let tail = &segments[segments.len().saturating_sub(3)..];
+    assert_eq!(tail[0], "route:policy", "{text}");
+    assert!(tail[1].starts_with("doors:"), "{text}");
+    assert_eq!(tail[2], "anchored", "{text}");
     assert!(resolved_graph(&text));
 }
 

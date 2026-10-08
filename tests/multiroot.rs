@@ -712,10 +712,11 @@ async fn indexing_ref1_makes_only_its_pre_edit_handles_stale() {
     client.cancel().await.unwrap();
 }
 
-/// Identical graph rows in two roots stay distinct: both edges appear, each
-/// carrying its seed root's alias; no cross-root deduplication or edges.
+/// 005 T004: a multi-root graph context requests doors and no longer
+/// expands the roots' manual graphs: identical rows in two roots add no
+/// lines, and an anchor-less query is `doors:none` with search packing.
 #[tokio::test]
-async fn identical_graph_rows_in_two_roots_stay_distinct() {
+async fn a_multi_root_graph_context_requests_doors_and_reads_no_manual_graph() {
     let lib = "pub fn graph_seed_port() -> u8 {\n    7\n}\n\npub fn graph_dock_rail() -> u8 {\n    9\n}\n";
     let dir = tempfile::tempdir().unwrap();
     let primary = repo(dir.path(), "ws0", lib);
@@ -754,8 +755,6 @@ async fn identical_graph_rows_in_two_roots_stay_distinct() {
         &[],
     )
     .await;
-    // An anchor-less query: an anchored context has no edge lines
-    // (context-v2 § Anchored context).
     let context = call(
         client.peer(),
         "context",
@@ -768,18 +767,14 @@ async fn identical_graph_rows_in_two_roots_stay_distinct() {
     .await;
     let text = assert_success(&context);
     let parsed = parse_v2(&text).unwrap_or_else(|e| panic!("not a v2 text ({e}):\n{text}"));
-    let mut edges: Vec<String> = parsed
-        .items
-        .iter()
-        .filter(|item| item.kind == context_foundry::testkit::V2Kind::Edge)
-        .map(|item| item.body.clone())
-        .collect();
-    edges.sort();
-    let edge_text = "src/lib.rs:1 (graph_seed_port) --calls--> src/lib.rs:5 (graph_dock_rail) [manual; provider=fixture@1]";
-    assert_eq!(
-        edges,
-        vec![format!("primary {edge_text}"), format!("ref1 {edge_text}")],
-        "identical rows stay distinct, one per root, aliased:\n{text}"
+    assert_eq!(parsed.header.last().unwrap(), "doors:none", "{text}");
+    assert!(!text.contains("--calls-->"), "{text}");
+    assert!(
+        parsed
+            .items
+            .iter()
+            .all(|item| item.kind == context_foundry::testkit::V2Kind::Source),
+        "{text}"
     );
     client.cancel().await.unwrap();
 }

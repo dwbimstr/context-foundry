@@ -63,18 +63,30 @@ pub fn compact_json(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
-const GRAPH_KEYWORDS: [&str; 11] = [
-    "calls",
-    "caller",
+/// The words that request doors under `auto` (context-v2 § Doors).
+const DOOR_WORDS: [&str; 22] = [
     "callers",
-    "depends",
-    "impact",
-    "dependency",
-    "dependencies",
-    "reference",
-    "references",
+    "caller",
+    "calls",
+    "called",
+    "invokes",
+    "invoked",
+    "invokers",
+    "uses",
+    "used",
     "usage",
     "usages",
+    "references",
+    "reference",
+    "referenced",
+    "dependents",
+    "depends",
+    "dependency",
+    "dependencies",
+    "impact",
+    "affects",
+    "break",
+    "breaks",
 ];
 
 /// The context retrieval strategy: `auto` routes (deterministically, or by
@@ -98,14 +110,15 @@ impl std::fmt::Display for Strategy {
 }
 
 /// Deterministic auto routing: ASCII-lowercase the query, tokenize maximal
-/// runs of ASCII letters, digits or `_`; any whole keyword token selects
-/// graph. Substring matches such as `preferences` or `calls_tracker` do not.
+/// runs of ASCII letters, digits or `_`; any whole token among the doors
+/// request words selects graph, which builds doors (context-v2 § Doors).
+/// Substring matches such as `preferences` or `calls_tracker` do not.
 pub fn strategy_for_query(query: &str) -> Strategy {
     let lowered = query.to_ascii_lowercase();
     let mut token = String::new();
     let mut graph = false;
     let flush = |token: &mut String, graph: &mut bool| {
-        if GRAPH_KEYWORDS.contains(&token.as_str()) {
+        if DOOR_WORDS.contains(&token.as_str()) {
             *graph = true;
         }
         token.clear();
@@ -272,7 +285,6 @@ struct HeaderV2<'a> {
     capped: u64,
     stale: u64,
     candidates_full: bool,
-    graph: Option<&'a str>,
     /// The 009 T002 semantic word: `ready`, `partial` or
     /// `fallback:<reason>`; `None` keeps the baseline header byte-for-byte.
     semantic: Option<&'a str>,
@@ -284,6 +296,9 @@ struct HeaderV2<'a> {
     /// definition count among its ambiguous anchors (context-v2 § Anchored
     /// context); `None` keeps the header unchanged.
     defs: Option<u64>,
+    /// `doors:<state>`: a context that requested doors (context-v2 § Doors);
+    /// `None` keeps the header unchanged.
+    doors: Option<&'static str>,
     /// The bare `anchored` segment, last: a context packed as the anchored
     /// selection; `false` keeps the header unchanged.
     anchored: bool,
@@ -336,9 +351,6 @@ impl HeaderV2<'_> {
         if self.candidates_full {
             segments.push("candidates:full".into());
         }
-        if let Some(graph) = self.graph {
-            segments.push(format!("graph:{graph}"));
-        }
         if let Some(semantic) = self.semantic {
             segments.push(format!("semantic:{}", single_line(semantic)));
         }
@@ -347,6 +359,9 @@ impl HeaderV2<'_> {
         }
         if let Some(defs) = self.defs {
             segments.push(format!("defs:{defs}"));
+        }
+        if let Some(doors) = self.doors {
+            segments.push(format!("doors:{doors}"));
         }
         if self.anchored {
             segments.push("anchored".into());
@@ -482,7 +497,6 @@ fn rendered_form(item: &RankedItem, form: &RenderedForm) -> RenderedChoice {
         RenderedForm::Outline(body) | RenderedForm::OutlineMin(body) => {
             (source(Some("[outline]"), body), None)
         }
-        RenderedForm::Line(text) => (edge_line(text), None),
         RenderedForm::Address => (
             handle.map_or_else(String::new, |handle| {
                 item_line(&handle.to_v2(), lines, &item.label, Some("[address]"))
@@ -499,11 +513,6 @@ fn ranked_forms(item: &RankedItem) -> Vec<RenderedChoice> {
         .map(|form| rendered_form(item, form))
         .filter(|(rendered, _)| !rendered.is_empty())
         .collect()
-}
-
-/// A graph item's one line, `edge <text>` (context-v2 § Evidence items).
-fn edge_line(text: &str) -> String {
-    format!("edge {}\n", single_line(text))
 }
 
 /// One semantic item line (009 T002): the selection tag sits immediately
@@ -701,12 +710,12 @@ fn refusal_floor_impl(
         capped: longest,
         stale: longest,
         candidates_full: true,
-        graph: (op == "context").then_some("graph_unavailable"),
         semantic: None,
         route: None,
-        // Like `route:`, the hint reserves no room for `defs:` or `anchored`:
-        // the worst-case numbers above dominate them.
+        // Like `route:`, the hint reserves no room for `defs:`, `doors:` or
+        // `anchored`: the worst-case numbers above dominate them.
         defs: None,
+        doors: None,
         anchored: false,
     };
     let item = handle.map_or_else(String::new, |handle| {
@@ -911,10 +920,10 @@ fn pack_retrieve_impl(
         capped: 0,
         stale: 0,
         candidates_full: false,
-        graph: None,
         semantic: None,
         route: None,
         defs: None,
+        doors: None,
         anchored: false,
     };
     let render = |length: usize, shown: usize, limited_by: BudgetLimiter| {
@@ -1000,10 +1009,10 @@ fn pack_retrieve_outline_impl(
         capped: 0,
         stale: 0,
         candidates_full: false,
-        graph: None,
         semantic: None,
         route: None,
         defs: None,
+        doors: None,
         anchored: false,
     };
     let handle = out.requested.to_v2();
@@ -1122,7 +1131,8 @@ pub fn pack_context_roots_with_memory(
 const DIRECTORY_LINES: usize = 8;
 
 /// The context header over a batch's facts; `defs` and `anchored` are the
-/// anchored selection's last segments.
+/// anchored selection's last segments, and `doors:<state>` is present when
+/// the context requested doors.
 fn context_header<'a>(
     batch: &'a CandidateBatch,
     roots: Option<&'a [RootHeader]>,
@@ -1140,10 +1150,10 @@ fn context_header<'a>(
         capped: batch.counters.capped,
         stale: batch.counters.stale,
         candidates_full: batch.counters.candidates_full,
-        graph: batch.counters.graph,
         semantic: batch.semantic.as_deref(),
         route: batch.route.as_deref(),
         defs,
+        doors: batch.doors.as_ref().map(|doors| doors.state.as_str()),
         anchored,
     }
 }
@@ -1237,9 +1247,12 @@ impl Slot {
 /// upgraded to its signature (verbatim when it has none), then to verbatim,
 /// when the difference fits. Every decision is a trial of the whole response
 /// with the header updated for it; an entry is omitted only when not even
-/// its last form fits. Nothing else is packed: every other candidate is
-/// counted in `omitted:<n>`. Opt-in 008 memory lines then fill the remaining
-/// budget under their existing rule.
+/// its last form fits. Then the door lines of § Doors, when the context
+/// requested doors and they were built: each placed when it fits, then the
+/// `⋯ <m> more files` line when it fits (navigation, not an item). Nothing
+/// else is packed: every other candidate is counted in `omitted:<n>`.
+/// Opt-in 008 memory lines then fill the remaining budget under their
+/// existing rule.
 fn pack_anchored(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
@@ -1299,6 +1312,22 @@ fn pack_anchored(
             plans.push(Plan::Ambiguous(start..slots.len()));
         }
     }
+    // The door lines (context-v2 § Doors), after every anchor's entries.
+    let doors = batch.doors.as_ref();
+    let door_slots = slots.len();
+    if let Some(doors) = doors {
+        let approx = doors.state == crate::store::DoorState::Approx;
+        slots.extend(
+            doors
+                .lines
+                .iter()
+                .map(|door| Slot::line(door_line(door, approx))),
+        );
+    }
+    let door_slots = door_slots..slots.len();
+    let more_files = doors
+        .filter(|doors| doors.more_files > 0)
+        .map(|doors| format!("⋯ {} more files\n", doors.more_files));
     // Everything outside the selection is omitted from the start.
     let outside = batch
         .items
@@ -1310,29 +1339,34 @@ fn pack_anchored(
         })
         .count();
     let header = context_header(batch, roots, defs, true);
-    let render = |slots: &[Slot], dropped: usize, tail_kept: &[usize], at_budget, limited_by| {
-        let shown = slots.iter().filter(|slot| slot.chosen.is_some()).count();
-        let mut text = header.line(
-            at_budget,
-            limited_by,
-            shown + tail_kept.len(),
-            outside + dropped,
-        );
-        for slot in slots {
-            if let Some(form) = slot.chosen {
-                text.push_str(&slot.forms[form]);
+    let render =
+        |slots: &[Slot], dropped: usize, more: bool, tail_kept: &[usize], at_budget, limited_by| {
+            let shown = slots.iter().filter(|slot| slot.chosen.is_some()).count();
+            let mut text = header.line(
+                at_budget,
+                limited_by,
+                shown + tail_kept.len(),
+                outside + dropped,
+            );
+            for slot in slots {
+                if let Some(form) = slot.chosen {
+                    text.push_str(&slot.forms[form]);
+                }
             }
-        }
-        for &index in tail_kept {
-            text.push_str(&tail[index]);
-        }
-        text
-    };
+            if more && let Some(line) = &more_files {
+                text.push_str(line);
+            }
+            for &index in tail_kept {
+                text.push_str(&tail[index]);
+            }
+            text
+        };
     let fits = |text: &str| boundary(text) <= BYTE_CAP && count_tokens(text) <= budget.tokens;
     let trial = |slots: &[Slot], dropped: usize| {
         fits(&render(
             slots,
             dropped,
+            false,
             &[],
             budget.tokens,
             budget.limited_by,
@@ -1392,6 +1426,9 @@ fn pack_anchored(
             }
         }
     }
+    for index in door_slots {
+        place(&mut slots, index, &[0], &mut dropped);
+    }
     // The final header carries the final counts: drop the last shown entry
     // until the whole response fits.
     let base_fits = loop {
@@ -1411,6 +1448,16 @@ fn pack_anchored(
             header.line(at_budget, limited_by, 0, outside + slots.len())
         }));
     }
+    // The `⋯ <m> more files` line follows the door lines when it fits.
+    let more = more_files.is_some()
+        && fits(&render(
+            &slots,
+            dropped,
+            true,
+            &[],
+            budget.tokens,
+            budget.limited_by,
+        ));
     // 008: memory lines fill the remaining budget, as after the ladder.
     let mut tail_kept: Vec<usize> = Vec::new();
     for index in 0..tail.len() {
@@ -1418,6 +1465,7 @@ fn pack_anchored(
         if !fits(&render(
             &slots,
             dropped,
+            more,
             &tail_kept,
             budget.tokens,
             budget.limited_by,
@@ -1428,6 +1476,7 @@ fn pack_anchored(
     let text = render(
         &slots,
         dropped,
+        more,
         &tail_kept,
         budget.tokens,
         budget.limited_by,
@@ -1499,10 +1548,10 @@ fn pack_search_impl(
         capped: outcome.capped,
         stale: outcome.stale_candidates,
         candidates_full: outcome.candidate_limit_reached,
-        graph: None,
         semantic: outcome.semantic.as_deref(),
         route: None,
         defs: None,
+        doors: None,
         anchored: false,
     };
     pack(&items, &[], &header, budget, BYTE_CAP, boundary, None)
@@ -1533,10 +1582,10 @@ pub fn pack_memory_search(
         capped: 0,
         stale: outcome.stale_candidates,
         candidates_full: outcome.candidates_full,
-        graph: None,
         semantic: None,
         route: None,
         defs: None,
+        doors: None,
         anchored: false,
     };
     pack(&items, &[], &header, budget, BYTE_CAP, boundary, None)
@@ -1571,6 +1620,29 @@ const EXCERPT_BYTES: usize = 160;
 fn locator(handle: &SourceHandle, best: u64, label: &str, quote: &str) -> String {
     let label = single_line(label);
     format!("{} L{best} {label}: {quote}\n", handle.to_v2())
+}
+
+/// One door line (context-v2 § Doors): `<handle> L<line> in <label>:
+/// <excerpt>` for a file's first site - the enclosing unit's handle, the
+/// site's line and at most 160 bytes of it under the locator excerpt rules -
+/// suffixed ` (+<n>)` when the file has `n` more sites and ` [approx]` for an
+/// approximate door.
+fn door_line(door: &crate::store::DoorLine, approx: bool) -> String {
+    let mut line = format!(
+        "{} L{} in {}: {}",
+        door.unit.to_v2(),
+        door.line,
+        single_line(&door.label),
+        excerpt(&door.text, door.line, door.line)
+    );
+    if door.more > 0 {
+        line.push_str(&format!(" (+{})", door.more));
+    }
+    if approx {
+        line.push_str(" [approx]");
+    }
+    line.push('\n');
+    line
 }
 
 /// The best line of a delivery unit's `text`, whose first line is

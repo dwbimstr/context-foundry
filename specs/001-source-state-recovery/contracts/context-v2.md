@@ -713,42 +713,32 @@ list. Single-root order is batch order; 007 merges batches, never packed respons
 Context candidates, in order:
 
 1. up to 32 delivery units from the two-tier ranking (§ Hit materialization);
-2. when the strategy resolves to graph, bounded graph items placed after the first
-   unit, seeded by the paths of the top 3 units as in v1;
-   (When 005 T004 is accepted, this item and the keyword routing below are replaced by
-   § Doors: graph and usage-intent requests build doors for a resolved anchor.)
-3. up to 3 file outlines for the first distinct files among those units, skipping an
+2. up to 3 file outlines for the first distinct files among those units, skipping an
    empty file and a file that one of those units spans (only whitespace lies outside
    the unit). Only mapped languages have outlines, read literally: a mapped
    language without units (`toml`, `json`, `yaml`, `bash`, `sql`, `html`, `css`) has an
    outline equal to its text; an unmapped extension has none.
 
-v1's `following_chunks` candidates are removed.
+v1's `following_chunks` candidates and the path-seeded graph items are removed (005
+T004): a request that asks who uses an anchored definition gets its doors (§ Doors),
+built in the response's final read.
 
 Anchored selection (§ Anchored context) happens at packing, over this already ordered
-list; this order, routing, graph expansion and 013's state composition do not change.
+list; this order, routing and 013's state composition do not change.
 
 For `auto`, ASCII-lowercase the query and tokenize maximal runs of ASCII letters,
-digits or `_`. Any whole token in `{calls,caller,callers,depends,impact,dependency,
-dependencies,reference,references,usage,usages}` selects graph, otherwise search. This
-replaces the prototype's substring rule: `preferences` and `calls_tracker` are not
-graph keywords, while a question about references can use 005's supported relation.
-Adding `uses`, `used`, `break`, `breaks` and `referenced` was tried and withdrawn on
-2026-10-06: after the tier-1 amendment, routing those questions to graph lowered the
-delivered required evidence on the rust-lang/rust checker tasks (dev 40.6% to 38.0%,
-held-out wordings 34.5% to 34.2%), because graph context places path-seeded neighbors,
-not the queried symbol's references ([validation](../../../docs/validation.md)).
-The owned policy can replace that choice only under 013's identity/threshold contract.
-Explicit search or graph never invokes the policy. Graph without eligible edges still
-returns source results and a graph coverage reason in the header. No claim that this
-heuristic is optimal.
+digits or `_`. Any whole token among § Doors' request words selects the graph strategy,
+which requests doors; otherwise search. This replaces the prototype's substring rule
+(`preferences` and `calls_tracker` request nothing) and the 2026-10-06 keyword set,
+whose graph context placed path-seeded neighbors rather than the queried symbol's
+references ([validation](../../../docs/validation.md)). The owned policy can replace
+that choice only under 013's identity/threshold contract. Explicit search or graph
+never invokes the policy. No claim that this heuristic is optimal.
 
 Before optional policy inference, check graph coverage metadata against the indexed
-source revision. If no supported graph scope is current, use search without a model
-call and report graph stale/unavailable; do not query a router to choose an unavailable
-branch. Current partial graph coverage permits bounded expansion, with its limitation
-retained. Explicit graph still reports the same limitation and never invents relations.
-This rule does not add graph storage to 001; before 005, compiler graph is unavailable.
+source revision. If no supported graph scope is current, doors are approximate
+(`doors:approx`) and no router chooses an unavailable branch; exact doors never invent
+relations.
 Candidate construction is the two-tier lexical ranking plus available 009 semantic
 candidates, followed by 009's bounded merge. The optional 013 ModernBERT decision head
 receives its own bounded state/question/option input after that merge; it does not
@@ -1014,18 +1004,23 @@ does. "What does `X` use" (callees) is not supported: its words request doors fo
 
 **Target.** Doors are built only for the query's first anchor, only when it is
 resolved: its definition `D`. When the first anchor is ambiguous, no doors are built
-(`doors:ambiguous`) and the directory lines name the candidates. A query that requests
-doors but has no anchor gets `doors:none` and search packing: this changes today's
-anchor-less `auto` usage-word and `strategy:graph` responses, which lose the path-seeded
-graph expansion (`context_graph_units` over span occurrences, removed) and with it the
-`graph:<state>` header segment. G1's anchor-less usage wordings measure that change.
+(`doors:ambiguous`) and the directory lines name the candidates. A first anchor with no
+definition, or whose definition the final read drops as stale, gives `doors:none`. A
+query that requests doors but has no anchor gets `doors:none` and search packing: this
+changes today's anchor-less `auto` usage-word and `strategy:graph` responses, which lose
+the path-seeded graph expansion (`context_graph_units` over span occurrences, removed)
+and with it the `graph:<state>` header segment. G1's anchor-less usage wordings measure
+that change. In a multi-root owner the primary root's request decides whether doors are
+requested, and the merged first anchor's doors come from the root that resolved it.
 
 **Exact doors.** When a selected compiler scope (005) is current for `D`'s path, the
 symbols are those of the definition occurrences whose range equals `D`'s stored
 `name_start..name_end`. One symbol, or several split identities of the same source
 definition, give exact doors: their references, deduplicated by site, read in the
-response's one final read with 005's scope, snapshot, revision and source checks.
-No such occurrence gives approximate doors with `doors:approx`.
+response's one final read with 005's scope, snapshot, revision and source checks, as one
+references window (256 records, 64 files); a filled window sets `candidates:full`. No
+such occurrence, or a malformed compiler row, gives approximate doors with
+`doors:approx`.
 
 **Approximate doors.** Each file's **import keys** are computed during indexing from
 its parse (the import node kinds of § Languages) and stored in `imports`: for every
@@ -1037,7 +1032,9 @@ directory for `index`, `mod`, `lib` and `__init__` stems). Approximate doors dra
 the delivery units, other than `D`'s own, whose `ident` contains `D`'s name, taken in
 the order: importing files first, then role, path and start; the first 256 are
 examined, and a candidate becomes a door only where its line contains `D`'s name
-exactly as written (checked on the line in the final read). Aliased imports (whose key
+exactly as written, as a whole identifier (checked on the line in the final read; a
+candidate gone stale counts in `stale:`); a candidate unit contributes its first such
+line. Aliased imports (whose key
 is the alias), re-exports, `tsconfig.json` paths and package `exports` are not followed; Rust glob
 imports (`use m::*`) give no key; a Go file's module key is its directory (its package),
 not its stem; a C#, F# or VB namespace in `using`/`open`/`Imports` matches only when its
@@ -1048,7 +1045,9 @@ limitations of `[approx]` lines.
 **Door lines summarize by file.** One line per file: `<handle> L<line> in <label>:
 <excerpt>`, the file's first site (its line, the enclosing unit's label and at most 160
 bytes of the line, § Search locator lines' excerpt rules), suffixed ` (+<n>)` when the
-file has `n` more sites and ` [approx]` for approximate doors. Files are listed in the
+file has `n` more sites (approximate: more candidate units) and ` [approx]` for
+approximate doors. Door lines follow the anchored selection; the `⋯ <m> more files` line
+is not counted as an item. Files are listed in the
 order above (exact: path order; approximate: importing files first, then role and
 path), at most 16, then `⋯ <m> more files` when more remain. Doors carry no cursor:
 the complete list is `references {handle}` on `D`'s handle (shown as the anchored

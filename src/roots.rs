@@ -13,9 +13,8 @@
 //! merged response, packed once by the v2 ladder over the merged list.
 
 use crate::store::{
-    ANCHOR_LIST, AnchorCandidate, AnchorWindow, CandidateBatch, CandidateCounters, Hit,
-    MAX_ANCHORS, QueryAnchors, RankedItem, RenderedForm, SearchOutcome, TIER_COMPILER, TIER_GRAPH,
-    TIER_OUTLINE,
+    ANCHOR_LIST, AnchorCandidate, AnchorWindow, CandidateBatch, CandidateCounters, DoorState,
+    Doors, Hit, MAX_ANCHORS, QueryAnchors, RankedItem, RenderedForm, SearchOutcome, TIER_OUTLINE,
 };
 use crate::{Control, Engine, FoundryError, error::FResult};
 use std::path::{Path, PathBuf};
@@ -292,22 +291,6 @@ pub struct RootBatch {
     pub batch: CandidateBatch,
 }
 
-/// The worst graph coverage across roots when the strategy resolved to graph:
-/// invalid over stale over unavailable over ok. Identical rows in two roots
-/// stay distinct; deduplication stays inside each root.
-fn worst_graph(a: Option<&'static str>, b: Option<&'static str>) -> Option<&'static str> {
-    let severity = |state: &str| match state {
-        "graph_invalid" => 3,
-        "graph_stale" => 2,
-        "graph_unavailable" => 1,
-        _ => 0,
-    };
-    match (a, b) {
-        (None, other) | (other, None) => other,
-        (Some(a), Some(b)) => Some(if severity(a) >= severity(b) { a } else { b }),
-    }
-}
-
 fn summed_counters(batches: &[RootBatch]) -> CandidateCounters {
     let mut counters = CandidateCounters::default();
     for root in batches {
@@ -316,7 +299,6 @@ fn summed_counters(batches: &[RootBatch]) -> CandidateCounters {
         counters.capped = counters.capped.saturating_add(batch.counters.capped);
         counters.candidates_full |= batch.counters.candidates_full;
         counters.truncated |= batch.counters.truncated;
-        counters.graph = worst_graph(counters.graph, batch.counters.graph);
     }
     counters
 }
@@ -393,8 +375,8 @@ fn merged_anchors(batches: &[RootBatch]) -> Vec<AnchorWindow> {
 ///    the item's 1-based position in its root's tier-2 list; ties break by
 ///    root order, path, start.
 ///
-/// Graph items (tier 3) and file outlines (tier 4) are not ranked here; the
-/// context merge places them after the merged units.
+/// File outlines (tier 4) are not ranked here; the context merge places them
+/// after the merged units.
 fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
     #[derive(Clone)]
     struct Unit<'a> {
@@ -523,62 +505,18 @@ pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
     }
 }
 
-/// Merge the serving roots' context batches: the first merged unit, graph
-/// edge items after it in root order (carrying their root's alias), the
-/// roots' compiler units (source-bearing, `TIER_COMPILER`), then the
-/// remaining merged units and the outlines of the first
-/// [`CONTEXT_OUTLINES`] distinct (root, path) files. The lexical units and the
-/// compiler units share ONE [`CONTEXT_UNITS`] bound across all roots, so the
-/// lexical tail yields; a cut sets `candidates_full`. Counters are summed
-/// across roots; graph takes the worst coverage; the anchor windows merge as
-/// [`merged_anchors`] describes.
+/// Merge the serving roots' context batches: the merged units, at most
+/// [`CONTEXT_UNITS`] across all roots, then the outlines of the first
+/// [`CONTEXT_OUTLINES`] distinct (root, path) files. Counters are summed
+/// across roots; the anchor windows merge as [`merged_anchors`] describes and
+/// the doors as [`merged_doors`] does.
 pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
     let merged = merged_units(batches);
-    let mut units: Vec<RankedItem> = merged
+    let units: Vec<RankedItem> = merged
         .iter()
         .take(CONTEXT_UNITS)
         .map(|(_, item)| (*item).clone())
         .collect();
-    // Each root's compiler units, in root order. Their identity carries the
-    // root (`ws16` in the handle), so identical rows in two roots stay two.
-    let mut compiler: Vec<RankedItem> = batches
-        .iter()
-        .flat_map(|root| root.batch.items.iter())
-        .filter(|item| item.tier == TIER_COMPILER)
-        .cloned()
-        .collect();
-    let first = usize::from(!units.is_empty());
-    let mut cut = false;
-    if compiler.len() > CONTEXT_UNITS - first {
-        compiler.truncate(CONTEXT_UNITS - first);
-        cut = true;
-    }
-    let lexical_room = CONTEXT_UNITS - compiler.len();
-    if units.len() > lexical_room {
-        units.truncate(lexical_room);
-        cut = true;
-    }
-    // Graph items, in root order, each carrying its seed root's alias.
-    let mut graph: Vec<RankedItem> = Vec::new();
-    for root in batches {
-        for item in &root.batch.items {
-            if item.tier != TIER_GRAPH {
-                continue;
-            }
-            let mut aliased = item.clone();
-            aliased.forms = item
-                .forms
-                .iter()
-                .map(|form| match form {
-                    RenderedForm::Line(text) => {
-                        RenderedForm::Line(format!("{} {text}", root.alias))
-                    }
-                    other => other.clone(),
-                })
-                .collect();
-            graph.push(aliased);
-        }
-    }
     // Outlines of the first three distinct (root, path) files among the
     // merged units, in merged order: a file CONSUMES one of the three slots
     // even when its outline was suppressed inside its own root (an empty
@@ -609,30 +547,55 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
             outlines.push(outline);
         }
     }
-    // The first unit, then graph items, then the compiler units, then the
-    // remaining units, then outlines: a fitting first unit precedes graph
-    // items.
-    let mut rest = units.into_iter();
-    let mut items: Vec<RankedItem> = rest.next().into_iter().collect();
-    items.append(&mut graph);
-    items.extend(compiler);
-    items.extend(rest);
+    // The units, then the outlines.
+    let mut items = units;
     items.extend(outlines);
     for (rank, item) in items.iter_mut().enumerate() {
         item.rank = rank;
     }
-    let mut counters = summed_counters(batches);
-    counters.candidates_full |= cut;
+    let anchors = merged_anchors(batches);
     CandidateBatch {
         freshness: batches[0].batch.freshness.clone(),
         items,
-        counters,
+        counters: summed_counters(batches),
         semantic: primary_semantic(batches),
         // 013 T003: the policy routes the PRIMARY root only (its store
         // composes the state), with the same scope suffix as semantics.
         route: primary_word(batches[0].batch.route.as_ref(), batches.len()),
-        anchors: merged_anchors(batches),
+        doors: merged_doors(batches, &anchors),
+        anchors,
     }
+}
+
+/// The merged context's doors (context-v2 § Doors; 007): requested when the
+/// primary root's context requested them, and built only for the merged
+/// first anchor when it is resolved - they are the doors of the root whose
+/// own first anchor resolved to that same definition (every root builds its
+/// doors in its own final read). The merged first anchor ambiguous gives
+/// `ambiguous`; no merged anchor with a definition gives `none`.
+fn merged_doors(batches: &[RootBatch], anchors: &[AnchorWindow]) -> Option<Doors> {
+    batches[0].batch.doors.as_ref()?;
+    let Some(window) = anchors.first().filter(|window| window.definitions > 0) else {
+        return Some(Doors::unbuilt(DoorState::None));
+    };
+    if !window.resolved() {
+        return Some(Doors::unbuilt(DoorState::Ambiguous));
+    }
+    let Some(target) = window
+        .entries
+        .first()
+        .and_then(|entry| entry.handle.as_ref())
+    else {
+        return Some(Doors::unbuilt(DoorState::None));
+    };
+    Some(
+        batches
+            .iter()
+            .filter_map(|root| root.batch.doors.as_ref())
+            .find(|doors| doors.target.as_ref() == Some(target))
+            .cloned()
+            .unwrap_or_else(|| Doors::unbuilt(DoorState::None)),
+    )
 }
 
 /// 009 T002: semantic evidence exists only for the PRIMARY root's store.
@@ -700,6 +663,7 @@ mod tests {
             semantic: None,
             route: None,
             anchors: Vec::new(),
+            doors: None,
         }
     }
 
@@ -821,120 +785,78 @@ mod tests {
     }
 
     #[test]
-    fn merged_context_keeps_graph_items_after_the_first_unit_with_aliases() {
-        let mut graph = unit(3, "ignored", 0);
-        graph.handle = None;
-        graph.forms = vec![RenderedForm::Line(
-            "src/a.rs:1 (f) --calls--> src/b.rs:2 (g) [manual; provider=p@1]".to_owned(),
-        )];
+    fn merged_context_keeps_the_units_then_one_outline_per_root_file() {
         let mut outline = unit(4, "src/a.rs", 0);
         outline.forms = vec![RenderedForm::Outline("outline".to_owned())];
         let first = RootBatch {
             alias: "primary".to_owned(),
-            batch: batch(vec![unit(1, "src/a.rs", 0), graph.clone(), outline.clone()]),
+            batch: batch(vec![unit(1, "src/a.rs", 0), outline.clone()]),
         };
         let second = RootBatch {
             alias: "ref1".to_owned(),
-            batch: batch(vec![unit(1, "src/a.rs", 5), graph, outline]),
+            batch: batch(vec![unit(1, "src/a.rs", 5), outline]),
         };
         let merged = merge_context(&[first, second]);
         let rendered: Vec<String> = merged
             .items
             .iter()
             .map(|item| match &item.forms[0] {
-                RenderedForm::Line(text) => format!("edge {text}"),
                 RenderedForm::Outline(_) => "outline".to_owned(),
                 _ => item.handle.as_ref().unwrap().path.clone(),
             })
             .collect();
-        // First merged unit, both roots' graph items in root order, the
-        // remaining unit, then one outline per distinct (root, path) file.
-        assert_eq!(
-            rendered,
-            vec![
-                "src/a.rs".to_owned(),
-                "edge primary src/a.rs:1 (f) --calls--> src/b.rs:2 (g) [manual; provider=p@1]"
-                    .to_owned(),
-                "edge ref1 src/a.rs:1 (f) --calls--> src/b.rs:2 (g) [manual; provider=p@1]"
-                    .to_owned(),
-                "src/a.rs".to_owned(),
-                "outline".to_owned(),
-                "outline".to_owned(),
-            ]
+        assert_eq!(rendered, ["src/a.rs", "src/a.rs", "outline", "outline"]);
+        assert!(merged.doors.is_none(), "no root requested doors");
+    }
+
+    /// A root whose only anchor `parse` lists `entries` and whose context
+    /// requested doors that open onto `target` (none built without one).
+    fn with_doors(alias: &str, entries: Vec<RankedItem>, target: Option<&RankedItem>) -> RootBatch {
+        let mut root = anchored(
+            alias,
+            vec![("parse", (1, 0), entries.len() as u64, entries)],
         );
+        root.batch.doors = Some(match target {
+            Some(item) => Doors {
+                state: DoorState::Exact,
+                target: item.handle.clone(),
+                lines: Vec::new(),
+                more_files: 3,
+            },
+            None => Doors::unbuilt(DoorState::None),
+        });
+        root
     }
 
-    fn root(alias: &str, lexical: usize, compiler: usize, edges: usize) -> RootBatch {
-        let mut items: Vec<RankedItem> = (0..lexical)
-            .map(|i| unit(2, &format!("{alias}/lex{i}.rs"), 0))
-            .collect();
-        items.extend((0..edges).map(|_| RankedItem {
-            handle: None,
-            forms: vec![RenderedForm::Line(
-                "src/a.rs:1 (f) --calls--> src/b.rs:2 (g)".to_owned(),
-            )],
-            ..unit(TIER_GRAPH, "", 0)
-        }));
-        items.extend((0..compiler).map(|i| unit(TIER_COMPILER, &format!("{alias}/cmp{i}.rs"), 0)));
-        RootBatch {
-            alias: alias.to_owned(),
-            batch: batch(items),
-        }
-    }
-
-    fn source_units(merged: &CandidateBatch) -> (usize, usize) {
-        let lexical = merged
-            .items
-            .iter()
-            .filter(|item| item.tier == 1 || item.tier == 2)
-            .count();
-        let compiler = merged
-            .items
-            .iter()
-            .filter(|item| item.tier == TIER_COMPILER)
-            .count();
-        (lexical, compiler)
-    }
-
+    /// 007 (context-v2 § Doors): the merged first anchor decides; a merged
+    /// resolution takes the doors of the root that resolved to the same
+    /// definition, and a merged tie is `ambiguous` even when each root
+    /// resolved on its own.
     #[test]
-    fn compiler_units_share_the_32_unit_bound_with_the_lexical_units_across_roots() {
-        // 30 + 20 lexical candidates (cut to 32 by the merge) and 5 compiler
-        // units from each root: 10 compiler + 32 lexical would be 42.
-        let merged = merge_context(&[root("primary", 30, 5, 1), root("ref1", 20, 5, 1)]);
-        let (lexical, compiler) = source_units(&merged);
-        assert_eq!(compiler, 10, "both roots' compiler units are kept");
-        assert_eq!(lexical + compiler, CONTEXT_UNITS);
-        assert!(merged.counters.candidates_full, "a cut fills the window");
-        // Order: the first unit, the edge lines (not counted as units), the
-        // compiler units, then the remaining lexical units.
-        let tiers: Vec<u8> = merged.items.iter().map(|item| item.tier).collect();
-        assert_eq!(tiers[0], 2);
-        assert_eq!(&tiers[1..3], &[TIER_GRAPH, TIER_GRAPH]);
-        assert!(tiers[3..13].iter().all(|&tier| tier == TIER_COMPILER));
-        assert!(tiers[13..].iter().all(|&tier| tier == 2));
-        // Edge lines carry their root's alias; compiler units do not.
-        for item in merged.items.iter().filter(|item| item.tier == TIER_GRAPH) {
-            let RenderedForm::Line(text) = &item.forms[0] else {
-                panic!("an edge line")
-            };
-            assert!(
-                text.starts_with("primary ") || text.starts_with("ref1 "),
-                "{text}"
-            );
-        }
-        // 33 would not fit: 32 compiler units from two roots keep their
-        // place and the lexical tail yields entirely but the first unit.
-        let merged = merge_context(&[root("primary", 10, 20, 0), root("ref1", 10, 20, 0)]);
-        let (lexical, compiler) = source_units(&merged);
-        assert_eq!((lexical, compiler), (1, 31));
-        assert!(merged.counters.candidates_full);
-    }
-
-    #[test]
-    fn compiler_units_under_the_bound_are_not_cut() {
-        let merged = merge_context(&[root("primary", 3, 2, 0), root("ref1", 2, 1, 0)]);
-        assert_eq!(source_units(&merged), (5, 3));
-        assert!(!merged.counters.candidates_full);
+    fn merged_doors_follow_the_merged_first_anchor() {
+        let qualified = definition("a.rs", (1, 0), 1, true);
+        let plain = definition("b.rs", (1, 0), 0, true);
+        // Root order puts the plain definition first; the qualifier wins.
+        let merged = merge_context(&[
+            with_doors("primary", vec![plain.clone()], Some(&plain)),
+            with_doors("ref1", vec![qualified.clone()], Some(&qualified)),
+        ]);
+        let doors = merged.doors.expect("the primary requested doors");
+        assert_eq!(doors.state, DoorState::Exact);
+        assert_eq!(doors.target, qualified.handle);
+        assert_eq!(doors.more_files, 3);
+        // Equal tuples in two roots: each root resolved, the merge did not.
+        let other = definition("c.rs", (1, 0), 0, true);
+        let merged = merge_context(&[
+            with_doors("primary", vec![plain.clone()], Some(&plain)),
+            with_doors("ref1", vec![other.clone()], Some(&other)),
+        ]);
+        assert_eq!(merged.doors.unwrap().state, DoorState::Ambiguous);
+        // A primary that did not request doors requests none for the merge.
+        let mut quiet = with_doors("primary", vec![plain.clone()], Some(&plain));
+        quiet.batch.doors = None;
+        let merged = merge_context(&[quiet, with_doors("ref1", vec![other], None)]);
+        assert!(merged.doors.is_none());
     }
 
     /// One tier-1 definition of the anchor at `order`, with its tuple.
@@ -945,6 +867,7 @@ mod tests {
                 qualifiers,
                 exact,
                 role: 0,
+                name: (0, 0),
             }),
             ..unit(1, path, 0)
         }

@@ -311,31 +311,3 @@ pub fn workspace_id_override(canonical_root: &str) -> Option<String> {
 pub fn clear_workspace_overrides() {
     workspace_overrides().lock().unwrap().clear();
 }
-
-// ---------------------------------------------------------------------------
-// 005 T003 final-pass graph-record counter: every graph record the final
-// witness pass reads (membership rows and uniqueness-walk rows) is charged
-// against the shared 256-record allowance, and tests observe the count. The
-// counter lives only in this feature-gated module; release builds carry none.
-// ---------------------------------------------------------------------------
-
-thread_local! {
-    /// Per-thread: the final pass runs synchronously on its caller's thread,
-    /// so concurrently running tests never mix their counts.
-    static FINAL_GRAPH_RECORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// Count one final-pass graph record.
-pub fn count_final_graph_record() {
-    FINAL_GRAPH_RECORDS.with(|count| count.set(count.get() + 1));
-}
-
-/// Final-pass graph records counted on this thread since the last reset.
-pub fn final_graph_records() -> usize {
-    FINAL_GRAPH_RECORDS.with(std::cell::Cell::get)
-}
-
-/// Reset this thread's final-pass graph-record counter.
-pub fn reset_final_graph_records() {
-    FINAL_GRAPH_RECORDS.with(|count| count.set(0));
-}

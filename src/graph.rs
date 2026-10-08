@@ -62,9 +62,6 @@ pub struct GraphEvidence {
     pub provider: String,
     pub revision: String,
     pub edge: Edge,
-    /// The exact stored row; identity for final-read revalidation.
-    #[serde(skip)]
-    pub(crate) raw: String,
 }
 
 fn invalid(message: impl Into<String>) -> FoundryError {
@@ -76,23 +73,6 @@ fn invalid(message: impl Into<String>) -> FoundryError {
 fn decode_stored(raw: &str) -> FResult<StoredEdge> {
     serde_json::from_str(raw)
         .map_err(|e| FoundryError::GraphInvalid(format!("edge row cannot be decoded: {e}")))
-}
-
-/// True when the exact stored edge row is still present under `from_path` in
-/// the transaction. Used by the final context read to revalidate selected
-/// graph rows, not only their endpoint hashes.
-pub(crate) fn edge_row_present(
-    tx: &redb::ReadTransaction,
-    from_path: &str,
-    raw: &str,
-) -> FResult<bool> {
-    let edges = tx.open_multimap_table(OUT)?;
-    for row in edges.get(from_path)? {
-        if row?.value() == raw {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 pub(crate) fn init(tx: &WriteTransaction) -> FResult<()> {
@@ -248,7 +228,6 @@ impl Engine {
                         provider: stored.provider,
                         revision: stored.revision,
                         edge: stored.edge,
-                        raw: raw.value().to_owned(),
                     });
                 }
             }
@@ -1008,12 +987,14 @@ const SEED_SCAN_LIMIT: usize = REFERENCES_MAX_EXAMINED - 2;
 /// reference with a cursor that continues losslessly.
 const DEFINITION_SCAN_LIMIT: usize = REFERENCES_MAX_EXAMINED - 1;
 
-/// Exactly one seed form: a 16-hex symbol id prefix, or a source handle plus
-/// an absolute byte offset within it.
+/// Exactly one seed form: a 16-hex symbol id prefix, a source handle plus an
+/// absolute byte offset within it, or a handle alone - the symbols of the
+/// handle's definition unit by the exact-doors rule (context-v2 § Doors).
 #[derive(Clone, Debug)]
 pub enum ReferencesSeed {
     SymbolId(String),
     Position { handle: String, byte_offset: u64 },
+    Handle(String),
 }
 
 #[derive(Clone, Debug)]
@@ -1110,8 +1091,13 @@ pub struct ReferencesOutcome {
     /// The selected snapshot tuple the answer was judged against: artifact
     /// digest, manifest digest, source revision and producer/config identity.
     pub snapshot: Option<SnapshotTuple>,
-    /// Full 64-hex id of the resolved seed symbol.
+    /// Full 64-hex id of the resolved seed symbol; for a handle seed whose
+    /// definition has several split identities, the first of
+    /// [`Self::symbol_ids`].
     pub symbol_id: Option<String>,
+    /// Every symbol the window read: one, or the split identities of one
+    /// definition (a handle seed, context-v2 § Doors) in (producer, id) order.
+    pub symbol_ids: Vec<String>,
     pub target: Option<TargetResolution>,
     pub definitions: Vec<DefinitionCandidate>,
     pub definitions_truncated: bool,
@@ -1134,13 +1120,21 @@ pub struct ReferencesOutcome {
 enum Seed {
     Symbol(String),
     Position(HandleRef, u64),
+    /// A handle alone: the symbols of its unit by the exact-doors rule.
+    Handle(HandleRef),
+}
+
+/// One symbol a references window reads, with the producer that owns it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Target {
+    namespace: String,
+    symbol_id: String,
 }
 
 enum Seeded {
-    Found {
-        symbol_id: String,
-        namespace: String,
-    },
+    /// One symbol, or the split identities of one definition, in
+    /// `(namespace, symbol id)` order.
+    Found(Vec<Target>),
     /// A successful line-less answer; `coverage` says why. `truncated` marks
     /// an examination window that ended before the answer was known.
     Unanswerable {
@@ -1217,32 +1211,71 @@ impl EligibleScopes {
 }
 
 /// One origin source, verified and indexed for line and delivery-unit lookups.
+/// Its delivery units are parsed on first use, so a file whose sites are only
+/// counted (doors beyond the shown files) is never parsed.
 struct FileView {
     body: String,
+    lang: Option<crate::syntax::Lang>,
     line_starts: Vec<usize>,
-    documents: Vec<crate::syntax::Document>,
+    documents: std::cell::OnceCell<Vec<crate::syntax::Document>>,
 }
 
 impl FileView {
     fn new(path: &str, body: String) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(body.match_indices('\n').map(|(at, _)| at + 1));
-        let documents = crate::syntax::documents(&body, crate::syntax::Lang::from_path(path));
         Self {
             body,
+            lang: crate::syntax::Lang::from_path(path),
             line_starts,
-            documents,
+            documents: std::cell::OnceCell::new(),
         }
+    }
+
+    fn documents(&self) -> &[crate::syntax::Document] {
+        self.documents
+            .get_or_init(|| crate::syntax::documents(&self.body, self.lang))
     }
 
     fn line_of(&self, offset: usize) -> u64 {
         self.line_starts.partition_point(|&start| start <= offset) as u64
     }
 
+    /// The text of one-based `line`, without its LF or CRLF terminator.
+    fn line_text(&self, line: u64) -> &str {
+        let index = (line as usize).saturating_sub(1);
+        let start = self
+            .line_starts
+            .get(index)
+            .copied()
+            .unwrap_or(self.body.len());
+        let end = self
+            .line_starts
+            .get(index + 1)
+            .copied()
+            .unwrap_or(self.body.len());
+        let text = &self.body[start..end];
+        let text = text.strip_suffix('\n').unwrap_or(text);
+        text.strip_suffix('\r').unwrap_or(text)
+    }
+
     fn unit_at(&self, offset: usize) -> Option<&crate::syntax::DeliveryUnit> {
-        let index = self.documents.partition_point(|d| d.start <= offset);
-        let document = self.documents.get(index.checked_sub(1)?)?;
+        let documents = self.documents();
+        let index = documents.partition_point(|d| d.start <= offset);
+        let document = documents.get(index.checked_sub(1)?)?;
         (offset < document.end).then_some(&document.unit)
+    }
+
+    /// The name node of the definition unit spanning exactly
+    /// `start..end`, if one does (context-v2 § Definitions and addresses).
+    fn definition_name(&self, start: u64, end: u64) -> Option<(u64, u64)> {
+        self.documents().iter().find_map(|document| {
+            let unit = &document.unit;
+            (unit.start as u64 == start && unit.end as u64 == end)
+                .then_some(unit.name_range)
+                .flatten()
+                .map(|(from, to)| (from as u64, to as u64))
+        })
     }
 }
 
@@ -1332,10 +1365,10 @@ fn resolve_prefix(
         )),
         1 => {
             let (symbol_id, namespace) = found.remove(0);
-            Ok(Seeded::Found {
-                symbol_id,
+            Ok(Seeded::Found(vec![Target {
                 namespace,
-            })
+                symbol_id,
+            }]))
         }
         n => {
             let ids: Vec<String> = found.into_iter().map(|(id, _)| id).collect();
@@ -1536,10 +1569,10 @@ fn resolve_position(
         .map(|(id, (namespace, _))| (id, namespace))
         .collect();
     if eligible.len() == 1 {
-        return Ok(Seeded::Found {
-            symbol_id: eligible[0].0.clone(),
+        return Ok(Seeded::Found(vec![Target {
             namespace: eligible[0].1.clone(),
-        });
+            symbol_id: eligible[0].0.clone(),
+        }]));
     }
     if eligible.len() > 1 {
         let ids: Vec<String> = eligible.iter().map(|(id, _)| (*id).clone()).collect();
@@ -1570,6 +1603,389 @@ fn resolve_position(
     ))
 }
 
+/// What the current compiler scopes say about one definition's name range
+/// (context-v2 § Doors, exact doors).
+enum NameSymbols {
+    /// No producer has a selected snapshot.
+    Unavailable,
+    /// Every selected snapshot predates the source revision.
+    Stale { producer: Option<String> },
+    /// No current scope of the source holds a definition occurrence whose
+    /// range equals the name range.
+    Undefined,
+    /// The shared allowance ran out before the scan finished.
+    Unfinished,
+    /// The definition occurrences' symbols, distinct, in (producer, id)
+    /// order: one, or several split identities of the same definition.
+    Found(Vec<Target>),
+}
+
+/// The symbols of the definition occurrences whose range equals `name`
+/// exactly, in every producer scope of `path` that is current: selected, at
+/// this source revision, published under that selection and over the bytes
+/// `source_hash`. Each occurrence record read is counted against the shared
+/// allowance.
+fn symbols_at_name(
+    tx: &redb::ReadTransaction,
+    producers: &[(String, ProducerRow)],
+    revision: u64,
+    path: &str,
+    source_hash: &str,
+    name: (u64, u64),
+    examined: &mut usize,
+) -> FResult<NameSymbols> {
+    let selected: Vec<(&String, &SelectedSnapshot)> = producers
+        .iter()
+        .filter_map(|(namespace, row)| row.selected.as_ref().map(|chosen| (namespace, chosen)))
+        .collect();
+    if selected.is_empty() {
+        return Ok(NameSymbols::Unavailable);
+    }
+    if selected
+        .iter()
+        .all(|(_, chosen)| chosen.tuple.source_revision != revision)
+    {
+        return Ok(NameSymbols::Stale {
+            producer: (selected.len() == 1).then(|| selected[0].0.clone()),
+        });
+    }
+    let scopes = tx.open_table(COMPILER_SCOPES)?;
+    let occurrences = tx.open_table(COMPILER_OCCURRENCES)?;
+    let mut found: BTreeSet<Target> = BTreeSet::new();
+    for (namespace, chosen) in selected {
+        if chosen.tuple.source_revision != revision {
+            continue;
+        }
+        let Some(scope) = scopes
+            .get(scope_key(namespace, path).as_str())?
+            .map(|raw| stored_row::<ScopeRow>(raw.value(), "compiler scope"))
+            .transpose()?
+        else {
+            continue;
+        };
+        if scope.snapshot_id != chosen.tuple.snapshot_id || scope.source_hash != source_hash {
+            continue;
+        }
+        let (start, end) = name;
+        let low = format!("{namespace}\0{path}\0{start:020}\0{end:020}\0d\0");
+        let high = format!("{namespace}\0{path}\0{start:020}\0{end:020}\0d\u{1}");
+        for entry in occurrences.range(low.as_str()..high.as_str())? {
+            if *examined >= SEED_SCAN_LIMIT {
+                return Ok(NameSymbols::Unfinished);
+            }
+            let (key, _) = entry?;
+            *examined += 1;
+            found.insert(Target {
+                namespace: namespace.clone(),
+                symbol_id: parse_occurrence_key(key.value())?.symbol_id,
+            });
+        }
+    }
+    Ok(if found.is_empty() {
+        NameSymbols::Undefined
+    } else {
+        NameSymbols::Found(found.into_iter().collect())
+    })
+}
+
+/// A handle seed (context-v2 § Doors, `references {handle}`): 001's handle
+/// precedence (the workspace was checked first), then the definition unit
+/// spanning exactly the handle's range and, by the exact-doors rule, the
+/// symbols of the definition occurrences at its name range. A handle that
+/// names no definition unit, or whose unit no current compiler scope
+/// defines, is `invalid_argument` naming `no_compiler_definition`.
+fn resolve_handle(
+    tx: &redb::ReadTransaction,
+    handle: &HandleRef,
+    producers: &[(String, ProducerRow)],
+    revision: u64,
+    examined: &mut usize,
+    files: &mut HashMap<String, Option<FileView>>,
+    visited: &mut BTreeSet<String>,
+) -> FResult<Seeded> {
+    let sources = tx.open_table(SOURCES)?;
+    let meta: SourceMeta = match sources.get(handle.path.as_str())? {
+        None => return Err(FoundryError::NotFound),
+        Some(raw) => crate::store::decode(raw.value(), "source")?,
+    };
+    if !meta.hash.starts_with(&handle.sha32) {
+        return Err(FoundryError::StaleHandle);
+    }
+    ensure_file(
+        files,
+        &sources,
+        &tx.open_table(CHUNKS)?,
+        &handle.path,
+        &meta.hash,
+    )?;
+    visited.insert(handle.path.clone());
+    let Some(Some(view)) = files.get(&handle.path) else {
+        return Err(FoundryError::CorruptSource(format!(
+            "{}: the indexed source could not be loaded",
+            handle.path
+        )));
+    };
+    let body = &view.body;
+    let valid_empty = handle.start == 0 && handle.end == 0 && meta.bytes == 0;
+    let valid_span = handle.start < handle.end
+        && handle.end <= body.len() as u64
+        && body.is_char_boundary(handle.start as usize)
+        && body.is_char_boundary(handle.end as usize);
+    if !valid_empty && !valid_span {
+        return Err(FoundryError::InvalidRange);
+    }
+    let undefined = |why: &str| invalid(format!("no_compiler_definition: {why}"));
+    let Some(name) = view.definition_name(handle.start, handle.end) else {
+        return Err(undefined("the handle names no definition unit"));
+    };
+    let line_less = |coverage: Coverage, producer: Option<String>, truncated: bool| {
+        Ok(Seeded::Unanswerable {
+            coverage,
+            symbol_id: None,
+            producer,
+            truncated,
+        })
+    };
+    match symbols_at_name(
+        tx,
+        producers,
+        revision,
+        &handle.path,
+        &meta.hash,
+        name,
+        examined,
+    )? {
+        NameSymbols::Unavailable => line_less(Coverage::Unavailable, None, false),
+        NameSymbols::Stale { producer } => line_less(Coverage::Stale, producer, false),
+        NameSymbols::Unfinished => line_less(Coverage::Partial, None, true),
+        NameSymbols::Undefined => Err(undefined(
+            "no current compiler scope has a definition occurrence at the unit's name",
+        )),
+        NameSymbols::Found(targets) => Ok(Seeded::Found(targets)),
+    }
+}
+
+/// One window over a symbol set's reference records.
+#[derive(Default)]
+struct ReferenceWindow {
+    items: Vec<ReferenceItem>,
+    /// Delivered references whose target is not uniquely resolved.
+    unresolved: usize,
+    /// Records dropped as ineligible: outside the selected snapshot, or a
+    /// source no longer carrying the bytes the scope was published from.
+    stale: usize,
+    /// A cap stopped the window with a record still pending.
+    want_more: bool,
+    /// The last record consumed: the continuation cursor's position.
+    consumed: Option<(String, u64, u64)>,
+}
+
+/// The eligibility view of each producer a target set names: its scopes
+/// under the producer's selected snapshot. A producer without a selection
+/// gets none, so every record it owns is ineligible.
+fn eligible_scopes(
+    tx: &redb::ReadTransaction,
+    producers: &[(String, ProducerRow)],
+    targets: &[Target],
+) -> FResult<HashMap<String, EligibleScopes>> {
+    let mut scopes = HashMap::new();
+    for target in targets {
+        if scopes.contains_key(&target.namespace) {
+            continue;
+        }
+        let Some(chosen) = producers
+            .iter()
+            .find(|(name, _)| *name == target.namespace)
+            .and_then(|(_, row)| row.selected.as_ref())
+        else {
+            continue;
+        };
+        scopes.insert(
+            target.namespace.clone(),
+            EligibleScopes {
+                scopes: tx.open_table(COMPILER_SCOPES)?,
+                namespace: target.namespace.clone(),
+                snapshot_id: chosen.tuple.snapshot_id.clone(),
+                cache: HashMap::new(),
+            },
+        );
+    }
+    Ok(scopes)
+}
+
+/// One window over `targets`' reference records, merged in `(path, start,
+/// end)` order strictly after `after`, ties in target order. A site several
+/// targets share (split identities of one definition) is delivered once.
+/// `limit` and the shared allowance are checked per record on the EXISTENCE
+/// of a next record, before any is decoded: an exhausted window never reads
+/// (and so never trips over) a record it could not deliver anyway; the
+/// visited-file budget is checked before a new file is read. `unique` is the
+/// target's unique definition: it gives each item its edge id, and without
+/// it every delivered item counts as unresolved. `labeled` names each item's
+/// enclosing delivery unit (parsing its file); otherwise the unit is the site
+/// itself and the label empty, and the caller labels what it shows.
+#[allow(clippy::too_many_arguments)] // the window shares the response's one read state
+fn reference_window(
+    by_symbol: &redb::ReadOnlyTable<&'static str, &'static str>,
+    sources: &redb::ReadOnlyTable<&'static str, &'static str>,
+    chunks: &redb::ReadOnlyTable<&'static str, &'static str>,
+    scopes: &mut HashMap<String, EligibleScopes>,
+    targets: &[Target],
+    after: Option<&(String, u64, u64)>,
+    limit: usize,
+    unique: Option<&DefinitionCandidate>,
+    bound: &str,
+    labeled: bool,
+    examined: &mut usize,
+    files: &mut HashMap<String, Option<FileView>>,
+    visited: &mut BTreeSet<String>,
+) -> FResult<ReferenceWindow> {
+    let bounds: Vec<(String, String)> = targets
+        .iter()
+        .map(|target| {
+            let id = &target.symbol_id;
+            let low = match after {
+                Some((path, start, end)) => format!("{id}\0r\0{path}\0{start:020}\0{end:020}\u{1}"),
+                None => format!("{id}\0r\0"),
+            };
+            (low, format!("{id}\0r\u{1}"))
+        })
+        .collect();
+    let mut heads = Vec::with_capacity(bounds.len());
+    for (low, high) in &bounds {
+        heads.push(by_symbol.range(low.as_str()..high.as_str())?.peekable());
+    }
+    let mut window = ReferenceWindow::default();
+    let mut delivered: Option<(String, u64, u64)> = None;
+    loop {
+        let mut pending = false;
+        for head in &mut heads {
+            if matches!(head.peek(), Some(Err(_)))
+                && let Some(Err(error)) = head.next()
+            {
+                return Err(error.into());
+            }
+            pending |= head.peek().is_some();
+        }
+        if !pending {
+            break;
+        }
+        if window.items.len() >= limit || *examined >= REFERENCES_MAX_EXAMINED {
+            window.want_more = true;
+            break;
+        }
+        let mut next: Option<(usize, SymbolKey)> = None;
+        for (index, head) in heads.iter_mut().enumerate() {
+            let Some(Ok((key, _))) = head.peek() else {
+                continue;
+            };
+            let parsed = parse_symbol_key(key.value())?;
+            let earlier = next.as_ref().is_none_or(|(_, best)| {
+                (parsed.path.as_str(), parsed.start, parsed.end)
+                    < (best.path.as_str(), best.start, best.end)
+            });
+            if earlier {
+                next = Some((index, parsed));
+            }
+        }
+        let Some((index, parsed)) = next else {
+            break;
+        };
+        let target = &targets[index];
+        let site = (parsed.path.clone(), parsed.start, parsed.end);
+        let scope = match scopes.get_mut(&target.namespace) {
+            Some(eligible) => eligible.get(&parsed.path)?,
+            None => None,
+        };
+        let Some(scope) = scope else {
+            heads[index].next();
+            *examined += 1;
+            window.stale += 1;
+            window.consumed = Some(site);
+            continue;
+        };
+        if !visited.contains(&parsed.path) && visited.len() >= REFERENCES_MAX_FILES {
+            window.want_more = true;
+            break;
+        }
+        heads[index].next();
+        *examined += 1;
+        window.consumed = Some(site.clone());
+        ensure_file(files, sources, chunks, &parsed.path, &scope.source_hash)?;
+        let Some(Some(view)) = files.get(&parsed.path) else {
+            window.stale += 1;
+            continue;
+        };
+        visited.insert(parsed.path.clone());
+        let (start, end) = (parsed.start as usize, parsed.end as usize);
+        if end > view.body.len()
+            || !view.body.is_char_boundary(start)
+            || !view.body.is_char_boundary(end)
+        {
+            return Err(FoundryError::GraphInvalid(format!(
+                "a stored occurrence lies outside its source: {}",
+                parsed.path
+            )));
+        }
+        if delivered.as_ref() == Some(&site) {
+            continue;
+        }
+        delivered = Some(site);
+        if unique.is_none() {
+            window.unresolved += 1;
+        }
+        let (unit_start, unit_end, label) = match labeled.then(|| view.unit_at(start)) {
+            Some(Some(unit)) => (unit.start as u64, unit.end as u64, unit_label(unit)),
+            Some(None) => (parsed.start, parsed.end, "block".to_owned()),
+            None => (parsed.start, parsed.end, String::new()),
+        };
+        let edge = unique.map(|definition| {
+            edge_id(
+                &target.namespace,
+                "references",
+                EdgeEnd {
+                    identity: &parsed.path,
+                    hash: &scope.source_hash,
+                    start: parsed.start,
+                    end: parsed.end,
+                },
+                EdgeEnd {
+                    identity: &definition.path,
+                    hash: &definition.sha256,
+                    start: definition.start,
+                    end: definition.end,
+                },
+            )
+        });
+        window.items.push(ReferenceItem {
+            occurrence_id: occurrence_id(
+                &target.namespace,
+                OccurrenceKind::Reference,
+                &parsed.path,
+                &scope.source_hash,
+                parsed.start,
+                parsed.end,
+                &target.symbol_id,
+            ),
+            path: parsed.path.clone(),
+            sha256: scope.source_hash.clone(),
+            start: parsed.start,
+            end: parsed.end,
+            line: view.line_of(start),
+            unit: SourceHandle {
+                workspace_id: bound.to_owned(),
+                path: parsed.path,
+                sha256: scope.source_hash,
+                start: unit_start,
+                end: unit_end,
+            },
+            label,
+            edge_id: edge,
+        });
+    }
+    Ok(window)
+}
+
 impl Engine {
     /// Budget-independent references query: seed resolution, definition
     /// lookup and a bounded, ordered reference window, all inside one final
@@ -1580,7 +1996,8 @@ impl Engine {
     /// same transaction and the same shared file budget. Ordering and the
     /// `after` cursor are `(path, start, end)`; `limit` and the shared
     /// 256-record allowance are enforced per record, so a page never
-    /// overshoots them.
+    /// overshoots them. A handle seed's split identities are read as one
+    /// set: their definitions and references deduplicated by site.
     pub fn references(&self, request: &ReferencesRequest) -> FResult<ReferencesOutcome> {
         if !(1..=REFERENCES_MAX_LIMIT).contains(&request.limit) {
             return Err(invalid("references limit must be 1..256"));
@@ -1592,9 +2009,10 @@ impl Engine {
                 handle,
                 byte_offset,
             } => Seed::Position(HandleRef::parse(handle)?, *byte_offset),
+            ReferencesSeed::Handle(handle) => Seed::Handle(HandleRef::parse(handle)?),
         };
         let bound = self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?;
-        if let Seed::Position(handle, _) = &seed
+        if let Seed::Position(handle, _) | Seed::Handle(handle) = &seed
             && !bound.starts_with(&handle.ws16)
         {
             return Err(FoundryError::WrongWorkspace);
@@ -1605,7 +2023,7 @@ impl Engine {
         // One cache and one visited-file budget serve the seed read, the
         // definition verification and the reference labeling alike.
         let mut files: HashMap<String, Option<FileView>> = HashMap::new();
-        let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut visited: BTreeSet<String> = BTreeSet::new();
         let mut examined = 0usize;
         let seeded = match &seed {
             Seed::Symbol(prefix) => resolve_prefix(&tx, prefix, &producers)?,
@@ -1613,6 +2031,15 @@ impl Engine {
                 &tx,
                 handle,
                 *offset,
+                &producers,
+                freshness.source_revision,
+                &mut examined,
+                &mut files,
+                &mut visited,
+            )?,
+            Seed::Handle(handle) => resolve_handle(
+                &tx,
+                handle,
                 &producers,
                 freshness.source_revision,
                 &mut examined,
@@ -1633,6 +2060,7 @@ impl Engine {
                 .and_then(|(_, row)| row.selected.as_ref())
                 .map(|selected| selected.tuple.clone()),
             producer,
+            symbol_ids: symbol_id.iter().cloned().collect(),
             symbol_id,
             target: None,
             definitions: Vec::new(),
@@ -1646,11 +2074,8 @@ impl Engine {
             more: false,
             resume: None,
         };
-        let (symbol_id, namespace) = match seeded {
-            Seeded::Found {
-                symbol_id,
-                namespace,
-            } => (symbol_id, namespace),
+        let targets = match seeded {
+            Seeded::Found(targets) => targets,
             Seeded::Unanswerable {
                 coverage,
                 symbol_id,
@@ -1662,6 +2087,9 @@ impl Engine {
                 ));
             }
         };
+        // The first target names the answer's producer and snapshot; a
+        // handle seed's targets all come from current scopes.
+        let (symbol_id, namespace) = (targets[0].symbol_id.clone(), targets[0].namespace.clone());
         let selected = producers
             .iter()
             .find(|(name, _)| *name == namespace)
@@ -1686,80 +2114,96 @@ impl Engine {
                 false,
             ));
         }
+        let complete = targets.iter().all(|target| {
+            producers
+                .iter()
+                .find(|(name, _)| *name == target.namespace)
+                .and_then(|(_, row)| row.selected.as_ref())
+                .is_some_and(|chosen| chosen.state == SnapshotState::Complete)
+        });
 
         let by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
         let sources = tx.open_table(SOURCES)?;
         let chunks = tx.open_table(CHUNKS)?;
-        let mut scopes = EligibleScopes {
-            scopes: tx.open_table(COMPILER_SCOPES)?,
-            namespace: namespace.clone(),
-            snapshot_id: selected.tuple.snapshot_id.clone(),
-            cache: HashMap::new(),
-        };
+        let mut scopes = eligible_scopes(&tx, &producers, &targets)?;
         let mut stale = 0usize;
 
         // Definition lookup: at most nine eligible records (eight candidates
         // and one more to know that more exist; stale drops draw too), taken
         // from the shared allowance but never from its last record
-        // (`DEFINITION_SCAN_LIMIT`).
-        // Every candidate that survives is re-verified against its indexed
-        // bytes before it can make the target unique.
+        // (`DEFINITION_SCAN_LIMIT`). A split identity's definition at a site
+        // already listed is the same definition. Every candidate that
+        // survives is re-verified against its indexed bytes before it can
+        // make the target unique.
         let mut definitions: Vec<DefinitionCandidate> = Vec::new();
         let mut eligible_definitions = 0usize;
         let mut definitions_truncated = false;
         let mut lookup_finished = true;
-        let low = format!("{symbol_id}\0d\0");
-        let high = format!("{symbol_id}\0d\u{1}");
-        for entry in by_symbol.range(low.as_str()..high.as_str())? {
-            if examined >= DEFINITION_SCAN_LIMIT {
-                lookup_finished = false;
-                break;
-            }
-            let (key, _) = entry?;
-            examined += 1;
-            let parsed = parse_symbol_key(key.value())?;
-            let Some(scope) = scopes.get(&parsed.path)? else {
-                stale += 1;
-                continue;
-            };
-            if definitions.len() == DEFINITION_CANDIDATES {
-                // A ninth eligible candidate only proves that more exist.
+        'lookup: for target in &targets {
+            let low = format!("{}\0d\0", target.symbol_id);
+            let high = format!("{}\0d\u{1}", target.symbol_id);
+            for entry in by_symbol.range(low.as_str()..high.as_str())? {
+                if examined >= DEFINITION_SCAN_LIMIT {
+                    lookup_finished = false;
+                    break 'lookup;
+                }
+                let (key, _) = entry?;
+                examined += 1;
+                let parsed = parse_symbol_key(key.value())?;
+                let scope = match scopes.get_mut(&target.namespace) {
+                    Some(eligible) => eligible.get(&parsed.path)?,
+                    None => None,
+                };
+                let Some(scope) = scope else {
+                    stale += 1;
+                    continue;
+                };
+                if definitions.iter().any(|known| {
+                    known.path == parsed.path
+                        && known.start == parsed.start
+                        && known.end == parsed.end
+                }) {
+                    continue;
+                }
+                if definitions.len() == DEFINITION_CANDIDATES {
+                    // A ninth eligible candidate only proves that more exist.
+                    eligible_definitions += 1;
+                    definitions_truncated = true;
+                    break 'lookup;
+                }
+                // Verify the candidate's source from the same transaction
+                // and the same file budget BEFORE it can count as a target:
+                // an absent or re-hashed source is a stale drop, an
+                // unverifiable range is a named corruption.
+                ensure_file(
+                    &mut files,
+                    &sources,
+                    &chunks,
+                    &parsed.path,
+                    &scope.source_hash,
+                )?;
+                let Some(body) = body_of(&files, &parsed.path) else {
+                    stale += 1;
+                    continue;
+                };
+                let verified = parsed.end <= body.len() as u64
+                    && body.is_char_boundary(parsed.start as usize)
+                    && body.is_char_boundary(parsed.end as usize);
+                if !verified {
+                    return Err(FoundryError::GraphInvalid(format!(
+                        "a stored definition lies outside its source: {}",
+                        parsed.path
+                    )));
+                }
                 eligible_definitions += 1;
-                definitions_truncated = true;
-                break;
+                visited.insert(parsed.path.clone());
+                definitions.push(DefinitionCandidate {
+                    path: parsed.path,
+                    sha256: scope.source_hash,
+                    start: parsed.start,
+                    end: parsed.end,
+                });
             }
-            // Verify the candidate's source from the same transaction and
-            // the same file budget BEFORE it can count as a target: an
-            // absent or re-hashed source is a stale drop, an unverifiable
-            // range is a named corruption.
-            ensure_file(
-                &mut files,
-                &sources,
-                &chunks,
-                &parsed.path,
-                &scope.source_hash,
-            )?;
-            let Some(body) = body_of(&files, &parsed.path) else {
-                stale += 1;
-                continue;
-            };
-            let verified = parsed.end <= body.len() as u64
-                && body.is_char_boundary(parsed.start as usize)
-                && body.is_char_boundary(parsed.end as usize);
-            if !verified {
-                return Err(FoundryError::GraphInvalid(format!(
-                    "a stored definition lies outside its source: {}",
-                    parsed.path
-                )));
-            }
-            eligible_definitions += 1;
-            visited.insert(parsed.path.clone());
-            definitions.push(DefinitionCandidate {
-                path: parsed.path,
-                sha256: scope.source_hash,
-                start: parsed.start,
-                end: parsed.end,
-            });
         }
         if !lookup_finished {
             definitions_truncated = true;
@@ -1772,115 +2216,25 @@ impl Engine {
         };
 
         // References in (path, start, end) order, strictly after the cursor.
-        // Every cap is checked per record, before that record is examined.
-        let low = match &after {
-            Some((path, start, end)) => {
-                format!("{symbol_id}\0r\0{path}\0{start:020}\0{end:020}\u{1}")
-            }
-            None => format!("{symbol_id}\0r\0"),
-        };
-        let high = format!("{symbol_id}\0r\u{1}");
-        let mut items: Vec<ReferenceItem> = Vec::new();
-        let (mut unresolved, mut want_more) = (0usize, false);
-        let mut consumed: Option<(String, u64, u64)> = None;
-        for entry in by_symbol.range(low.as_str()..high.as_str())? {
-            // The caps are checked on the EXISTENCE of the next key, before
-            // it is decoded: an exhausted window never reads (and so never
-            // trips over) a record it could not deliver anyway.
-            let (key, _) = entry?;
-            if items.len() >= request.limit || examined >= REFERENCES_MAX_EXAMINED {
-                want_more = true;
-                break;
-            }
-            let parsed = parse_symbol_key(key.value())?;
-            let Some(scope) = scopes.get(&parsed.path)? else {
-                examined += 1;
-                stale += 1;
-                consumed = Some((parsed.path, parsed.start, parsed.end));
-                continue;
-            };
-            if !visited.contains(&parsed.path) && visited.len() >= REFERENCES_MAX_FILES {
-                want_more = true;
-                break;
-            }
-            examined += 1;
-            consumed = Some((parsed.path.clone(), parsed.start, parsed.end));
-            ensure_file(
-                &mut files,
-                &sources,
-                &chunks,
-                &parsed.path,
-                &scope.source_hash,
-            )?;
-            let Some(Some(view)) = files.get(&parsed.path) else {
-                stale += 1;
-                continue;
-            };
-            visited.insert(parsed.path.clone());
-            let (start, end) = (parsed.start as usize, parsed.end as usize);
-            if end > view.body.len()
-                || !view.body.is_char_boundary(start)
-                || !view.body.is_char_boundary(end)
-            {
-                return Err(FoundryError::GraphInvalid(format!(
-                    "a stored occurrence lies outside its source: {}",
-                    parsed.path
-                )));
-            }
-            if target != TargetResolution::Unique {
-                unresolved += 1;
-            }
-            let (unit_start, unit_end, label) = match view.unit_at(start) {
-                Some(unit) => (unit.start as u64, unit.end as u64, unit_label(unit)),
-                None => (parsed.start, parsed.end, "block".to_owned()),
-            };
-            let edge = (target == TargetResolution::Unique)
-                .then(|| definitions.first())
-                .flatten()
-                .map(|definition| {
-                    edge_id(
-                        &namespace,
-                        "references",
-                        EdgeEnd {
-                            identity: &parsed.path,
-                            hash: &scope.source_hash,
-                            start: parsed.start,
-                            end: parsed.end,
-                        },
-                        EdgeEnd {
-                            identity: &definition.path,
-                            hash: &definition.sha256,
-                            start: definition.start,
-                            end: definition.end,
-                        },
-                    )
-                });
-            items.push(ReferenceItem {
-                occurrence_id: occurrence_id(
-                    &namespace,
-                    OccurrenceKind::Reference,
-                    &parsed.path,
-                    &scope.source_hash,
-                    parsed.start,
-                    parsed.end,
-                    &symbol_id,
-                ),
-                path: parsed.path.clone(),
-                sha256: scope.source_hash.clone(),
-                start: parsed.start,
-                end: parsed.end,
-                line: view.line_of(start),
-                unit: SourceHandle {
-                    workspace_id: bound.clone(),
-                    path: parsed.path,
-                    sha256: scope.source_hash,
-                    start: unit_start,
-                    end: unit_end,
-                },
-                label,
-                edge_id: edge,
-            });
-        }
+        let unique = (target == TargetResolution::Unique)
+            .then(|| definitions.first())
+            .flatten();
+        let window = reference_window(
+            &by_symbol,
+            &sources,
+            &chunks,
+            &mut scopes,
+            &targets,
+            after.as_ref(),
+            request.limit,
+            unique,
+            &bound,
+            true,
+            &mut examined,
+            &mut files,
+            &mut visited,
+        )?;
+        stale += window.stale;
         // `more` promises a continuation cursor. A window that stopped with
         // a reference still pending but before consuming ANY record has no
         // cursor to hand back: that is a budget cliff, not an end. It is
@@ -1889,17 +2243,17 @@ impl Engine {
         // The seed scan and the definition lookup both stop short of the
         // reserved record, so this is a backstop: a future change to those
         // limits cannot turn an exhausted window into a false end.
-        let no_progress = want_more && consumed.is_none();
+        let no_progress = window.want_more && window.consumed.is_none();
         let candidates_full = no_progress
             || examined >= REFERENCES_MAX_EXAMINED
             || visited.len() >= REFERENCES_MAX_FILES;
-        let resume = consumed
-            .clone()
+        let more = window.want_more && window.consumed.is_some();
+        let resume = window
+            .consumed
             .map(|(path, start, end)| format!("{path}#{start}-{end}"));
-        let more = want_more && consumed.is_some();
-        let coverage = if selected.state == SnapshotState::Complete
+        let coverage = if complete
             && stale == 0
-            && unresolved == 0
+            && window.unresolved == 0
             && !no_progress
             && target == TargetResolution::Unique
         {
@@ -1912,12 +2266,13 @@ impl Engine {
             snapshot: Some(selected.tuple.clone()),
             producer: Some(namespace),
             symbol_id: Some(symbol_id),
+            symbol_ids: targets.into_iter().map(|target| target.symbol_id).collect(),
             target: Some(target),
             definitions,
             definitions_truncated,
-            items,
+            items: window.items,
             examined,
-            unresolved,
+            unresolved: window.unresolved,
             stale,
             candidates_full,
             coverage,
@@ -1928,685 +2283,113 @@ impl Engine {
 }
 
 // ---------------------------------------------------------------------------
-// Context graph expansion (005 § context(strategy=graph), T003).
+// Exact doors (context-v2 § Doors, 005 T004).
 // ---------------------------------------------------------------------------
 
-/// Retrieval spans a context's compiler expansion seeds from.
-pub(crate) const CONTEXT_GRAPH_SPANS: usize = 3;
-/// Delivery units the compiler graph may contribute to one context. With the
-/// lexical units they are bounded again by the context's one 32-unit total.
-pub(crate) const CONTEXT_GRAPH_UNITS: usize = 32;
-/// Graph records one context expansion may examine: seed-span occurrences,
-/// definition lookups and reference records all draw from it.
-pub(crate) const CONTEXT_GRAPH_EXAMINED: usize = 256;
-/// The share of that window the seed-span scan may take, so the symbols it
-/// collected can still be resolved.
-const CONTEXT_SEED_SCAN: usize = CONTEXT_GRAPH_EXAMINED / 2;
-
-/// The relation one compiler reference was collected under: the snapshot it
-/// was read from, the `(path, source sha256)` of its seed, definition and
-/// reference scopes, and the three stored rows that state it (the seed
-/// occurrence, the unique definition and the reference). The final read must
-/// find ALL of it again: a same-revision replacement or a re-import under a
-/// new snapshot is a different relation even when some scope row for the
-/// same path and hash still exists.
-#[derive(Clone, Debug)]
-pub(crate) struct ContextWitness {
-    pub(crate) namespace: String,
-    pub(crate) snapshot_id: String,
-    pub(crate) seed: (String, String),
-    pub(crate) definition: (String, String),
-    pub(crate) reference: (String, String),
-    /// Full id of the seed symbol the relation was resolved for.
-    pub(crate) symbol_id: String,
-    /// `COMPILER_OCCURRENCES` key of the seed occurrence.
-    pub(crate) seed_key: String,
-    /// `COMPILER_BY_SYMBOL` keys of the unique definition and the reference.
-    pub(crate) definition_key: String,
-    pub(crate) reference_key: String,
-    /// The delivery unit `(path, start, end)` this witness speaks for. The
-    /// final pass keeps ONE witness per delivered unit, so a unit holding
-    /// many occurrences of the symbol is verified once.
-    pub(crate) unit: (String, u64, u64),
-}
-
-/// One delivery unit contributed by the compiler graph: the unit that
-/// encloses an eligible reference occurrence, exactly as `references`
-/// reports it, with the relation that put it here.
-pub(crate) struct ContextUnit {
-    pub(crate) path: String,
-    pub(crate) sha256: String,
-    pub(crate) start: u64,
-    pub(crate) end: u64,
-    pub(crate) line: u64,
-    pub(crate) label: String,
-    pub(crate) witness: ContextWitness,
-}
-
-/// The compiler half of a graph context: evidence still to be revalidated in
-/// the caller's final read.
-pub(crate) struct ContextGraphUnits {
-    /// Units no search unit already covers.
-    pub(crate) units: Vec<ContextUnit>,
-    /// Relations whose reference unit was ALREADY selected as a search unit:
-    /// they add no unit, but they are evidence the eligible graph was used,
-    /// so the graph is `ok`, never `unavailable`.
-    pub(crate) already_selected: Vec<ContextWitness>,
-    pub(crate) examined: usize,
-    pub(crate) stale: usize,
-    /// A bound was hit (the examination window, the seed-scan share or the
-    /// unit cap).
+/// The exact doors of one definition, summarized by file.
+pub(crate) struct ExactDoors {
+    /// One line per file in path order, at most [`crate::store::DOOR_FILES`].
+    pub(crate) lines: Vec<crate::store::DoorLine>,
+    /// Files with sites beyond the listed ones.
+    pub(crate) more_files: usize,
+    /// The references window filled (records, files or lines).
     pub(crate) full: bool,
-    /// Every selected snapshot predates the current source revision, the
-    /// same state `references` answers `coverage:stale` for.
-    pub(crate) state_stale: bool,
+    /// Records the window dropped as ineligible.
+    pub(crate) stale: usize,
 }
 
-impl ContextGraphUnits {
-    pub(crate) fn empty() -> Self {
-        Self {
-            units: Vec::new(),
-            already_selected: Vec::new(),
-            examined: 0,
-            stale: 0,
-            full: false,
-            state_stale: false,
-        }
-    }
-}
-
-/// What a final-read check found about one source range.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SourceProof {
-    /// The source is absent or no longer carries the expected hash.
-    Missing,
-    /// The source's chunks reconstruct to its recorded hash and the range
-    /// lies inside the verified body on UTF-8 boundaries.
-    Verified,
-    /// The source verifies but the stored range does not lie inside it.
-    Outside,
-}
-
-/// The final read's verdicts: one per witness, in order, and whether the
-/// shared record allowance ran out anywhere (an unfinished proof).
-pub(crate) struct WitnessVerdicts {
-    pub(crate) holds: Vec<bool>,
-    pub(crate) unfinished: bool,
-}
-
-/// The outcome of re-establishing one symbol's resolution in the final read.
-#[derive(Clone, Debug)]
-enum FinalResolution {
-    /// Exactly one eligible, source-verified definition: its `by_symbol` key.
-    Unique(String),
-    /// None, or more than one: the symbol no longer resolves uniquely.
-    NotUnique,
-    /// The allowance ran out before uniqueness could be concluded.
-    Unfinished,
-}
-
-/// Graph records the final pass may read across ALL delivered units and
-/// symbols: witness membership rows (seed, definition and reference) and
-/// uniqueness-walk rows alike. Source-body verification is separate source
-/// work and is not counted here.
-const CONTEXT_FINAL_RECORDS: usize = CONTEXT_GRAPH_EXAMINED;
-
-/// Count one final-pass graph record. A release build carries no counter.
-#[cfg(feature = "test-faults")]
-fn count_final_record() {
-    crate::fault::count_final_graph_record();
-}
-
-/// Count one final-pass graph record. A release build carries no counter.
-#[cfg(not(feature = "test-faults"))]
-fn count_final_record() {}
-
-/// Re-establish `symbol_id`'s resolution under `snapshot_id` in THIS
-/// transaction: walk its definition records (each one counted against
-/// `allowance`, checked before the record is decoded) and require exactly one
-/// whose scope belongs to the snapshot and whose source verifies through
-/// `proof`. A definition range outside its verified source is `graph_invalid`.
-fn final_resolution(
-    by_symbol: &redb::ReadOnlyTable<&'static str, &'static str>,
-    scopes: &redb::ReadOnlyTable<&'static str, &'static str>,
-    proof: &mut dyn FnMut(&str, &str, u64, u64) -> FResult<SourceProof>,
-    namespace: &str,
-    snapshot_id: &str,
-    symbol_id: &str,
-    allowance: &mut usize,
-) -> FResult<FinalResolution> {
-    let low = format!("{symbol_id}\0d\0");
-    let high = format!("{symbol_id}\0d\u{1}");
-    let mut found: Option<String> = None;
-    for entry in by_symbol.range(low.as_str()..high.as_str())? {
-        if *allowance == 0 {
-            return Ok(FinalResolution::Unfinished);
-        }
-        let (key, _) = entry?;
-        *allowance -= 1;
-        count_final_record();
-        let parsed = parse_symbol_key(key.value())?;
-        let Some(raw) = scopes.get(scope_key(namespace, &parsed.path).as_str())? else {
-            continue;
-        };
-        let scope: ScopeRow = stored_row(raw.value(), "compiler scope")?;
-        if scope.snapshot_id != snapshot_id {
-            continue;
-        }
-        match proof(&parsed.path, &scope.source_hash, parsed.start, parsed.end)? {
-            SourceProof::Missing => continue,
-            SourceProof::Outside => {
-                return Err(FoundryError::GraphInvalid(format!(
-                    "a stored definition lies outside its source: {}",
-                    parsed.path
-                )));
-            }
-            SourceProof::Verified => {}
-        }
-        if found.is_some() {
-            return Ok(FinalResolution::NotUnique);
-        }
-        found = Some(key.value().to_owned());
-    }
-    Ok(found.map_or(FinalResolution::NotUnique, FinalResolution::Unique))
-}
-
-/// Whether each witness still holds in THIS transaction:
-///
-/// * its producer's selected snapshot is still the one it was collected
-///   under and is current for the source revision;
-/// * its seed, definition and reference scopes still belong to that
-///   snapshot and name the same source bytes, and the seed occurrence,
-///   definition and reference rows still exist. Those three membership rows
-///   are charged against the shared record allowance (cached, so a repeated
-///   witness is not re-read), as is every uniqueness-walk record below:
-///   EVERY graph record the final pass reads counts, and a depleted
-///   allowance leaves the proof unfinished;
-/// * the seed, definition and reference SOURCES verify through `proof`
-///   (chunks, hash and the stored range) - the caller shares one
-///   verified-body cache with context rendering, so each file is
-///   reconstructed once. That is separate source work; it is not counted
-///   against the record allowance;
-/// * the seed symbol STILL resolves to exactly the witnessed unique,
-///   source-verified definition. The same snapshot can gain a second
-///   definition after collection (a partial import completed by a replay of
-///   the same artifact), so presence of the witnessed row is not enough. The
-///   verdict is cached per `(namespace, snapshot, symbol)`; an ambiguous or
-///   unfinished check drops the symbol's expansion.
-///
-/// The caller passes ONE witness per delivered unit (at most 32), so many
-/// occurrences of a symbol inside one delivered unit cost one membership
-/// check, not one per occurrence.
-///
-/// A malformed producer or scope row, or a range outside its source, is
-/// `graph_invalid` (component-local at the caller). Chunk corruption and
-/// database errors keep their own named codes: they are never an empty graph.
-pub(crate) fn witnesses_hold(
+/// Exact doors (context-v2 § Doors) of the definition whose stored name range
+/// in `path` (over the bytes `source_hash`) is `name`: when a current
+/// compiler scope of `path` holds definition occurrences whose range equals
+/// it, their symbols - one, or several split identities of the same
+/// definition - give their references, deduplicated by site and read in the
+/// caller's final read transaction `tx` with 005's scope, snapshot, revision
+/// and source checks, in exactly one `references` window (the same record,
+/// file and line caps). `None` when no such occurrence exists: the caller
+/// gives approximate doors. Only the listed files' first sites are labeled,
+/// so only those files are parsed.
+pub(crate) fn exact_doors(
     tx: &redb::ReadTransaction,
     revision: u64,
-    witnesses: &[&ContextWitness],
-    proof: &mut dyn FnMut(&str, &str, u64, u64) -> FResult<SourceProof>,
-) -> FResult<WitnessVerdicts> {
+    bound: &str,
+    path: &str,
+    source_hash: &str,
+    name: (u64, u64),
+) -> FResult<Option<ExactDoors>> {
     let producers = read_producers(tx)?;
-    let scopes = tx.open_table(COMPILER_SCOPES)?;
-    let occurrences = tx.open_table(COMPILER_OCCURRENCES)?;
-    let by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
-    let mut resolutions: HashMap<(String, String, String), FinalResolution> = HashMap::new();
-    let mut memberships: HashMap<[String; 5], bool> = HashMap::new();
-    let mut allowance = CONTEXT_FINAL_RECORDS;
-    let mut unfinished = false;
-    let mut holds_all = Vec::with_capacity(witnesses.len());
-    // Charge one record before it is read; a depleted allowance leaves the
-    // rest of that witness unfinished.
-    let charge = |allowance: &mut usize| -> bool {
-        if *allowance == 0 {
-            return false;
-        }
-        *allowance -= 1;
-        count_final_record();
-        true
+    let mut examined = 0usize;
+    let NameSymbols::Found(targets) = symbols_at_name(
+        tx,
+        &producers,
+        revision,
+        path,
+        source_hash,
+        name,
+        &mut examined,
+    )?
+    else {
+        return Ok(None);
     };
-    for witness in witnesses {
-        let current = producers
-            .iter()
-            .find(|(name, _)| *name == witness.namespace)
-            .and_then(|(_, row)| row.selected.as_ref())
-            .is_some_and(|selected| {
-                selected.tuple.snapshot_id == witness.snapshot_id
-                    && selected.tuple.source_revision == revision
-            });
-        if !current {
-            holds_all.push(false);
+    let by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
+    let sources = tx.open_table(SOURCES)?;
+    let chunks = tx.open_table(CHUNKS)?;
+    let mut scopes = eligible_scopes(tx, &producers, &targets)?;
+    let mut files: HashMap<String, Option<FileView>> = HashMap::new();
+    let mut visited: BTreeSet<String> = BTreeSet::new();
+    let window = reference_window(
+        &by_symbol,
+        &sources,
+        &chunks,
+        &mut scopes,
+        &targets,
+        None,
+        REFERENCES_MAX_LIMIT,
+        None,
+        bound,
+        false,
+        &mut examined,
+        &mut files,
+        &mut visited,
+    )?;
+    let mut doors = ExactDoors {
+        lines: Vec::new(),
+        more_files: 0,
+        full: window.want_more
+            || examined >= REFERENCES_MAX_EXAMINED
+            || visited.len() >= REFERENCES_MAX_FILES,
+        stale: window.stale,
+    };
+    for sites in window.items.chunk_by(|a, b| a.path == b.path) {
+        if doors.lines.len() == crate::store::DOOR_FILES {
+            doors.more_files += 1;
             continue;
         }
-        // Membership: the three stored rows the relation was collected
-        // under, charged and cached per witness identity.
-        let membership_key = [
-            witness.namespace.clone(),
-            witness.snapshot_id.clone(),
-            witness.seed_key.clone(),
-            witness.definition_key.clone(),
-            witness.reference_key.clone(),
-        ];
-        let mut holds = match memberships.get(&membership_key) {
-            Some(&known) => known,
-            None => {
-                let mut known = true;
-                for _ in 0..3 {
-                    if !charge(&mut allowance) {
-                        unfinished = true;
-                        known = false;
-                        break;
-                    }
-                }
-                if known {
-                    known &= occurrences.get(witness.seed_key.as_str())?.is_some();
-                    for key in [&witness.definition_key, &witness.reference_key] {
-                        known &= by_symbol
-                            .get(key.as_str())?
-                            .is_some_and(|namespace| namespace.value() == witness.namespace);
-                    }
-                    for (path, hash) in [&witness.seed, &witness.definition, &witness.reference] {
-                        let scope =
-                            match scopes.get(scope_key(&witness.namespace, path).as_str())? {
-                                Some(raw) => {
-                                    Some(stored_row::<ScopeRow>(raw.value(), "compiler scope")?)
-                                }
-                                None => None,
-                            };
-                        known &= scope.is_some_and(|row| {
-                            row.snapshot_id == witness.snapshot_id && row.source_hash == *hash
-                        });
-                    }
-                }
-                memberships.insert(membership_key, known);
-                known
-            }
+        let first = &sites[0];
+        let Some(Some(view)) = files.get(&first.path) else {
+            return Err(FoundryError::CorruptStore(format!(
+                "{}: a delivered reference's source is not loaded",
+                first.path
+            )));
         };
-        if !holds {
-            holds_all.push(false);
-            continue;
-        }
-        // The sources the relation stands on, verified in this transaction.
-        let seed = parse_occurrence_key(&witness.seed_key)?;
-        let definition = parse_symbol_key(&witness.definition_key)?;
-        let reference = parse_symbol_key(&witness.reference_key)?;
-        for ((path, hash), start, end) in [
-            (&witness.seed, seed.start, seed.end),
-            (&witness.definition, definition.start, definition.end),
-            (&witness.reference, reference.start, reference.end),
-        ] {
-            match proof(path, hash, start, end)? {
-                SourceProof::Verified => {}
-                SourceProof::Missing => holds = false,
-                SourceProof::Outside => {
-                    return Err(FoundryError::GraphInvalid(format!(
-                        "a stored occurrence lies outside its source: {path}"
-                    )));
-                }
-            }
-        }
-        if !holds {
-            holds_all.push(false);
-            continue;
-        }
-        // The symbol must still resolve uniquely to the witnessed definition.
-        let cache_key = (
-            witness.namespace.clone(),
-            witness.snapshot_id.clone(),
-            witness.symbol_id.clone(),
-        );
-        let resolution = match resolutions.get(&cache_key) {
-            Some(known) => known.clone(),
-            None => {
-                let fresh = final_resolution(
-                    &by_symbol,
-                    &scopes,
-                    proof,
-                    &witness.namespace,
-                    &witness.snapshot_id,
-                    &witness.symbol_id,
-                    &mut allowance,
-                )?;
-                resolutions.insert(cache_key, fresh.clone());
-                fresh
-            }
+        let (start, end, label) = match view.unit_at(first.start as usize) {
+            Some(unit) => (unit.start as u64, unit.end as u64, unit_label(unit)),
+            None => (first.start, first.end, "block".to_owned()),
         };
-        match resolution {
-            FinalResolution::Unique(key) => holds = key == witness.definition_key,
-            FinalResolution::NotUnique => holds = false,
-            FinalResolution::Unfinished => {
-                holds = false;
-                unfinished = true;
-            }
-        }
-        holds_all.push(holds);
-    }
-    Ok(WitnessVerdicts {
-        holds: holds_all,
-        unfinished,
-    })
-}
-
-/// A stored occurrence range must lie inside the verified source body, on
-/// UTF-8 boundaries: the guard `resolve_position` applies, reused here.
-fn lies_in(body: &str, start: u64, end: u64) -> bool {
-    end <= body.len() as u64
-        && body.is_char_boundary(start as usize)
-        && body.is_char_boundary(end as usize)
-}
-
-/// A seed occurrence collected from a retrieval span.
-struct ContextSeed {
-    namespace: String,
-    symbol_id: String,
-    seed_key: String,
-    path: String,
-    hash: String,
-}
-
-impl Engine {
-    /// Compiler delivery units for `context(strategy=graph)`, seeded by the
-    /// first retrieved spans.
-    ///
-    /// * Seeds: for each span (retrieval order), the eligible occurrences
-    ///   overlapping it - those starting inside it, then the earlier ones
-    ///   that reach into it - symbol ids ordered within a span, each symbol
-    ///   once. Every examined occurrence range is validated against the
-    ///   verified source before it counts as overlapping.
-    /// * Resolution: only a symbol with a UNIQUE eligible, source-verified
-    ///   definition expands. Every inspected definition record is counted
-    ///   against the shared window; an ambiguous symbol, or one whose
-    ///   uniqueness the window cannot conclude, is skipped (the latter marks
-    ///   the window full).
-    /// * Units: the delivery units enclosing the symbol's eligible reference
-    ///   occurrences, deduplicated against each other and against `taken`.
-    ///
-    /// Everything shares one examination window; hitting it (or the unit
-    /// cap) sets `full`. The result is NOT final: the caller revalidates
-    /// every witness in its own final read transaction. A stored occurrence
-    /// outside its source is `graph_invalid`, component-local at the caller.
-    pub(crate) fn context_graph_units(
-        &self,
-        spans: &[(String, u64, u64)],
-        taken: &BTreeSet<(String, u64, u64)>,
-    ) -> FResult<ContextGraphUnits> {
-        let tx = self.db.begin_read()?;
-        let freshness = self.freshness_in(&tx)?;
-        let revision = freshness.source_revision;
-        let producers = read_producers(&tx)?;
-        let mut outcome = ContextGraphUnits::empty();
-        let selected_rows: Vec<&(String, ProducerRow)> = producers
-            .iter()
-            .filter(|(_, row)| row.selected.is_some())
-            .collect();
-        if selected_rows.is_empty() {
-            return Ok(outcome);
-        }
-        // The same early state `references` reports `coverage:stale` for:
-        // every selected snapshot predates the source revision, so no
-        // compiler fact is eligible. Decided before any deep scan.
-        outcome.state_stale = selected_rows.iter().all(|(_, row)| {
-            row.selected
-                .as_ref()
-                .is_some_and(|selected| selected.tuple.source_revision != revision)
+        doors.lines.push(crate::store::DoorLine {
+            unit: SourceHandle {
+                workspace_id: bound.to_owned(),
+                path: first.path.clone(),
+                sha256: first.sha256.clone(),
+                start,
+                end,
+            },
+            line: first.line,
+            label,
+            text: view.line_text(first.line).to_owned(),
+            more: sites.len() - 1,
         });
-        if outcome.state_stale {
-            return Ok(outcome);
-        }
-        let occurrences = tx.open_table(COMPILER_OCCURRENCES)?;
-        let by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
-        let scope_table = tx.open_table(COMPILER_SCOPES)?;
-        let sources = tx.open_table(SOURCES)?;
-        let chunks = tx.open_table(CHUNKS)?;
-        let mut files: HashMap<String, Option<FileView>> = HashMap::new();
-        let mut ordered: Vec<ContextSeed> = Vec::new();
-        let mut done: BTreeSet<String> = BTreeSet::new();
-        // Units this expansion already added (`taken` holds the search units).
-        let mut seen: BTreeSet<(String, u64, u64)> = BTreeSet::new();
-        'spans: for (path, span_start, span_end) in spans.iter().take(CONTEXT_GRAPH_SPANS) {
-            // symbol id -> its first seed occurrence, so ids sort per span.
-            let mut per_span: BTreeMap<String, ContextSeed> = BTreeMap::new();
-            for (namespace, row) in &producers {
-                let Some(selected) = &row.selected else {
-                    continue;
-                };
-                if selected.tuple.source_revision != revision {
-                    continue;
-                }
-                let Some(scope) = scope_table
-                    .get(scope_key(namespace, path).as_str())?
-                    .map(|raw| stored_row::<ScopeRow>(raw.value(), "compiler scope"))
-                    .transpose()?
-                else {
-                    continue;
-                };
-                if scope.snapshot_id != selected.tuple.snapshot_id {
-                    continue;
-                }
-                // Only a scope published from the current bytes of this
-                // source can contribute eligible occurrences.
-                ensure_file(&mut files, &sources, &chunks, path, &scope.source_hash)?;
-                let Some(body) = body_of(&files, path) else {
-                    continue;
-                };
-                let outside = || {
-                    FoundryError::GraphInvalid(format!(
-                        "a stored occurrence lies outside its source: {path}"
-                    ))
-                };
-                let mut collect = |key: &str, parsed: OccurrenceKey| {
-                    per_span
-                        .entry(parsed.symbol_id)
-                        .or_insert_with(|| ContextSeed {
-                            namespace: namespace.clone(),
-                            symbol_id: String::new(),
-                            seed_key: key.to_owned(),
-                            path: path.clone(),
-                            hash: scope.source_hash.clone(),
-                        });
-                };
-                // Occurrences STARTING inside the span all overlap it.
-                let inside_low = format!("{namespace}\0{path}\0{span_start:020}");
-                let inside_high = format!("{namespace}\0{path}\0{span_end:020}");
-                for entry in occurrences.range(inside_low.as_str()..inside_high.as_str())? {
-                    if outcome.examined >= CONTEXT_SEED_SCAN {
-                        outcome.full = true;
-                        break;
-                    }
-                    let (key, _) = entry?;
-                    outcome.examined += 1;
-                    let parsed = parse_occurrence_key(key.value())?;
-                    if !lies_in(body, parsed.start, parsed.end) {
-                        return Err(outside());
-                    }
-                    collect(key.value(), parsed);
-                }
-                // Earlier occurrences that reach into it, nearest first,
-                // until none can: the longest stored occurrence bounds how
-                // far back one can start.
-                let before_low = format!("{namespace}\0{path}\0");
-                for entry in occurrences
-                    .range(before_low.as_str()..inside_low.as_str())?
-                    .rev()
-                {
-                    if outcome.examined >= CONTEXT_SEED_SCAN {
-                        outcome.full = true;
-                        break;
-                    }
-                    let (key, _) = entry?;
-                    outcome.examined += 1;
-                    let parsed = parse_occurrence_key(key.value())?;
-                    if !lies_in(body, parsed.start, parsed.end) {
-                        return Err(outside());
-                    }
-                    let (start, end) = (parsed.start, parsed.end);
-                    if end > *span_start {
-                        collect(key.value(), parsed);
-                    }
-                    if start.saturating_add(scope.max_span) <= *span_start {
-                        break;
-                    }
-                }
-            }
-            // What the span collected is kept even when its scan stopped at
-            // the window: those symbols still resolve below.
-            for (symbol_id, mut seed) in per_span {
-                if done.insert(symbol_id.clone()) {
-                    seed.symbol_id = symbol_id;
-                    ordered.push(seed);
-                }
-            }
-            if outcome.full {
-                break 'spans;
-            }
-        }
-        'symbols: for seed in ordered {
-            let Some(selected) = producers
-                .iter()
-                .find(|(name, _)| *name == seed.namespace)
-                .and_then(|(_, row)| row.selected.as_ref())
-            else {
-                continue;
-            };
-            let mut scopes = EligibleScopes {
-                scopes: tx.open_table(COMPILER_SCOPES)?,
-                namespace: seed.namespace.clone(),
-                snapshot_id: selected.tuple.snapshot_id.clone(),
-                cache: HashMap::new(),
-            };
-            // Definition lookup under the same eligibility as `references`,
-            // but the context only expands a UNIQUE eligible definition:
-            // the second eligible record ends the check as ambiguous, and a
-            // window that runs out first leaves it unfinished.
-            let mut definition: Option<(String, String, String)> = None;
-            let mut eligible = 0usize;
-            let mut finished = true;
-            let low = format!("{}\0d\0", seed.symbol_id);
-            let high = format!("{}\0d\u{1}", seed.symbol_id);
-            for entry in by_symbol.range(low.as_str()..high.as_str())? {
-                if outcome.examined >= CONTEXT_GRAPH_EXAMINED {
-                    finished = false;
-                    break;
-                }
-                let (key, _) = entry?;
-                outcome.examined += 1;
-                let parsed = parse_symbol_key(key.value())?;
-                let Some(scope) = scopes.get(&parsed.path)? else {
-                    outcome.stale += 1;
-                    continue;
-                };
-                ensure_file(
-                    &mut files,
-                    &sources,
-                    &chunks,
-                    &parsed.path,
-                    &scope.source_hash,
-                )?;
-                let Some(body) = body_of(&files, &parsed.path) else {
-                    outcome.stale += 1;
-                    continue;
-                };
-                if !lies_in(body, parsed.start, parsed.end) {
-                    return Err(FoundryError::GraphInvalid(format!(
-                        "a stored definition lies outside its source: {}",
-                        parsed.path
-                    )));
-                }
-                eligible += 1;
-                if eligible > 1 {
-                    break;
-                }
-                definition = Some((key.value().to_owned(), parsed.path, scope.source_hash));
-            }
-            if !finished {
-                outcome.full = true;
-                break 'symbols;
-            }
-            if eligible != 1 {
-                continue;
-            }
-            let Some(definition) = definition else {
-                continue;
-            };
-            let low = format!("{}\0r\0", seed.symbol_id);
-            let high = format!("{}\0r\u{1}", seed.symbol_id);
-            for entry in by_symbol.range(low.as_str()..high.as_str())? {
-                // Both caps are checked on the EXISTENCE of the next record,
-                // before it is decoded.
-                if outcome.examined >= CONTEXT_GRAPH_EXAMINED
-                    || outcome.units.len() >= CONTEXT_GRAPH_UNITS
-                {
-                    outcome.full = true;
-                    break;
-                }
-                let (key, _) = entry?;
-                outcome.examined += 1;
-                let parsed = parse_symbol_key(key.value())?;
-                let Some(scope) = scopes.get(&parsed.path)? else {
-                    outcome.stale += 1;
-                    continue;
-                };
-                ensure_file(
-                    &mut files,
-                    &sources,
-                    &chunks,
-                    &parsed.path,
-                    &scope.source_hash,
-                )?;
-                let Some(Some(view)) = files.get(&parsed.path) else {
-                    outcome.stale += 1;
-                    continue;
-                };
-                if !lies_in(&view.body, parsed.start, parsed.end) {
-                    return Err(FoundryError::GraphInvalid(format!(
-                        "a stored occurrence lies outside its source: {}",
-                        parsed.path
-                    )));
-                }
-                let start = parsed.start as usize;
-                let (unit_start, unit_end, label) = match view.unit_at(start) {
-                    Some(unit) => (unit.start as u64, unit.end as u64, unit_label(unit)),
-                    None => (parsed.start, parsed.end, "block".to_owned()),
-                };
-                let unit_key = (parsed.path.clone(), unit_start, unit_end);
-                let witness = ContextWitness {
-                    namespace: seed.namespace.clone(),
-                    snapshot_id: selected.tuple.snapshot_id.clone(),
-                    symbol_id: seed.symbol_id.clone(),
-                    seed: (seed.path.clone(), seed.hash.clone()),
-                    definition: (definition.1.clone(), definition.2.clone()),
-                    reference: (parsed.path.clone(), scope.source_hash.clone()),
-                    seed_key: seed.seed_key.clone(),
-                    definition_key: definition.0.clone(),
-                    reference_key: key.value().to_owned(),
-                    unit: unit_key.clone(),
-                };
-                if taken.contains(&unit_key) {
-                    // One witness per unit: later occurrences of the same
-                    // symbol in the SAME already-selected unit add nothing.
-                    if !outcome
-                        .already_selected
-                        .iter()
-                        .any(|kept| kept.unit == unit_key)
-                    {
-                        outcome.already_selected.push(witness);
-                    }
-                } else if seen.insert(unit_key) {
-                    outcome.units.push(ContextUnit {
-                        path: parsed.path,
-                        sha256: scope.source_hash,
-                        start: unit_start,
-                        end: unit_end,
-                        line: view.line_of(start),
-                        label,
-                        witness,
-                    });
-                }
-            }
-        }
-        Ok(outcome)
     }
+    Ok(Some(doors))
 }
 
 impl ReferencesRequest {
@@ -2624,7 +2407,7 @@ impl ReferencesRequest {
             ReferencesSeed::SymbolId(raw) => {
                 symbol_prefix(raw)?;
             }
-            ReferencesSeed::Position { handle, .. } => {
+            ReferencesSeed::Position { handle, .. } | ReferencesSeed::Handle(handle) => {
                 HandleRef::parse(handle)?;
             }
         }
@@ -2648,59 +2431,6 @@ impl Engine {
         {
             let mut scopes = tx.open_table(COMPILER_SCOPES)?;
             scopes.insert(scope_key(namespace, path).as_str(), raw)?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-}
-
-#[cfg(feature = "test-faults")]
-impl Engine {
-    /// Test seam (feature `test-faults` only): replace the `body` of one
-    /// stored chunk of an OPEN engine, keeping its JSON shape, path and
-    /// hash, so the source no longer reconstructs to its recorded hash. A
-    /// barrier test uses it to corrupt a file AFTER candidate collection,
-    /// which a closed-store rewrite cannot reach.
-    pub fn overwrite_chunk_body_for_tests(
-        &self,
-        path: &str,
-        ordinal: usize,
-        body: &str,
-    ) -> FResult<()> {
-        let tx = self.db.begin_write()?;
-        {
-            let mut chunks = tx.open_table(CHUNKS)?;
-            let key = format!("{path}\0{ordinal:010}");
-            let raw = chunks
-                .get(key.as_str())?
-                .map(|value| value.value().to_owned())
-                .ok_or(FoundryError::NotFound)?;
-            let mut value: serde_json::Value = serde_json::from_str(&raw)?;
-            value["body"] = body.into();
-            chunks.insert(key.as_str(), value.to_string().as_str())?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-}
-
-#[cfg(feature = "test-faults")]
-impl Engine {
-    /// Test seam (feature `test-faults` only): insert raw `compiler_by_symbol`
-    /// rows of an OPEN engine, each valued `namespace`. A barrier test uses it
-    /// to add records AFTER candidate collection (for example hundreds of
-    /// ineligible definition rows that exhaust the final uniqueness allowance).
-    pub fn insert_compiler_by_symbol_for_tests(
-        &self,
-        keys: &[String],
-        namespace: &str,
-    ) -> FResult<()> {
-        let tx = self.db.begin_write()?;
-        {
-            let mut by_symbol = tx.open_table(COMPILER_BY_SYMBOL)?;
-            for key in keys {
-                by_symbol.insert(key.as_str(), namespace)?;
-            }
         }
         tx.commit()?;
         Ok(())

@@ -3157,6 +3157,34 @@ fn the_cli_imports_the_real_artifact_and_prints_budgeted_references() {
         .unwrap();
     assert!(examined > 4, "{by_position_text}");
 
+    // 005 T004: `--handle` alone means the symbols of the handle's
+    // definition unit (the exact-doors rule): the same references.
+    let body = std::fs::read_to_string(world.ws.join("src/a.rs")).unwrap();
+    let unit = context_foundry::syntax::documents(
+        &body,
+        context_foundry::syntax::Lang::from_path("src/a.rs"),
+    )
+    .into_iter()
+    .map(|document| document.unit)
+    .find(|unit| unit.name.as_deref() == Some("parse_record"))
+    .unwrap();
+    let definition = SourceHandle {
+        workspace_id: world.status()["workspace_id"].as_str().unwrap().to_owned(),
+        path: "src/a.rs".to_owned(),
+        sha256: digest(body.as_bytes()),
+        start: unit.start as u64,
+        end: unit.end as u64,
+    }
+    .to_v2();
+    let by_handle = cli(&world.store, &["references", "--handle", &definition]);
+    assert!(
+        by_handle.status.success(),
+        "{}",
+        String::from_utf8_lossy(&by_handle.stderr)
+    );
+    let by_handle = parse_v2(&String::from_utf8(by_handle.stdout).unwrap()).unwrap();
+    assert_eq!(by_handle.items, parsed.items);
+
     // A tight budget truncates with `next: after=`, and `--after` continues.
     let mut after: Option<String> = None;
     let mut seen = Vec::new();
@@ -3181,8 +3209,9 @@ fn the_cli_imports_the_real_artifact_and_prints_budgeted_references() {
     assert_eq!(seen.len(), 3);
     assert!(seen.iter().any(|h| h.starts_with("src/pointer.rs#")));
 
-    // Invalid invocations exit 2: no seed, two seeds, a handle without an
-    // offset, out-of-range arguments, a missing import file.
+    // Invalid invocations exit 2: no seed, two seeds, a handle alone that
+    // names no definition unit (`no_compiler_definition`), out-of-range
+    // arguments, a missing import file.
     let invalid: Vec<Vec<&str>> = vec![
         vec!["references"],
         vec![
@@ -5300,142 +5329,11 @@ fn a_truncated_unnamed_oversized_document_is_producer_incomplete() {
     assert_eq!(world.selected(RA).unwrap().tuple, selected.tuple);
 }
 
-// --- T003: context(strategy=graph) compiler units ----------------------------
+// --- 005 T004: doors (context-v2 § Doors) ------------------------------------
 
-fn graph_context(world: &World, query: &str) -> context_foundry::store::CandidateBatch {
-    world
-        .engine()
-        .context_candidates(
-            query,
-            context_foundry::Strategy::Graph,
-            &Control::unbounded(),
-        )
-        .unwrap()
-}
-
-#[test]
-fn graph_context_adds_the_units_enclosing_a_symbols_references() {
-    // A query whose lexical hits live in a.rs, b.rs and lib.rs only: the
-    // compiler graph is what can add the units that ENCLOSE a::parse_record's
-    // references in use_one.rs, use_two.rs and pointer.rs.
-    let world = World::fixture();
-    let bytes = fixture_artifact();
-    world
-        .import_manifest(&fixture_manifest(&world, &bytes), &bytes)
-        .unwrap();
-    let batch = graph_context(&world, "raw");
-    assert_eq!(batch.counters.graph, Some("ok"), "{:?}", batch.counters);
-    let paths: Vec<&str> = batch
-        .items
-        .iter()
-        .filter_map(|item| item.handle.as_ref().map(|handle| handle.path.as_str()))
-        .collect();
-    for expected in ["src/use_one.rs", "src/use_two.rs", "src/pointer.rs"] {
-        assert!(paths.contains(&expected), "{paths:?}");
-    }
-    // The compiler units are source-first units: verbatim text of the unit.
-    let pointer = batch
-        .items
-        .iter()
-        .find(|item| {
-            item.handle
-                .as_ref()
-                .is_some_and(|h| h.path == "src/pointer.rs")
-        })
-        .unwrap();
-    assert!(
-        pointer
-            .forms
-            .iter()
-            .any(|form| matches!(form, context_foundry::store::RenderedForm::Verbatim(_)))
-    );
-    // The packed text carries the graph state and the unit's handle.
-    let packed = response::pack_context(
-        &batch,
-        response::Budget {
-            tokens: 4096,
-            limited_by: response::BudgetLimiter::Request,
-        },
-        &response::stdout_bytes,
-    )
-    .unwrap();
-    assert!(
-        packed.text.contains("graph:ok"),
-        "{}",
-        packed.text.lines().next().unwrap()
-    );
-    assert!(packed.text.contains("src/pointer.rs"));
-}
-
-#[test]
-fn graph_context_state_spans_unavailable_ok_and_stale() {
-    // No import: the compiler graph is unavailable, and the source context
-    // still delivers.
-    let world = World::fixture();
-    let batch = graph_context(&world, "raw");
-    assert_eq!(batch.counters.graph, Some("graph_unavailable"));
-    assert!(
-        batch.items.iter().any(|item| item.handle.is_some()),
-        "source context survives the unavailable graph"
-    );
-    // With a fresh import the same query is ok.
-    let bytes = fixture_artifact();
-    world
-        .import_manifest(&fixture_manifest(&world, &bytes), &bytes)
-        .unwrap();
-    assert_eq!(graph_context(&world, "raw").counters.graph, Some("ok"));
-    // An edit bumps the revision: every selected snapshot predates it, the
-    // same state `references` answers `coverage:stale` for.
-    world.set_source("Cargo.toml", "[package]\nname = \"fixture\"\n");
-    let batch = graph_context(&world, "raw");
-    assert_eq!(batch.counters.graph, Some("graph_stale"));
-    assert!(
-        batch.items.iter().any(|item| item.handle.is_some()),
-        "source context survives the stale graph"
-    );
-}
-
-#[test]
-fn graph_context_units_are_deduplicated_against_search_units_and_capped() {
-    // The same unit is never delivered twice: the search hit in a.rs stays
-    // the search unit, and each symbol contributes its units once.
-    let world = World::fixture();
-    let bytes = fixture_artifact();
-    world
-        .import_manifest(&fixture_manifest(&world, &bytes), &bytes)
-        .unwrap();
-    let batch = graph_context(&world, "raw");
-    let mut seen = std::collections::BTreeSet::new();
-    for item in &batch.items {
-        if let Some(handle) = &item.handle {
-            assert!(
-                seen.insert((handle.path.clone(), handle.start, handle.end)),
-                "a unit is delivered twice: {} {}..{}",
-                handle.path,
-                handle.start,
-                handle.end
-            );
-        }
-    }
-    // A query with no lexical hits at all has no spans to seed from: the
-    // compiler graph cannot invent candidates, and says unavailable.
-    let batch = graph_context(&world, "zzz_no_such_token");
-    assert_eq!(batch.counters.graph, Some("graph_unavailable"));
-    assert!(batch.items.is_empty());
-}
-
-// --- T003 review round 1: provenance, uniqueness, bounds and degradation -----
-
-use context_foundry::store::{CandidateBatch, TIER_COMPILER};
-
-fn compiler_paths(batch: &CandidateBatch) -> Vec<String> {
-    batch
-        .items
-        .iter()
-        .filter(|item| item.tier == TIER_COMPILER)
-        .filter_map(|item| item.handle.as_ref().map(|handle| handle.path.clone()))
-        .collect()
-}
+use context_foundry::Strategy;
+use context_foundry::store::{CandidateBatch, DoorState, Doors};
+use context_foundry::testkit::{V2Item, V2Response};
 
 const REFERRING_FILES: [&str; 3] = ["src/pointer.rs", "src/use_one.rs", "src/use_two.rs"];
 
@@ -5459,21 +5357,364 @@ fn make_searchable(world: &mut World) {
         .unwrap();
 }
 
-fn assert_referring_units_collected(world: &World) {
-    let before = compiler_paths(&graph_context(world, "raw"));
-    for expected in REFERRING_FILES {
-        assert!(before.iter().any(|path| path == expected), "{before:?}");
+fn context_with(world: &World, query: &str, strategy: Strategy) -> CandidateBatch {
+    world
+        .engine()
+        .context_candidates(query, strategy, &Control::unbounded())
+        .unwrap()
+}
+
+fn doors(batch: &CandidateBatch) -> &Doors {
+    batch.doors.as_ref().expect("the context requested doors")
+}
+
+/// Each door line's `(path, line, more sites)`.
+fn door_lines(batch: &CandidateBatch) -> Vec<(String, u64, usize)> {
+    doors(batch)
+        .lines
+        .iter()
+        .map(|line| (line.unit.path.clone(), line.line, line.more))
+        .collect()
+}
+
+fn packed_context(batch: &CandidateBatch, tokens: usize) -> (String, V2Response) {
+    let text = response::pack_context(
+        batch,
+        response::Budget::request(tokens),
+        &response::stdout_bytes,
+    )
+    .unwrap()
+    .text;
+    let parsed = parse_v2(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    (text, parsed)
+}
+
+fn door_items(parsed: &V2Response) -> Vec<&V2Item> {
+    parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == V2Kind::Door)
+        .collect()
+}
+
+/// Every reference of `outcome` grouped by file in path order: the file's
+/// first site and its count of further sites.
+fn first_sites(outcome: &ReferencesOutcome) -> Vec<(String, u64, usize)> {
+    let mut files: Vec<(String, u64, usize)> = Vec::new();
+    for item in &outcome.items {
+        match files.last_mut() {
+            Some((path, _, more)) if *path == item.path => *more += 1,
+            _ => files.push((item.path.clone(), item.line, 0)),
+        }
+    }
+    files
+}
+
+/// Of a same-name pair in two modules, the qualifier anchors one and the
+/// doors come from that one alone; unqualified, the anchor is ambiguous, no
+/// doors are built and the directory names both.
+#[test]
+fn doors_come_from_the_qualified_definition_and_a_bare_pair_is_ambiguous() {
+    let (world, _) = imported_fixture();
+    let batch = context_with(&world, "who calls `a::parse_record`", Strategy::Auto);
+    let built = doors(&batch);
+    assert_eq!(built.state, DoorState::Exact);
+    assert_eq!(built.target.as_ref().unwrap().path, "src/a.rs");
+    let files: Vec<String> = door_lines(&batch)
+        .into_iter()
+        .map(|(path, ..)| path)
+        .collect();
+    assert_eq!(files, REFERRING_FILES);
+    let (text, parsed) = packed_context(&batch, 2048);
+    assert!(parsed.header.contains(&"doors:exact".to_owned()), "{text}");
+    assert_eq!(parsed.header.last().unwrap(), "anchored");
+    assert!(!text.contains("src/use_b.rs"), "{text}");
+    let lines = door_items(&parsed);
+    assert_eq!(lines.len(), 3, "{text}");
+    for (line, path) in lines.iter().zip(REFERRING_FILES) {
+        assert!(line.handle.starts_with(&format!("{path}#")), "{text}");
+        assert_eq!(line.lines.as_deref(), Some("L2"));
+        assert!(line.body.contains("crate::a::parse_record"), "{text}");
+        assert_eq!(line.form, None, "exact doors carry no [approx]");
+    }
+
+    let bare = context_with(&world, "who calls `parse_record`", Strategy::Auto);
+    assert_eq!(doors(&bare).state, DoorState::Ambiguous);
+    assert!(doors(&bare).lines.is_empty() && doors(&bare).target.is_none());
+    let (text, parsed) = packed_context(&bare, 2048);
+    assert!(
+        parsed.header.contains(&"doors:ambiguous".to_owned()),
+        "{text}"
+    );
+    assert!(parsed.header.contains(&"defs:2".to_owned()), "{text}");
+    assert!(door_items(&parsed).is_empty());
+    for path in ["src/a.rs", "src/b.rs"] {
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|item| item.handle.starts_with(&format!("{path}#"))),
+            "{text}"
+        );
     }
 }
 
+/// Exact doors equal `references` for the same symbol: one door line per
+/// file in path order, the file's first site and `(+n)` for the rest; and
+/// `references {handle}` on the anchored definition reads the same symbol.
 #[test]
-fn a_same_revision_replacement_at_the_final_barrier_drops_the_old_snapshots_units() {
+fn exact_doors_equal_references_and_references_handle_reads_the_same_symbol() {
+    let (world, _) = imported_fixture();
+    let batch = context_with(&world, "`a::parse_record`", Strategy::Graph);
+    let a_id = symbol_id(RA, "src/a.rs", A_SYMBOL);
+    let by_symbol = world.by_symbol(&a_id);
+    assert_eq!(door_lines(&batch), first_sites(&by_symbol));
+    for (door, item) in doors(&batch).lines.iter().zip(&by_symbol.items) {
+        assert_eq!(door.unit, item.unit);
+        assert_eq!(door.label, item.label);
+    }
+    let target = doors(&batch).target.clone().unwrap();
+    let by_handle = world
+        .references(ReferencesSeed::Handle(target.to_v2()), 64, None)
+        .unwrap();
+    assert_eq!(by_handle.symbol_ids, std::slice::from_ref(&a_id));
+    assert_eq!(by_handle.symbol_id.as_deref(), Some(a_id.as_str()));
+    assert_eq!(by_handle.coverage, Coverage::Complete);
+    let sites = |outcome: &ReferencesOutcome| -> Vec<(String, u64, u64)> {
+        outcome
+            .items
+            .iter()
+            .map(|item| (item.path.clone(), item.start, item.end))
+            .collect()
+    };
+    assert_eq!(sites(&by_handle), sites(&by_symbol));
+}
+
+/// The one-line SCIP range of the byte range `at..at + len` of `source`.
+fn scip_range(source: &str, at: usize, len: usize) -> Vec<i32> {
+    let line = source[..at].matches('\n').count() as i32;
+    let column = (at - source[..at].rfind('\n').map_or(0, |nl| nl + 1)) as i32;
+    vec![line, column, column + len as i32]
+}
+
+/// A decorated Python function, an annotated Java method, a C++ template
+/// and a Rust `fn` whose name is on the next line: each unit starts at what
+/// precedes its name, and each resolves to its compiler definition by its
+/// stored name range, giving exact doors and `references {handle}`.
+#[test]
+fn definitions_resolve_by_name_range_whatever_precedes_the_name() {
+    // (path, source, what the unit starts with, name, caller, caller source)
+    let cases: [(&str, &str, &str, &str, &str, &str); 4] = [
+        (
+            "py/app.py",
+            "@decorated\ndef py_handler(x):\n    return x\n",
+            "@decorated",
+            "py_handler",
+            "py/caller.py",
+            "def go():\n    return py_handler(1)\n",
+        ),
+        (
+            "java/Svc.java",
+            "class Svc {\n    @Override\n    public void javaRun() {}\n}\n",
+            "@Override",
+            "javaRun",
+            "java/Caller.java",
+            "class Caller {\n    void go(Svc s) { s.javaRun(); }\n}\n",
+        ),
+        (
+            "cpp/twice.hpp",
+            "template <typename T>\nT cpp_twice(T x) { return x + x; }\n",
+            "template",
+            "cpp_twice",
+            "cpp/use.cpp",
+            "int main() { return cpp_twice(2); }\n",
+        ),
+        (
+            "src/next.rs",
+            "pub fn\nnext_line_fn() {}\n",
+            "pub fn",
+            "next_line_fn",
+            "src/user.rs",
+            "pub fn user() {\n    crate::next_line_fn();\n}\n",
+        ),
+    ];
+    let sources: Vec<(&str, &str)> = cases
+        .iter()
+        .flat_map(|(path, body, _, _, caller, call)| [(*path, *body), (*caller, *call)])
+        .collect();
+    let mut world = World::with_sources(&sources);
+    let documents: Vec<Document> = cases
+        .iter()
+        .enumerate()
+        .flat_map(|(i, (path, body, _, name, caller, call))| {
+            let symbol = format!("rust-analyzer cargo toy 0.1.0 s{i}().");
+            [
+                doc(
+                    path,
+                    vec![occ(
+                        &scip_range(body, body.find(name).unwrap(), name.len()),
+                        &symbol,
+                        DEF,
+                    )],
+                ),
+                doc(
+                    caller,
+                    vec![occ(
+                        &scip_range(call, call.find(name).unwrap(), name.len()),
+                        &symbol,
+                        REF,
+                    )],
+                ),
+            ]
+        })
+        .collect();
+    world.import_ok(RA, "name-ranges", &artifact(documents));
+    make_searchable(&mut world);
+    for (path, body, lead, name, caller, call) in cases {
+        let batch = context_with(&world, &format!("who calls `{name}`"), Strategy::Auto);
+        let built = doors(&batch);
+        assert_eq!(built.state, DoorState::Exact, "{path}: {built:?}");
+        let target = built.target.clone().unwrap();
+        assert_eq!(target.path, path);
+        assert!(
+            body[target.start as usize..].starts_with(lead),
+            "{path}: the unit starts at {:?}",
+            &body[target.start as usize..]
+        );
+        let line = call[..call.find(name).unwrap()].matches('\n').count() as u64 + 1;
+        assert_eq!(door_lines(&batch), [(caller.to_owned(), line, 0)], "{path}");
+        let by_handle = world
+            .references(ReferencesSeed::Handle(target.to_v2()), 64, None)
+            .unwrap();
+        assert_eq!(by_handle.items.len(), 1, "{path}");
+        assert_eq!(by_handle.items[0].path, caller);
+    }
+}
+
+/// A unit no compiler definition occurrence covers gives approximate doors,
+/// and `references {handle}` on it is `invalid_argument` naming
+/// `no_compiler_definition`; so is a handle that names no definition unit.
+#[test]
+fn a_unit_without_a_definition_occurrence_gives_approximate_doors() {
+    let mut world = toy();
+    world.import_ok(RA, "approx", &toy_artifact());
+    make_searchable(&mut world);
+    // `beta` is defined in src/lib.rs, but the artifact has no occurrence
+    // at its name: the scope is current, the definition is not compiler-known.
+    let batch = context_with(&world, "what uses `beta`", Strategy::Auto);
+    let built = doors(&batch);
+    assert_eq!(built.state, DoorState::Approx);
+    let target = built.target.clone().unwrap();
+    let (text, parsed) = packed_context(&batch, 2048);
+    assert!(parsed.header.contains(&"doors:approx".to_owned()), "{text}");
+    let refused = world
+        .references(ReferencesSeed::Handle(target.to_v2()), 64, None)
+        .unwrap_err();
+    assert_eq!(refused.code(), "invalid_argument");
+    assert!(
+        refused.to_string().contains("no_compiler_definition"),
+        "{refused}"
+    );
+    let whole = world
+        .references(
+            ReferencesSeed::Handle(world.whole_file_handle("src/lib.rs")),
+            64,
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(whole.code(), "invalid_argument");
+    assert!(
+        whole.to_string().contains("no_compiler_definition"),
+        "{whole}"
+    );
+    // `alpha` is compiler-known: exact.
+    let exact = context_with(&world, "what uses `alpha`", Strategy::Auto);
+    assert_eq!(doors(&exact).state, DoorState::Exact);
+}
+
+/// Two split identities of one definition (two symbols defined at the same
+/// name range) give one door set, deduplicated by site, and one
+/// `references {handle}` window over both.
+#[test]
+fn split_identities_of_one_definition_give_one_deduplicated_set() {
+    const ONE: &str = "rust-analyzer cargo toy 0.1.0 Split#";
+    const TWO: &str = "rust-analyzer cargo toy 0.1.0 Split().";
+    let lib = "pub struct Split;\n";
+    let users = [
+        ("src/a.rs", "fn a() { crate::Split; }\n"),
+        ("src/b.rs", "fn b() { crate::Split; }\n"),
+        ("src/c.rs", "fn c() { crate::Split; }\n"),
+    ];
+    let mut sources = vec![("src/lib.rs", lib)];
+    sources.extend(users);
+    let mut world = World::with_sources(&sources);
+    let site = |body: &str| scip_range(body, body.find("Split").unwrap(), 5);
+    // ONE is referenced in a and b, TWO in b and c: b's site is shared.
+    world.import_ok(
+        RA,
+        "split",
+        &artifact(vec![
+            doc(
+                "src/lib.rs",
+                vec![occ(&site(lib), ONE, DEF), occ(&site(lib), TWO, DEF)],
+            ),
+            doc("src/a.rs", vec![occ(&site(users[0].1), ONE, REF)]),
+            doc(
+                "src/b.rs",
+                vec![
+                    occ(&site(users[1].1), ONE, REF),
+                    occ(&site(users[1].1), TWO, REF),
+                ],
+            ),
+            doc("src/c.rs", vec![occ(&site(users[2].1), TWO, REF)]),
+        ]),
+    );
+    make_searchable(&mut world);
+    let batch = context_with(&world, "what uses `Split`", Strategy::Auto);
+    assert_eq!(doors(&batch).state, DoorState::Exact);
+    let one_each = |path: &str| (path.to_owned(), 1, 0);
+    assert_eq!(
+        door_lines(&batch),
+        [
+            one_each("src/a.rs"),
+            one_each("src/b.rs"),
+            one_each("src/c.rs")
+        ]
+    );
+    let target = doors(&batch).target.clone().unwrap();
+    let by_handle = world
+        .references(ReferencesSeed::Handle(target.to_v2()), 64, None)
+        .unwrap();
+    let mut ids = vec![
+        symbol_id(RA, "src/lib.rs", ONE),
+        symbol_id(RA, "src/lib.rs", TWO),
+    ];
+    ids.sort();
+    assert_eq!(by_handle.symbol_ids, ids);
+    let paths: Vec<&str> = by_handle
+        .items
+        .iter()
+        .map(|item| item.path.as_str())
+        .collect();
+    assert_eq!(paths, ["src/a.rs", "src/b.rs", "src/c.rs"]);
+    assert_eq!(by_handle.target, Some(TargetResolution::Unique));
+    assert_eq!(by_handle.coverage, Coverage::Complete);
+}
+
+/// A graph replacement between candidate collection and the final read is
+/// what the final read sees: doors are read in that one transaction, so
+/// nothing from the replaced snapshot is delivered; a corrupt compiler row
+/// there is component-local and gives approximate doors.
+#[test]
+fn a_graph_replacement_during_door_collection_is_caught_by_the_final_read() {
     let (world, bytes) = imported_fixture();
-    assert_referring_units_collected(&world);
+    let query = "who calls `a::parse_record`";
+    assert_eq!(
+        door_lines(&context_with(&world, query, Strategy::Auto)).len(),
+        3
+    );
     // Artifact B at the SAME source revision: the referring files carry no
-    // occurrences any more, so B removed exactly those references. Their
-    // scopes still exist (accepted-empty, under B's snapshot) with the same
-    // source hashes - which is all round 1 checked.
+    // occurrences any more.
     let replacement = {
         let mut index = Index::parse_from_bytes(&bytes).unwrap();
         for document in &mut index.documents {
@@ -5497,385 +5738,24 @@ fn a_same_revision_replacement_at_the_final_barrier_drops_the_old_snapshots_unit
             assert!(report.complete && report.selected, "{report:?}");
         })),
     );
-    let batch = graph_context(&world, "raw");
+    let batch = context_with(&world, query, Strategy::Auto);
     fault::disarm_all();
-    assert!(
-        compiler_paths(&batch).is_empty(),
-        "a unit read from the old snapshot was relabeled: {:?}",
-        compiler_paths(&batch)
-    );
-    assert!(batch.counters.stale >= 3, "{:?}", batch.counters);
-    assert_eq!(batch.counters.graph, Some("graph_stale"));
-    assert!(
-        batch.items.iter().any(|item| item.handle.is_some()),
-        "source context survives"
-    );
-}
+    assert_eq!(doors(&batch).state, DoorState::Exact);
+    assert!(doors(&batch).lines.is_empty(), "{:?}", door_lines(&batch));
 
-#[test]
-fn a_third_file_edit_and_reimport_at_the_final_barrier_drops_the_old_snapshots_units() {
-    let (world, bytes) = imported_fixture();
-    assert_referring_units_collected(&world);
-    // At the barrier an UNRELATED file changes and the same artifact is
-    // imported for the new revision: every scope is republished under a new
-    // snapshot with unchanged hashes, so a check against "some current scope
-    // for the path" would relabel the old evidence.
-    const EDITED: &str = "[package]\nname = \"edited\"\n";
-    let revision = world.engine().source_revision().unwrap() + 1;
-    let mut inputs = world.inputs();
-    for (path, hash) in &mut inputs {
-        if path == "Cargo.toml" {
-            *hash = digest(EDITED.as_bytes());
-        }
-    }
-    let manifest = fixture_manifest_for(
-        &world.engine().workspace_id().unwrap(),
-        revision,
-        inputs,
-        &bytes,
-    );
-    let (index_path, snapshot_path) = world.write_pair(&manifest, &bytes);
-    fault::arm(
-        names::CONTEXT_BEFORE_FINAL_VALIDATION,
-        0,
-        Action::Call(Box::new(move |ctx| {
-            let engine = ctx.engine.unwrap();
-            assert!(engine.replace_source("Cargo.toml", EDITED).unwrap());
-            let report = engine
-                .import_scip(&index_path, &snapshot_path, &Control::unbounded())
-                .unwrap();
-            assert!(report.complete && report.selected, "{report:?}");
-        })),
-    );
-    let batch = graph_context(&world, "raw");
-    fault::disarm_all();
-    assert!(
-        compiler_paths(&batch).is_empty(),
-        "{:?}",
-        compiler_paths(&batch)
-    );
-    assert!(batch.counters.stale >= 3, "{:?}", batch.counters);
-    assert_eq!(batch.counters.graph, Some("graph_stale"));
-}
-
-#[test]
-fn a_corrupt_scope_row_at_the_final_barrier_degrades_to_graph_invalid_and_keeps_source_context() {
-    let (world, _) = imported_fixture();
-    assert_referring_units_collected(&world);
     fault::arm(
         names::CONTEXT_BEFORE_FINAL_VALIDATION,
         0,
         Action::Call(Box::new(|ctx| {
             ctx.engine
                 .unwrap()
-                .overwrite_compiler_scope_for_tests(RA, "src/use_one.rs", "{not json")
+                .overwrite_compiler_scope_for_tests(RA, "src/a.rs", "{not json")
                 .unwrap();
         })),
     );
-    // The context call itself succeeds: the corruption is component-local.
-    let batch = graph_context(&world, "raw");
+    let batch = context_with(&world, query, Strategy::Auto);
     fault::disarm_all();
-    assert_eq!(batch.counters.graph, Some("graph_invalid"));
-    assert!(compiler_paths(&batch).is_empty());
-    assert!(
-        batch.items.iter().any(|item| item
-            .handle
-            .as_ref()
-            .is_some_and(|handle| handle.path == "src/a.rs" || handle.path == "src/lib.rs")),
-        "valid source context survives the invalid graph"
-    );
-}
-
-const TFN: &str = "rust-analyzer cargo toy 0.1.0 target_fn().";
-
-/// `host_seed` (the lexical hit) calls `target_fn`, defined in `def_one.rs`
-/// (and in `def_two.rs` when `second_definition`); `callers.rs` calls it from
-/// a unit the query never matches (when `caller`).
-fn target_fn_world(second_definition: bool, caller: bool) -> World {
-    const LIB_SRC: &str = "pub fn host_seed() { crate::target_fn(); }\n";
-    const DEF_SRC: &str = "pub fn target_fn() {}\n";
-    const CALLER_SRC: &str = "pub fn caller_a() { crate::target_fn(); }\n";
-    let mut world = World::with_sources(&[
-        ("src/lib.rs", LIB_SRC),
-        ("src/def_one.rs", DEF_SRC),
-        ("src/def_two.rs", DEF_SRC),
-        ("src/callers.rs", CALLER_SRC),
-    ]);
-    let col = |text: &str| text.find("target_fn").unwrap() as i32;
-    let mut documents = vec![
-        doc(
-            "src/lib.rs",
-            vec![occ(&[0, col(LIB_SRC), col(LIB_SRC) + 9], TFN, REF)],
-        ),
-        doc("src/def_one.rs", vec![occ(&[0, 7, 16], TFN, DEF)]),
-    ];
-    if second_definition {
-        documents.push(doc("src/def_two.rs", vec![occ(&[0, 7, 16], TFN, DEF)]));
-    }
-    if caller {
-        documents.push(doc(
-            "src/callers.rs",
-            vec![occ(&[0, col(CALLER_SRC), col(CALLER_SRC) + 9], TFN, REF)],
-        ));
-    }
-    world.import_ok(RA, "target-fn", &artifact(documents));
-    make_searchable(&mut world);
-    world
-}
-
-#[test]
-fn a_uniquely_defined_symbol_expands_to_the_units_that_reference_it() {
-    let world = target_fn_world(false, true);
-    let batch = graph_context(&world, "host_seed");
-    assert_eq!(batch.counters.graph, Some("ok"), "{:?}", batch.counters);
-    assert_eq!(compiler_paths(&batch), ["src/callers.rs"]);
-}
-
-#[test]
-fn an_ambiguous_symbol_does_not_expand_in_context() {
-    // Two eligible definitions: `references` calls the target Ambiguous
-    // (partial), so the context must not present its reference units as
-    // resolved evidence.
-    let world = target_fn_world(true, true);
-    let batch = graph_context(&world, "host_seed");
-    assert!(
-        compiler_paths(&batch).is_empty(),
-        "{:?}",
-        compiler_paths(&batch)
-    );
-    assert_eq!(batch.counters.graph, Some("graph_unavailable"));
-}
-
-#[test]
-fn a_uniqueness_check_the_window_cannot_conclude_does_not_expand_and_fills_the_window() {
-    let mut world = target_fn_world(false, true);
-    // 300 old-snapshot definition records sort AFTER the real one: the first
-    // eligible definition is found at once, but only walking the rest could
-    // conclude that it is the only one - and the 256-record window runs out.
-    let id = symbol_id(RA, "src/def_one.rs", TFN);
-    world.close();
-    testkit::write_store(&world.store, |tx| {
-        let mut table = tx
-            .open_table(redb::TableDefinition::<&str, &str>::new(
-                "compiler_by_symbol",
-            ))
-            .unwrap();
-        for i in 0..300 {
-            let key = format!("{id}\0d\0src/zz{i:04}_old.rs\0{:020}\0{:020}", 0, 1);
-            table.insert(key.as_str(), RA).unwrap();
-        }
-    });
-    world.reopen();
-    let batch = graph_context(&world, "host_seed");
-    assert!(
-        compiler_paths(&batch).is_empty(),
-        "{:?}",
-        compiler_paths(&batch)
-    );
-    assert!(batch.counters.candidates_full, "{:?}", batch.counters);
-    assert_ne!(batch.counters.graph, Some("ok"));
-}
-
-#[test]
-fn a_graph_whose_reference_units_are_all_already_selected_is_ok_not_unavailable() {
-    // The only reference to `target_fn` sits in `host_seed` itself, which the
-    // lexical ranking already selected: no new unit, but the eligible graph
-    // WAS used - reporting it unavailable would be a false empty graph.
-    let world = target_fn_world(false, false);
-    let batch = graph_context(&world, "host_seed");
-    assert!(compiler_paths(&batch).is_empty());
-    assert_eq!(batch.counters.graph, Some("ok"), "{:?}", batch.counters);
-}
-
-#[test]
-fn a_large_seed_span_keeps_its_collected_symbols_and_fills_the_window() {
-    const SYM: &str = "rust-analyzer cargo toy 0.1.0 tgt().";
-    // One function containing 300 occurrences of the same symbol: the scan
-    // of its span stops at the seed-scan share of the window. What it
-    // collected is kept (round 1 discarded it) and still resolves.
-    let big = format!("pub fn big_seed() {{\n    {}\n}}\n", "t ".repeat(300));
-    let caller = "pub fn other_caller() { tgt(); }\n";
-    let mut world = World::with_sources(&[
-        ("src/lib.rs", big.as_str()),
-        ("src/def.rs", "pub fn tgt() {}\n"),
-        ("src/caller.rs", caller),
-    ]);
-    let col = caller.find("tgt").unwrap() as i32;
-    let references: Vec<Occurrence> = (0..300)
-        .map(|i| occ(&[1, 4 + 2 * i, 5 + 2 * i], SYM, REF))
-        .collect();
-    world.import_ok(
-        RA,
-        "large-seed",
-        &artifact(vec![
-            doc("src/lib.rs", references),
-            doc("src/def.rs", vec![occ(&[0, 7, 10], SYM, DEF)]),
-            doc("src/caller.rs", vec![occ(&[0, col, col + 3], SYM, REF)]),
-        ]),
-    );
-    make_searchable(&mut world);
-    let batch = graph_context(&world, "big_seed");
-    assert_eq!(batch.counters.graph, Some("ok"), "{:?}", batch.counters);
-    assert!(batch.counters.candidates_full, "the window filled");
-    assert_eq!(compiler_paths(&batch), ["src/caller.rs"]);
-}
-
-/// `rewrite` replaces one `compiler_occurrences` key of a CLOSED store,
-/// keeping its value; the reverse `compiler_by_symbol` keys stay valid.
-fn rekey_occurrence(
-    world: &mut World,
-    path: &str,
-    tag: &str,
-    symbol: &str,
-    from: (u64, u64),
-    to: (u64, u64),
-) {
-    world.close();
-    testkit::write_store(&world.store, |tx| {
-        let mut table = tx
-            .open_table(redb::TableDefinition::<&str, &str>::new(
-                "compiler_occurrences",
-            ))
-            .unwrap();
-        let key = |(start, end): (u64, u64)| {
-            format!("{RA}\0{path}\0{start:020}\0{end:020}\0{tag}\0{symbol}")
-        };
-        let value = table
-            .get(key(from).as_str())
-            .unwrap()
-            .unwrap()
-            .value()
-            .to_owned();
-        table.remove(key(from).as_str()).unwrap();
-        table.insert(key(to).as_str(), value.as_str()).unwrap();
-    });
-    world.reopen();
-}
-
-/// `alpha` is defined in `lib.rs` and referenced from a unit in `other.rs`;
-/// the query matches only the later, unrelated `beta_unit`.
-fn alpha_beta_world(lib: &str) -> (World, String) {
-    const ALPHA_SYM: &str = "rust-analyzer cargo toy 0.1.0 alpha().";
-    let other = "pub fn caller() { crate::alpha(); }\n";
-    let mut world = World::with_sources(&[("src/lib.rs", lib), ("src/other.rs", other)]);
-    let col = other.find("alpha").unwrap() as i32;
-    let end = lib.find("α").map_or(12, |at| at as i32 + 2);
-    world.import_ok(
-        RA,
-        "alpha-beta",
-        &artifact(vec![
-            doc("src/lib.rs", vec![occ(&[0, 7, end], ALPHA_SYM, DEF)]),
-            doc(
-                "src/other.rs",
-                vec![occ(&[0, col, col + 5], ALPHA_SYM, REF)],
-            ),
-        ]),
-    );
-    let id = symbol_id(RA, "src/lib.rs", ALPHA_SYM);
-    make_searchable(&mut world);
-    (world, id)
-}
-
-#[test]
-fn a_seed_occurrence_that_runs_past_its_source_is_graph_invalid_in_context() {
-    let (mut world, id) = alpha_beta_world("pub fn alpha() {}\npub fn beta_unit() {}\n");
-    // Healthy: the query matches only `beta_unit`, which touches no symbol.
-    assert_eq!(
-        graph_context(&world, "beta_unit").counters.graph,
-        Some("graph_unavailable")
-    );
-    // Only the occurrence row of alpha's definition is rewritten, past the
-    // end of the 40-byte source; its reverse key is still valid, so the
-    // corrupt range would "overlap" beta's span and pull alpha's external
-    // reference units in as if they were evidence.
-    rekey_occurrence(&mut world, "src/lib.rs", "d", &id, (7, 12), (7, 120));
-    let batch = graph_context(&world, "beta_unit");
-    assert_eq!(batch.counters.graph, Some("graph_invalid"));
-    assert!(
-        compiler_paths(&batch).is_empty(),
-        "{:?}",
-        compiler_paths(&batch)
-    );
-    assert!(
-        batch.items.iter().any(|item| item
-            .handle
-            .as_ref()
-            .is_some_and(|handle| handle.path == "src/lib.rs")),
-        "the lexical source context survives"
-    );
-}
-
-#[test]
-fn a_seed_occurrence_that_splits_a_codepoint_is_graph_invalid_in_context() {
-    // `α` is bytes 7..9; the rewritten key starts at 8, inside it.
-    let (mut world, id) = alpha_beta_world("pub fn α() {}\npub fn beta_unit() {}\n");
-    rekey_occurrence(&mut world, "src/lib.rs", "d", &id, (7, 9), (8, 10));
-    let batch = graph_context(&world, "beta_unit");
-    assert_eq!(batch.counters.graph, Some("graph_invalid"));
-    assert!(compiler_paths(&batch).is_empty());
-}
-
-fn many_units_world(files: usize, fns: usize) -> World {
-    const SYM: &str = "rust-analyzer cargo toy 0.1.0 target().";
-    let line = |j: usize| format!("pub fn f{j}() {{ needle(); target(); }}\n");
-    let body: String = (0..fns).map(line).collect();
-    let col = line(0).find("target").unwrap() as i32;
-    let paths: Vec<String> = (0..files).map(|i| format!("src/m{i}.rs")).collect();
-    let mut sources: Vec<(&str, &str)> = paths
-        .iter()
-        .map(|path| (path.as_str(), body.as_str()))
-        .collect();
-    sources.push(("src/def.rs", "pub fn target() {}\n"));
-    let mut world = World::with_sources(&sources);
-    let mut documents: Vec<Document> = paths
-        .iter()
-        .map(|path| {
-            doc(
-                path,
-                (0..fns)
-                    .map(|j| occ(&[j as i32, col, col + 6], SYM, REF))
-                    .collect(),
-            )
-        })
-        .collect();
-    documents.push(doc("src/def.rs", vec![occ(&[0, 7, 13], SYM, DEF)]));
-    world.import_ok(RA, "many-units", &artifact(documents));
-    make_searchable(&mut world);
-    world
-}
-
-#[test]
-fn lexical_and_compiler_units_share_one_32_unit_bound() {
-    // 10 files x 6 functions, 4 hits per file: 40 lexical candidates cut to
-    // 32. Every function also references the uniquely defined `target`, so
-    // 28 of the 60 referring units are NEW to the compiler graph - which
-    // together with the 32 lexical units would be 60 delivered units.
-    let world = many_units_world(10, 6);
-    let batch = graph_context(&world, "needle");
-    let delivered = |batch: &CandidateBatch| {
-        batch
-            .items
-            .iter()
-            .filter(|item| matches!(item.tier, 1 | 2) || item.tier == TIER_COMPILER)
-            .count()
-    };
-    assert_eq!(delivered(&batch), 32);
-    assert!(!compiler_paths(&batch).is_empty(), "compiler units kept");
-    assert!(batch.counters.candidates_full, "a cut fills the window");
-    let mut seen = std::collections::BTreeSet::new();
-    for handle in batch.items.iter().filter_map(|item| item.handle.as_ref()) {
-        assert!(
-            seen.insert((handle.path.clone(), handle.start, handle.end)),
-            "a unit is delivered twice: {}",
-            handle.path
-        );
-    }
-    // Under the bound nothing is cut: 2 files x 3 functions are 6 lexical
-    // units, and every referring unit is one of them.
-    let small = graph_context(&many_units_world(2, 3), "needle");
-    assert_eq!(delivered(&small), 6);
-    assert!(compiler_paths(&small).is_empty());
-    assert_eq!(small.counters.graph, Some("ok"));
+    assert_eq!(doors(&batch).state, DoorState::Approx);
 }
 
 #[test]
@@ -5910,6 +5790,7 @@ fn references_request_validation_is_pure_syntax_and_bounds() {
             64,
             None,
         ),
+        request(ReferencesSeed::Handle("not-a-handle".to_owned()), 64, None),
     ];
     for bad in refused {
         assert_eq!(bad.validate().unwrap_err().code(), "invalid_argument");
@@ -5956,6 +5837,7 @@ fn the_references_refusal_floor_covers_a_maximum_length_path() {
         producer: None,
         snapshot: None,
         symbol_id: None,
+        symbol_ids: Vec::new(),
         target: None,
         definitions: Vec::new(),
         definitions_truncated: false,
@@ -5986,310 +5868,4 @@ fn the_references_refusal_floor_covers_a_maximum_length_path() {
         "the outcome-free hint {} is below the real minimum {minimum_tokens}",
         response::references_refusal_floor()
     );
-}
-
-// --- T003 review round 2: the final read re-proves resolution and sources ----
-
-const TARGET_LIB: &str = "pub fn host_seed() { crate::target_fn(); }\n";
-const TARGET_DEF: &str = "pub fn target_fn() {}\n";
-const TARGET_CALLER: &str = "pub fn caller_a() { crate::target_fn(); }\n";
-
-/// `target_fn_world`'s two definitions, imported in the order lib, callers,
-/// def_one, def_two and CANCELLED before def_two: a partial snapshot that
-/// holds ONE definition. Returns the staged artifact and manifest so a test
-/// can replay the very same import.
-fn partially_imported_target_world() -> (World, std::path::PathBuf, std::path::PathBuf) {
-    let mut world = World::with_sources(&[
-        ("src/lib.rs", TARGET_LIB),
-        ("src/def_one.rs", TARGET_DEF),
-        ("src/def_two.rs", TARGET_DEF),
-        ("src/callers.rs", TARGET_CALLER),
-    ]);
-    let col = |text: &str| text.find("target_fn").unwrap() as i32;
-    let bytes = artifact(vec![
-        doc(
-            "src/lib.rs",
-            vec![occ(&[0, col(TARGET_LIB), col(TARGET_LIB) + 9], TFN, REF)],
-        ),
-        doc(
-            "src/callers.rs",
-            vec![occ(
-                &[0, col(TARGET_CALLER), col(TARGET_CALLER) + 9],
-                TFN,
-                REF,
-            )],
-        ),
-        doc("src/def_one.rs", vec![occ(&[0, 7, 16], TFN, DEF)]),
-        doc("src/def_two.rs", vec![occ(&[0, 7, 16], TFN, DEF)]),
-    ]);
-    let manifest = world.manifest(RA, "2026-08-31", "partial-then-complete", &bytes);
-    let (index_path, snapshot_path) = world.write_pair(&manifest, &bytes);
-    // The fourth document (def_two) is never published.
-    fault::arm(names::SCIP_BETWEEN_DOCUMENTS, 3, Action::Cancel);
-    let partial = world
-        .engine()
-        .import_scip(&index_path, &snapshot_path, &Control::unbounded())
-        .unwrap();
-    fault::disarm_all();
-    assert!(
-        !partial.complete && partial.interrupted.is_some(),
-        "{partial:?}"
-    );
-    assert_eq!((partial.definitions, partial.references), (1, 2));
-    make_searchable(&mut world);
-    (world, index_path, snapshot_path)
-}
-
-#[test]
-fn a_same_snapshot_completion_at_the_final_barrier_drops_an_expansion_that_became_ambiguous() {
-    let (world, index_path, snapshot_path) = partially_imported_target_world();
-    // Collected from the partial snapshot, the symbol has ONE definition and
-    // expands: callers.rs references it, and host_seed (the lexical hit)
-    // references it too.
-    let before = graph_context(&world, "host_seed");
-    assert_eq!(compiler_paths(&before), ["src/callers.rs"]);
-    assert_eq!(before.counters.graph, Some("ok"), "{:?}", before.counters);
-    let snapshot_before = world.selected(RA).unwrap().tuple.snapshot_id;
-    // At the barrier the SAME artifact and manifest are replayed: the second
-    // definition is published under the SAME snapshot id, so every witnessed
-    // row is still there and every scope still belongs to the snapshot - only
-    // the symbol's uniqueness changed.
-    fault::arm(
-        names::CONTEXT_BEFORE_FINAL_VALIDATION,
-        0,
-        Action::Call(Box::new(move |ctx| {
-            let report = ctx
-                .engine
-                .unwrap()
-                .import_scip(&index_path, &snapshot_path, &Control::unbounded())
-                .unwrap();
-            assert!(report.complete, "{report:?}");
-        })),
-    );
-    let batch = graph_context(&world, "host_seed");
-    fault::disarm_all();
-    assert_eq!(
-        world.selected(RA).unwrap().tuple.snapshot_id,
-        snapshot_before,
-        "the same snapshot was completed"
-    );
-    assert!(
-        compiler_paths(&batch).is_empty(),
-        "an ambiguous symbol was expanded: {:?}",
-        compiler_paths(&batch)
-    );
-    assert!(batch.counters.stale >= 1, "{:?}", batch.counters);
-    assert_eq!(batch.counters.graph, Some("graph_stale"));
-    // The completed graph agrees without any barrier.
-    let after = graph_context(&world, "host_seed");
-    assert!(compiler_paths(&after).is_empty());
-}
-
-#[test]
-fn a_final_uniqueness_check_the_allowance_cannot_conclude_drops_the_expansion() {
-    let world = target_fn_world(false, true);
-    let id = symbol_id(RA, "src/def_one.rs", TFN);
-    // 300 ineligible definition rows (no scope behind them) appear AFTER
-    // collection and sort after the real one: the final walk finds the real
-    // definition first, but cannot reach the end of the symbol's records
-    // within its allowance, so uniqueness is unfinished.
-    let keys: Vec<String> = (0..300)
-        .map(|i| format!("{id}\0d\0src/zz{i:04}_old.rs\0{:020}\0{:020}", 0, 1))
-        .collect();
-    fault::arm(
-        names::CONTEXT_BEFORE_FINAL_VALIDATION,
-        0,
-        Action::Call(Box::new(move |ctx| {
-            ctx.engine
-                .unwrap()
-                .insert_compiler_by_symbol_for_tests(&keys, RA)
-                .unwrap();
-        })),
-    );
-    let batch = graph_context(&world, "host_seed");
-    fault::disarm_all();
-    assert!(
-        compiler_paths(&batch).is_empty(),
-        "{:?}",
-        compiler_paths(&batch)
-    );
-    assert!(batch.counters.candidates_full, "{:?}", batch.counters);
-    assert!(batch.counters.stale >= 1, "{:?}", batch.counters);
-    assert_eq!(batch.counters.graph, Some("graph_stale"));
-}
-
-#[test]
-fn a_corrupt_definition_chunk_at_the_final_barrier_is_corrupt_source_never_graph_ok() {
-    let world = target_fn_world(false, true);
-    // Clean: the unique definition lives in def_one.rs, which is neither a
-    // lexical hit for `host_seed` nor a delivered reference unit.
-    assert_eq!(
-        graph_context(&world, "host_seed").counters.graph,
-        Some("ok")
-    );
-    fault::arm(
-        names::CONTEXT_BEFORE_FINAL_VALIDATION,
-        0,
-        Action::Call(Box::new(|ctx| {
-            ctx.engine
-                .unwrap()
-                .overwrite_chunk_body_for_tests("src/def_one.rs", 0, "pub fn target_fn() { 1 }\n")
-                .unwrap();
-        })),
-    );
-    let error = world
-        .engine()
-        .context_candidates(
-            "host_seed",
-            context_foundry::Strategy::Graph,
-            &Control::unbounded(),
-        )
-        .unwrap_err();
-    fault::disarm_all();
-    assert_eq!(error.code(), "corrupt_source", "{error:?}");
-}
-
-// --- T003 review round 3: the final pass's record allowance is shared -------
-
-#[test]
-fn final_membership_and_uniqueness_records_are_counted_together() {
-    let world = target_fn_world(false, true);
-    fault::reset_final_graph_records();
-    let batch = graph_context(&world, "host_seed");
-    assert_eq!(compiler_paths(&batch), ["src/callers.rs"]);
-    assert_eq!(batch.counters.graph, Some("ok"), "{:?}", batch.counters);
-    // Delivered compiler unit (callers.rs): 3 membership rows. The
-    // already-selected lexical unit (lib.rs, still delivered): 3 more. The
-    // uniqueness walk: 1 definition record, cached for the second witness.
-    assert_eq!(fault::final_graph_records(), 3 + 3 + 1);
-}
-
-#[test]
-fn many_occurrences_in_one_delivered_unit_need_one_witness() {
-    const TFN_LOCAL: &str = "rust-analyzer cargo toy 0.1.0 target_fn().";
-    // One hundred and twenty-seven references of the symbol inside the ONE
-    // delivered unit that is also the lexical hit: the final pass must prove
-    // that unit once, not once per occurrence.
-    let calls = "target_fn(); ".repeat(127);
-    let lib = format!("pub fn host_seed() {{ {calls}}}\n");
-    let world =
-        World::with_sources(&[("src/lib.rs", lib.as_str()), ("src/def_one.rs", TARGET_DEF)]);
-    let stride = "target_fn(); ".len() as i32;
-    let first = lib.find("target_fn").unwrap() as i32;
-    let references: Vec<Occurrence> = (0..127)
-        .map(|i| {
-            occ(
-                &[0, first + i * stride, first + i * stride + 9],
-                TFN_LOCAL,
-                REF,
-            )
-        })
-        .collect();
-    world.import_ok(
-        RA,
-        "one-unit-many-occurrences",
-        &artifact(vec![
-            doc("src/lib.rs", references),
-            doc("src/def_one.rs", vec![occ(&[0, 7, 16], TFN_LOCAL, DEF)]),
-        ]),
-    );
-    let mut world = world;
-    make_searchable(&mut world);
-    fault::reset_final_graph_records();
-    let batch = graph_context(&world, "host_seed");
-    assert_eq!(batch.counters.graph, Some("ok"), "{:?}", batch.counters);
-    assert_eq!(batch.counters.stale, 0, "{:?}", batch.counters);
-    assert_eq!(fault::final_graph_records(), 3 + 1);
-}
-
-#[test]
-fn candidates_removed_by_the_unit_cut_are_never_probed() {
-    // Forty distinct reference units compete for the 31 compiler slots (the
-    // lexical first unit holds one): the cut candidates are never read. The
-    // seed file sorts before the callers, so its already-selected witness is
-    // collected before the 32-unit collection cap stops the reference scan.
-    let caller = |i: usize| format!("pub fn c{i:02}() {{ crate::target_fn(); }}\n");
-    let bodies: Vec<String> = (0..40).map(caller).collect();
-    let mut owned: Vec<(String, String)> = vec![
-        ("src/a_seed.rs".to_owned(), TARGET_LIB.to_owned()),
-        ("src/def_one.rs".to_owned(), TARGET_DEF.to_owned()),
-    ];
-    for (i, body) in bodies.iter().enumerate() {
-        owned.push((format!("src/c{i:02}.rs"), body.clone()));
-    }
-    let sources: Vec<(&str, &str)> = owned
-        .iter()
-        .map(|(path, body)| (path.as_str(), body.as_str()))
-        .collect();
-    let mut world = World::with_sources(&sources);
-    let col = |text: &str| text.find("target_fn").unwrap() as i32;
-    let mut documents = vec![
-        doc(
-            "src/a_seed.rs",
-            vec![occ(&[0, col(TARGET_LIB), col(TARGET_LIB) + 9], TFN, REF)],
-        ),
-        doc("src/def_one.rs", vec![occ(&[0, 7, 16], TFN, DEF)]),
-    ];
-    for (i, body) in bodies.iter().enumerate() {
-        documents.push(doc(
-            &format!("src/c{i:02}.rs"),
-            vec![occ(&[0, col(body), col(body) + 9], TFN, REF)],
-        ));
-    }
-    world.import_ok(RA, "cut-never-probed", &artifact(documents));
-    make_searchable(&mut world);
-    fault::reset_final_graph_records();
-    let batch = graph_context(&world, "host_seed");
-    // The reference scan collects a_seed's already-selected witness and 32
-    // new caller units (its own unit cap); the selection keeps 31 of those
-    // for the 32-unit delivery bound. 31 x 3 membership rows, a_seed's 3,
-    // and one (cached) uniqueness walk record: nothing is read for the cut
-    // candidate.
-    assert_eq!(fault::final_graph_records(), 31 * 3 + 3 + 1);
-    assert!(batch.counters.candidates_full, "{:?}", batch.counters);
-    let delivered = compiler_paths(&batch);
-    assert_eq!(delivered.len(), 31, "{delivered:?}");
-    assert!(
-        !delivered.contains(&"src/c31.rs".to_owned()),
-        "{delivered:?}"
-    );
-    assert_eq!(batch.counters.stale, 0, "{:?}", batch.counters);
-}
-
-#[test]
-fn a_depleted_final_record_allowance_drops_the_expansion_with_candidates_full() {
-    let world = target_fn_world(false, true);
-    let id = symbol_id(RA, "src/def_one.rs", TFN);
-    // After collection, 300 ineligible definition rows appear: membership
-    // (3) plus the walk consume the whole 256-record allowance, so the walk
-    // is unfinished and the second witness's membership cannot even charge.
-    let keys: Vec<String> = (0..300)
-        .map(|i| format!("{id}\0d\0src/zz{i:04}_old.rs\0{:020}\0{:020}", 0, 1))
-        .collect();
-    fault::arm(
-        names::CONTEXT_BEFORE_FINAL_VALIDATION,
-        0,
-        Action::Call(Box::new(move |ctx| {
-            ctx.engine
-                .unwrap()
-                .insert_compiler_by_symbol_for_tests(&keys, RA)
-                .unwrap();
-        })),
-    );
-    fault::reset_final_graph_records();
-    let batch = graph_context(&world, "host_seed");
-    fault::disarm_all();
-    assert_eq!(
-        fault::final_graph_records(),
-        256,
-        "the allowance is fully consumed"
-    );
-    assert!(
-        compiler_paths(&batch).is_empty(),
-        "{:?}",
-        compiler_paths(&batch)
-    );
-    assert!(batch.counters.candidates_full, "{:?}", batch.counters);
-    assert!(batch.counters.stale >= 1, "{:?}", batch.counters);
-    assert_eq!(batch.counters.graph, Some("graph_stale"));
 }

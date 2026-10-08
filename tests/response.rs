@@ -229,7 +229,7 @@ fn error_cap_applies_to_the_final_rendering_and_always_terminates() {
 }
 
 #[test]
-fn context_items_cite_touched_lines_and_the_header_names_graph_coverage() {
+fn context_items_cite_touched_lines_and_the_header_names_requested_doors() {
     let mut fx = new_fixture();
     // Four 30-line units; every comment line names its own line number.
     let multi: String = (0..4)
@@ -284,19 +284,20 @@ fn context_items_cite_touched_lines_and_the_header_names_graph_coverage() {
     }
     cited.sort();
     assert_eq!(cited, [(1, 30), (31, 60), (61, 90), (91, 120)]);
-    // Requested graph coverage that is unavailable is named in the header.
+    // A requested graph context names its doors, never a graph coverage
+    // segment (005 T004): the anchored definition has no compiler graph, so
+    // its doors are approximate.
     let graph = fx
         .engine
         .context_candidates("one_liner_cite", Strategy::Graph, &Control::unbounded())
         .unwrap();
     let parsed = parse_v2(&pack(&graph, 2048)).unwrap();
     assert!(
-        parsed
-            .header
-            .contains(&"graph:graph_unavailable".to_owned()),
+        parsed.header.contains(&"doors:approx".to_owned()),
         "{:?}",
         parsed.header
     );
+    assert!(!parsed.header.iter().any(|s| s.starts_with("graph:")));
 }
 
 #[test]
@@ -669,8 +670,8 @@ fn v2_context_packs_in_order_with_exact_counts_and_quoted_bodies() {
     );
     assert_eq!(shown + omitted, outcome.items.len());
 
-    // Graph strategy: edges render as `edge <text>` lines and the header names
-    // the graph coverage; a fitting first source precedes graph items.
+    // Graph strategy without an anchor (005 T004): `doors:none` and search
+    // packing; the manual graph adds no lines.
     let endpoint = |path: &str| Endpoint {
         path: path.into(),
         line: 1,
@@ -689,8 +690,6 @@ fn v2_context_packs_in_order_with_exact_counts_and_quoted_bodies() {
             }],
         })
         .unwrap();
-    // An anchor-less query: an anchored context has no edge lines
-    // (context-v2 § Anchored context).
     let outcome = fx
         .engine
         .context_candidates(
@@ -701,21 +700,10 @@ fn v2_context_packs_in_order_with_exact_counts_and_quoted_bodies() {
         .unwrap();
     let packed = response::pack_context(&outcome, Budget::request(32768), CLI).unwrap();
     let parsed = assert_v2_success(&packed, 32768, "context");
-    assert!(
-        parsed.header.contains(&"graph:ok".to_owned()),
-        "{:?}",
-        parsed.header
-    );
-    assert_eq!(parsed.items[0].kind, V2Kind::Source);
-    let edge = parsed
-        .items
-        .iter()
-        .find(|i| i.kind == V2Kind::Edge)
-        .expect("graph item");
-    assert_eq!(
-        edge.body,
-        "no_lf.rs:1 (no_lf.rs) --calls--> ident.go:1 (ident.go) [manual; provider=fixture@1]"
-    );
+    assert_eq!(parsed.header.last().unwrap(), "doors:none");
+    assert!(!parsed.header.iter().any(|s| s.starts_with("graph:")));
+    assert!(parsed.items.iter().all(|i| i.kind == V2Kind::Source));
+    assert!(!packed.text.contains("--calls-->"), "{}", packed.text);
 }
 
 #[test]
@@ -803,73 +791,48 @@ fn v2_search_locators_pick_the_best_line_with_bounded_single_line_excerpts() {
     assert!(response::pack_search(&outcome, Budget::request(1), CLI).is_err());
 }
 
-/// context-v2 § Evidence items / § Context candidates: graph items follow the
-/// FIRST source item; a fitting first source precedes them and they outrank
-/// later sources under a tight budget.
+/// 005 T004 (context-v2 § Doors): a usage word requests doors under `auto`,
+/// matched case-insensitively as a whole token; a query with no anchor gets
+/// `doors:none` and today's search packing, and `strategy:search` requests
+/// no doors at all.
 #[test]
-fn graph_items_follow_the_first_source_and_outrank_later_sources() {
+fn an_anchorless_usage_query_gets_doors_none_and_search_packing() {
     let mut fx = new_fixture();
     let body = "fn parse_record() { caller marker }\n";
     fx.add(&[("a.rs", body), ("b.rs", body)]);
-    let endpoint = |path: &str| Endpoint {
-        path: path.into(),
-        line: 1,
-        symbol: path.into(),
-        hash: digest(body.as_bytes()),
-    };
-    fx.engine
-        .import_graph(&GraphBundle {
-            provider: "fixture".into(),
-            revision: "1".into(),
-            edges: vec![Edge {
-                from: endpoint("a.rs"),
-                to: endpoint("b.rs"),
-                kind: "calls".into(),
-                evidence: "manual".into(),
-            }],
-        })
-        .unwrap();
-    // An anchor-less query: an anchored context has no edge lines
-    // (context-v2 § Anchored context).
-    let outcome = fx
-        .engine
-        .context_candidates(
-            "references to parse record",
-            Strategy::Auto,
-            &Control::unbounded(),
-        )
-        .unwrap();
-    let kinds = |text: &str| -> Vec<V2Kind> {
-        parse_v2(text)
+    let packed = |query: &str, strategy: Strategy| {
+        let outcome = fx
+            .engine
+            .context_candidates(query, strategy, &Control::unbounded())
+            .unwrap();
+        response::pack_context(&outcome, Budget::request(32768), CLI)
             .unwrap()
-            .items
-            .iter()
-            .map(|item| item.kind)
-            .collect()
+            .text
     };
-    let full = response::pack_context(&outcome, Budget::request(32768), CLI).unwrap();
-    assert_eq!(
-        kinds(&full.text),
-        [V2Kind::Source, V2Kind::Edge, V2Kind::Source],
-        "{}",
-        full.text
-    );
-    // The tightest budget that drops something keeps the first source and
-    // the edge, and drops the lower-ranked second source.
-    let mut budget = full.tokens;
-    let tight = loop {
-        budget -= 1;
-        let packed = response::pack_context(&outcome, Budget::request(budget), CLI).unwrap();
-        if packed.omitted > 0 {
-            break packed;
-        }
-    };
-    assert_eq!(
-        kinds(&tight.text),
-        [V2Kind::Source, V2Kind::Edge],
-        "{}",
-        tight.text
-    );
+    for query in [
+        "references to parse record",
+        "REFERENCES to parse record",
+        "Who Calls parse record",
+    ] {
+        let text = packed(query, Strategy::Auto);
+        let parsed = parse_v2(&text).unwrap();
+        assert_eq!(parsed.header.last().unwrap(), "doors:none", "{text}");
+        assert!(!parsed.header.contains(&"anchored".to_owned()));
+        let kinds: Vec<V2Kind> = parsed.items.iter().map(|item| item.kind).collect();
+        assert_eq!(kinds, [V2Kind::Source, V2Kind::Source], "{text}");
+    }
+    // The same words under `search`, and a substring of a usage word under
+    // `auto`, request nothing.
+    for (query, strategy) in [
+        ("references to parse record", Strategy::Search),
+        ("preferences of parse record", Strategy::Auto),
+    ] {
+        let text = packed(query, strategy);
+        assert!(
+            !text.lines().next().unwrap().contains("doors:"),
+            "{query}: {text}"
+        );
+    }
 }
 
 /// Paths may begin with `edge ` or `next: ` unescaped (context-v2 § Source
