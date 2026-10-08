@@ -957,16 +957,19 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
     (`ggml-org/embeddinggemma-2-GGUF@bfcd2987`, Apache-2.0) and a Nemotron 3 Embed 1B
     GGUF, on cards.
   - *G2 and enablement.* G2 is a frozen set of at least 300 questions that name no
-    identifier, each with one ground-truth definition, on a corpus with SCIP coverage:
-    written from the code and documentation of rust-lang/rust and oh-my-pi (owner,
-    2026-10-08), frozen with their expected definitions before any T004 code, and
-    checked by a cross-lab refuter for identifiers or paths leaking into the wording;
-    its harness scores
-    delivered evidence as G1 v2 does. Semantic retrieval stays optional and off by
-    default; a profile is enabled for anchor-less queries only when, on G2, its
-    delivered evidence exceeds the same queries without it (exact McNemar p < 0.05) at
-    no more delivered tokens per query, and G1's anchor-less tasks (queries that name
-    plain-lowercase identifiers) show no significant loss with it enabled.
+    identifier, each with one ground-truth definition: written from the code and
+    documentation of rust-lang/rust `library/` (answers are SCIP definitions of the
+    frozen 005 artifact) and oh-my-pi (answers are top-level declarations at its pinned
+    commit; TypeScript has no SCIP artifact here) (owner, 2026-10-08), frozen before any
+    T004 code, and checked by a cross-lab refuter for leaked identifiers, paths, name
+    pieces and copied text and for answers another definition fits equally well. Its
+    scoring harness (delivered evidence as G1 scores it, paired per question, delivered
+    tokens) and the candidate profiles are frozen before the first G2 run. Semantic
+    retrieval stays optional and off by default; a profile is enabled for anchor-less
+    queries only when, on G2, its delivered evidence exceeds the same queries without
+    it (exact McNemar p < 0.05, divided by the number of candidate profiles) at no more
+    delivered tokens per query, and G1 with the profile enabled passes every target and
+    guard that it passes without it.
 - **Verification:** card rendering and the limit on a fixture per language; dimensions
   768/512/256/128 end to end (cache, generation geometry, frame size) with a wrong
   length refused; mixed retained 2048/768/256 rows open and account correctly; a v1
