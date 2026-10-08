@@ -959,8 +959,9 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
   - *G2 and enablement.* G2 is a frozen set of at least 300 questions that name no
     identifier, each with one ground-truth definition: written from the code and
     documentation of rust-lang/rust `library/` (answers are SCIP definitions of the
-    frozen 005 artifact) and oh-my-pi (answers are top-level declarations at its pinned
-    commit; TypeScript has no SCIP artifact here) (owner, 2026-10-08), frozen before any
+    frozen 005 artifact) and oh-my-pi (answers are top-level declarations, or direct
+    methods of top-level classes, at its pinned commit; TypeScript has no SCIP artifact
+    here) (owner, 2026-10-08), frozen before any
     T004 code, and checked by a cross-lab refuter for leaked identifiers, paths, name
     pieces and copied text and for answers another definition fits equally well. Its
     scoring harness (delivered evidence as G1 scores it, paired per question, delivered
