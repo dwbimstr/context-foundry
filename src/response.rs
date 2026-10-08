@@ -7,8 +7,8 @@
 use crate::error::{FResult, FoundryError};
 use crate::graph::ReferencesOutcome;
 use crate::store::{
-    ANCHOR_LIST, CandidateBatch, HandleRef, OutlineOutcome, RankedItem, RenderedForm,
-    RetrieveOutcome, SearchOutcome, SourceHandle,
+    ANCHOR_LIST, CandidateBatch, DoorGroup, DoorState, HandleRef, OutlineOutcome, RankedItem,
+    RenderedForm, RetrieveOutcome, SearchOutcome, SourceHandle,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1237,6 +1237,23 @@ impl Slot {
     }
 }
 
+/// A tie-group entry's door group (context-v2 § Doors, `doors:each`): one
+/// door line per file, the last carrying the group's `⋯ <m> more files`
+/// line, so the group fits or is omitted whole.
+fn group_slots(group: &DoorGroup) -> Vec<Slot> {
+    let mut lines: Vec<String> = group
+        .lines
+        .iter()
+        .map(|door| door_line(door, false))
+        .collect();
+    if group.more_files > 0
+        && let Some(last) = lines.last_mut()
+    {
+        last.push_str(&format!("⋯ {} more files\n", group.more_files));
+    }
+    lines.into_iter().map(Slot::line).collect()
+}
+
 /// The anchored selection (context-v2 § Anchored context), per anchor in
 /// order: a resolved anchor's first definition through the ladder
 /// (verbatim, signature when it differs, `[address]`), then at most
@@ -1247,7 +1264,12 @@ impl Slot {
 /// upgraded to its signature (verbatim when it has none), then to verbatim,
 /// when the difference fits. Every decision is a trial of the whole response
 /// with the header updated for it; an entry is omitted only when not even
-/// its last form fits. Then the door lines of § Doors, when the context
+/// its last form fits. Under `doors:each`, each of the first anchor's
+/// entries with a door group shows it right after the entry: the groups are
+/// tried in list order after the address pass (after the ladder of a first
+/// definition the final read left resolved) and before any upgrade, each
+/// placed whole or omitted with its lines counted, and an omitted entry's
+/// group with it. Otherwise the door lines of § Doors, when the context
 /// requested doors and they were built: each placed when it fits, then the
 /// `⋯ <m> more files` line when it fits (navigation, not an item). Nothing
 /// else is packed: every other candidate is counted in `omitted:<n>`.
@@ -1263,15 +1285,26 @@ fn pack_anchored(
     enum Plan {
         Resolved {
             first: usize,
+            group: std::ops::Range<usize>,
             directory: std::ops::Range<usize>,
         },
-        Ambiguous(std::ops::Range<usize>),
+        /// Each listed entry's slot, then its door group's slots.
+        Ambiguous(Vec<(usize, std::ops::Range<usize>)>),
     }
+    let doors = batch.doors.as_ref();
+    // `doors:each`: the first anchor's entries' own groups.
+    let each: &[DoorGroup] = match doors {
+        Some(doors) if doors.state == DoorState::Each => &doors.groups,
+        _ => &[],
+    };
     let mut slots: Vec<Slot> = Vec::new();
     let mut plans: Vec<Plan> = Vec::new();
     let mut selected: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut defs: Option<u64> = None;
-    for window in batch.anchors.iter().filter(|window| window.definitions > 0) {
+    for (index, window) in batch.anchors.iter().enumerate() {
+        if window.definitions == 0 {
+            continue;
+        }
         let resolved = window.resolved();
         if !resolved {
             defs = Some(defs.map_or(window.definitions, |most| most.max(window.definitions)));
@@ -1291,9 +1324,21 @@ fn pack_anchored(
                 .take(listed)
                 .filter_map(|entry| entry.handle.as_ref().map(SourceHandle::to_v2)),
         );
-        if resolved {
+        // An entry's slot, then its own door group's slots.
+        let entry_slots = |slots: &mut Vec<Slot>, entry: &RankedItem| {
             let at = slots.len();
-            slots.push(Slot::ladder(first));
+            slots.push(Slot::ladder(entry));
+            let group = slots.len();
+            if let Some(doors) = each
+                .iter()
+                .find(|group| index == 0 && group.target.is_some() && group.target == entry.handle)
+            {
+                slots.extend(group_slots(doors));
+            }
+            (at, group..slots.len())
+        };
+        if resolved {
+            let (at, group) = entry_slots(&mut slots, first);
             let directory = slots.len();
             slots.extend(
                 window.entries[1..]
@@ -1304,30 +1349,37 @@ fn pack_anchored(
             );
             plans.push(Plan::Resolved {
                 first: at,
+                group,
                 directory: directory..slots.len(),
             });
         } else {
-            let start = slots.len();
-            slots.extend(window.entries.iter().take(ANCHOR_LIST).map(Slot::ladder));
-            plans.push(Plan::Ambiguous(start..slots.len()));
+            let entries = window
+                .entries
+                .iter()
+                .take(ANCHOR_LIST)
+                .map(|entry| entry_slots(&mut slots, entry))
+                .collect();
+            plans.push(Plan::Ambiguous(entries));
         }
     }
-    // The door lines (context-v2 § Doors), after every anchor's entries.
-    let doors = batch.doors.as_ref();
+    // The door lines (context-v2 § Doors), after every anchor's entries,
+    // unless they are the entries' own groups.
+    let doors = doors.filter(|doors| doors.state != DoorState::Each);
+    let group = doors.and_then(|doors| doors.groups.first());
     let door_slots = slots.len();
-    if let Some(doors) = doors {
-        let approx = doors.state == crate::store::DoorState::Approx;
+    if let Some(group) = group {
+        let approx = doors.is_some_and(|doors| doors.state == DoorState::Approx);
         slots.extend(
-            doors
+            group
                 .lines
                 .iter()
                 .map(|door| Slot::line(door_line(door, approx))),
         );
     }
     let door_slots = door_slots..slots.len();
-    let more_files = doors
-        .filter(|doors| doors.more_files > 0)
-        .map(|doors| format!("⋯ {} more files\n", doors.more_files));
+    let more_files = group
+        .filter(|group| group.more_files > 0)
+        .map(|group| format!("⋯ {} more files\n", group.more_files));
     // Everything outside the selection is omitted from the start.
     let outside = batch
         .items
@@ -1383,22 +1435,44 @@ fn pack_anchored(
         slots[index].chosen = None;
         *dropped += 1;
     };
+    // A door group fits whole or is omitted, its lines counted; so is an
+    // omitted entry's.
+    let place_group =
+        |slots: &mut [Slot], entry: usize, group: &std::ops::Range<usize>, dropped: &mut usize| {
+            if !group.is_empty() && slots[entry].chosen.is_some() {
+                for index in group.clone() {
+                    slots[index].chosen = Some(0);
+                }
+                if trial(slots, *dropped) {
+                    return;
+                }
+                for index in group.clone() {
+                    slots[index].chosen = None;
+                }
+            }
+            *dropped += group.len();
+        };
     let mut dropped = 0usize;
     for plan in &plans {
         match plan {
-            Plan::Resolved { first, directory } => {
+            Plan::Resolved {
+                first,
+                group,
+                directory,
+            } => {
                 let ladder: Vec<usize> = (0..slots[*first].forms.len()).collect();
                 place(&mut slots, *first, &ladder, &mut dropped);
+                place_group(&mut slots, *first, group, &mut dropped);
                 for index in directory.clone() {
                     place(&mut slots, index, &[0], &mut dropped);
                 }
             }
-            Plan::Ambiguous(range) => {
+            Plan::Ambiguous(entries) => {
                 // Pass 1: every listed entry's address line, in list order.
                 // The first that does not fit is omitted with every entry
                 // after it.
                 let before = dropped;
-                for index in range.clone() {
+                for &(index, _) in entries {
                     if dropped > before {
                         dropped += 1;
                         continue;
@@ -1406,11 +1480,16 @@ fn pack_anchored(
                     let address = slots[index].address;
                     place(&mut slots, index, address.as_slice(), &mut dropped);
                 }
+                // `doors:each`: the entries' groups, in list order, before
+                // any upgrade.
+                for (index, group) in entries {
+                    place_group(&mut slots, *index, group, &mut dropped);
+                }
                 // Pass 2 upgrades to the signature (verbatim when there is
                 // none), pass 3 to verbatim: each in list order when the
                 // difference fits; one that does not keeps its form.
                 for verbatim in [false, true] {
-                    for index in range.clone() {
+                    for &(index, _) in entries {
                         let Some(previous) = slots[index].chosen else {
                             continue;
                         };

@@ -887,7 +887,7 @@ fn a_stale_merged_winner_gives_no_doors_and_promotes_no_other_roots_namesake() {
         let before = merged(false);
         assert_eq!(before.state, DoorState::Approx, "{runners_up}");
         assert_eq!(
-            before.target.as_ref().unwrap().path,
+            before.groups[0].target.as_ref().unwrap().path,
             "src/alpha/beta.rs",
             "{runners_up}"
         );

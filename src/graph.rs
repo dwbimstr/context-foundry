@@ -2352,7 +2352,7 @@ impl Engine {
 
 /// The exact doors of one definition, summarized by file.
 pub(crate) struct ExactDoors {
-    /// One line per file in path order, at most [`crate::store::DOOR_FILES`].
+    /// One line per file in path order, at most the caller's cap.
     pub(crate) lines: Vec<crate::store::DoorLine>,
     /// Files with sites beyond the listed ones.
     pub(crate) more_files: usize,
@@ -2374,111 +2374,150 @@ pub(crate) enum ExactResolution {
     },
 }
 
-/// Exact doors (context-v2 § Doors) of the definition whose stored name range
-/// in `path` (over the bytes `source_hash`) is `name`: when a current
-/// compiler scope of `path` holds definition occurrences whose range equals
-/// it, their symbols - one, or several split identities of the same
-/// definition - give their references, deduplicated by site and read in the
-/// caller's final read transaction `tx` with 005's scope, snapshot, revision
-/// and source checks, in exactly the window `references {handle}` on the
-/// definition reads at limit 256: the definition's own source is its first
-/// file, charged once, then the definition lookup and the references draw on
-/// the same record, file and line caps. No such occurrence gives approximate
-/// doors. Only the listed files' first sites are labeled, so only those files
-/// are parsed.
-pub(crate) fn exact_doors(
-    tx: &redb::ReadTransaction,
+/// The exact-door reads of one response (context-v2 § Doors), in its final
+/// read transaction: one references window per target, each exactly the
+/// window `references {handle}` on that target reads (its own record, file
+/// and line caps). The windows share only the verified-file cache - a source
+/// is read and verified at most once per response - and the sites already
+/// summarized: a site appears at most once in a response.
+pub(crate) struct DoorReads<'t> {
+    tx: &'t redb::ReadTransaction,
     revision: u64,
-    bound: &str,
-    path: &str,
-    source_hash: &str,
-    name: (u64, u64),
-) -> FResult<ExactResolution> {
-    let producers = read_producers(tx)?;
-    let mut examined = 0usize;
-    let targets = match symbols_at_name(
-        tx,
-        &producers,
-        revision,
-        path,
-        source_hash,
-        name,
-        &mut examined,
-    )? {
-        NameSymbols::Found(targets) => targets,
-        NameSymbols::Unfinished => return Ok(ExactResolution::Approximate { exhausted: true }),
-        NameSymbols::Unavailable | NameSymbols::Stale { .. } | NameSymbols::Undefined => {
+    bound: &'t str,
+    files: HashMap<String, Option<FileView>>,
+    /// Per path, the `(start, end)` of every site a listed file summarized.
+    summarized: HashMap<String, BTreeSet<(u64, u64)>>,
+}
+
+impl<'t> DoorReads<'t> {
+    pub(crate) fn new(tx: &'t redb::ReadTransaction, revision: u64, bound: &'t str) -> Self {
+        Self {
+            tx,
+            revision,
+            bound,
+            files: HashMap::new(),
+            summarized: HashMap::new(),
+        }
+    }
+
+    /// Exact doors (context-v2 § Doors) of the definition whose stored name
+    /// range in `path` (over the bytes `source_hash`) is `name`: when a
+    /// current compiler scope of `path` holds definition occurrences whose
+    /// range equals it, their symbols - one, or several split identities of
+    /// the same definition - give their references, deduplicated by site
+    /// and read with 005's scope, snapshot, revision and source checks, in
+    /// exactly the window `references {handle}` on the definition reads at
+    /// limit 256: the definition's own source is its first file, charged
+    /// once, then the definition lookup and the references draw on the same
+    /// record, file and line caps. The window's sites, less those an earlier
+    /// window's listed files summarized, give at most `cap` lines, one per
+    /// file in path order. No such occurrence gives approximate doors. Only
+    /// the listed files' first sites are labeled, so only those files are
+    /// parsed.
+    pub(crate) fn exact_doors(
+        &mut self,
+        path: &str,
+        source_hash: &str,
+        name: (u64, u64),
+        cap: usize,
+    ) -> FResult<ExactResolution> {
+        let tx = self.tx;
+        let producers = read_producers(tx)?;
+        let mut examined = 0usize;
+        let targets = match symbols_at_name(
+            tx,
+            &producers,
+            self.revision,
+            path,
+            source_hash,
+            name,
+            &mut examined,
+        )? {
+            NameSymbols::Found(targets) => targets,
+            NameSymbols::Unfinished => return Ok(ExactResolution::Approximate { exhausted: true }),
+            NameSymbols::Unavailable | NameSymbols::Stale { .. } | NameSymbols::Undefined => {
+                return Ok(ExactResolution::Approximate { exhausted: false });
+            }
+        };
+        let mut visited: BTreeSet<String> = BTreeSet::new();
+        // The definition's source joins the window first, as a handle seed's
+        // does: it counts once toward the visited-file budget.
+        if verified_file(
+            &mut self.files,
+            &tx.open_table(SOURCES)?,
+            &tx.open_table(CHUNKS)?,
+            path,
+            source_hash,
+        )?
+        .is_none()
+        {
             return Ok(ExactResolution::Approximate { exhausted: false });
         }
-    };
-    let mut files: HashMap<String, Option<FileView>> = HashMap::new();
-    let mut visited: BTreeSet<String> = BTreeSet::new();
-    // The definition's source joins the window first, as a handle seed's
-    // does: it counts once toward the visited-file budget.
-    if verified_file(
-        &mut files,
-        &tx.open_table(SOURCES)?,
-        &tx.open_table(CHUNKS)?,
-        path,
-        source_hash,
-    )?
-    .is_none()
-    {
-        return Ok(ExactResolution::Approximate { exhausted: false });
-    }
-    visited.insert(path.to_owned());
-    let found = target_window(
-        tx,
-        &producers,
-        &targets,
-        None,
-        REFERENCES_MAX_LIMIT,
-        bound,
-        false,
-        &mut examined,
-        &mut files,
-        &mut visited,
-    )?;
-    let window = found.window;
-    let mut doors = ExactDoors {
-        lines: Vec::new(),
-        more_files: 0,
-        full: window.want_more
-            || examined >= REFERENCES_MAX_EXAMINED
-            || visited.len() >= REFERENCES_MAX_FILES,
-        stale: found.stale,
-    };
-    for sites in window.items.chunk_by(|a, b| a.path == b.path) {
-        if doors.lines.len() == crate::store::DOOR_FILES {
-            doors.more_files += 1;
-            continue;
+        visited.insert(path.to_owned());
+        let found = target_window(
+            tx,
+            &producers,
+            &targets,
+            None,
+            REFERENCES_MAX_LIMIT,
+            self.bound,
+            false,
+            &mut examined,
+            &mut self.files,
+            &mut visited,
+        )?;
+        let window = found.window;
+        let mut doors = ExactDoors {
+            lines: Vec::new(),
+            more_files: 0,
+            full: window.want_more
+                || examined >= REFERENCES_MAX_EXAMINED
+                || visited.len() >= REFERENCES_MAX_FILES,
+            stale: found.stale,
+        };
+        for sites in window.items.chunk_by(|a, b| a.path == b.path) {
+            let known = self.summarized.get(&sites[0].path);
+            let mut fresh = sites
+                .iter()
+                .filter(|site| known.is_none_or(|known| !known.contains(&(site.start, site.end))));
+            let Some(first) = fresh.next() else {
+                continue;
+            };
+            if doors.lines.len() == cap {
+                doors.more_files += 1;
+                continue;
+            }
+            let more = fresh.count();
+            let Some(view) = cached_file(&self.files, &first.path, &first.sha256) else {
+                return Err(FoundryError::CorruptStore(format!(
+                    "{}: a delivered reference's source is not loaded",
+                    first.path
+                )));
+            };
+            let (start, end, label) = match view.unit_at(first.start as usize) {
+                Some(unit) => (unit.start as u64, unit.end as u64, unit_label(unit)),
+                None => (first.start, first.end, "block".to_owned()),
+            };
+            doors.lines.push(crate::store::DoorLine {
+                unit: SourceHandle {
+                    workspace_id: self.bound.to_owned(),
+                    path: first.path.clone(),
+                    sha256: first.sha256.clone(),
+                    start,
+                    end,
+                },
+                line: first.line,
+                label,
+                text: view.line_text(first.line).to_owned(),
+                more,
+            });
+            self.summarized
+                .entry(first.path.clone())
+                .or_default()
+                .extend(sites.iter().map(|site| (site.start, site.end)));
         }
-        let first = &sites[0];
-        let Some(view) = cached_file(&files, &first.path, &first.sha256) else {
-            return Err(FoundryError::CorruptStore(format!(
-                "{}: a delivered reference's source is not loaded",
-                first.path
-            )));
-        };
-        let (start, end, label) = match view.unit_at(first.start as usize) {
-            Some(unit) => (unit.start as u64, unit.end as u64, unit_label(unit)),
-            None => (first.start, first.end, "block".to_owned()),
-        };
-        doors.lines.push(crate::store::DoorLine {
-            unit: SourceHandle {
-                workspace_id: bound.to_owned(),
-                path: first.path.clone(),
-                sha256: first.sha256.clone(),
-                start,
-                end,
-            },
-            line: first.line,
-            label,
-            text: view.line_text(first.line).to_owned(),
-            more: sites.len() - 1,
-        });
+        Ok(ExactResolution::Doors(doors))
     }
-    Ok(ExactResolution::Doors(doors))
 }
 
 impl ReferencesRequest {

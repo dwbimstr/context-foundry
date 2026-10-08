@@ -1116,8 +1116,14 @@ fn doors_at(
     )
 }
 
-fn door_paths(doors: &context_foundry::store::Doors) -> Vec<&str> {
-    doors
+/// The one door group of a resolved first anchor.
+fn only_group(doors: &context_foundry::store::Doors) -> &context_foundry::store::DoorGroup {
+    assert_eq!(doors.groups.len(), 1, "{doors:?}");
+    &doors.groups[0]
+}
+
+fn door_paths(group: &context_foundry::store::DoorGroup) -> Vec<&str> {
+    group
         .lines
         .iter()
         .map(|line| line.unit.path.as_str())
@@ -1152,14 +1158,15 @@ fn approximate_doors_rank_importing_files_first_and_summarize_by_file() {
     drain(&mut engine);
     let (doors, batch, text) = doors_at(&engine, "what uses `toolSession`");
     assert_eq!(doors.state, context_foundry::store::DoorState::Approx);
-    assert_eq!(doors.target.as_ref().unwrap().path, "lib/session.ts");
-    let paths = door_paths(&doors);
+    let group = only_group(&doors);
+    assert_eq!(group.target.as_ref().unwrap().path, "lib/session.ts");
+    let paths = door_paths(group);
     assert_eq!(paths.len(), 16);
     assert_eq!(paths[0], "z/user.ts", "{text}");
-    assert_eq!(doors.lines[0].line, 1);
+    assert_eq!(group.lines[0].line, 1);
     assert_eq!(&paths[1..4], ["a/m00.ts", "a/m01.ts", "a/m02.ts"]);
-    assert_eq!(doors.lines[1].more, 1, "a/m00.ts has a second site");
-    assert_eq!(doors.more_files, 65 - 16);
+    assert_eq!(group.lines[1].more, 1, "a/m00.ts has a second site");
+    assert_eq!(group.more_files, 65 - 16);
     assert!(!batch.counters.candidates_full);
     assert!(text.contains("doors:approx"), "{text}");
     assert!(text.contains(" (+1) [approx]\n"), "{text}");
@@ -1185,12 +1192,13 @@ fn the_approximate_window_is_256_units_and_one_character_names_have_none() {
     }
     drain(&mut engine);
     let (doors, batch, _) = doors_at(&engine, "what uses `markerFn`");
-    assert_eq!(doors.lines.len(), 16);
-    assert_eq!(doors.more_files, 256 - 16);
+    let group = only_group(&doors);
+    assert_eq!(group.lines.len(), 16);
+    assert_eq!(group.more_files, 256 - 16);
     assert!(batch.counters.candidates_full, "the window filled");
     let (doors, _, _) = doors_at(&engine, "what uses `q`");
     assert_eq!(doors.state, context_foundry::store::DoorState::Approx);
-    assert!(doors.lines.is_empty());
+    assert!(only_group(&doors).lines.is_empty());
 }
 
 /// Import keys in a Bun workspace layout: named, default, namespace (the
@@ -1237,7 +1245,7 @@ fn bun_workspace_import_forms_mark_importing_files_and_aliases_are_not_followed(
     drain(&mut engine);
     let (doors, _, text) = doors_at(&engine, "what uses `ToolSession`");
     assert_eq!(
-        door_paths(&doors),
+        door_paths(only_group(&doors)),
         [
             "packages/cli/src/default.ts",
             "packages/cli/src/named.ts",
@@ -1248,7 +1256,7 @@ fn bun_workspace_import_forms_mark_importing_files_and_aliases_are_not_followed(
         ],
         "{text}"
     );
-    let namespace = &doors.lines[2];
+    let namespace = &only_group(&doors).lines[2];
     assert_eq!(namespace.line, 2, "its first site holds the name");
 }
 
@@ -2798,6 +2806,34 @@ fn a_window_over_64_definitions_finds_the_intended_one() {
     );
     let tokens = response::count_tokens(header);
     assert!(tokens <= 40, "{tokens}: {header}");
+    // Doors requested (005 T004): this fixture's tie group of 71 is
+    // `doors:ambiguous`, the longest doors state, and the header still holds
+    // within 40 tokens. A tie group of at most four is `doors:each`, never
+    // longer. With defs at u64::MAX as above a doors segment does not fit:
+    // 44 o200k tokens with `doors:ambiguous` (so since 005 T004) and 43 with
+    // `doors:each`.
+    use context_foundry::store::{DoorState, Doors};
+    let batch = engine
+        .context_candidates("where is `find_me`", Strategy::Graph, &Control::unbounded())
+        .unwrap();
+    assert_eq!(batch.doors, Some(Doors::unbuilt(DoorState::Ambiguous)));
+    let packed = response::pack_context(&batch, Budget::request(2048), &stdout_bytes).unwrap();
+    let header = packed.text.lines().next().unwrap();
+    assert!(
+        header.ends_with(" · defs:71 · doors:ambiguous · anchored"),
+        "{header}"
+    );
+    let tokens = response::count_tokens(header);
+    assert!(tokens <= 40, "{tokens}: {header}");
+    let at_largest = |state: DoorState| {
+        let mut largest = batch.clone();
+        largest.anchors[0].definitions = u64::MAX;
+        largest.doors = Some(Doors::unbuilt(state));
+        let packed =
+            response::pack_context(&largest, Budget::request(32_768), &stdout_bytes).unwrap();
+        response::count_tokens(packed.text.lines().next().unwrap())
+    };
+    assert!(at_largest(DoorState::Each) <= at_largest(DoorState::Ambiguous));
 }
 
 /// A resolved anchor: its definition through the ladder, then at most 8

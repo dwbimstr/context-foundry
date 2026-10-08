@@ -131,6 +131,11 @@ const CONTEXT_UNITS: usize = 32;
 const CONTEXT_OUTLINES: usize = 3;
 /// Doors list at most this many files (context-v2 § Doors).
 pub(crate) const DOOR_FILES: usize = 16;
+/// A first anchor's tie group of at most this many definitions gets doors,
+/// each its own (context-v2 § Doors, Target and Doors of a tie group).
+pub(crate) const TIE_GROUP: usize = 4;
+/// A tie-group entry's door lines: the resolved cap over the largest group.
+pub(crate) const GROUP_FILES: usize = DOOR_FILES / TIE_GROUP;
 /// Approximate doors examine at most this many delivery units.
 const DOOR_WINDOW: usize = 256;
 /// The META value naming the current search index format. `"5"` (001 T008,
@@ -550,12 +555,14 @@ pub struct CandidateCounters {
 
 /// The doors state of a context that requested doors (context-v2 § Doors):
 /// `exact` (compiler references), `approx` (import keys and identifiers),
-/// `ambiguous` (the first anchor is ambiguous: no doors) or `none` (no
-/// anchor, or no current definition for the first one).
+/// `each` (a tie group whose entries have their own exact doors),
+/// `ambiguous` (a first anchor's tie group of more than [`TIE_GROUP`]: no
+/// doors) or `none` (no anchor, or no current definition for the first one).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DoorState {
     Exact,
     Approx,
+    Each,
     Ambiguous,
     None,
 }
@@ -565,6 +572,7 @@ impl DoorState {
         match self {
             Self::Exact => "exact",
             Self::Approx => "approx",
+            Self::Each => "each",
             Self::Ambiguous => "ambiguous",
             Self::None => "none",
         }
@@ -592,13 +600,11 @@ pub struct DoorLine {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Doors {
     pub state: DoorState,
-    /// The definition the doors open onto (the first anchor's resolved
-    /// definition): `None` for `ambiguous` and `none`.
-    pub target: Option<SourceHandle>,
-    /// One line per file, at most [`DOOR_FILES`], in door order.
-    pub lines: Vec<DoorLine>,
-    /// Files with doors beyond the listed ones.
-    pub more_files: usize,
+    /// The door groups in list order: for a resolved first anchor, one onto
+    /// its definition; under `each`, one per tie-group entry with exact
+    /// doors, onto that entry; for a tie group without exact doors, one onto
+    /// no entry (`approx`); none for `ambiguous` and `none`.
+    pub groups: Vec<DoorGroup>,
 }
 
 impl Doors {
@@ -606,11 +612,23 @@ impl Doors {
     pub fn unbuilt(state: DoorState) -> Self {
         Self {
             state,
-            target: None,
-            lines: Vec::new(),
-            more_files: 0,
+            groups: Vec::new(),
         }
     }
+}
+
+/// One door group (context-v2 § Doors): the doors of one target, summarized
+/// by file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DoorGroup {
+    /// The definition the group opens onto: `None` for the approximate
+    /// doors a tie group's name shares, attributed to no entry.
+    pub target: Option<SourceHandle>,
+    /// One line per file in door order: at most [`DOOR_FILES`] for a
+    /// resolved target, [`GROUP_FILES`] for a tie-group entry.
+    pub lines: Vec<DoorLine>,
+    /// Files with doors beyond the listed ones.
+    pub more_files: usize,
 }
 
 /// The first anchor's doors target (context-v2 § Doors, Target), decided
@@ -618,23 +636,27 @@ impl Doors {
 pub(crate) enum DoorTarget {
     /// No anchor with a definition.
     None,
-    /// The first anchor is ambiguous.
+    /// The first anchor's tie group is larger than [`TIE_GROUP`].
     Ambiguous,
     /// The first anchor resolved to this definition, its window's first.
     Resolved(SourceHandle),
+    /// The first anchor is ambiguous with this tie group, in window order:
+    /// the definitions whose resolver tuple equals the first's.
+    Tied(Vec<SourceHandle>),
 }
 
 /// A context's first anchor as collected, before its final read validates
 /// the windows: the doors target is decided from it, so that read can drop
-/// the target but never retarget the doors. A 007 merge decides from every
-/// root's, so a definition one root dropped as stale never hands the doors
-/// to another root's namesake.
+/// a target but never retarget the doors or let a lower namesake into a tie
+/// group. A 007 merge decides from every root's, so a definition one root
+/// dropped as stale never hands the doors to another root's namesake.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CollectedAnchor {
     pub anchor: String,
     pub definitions: u64,
-    /// The window's first two definitions in window order: all resolution
-    /// reads (a merge's first two are among its roots' first two).
+    /// The window's first [`TIE_GROUP`] + 1 definitions in window order:
+    /// enough to resolve and to know whether the tie group ends within the
+    /// bound (a merge's are among its roots').
     pub head: Vec<(Option<SourceHandle>, Option<Resolver>)>,
 }
 
@@ -646,7 +668,7 @@ impl CollectedAnchor {
             head: window
                 .entries
                 .iter()
-                .take(2)
+                .take(TIE_GROUP + 1)
                 .map(|entry| (entry.handle.clone(), entry.resolver))
                 .collect(),
         }
@@ -656,16 +678,25 @@ impl CollectedAnchor {
         if self.definitions == 0 {
             return DoorTarget::None;
         }
-        if !resolves(
-            self.definitions,
-            self.head.iter().map(|(_, resolver)| *resolver),
-        ) {
+        let tuple = |resolver: &Option<Resolver>| resolver.map(|resolver| resolver.key());
+        if resolves(self.definitions, self.head.iter().map(|(_, r)| *r)) {
+            return match self.head.first().and_then(|(handle, _)| handle.clone()) {
+                Some(handle) => DoorTarget::Resolved(handle),
+                None => DoorTarget::None,
+            };
+        }
+        let Some((_, first)) = self.head.first() else {
+            return DoorTarget::None;
+        };
+        let tied = || {
+            self.head
+                .iter()
+                .take_while(|(_, resolver)| tuple(resolver) == tuple(first))
+        };
+        if tied().count() > TIE_GROUP {
             return DoorTarget::Ambiguous;
         }
-        match self.head.first().and_then(|(handle, _)| handle.clone()) {
-            Some(handle) => DoorTarget::Resolved(handle),
-            None => DoorTarget::None,
-        }
+        DoorTarget::Tied(tied().filter_map(|(handle, _)| handle.clone()).collect())
     }
 }
 
@@ -5047,7 +5078,7 @@ impl Engine {
                 let target = first
                     .as_ref()
                     .map_or(DoorTarget::None, CollectedAnchor::target);
-                Some(self.doors_in(&tx, &target, &anchors, &mut counters)?)
+                Some(self.doors_in(&tx, &target, &anchors, &mut counters, control)?)
             }
             None => None,
         };
@@ -5241,96 +5272,152 @@ impl Engine {
     }
 
     /// The doors of a context that requested them (context-v2 § Doors),
-    /// built in its final read `tx` for `target`, the first anchor's
-    /// definition `D` as resolved before this read. `D` dropped as stale by
-    /// this read's validation of the anchor windows gives `none`: no namesake
-    /// is promoted for this request. Exact doors when a current compiler
-    /// scope of `D`'s path holds definition occurrences at `D`'s stored name
-    /// range; otherwise approximate doors. A malformed compiler row is
-    /// component-local: it gives approximate doors, never a failed context.
+    /// built in its final read `tx` for `target`, decided from the first
+    /// anchor's window before this read. A target this read's validation of
+    /// the anchor windows dropped as stale gets no doors, and no other
+    /// definition takes its place: a resolved `D` gives `none`.
+    ///
+    /// Each surviving target reads one references window, exactly the
+    /// resolved anchor's (at most [`TIE_GROUP`] per request), with a
+    /// cancellation check before every window after the first. Exact doors
+    /// when a current compiler scope of a target's path holds definition
+    /// occurrences at its stored name range. A resolved `D` without them
+    /// gets approximate doors; a tie group's entry without them gets no
+    /// group, and only when no entry has exact doors does the name get
+    /// approximate doors once, attributed to no entry. A malformed compiler
+    /// row is component-local: it gives approximate doors, never a failed
+    /// context.
     fn doors_in(
         &self,
         tx: &redb::ReadTransaction,
         target: &DoorTarget,
         anchors: &[AnchorWindow],
         counters: &mut CandidateCounters,
+        control: &crate::Control,
     ) -> FResult<Doors> {
-        let handle = match target {
+        let (targets, cap) = match target {
             DoorTarget::None => return Ok(Doors::unbuilt(DoorState::None)),
             DoorTarget::Ambiguous => return Ok(Doors::unbuilt(DoorState::Ambiguous)),
-            DoorTarget::Resolved(handle) => handle,
+            DoorTarget::Resolved(handle) => (std::slice::from_ref(handle), DOOR_FILES),
+            DoorTarget::Tied(handles) => (handles.as_slice(), GROUP_FILES),
         };
-        // Validation only removes entries, so `D` is still the window's
-        // first entry exactly when it survived.
-        let Some(resolver) = anchors
-            .first()
-            .and_then(|window| window.entries.first())
-            .filter(|definition| definition.handle.as_ref() == Some(handle))
-            .and_then(|definition| definition.resolver)
-        else {
-            return Ok(Doors::unbuilt(DoorState::None));
+        // Validation only removes entries: a target survived exactly when it
+        // is still in the first anchor's window.
+        let surviving = |handle: &SourceHandle| {
+            anchors
+                .first()?
+                .entries
+                .iter()
+                .find(|entry| entry.handle.as_ref() == Some(handle))?
+                .resolver
         };
         let revision = self.freshness_in(tx)?.source_revision;
         let bound = self.workspace_id.clone().unwrap_or_default();
-        match graph::exact_doors(
-            tx,
-            revision,
-            &bound,
-            &handle.path,
-            &handle.sha256,
-            resolver.name,
-        ) {
-            Ok(graph::ExactResolution::Doors(exact)) => {
-                counters.stale += exact.stale as u64;
-                counters.candidates_full |= exact.full;
-                return Ok(Doors {
-                    state: DoorState::Exact,
-                    target: Some(handle.clone()),
-                    lines: exact.lines,
-                    more_files: exact.more_files,
-                });
+        let mut reads = graph::DoorReads::new(tx, revision, &bound);
+        let mut groups: Vec<DoorGroup> = Vec::new();
+        // The first surviving target names the approximate doors.
+        let mut named: Option<(&SourceHandle, Resolver)> = None;
+        for handle in targets {
+            let Some(resolver) = surviving(handle) else {
+                continue;
+            };
+            match named {
+                // Every window after the first checks the request's
+                // cancellation.
+                Some(_) => control.check()?,
+                None => named = Some((handle, resolver)),
             }
-            // A name scan that ran out of its allowance filled the window,
-            // whatever the approximate window does.
-            Ok(graph::ExactResolution::Approximate { exhausted }) => {
-                counters.candidates_full |= exhausted;
+            match reads.exact_doors(&handle.path, &handle.sha256, resolver.name, cap) {
+                Ok(graph::ExactResolution::Doors(exact)) => {
+                    counters.stale += exact.stale as u64;
+                    counters.candidates_full |= exact.full;
+                    groups.push(DoorGroup {
+                        target: Some(handle.clone()),
+                        lines: exact.lines,
+                        more_files: exact.more_files,
+                    });
+                }
+                // A name scan that ran out of its allowance filled the
+                // window, whatever the approximate window does.
+                Ok(graph::ExactResolution::Approximate { exhausted }) => {
+                    counters.candidates_full |= exhausted;
+                }
+                Err(FoundryError::GraphInvalid(_)) => {}
+                Err(other) => return Err(other),
             }
-            Err(FoundryError::GraphInvalid(_)) => {}
-            Err(other) => return Err(other),
         }
+        let resolved = matches!(target, DoorTarget::Resolved(_));
+        if !groups.is_empty() {
+            let state = if resolved {
+                DoorState::Exact
+            } else {
+                DoorState::Each
+            };
+            return Ok(Doors { state, groups });
+        }
+        let Some(group) = named
+            .map(|(handle, resolver)| {
+                self.approx_doors(tx, handle, resolver.name, targets, counters, control)
+            })
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(Doors::unbuilt(DoorState::None));
+        };
+        Ok(Doors {
+            state: DoorState::Approx,
+            groups: vec![DoorGroup {
+                target: resolved.then(|| targets[0].clone()),
+                ..group
+            }],
+        })
+    }
+
+    /// Approximate doors (context-v2 § Doors) for the name exactly as
+    /// written at `name` in `named`'s verified bytes, without a trailing
+    /// `?`, `!` or `'`: the units of `own` are excluded and their module keys
+    /// are import keys. One group, onto no target; `None` when `named`'s
+    /// source is gone from this read.
+    fn approx_doors(
+        &self,
+        tx: &redb::ReadTransaction,
+        named: &SourceHandle,
+        name: (u64, u64),
+        own: &[SourceHandle],
+        counters: &mut CandidateCounters,
+        control: &crate::Control,
+    ) -> FResult<Option<DoorGroup>> {
+        let bound = self.workspace_id.clone().unwrap_or_default();
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
         let mut files: std::collections::HashMap<String, Option<DoorFile>> =
             std::collections::HashMap::new();
-        // `D`'s name exactly as written: its stored name range in its
-        // verified bytes, without a trailing `?`, `!` or `'`.
-        let Some(file) = door_file(&mut files, &sources, &stored, &handle.path, &handle.sha256)?
+        let Some(file) = door_file(&mut files, &sources, &stored, &named.path, &named.sha256)?
         else {
-            return Ok(Doors::unbuilt(DoorState::None));
+            return Ok(None);
         };
-        let (start, end) = (resolver.name.0 as usize, resolver.name.1 as usize);
+        let (start, end) = (name.0 as usize, name.1 as usize);
         let name = file
             .body
             .get(start..end)
             .ok_or_else(|| {
                 FoundryError::CorruptStore(format!(
                     "a stored name range lies outside {}",
-                    handle.path
+                    named.path
                 ))
             })?
             .trim_end_matches(['?', '!', '\''])
             .to_owned();
-        let mut doors = Doors {
-            state: DoorState::Approx,
-            target: Some(handle.clone()),
+        let mut doors = DoorGroup {
+            target: None,
             lines: Vec::new(),
             more_files: 0,
         };
         // Identifiers of one character have no doors.
         if name.chars().count() < 2 {
-            return Ok(doors);
+            return Ok(Some(doors));
         }
-        let (candidates, full) = self.door_candidates(&name, module_key(&handle.path), handle)?;
+        let (candidates, full) = self.door_candidates(&name, own, control)?;
         counters.candidates_full |= full;
         // A candidate becomes a door where a line of it holds the name
         // exactly as written; one site per unit, grouped by file in door
@@ -5339,6 +5426,7 @@ impl Engine {
         let mut group_of: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
         for candidate in &candidates {
+            control.check()?;
             let Some(file) = door_file(
                 &mut files,
                 &sources,
@@ -5390,21 +5478,22 @@ impl Engine {
             .take(DOOR_FILES)
             .map(|(line, more)| DoorLine { more, ..line })
             .collect();
-        Ok(doors)
+        Ok(Some(doors))
     }
 
-    /// The approximate-door candidates of the definition `own` named `name`
-    /// (context-v2 § Doors): the delivery units, other than `own`, whose
-    /// `ident` holds the name, in door order - importing files first (a file
-    /// whose index-time import keys hold the name or `module`), then role,
-    /// path and start - cut to the first [`DOOR_WINDOW`]; and whether more
-    /// existed. Nothing is resolved, read from configuration or executed: the
-    /// keys were computed at indexing.
+    /// The approximate-door candidates of the definitions `own`, all named
+    /// `name` (context-v2 § Doors): the delivery units, other than theirs,
+    /// whose `ident` holds the name, in door order - importing files first (a
+    /// file whose index-time import keys hold the name or one of their
+    /// module keys), then role, path and start - cut to the first
+    /// [`DOOR_WINDOW`]; and whether more existed. The request's cancellation
+    /// is checked as each search document is read. Nothing is resolved, read
+    /// from configuration or executed: the keys were computed at indexing.
     fn door_candidates(
         &self,
         name: &str,
-        module: Option<&str>,
-        own: &SourceHandle,
+        own: &[SourceHandle],
+        control: &crate::Control,
     ) -> FResult<(Vec<DoorCandidate>, bool)> {
         let handles = self.require_search()?;
         let fields = &handles.fields;
@@ -5415,15 +5504,22 @@ impl Engine {
                 IndexRecordOption::Basic,
             ))
         };
-        let mut keys = vec![term(fields.imports, name)];
-        if let Some(module) = module.filter(|module| *module != name) {
-            keys.push(term(fields.imports, module));
+        let mut modules: Vec<&str> = vec![name];
+        for module in own.iter().filter_map(|handle| module_key(&handle.path)) {
+            if !modules.contains(&module) {
+                modules.push(module);
+            }
         }
+        let keys = modules
+            .into_iter()
+            .map(|key| term(fields.imports, key))
+            .collect();
         let mut importing: std::collections::HashSet<String> = std::collections::HashSet::new();
         for address in searcher.search(
             &BooleanQuery::union(keys),
             &tantivy::collector::DocSetCollector,
         )? {
+            control.check()?;
             let doc: TantivyDocument = searcher.doc(address)?;
             if let Some(path) = doc.get_first(fields.path).and_then(|v| v.as_str()) {
                 importing.insert(path.to_owned());
@@ -5436,6 +5532,7 @@ impl Engine {
         let mut units: std::collections::BTreeMap<(String, u64, u64), DoorCandidate> =
             std::collections::BTreeMap::new();
         for address in searcher.search(&mentions, &tantivy::collector::DocSetCollector)? {
+            control.check()?;
             let doc: TantivyDocument = searcher.doc(address)?;
             let invalid = || FoundryError::CorruptStore("invalid search document".into());
             let text = |field| doc.get_first(field).and_then(|v| v.as_str());
@@ -5446,7 +5543,10 @@ impl Engine {
             };
             let path = text(fields.path).ok_or_else(invalid)?;
             let (unit_start, unit_end) = (number(fields.unit_start)?, number(fields.unit_end)?);
-            if path == own.path && unit_start == own.start && unit_end == own.end {
+            let own_unit = own.iter().any(|handle| {
+                handle.path == path && handle.start == unit_start && handle.end == unit_end
+            });
+            if own_unit {
                 continue;
             }
             let key = (path.to_owned(), unit_start, unit_end);

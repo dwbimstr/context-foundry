@@ -160,27 +160,8 @@ impl World {
 
     /// A manifest bound to this store's current workspace and revision.
     fn manifest(&self, producer: &str, tag: &str, config: &str, artifact: &[u8]) -> Value {
-        let inputs: Vec<Value> = self
-            .inputs()
-            .into_iter()
-            .map(|(path, sha256)| json!({"path": path, "sha256": sha256}))
-            .collect();
-        json!({
-            "v": 1,
-            "workspace_id": self.engine().workspace_id().unwrap(),
-            "source_revision": self.engine().source_revision().unwrap(),
-            "producer": {
-                "name": producer,
-                "release_tag": tag,
-                "commit": "f8996691e991a4dc3c6f135e0fc04fc5561e4e9a",
-                "version_output": "test-producer 1.0",
-                "binary_sha256": digest(b"test-producer-binary"),
-            },
-            "invocation": "test-producer scip <snapshot> --output index.scip",
-            "config": config,
-            "artifact_sha256": digest(artifact),
-            "inputs": inputs,
-        })
+        let known: Vec<String> = self.known.borrow().iter().cloned().collect();
+        manifest_at(self.engine(), &known, producer, tag, config, artifact)
     }
 
     fn write_pair(&self, manifest: &Value, artifact: &[u8]) -> (PathBuf, PathBuf) {
@@ -256,6 +237,41 @@ impl World {
         .unwrap()
         .text
     }
+}
+
+/// A manifest bound to `engine`'s current workspace and revision, whose
+/// inputs are the indexed sources among `paths`.
+fn manifest_at(
+    engine: &Engine,
+    paths: &[String],
+    producer: &str,
+    tag: &str,
+    config: &str,
+    artifact: &[u8],
+) -> Value {
+    let inputs: Vec<Value> = paths
+        .iter()
+        .filter_map(|path| {
+            let meta = engine.source(path).unwrap()?;
+            Some(json!({"path": path, "sha256": meta.hash}))
+        })
+        .collect();
+    json!({
+        "v": 1,
+        "workspace_id": engine.workspace_id().unwrap(),
+        "source_revision": engine.source_revision().unwrap(),
+        "producer": {
+            "name": producer,
+            "release_tag": tag,
+            "commit": "f8996691e991a4dc3c6f135e0fc04fc5561e4e9a",
+            "version_output": "test-producer 1.0",
+            "binary_sha256": digest(b"test-producer-binary"),
+        },
+        "invocation": "test-producer scip <snapshot> --output index.scip",
+        "config": config,
+        "artifact_sha256": digest(artifact),
+        "inputs": inputs,
+    })
 }
 
 fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
@@ -5332,7 +5348,7 @@ fn a_truncated_unnamed_oversized_document_is_producer_incomplete() {
 // --- 005 T004: doors (context-v2 § Doors) ------------------------------------
 
 use context_foundry::Strategy;
-use context_foundry::store::{CandidateBatch, DoorState, Doors};
+use context_foundry::store::{CandidateBatch, DoorGroup, DoorState, Doors};
 use context_foundry::testkit::{V2Item, V2Response};
 
 const REFERRING_FILES: [&str; 3] = ["src/pointer.rs", "src/use_one.rs", "src/use_two.rs"];
@@ -5368,13 +5384,25 @@ fn doors(batch: &CandidateBatch) -> &Doors {
     batch.doors.as_ref().expect("the context requested doors")
 }
 
+/// The one door group of a resolved first anchor.
+fn group(batch: &CandidateBatch) -> &DoorGroup {
+    let doors = doors(batch);
+    assert_eq!(doors.groups.len(), 1, "{doors:?}");
+    &doors.groups[0]
+}
+
 /// Each door line's `(path, line, more sites)`.
-fn door_lines(batch: &CandidateBatch) -> Vec<(String, u64, usize)> {
-    doors(batch)
+fn group_lines(group: &DoorGroup) -> Vec<(String, u64, usize)> {
+    group
         .lines
         .iter()
         .map(|line| (line.unit.path.clone(), line.line, line.more))
         .collect()
+}
+
+/// The door lines of a resolved first anchor's one group.
+fn door_lines(batch: &CandidateBatch) -> Vec<(String, u64, usize)> {
+    group_lines(group(batch))
 }
 
 fn packed_context(batch: &CandidateBatch, tokens: usize) -> (String, V2Response) {
@@ -5411,15 +5439,16 @@ fn first_sites(outcome: &ReferencesOutcome) -> Vec<(String, u64, usize)> {
 }
 
 /// Of a same-name pair in two modules, the qualifier anchors one and the
-/// doors come from that one alone; unqualified, the anchor is ambiguous, no
-/// doors are built and the directory names both.
+/// doors come from that one alone; unqualified, the anchor is ambiguous with
+/// a tie group of two, and each definition gets its own exact door group
+/// right after its entry (`doors:each`), the directory naming both.
 #[test]
-fn doors_come_from_the_qualified_definition_and_a_bare_pair_is_ambiguous() {
+fn doors_come_from_the_qualified_definition_and_each_of_a_bare_pair_has_its_own_group() {
     let (world, _) = imported_fixture();
     let batch = context_with(&world, "who calls `a::parse_record`", Strategy::Auto);
     let built = doors(&batch);
     assert_eq!(built.state, DoorState::Exact);
-    assert_eq!(built.target.as_ref().unwrap().path, "src/a.rs");
+    assert_eq!(group(&batch).target.as_ref().unwrap().path, "src/a.rs");
     let files: Vec<String> = door_lines(&batch)
         .into_iter()
         .map(|(path, ..)| path)
@@ -5439,23 +5468,45 @@ fn doors_come_from_the_qualified_definition_and_a_bare_pair_is_ambiguous() {
     }
 
     let bare = context_with(&world, "who calls `parse_record`", Strategy::Auto);
-    assert_eq!(doors(&bare).state, DoorState::Ambiguous);
-    assert!(doors(&bare).lines.is_empty() && doors(&bare).target.is_none());
+    let built = doors(&bare);
+    assert_eq!(built.state, DoorState::Each);
+    assert_eq!(built.groups.len(), 2, "{built:?}");
+    // a's own group is the window the qualified anchor reads.
+    assert_eq!(built.groups[0], *group(&batch));
+    let b = &built.groups[1];
+    assert_eq!(b.target.as_ref().unwrap().path, "src/b.rs");
+    let b_files: Vec<String> = group_lines(b).into_iter().map(|(path, ..)| path).collect();
+    assert_eq!(
+        (b_files, b.more_files),
+        (vec!["src/use_b.rs".to_owned()], 0)
+    );
     let (text, parsed) = packed_context(&bare, 2048);
-    assert!(
-        parsed.header.contains(&"doors:ambiguous".to_owned()),
+    assert!(parsed.header.contains(&"doors:each".to_owned()), "{text}");
+    assert!(parsed.header.contains(&"defs:2".to_owned()), "{text}");
+    assert!(response::count_tokens(text.lines().next().unwrap()) <= 40);
+    // Each entry, then its own group: a's three referring files, then b's one.
+    let order: Vec<(bool, &str)> = parsed
+        .items
+        .iter()
+        .map(|item| {
+            let path = item.handle.split('#').next().unwrap();
+            (item.kind == V2Kind::Door, path)
+        })
+        .collect();
+    assert_eq!(
+        order,
+        [
+            (false, "src/a.rs"),
+            (true, REFERRING_FILES[0]),
+            (true, REFERRING_FILES[1]),
+            (true, REFERRING_FILES[2]),
+            (false, "src/b.rs"),
+            (true, "src/use_b.rs"),
+        ],
         "{text}"
     );
-    assert!(parsed.header.contains(&"defs:2".to_owned()), "{text}");
-    assert!(door_items(&parsed).is_empty());
-    for path in ["src/a.rs", "src/b.rs"] {
-        assert!(
-            parsed
-                .items
-                .iter()
-                .any(|item| item.handle.starts_with(&format!("{path}#"))),
-            "{text}"
-        );
+    for line in door_items(&parsed) {
+        assert_eq!(line.form, None, "exact doors carry no [approx]: {text}");
     }
 }
 
@@ -5469,11 +5520,11 @@ fn exact_doors_equal_references_and_references_handle_reads_the_same_symbol() {
     let a_id = symbol_id(RA, "src/a.rs", A_SYMBOL);
     let by_symbol = world.by_symbol(&a_id);
     assert_eq!(door_lines(&batch), first_sites(&by_symbol));
-    for (door, item) in doors(&batch).lines.iter().zip(&by_symbol.items) {
+    for (door, item) in group(&batch).lines.iter().zip(&by_symbol.items) {
         assert_eq!(door.unit, item.unit);
         assert_eq!(door.label, item.label);
     }
-    let target = doors(&batch).target.clone().unwrap();
+    let target = group(&batch).target.clone().unwrap();
     let by_handle = world
         .references(ReferencesSeed::Handle(target.to_v2()), 64, None)
         .unwrap();
@@ -5574,7 +5625,7 @@ fn definitions_resolve_by_name_range_whatever_precedes_the_name() {
         let batch = context_with(&world, &format!("who calls `{name}`"), Strategy::Auto);
         let built = doors(&batch);
         assert_eq!(built.state, DoorState::Exact, "{path}: {built:?}");
-        let target = built.target.clone().unwrap();
+        let target = group(&batch).target.clone().unwrap();
         assert_eq!(target.path, path);
         assert!(
             body[target.start as usize..].starts_with(lead),
@@ -5604,7 +5655,7 @@ fn a_unit_without_a_definition_occurrence_gives_approximate_doors() {
     let batch = context_with(&world, "what uses `beta`", Strategy::Auto);
     let built = doors(&batch);
     assert_eq!(built.state, DoorState::Approx);
-    let target = built.target.clone().unwrap();
+    let target = group(&batch).target.clone().unwrap();
     let (text, parsed) = packed_context(&batch, 2048);
     assert!(parsed.header.contains(&"doors:approx".to_owned()), "{text}");
     let refused = world
@@ -5681,7 +5732,7 @@ fn split_identities_of_one_definition_give_one_deduplicated_set() {
             one_each("src/c.rs")
         ]
     );
-    let target = doors(&batch).target.clone().unwrap();
+    let target = group(&batch).target.clone().unwrap();
     let by_handle = world
         .references(ReferencesSeed::Handle(target.to_v2()), 64, None)
         .unwrap();
@@ -5741,7 +5792,7 @@ fn a_graph_replacement_during_door_collection_is_caught_by_the_final_read() {
     let batch = context_with(&world, query, Strategy::Auto);
     fault::disarm_all();
     assert_eq!(doors(&batch).state, DoorState::Exact);
-    assert!(doors(&batch).lines.is_empty(), "{:?}", door_lines(&batch));
+    assert!(group(&batch).lines.is_empty(), "{:?}", door_lines(&batch));
 
     fault::arm(
         names::CONTEXT_BEFORE_FINAL_VALIDATION,
@@ -5823,9 +5874,9 @@ fn a_scope_expecting_other_bytes_never_reuses_a_file_verified_for_another_scope(
     let built = doors(&batch);
     assert_eq!(built.state, DoorState::Exact);
     assert_eq!(door_lines(&batch), [("src/user.rs".to_owned(), 1, 0)]);
-    assert_eq!(built.lines[0].unit.sha256, actual);
+    assert_eq!(group(&batch).lines[0].unit.sha256, actual);
 
-    let target = built.target.clone().unwrap();
+    let target = group(&batch).target.clone().unwrap();
     let by_handle = world
         .references(ReferencesSeed::Handle(target.to_v2()), 64, None)
         .unwrap();
@@ -5892,7 +5943,7 @@ fn a_stale_resolved_definition_gives_no_doors_and_promotes_no_namesake() {
         let built = doors(&before);
         assert_eq!(built.state, DoorState::Approx, "{runners_up}");
         assert_eq!(
-            built.target.as_ref().unwrap().path,
+            group(&before).target.as_ref().unwrap().path,
             "src/alpha/beta.rs",
             "{runners_up}"
         );
@@ -5965,7 +6016,7 @@ fn an_exhausted_exact_name_scan_reports_candidates_full_under_approximate_doors(
             "{text}"
         );
         if identities == 255 {
-            let target = doors(&batch).target.clone().unwrap();
+            let target = group(&batch).target.clone().unwrap();
             let by_handle = world
                 .references(ReferencesSeed::Handle(target.to_v2()), 64, None)
                 .unwrap();
@@ -6006,7 +6057,7 @@ fn exact_doors_equal_references_across_the_64_file_boundary() {
     assert_eq!(built.state, DoorState::Exact);
     let by_handle = world
         .references(
-            ReferencesSeed::Handle(built.target.clone().unwrap().to_v2()),
+            ReferencesSeed::Handle(group(&batch).target.clone().unwrap().to_v2()),
             256,
             None,
         )
@@ -6019,8 +6070,508 @@ fn exact_doors_equal_references_across_the_64_file_boundary() {
         "the definition's file and 63 referring files"
     );
     assert_eq!(door_lines(&batch), files[..16]);
-    assert_eq!(built.more_files, files.len() - 16);
+    assert_eq!(group(&batch).more_files, files.len() - 16);
     assert!(batch.counters.candidates_full);
+}
+
+// --- Doors of a tie group (context-v2 § Doors, Doors of a tie group) --------
+
+const PIVOT: &str = "pub fn pivot_dock() {}\n";
+const PIVOT_USER: &str = "fn user() { pivot_dock(); }\n";
+
+/// The SCIP symbol of the `pivot_dock` defined in `path`.
+fn pivot_symbol(path: &str) -> String {
+    format!(
+        "rust-analyzer cargo toy 0.1.0 {}/pivot_dock().",
+        path.replace(['/', '.'], "_")
+    )
+}
+
+/// SCIP documents for `pivot_dock` namesakes: each `(definition, callers)`
+/// defines its own symbol at its name range, referenced once from each of
+/// its callers (a [`PIVOT_USER`]).
+fn pivot_documents(definitions: &[(&str, &[&str])]) -> Vec<Document> {
+    let name = word_range(PIVOT, "pivot_dock", 0);
+    let call = word_range(PIVOT_USER, "pivot_dock", 0);
+    let mut documents = Vec::new();
+    for (path, callers) in definitions {
+        let symbol = pivot_symbol(path);
+        documents.push(doc(path, vec![occ(&name, &symbol, DEF)]));
+        for caller in *callers {
+            documents.push(doc(caller, vec![occ(&call, &symbol, REF)]));
+        }
+    }
+    documents
+}
+
+/// A world of `pivot_dock` namesakes and their callers, whose artifact
+/// defines every one of `definitions`, made searchable.
+fn pivot_world(definitions: &[(&str, &[&str])]) -> World {
+    let mut sources: Vec<(&str, &str)> = Vec::new();
+    for (path, callers) in definitions {
+        sources.push((path, PIVOT));
+        sources.extend(callers.iter().map(|caller| (*caller, PIVOT_USER)));
+    }
+    let mut world = World::with_sources(&sources);
+    world.import_ok(RA, "pivot", &artifact(pivot_documents(definitions)));
+    make_searchable(&mut world);
+    world
+}
+
+/// Each group's `(target path, door files, more files)`.
+fn group_files(doors: &Doors) -> Vec<(String, Vec<String>, usize)> {
+    doors
+        .groups
+        .iter()
+        .map(|group| {
+            let target = group.target.as_ref().map(|t| t.path.clone());
+            let files = group_lines(group).into_iter().map(|(path, ..)| path);
+            (
+                target.unwrap_or_default(),
+                files.collect(),
+                group.more_files,
+            )
+        })
+        .collect()
+}
+
+/// Each parsed item as `(kind, path)`; a `⋯ <m> more files` line as
+/// `(MoreFiles, m)`.
+fn item_paths(parsed: &V2Response) -> Vec<(V2Kind, String)> {
+    parsed
+        .items
+        .iter()
+        .map(|item| match item.kind {
+            V2Kind::MoreFiles => (item.kind, item.body.clone()),
+            kind => (kind, item.handle.split('#').next().unwrap().to_owned()),
+        })
+        .collect()
+}
+
+/// A tie group of four (the qualifier `alpha` ties four namesakes above a
+/// fifth) gives each its own exact group of at most four lines, then
+/// `⋯ <m> more files`, right after its entry (`doors:each`); unqualified,
+/// the five tie and the anchor is `doors:ambiguous` with no doors. Both
+/// headers stay within 40 tokens.
+#[test]
+fn a_tie_group_of_four_gets_a_group_each_and_a_tie_group_of_five_is_ambiguous() {
+    let a0: Vec<String> = (0..6).map(|n| format!("src/use/a0_{n}.rs")).collect();
+    let a0: Vec<&str> = a0.iter().map(String::as_str).collect();
+    let definitions: [(&str, &[&str]); 5] = [
+        ("src/alpha/a0.rs", &a0),
+        ("src/alpha/a1.rs", &["src/use/a1.rs"]),
+        ("src/alpha/a2.rs", &["src/use/a2.rs"]),
+        ("src/alpha/a3.rs", &["src/use/a3.rs"]),
+        ("src/beta/b0.rs", &["src/use/b0.rs"]),
+    ];
+    let world = pivot_world(&definitions);
+    let four = context_with(&world, "who calls `alpha::pivot_dock`", Strategy::Auto);
+    assert_eq!(doors(&four).state, DoorState::Each);
+    let one = |target: &str, user: &str| (target.to_owned(), vec![user.to_owned()], 0);
+    assert_eq!(
+        group_files(doors(&four)),
+        [
+            (
+                "src/alpha/a0.rs".to_owned(),
+                a0[..4].iter().map(|path| (*path).to_owned()).collect(),
+                2
+            ),
+            one("src/alpha/a1.rs", "src/use/a1.rs"),
+            one("src/alpha/a2.rs", "src/use/a2.rs"),
+            one("src/alpha/a3.rs", "src/use/a3.rs"),
+        ]
+    );
+    let (text, parsed) = packed_context(&four, 4096);
+    let header = text.lines().next().unwrap();
+    assert!(
+        header.ends_with(" · defs:5 · doors:each · anchored"),
+        "{text}"
+    );
+    assert!(response::count_tokens(header) <= 40, "{header}");
+    let entry = |path: &str| (V2Kind::Source, path.to_owned());
+    let door = |path: &str| (V2Kind::Door, path.to_owned());
+    let mut expected = vec![entry("src/alpha/a0.rs")];
+    expected.extend(a0[..4].iter().map(|path| door(path)));
+    expected.push((V2Kind::MoreFiles, "2".to_owned()));
+    for i in 1..4 {
+        expected.push(entry(&format!("src/alpha/a{i}.rs")));
+        expected.push(door(&format!("src/use/a{i}.rs")));
+    }
+    expected.push(entry("src/beta/b0.rs"));
+    assert_eq!(item_paths(&parsed), expected, "{text}");
+
+    let five = context_with(&world, "who calls `pivot_dock`", Strategy::Auto);
+    assert_eq!(doors(&five), &Doors::unbuilt(DoorState::Ambiguous));
+    let (text, parsed) = packed_context(&five, 4096);
+    let header = text.lines().next().unwrap();
+    assert!(
+        header.ends_with(" · defs:5 · doors:ambiguous · anchored"),
+        "{text}"
+    );
+    assert!(response::count_tokens(header) <= 40, "{header}");
+    let kinds: Vec<V2Kind> = parsed.items.iter().map(|item| item.kind).collect();
+    assert_eq!(kinds, [V2Kind::Source; 5], "{text}");
+}
+
+/// Door groups are packed after the address pass and before the signature
+/// and verbatim upgrades: at the smallest budget that fits both entries'
+/// groups, both entries are still `[address]` lines.
+#[test]
+fn tie_group_doors_are_packed_before_signature_upgrades() {
+    let (world, _) = imported_fixture();
+    let bare = context_with(&world, "who calls `parse_record`", Strategy::Auto);
+    let with_groups = |tokens: usize| -> Option<V2Response> {
+        let packed = response::pack_context(
+            &bare,
+            response::Budget::request(tokens),
+            &response::stdout_bytes,
+        )
+        .ok()?;
+        let parsed = parse_v2(&packed.text).unwrap();
+        (door_items(&parsed).len() == 4).then_some(parsed)
+    };
+    assert!(with_groups(2048).is_some());
+    let (mut lo, mut hi) = (1usize, 2048usize);
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        if with_groups(mid).is_some() {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    let parsed = with_groups(hi).unwrap();
+    let order: Vec<V2Kind> = parsed.items.iter().map(|item| item.kind).collect();
+    use V2Kind::{Address, Door};
+    assert_eq!(
+        order,
+        [Address, Door, Door, Door, Address, Door],
+        "{hi}: {parsed:?}"
+    );
+    // With room, the entries upgrade and keep their groups.
+    let roomy = with_groups(2048).unwrap();
+    let entries: Vec<V2Kind> = roomy
+        .items
+        .iter()
+        .map(|item| item.kind)
+        .filter(|kind| *kind != Door)
+        .collect();
+    assert_eq!(entries, [V2Kind::Source, V2Kind::Source]);
+}
+
+/// A tie-group entry the final read drops as stale gets no group, and no
+/// lower namesake takes its place (one root): `delta.rs` would have exact
+/// doors, but only `alpha::pivot_dock`'s tie group as collected has groups.
+/// The producer runs again at the barrier, so the survivor's doors stay
+/// exact at the new revision.
+#[test]
+fn a_stale_tie_group_entry_gets_no_group_and_no_lower_namesake_takes_its_place() {
+    let definitions: [(&str, &[&str]); 3] = [
+        ("src/alpha/one.rs", &["src/use_one.rs"]),
+        ("src/alpha/two.rs", &["src/use_two.rs"]),
+        ("src/delta.rs", &["src/use_delta.rs"]),
+    ];
+    let world = pivot_world(&definitions);
+    let query = "who calls `alpha::pivot_dock`";
+    let before = context_with(&world, query, Strategy::Auto);
+    assert_eq!(doors(&before).state, DoorState::Each);
+    let targets = |doors: &Doors| -> Vec<String> {
+        group_files(doors)
+            .into_iter()
+            .map(|(target, ..)| target)
+            .collect()
+    };
+    assert_eq!(
+        targets(doors(&before)),
+        ["src/alpha/one.rs", "src/alpha/two.rs"]
+    );
+    let paths: Vec<String> = world.known.borrow().iter().cloned().collect();
+    let bytes = artifact(pivot_documents(&definitions));
+    let (index, snapshot) = (world.fresh_name("index"), world.fresh_name("manifest"));
+    fault::arm(
+        names::CONTEXT_BEFORE_FINAL_VALIDATION,
+        0,
+        Action::Call(Box::new(move |ctx| {
+            let engine = ctx.engine.unwrap();
+            engine
+                .replace_source("src/alpha/one.rs", "pub fn pivot_dock() { /* edited */ }\n")
+                .unwrap();
+            let manifest = manifest_at(engine, &paths, RA, "2026-08-31", "edited", &bytes);
+            std::fs::write(&index, &bytes).unwrap();
+            std::fs::write(&snapshot, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            let report = engine
+                .import_scip(&index, &snapshot, &Control::unbounded())
+                .unwrap();
+            assert!(report.complete && report.selected, "{report:?}");
+        })),
+    );
+    let after = context_with(&world, query, Strategy::Auto);
+    fault::disarm_all();
+    assert_eq!(doors(&after).state, DoorState::Each);
+    assert_eq!(
+        group_files(doors(&after)),
+        [(
+            "src/alpha/two.rs".to_owned(),
+            vec!["src/use_two.rs".to_owned()],
+            0
+        )]
+    );
+    assert!(after.counters.stale > 0);
+    // The survivor leads the window it validated; its group follows it, and
+    // the lower namesake is a directory line without doors.
+    let (text, parsed) = packed_context(&after, 4096);
+    assert!(parsed.header.contains(&"doors:each".to_owned()), "{text}");
+    assert_eq!(
+        item_paths(&parsed),
+        [
+            (V2Kind::Source, "src/alpha/two.rs".to_owned()),
+            (V2Kind::Door, "src/use_two.rs".to_owned()),
+            (V2Kind::Locator, "src/delta.rs".to_owned()),
+        ],
+        "{text}"
+    );
+}
+
+/// Across roots (007): a merged tie group takes each entry's exact group
+/// from its own root's final read, though each root resolved on its own;
+/// the primary's entry dropped as stale in the primary's final read gets no
+/// group, and the reference root's lower namesake never takes its place.
+#[test]
+fn across_roots_a_stale_tie_group_entry_gets_no_group_and_promotes_no_namesake() {
+    use context_foundry::roots;
+    use context_foundry::store::ContextOptions;
+    let primary = pivot_world(&[("src/alpha/one.rs", &["src/use_one.rs"])]);
+    let reference = pivot_world(&[
+        ("src/alpha/two.rs", &["src/use_two.rs"]),
+        ("src/delta.rs", &["src/use_delta.rs"]),
+    ]);
+    let query = "who calls `alpha::pivot_dock`";
+    let merged = |barrier: bool| -> Doors {
+        let control = Control::unbounded();
+        let serving = [primary.engine(), reference.engine()];
+        let anchors = roots::select_anchors(&serving, query, None, &control).unwrap();
+        if barrier {
+            fault::arm(
+                names::CONTEXT_BEFORE_FINAL_VALIDATION,
+                0,
+                Action::Call(Box::new(|ctx| {
+                    let engine = ctx.engine.unwrap();
+                    // Only the primary holds `one.rs`.
+                    if engine.source("src/alpha/one.rs").unwrap().is_some() {
+                        engine
+                            .replace_source(
+                                "src/alpha/one.rs",
+                                "pub fn pivot_dock() { /* edited */ }\n",
+                            )
+                            .unwrap();
+                    }
+                })),
+            );
+        }
+        let options = ContextOptions {
+            anchors: Some(&anchors),
+            ..ContextOptions::default()
+        };
+        let batches: Vec<roots::RootBatch> = serving
+            .iter()
+            .enumerate()
+            .map(|(i, engine)| roots::RootBatch {
+                alias: format!("r{i}"),
+                batch: engine
+                    .context_candidates_with(query, Strategy::Auto, &control, &options)
+                    .unwrap()
+                    .batch,
+            })
+            .collect();
+        fault::disarm_all();
+        // Each root resolved its own namesake.
+        for root in &batches {
+            let built = root.batch.doors.as_ref().unwrap();
+            assert!(matches!(built.state, DoorState::Exact | DoorState::None));
+        }
+        roots::merge_context(&batches)
+            .doors
+            .expect("the primary requested doors")
+    };
+    let before = merged(false);
+    assert_eq!(before.state, DoorState::Each);
+    assert_eq!(
+        group_files(&before),
+        [
+            (
+                "src/alpha/one.rs".to_owned(),
+                vec!["src/use_one.rs".to_owned()],
+                0
+            ),
+            (
+                "src/alpha/two.rs".to_owned(),
+                vec!["src/use_two.rs".to_owned()],
+                0
+            ),
+        ]
+    );
+    let after = merged(true);
+    assert_eq!(after.state, DoorState::Each);
+    assert_eq!(
+        group_files(&after),
+        [(
+            "src/alpha/two.rs".to_owned(),
+            vec!["src/use_two.rs".to_owned()],
+            0
+        )]
+    );
+}
+
+/// A tie-group entry with no definition occurrence gets no group while its
+/// namesake keeps its own; with none for every entry, the name's
+/// approximate doors follow the list once, attributed to no entry, every
+/// entry's own unit excluded (`doors:approx`).
+#[test]
+fn an_entry_without_exact_doors_gets_no_group_and_a_tie_without_any_shares_approximate_doors() {
+    let lone = "pub fn lone_dock() {}\n";
+    let mut world = World::with_sources(&[
+        ("src/alpha/one.rs", PIVOT),
+        ("src/alpha/two.rs", PIVOT),
+        ("src/use_one.rs", PIVOT_USER),
+        ("src/lone/a.rs", lone),
+        ("src/lone/b.rs", lone),
+        ("src/use_lone.rs", "fn user() { lone_dock(); }\n"),
+    ]);
+    // Only one.rs's `pivot_dock` is compiler-known.
+    world.import_ok(
+        RA,
+        "partial",
+        &artifact(pivot_documents(&[(
+            "src/alpha/one.rs",
+            &["src/use_one.rs"],
+        )])),
+    );
+    make_searchable(&mut world);
+    let pair = context_with(&world, "who calls `pivot_dock`", Strategy::Auto);
+    assert_eq!(doors(&pair).state, DoorState::Each);
+    assert_eq!(
+        group_files(doors(&pair)),
+        [(
+            "src/alpha/one.rs".to_owned(),
+            vec!["src/use_one.rs".to_owned()],
+            0
+        )]
+    );
+    let (text, parsed) = packed_context(&pair, 4096);
+    assert_eq!(
+        item_paths(&parsed),
+        [
+            (V2Kind::Source, "src/alpha/one.rs".to_owned()),
+            (V2Kind::Door, "src/use_one.rs".to_owned()),
+            (V2Kind::Source, "src/alpha/two.rs".to_owned()),
+        ],
+        "{text}"
+    );
+
+    let shared = context_with(&world, "who calls `lone_dock`", Strategy::Auto);
+    assert_eq!(doors(&shared).state, DoorState::Approx);
+    assert_eq!(
+        group_files(doors(&shared)),
+        [(String::new(), vec!["src/use_lone.rs".to_owned()], 0)],
+        "one group onto no entry, neither namesake's own unit a door"
+    );
+    let (text, parsed) = packed_context(&shared, 4096);
+    assert!(parsed.header.contains(&"doors:approx".to_owned()), "{text}");
+    assert_eq!(
+        item_paths(&parsed),
+        [
+            (V2Kind::Source, "src/lone/a.rs".to_owned()),
+            (V2Kind::Source, "src/lone/b.rs".to_owned()),
+            (V2Kind::Door, "src/use_lone.rs".to_owned()),
+        ],
+        "{text}"
+    );
+    assert_eq!(door_items(&parsed)[0].form.as_deref(), Some("approx"));
+}
+
+/// A site appears at most once in a response: a reference occurrence that
+/// names both namesakes of a tie group is summarized in the first entry's
+/// group only; the second keeps its other site.
+#[test]
+fn a_site_shared_by_two_namesakes_appears_in_one_group() {
+    let mut world = World::with_sources(&[
+        ("src/alpha/one.rs", PIVOT),
+        ("src/alpha/two.rs", PIVOT),
+        ("src/user.rs", PIVOT_USER),
+        ("src/use_two.rs", PIVOT_USER),
+    ]);
+    let name = word_range(PIVOT, "pivot_dock", 0);
+    let call = word_range(PIVOT_USER, "pivot_dock", 0);
+    let (one, two) = (
+        pivot_symbol("src/alpha/one.rs"),
+        pivot_symbol("src/alpha/two.rs"),
+    );
+    world.import_ok(
+        RA,
+        "shared",
+        &artifact(vec![
+            doc("src/alpha/one.rs", vec![occ(&name, &one, DEF)]),
+            doc("src/alpha/two.rs", vec![occ(&name, &two, DEF)]),
+            doc(
+                "src/user.rs",
+                vec![occ(&call, &one, REF), occ(&call, &two, REF)],
+            ),
+            doc("src/use_two.rs", vec![occ(&call, &two, REF)]),
+        ]),
+    );
+    make_searchable(&mut world);
+    let batch = context_with(&world, "who calls `pivot_dock`", Strategy::Auto);
+    assert_eq!(doors(&batch).state, DoorState::Each);
+    assert_eq!(
+        group_files(doors(&batch)),
+        [
+            (
+                "src/alpha/one.rs".to_owned(),
+                vec!["src/user.rs".to_owned()],
+                0
+            ),
+            (
+                "src/alpha/two.rs".to_owned(),
+                vec!["src/use_two.rs".to_owned()],
+                0
+            ),
+        ]
+    );
+    // `references {handle}` on the second still lists the shared site.
+    let two_handle = doors(&batch).groups[1].target.clone().unwrap();
+    let by_handle = world
+        .references(ReferencesSeed::Handle(two_handle.to_v2()), 64, None)
+        .unwrap();
+    let paths: Vec<&str> = by_handle
+        .items
+        .iter()
+        .map(|item| item.path.as_str())
+        .collect();
+    assert_eq!(paths, ["src/use_two.rs", "src/user.rs"]);
+}
+
+/// Collecting approximate door candidates checks the request's
+/// cancellation as documents are read: a cancel at the final-read barrier
+/// reaches no other check before approximate collection (one target, one
+/// references window), and fails the context as cancelled.
+#[test]
+fn a_cancel_during_approximate_door_collection_fails_the_context() {
+    let mut world = toy();
+    world.import_ok(RA, "approx", &toy_artifact());
+    make_searchable(&mut world);
+    // `beta` has no definition occurrence: its doors are approximate.
+    let query = "what uses `beta`";
+    assert_eq!(
+        doors(&context_with(&world, query, Strategy::Auto)).state,
+        DoorState::Approx
+    );
+    fault::arm(names::CONTEXT_BEFORE_FINAL_VALIDATION, 0, Action::Cancel);
+    let result = world
+        .engine()
+        .context_candidates(query, Strategy::Auto, &Control::unbounded());
+    fault::disarm_all();
+    let error = result.unwrap_err();
+    assert_eq!(error.code(), "cancelled", "{error:?}");
 }
 
 #[test]
