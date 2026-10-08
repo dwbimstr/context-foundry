@@ -457,6 +457,8 @@ pub struct QueryRuntime {
     /// The function digest of the provider's own descriptor.
     served_digest: String,
     index: Mutex<Option<Arc<DenseIndex>>>,
+    /// The cache cap the owner's preparation runs under.
+    pub(crate) cache_cap_bytes: u64,
 }
 
 impl QueryRuntime {
@@ -551,7 +553,15 @@ impl QueryRuntime {
             late,
             served_digest,
             index: Mutex::new(None),
+            cache_cap_bytes: crate::neural::cache::DEFAULT_CACHE_CAP_BYTES,
         })
+    }
+
+    /// The owner's preparation runs under `bytes` of cache instead of the
+    /// default (`mcp --semantic-cache-cap`).
+    pub fn with_cache_cap(mut self, bytes: u64) -> Self {
+        self.cache_cap_bytes = bytes;
+        self
     }
 
     fn admission(&self) -> MutexGuard<'_, ()> {

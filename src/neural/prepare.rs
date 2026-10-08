@@ -52,9 +52,7 @@
 //! profile for `status`; there is no live probe.
 use crate::control::Control;
 use crate::error::{FResult, FoundryError};
-use crate::neural::cache::{
-    self, CacheLookup, DEFAULT_CACHE_CAP_BYTES, PartitionUnit, ProviderObservation, StateError,
-};
+use crate::neural::cache::{self, CacheLookup, PartitionUnit, ProviderObservation, StateError};
 use crate::neural::index::Publication;
 use crate::neural::partition::{self, CardRecipe, TokenCount};
 use crate::neural::profile::SemanticProfile;
@@ -91,6 +89,9 @@ pub struct PrepareReport {
     /// 009 T004: the profile's output dimension, recorded in the state row
     /// with the digest and recipe.
     pub dimensions: u32,
+    /// The run's cache cap in bytes (the operator's setting, default
+    /// [`cache::DEFAULT_CACHE_CAP_BYTES`]), recorded in the state row.
+    pub cache_cap_bytes: u64,
     pub sources: u64,
     pub partitioned_sources: u64,
     pub reused_partitions: u64,
@@ -219,6 +220,7 @@ pub fn cli_prepare(
     profile_path: &Path,
     budget_seconds: u64,
     development: bool,
+    cache_cap_bytes: u64,
     started: Instant,
     control: &Control,
 ) -> FResult<PrepareReport> {
@@ -228,7 +230,7 @@ pub fn cli_prepare(
             profile_path,
             budget_seconds,
             development,
-            cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+            cache_cap_bytes,
             started,
             control,
         },
@@ -297,6 +299,7 @@ pub fn run(
         function_digest: function_digest.clone(),
         recipe_id: recipe.clone(),
         dimensions: profile.descriptor.dimensions,
+        cache_cap_bytes: options.cache_cap_bytes,
         budget_seconds: options.budget_seconds,
         publication_reserve_seconds: reserve.as_secs(),
         ..PrepareReport::default()
@@ -334,16 +337,18 @@ pub fn run(
 }
 
 /// Record a run's start in the state row: the profile identity (digest,
-/// recipe and dimension), `running`, no error, and the cache-byte total
-/// reconciled from the actual rows in the same transaction, so the disk cap
-/// never trusts a total another binary recorded. A profile change never
-/// purges: rows and generations of the earlier profile stay retained.
+/// recipe and dimension), the run's cache cap, `running`, no error, and the
+/// cache-byte total reconciled from the actual rows in the same
+/// transaction, so the disk cap never trusts a total another binary
+/// recorded. A profile change never purges: rows and generations of the
+/// earlier profile stay retained.
 pub(crate) fn begin(engine: &Engine, report: &PrepareReport) -> FResult<()> {
     engine.semantic_begin_run(|state| {
         state.profile_name = Some(report.profile.clone());
         state.function_digest = Some(report.function_digest.clone());
         state.recipe_id = Some(report.recipe_id.clone());
         state.dimensions = Some(report.dimensions);
+        state.cache_cap_bytes = Some(report.cache_cap_bytes);
         state.state = "running".into();
         state.last_error = None;
     })

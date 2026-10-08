@@ -42,7 +42,9 @@ pub(crate) const STATE: TableDefinition<&str, &str> = TableDefinition::new("sema
 
 /// The single state-row key.
 pub const STATE_KEY: &str = "state";
-/// Default cache cap: 2 GiB per workspace (D001 chosen values).
+/// Default cache cap: 2 GiB per workspace (D001 chosen values). An operator
+/// may set another per run (`semantic prepare --cache-cap`, `mcp
+/// --semantic-cache-cap`); the run records it in the state row.
 pub const DEFAULT_CACHE_CAP_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// A descriptor v1 cache row: 64 hex digest bytes and 2048 f32 LE values,
 /// with no dimension field.
@@ -112,6 +114,10 @@ pub struct SemanticState {
     /// Exact byte total of the cache rows (their actual lengths), updated
     /// with each batch commit.
     pub cache_bytes: u64,
+    /// The cache cap of the last run that began; `None` before one recorded
+    /// it, which means [`DEFAULT_CACHE_CAP_BYTES`].
+    #[serde(default)]
+    pub cache_cap_bytes: Option<u64>,
     /// The last provider state a preparation run observed, if any.
     #[serde(default)]
     pub provider: Option<ProviderObservation>,

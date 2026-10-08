@@ -57,7 +57,7 @@
 //! resumes) the driver.
 use crate::control::Control;
 use crate::error::{FResult, FoundryError};
-use crate::neural::cache::{self, DEFAULT_CACHE_CAP_BYTES, SemanticState};
+use crate::neural::cache::{self, SemanticState};
 use crate::neural::index::{
     self, GenerationError, MappingWalk, Publication, validate_generation_with,
 };
@@ -371,6 +371,7 @@ impl<'a> Run<'a> {
                 function_digest: digest.clone(),
                 recipe_id: recipe.clone(),
                 dimensions: profile.descriptor.dimensions,
+                cache_cap_bytes: runtime.cache_cap_bytes,
                 // The resident runtime is up; a failed call says otherwise.
                 provider_state: Some("ready"),
                 ..PrepareReport::default()
@@ -625,7 +626,10 @@ impl<'a> Run<'a> {
         }
         let size = keys.len() as u64;
         let owner = self.owner;
-        let dims = self.runtime.profile.descriptor.dims();
+        let (dims, cap) = (
+            self.runtime.profile.descriptor.dims(),
+            self.runtime.cache_cap_bytes,
+        );
         let (control, digest, report) = (self.control, &self.digest, &mut self.report);
         let committed = hold(owner, |engine| {
             // Shutdown may have arrived while the batch waited for the slot:
@@ -636,14 +640,7 @@ impl<'a> Run<'a> {
                 return Ok(Err(StopOrError::Stop(cancelled())));
             }
             Ok(prepare::commit_batch(
-                engine,
-                keys,
-                vectors,
-                digest,
-                dims,
-                DEFAULT_CACHE_CAP_BYTES,
-                control,
-                report,
+                engine, keys, vectors, digest, dims, cap, control, report,
             ))
         })?;
         match committed {

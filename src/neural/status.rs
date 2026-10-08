@@ -276,7 +276,10 @@ impl Engine {
                 orphan_entries: census.orphan,
                 legacy_entries: census.legacy,
                 corrupt_entries: census.corrupt,
-                cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+                cap_bytes: state
+                    .as_ref()
+                    .and_then(|state| state.cache_cap_bytes)
+                    .unwrap_or(DEFAULT_CACHE_CAP_BYTES),
             },
             index: IndexStatus {
                 available: generation.is_some(),

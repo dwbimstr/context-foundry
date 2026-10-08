@@ -205,6 +205,14 @@ enum SemanticAction {
         /// advertised as production isolation.
         #[arg(long)]
         development_isolation: bool,
+        /// Bytes of vector cache this store may hold (default 2 GiB); at
+        /// the cap preparation stops `cache_full`. Recorded in `status`.
+        #[arg(
+            long = "cache-cap",
+            value_name = "BYTES",
+            value_parser = clap::value_parser!(u64).range(1..)
+        )]
+        cache_cap: Option<u64>,
     },
     /// Metadata-only readiness: never loads the tokenizer, the worker, the
     /// model or a broken profile.
@@ -1131,6 +1139,7 @@ fn semantic_run(
             profile,
             budget_seconds,
             development_isolation,
+            cache_cap,
         } => {
             #[cfg(feature = "semantic")]
             {
@@ -1140,6 +1149,7 @@ fn semantic_run(
                     &profile,
                     budget_seconds,
                     development_isolation,
+                    cache_cap.unwrap_or(crate::neural::cache::DEFAULT_CACHE_CAP_BYTES),
                     started,
                     &control,
                 )?;
@@ -1150,7 +1160,13 @@ fn semantic_run(
             }
             #[cfg(not(feature = "semantic"))]
             {
-                let _ = (profile, budget_seconds, development_isolation, started);
+                let _ = (
+                    profile,
+                    budget_seconds,
+                    development_isolation,
+                    cache_cap,
+                    started,
+                );
                 return Err(FoundryError::Semantic {
                     code: "semantic_unavailable",
                     message: "this build has no semantic retrieval; rebuild with \

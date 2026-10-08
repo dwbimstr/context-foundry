@@ -266,6 +266,11 @@ query embeddings and document batches alike, behind one model slot:
   With `semantic`, `index` does nothing else; combined with `root` or `scip` it is
   `invalid_argument`. Without a profile, or after a refused start, the answer is
   `semantic_unavailable` with the fallback reason. Startup never resumes preparation.
+- **Cache cap.** Preparation holds at most 2 GiB of vectors per workspace unless the
+  operator says otherwise: `semantic prepare --cache-cap BYTES` for a CLI run,
+  `mcp --semantic-cache-cap BYTES` for the owner's runs. At the cap a run stops
+  `cache_full` and keeps its rows; a run under a larger cap resumes from them.
+  `semantic status` reports the cap of the last run.
 - **Foreground first.** Each store step (partition up to 8 sources and at most about
   100 ms, select one batch of at most 8 missing inputs, commit, one short publication
   step) takes the engine slot only while no foreground operation is in flight. A

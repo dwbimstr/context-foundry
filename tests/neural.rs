@@ -594,9 +594,21 @@ fn disk_cap_stops_with_cache_full_and_preserves_valid_data() {
         "committed coverage is published at the stop"
     );
     assert_eq!(status.missing_units, 1);
-    assert_eq!(status.cache.cap_bytes, DEFAULT_CACHE_CAP_BYTES);
+    assert_eq!(status.cache.cap_bytes, cap, "status names the run's cap");
     // The ninth source itself is untouched.
     assert!(env.open().source("f8.md").unwrap().is_some());
+    // An operator raising the cap resumes from the kept rows: only the
+    // ninth is embedded, and status names the new cap.
+    let report = env.prepare_with(60, 9 * ROW);
+    assert!(!report.partial, "{report:?}");
+    assert_eq!(
+        (report.embedded_units, report.reused_cached_units),
+        (1, 8),
+        "{report:?}"
+    );
+    let status = env.status();
+    assert_eq!(status.missing_units, 0);
+    assert_eq!(status.cache.cap_bytes, 9 * ROW);
 }
 
 #[test]
@@ -1779,7 +1791,8 @@ fn a_mapping_is_refused_unless_every_card_tuple_is_the_card_rendered_there() {
 }
 
 /// Rewrite the state row as a pre-T004 binary's finalizer leaves it: no
-/// dimension, and a cache-byte total of `per_row` bytes for every row.
+/// dimension, no recorded cache cap, and a cache-byte total of `per_row`
+/// bytes for every row.
 fn old_binary_counter(env: &mut Env, per_row: u64) {
     env.close();
     let rows = testkit::semantic_cache_rows(&env.store).len() as u64;
@@ -1787,6 +1800,7 @@ fn old_binary_counter(env: &mut Env, per_row: u64) {
     let mut state: serde_json::Value = serde_json::from_str(&raw).unwrap();
     let object = state.as_object_mut().unwrap();
     object.remove("dimensions");
+    object.remove("cache_cap_bytes");
     object.insert("cache_bytes".into(), (rows * per_row).into());
     testkit::tamper_semantic_state(&env.store, &state.to_string());
 }
@@ -1800,6 +1814,8 @@ fn the_cache_cap_counts_actual_rows_whatever_total_an_older_binary_recorded() {
     // 8,256 bytes each. Two actual rows fit a cap of exactly two rows.
     let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     old_binary_counter(&mut env, LEGACY_ROW_BYTES as u64);
+    // A row no run recorded a cap in reports the default.
+    assert_eq!(env.status().cache.cap_bytes, DEFAULT_CACHE_CAP_BYTES);
     env.open().replace_source("b.md", &body(120)).unwrap();
     env.open_mut().refresh(&Control::unbounded()).unwrap();
     let report = env.prepare_with(60, 2 * ROW);
@@ -1808,6 +1824,11 @@ fn the_cache_cap_counts_actual_rows_whatever_total_an_older_binary_recorded() {
     assert_eq!(report.cache_bytes, 2 * ROW);
     let state = env.open().semantic_state().unwrap().unwrap();
     assert_eq!(state.cache_bytes, 2 * ROW);
+    assert_eq!(
+        state.cache_cap_bytes,
+        Some(2 * ROW),
+        "the run records its cap"
+    );
 
     // 2048 values: 8,260-byte rows, recorded as 8,256. A cap one byte short
     // of two actual rows refuses the second.

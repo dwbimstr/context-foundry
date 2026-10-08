@@ -58,6 +58,15 @@ pub enum AdapterCommand {
         /// admission stays closed until platform isolation acceptance).
         #[arg(long = "development-isolation", requires = "isolated_workers")]
         development_isolation: bool,
+        /// 009: bytes of vector cache this owner's preparation may hold
+        /// (default 2 GiB); at the cap preparation stops `cache_full`.
+        #[arg(
+            long = "semantic-cache-cap",
+            value_name = "BYTES",
+            requires = "semantic_profile",
+            value_parser = clap::value_parser!(u64).range(1..)
+        )]
+        semantic_cache_cap: Option<u64>,
     },
     /// Inspect repository bootstrap; `--apply` creates/opens the store and indexes baseline source.
     Bootstrap {
@@ -313,6 +322,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             semantic_profile,
             policy_config,
             development_isolation,
+            semantic_cache_cap,
         } => serve_mcp(
             store,
             root,
@@ -322,8 +332,10 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             budget,
             reference,
             no_memory,
-            semantic_profile
-                .map(|profile| crate::mcp::SemanticServing::new(profile, development_isolation)),
+            semantic_profile.map(|profile| crate::mcp::SemanticServing {
+                cache_cap_bytes: semantic_cache_cap,
+                ..crate::mcp::SemanticServing::new(profile, development_isolation)
+            }),
             policy_config
                 .map(|config| crate::policy::PolicyServing::new(config, development_isolation)),
         )?,

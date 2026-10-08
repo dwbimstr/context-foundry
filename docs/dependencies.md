@@ -107,6 +107,17 @@ distribution must reproduce. `aws-lc-sys` also builds a third-party C library;
 Foundry adds no first-party C. Source: `cargo metadata --locked --filter-platform
 aarch64-apple-darwin`. This is metadata, not a legal audit.
 
+## 009 T004 embedding worker
+
+The optional `embed-worker` feature (default off) builds `foundry-embed` on llama.cpp
+`b9acf138` (MIT; its LICENSE also covers the vendored ggml, which has no license file
+of its own at that commit). `build.rs` builds it from the pinned commit's tree with
+CMake and links it statically, with Apple's Metal, Accelerate and Foundation
+frameworks; packaging takes the license from the worker (`foundry-embed --notices`).
+The feature adds one optional build dependency, `bindgen` 0.72 (BSD-3-Clause), for the
+C bindings; default and Rust 1.90 builds do not compile it. PyO3 and the MLX runtime
+closure are no longer product dependencies.
+
 
 ## Legacy prototype and planned optional components
 

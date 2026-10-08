@@ -3131,10 +3131,12 @@ pub struct ServerOptions {
 }
 
 /// The launch-time semantic configuration (`mcp --semantic-profile FILE
-/// [--development-isolation]`).
+/// [--development-isolation] [--semantic-cache-cap BYTES]`).
 pub struct SemanticServing {
     pub profile: PathBuf,
     pub development: bool,
+    /// The owner's preparation cache cap; `None` is the 2 GiB default.
+    pub cache_cap_bytes: Option<u64>,
     /// Tests only: build the provider here instead of launching the
     /// supervised worker.
     #[cfg(all(feature = "test-faults", feature = "semantic"))]
@@ -3147,6 +3149,7 @@ impl SemanticServing {
         Self {
             profile,
             development,
+            cache_cap_bytes: None,
             #[cfg(all(feature = "test-faults", feature = "semantic"))]
             provider: None,
         }
@@ -3158,6 +3161,7 @@ impl SemanticServing {
         Self {
             profile,
             development: true,
+            cache_cap_bytes: None,
             provider: Some(make),
         }
     }
@@ -3185,6 +3189,11 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
         };
         let fallback =
             |error: crate::neural::provider::ProviderError| fallback_word(&error.to_string());
+        let cap = launch.cache_cap_bytes;
+        let capped = move |runtime: QueryRuntime| match cap {
+            Some(bytes) => runtime.with_cache_cap(bytes),
+            None => runtime,
+        };
         #[cfg(feature = "test-faults")]
         if let Some(make) = launch.provider {
             // Tests only: the provider is built by the caller instead of the
@@ -3192,10 +3201,11 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
             let started = crate::neural::profile::SemanticProfile::load(&launch.profile)
                 .map(Arc::new)
                 .and_then(|profile| QueryRuntime::start(profile, make));
-            return Ok(Some(started.map(Arc::new).map_err(fallback)));
+            return Ok(Some(started.map(capped).map(Arc::new).map_err(fallback)));
         }
         Ok(Some(
             QueryRuntime::acquire(&launch.profile, launch.development)
+                .map(capped)
                 .map(Arc::new)
                 .map_err(fallback),
         ))
@@ -4025,6 +4035,18 @@ mod tests {
             crate::neural::provider::FunctionDescriptor,
         ) -> crate::neural::query::MakeProvider,
     ) -> Arc<Shared> {
+        semantic_owner_capped(dir, None, make)
+    }
+
+    /// [`semantic_owner`] launched with `--semantic-cache-cap`.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    fn semantic_owner_capped(
+        dir: &Path,
+        cache_cap_bytes: Option<u64>,
+        make: impl FnOnce(
+            crate::neural::provider::FunctionDescriptor,
+        ) -> crate::neural::query::MakeProvider,
+    ) -> Arc<Shared> {
         let root = dir.join("workspace");
         std::fs::create_dir_all(&root).unwrap();
         for n in 0..12 {
@@ -4041,12 +4063,36 @@ mod tests {
             .unwrap()
             .descriptor;
         let mut shared = Shared::single_root(engine, root, BudgetConfig::default());
-        shared.semantic = semantic_slot(Some(SemanticServing::with_provider(
-            profile_path,
-            make(descriptor),
-        )))
+        shared.semantic = semantic_slot(Some(SemanticServing {
+            cache_cap_bytes,
+            ..SemanticServing::with_provider(profile_path, make(descriptor))
+        }))
         .unwrap();
         Arc::new(shared)
+    }
+
+    /// `mcp --semantic-cache-cap`: the owner's preparation stops `cache_full`
+    /// at the operator's cap, not the 2 GiB default, and records it.
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn the_owners_preparation_stops_at_the_operators_cache_cap() {
+        let row = (64 + 4 + 4 * crate::testkit::FIXTURE_DIMENSIONS) as u64;
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        gate.open();
+        let shared = semantic_owner_capped(dir.path(), Some(8 * row), |descriptor| {
+            gate.maker(descriptor)
+        });
+        start_preparation(&shared).unwrap();
+        wait_idle(&shared);
+        let (state, cache_rows) = stopped_state(&shared);
+        assert_eq!(
+            state.last_error.as_ref().map(|error| error.code.as_str()),
+            Some("cache_full"),
+            "{state:?}"
+        );
+        assert_eq!(cache_rows, 8, "{state:?}");
+        assert_eq!(state.cache_cap_bytes, Some(8 * row), "{state:?}");
     }
 
     /// `index {semantic: "prepare"}` on the in-crate owner.
