@@ -1496,6 +1496,22 @@ fn definitions_record_their_name_node_and_impls_none() {
     assert_eq!(section.name_range, None, "a section is no definition");
 }
 
+/// The qualifiers of the unit named `qname` in `source`.
+fn qualifiers(source: &str, lang: Lang, qname: &str) -> Vec<String> {
+    let found = syntax::units(source, lang);
+    found
+        .iter()
+        .find(|unit| unit.qname.as_deref() == Some(qname))
+        .unwrap_or_else(|| panic!("no unit {qname} in {found:#?}"))
+        .qualifiers
+        .clone()
+}
+
+/// Address segments are the path's, then the qualified name's without the
+/// unit's own name, read from the syntax tree: a generic type or template
+/// contributes its base name and none of its arguments, whatever they hold
+/// (`->`, a comment holding `>`, a `<<` shift, nested lists, lifetimes); a
+/// scoped name contributes each part; the qualified name keeps the full text.
 #[test]
 fn address_segments_split_the_path_and_the_qualified_name() {
     let path = syntax::path_segments("packages/coding-agent/src/tools/index.ts");
@@ -1503,42 +1519,95 @@ fn address_segments_split_the_path_and_the_qualified_name() {
         path,
         ["packages", "coding", "agent", "src", "tools", "index"]
     );
-    assert_eq!(
-        syntax::address_segments(&[], Lang::Rust, "UnionFind<Key>::find"),
-        ["unionfind"]
-    );
+    assert_eq!(syntax::path_segments(".gitignore"), ["gitignore"]);
+    let nested =
+        "mod graph {\n    impl Outer<Vec<[u8; 4]>> {\n        fn edges(&self) {}\n    }\n}\n";
     assert_eq!(
         syntax::address_segments(
             &syntax::path_segments("src/graph/mod.rs"),
-            Lang::Rust,
-            "Outer<Vec<[u8; 4]>>::Graph::edges"
+            &qualifiers(nested, Lang::Rust, "graph::Outer<Vec<[u8; 4]>>::edges"),
         ),
         ["src", "graph", "mod", "outer"]
     );
-    assert_eq!(
-        syntax::address_segments(&[], Lang::Java, "Outer.Inner.run"),
-        ["outer", "inner"]
-    );
-    // A generic list ends at its own close: the `>` of `->`, a `>` inside a
-    // parenthesized or braced group and a `>` in a char or string literal
-    // close nothing; a lifetime is no literal.
-    for (lang, qname, want) in [
-        (Lang::Rust, "Mapper<fn() -> u8>::run", &["mapper"][..]),
+    for (lang, source, qname, want) in [
         (
             Lang::Rust,
-            "Mapper<fn(Vec<u8>) -> Option<u8>>::Inner::run",
-            &["mapper", "inner"],
+            "impl<Key> UnionFind<Key> {\n    fn find(&self) {}\n}\n",
+            "UnionFind<Key>::find",
+            &["unionfind"][..],
         ),
-        (Lang::Rust, "Grid<{ N > 2 }>::cell", &["grid"]),
-        (Lang::Rust, "Tag<'>'>::get", &["tag"]),
-        (Lang::Rust, "Tag<'\\''>::get", &["tag"]),
-        (Lang::Rust, "Ref<'a, Slot<'a>>::get", &["ref"]),
-        (Lang::Cpp, "Box<(a > b), \"x>y\">::get", &["box"]),
-        (Lang::Go, "Stack[func() []int].Push", &["stack"]),
+        (
+            Lang::Rust,
+            "impl Mapper<fn() -> u8> {\n    fn run(&self) {}\n}\n",
+            "Mapper<fn() -> u8>::run",
+            &["mapper"],
+        ),
+        (
+            Lang::Rust,
+            "impl Mapper</* > */ u8> {\n    fn run(&self) {}\n}\n",
+            "Mapper</* > */ u8>::run",
+            &["mapper"],
+        ),
+        (
+            Lang::Rust,
+            "impl Mapper<fn(Vec<u8>) -> Option<Box<[u8]>>> {\n    fn run(&self) {}\n}\n",
+            "Mapper<fn(Vec<u8>) -> Option<Box<[u8]>>>::run",
+            &["mapper"],
+        ),
+        (
+            Lang::Rust,
+            "impl<'a> Ref<'a, Slot<'a>> {\n    fn get(&self) {}\n}\n",
+            "Ref<'a, Slot<'a>>::get",
+            &["ref"],
+        ),
+        (
+            Lang::Rust,
+            "impl<T> a::b::Wrapper<T> {\n    fn get(&self) {}\n}\n",
+            "a::b::Wrapper<T>::get",
+            &["a", "b", "wrapper"],
+        ),
+        (
+            Lang::Rust,
+            "impl Show for &Bar {\n    fn show(&self) {}\n}\n",
+            "&Bar::show",
+            &["bar"],
+        ),
+        (
+            Lang::Cpp,
+            "template<> struct Box<1 << 2> {\n    void run() {}\n};\n",
+            "Box<1 << 2>::run",
+            &["box"],
+        ),
+        (
+            Lang::Cpp,
+            "struct ns::Box {\n    void run() {}\n};\n",
+            "ns::Box::run",
+            &["ns", "box"],
+        ),
+        (
+            Lang::Cpp,
+            "namespace a::b {\nvoid f() {}\n}\n",
+            "a::b::f",
+            &["a", "b"],
+        ),
+        (
+            Lang::Java,
+            "class Outer {\n  class Inner {\n    void run() {}\n  }\n}\n",
+            "Outer.Inner.run",
+            &["outer", "inner"],
+        ),
     ] {
-        assert_eq!(syntax::address_segments(&[], lang, qname), want, "{qname}");
+        assert_eq!(qualifiers(source, lang, qname), want, "{qname}");
     }
-    assert_eq!(syntax::path_segments(".gitignore"), ["gitignore"]);
+    // The scope of a unit's own name qualifies it.
+    assert_eq!(
+        qualifiers(
+            "struct ns::Box {\n    void run() {}\n};\n",
+            Lang::Cpp,
+            "ns::Box"
+        ),
+        ["ns"]
+    );
 }
 
 /// Each file's import keys (context-v2 § Doors import keys): the bound names
@@ -1699,11 +1768,15 @@ fn enum_members_and_module_level_bindings_are_definitions() {
 }
 
 /// A quoted TypeScript enum member is a variant like a bare one (the enum
-/// body's `name` field holds either), with or without an initializer; its
-/// name is the text inside its quotes.
+/// body's `name` field holds either), with or without an initializer, and a
+/// quoted method name is a name like any other: the name is the source text
+/// inside the quotes, as written — escapes are kept, not decoded.
 #[test]
 fn quoted_typescript_enum_members_are_variants_named_inside_their_quotes() {
-    let source = "enum Mode { \"Fast\", Slow = 2, \"Quick\" = 3 }\n";
+    let source = concat!(
+        "enum Mode { \"Fast\", Slow = 2, \"Quick\" = 3, \"F\\u0061r\", 'Q\\'t' = 4 }\n",
+        "class Api {\n  \"get\\u0056alue\"() {}\n}\n",
+    );
     let found = syntax::units(source, Lang::TypeScript);
     let shown: Vec<(&str, Option<&str>, &str, &str)> = found
         .iter()
@@ -1717,18 +1790,33 @@ fn quoted_typescript_enum_members_are_variants_named_inside_their_quotes() {
             )
         })
         .collect();
+    let class = &source[source.find("class").unwrap()..source.len() - 1];
     assert_eq!(
         shown,
         [
-            ("enum", Some("Mode"), source.trim_end(), "Mode"),
+            ("enum", Some("Mode"), source.lines().next().unwrap(), "Mode"),
             ("variant", Some("Mode.Fast"), "\"Fast\"", "Fast"),
             ("variant", Some("Mode.Slow"), "Slow = 2", "Slow"),
             ("variant", Some("Mode.Quick"), "\"Quick\" = 3", "Quick"),
+            (
+                "variant",
+                Some("Mode.F\\u0061r"),
+                "\"F\\u0061r\"",
+                "F\\u0061r"
+            ),
+            ("variant", Some("Mode.Q\\'t"), "'Q\\'t' = 4", "Q\\'t"),
+            ("class", Some("Api"), class, "Api"),
+            (
+                "method",
+                Some("Api.get\\u0056alue"),
+                "\"get\\u0056alue\"() {}",
+                "get\\u0056alue"
+            ),
         ]
     );
-    // One document holds each member's name: one definition each.
+    // One document holds each name: one definition each.
     let documents = assert_tiles(source, Some(Lang::TypeScript));
-    for unit in &found[1..] {
+    for unit in &found {
         let (name_start, _) = unit.name_range.unwrap();
         let holding = documents
             .iter()

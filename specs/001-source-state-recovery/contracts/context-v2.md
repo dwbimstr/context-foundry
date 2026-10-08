@@ -902,9 +902,12 @@ Search schema `"4"` adds:
 § Search index v2 table as well.) **Address segments** are, lowercased and distinct:
 each path component, the last without its extension, split on every character outside
 `[A-Za-z0-9_$]` (`packages/coding-agent/src/tools/index.ts` gives `packages coding
-agent src tools index`); then the unit's qname with every generic argument list
-(`<…>`, `[…]`, nested) removed first, split on the language's qname separator, minus the
-unit's own name (`UnionFind<Key>::find` gives `unionfind`).
+agent src tools index`); then the unit's qualifiers, read from the syntax tree rather
+than from the qname text: each enclosing named unit's name and the scope parts of the
+unit's own name, where a generic or template name contributes its base name only (its
+argument list is never read) and a scoped name each of its parts
+(`UnionFind<Key>::find` gives `unionfind`; `impl Mapper<fn() -> u8>` gives `mapper`;
+`impl a::b::Wrapper<T>` gives `a b wrapper`).
 
 ### Anchors and qualifiers
 

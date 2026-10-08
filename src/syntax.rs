@@ -182,16 +182,20 @@ impl UnitKind {
 /// attribute of that run, else `head`. `head` is the node's (or wrapper's)
 /// own start, after the leading run. `body` is the `body` field (else the
 /// block/declaration_list child), `None` when the unit has no elidable
-/// interior. `name_range` is the byte range of the unit's name node when the
-/// unit is a definition (context-v2 § Definitions and addresses): a
+/// interior. `name_range` is the byte range of the unit's name when the unit
+/// is a definition (context-v2 § Definitions and addresses): a
 /// programming-language unit with a name, except a Rust `impl`, which
-/// extends a type defined elsewhere. Units are stored in source (pre-)order.
+/// extends a type defined elsewhere; a quoted name's range is the text inside
+/// its quotes. `qualifiers` are its qualified name's address segments minus
+/// its own name, taken from the syntax tree ([`address_segments`]). Units are
+/// stored in source (pre-)order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unit {
     pub kind: UnitKind,
     pub name: Option<String>,
     pub qname: Option<String>,
     pub name_range: Option<(usize, usize)>,
+    pub qualifiers: Vec<String>,
     pub start: usize,
     pub decl: usize,
     pub head: usize,
@@ -213,9 +217,11 @@ pub struct DeliveryUnit {
     pub kind: UnitKind,
     pub name: Option<String>,
     pub qname: Option<String>,
-    /// The definition's name node (see [`Unit::name_range`]); `None` for a
+    /// The definition's name (see [`Unit::name_range`]); `None` for a
     /// block, a section and an `impl`.
     pub name_range: Option<(usize, usize)>,
+    /// See [`Unit::qualifiers`].
+    pub qualifiers: Vec<String>,
 }
 
 /// One search document: a byte range of the source and its delivery unit.
@@ -234,6 +240,8 @@ struct Candidate {
     kind: UnitKind,
     name: Option<String>,
     name_range: Option<(usize, usize)>,
+    /// The name's own address segments ([`name_address`]), lowercased.
+    address: Vec<String>,
     body: Option<(usize, usize)>,
 }
 
@@ -851,14 +859,18 @@ fn candidate(
 ) -> Option<Candidate> {
     let kind = unit_kind(lang, node, ancestors)?;
     let name_node = unit_name(lang, node);
-    let name = name_node
-        .and_then(|name| name.utf8_text(source).ok())
+    let span = name_node.map(|name| name_span(lang, name));
+    let name = span
+        .and_then(|(start, end)| std::str::from_utf8(&source[start..end]).ok())
+        .filter(|name| !name.is_empty())
         .map(str::to_owned);
     // A Rust `impl` names the type it extends: it is a container, not a
     // definition of that type (context-v2 § Definitions and addresses).
-    let name_range = name_node
-        .filter(|_| kind != UnitKind::Impl && name.is_some())
-        .map(|name| (name.start_byte(), name.end_byte()));
+    let name_range = span.filter(|_| kind != UnitKind::Impl && name.is_some());
+    let address = match (name_node, &name) {
+        (Some(node), Some(_)) => name_address(lang, node, source),
+        _ => Vec::new(),
+    };
     let body = body_range(lang, node);
     let outer = outermost_wrapper(lang, node, ancestors);
     // `outer` sits at the depth of the outermost wrapper (or of `node`).
@@ -876,6 +888,7 @@ fn candidate(
         kind,
         name,
         name_range,
+        address,
         body,
     })
 }
@@ -1130,27 +1143,12 @@ fn declarators(declaration: tree_sitter::Node) -> usize {
 /// The node the language's name rule selects (context-v2 § Unit kinds): the
 /// `name` field; for a Rust `impl` the `type` field; for C/C++ the innermost
 /// identifier of the declarator chain; a bare TypeScript enum member is its
-/// own name, and a quoted member name is the text inside its quotes; a
-/// Python assignment's left identifier.
+/// own name; a Python assignment's left identifier.
 fn unit_name(lang: Lang, node: tree_sitter::Node) -> Option<tree_sitter::Node> {
     match (lang, node.kind()) {
         (Lang::Rust, "impl_item") => node.child_by_field_name("type"),
-        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, kind) => {
-            let name = match kind {
-                "property_identifier" | "string" => node,
-                _ => node.child_by_field_name("name")?,
-            };
-            if name.kind() != "string" {
-                return Some(name);
-            }
-            // `"Fast"`: its one `string_fragment`; an empty or escaped
-            // name has none.
-            let mut cursor = name.walk();
-            let mut parts = name.named_children(&mut cursor);
-            match (parts.next(), parts.next()) {
-                (Some(fragment), None) if fragment.kind() == "string_fragment" => Some(fragment),
-                _ => None,
-            }
+        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "property_identifier" | "string") => {
+            Some(node)
         }
         (Lang::Python, "assignment") => node.child_by_field_name("left"),
         (Lang::C | Lang::Cpp, "function_definition") => Some(innermost_declarator(
@@ -1158,6 +1156,70 @@ fn unit_name(lang: Lang, node: tree_sitter::Node) -> Option<tree_sitter::Node> {
         )),
         _ => node.child_by_field_name("name"),
     }
+}
+
+/// A name node's byte range: the node's, except that a quoted JavaScript-
+/// family name (`"Fast"`, `'get\u0056alue'`) is the source text inside its
+/// quotes, as written, escapes and all.
+fn name_span(lang: Lang, name: tree_sitter::Node) -> (usize, usize) {
+    let (start, end) = (name.start_byte(), name.end_byte());
+    match (lang, name.kind()) {
+        (Lang::TypeScript | Lang::Tsx | Lang::JavaScript, "string") if end - start >= 2 => {
+            (start + 1, end - 1)
+        }
+        _ => (start, end),
+    }
+}
+
+/// A name node's address segments (context-v2 § Definitions and addresses),
+/// read from the syntax tree, never from the name's text, lowercased: a
+/// plain name is itself, a quoted one the text inside its quotes
+/// ([`name_span`]); a generic type or template (`Mapper<fn() -> u8>`,
+/// `Box<1 << 2>`) is its base's, so its argument list is never read; a
+/// scoped or qualified name (`a::b::Foo`, `ns::Box`) is its parts' in order;
+/// a reference or pointer type is its referent's; any other type (a tuple,
+/// an array, a function or trait-object type) has none. The walk keeps its
+/// pending nodes on the heap: a path's nesting is bounded only by the
+/// source.
+fn name_address(lang: Lang, name: tree_sitter::Node, source: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut pending = vec![name];
+    while let Some(node) = pending.pop() {
+        match node.kind() {
+            "generic_type" | "template_type" | "template_function" | "template_method" => {
+                let base = node
+                    .child_by_field_name("type")
+                    .or_else(|| node.child_by_field_name("name"))
+                    .or_else(|| node.named_child(0));
+                pending.extend(base);
+            }
+            "scoped_type_identifier"
+            | "scoped_identifier"
+            | "qualified_identifier"
+            | "nested_type_identifier"
+            | "nested_namespace_specifier"
+            | "nested_identifier"
+            | "qualified_type" => {
+                let mut cursor = node.walk();
+                let parts: Vec<_> = node
+                    .named_children(&mut cursor)
+                    .filter(|part| !part.kind().contains("comment"))
+                    .collect();
+                pending.extend(parts.into_iter().rev());
+            }
+            "reference_type" | "pointer_type" => pending.extend(node.child_by_field_name("type")),
+            _ if node.named_child_count() == 0 || node.kind() == "string" => {
+                let (start, end) = name_span(lang, node);
+                if let Ok(text) = std::str::from_utf8(&source[start..end])
+                    && !text.is_empty()
+                {
+                    out.push(text.to_lowercase());
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// C/C++: the innermost identifier of the declarator chain (through pointer,
@@ -1289,6 +1351,7 @@ fn markdown_sections(source: &str) -> Vec<Candidate> {
                 kind: UnitKind::Section,
                 name: (!name.is_empty()).then(|| name.to_owned()),
                 name_range: None,
+                address: Vec::new(),
                 body: (*heading_end < end).then_some((*heading_end, end)),
             }
         })
@@ -1324,6 +1387,9 @@ fn forest(source: &str, lang: Lang, mut candidates: Vec<Candidate>) -> Vec<Unit>
     let mut stack: Vec<usize> = Vec::new();
     // Per unit: the unit itself when named, else its nearest named ancestor.
     let mut nearest_named: Vec<Option<usize>> = Vec::new();
+    // Per unit: the last of its name's address segments (its own name's;
+    // the scope before it is already among its qualifiers).
+    let mut lasts: Vec<Option<String>> = Vec::new();
     for candidate in candidates {
         while stack
             .last()
@@ -1345,16 +1411,36 @@ fn forest(source: &str, lang: Lang, mut candidates: Vec<Candidate>) -> Vec<Unit>
             let prefix = enclosing_named.and_then(|named| units[named].qname.as_deref());
             qualified(prefix, lang.qname_separator(), name)
         });
+        // The qualified name's address segments minus the unit's own name:
+        // the enclosing named unit's qualifiers and own segment, then the
+        // scope of the unit's own name (`ns` of `ns::Box`).
+        let mut address = candidate.address;
+        let last = address.pop();
+        let qualifiers = match candidate.name {
+            None => Vec::new(),
+            Some(_) => {
+                let mut qualifiers = enclosing_named.map_or_else(Vec::new, |named| {
+                    let mut inherited = units[named].qualifiers.clone();
+                    inherited.extend(lasts[named].iter().cloned());
+                    inherited
+                });
+                qualifiers.append(&mut address);
+                keep_qualifier_tail(&mut qualifiers);
+                qualifiers
+            }
+        };
         let index = units.len();
         nearest_named.push(match candidate.name {
             Some(_) => Some(index),
             None => enclosing_named,
         });
+        lasts.push(last);
         units.push(Unit {
             kind: candidate.kind,
             name: candidate.name,
             qname,
             name_range: candidate.name_range,
+            qualifiers,
             start: candidate.start,
             decl: candidate.decl,
             head: candidate.head,
@@ -1394,6 +1480,21 @@ fn qualified(prefix: Option<&str>, separator: &str, name: &str) -> String {
     joined
 }
 
+/// Keeps the innermost qualifiers within [`QNAME_BYTES`] bytes in all, as a
+/// qualified name keeps its tail: deep named nesting stays linear.
+fn keep_qualifier_tail(qualifiers: &mut Vec<String>) {
+    let mut bytes = 0usize;
+    let kept = qualifiers
+        .iter()
+        .rev()
+        .take_while(|qualifier| {
+            bytes += qualifier.len();
+            bytes <= QNAME_BYTES
+        })
+        .count();
+    qualifiers.drain(..qualifiers.len() - kept);
+}
+
 fn delivery(unit: &Unit) -> DeliveryUnit {
     DeliveryUnit {
         start: unit.start,
@@ -1403,6 +1504,7 @@ fn delivery(unit: &Unit) -> DeliveryUnit {
         name: unit.name.clone(),
         qname: unit.qname.clone(),
         name_range: unit.name_range,
+        qualifiers: unit.qualifiers.clone(),
     }
 }
 
@@ -1474,6 +1576,7 @@ fn blocks(source: &str, start: usize, end: usize, out: &mut Vec<Document>) {
             name: None,
             qname: None,
             name_range: None,
+            qualifiers: Vec::new(),
         };
         region(source, block_start, block_end, &unit, out);
     }
@@ -1795,87 +1898,20 @@ pub fn path_segments(path: &str) -> Vec<String> {
     out
 }
 
-/// A definition's address segments: `path`'s segments (from
-/// [`path_segments`]), then its qualified name's — every generic argument
-/// list (`<…>`, `[…]`, nested) removed first ([`without_generic_lists`]),
-/// split on the language's qname separator, minus the unit's own name
-/// (`UnionFind<Key>::find` gives `unionfind`) — lowercased and distinct.
-pub fn address_segments(path: &[String], lang: Lang, qname: &str) -> Vec<String> {
+/// A definition's address segments (context-v2 § Definitions and
+/// addresses): `path`'s segments (from [`path_segments`]), then its
+/// [`Unit::qualifiers`] — its qualified name minus its own name, every
+/// generic argument list removed, split at the qname separator — lowercased
+/// and distinct. The qualifiers come from the syntax tree ([`name_address`]
+/// of each enclosing named unit), never from re-reading the qualified name's
+/// text: `impl Mapper<fn() -> u8> { fn run }` and `impl Mapper</* > */ u8>`
+/// give `run` the qualifier `mapper`, as `UnionFind<Key>::find` gives `find`
+/// `unionfind`.
+pub fn address_segments(path: &[String], qualifiers: &[String]) -> Vec<String> {
     let mut out = path.to_vec();
-    let stripped = without_generic_lists(qname);
-    let mut parts: Vec<&str> = stripped.split(lang.qname_separator()).collect();
-    // The last part is the unit's own name.
-    parts.pop();
-    for part in parts {
-        let part = part.trim().to_lowercase();
-        if !part.is_empty() && !out.contains(&part) {
-            out.push(part);
-        }
-    }
-    out
-}
-
-/// `qname` without its generic argument lists (`<…>`, `[…]`, nested): a
-/// list ends at its matching close, so inside a list the `>` of `->` closes
-/// nothing, a parenthesized or braced group (a function type's parameters, a
-/// const expression) is opaque, and string and char literals are skipped
-/// (`Mapper<fn() -> u8>::run` gives `Mapper::run`). A lifetime's `'` is not a
-/// literal. A stray close outside every list is dropped.
-fn without_generic_lists(qname: &str) -> String {
-    let mut out = String::with_capacity(qname.len());
-    // Open `<`/`[` lists, and open `(`/`{` groups inside the innermost.
-    let (mut lists, mut groups) = (0usize, 0usize);
-    let mut chars = qname.chars().peekable();
-    while let Some(c) = chars.next() {
-        if lists == 0 {
-            match c {
-                '<' | '[' => lists = 1,
-                '>' | ']' => {}
-                _ => out.push(c),
-            }
-            continue;
-        }
-        match c {
-            '"' => {
-                while let Some(c) = chars.next() {
-                    match c {
-                        '\\' => {
-                            chars.next();
-                        }
-                        '"' => break,
-                        _ => {}
-                    }
-                }
-            }
-            '\'' => {
-                let mut ahead = chars.clone();
-                match ahead.next() {
-                    // An escaped char literal runs to its closing quote.
-                    Some('\\') => {
-                        chars.next();
-                        chars.next();
-                        for c in chars.by_ref() {
-                            if c == '\'' {
-                                break;
-                            }
-                        }
-                    }
-                    // `'x'` is a char literal; `'a` alone a lifetime.
-                    Some(_) if ahead.next() == Some('\'') => {
-                        chars.next();
-                        chars.next();
-                    }
-                    _ => {}
-                }
-            }
-            '-' if chars.peek() == Some(&'>') => {
-                chars.next();
-            }
-            '(' | '{' => groups += 1,
-            ')' | '}' => groups = groups.saturating_sub(1),
-            '<' | '[' if groups == 0 => lists += 1,
-            '>' | ']' if groups == 0 => lists -= 1,
-            _ => {}
+    for qualifier in qualifiers {
+        if !out.contains(qualifier) {
+            out.push(qualifier.clone());
         }
     }
     out

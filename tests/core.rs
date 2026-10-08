@@ -2594,27 +2594,46 @@ fn the_resolver_orders_by_qualifier_then_exact_case_then_role_then_path() {
     assert_eq!(source(&batch.items[0]).path, "tests/exact.rs");
 }
 
-/// The impl of a type with a function-pointer generic argument keeps its
-/// type as the address qualifier: the `>` of `fn() -> u8` closes nothing,
-/// so `Mapper::run` resolves to that impl's method, not to `Other::run`.
+/// A generic impl or template specialization keeps its base type as the
+/// address qualifier, whatever its arguments hold — `fn() -> u8`, a comment
+/// holding `>`, a `<<` shift — so `Mapper::run`, `Holder::run` and
+/// `Box::run` each resolve to their own method among four `run`s.
 #[test]
 fn a_function_pointer_generic_keeps_the_impl_type_as_qualifier() {
     let fixture = tempfile::tempdir().unwrap();
     let (_store, mut engine) = setup(&fixture.path().join("ws"));
     let source = "pub struct Mapper<T>(T);\n\nimpl Mapper<fn() -> u8> {\n    pub fn run(&self) {}\n}\n\npub struct Other;\n\nimpl Other {\n    pub fn run(&self) {}\n}\n";
     engine.replace_source("src/lib.rs", source).unwrap();
+    engine
+        .replace_source(
+            "src/hold.rs",
+            "pub struct Holder<T>(T);\n\nimpl Holder</* > */ u8> {\n    pub fn run(&self) {}\n}\n",
+        )
+        .unwrap();
+    engine
+        .replace_source(
+            "src/shift.cpp",
+            "template<int N> struct Box {};\n\ntemplate<> struct Box<1 << 2> {\n    void run() {}\n};\n",
+        )
+        .unwrap();
     drain(&mut engine);
-    let window = &windows(&engine, "`Mapper::run`")[0];
-    assert_eq!(window.definitions, 2);
-    assert!(window.resolved());
-    assert_eq!(window.entries[0].label, "fn Mapper<fn() -> u8>::run");
-    let other = &windows(&engine, "`Other::run`")[0];
-    assert!(other.resolved());
-    assert_eq!(other.entries[0].label, "fn Other::run");
+    for (query, label) in [
+        ("`Mapper::run`", "fn Mapper<fn() -> u8>::run"),
+        ("`Other::run`", "fn Other::run"),
+        ("`Holder::run`", "fn Holder</* > */ u8>::run"),
+        ("`Box::run`", "fn Box<1 << 2>::run"),
+    ] {
+        let window = &windows(&engine, query)[0];
+        assert_eq!(window.definitions, 4, "{query}");
+        assert!(window.resolved(), "{query}");
+        assert_eq!(window.entries[0].label, label, "{query}");
+    }
 }
 
-/// A quoted TypeScript enum member is one definition of the name inside its
-/// quotes, resolved like a bare member.
+/// A quoted TypeScript enum member or method is one definition of the source
+/// text inside its quotes, escapes kept as written, resolved like a bare
+/// name. Plain names are reached by a query's anchors; an escaped one has no
+/// identifier-run spelling, so its window is asked for directly.
 #[test]
 fn a_quoted_enum_member_is_one_definition_of_its_name() {
     let fixture = tempfile::tempdir().unwrap();
@@ -2622,7 +2641,7 @@ fn a_quoted_enum_member_is_one_definition_of_its_name() {
     engine
         .replace_source(
             "src/mode.ts",
-            "export enum Mode { \"Fast\", Slow = 2, \"Quick\" = 3 }\n",
+            "export enum Mode { \"Fast\", Slow = 2, \"Quick\" = 3, \"F\\u0061r\", 'Q\\'t' = 4 }\n\nexport class Api {\n  \"get\\u0056alue\"() {}\n}\n",
         )
         .unwrap();
     drain(&mut engine);
@@ -2635,6 +2654,27 @@ fn a_quoted_enum_member_is_one_definition_of_its_name() {
         assert_eq!(window.definitions, 1, "{name}");
         assert!(window.resolved(), "{name}");
         assert_eq!(window.entries[0].label, label);
+    }
+    let control = Control::unbounded();
+    for (name, label) in [
+        ("F\\u0061r", "variant Mode.F\\u0061r"),
+        ("Q\\'t", "variant Mode.Q\\'t"),
+        ("get\\u0056alue", "method Api.get\\u0056alue"),
+    ] {
+        assert!(engine.defines_exact_case(name, None).unwrap(), "{name}");
+        let anchor = context_foundry::store::AnchorCandidate {
+            text: name.to_owned(),
+            group: 1,
+            position: 0,
+        };
+        let batch = engine
+            .search_candidates_with(name, None, 10, &control, Some(&[anchor]))
+            .unwrap();
+        let window = &batch.anchors[0];
+        assert_eq!(window.definitions, 1, "{name}");
+        assert!(window.resolved(), "{name}");
+        assert_eq!(window.entries[0].label, label);
+        assert_eq!(source(&batch.items[0]).path, "src/mode.ts");
     }
 }
 

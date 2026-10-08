@@ -1710,14 +1710,14 @@ fn search_documents(
             }
             if let Some(name) = &unit.name {
                 out.add_text(fields.name, name);
-                if let (Some((name_start, name_end)), Some(lang)) = (unit.name_range, lang)
+                if let (Some((name_start, name_end)), Some(_)) = (unit.name_range, lang)
                     && document.start <= name_start
                     && name_start < document.end
                 {
                     out.add_text(fields.def_name, name);
                     out.add_u64(fields.name_case_hash, hash64(name));
-                    let qname = unit.qname.as_deref().unwrap_or(name);
-                    for segment in crate::syntax::address_segments(&path_segments, lang, qname) {
+                    for segment in crate::syntax::address_segments(&path_segments, &unit.qualifiers)
+                    {
                         out.add_u64(fields.addr_hash, hash64(&segment));
                     }
                     out.add_u64(fields.name_start, name_start as u64);
