@@ -916,7 +916,8 @@ fn namesakes_tied_across_roots_share_every_roots_approximate_doors() {
     type Files<'a> = Vec<(&'a str, &'a str)>;
     // The primary's files, the reference root's, and the shared doors as
     // (root, path).
-    let cases: [(Files<'_>, Files<'_>, Vec<(usize, &str)>); 2] = [
+    type Case<'a> = (Files<'a>, Files<'a>, Vec<(usize, &'a str)>);
+    let cases: [Case<'_>; 2] = [
         (
             vec![("src/alpha/one.rs", pivot)],
             vec![("src/alpha/two.rs", pivot), ("src/user.rs", user)],

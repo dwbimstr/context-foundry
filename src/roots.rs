@@ -647,7 +647,7 @@ fn merged_doors(batches: &[RootBatch], anchors: &[AnchorWindow]) -> Option<Doors
                 })
                 .collect();
             if exact.is_empty() {
-                shared_approx(tied.iter().filter_map(|target| built_for(target)))
+                shared_approx(tied.iter().filter_map(built_for))
             } else {
                 Doors {
                     state: DoorState::Each,
