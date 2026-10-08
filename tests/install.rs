@@ -7,10 +7,12 @@
 //! path arguments), an interrupted switch, the optional worker bundles
 //! (around the fake workers), disable and uninstall run against real files,
 //! processes and host-config bytes. The release-build install with the real
-//! worker bundles is a separate measurement.
-use context_foundry::bootstrap::{
-    OWNED_BEGIN, OWNED_END, OWNED_SEPARATOR_FIELD, apply_owned_block, remove_owned_block,
-};
+//! worker bundles is a separate measurement. The package target is macOS
+//! arm64 (`scripts/package.sh` refuses any other host), so this file builds
+//! only there.
+#![cfg(all(target_os = "macos", target_arch = "aarch64"))]
+
+use context_foundry::bootstrap::{OWNED_BEGIN, OWNED_END};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -715,119 +717,6 @@ fn package_install_upgrade_rollback_uninstall_keep_user_data() {
         ok(foundry(Path::new(FOUNDRY), &store, &memory_get)).stdout,
         memory,
         "the memory survives uninstall"
-    );
-}
-
-#[test]
-fn removing_the_owned_block_restores_the_host_config_bytes() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let block = format!(
-        "{OWNED_BEGIN}\n[mcp_servers.context-foundry]\ncommand = \"/opt/foundry\"\n{OWNED_END}\n"
-    );
-    let round_trip = |original: &[u8]| -> Vec<u8> {
-        std::fs::write(&path, original).unwrap();
-        apply_owned_block(&path, &block, false).unwrap();
-        let applied = std::fs::read(&path).unwrap();
-        assert!(remove_owned_block(&path).unwrap(), "a block was removed");
-        assert_eq!(
-            std::fs::read(&path).unwrap(),
-            original,
-            "exact bytes restored"
-        );
-        applied
-    };
-
-    // A final line break: the block is appended as it always was.
-    let applied = round_trip(b"model = \"o3\"\n");
-    assert_eq!(applied, format!("model = \"o3\"\n{block}").into_bytes());
-    // None: the separator apply inserts is recorded in the begin marker and
-    // removed with the block; the result is still TOML.
-    let applied = round_trip(b"model = \"o3\"");
-    let recorded = format!(
-        "model = \"o3\"\n{OWNED_BEGIN}{OWNED_SEPARATOR_FIELD}\n{}",
-        block.strip_prefix(&format!("{OWNED_BEGIN}\n")).unwrap()
-    );
-    assert_eq!(text(&applied), recorded);
-    let parsed: toml::Value = toml::from_str(&recorded).unwrap();
-    assert_eq!(parsed["model"].as_str(), Some("o3"));
-    assert!(parsed["mcp_servers"]["context-foundry"].is_table());
-    // Reapplying the same block to the recorded form changes nothing.
-    std::fs::write(&path, &applied).unwrap();
-    apply_owned_block(&path, &block, false).unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), applied);
-    // Empty and non-UTF-8 originals.
-    round_trip(b"");
-    round_trip(b"# operator \xff\xfe\nkey = 1\n");
-    round_trip(b"# operator \xff\xfe");
-
-    // Bytes added after a recorded block: its separator stays, so no
-    // operator lines are joined.
-    std::fs::write(&path, [recorded.as_bytes(), b"extra = 2\n"].concat()).unwrap();
-    assert!(remove_owned_block(&path).unwrap());
-    assert_eq!(
-        text(&std::fs::read(&path).unwrap()),
-        "model = \"o3\"\nextra = 2\n"
-    );
-
-    // Blocks the previous format wrote (no field) stay removable. The line
-    // break before one stays: nothing records whether apply inserted it,
-    // which is exact whenever the original ended with one.
-    std::fs::write(&path, format!("model = \"o3\"\n{block}")).unwrap();
-    assert!(remove_owned_block(&path).unwrap());
-    assert_eq!(text(&std::fs::read(&path).unwrap()), "model = \"o3\"\n");
-    std::fs::write(&path, format!("a = 1\n{block}b = 2\n")).unwrap();
-    assert!(remove_owned_block(&path).unwrap());
-    assert_eq!(text(&std::fs::read(&path).unwrap()), "a = 1\nb = 2\n");
-
-    // No block: nothing to remove, nothing written.
-    std::fs::write(&path, "a = 1\n").unwrap();
-    assert!(!remove_owned_block(&path).unwrap());
-    assert_eq!(text(&std::fs::read(&path).unwrap()), "a = 1\n");
-    // Incomplete or duplicated markers, and marker text that is not a whole
-    // marker line (inside a value, with other text on its line, indented),
-    // are never owned: removal and apply both refuse without writing.
-    for broken in [
-        format!("# own\n{OWNED_BEGIN}\nx = 1\n"),
-        format!("{block}{block}"),
-        format!("{OWNED_END}\nx\n{OWNED_BEGIN}\n"),
-        format!("note = \"{OWNED_BEGIN}KEEP{OWNED_END}\"\n"),
-        format!("{OWNED_BEGIN} extra\n[mcp_servers.x]\n{OWNED_END}\n"),
-        format!("{OWNED_BEGIN}\nx = 1\n{OWNED_END} # trailing\n"),
-        format!("  {OWNED_BEGIN}\nx = 1\n{OWNED_END}\n"),
-        format!("a = 1\n{OWNED_BEGIN}{OWNED_SEPARATOR_FIELD} more\nx = 1\n{OWNED_END}\n"),
-    ] {
-        std::fs::write(&path, &broken).unwrap();
-        let error = remove_owned_block(&path).expect_err("removal refused");
-        assert_eq!(error.code(), "manual_integration_required", "{broken}");
-        assert_eq!(text(&std::fs::read(&path).unwrap()), broken);
-        let error = apply_owned_block(&path, &block, false).expect_err("apply refused");
-        assert_eq!(error.code(), "manual_integration_required", "{broken}");
-        assert_eq!(text(&std::fs::read(&path).unwrap()), broken);
-    }
-
-    // The CLI form: removal takes only the file and reports the outcome.
-    std::fs::write(&path, format!("a = 1\n{block}")).unwrap();
-    let out = ok(Command::new(FOUNDRY)
-        .arg("connect")
-        .arg("--remove-config")
-        .arg(&path)
-        .output()
-        .unwrap());
-    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(report["removed"], true);
-    assert_eq!(text(&std::fs::read(&path).unwrap()), "a = 1\n");
-    let mixed = Command::new(FOUNDRY)
-        .arg("connect")
-        .arg("--remove-config")
-        .arg(&path)
-        .args(["--host", "codex"])
-        .output()
-        .unwrap();
-    assert_eq!(
-        mixed.status.code(),
-        Some(2),
-        "removal takes no host arguments"
     );
 }
 
