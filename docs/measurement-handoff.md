@@ -35,6 +35,9 @@ to run it.
 All of these live outside Git on the owner's machine and are transferred privately
 under the owner's authority; paths are given relative to `~/VSC_DEV`. The corpora are
 public sources; the datasets, results and converted model files are not redistributed.
+The stores are bound to the absolute corpus paths under `/Users/satishlomte/VSC_DEV`;
+[resume on another machine](resume.md) gives the exact transfer, clone and
+verification steps.
 
 | Input | Location | Identity |
 | --- | --- | --- |

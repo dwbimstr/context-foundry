@@ -4,7 +4,9 @@ Written 2026-10-08 so that a fresh agent (for example a cloud agent) can continu
 without the original sessions, their memory store or their temporary directories. Read
 it after [AGENTS.md](../AGENTS.md), the [constitution](../.specify/memory/constitution.md)
 and the [portfolio](../specs/README.md). Where this file and a spec disagree, the spec
-wins; this file only orients.
+wins; this file only orients. To set up a new machine step by step (what to copy,
+what to clone, how to prove the setup reproduces the recorded results), follow
+[resume on another machine](resume.md).
 
 ## Where things stand
 
