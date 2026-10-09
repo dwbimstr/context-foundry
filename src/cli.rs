@@ -78,6 +78,9 @@ enum Command {
         /// 008: append compact `mem:` lines for validated memory hits.
         #[arg(long = "include-memory")]
         include_memory: bool,
+        /// Experimental source-bound derived vocabulary (anchorless queries only).
+        #[arg(long)]
+        include_briefs: bool,
         /// 009 T002: fuse dense evidence from this semantic profile into
         /// the lexical candidates. The worker loads at command start.
         #[arg(long = "semantic-profile", value_name = "FILE")]
@@ -177,8 +180,8 @@ enum Command {
         #[arg(long = "policy-config", value_name = "FILE")]
         policy_config: Option<PathBuf>,
     },
-    /// Explicit v1..v5 -> v6 schema upgrade under exclusive ownership; `--to`
-    /// must be 6, the only supported target.
+    /// Explicit v1..v7 -> v8 schema upgrade under exclusive ownership; `--to`
+    /// must be 8, the only supported target.
     UpgradeStore {
         #[arg(long)]
         to: u32,
@@ -192,6 +195,8 @@ enum Command {
     },
     /// Experimental task state: one scoped JSON request on stdin.
     TaskContext,
+    /// Experimental source brief: one bounded JSON request on stdin.
+    Brief,
     /// 008 explicit project memory: put, update, get, forget, search, export.
     Memory {
         #[command(subcommand)]
@@ -659,6 +664,31 @@ fn run() -> AResult<()> {
         Command::Semantic { action } => semantic_run(&cli.store, action, semantic_started)?,
         Command::Adapter(command) => crate::adapter_cli::run(command, cli.store, store_explicit)?,
         Command::Memory { action } => memory_run(&cli.store, action)?,
+        Command::Brief => {
+            let mut bytes = Vec::new();
+            io::stdin()
+                .lock()
+                .take(crate::brief::MAX_REQUEST_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            let request = crate::brief::parse(&bytes)?;
+            let mut engine = if matches!(
+                request.command,
+                crate::brief::Command::Get { .. } | crate::brief::Command::Export { .. }
+            ) {
+                Engine::open_authoritative(&cli.store)?
+            } else {
+                Engine::open_existing(&cli.store)?
+            };
+            let result = engine.brief(&request, &live_control())?;
+            if matches!(
+                request.command,
+                crate::brief::Command::Put { .. } | crate::brief::Command::Forget { .. }
+            ) && let Some(id) = result["id"].as_str()
+            {
+                engine.drain_brief_key(id);
+            }
+            println!("{}", serde_json::to_string(&result)?);
+        }
         Command::TaskContext => {
             let mut bytes = Vec::new();
             io::stdin()
@@ -743,6 +773,7 @@ fn run() -> AResult<()> {
             experimental_behavior_context,
             strategy,
             include_memory,
+            include_briefs,
             task,
             task_revision,
             semantic_profile,
@@ -812,16 +843,15 @@ fn run() -> AResult<()> {
                     crate::store::ContextOptions {
                         task: task_scope,
                         memory: include_memory,
+                        briefs: include_briefs,
                         policy: routed,
                         experimental_behavior: experimental_behavior_context,
                         ..crate::store::ContextOptions::default()
                     },
                 )?;
-                let packed = response::pack_task_context(
-                    &combined.batch,
+                let packed = response::pack_enriched_context(
+                    &combined,
                     None,
-                    &combined.hits,
-                    combined.task_view.as_ref(),
                     Budget::request(tokens),
                     &response::stdout_bytes,
                 )?;

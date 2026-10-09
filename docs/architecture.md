@@ -345,7 +345,11 @@ still refuses changed/deleted inputs. Model inference keeps its existing admissi
 rules. Whole-corpus partition and ANN publication barriers remain for 009 T007.
 
 The owner's 2026-10-09 scale direction also reactivates 010 for source-bound LLM
-briefs and area summaries. These are selected work, not implemented enrichment.
+briefs and area summaries. T001 now implements explicit structured-brief import,
+source-hash invalidation and anchorless lexical discovery in schema 8. One
+`source_briefs` table shares the existing source authority and derived search index;
+context delivers original source before optional labeled derived orientation under
+one budget. Automatic generation and area summaries remain T002 work.
 Exact source/graph evidence, derived repository knowledge and explicit task memory
 have distinct provenance and invalidation rules. The
 [revised ecosystem design](context-ecosystem-plan.md#architecture-correction-useful-context-across-6000080000-files)

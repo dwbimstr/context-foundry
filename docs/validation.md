@@ -1,5 +1,56 @@
 # Validation
 
+## Source-bound brief import and conceptual discovery — 2026-10-09
+
+[010 T001](../specs/010-source-bound-derived-knowledge/spec.md) is implemented on the
+experimental branch in [brief.rs](../src/brief.rs), the shared store/index and the
+source-first response packer. Schema 8 retains one structured derived brief per
+source/recipe, with generator attribution, exact cited spans and full dependency
+hashes. Import, get/search, explicit per-ID historical export and CAS forget use the
+same authoritative owner. `context --include-briefs` maps generated vocabulary to
+source for anchorless queries and can deliver derived orientation within the same
+allowance as supporting code, a selected task view and explicit memory.
+
+Executed Linux/Rust 1.90.0 sandbox evidence:
+
+- **17 tests in [tests/brief.rs](../tests/brief.rs)** pass against real redb, Tantivy,
+  response packing and independent CLI processes. The synthetic `capacity eviction`
+  fixture has no baseline source match; a brief finds the opaque routine and exact
+  source/test bytes are recovered. Exact-name context remains byte-identical in the
+  fixture. A deliberately false summary is still only `kind:derived`; its primary
+  source must fit before any summary is delivered.
+- Source/dependency edits and deletes invalidate delivery before index cleanup;
+  tests force edits during generation and final query validation and forget after
+  candidate selection. Replay, replacement CAS, monotonic revisions, malformed
+  citations/identifiers, UTF-8/JSON/text limits, escaped dependency paths, corruption,
+  namespace separation and user-memory preservation pass. Restart, full repair and
+  pending replacement during derived drain converge on current rows.
+- Real child processes abort before/after put and forget commits. Reopen/replay
+  proves row, revision and pending work are atomic at those boundaries. This is
+  application recovery evidence, not a hardware power-loss claim.
+- The previous schema-7 binary creates source plus task state in an isolated
+  temporary store; the current binary upgrades it to schema 8 and preserves both.
+  The previous binary then returns `unsupported_schema`. A separate test interrupts
+  schema-7 upgrade before commit and verifies retry; old source/memory/task data is
+  retained. Existing repository indexes were not upgraded.
+- `cargo test --locked --no-fail-fast` exercised the full suite: 860 passed,
+  four older migration assertions still expected schema 7, and two existing model/
+  hardware measurements were ignored. Only those test expectations were then
+  corrected; rerunning both affected suites (`--test neural --test semantic`)
+  passed all 159 tests. **864 tests now pass, zero unresolved failures, two ignored**,
+  plus every scenario in the separate recovery runner. Source was not edited during
+  the full run; the rerun changed only the four schema assertions.
+- `cargo clippy --locked --all-targets -- -D warnings`,
+  `cargo check --locked --no-default-features --lib --bin foundry`,
+  `cargo fmt --all --check`, Markdown link/anchor checks and `git diff --check` pass.
+
+These inputs are synthetic generator outputs. No generation provider, area rollup,
+MCP brief tool or automatic background generation ran. A citation establishes which
+bytes were used, not that model prose is correct. Freshness is relative to committed
+source state; the watcher is the next build-order increment. No real-model quality,
+80,000-file throughput or full-task token/cost improvement is claimed. Self-review
+only; no release/default promotion or change to 013's freeze.
+
 ## Large-repository architecture and parallel partitioning — 2026-10-09
 
 The owner redirected the experimental work toward verified task quality, practical

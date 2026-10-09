@@ -2,6 +2,7 @@
 //! (Tantivy). One owner per store; explicit initialization, explicit schema
 //! upgrade and explicit repair. Reads never mutate authoritative state.
 use crate::Strategy;
+use crate::brief::BRIEFS;
 use crate::error::{FResult, FoundryError};
 use crate::graph;
 use crate::memory::{MEMORY, MemoryRecord, memory_pending_key, source_pending_key};
@@ -32,7 +33,7 @@ pub(crate) const META: TableDefinition<&str, &str> = TableDefinition::new("meta"
 pub(crate) const SEEN: TableDefinition<&str, &str> = TableDefinition::new("scan_seen");
 pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("feedback");
 
-pub const SCHEMA_VERSION: u32 = 7;
+pub const SCHEMA_VERSION: u32 = 8;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
 /// Refresh builds a page's search documents on at most this many threads,
@@ -1452,6 +1453,21 @@ impl QueryAnchors {
     }
 }
 
+/// One derived record search candidate before live-row validation (the
+/// document's id and the revision it was indexed at).
+pub(crate) struct RecordCandidate {
+    pub id: String,
+    pub revision: u64,
+}
+
+/// The derived record candidates of one query, collected before the final
+/// read: whether the 256-document selection window filled, and the (id,
+/// indexed revision) pairs it produced.
+pub(crate) struct RecordPlan {
+    pub window_full: bool,
+    pub candidates: Vec<RecordCandidate>,
+}
+
 /// What a context request adds to its query and strategy
 /// ([`Engine::context_candidates_with`]): 008 memory, the 009 T002 dense
 /// window, a configured 013 policy routing an `auto` strategy, and the
@@ -1461,6 +1477,7 @@ impl QueryAnchors {
 pub struct ContextOptions<'a> {
     pub task: Option<crate::task_context::Scope<'a>>,
     pub memory: bool,
+    pub briefs: bool,
     pub experimental_behavior: bool,
     #[cfg(feature = "semantic")]
     pub dense: Option<&'a crate::neural::query::DenseWindow>,
@@ -1807,6 +1824,13 @@ fn tier_restricted(fields: &Fields, dir: Option<&str>, query: Box<dyn Query>) ->
             )) as Box<dyn Query>,
         ),
     ];
+    clauses.push((
+        Occur::MustNot,
+        Box::new(TermQuery::new(
+            Term::from_field_text(fields.kind, "brief"),
+            IndexRecordOption::Basic,
+        )),
+    ));
     if let Some(dir) = dir {
         clauses.push((
             Occur::Must,
@@ -2294,13 +2318,14 @@ impl Drop for Closing<'_> {
 /// its parse boundary fails the page by name. Returns the parse panics of
 /// the page by position.
 #[allow(clippy::too_many_arguments)]
-fn index_page<S, C, M>(
+fn index_page<S, C, M, B>(
     writer: &mut IndexWriter,
     fields: &Fields,
     pending: &[(String, String)],
     sources: &S,
     stored: &C,
     memory: &M,
+    briefs: &B,
     control: &crate::Control,
     hooks: &IndexHooks,
 ) -> FResult<Vec<(usize, String)>>
@@ -2308,6 +2333,7 @@ where
     S: ReadableTable<&'static str, &'static str>,
     C: ReadableTable<&'static str, &'static str>,
     M: ReadableTable<&'static str, &'static str>,
+    B: ReadableTable<&'static str, &'static str>,
 {
     let jobs = pending
         .iter()
@@ -2319,6 +2345,7 @@ where
         writer,
         fields,
         memory,
+        briefs,
         pending,
         queue: &queue,
         control,
@@ -2366,10 +2393,11 @@ where
 }
 
 /// The page's one writer, on the calling thread.
-struct PageWriter<'a, M> {
+struct PageWriter<'a, M, B> {
     writer: &'a mut IndexWriter,
     fields: &'a Fields,
     memory: &'a M,
+    briefs: &'a B,
     pending: &'a [(String, String)],
     queue: &'a HandOut,
     control: &'a crate::Control,
@@ -2384,7 +2412,9 @@ struct PageWriter<'a, M> {
     panics: Vec<(usize, String)>,
 }
 
-impl<M: ReadableTable<&'static str, &'static str>> PageWriter<'_, M> {
+impl<M: ReadableTable<&'static str, &'static str>, B: ReadableTable<&'static str, &'static str>>
+    PageWriter<'_, M, B>
+{
     /// Hand out the page's existing sources in key order, adding finished
     /// ones in key order as it goes, then add the rest.
     fn hand_out<S, C>(&mut self, sources: &S, stored: &C) -> FResult<()>
@@ -2505,6 +2535,20 @@ impl<M: ReadableTable<&'static str, &'static str>> PageWriter<'_, M> {
                         memory_document(self.fields, &record.id, record.revision, &record.text);
                     self.add_document(document)?;
                 }
+            }
+        } else if let Some(id) = key.strip_prefix("brief:") {
+            self.writer
+                .delete_term(Term::from_field_text(self.fields.key, key));
+            if let Some(raw) = self.briefs.get(id)?
+                && let Ok(record) = crate::brief::decode_row(id, raw.value())
+            {
+                self.add_document(record_document(
+                    self.fields,
+                    "brief",
+                    id,
+                    record.revision,
+                    &record.brief.searchable_text(),
+                ))?;
             }
         }
         Ok(())
@@ -2662,7 +2706,17 @@ pub(crate) fn validate_link_span(tx: &WriteTransaction, bound: &str, handle: &st
 /// it — and memory documents carry no `def_name`, so definition matching
 /// stays source-only even before the kind filter excludes them.
 fn memory_document(fields: &Fields, id: &str, revision: u64, text: &str) -> TantivyDocument {
-    let key = memory_pending_key(id);
+    record_document(fields, "memory", id, revision, text)
+}
+
+fn record_document(
+    fields: &Fields,
+    kind: &str,
+    id: &str,
+    revision: u64,
+    text: &str,
+) -> TantivyDocument {
+    let key = format!("{kind}:{id}");
     let mut out = TantivyDocument::default();
     out.add_u64(fields.key_hash, hash64(&key));
     out.add_text(fields.key, &key);
@@ -2677,7 +2731,7 @@ fn memory_document(fields: &Fields, id: &str, revision: u64, text: &str) -> Tant
     ] {
         out.add_u64(field, 0);
     }
-    out.add_text(fields.kind, "memory");
+    out.add_text(fields.kind, kind);
     out.add_u64(fields.role, path_role(""));
     out.add_text(fields.name, id);
     out.add_text(fields.ident, text);
@@ -3154,6 +3208,7 @@ fn initialize_tables(tx: &WriteTransaction) -> FResult<()> {
     tx.open_table(PENDING)?;
     tx.open_table(MEMORY)?;
     tx.open_table(crate::task_context::TASKS)?;
+    tx.open_table(BRIEFS)?;
     tx.open_table(FEEDBACK)?;
     tx.open_table(SEEN)?;
     crate::graph::init(tx)?;
@@ -3219,6 +3274,7 @@ impl Engine {
             meta.insert("scan_status", "never")?;
             meta.insert("memory_revision", "0")?;
             meta.insert("task_revision", "0")?;
+            meta.insert("brief_revision", "0")?;
             meta.insert("search_schema", SEARCH_SCHEMA)?;
             let root_str = root.to_str().ok_or_else(|| {
                 FoundryError::InvalidArgument("workspace path is not UTF-8".into())
@@ -3291,12 +3347,12 @@ impl Engine {
                 ));
             };
             match version.value() {
-                "1" | "2" | "3" | "4" | "5" | "6" => {
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" => {
                     return Err(FoundryError::UpgradeRequired {
                         found: version.value().to_owned(),
                     });
                 }
-                "7" => 7u32,
+                "8" => 8u32,
                 other => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: other.to_owned(),
@@ -3304,8 +3360,8 @@ impl Engine {
                 }
             }
         };
-        // Confirm the schema-7 tables exist; missing authoritative tables in
-        // a schema-7 store are corruption, not something an open recreates.
+        // Confirm the schema-8 tables exist; missing authoritative tables in
+        // a schema-8 store are corruption, not something an open recreates.
         {
             let tx = db.begin_read()?;
             tx.open_table(SEEN).map_err(|e| {
@@ -3322,6 +3378,9 @@ impl Engine {
             tx.open_table(crate::task_context::TASKS)
                 .map_err(|e| FoundryError::CorruptStore(format!("task_context table: {e}")))?;
             read_counter(&tx.open_table(META)?, "task_revision")?;
+            tx.open_table(BRIEFS)
+                .map_err(|e| FoundryError::CorruptStore(format!("source_briefs table: {e}")))?;
+            read_counter(&tx.open_table(META)?, "brief_revision")?;
             crate::graph::check_compiler_tables(&tx)?;
             crate::neural::cache::check_tables(&db)?;
             crate::learning::check_tables(&db)?;
@@ -3382,9 +3441,9 @@ impl Engine {
         }
     }
 
-    /// Explicit v1..=v6 -> v7 transaction under exclusive ownership. The
+    /// Explicit v1..=v7 -> v8 transaction under exclusive ownership. The
     /// cumulative steps preserve source, memory, graph, semantic and learning
-    /// data. Version 7 adds task_context and its never-reset task_revision.
+    /// data. Version 8 adds source_briefs and its never-reset brief_revision.
     /// Publish the schema last; interrupted upgrades remain wholly old or new.
     /// Only the current version is a target. Older readers must refuse it.
     pub fn upgrade_store(store_dir: &Path, to: u32, control: &crate::Control) -> FResult<()> {
@@ -3408,13 +3467,14 @@ impl Engine {
                         "store has no schema marker".into(),
                     ));
                 }
-                Some(v) if v.value() == "7" => return Ok(()), // already upgraded
+                Some(v) if v.value() == "8" => return Ok(()), // already upgraded
                 Some(v) if v.value() == "1" => 1u32,
                 Some(v) if v.value() == "2" => 2u32,
                 Some(v) if v.value() == "3" => 3u32,
                 Some(v) if v.value() == "4" => 4u32,
                 Some(v) if v.value() == "5" => 5u32,
                 Some(v) if v.value() == "6" => 6u32,
+                Some(v) if v.value() == "7" => 7u32,
                 Some(v) => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: v.value().to_owned(),
@@ -3488,6 +3548,10 @@ impl Engine {
             if from < 7 {
                 tx.open_table(crate::task_context::TASKS)?;
                 meta.insert("task_revision", "0")?;
+            }
+            if from < 8 {
+                tx.open_table(BRIEFS)?;
+                meta.insert("brief_revision", "0")?;
             }
             // Publish the schema last inside the same transaction.
             meta.insert("schema", SCHEMA_VERSION.to_string().as_str())?;
@@ -3874,14 +3938,17 @@ impl Engine {
     /// or missing index, I/O) leaves the key pending and is not reported:
     /// the authoritative mutation already succeeded and replay converges.
     pub(crate) fn drain_memory_key(&mut self, id: &str) {
-        let _ = self.try_drain_memory_key(id);
+        let _ = self.try_drain_record_key(id, "memory");
     }
 
-    fn try_drain_memory_key(&mut self, id: &str) -> FResult<()> {
+    pub(crate) fn drain_brief_key(&mut self, id: &str) {
+        let _ = self.try_drain_record_key(id, "brief");
+    }
+    fn try_drain_record_key(&mut self, id: &str, kind: &str) -> FResult<()> {
         if self.repair_reason.is_some() {
             return Ok(());
         }
-        let key = memory_pending_key(id);
+        let key = format!("{kind}:{id}");
         let (value, record) = {
             let tx = self.db.begin_read()?;
             let Some(value) = tx
@@ -3891,9 +3958,16 @@ impl Engine {
             else {
                 return Ok(());
             };
-            let record = match tx.open_table(MEMORY)?.get(id)? {
-                Some(raw) => serde_json::from_str::<MemoryRecord>(raw.value()).ok(),
-                None => None,
+            let record = if kind == "brief" {
+                tx.open_table(BRIEFS)?
+                    .get(id)?
+                    .and_then(|raw| crate::brief::decode_row(id, raw.value()).ok())
+                    .map(|r| (r.id, r.revision, r.brief.searchable_text()))
+            } else {
+                tx.open_table(MEMORY)?
+                    .get(id)?
+                    .and_then(|raw| serde_json::from_str::<MemoryRecord>(raw.value()).ok())
+                    .map(|r| (r.id, r.revision, r.text))
             };
             (value, record)
         };
@@ -3904,11 +3978,12 @@ impl Engine {
             .writer
             .delete_term(Term::from_field_text(handles.fields.key, &key));
         if let Some(record) = &record {
-            handles.writer.add_document(memory_document(
+            handles.writer.add_document(record_document(
                 &handles.fields,
-                &record.id,
-                record.revision,
-                &record.text,
+                kind,
+                &record.0,
+                record.1,
+                &record.2,
             ))?;
         }
         handles.writer.commit()?;
@@ -3959,12 +4034,11 @@ impl Engine {
         // Typed pending keys (008): the drain dispatches on the prefix. An
         // untyped key cannot exist in a v3 store — the upgrade migrated them
         // all — so it names authoritative corruption, before any work.
-        if let Some((key, _)) = pending
-            .iter()
-            .find(|(key, _)| !key.starts_with("source:") && !key.starts_with("memory:"))
-        {
+        if let Some((key, _)) = pending.iter().find(|(key, _)| {
+            !key.starts_with("source:") && !key.starts_with("memory:") && !key.starts_with("brief:")
+        }) {
             return Err(FoundryError::CorruptStore(format!(
-                "pending key {key:?} is not typed (source:/memory:)"
+                "pending key {key:?} is not typed (source:/memory:/brief:)"
             )));
         }
         let sources = tx.open_table(SOURCES)?;
@@ -3976,6 +4050,7 @@ impl Engine {
         };
         let hooks = IndexHooks::current();
         let memory = tx.open_table(MEMORY)?;
+        let briefs = tx.open_table(BRIEFS)?;
         let SearchHandles {
             reader,
             writer,
@@ -3986,9 +4061,10 @@ impl Engine {
         // cancelled after its last hand-out is committed below and stops
         // after the commit.
         let panics = index_page(
-            writer, fields, &pending, &sources, &stored, &memory, control, &hooks,
+            writer, fields, &pending, &sources, &stored, &memory, &briefs, control, &hooks,
         )?;
         drop(memory);
+        drop(briefs);
         index_fault!(INDEX_BEFORE_COMMIT, control, "")?;
         writer.commit()?;
         // The page's documents are committed: its parse panics are this
@@ -4851,7 +4927,11 @@ impl Engine {
     /// tier-2 lexical clauses over `body`/`ident`, restricted to
     /// `kind:"memory"`, at most `limit` by (score, key_hash). Callers
     /// validate each candidate against the live row before delivery.
-    pub(crate) fn memory_plan(&self, query: &str) -> FResult<crate::memory::MemoryPlan> {
+    pub(crate) fn memory_plan(&self, query: &str) -> FResult<RecordPlan> {
+        self.record_plan(query, "memory")
+    }
+
+    pub(crate) fn record_plan(&self, query: &str, kind: &str) -> FResult<RecordPlan> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
@@ -4894,7 +4974,7 @@ impl Engine {
             (
                 Occur::Must,
                 Box::new(TermQuery::new(
-                    Term::from_field_text(fields.kind, "memory"),
+                    Term::from_field_text(fields.kind, kind),
                     IndexRecordOption::Basic,
                 )) as Box<dyn Query>,
             ),
@@ -4918,10 +4998,10 @@ impl Engine {
             let key = doc
                 .get_first(fields.key)
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| FoundryError::CorruptStore("invalid memory document".into()))?;
-            let Some(id) = key.strip_prefix("memory:") else {
+                .ok_or_else(|| FoundryError::CorruptStore("invalid record document".into()))?;
+            let Some(id) = key.strip_prefix(&format!("{kind}:")) else {
                 return Err(FoundryError::CorruptStore(format!(
-                    "memory query matched non-memory document {key:?}"
+                    "{kind} query matched another kind of document {key:?}"
                 )));
             };
             let revision = doc
@@ -4929,14 +5009,14 @@ impl Engine {
                 .and_then(|v| v.as_str())
                 .and_then(|v| v.parse::<u64>().ok())
                 .ok_or_else(|| {
-                    FoundryError::CorruptStore(format!("memory document {key:?} has no revision"))
+                    FoundryError::CorruptStore(format!("{kind} document {key:?} has no revision"))
                 })?;
-            out.push(crate::memory::MemoryCandidate {
+            out.push(RecordCandidate {
                 id: id.to_owned(),
                 revision,
             });
         }
-        Ok(crate::memory::MemoryPlan {
+        Ok(RecordPlan {
             window_full: out.len() >= MEMORY_CANDIDATE_WINDOW,
             candidates: out,
         })
@@ -5064,6 +5144,9 @@ impl Engine {
                     .clone()
                     .map(|owner| (owner, terms))
             });
+        let brief_plan = (options.briefs && search.anchors.is_empty())
+            .then(|| self.record_plan(query, "brief"))
+            .transpose()?;
         // A context resolved to graph requests doors (context-v2 § Doors),
         // for the first anchor's target as resolved from the collected
         // windows: the final read can drop that definition, never retarget.
@@ -5169,6 +5252,30 @@ impl Engine {
                 Some(self.doors_in(&tx, &target, &anchors, &mut counters, control)?)
             }
             None => None,
+        };
+        let briefs = match &brief_plan {
+            Some(plan) => {
+                let (hits, stale, _) =
+                    self.brief_hits_in(&tx, plan, crate::brief::CONTEXT_HITS, control)?;
+                counters.stale += stale;
+                counters.candidates_full |= plan.window_full;
+                let mut evidence = Vec::new();
+                for hit in &hits {
+                    let source = self.brief_source_in(&tx, hit)?;
+                    // One primary representation per source; generated forms do
+                    // not displace independent files in the source window.
+                    units.retain(|unit| {
+                        unit.handle.as_ref().map(|h| &h.path)
+                            != source.handle.as_ref().map(|h| &h.path)
+                    });
+                    evidence.push(source);
+                }
+                evidence.append(&mut units);
+                evidence.truncate(CONTEXT_UNITS);
+                units = evidence;
+                hits
+            }
+            None => Vec::new(),
         };
         // Verified bodies, once per path, for the signature forms of units in
         // languages with units and for the first distinct files' outlines.
@@ -5342,6 +5449,7 @@ impl Engine {
             item.rank = rank;
         }
         let context = crate::memory::MemoryContext {
+            briefs,
             task_view,
             batch: CandidateBatch {
                 semantic,
@@ -5632,6 +5740,7 @@ impl Engine {
         let mentions = BooleanQuery::new(vec![
             (Occur::Must, term(fields.ident, &name.to_lowercase())),
             (Occur::MustNot, term(fields.kind, "memory")),
+            (Occur::MustNot, term(fields.kind, "brief")),
         ]);
         let mut units: std::collections::BTreeMap<(String, u64, u64), DoorCandidate> =
             std::collections::BTreeMap::new();
@@ -6072,6 +6181,39 @@ impl Engine {
             after = page.last().map(|(k, _)| k.clone());
         }
         control.check()?;
+        let mut after: Option<String> = None;
+        loop {
+            control.check()?;
+            let page = {
+                let tx = engine.db.begin_read()?;
+                let table = tx.open_table(BRIEFS)?;
+                table
+                    .range::<&str>((
+                        after.as_deref().map_or(Bound::Unbounded, Bound::Excluded),
+                        Bound::Unbounded,
+                    ))?
+                    .take(PAGE)
+                    .map(|row| {
+                        let (key, raw) = row?;
+                        let revision = crate::brief::decode_row(key.value(), raw.value())
+                            .map_or_else(|_| "corrupt".into(), |r| r.revision.to_string());
+                        Ok((key.value().to_owned(), revision))
+                    })
+                    .collect::<Result<Vec<_>, redb::StorageError>>()?
+            };
+            if page.is_empty() {
+                break;
+            }
+            let tx = engine.db.begin_write()?;
+            {
+                let mut pending = tx.open_table(PENDING)?;
+                for (id, revision) in &page {
+                    pending.insert(crate::brief::pending_key(id).as_str(), revision.as_str())?;
+                }
+            }
+            tx.commit()?;
+            after = page.last().map(|(id, _)| id.clone());
+        }
         // Construct the replacement index and drain.
         fault!(
             REPAIR_BEFORE_REPLACEMENT_INDEX,

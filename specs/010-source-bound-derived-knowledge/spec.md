@@ -1,9 +1,9 @@
 # 010 — Source-bound derived repository knowledge
 
-Status: Reactivated for experimental implementation, 2026-10-09. T001 and T002 are
-selected contracts, not implemented capabilities. The owner's large-repository
-architecture direction supersedes the earlier blanket deferral. No generation model
-has been selected or run in this increment. 013 remains frozen off.
+Status: Experimental T001 implemented locally, 2026-10-09; T002 remains selected
+work. The owner's large-repository direction supersedes the earlier blanket deferral.
+The import, retrieval and lifecycle use synthetic generator outputs; no generation
+model has been selected or run. 013 remains frozen off.
 
 ## Outcome and ownership
 
@@ -56,6 +56,60 @@ do not claim current G2 attribution from that constructed example.
 - Verify conceptual discovery, stale dependencies, edit-during-generation, deletion,
   malformed claims, replay, restart, output bounds and exact-source recovery. Include
   a misleading-summary fixture so a lexical hit cannot certify answer completeness.
+
+### T001 implementation decisions and acceptance
+
+[brief.rs](../../src/brief.rs) owns the strict CLI/library import seam;
+[store.rs](../../src/store.rs) shares Tantivy record documents, bounded candidate
+selection, pending drain and repair. Schema **8** adds `source_briefs` and the
+never-reset `brief_revision`; upgrading schemas 1–7 is explicit and transactional.
+The search schema remains 5. Old binaries refuse schema 8 before reading its typed
+`brief:` pending keys. Explicit user memory retains its independent lifetime.
+
+- `cited_spans` contains 1–32 nonempty v2 spans; span zero identifies the owning
+  source and is the primary context evidence. Claims refer to zero-based indices
+  and declare the identifiers to byte-check in those spans. Purpose and behavior
+  are required; the other claim lists may be empty. Unknowns are delivered as
+  unknowns and excluded from the lexical document. All extra JSON fields are refused.
+- ID is SHA-256 of the JSON tuple `(workspace, primary path, recipe digest)`.
+  The input identity binds the workspace, ordered spans, model, artifact, recipe,
+  prompt digest and every dependency's full source digest. Generation time is
+  attribution. An identical output replay may change that timestamp and remains
+  a no-op; differing output for identical inputs conflicts. Changed inputs require
+  the current `expected_revision`. Admission rechecks sources even on replay, so
+  a late stale generation result is refused rather than reinstated.
+- Admission reconstructs and hashes every cited source, reusing bodies by path
+  inside one writer transaction (at most 32 sources, 64 MiB of source bytes).
+  No generation occurs there. Identifier presence validates only declared bytes;
+  citations and generator metadata do not verify prose or prove a provider ran.
+- Requests are at most 256 KiB; claim/identifier/unknown text totals at most 16 KiB.
+  Persisted records, including repeated full dependency paths, are at most 512 KiB.
+  `get` suppresses stale text; explicit per-ID `export` may return it with
+  `eligible:false`. Forget removes the live row and queues index deletion atomically.
+- Brief search examines at most 256 derived candidates, validates live revisions
+  and every dependency in one final snapshot, groups by primary source, and returns
+  at most eight records under an explicit JSON-byte allowance. Pending brief work,
+  stale candidates, a filled candidate window and output omissions are visible.
+  A first record that cannot fit causes a refusal, not a successful empty answer.
+- CLI `context --include-briefs` and library `ContextOptions.briefs` augment only
+  anchorless queries. Supporting primary source spans precede ordinary candidates.
+  [response.rs](../../src/response.rs) permits a `brief:` line only when its primary
+  span is delivered, using the same complete-response tokenizer and byte allowance
+  as source, explicit project memory and a selected task view. Records are explicitly
+  `kind:derived`; test/dependency citations remain exactly recoverable. This does
+  not assert that primary source plus orientation is a complete editing packet.
+  The MCP catalog has no brief tool/flag in this slice; automatic generation and
+  model-derived dense indexing are not implemented.
+
+[tests/brief.rs](../../tests/brief.rs) uses the real store, lexical index, packer and
+CLI. Its constructed baseline for `capacity eviction` is empty; the imported brief
+finds the opaque routine and recovers exact implementation/test bytes. Other cases
+cover an intentionally false summary, exact-name output stability, source/dependency
+edit/delete, edits during generation and final selection, CAS/replay, unknown fields,
+byte/UTF-8/citation bounds, row corruption, hash verification, namespace collisions,
+user-memory preservation, restart/repair, pending replacement during drain, explicit
+schema-7 upgrade and real child-process exits before/after put and forget commits.
+See [validation](../../docs/validation.md) for executed checks and limits.
 
 ### T002 — Generate useful briefs and area knowledge within idle resources
 

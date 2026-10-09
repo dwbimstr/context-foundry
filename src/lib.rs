@@ -27,6 +27,7 @@ macro_rules! fault {
 pub mod adapter_cli;
 pub mod adapter_error;
 pub mod bootstrap;
+pub mod brief;
 pub mod cli;
 pub mod config;
 pub mod control;

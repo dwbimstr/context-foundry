@@ -622,3 +622,17 @@ These are focused integration checks owned by existing tasks and the
 [release checklist](release.md); no new all-roadmap measurement gate. Package/signing/
 VM compatibility and the library choices remain unexecuted proof obligations. Explicit
 publication authorization and destination are still required to upload any artifact.
+
+
+## Experimental schema 8
+
+The experimental context branch uses schema 8 for source-bound derived briefs, in
+addition to schema 7's task state. Existing schemas 1–7 require explicit
+`foundry --store STORE upgrade-store --to 8`; initialization and ordinary open do not
+upgrade. Preserve a closed-store backup before upgrading an existing store. Older
+binaries refuse schema 8; rollback requires the backup or a compatible binary.
+Upgrade preserves source, graph, memory, task, semantic and learning tables. No
+source scanning, provider call or automatic generation is part of the upgrade.
+See the [experimental workflow](experimental-context.md#source-bound-derived-briefs)
+for import and retrieval; `repair-index` rebuilds brief search documents from the
+same authoritative store.

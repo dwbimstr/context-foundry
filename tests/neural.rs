@@ -1110,7 +1110,10 @@ fn schema_5_upgrade_from_v4_preserves_every_table_atomically() {
     )
     .unwrap_err();
     fault::disarm_all();
-    assert_eq!(testkit::schema_marker(&store), "7");
+    assert_eq!(
+        testkit::schema_marker(&store),
+        context_foundry::SCHEMA_VERSION.to_string()
+    );
     let after = testkit::snapshot(&store);
     for table in [
         "sources",
@@ -1210,7 +1213,10 @@ fn schema_6_upgrade_from_v5_preserves_every_table_and_the_vector_cache() {
         &Control::unbounded(),
     )
     .unwrap();
-    assert_eq!(testkit::schema_marker(&env.store), "7");
+    assert_eq!(
+        testkit::schema_marker(&env.store),
+        context_foundry::SCHEMA_VERSION.to_string()
+    );
     let after = testkit::snapshot(&env.store);
     for (table, rows) in &before {
         let (mut left, mut right) = (after[table].clone(), rows.clone());

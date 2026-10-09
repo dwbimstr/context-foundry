@@ -1,9 +1,9 @@
 # Experimental task context
 
 This branch adds recoverable task state beside retrieval. Start with a disposable
-store. New stores use schema 7; an existing store needs an explicit
-`foundry --store STORE upgrade-store --to 7`. Take a closed-store backup first if
-using an existing store: schema 6 binaries cannot open schema 7, and rollback means
+store. New stores use schema 8; an existing store needs an explicit
+`foundry --store STORE upgrade-store --to 8`. Take a closed-store backup first if
+using an existing store: schema 7 and earlier binaries cannot open schema 8, and rollback means
 restoring that backup. This work does not upgrade stores automatically.
 
 The core works through `foundry --store STORE task-context`, which accepts one JSON
@@ -150,3 +150,83 @@ CLI restarts, real SDK MCP calls, concurrent revisions, source staleness, exact
 recovery and abrupt exits around commits. See [validation](validation.md),
 [008](../specs/008-scoped-durable-memory/spec.md) and
 [003](../specs/003-agent-retrieval-context/spec.md).
+
+
+## Source-bound derived briefs
+
+010 T001 adds explicit imported repository knowledge through the CLI and library.
+This is separate from task state and project memory. No model is called yet; the
+same acceptance seam is intended for the future generator. First index the sources
+and obtain exact v2 source handles. `foundry --store STORE brief` accepts one JSON
+request on stdin:
+
+```json
+{
+  "workspace_id": "<full workspace ID from status>",
+  "command": {
+    "op": "put",
+    "brief": {
+      "cited_spans": ["<primary implementation handle>", "<test handle>"],
+      "recipe_sha256": "<64 lowercase hex characters>",
+      "model": "<generator model or synthetic fixture identity>",
+      "artifact_sha256": "<64 lowercase hex characters>",
+      "prompt_sha256": "<64 lowercase hex characters>",
+      "generated_at_unix_ms": 1791504000000,
+      "purpose": [{"text":"Enforce queue capacity.","citations":[0],"identifiers":[]}],
+      "behavior": [{"text":"Remove oldest queued entries until length fits capacity.","citations":[0],"identifiers":[]}],
+      "provides": [],
+      "consumes": [],
+      "constraints": [],
+      "tests": [{"text":"Exercise capacity eviction.","citations":[1],"identifiers":[]}],
+      "unknowns": ["Thread safety is unknown."]
+    }
+  }
+}
+```
+
+Replace the placeholders and descriptions with the actual source-bound generator
+result. Claims use zero-based citation indices; declared identifiers must appear in
+their cited bytes. Byte presence is not semantic verification. Provenance identifies
+the asserted generator inputs; import does not prove the model/artifact was executed.
+
+Keep the returned `id` and `revision`. One current record is retained per primary
+source and recipe. Identical input/output replay is a no-op (a changed generation
+timestamp alone is ignored). Different output for identical inputs conflicts. A
+new input replaces the current record only with `expected_revision` alongside
+`brief`; source changes during generation still cause refusal.
+
+Use these scoped commands inside the same `workspace_id` envelope:
+
+| Command | Result |
+| --- | --- |
+| `{"op":"get","id":"<id>"}` | Current structured record, or a content-free stale status. |
+| `{"op":"search","query":"capacity eviction","limit":8,"max_bytes":262144}` | Derived vocabulary matches, grouped by source and validated against current rows/dependencies. `max_bytes` is 1024–262144, including the CLI newline. |
+| `{"op":"export","id":"<id>"}` | Full retained record, including stale text explicitly labeled `eligible:false`. |
+| `{"op":"forget","id":"<id>","expected_revision":1}` | Remove retained text and queue search cleanup; explicit project memory is unaffected. |
+
+A source/dependency edit or deletion in Foundry's authoritative snapshot immediately
+excludes the old brief from search/context, even before search cleanup. Unindexed disk
+edits are not observed by this slice. CLI mutations attempt immediate derived cleanup;
+failed indexing leaves durable pending work for the ordinary drain/repair paths.
+`status` reports total pending work; brief search also reports `pending_briefs`.
+Exports/backups and data already delivered to callers are outside live-store forget.
+
+To use conceptual discovery with bounded evidence:
+
+```sh
+foundry --store STORE context 'capacity eviction' --include-briefs --tokens 4096
+```
+
+This augments anchorless queries, delivers the cited primary source, and includes
+`brief:` JSON labeled `kind:derived` only if that source and the optional orientation
+fit the same budget. Test/dependency handles can be recovered with `retrieve`.
+Exact-name context keeps its original path. A matching summary is not proof that an
+answer is true or that the evidence is complete. A selected `--task` and
+`--include-memory` may share this same allowance. MCP brief import/discovery flags,
+automatic generation and area rollups remain future work.
+
+Requests are capped at 256 KiB, claims/identifiers/unknowns at 16 KiB of text, and
+citations at 32 spans. Stored records are capped at 512 KiB including full dependency
+paths. Search refuses when its first matching record cannot fit the requested byte
+allowance; `get`/`export` by ID can recover a larger bounded record. No output is
+silently cut inside a claim.

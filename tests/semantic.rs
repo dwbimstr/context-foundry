@@ -2866,7 +2866,10 @@ fn a_v3_store_upgrades_to_v4_in_one_transaction_preserving_every_other_feature()
         &Control::unbounded(),
     )
     .unwrap();
-    assert_eq!(testkit::schema_marker(&store), "7");
+    assert_eq!(
+        testkit::schema_marker(&store),
+        context_foundry::SCHEMA_VERSION.to_string()
+    );
     let after = testkit::snapshot(&store);
     // The v3 steps ran for a v1/v2 store only: pending keys are not
     // re-prefixed and the memory counter is not reset.
@@ -2950,7 +2953,10 @@ fn a_v1_and_a_v2_store_upgrade_straight_to_v5_in_one_transaction() {
             &Control::unbounded(),
         )
         .unwrap();
-        assert_eq!(testkit::schema_marker(&store), "7");
+        assert_eq!(
+            testkit::schema_marker(&store),
+            context_foundry::SCHEMA_VERSION.to_string()
+        );
         let after = testkit::snapshot(&store);
         for table in [
             "sources",

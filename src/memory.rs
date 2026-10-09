@@ -126,25 +126,11 @@ pub enum MemoryRequest {
     Search(SearchInput),
 }
 
-/// One derived memory search candidate before live-row validation (the
-/// document's id and the revision it was indexed at).
-pub(crate) struct MemoryCandidate {
-    pub id: String,
-    pub revision: u64,
-}
-
-/// The derived memory candidates of one query, collected before the final
-/// read: whether the 256-document selection window filled, and the (id,
-/// indexed revision) pairs it produced.
-pub(crate) struct MemoryPlan {
-    pub window_full: bool,
-    pub candidates: Vec<MemoryCandidate>,
-}
-
 /// The combined context outcome (008): the source/graph batch plus the
 /// memory hits validated in the batch's own final read transaction.
 pub struct MemoryContext {
     pub task_view: Option<crate::task_context::ContextView>,
+    pub briefs: Vec<crate::brief::Record>,
     pub batch: crate::store::CandidateBatch,
     pub hits: Vec<MemoryHit>,
 }

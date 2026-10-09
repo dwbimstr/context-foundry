@@ -357,6 +357,7 @@ pub fn context_primary_with_options(
     let options = crate::store::ContextOptions {
         task: requested.task,
         memory: requested.memory,
+        briefs: requested.briefs,
         experimental_behavior: requested.experimental_behavior,
         #[cfg(feature = "semantic")]
         dense: match &plan {

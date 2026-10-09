@@ -136,7 +136,7 @@ operator limits and hysteresis. Unknown host signals remain unknown.
 | Order | Concrete increment | Owner/status |
 | --- | --- | --- |
 | A | Snapshot/compute/commit partition pipeline with bounded parallel CPU work and source-version refusal | 009 T006: implemented and tested in this sandbox increment; actual throughput gain unmeasured |
-| B | First source-bound structured brief: strict import/generation seam, lexical discovery, exact citations, stale/forget behavior | 010 T001: selected, not implemented |
+| B | First source-bound structured brief: strict import/generation seam, lexical discovery, exact citations, stale/forget behavior | 010 T001: explicit import, lexical discovery and lifecycle implemented/tested; generation remains T002 |
 | C | Event-driven incremental source refresh and idle maintenance within the admitted owner | 001 T011: selected, not implemented |
 | D | First useful semantic coverage before a full pass; amortized publication and device-batch tuning | 009 T007: selected, not implemented |
 | E | Governed model generation, area rollups, boundary joins and task-oriented evidence composition | 010 T002, 005 T005, 003 T009: selected, not implemented |

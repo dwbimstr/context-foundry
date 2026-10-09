@@ -263,7 +263,7 @@ fn cli_upgrade_and_repair_flows() {
         "1",
         "a refused upgrade changes nothing"
     );
-    ok(&store, &["upgrade-store", "--to", "7"]);
+    ok(&store, &["upgrade-store", "--to", "8"]);
     let status: serde_json::Value =
         serde_json::from_slice(&ok(&store, &["status"]).stdout).unwrap();
     assert_eq!(status["schema"], context_foundry::SCHEMA_VERSION);

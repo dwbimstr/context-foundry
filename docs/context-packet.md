@@ -13,9 +13,10 @@ what to clone, how to prove the setup reproduces the recorded results), follow
 **Experimental update, 2026-10-09:** the owner authorized local work on
 `experimental/context-ecosystem` without waiting on external measurements. Retrieval
 tracing, opt-in behavioral packing, task state/recovery/promotion and task-aware
-retrieval are committed. The next increment parallelizes semantic partition CPU work
-outside writer/serving locks and revises the architecture for 60,000–80,000 files.
-010 is reactivated for source-bound LLM briefs; watching, progressive bootstrap,
+retrieval are committed. Semantic partition CPU work now runs in bounded parallel
+waves outside writer/serving locks. Schema 8 adds 010 T001: explicit structured-brief
+import, exact citations, source-hash invalidation and opt-in anchorless lexical
+context. Automatic generation remains T002; watching, progressive bootstrap,
 boundary joins and task-evidence composition are selected but not implemented.
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
 [validation](validation.md). 013 remains frozen. No release or quality gain is claimed.

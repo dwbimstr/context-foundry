@@ -645,12 +645,13 @@ fn refusal_floor_impl(
 /// priority — counted in `shown` but never in `omitted`.
 fn pack(
     items: &[Vec<String>],
-    tail: &[String],
+    tail: (&[String], &[(usize, usize)]),
     header: &HeaderV2,
     budget: Budget,
     byte_cap: usize,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    let (tail, required) = tail;
     let render = |included: &[(usize, usize)],
                   tail_kept: &[usize],
                   omitted: usize,
@@ -721,6 +722,11 @@ fn pack(
     // a time; a line that does not fit is skipped, never traded for a source
     // item and never counted as omitted.
     for index in 0..tail.len() {
+        if required.iter().any(|&(tail_index, source_index)| {
+            tail_index == index && !included.iter().any(|&(i, _)| i == source_index)
+        }) {
+            continue;
+        }
         if !tail_kept.contains(&index) {
             let mut trial = tail_kept.clone();
             trial.push(index);
@@ -1012,6 +1018,59 @@ pub fn pack_task_context(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    let tail: Vec<String> = hits.iter().map(memory_line).collect();
+    pack_task_tail(batch, roots, (&tail, &[]), task_view, budget, boundary)
+}
+
+/// Source-first delivery with derived orientation in the same allowance.
+pub fn pack_enriched_context(
+    context: &crate::memory::MemoryContext,
+    roots: Option<&[RootHeader]>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let mut tail: Vec<String> = context
+        .briefs
+        .iter()
+        .map(|brief| serde_json::to_string(brief).map(|json| format!("brief: {json}\n")))
+        .collect::<Result<_, _>>()?;
+    let required: Vec<(usize, usize)> = context
+        .briefs
+        .iter()
+        .enumerate()
+        .map(|(i, brief)| {
+            let source = context
+                .batch
+                .items
+                .iter()
+                .position(|item| {
+                    item.handle
+                        .as_ref()
+                        .is_some_and(|handle| handle.to_v2() == brief.brief.cited_spans[0])
+                })
+                .unwrap_or(usize::MAX);
+            (i, source)
+        })
+        .collect();
+    tail.extend(context.hits.iter().map(memory_line));
+    pack_task_tail(
+        &context.batch,
+        roots,
+        (&tail, &required),
+        context.task_view.as_ref(),
+        budget,
+        boundary,
+    )
+}
+
+fn pack_task_tail(
+    batch: &CandidateBatch,
+    roots: Option<&[RootHeader]>,
+    tail: (&[String], &[(usize, usize)]),
+    task_view: Option<&crate::task_context::ContextView>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
     if let Some(task) = task_view {
         // Even the view alone cannot fit; no larger token allowance can
         // repair a byte refusal. Preserve the view and require an explicit edit.
@@ -1022,11 +1081,10 @@ pub fn pack_task_context(
             ));
         }
     }
-    let tail: Vec<String> = hits.iter().map(memory_line).collect();
-    pack_context_impl(
+    pack_context_guarded(
         batch,
         roots,
-        &tail,
+        tail,
         task_view.map(|v| v.line.as_str()),
         budget,
         boundary,
@@ -1074,8 +1132,19 @@ fn pack_context_impl(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    pack_context_guarded(batch, roots, (tail, &[]), task_view, budget, boundary)
+}
+
+fn pack_context_guarded(
+    batch: &CandidateBatch,
+    roots: Option<&[RootHeader]>,
+    tail: (&[String], &[(usize, usize)]),
+    task_view: Option<&str>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
     if batch.anchored() {
-        return pack_anchored(batch, roots, tail, task_view, budget, boundary);
+        return pack_anchored(batch, roots, tail.0, task_view, budget, boundary);
     }
     let items: Vec<Vec<String>> = batch.items.iter().map(ranked_forms).collect();
     let mut header = context_header(batch, roots, None, false);
@@ -1610,7 +1679,7 @@ fn pack_search_impl(
         doors: None,
         anchored: false,
     };
-    pack(&items, &[], &header, budget, BYTE_CAP, boundary)
+    pack(&items, (&[], &[]), &header, budget, BYTE_CAP, boundary)
 }
 
 /// 008 memory search: the v2 header exactly as `search` builds it (from the
@@ -1645,7 +1714,7 @@ pub fn pack_memory_search(
         doors: None,
         anchored: false,
     };
-    pack(&items, &[], &header, budget, BYTE_CAP, boundary)
+    pack(&items, (&[], &[]), &header, budget, BYTE_CAP, boundary)
 }
 
 /// One compact memory line (008): `mem:<id>@r<revision> <author>:
