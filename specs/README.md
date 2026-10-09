@@ -13,8 +13,11 @@ editing, selective intervention and durable knowledge. The owner authorized exec
 [001 T010](001-source-state-recovery/spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol)
 (mixed symbol/behavior retrieval), and
 [003 T006](003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
-(real-host outcomes and economics). They are in progress and retain their full acceptance gates. Later milestones
-require concrete amendments as their dependency gates pass; they do not
+(real-host outcomes and economics). They are in progress. The owner's subsequent
+instruction authorizes sandbox implementation without waiting for measurements or
+gates; 008 T003/T004 own experimental task state, recoverable working context, grounded
+reminders and explicit promotion; 003 T007 owns CLI/opt-in MCP delivery. Later
+milestones require concrete amendments as they enter implementation; they do not
 reactivate deferred specs or reopen accepted tasks. 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.
 

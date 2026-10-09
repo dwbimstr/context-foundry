@@ -2846,7 +2846,12 @@ fn a_v3_store_upgrades_to_v4_in_one_transaction_preserving_every_other_feature()
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap_err();
     fault::disarm_all();
     assert_eq!(testkit::schema_marker(&store), "3");
     assert_eq!(testkit::snapshot(&store), before);
@@ -2855,8 +2860,13 @@ fn a_v3_store_upgrades_to_v4_in_one_transaction_preserving_every_other_feature()
     assert_eq!(error.code(), "unsupported_mode");
     assert_eq!(testkit::snapshot(&store), before);
 
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap();
-    assert_eq!(testkit::schema_marker(&store), "6");
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
+    assert_eq!(testkit::schema_marker(&store), "7");
     let after = testkit::snapshot(&store);
     // The v3 steps ran for a v1/v2 store only: pending keys are not
     // re-prefixed and the memory counter is not reset.
@@ -2887,14 +2897,22 @@ fn a_v3_store_upgrades_to_v4_in_one_transaction_preserving_every_other_feature()
         assert!(after[table].is_empty(), "{table} starts empty");
     }
     // Re-running is a no-op, the store opens, and imports now work.
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
     assert_eq!(testkit::snapshot(&store), after);
     let engine = Engine::open_existing(&store).unwrap();
-    assert_eq!(engine.status().unwrap().schema, 6);
+    assert_eq!(
+        engine.status().unwrap().schema,
+        context_foundry::SCHEMA_VERSION
+    );
     assert!(engine.compiler_producers().unwrap().is_empty());
     drop(engine);
     // A newer-than-supported schema is refused by this reader and changes nothing.
-    testkit::set_meta(&store, "schema", Some("7"));
+    testkit::set_meta(&store, "schema", Some("999"));
     let frozen = testkit::snapshot(&store);
     assert_eq!(
         Engine::open_existing(&store).unwrap_err().code(),
@@ -2918,11 +2936,21 @@ fn a_v1_and_a_v2_store_upgrade_straight_to_v5_in_one_transaction() {
             0,
             Action::Fail("injected".into()),
         );
-        Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
+        Engine::upgrade_store(
+            &store,
+            context_foundry::SCHEMA_VERSION,
+            &Control::unbounded(),
+        )
+        .unwrap_err();
         fault::disarm_all();
         assert_eq!(testkit::snapshot(&store), before, "{name}: wholly old");
-        Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap();
-        assert_eq!(testkit::schema_marker(&store), "6");
+        Engine::upgrade_store(
+            &store,
+            context_foundry::SCHEMA_VERSION,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert_eq!(testkit::schema_marker(&store), "7");
         let after = testkit::snapshot(&store);
         for table in [
             "sources",

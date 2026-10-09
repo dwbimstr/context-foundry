@@ -182,6 +182,7 @@ pub(crate) struct Shared {
     /// `--no-memory`: the `memory` tool is absent from the catalog and
     /// `include_memory:true` is refused. Disabling never touches records.
     no_memory: bool,
+    experimental_task_context: bool,
     /// 009 T002: the owner's resident query runtime, or the named fallback
     /// word every request reports when it could not start. 009 T003: the
     /// same runtime embeds the preparation driver's document batches.
@@ -588,6 +589,7 @@ impl Shared {
             slot_hooks: SlotHooks::default(),
             shutdown: CancellationToken::new(),
             no_memory: false,
+            experimental_task_context: false,
             semantic: SemanticSlot::default(),
             #[cfg(feature = "semantic")]
             preparation: Arc::default(),
@@ -1369,6 +1371,9 @@ impl Clone for FoundryMcp {
 impl FoundryMcp {
     pub(crate) fn new(state: Arc<Shared>) -> Self {
         let mut tool_router = Self::tool_router();
+        if !state.experimental_task_context {
+            tool_router.remove_route("task_context");
+        }
         if state.no_memory {
             tool_router.remove_route("memory");
         }
@@ -2190,6 +2195,52 @@ impl FoundryMcp {
         // 013 T003: the policy state (no engine work).
         outcome["policy"] = self.state.policy.status();
         Ok(text_result(response::compact_json(&outcome)))
+    }
+
+    #[tool(
+        name = "task_context",
+        description = "Experimental task state and recoverable views. Explicit scoped JSON commands; export uses CLI.",
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["workspace_id","task_id","command"],"properties":{"workspace_id":{"type":"string"},"task_id":{"type":"string"},"command":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["create","apply","inspect","peek","render","forget","advise","promote"]},"title":{"type":"string"},"expected_revision":{"type":"integer","minimum":0},"edits":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["add","select","pin","fold","expand","checkpoint","restore","dismiss"]},"entry":{"type":"object","additionalProperties":false,"required":["id","kind","text","author","provenance","source_links"],"properties":{"id":{"type":"string"},"kind":{"enum":["requirement","constraint","observation","hypothesis","decision","rejected_attempt","question","work","artifact"]},"text":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"source_links":{"type":"array","items":{"type":"string"}},"supersedes":{"type":["string","null"]},"action_key":{"type":["string","null"]}}},"entry_id":{"type":"string"},"selected":{"type":"boolean"},"pinned":{"type":"boolean"},"summary":{"type":"string"},"name":{"type":"string"}}},"minItems":1,"maxItems":32},"entry_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"bytes":{"type":"integer","minimum":4,"maximum":65536},"max_bytes":{"type":"integer","minimum":256,"maximum":1048576},"action_key":{"type":"string"},"memory_id":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"}}}}}"#),
+        annotations(read_only_hint = false, open_world_hint = false)
+    )]
+    async fn task_context(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        arguments: JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = match crate::task_context::parse(serde_json::Value::Object(arguments)) {
+            Ok(request) => request,
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        if self.state.no_memory
+            && matches!(
+                request.command,
+                crate::task_context::Command::Promote { .. }
+            )
+        {
+            return Ok(foundry_error_result(&FoundryError::UnsupportedMode(
+                "project memory is disabled on this owner".into(),
+            )));
+        }
+        if matches!(request.command, crate::task_context::Command::Export {}) {
+            return Ok(foundry_error_result(&FoundryError::UnsupportedMode(
+                "task export uses CLI".into(),
+            )));
+        }
+        let read = matches!(
+            request.command,
+            crate::task_context::Command::Advise { .. }
+                | crate::task_context::Command::Inspect {}
+                | crate::task_context::Command::Peek { .. }
+                | crate::task_context::Command::Render { .. }
+        );
+        Ok(self
+            .memory_op(&ctx, read, move |engine, control| {
+                let result = engine.task_context(&request, control)?;
+                engine.drain_task_memory(&result);
+                Ok(result)
+            })
+            .await)
     }
 
     #[tool(
@@ -3226,6 +3277,8 @@ pub struct ServerOptions {
     pub budget: BudgetConfig,
     /// Omit the `memory` tool and refuse `include_memory` (008); records stay.
     pub no_memory: bool,
+    /// Enable the experimental, explicitly scoped task-context tool.
+    pub experimental_task_context: bool,
     /// 009 T002: the semantic profile this owner serves, if any. `None`
     /// keeps every response byte-identical to a build without semantics.
     pub semantic: Option<SemanticServing>,
@@ -3402,6 +3455,7 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         slot_hooks: SlotHooks::default(),
         shutdown,
         no_memory: options.no_memory,
+        experimental_task_context: options.experimental_task_context,
         semantic,
         #[cfg(feature = "semantic")]
         preparation: Arc::default(),
@@ -5131,6 +5185,7 @@ mod tests {
                     root,
                     references: Vec::new(),
                     no_memory: false,
+                    experimental_task_context: false,
                     semantic: Some(semantic),
                     policy: None,
                     budget: BudgetConfig::default(),

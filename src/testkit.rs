@@ -129,7 +129,7 @@ pub fn quarantine_dirs(store: &Path) -> Vec<std::path::PathBuf> {
 pub type Snapshot = BTreeMap<&'static str, Vec<(String, String)>>;
 
 /// Tables whose rows are authoritative knowledge (not scan/pending/meta bookkeeping).
-pub const KNOWLEDGE_TABLES: [&str; 14] = [
+pub const KNOWLEDGE_TABLES: [&str; 15] = [
     "sources",
     "chunks",
     "feedback",
@@ -137,6 +137,7 @@ pub const KNOWLEDGE_TABLES: [&str; 14] = [
     "edges_out",
     "edges_in",
     "memory",
+    "task_context",
     "compiler_producers",
     "compiler_scopes",
     "compiler_occurrences",
@@ -146,7 +147,7 @@ pub const KNOWLEDGE_TABLES: [&str; 14] = [
     "learning_datasets",
 ];
 
-const TABLES: [&str; 18] = [
+const TABLES: [&str; 19] = [
     "sources",
     "chunks",
     "pending_index",
@@ -156,6 +157,7 @@ const TABLES: [&str; 18] = [
     "provider_bundles",
     "edges_out",
     "memory",
+    "task_context",
     "compiler_producers",
     "compiler_scopes",
     "compiler_occurrences",

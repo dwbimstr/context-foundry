@@ -32,7 +32,7 @@ pub(crate) const META: TableDefinition<&str, &str> = TableDefinition::new("meta"
 pub(crate) const SEEN: TableDefinition<&str, &str> = TableDefinition::new("scan_seen");
 pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("feedback");
 
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
 /// Refresh builds a page's search documents on at most this many threads,
@@ -3152,6 +3152,7 @@ fn initialize_tables(tx: &WriteTransaction) -> FResult<()> {
     tx.open_table(CHUNKS)?;
     tx.open_table(PENDING)?;
     tx.open_table(MEMORY)?;
+    tx.open_table(crate::task_context::TASKS)?;
     tx.open_table(FEEDBACK)?;
     tx.open_table(SEEN)?;
     crate::graph::init(tx)?;
@@ -3216,6 +3217,7 @@ impl Engine {
             meta.insert("scan_id", "0")?;
             meta.insert("scan_status", "never")?;
             meta.insert("memory_revision", "0")?;
+            meta.insert("task_revision", "0")?;
             meta.insert("search_schema", SEARCH_SCHEMA)?;
             let root_str = root.to_str().ok_or_else(|| {
                 FoundryError::InvalidArgument("workspace path is not UTF-8".into())
@@ -3288,12 +3290,12 @@ impl Engine {
                 ));
             };
             match version.value() {
-                "1" | "2" | "3" | "4" | "5" => {
+                "1" | "2" | "3" | "4" | "5" | "6" => {
                     return Err(FoundryError::UpgradeRequired {
                         found: version.value().to_owned(),
                     });
                 }
-                "6" => 6u32,
+                "7" => 7u32,
                 other => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: other.to_owned(),
@@ -3301,8 +3303,8 @@ impl Engine {
                 }
             }
         };
-        // Confirm the schema-6 tables exist; missing authoritative tables in
-        // a schema-6 store are corruption, not something an open recreates.
+        // Confirm the schema-7 tables exist; missing authoritative tables in
+        // a schema-7 store are corruption, not something an open recreates.
         {
             let tx = db.begin_read()?;
             tx.open_table(SEEN).map_err(|e| {
@@ -3316,6 +3318,9 @@ impl Engine {
                 .map_err(|e| FoundryError::CorruptStore(format!("pending table: {e}")))?;
             tx.open_table(MEMORY)
                 .map_err(|e| FoundryError::CorruptStore(format!("memory table: {e}")))?;
+            tx.open_table(crate::task_context::TASKS)
+                .map_err(|e| FoundryError::CorruptStore(format!("task_context table: {e}")))?;
+            read_counter(&tx.open_table(META)?, "task_revision")?;
             crate::graph::check_compiler_tables(&tx)?;
             crate::neural::cache::check_tables(&db)?;
             crate::learning::check_tables(&db)?;
@@ -3376,20 +3381,11 @@ impl Engine {
         }
     }
 
-    /// Explicit v1..=v5 -> v6 transaction under exclusive ownership. A
-    /// v1 store first receives the v2 steps, a v1|v2 store the v3 steps, a
-    /// v1|v2|v3 store the v4 steps, a v1..=v4 store the v5 steps, then every
-    /// store the v6 steps; all run in ONE write transaction. The v3 steps create the memory table and
-    /// its never-reset revision counter and migrate every pending key to the
-    /// typed form (`source:<path>`); the v4 steps (005) create the empty
-    /// compiler-fact tables; the v5 steps (009) create the empty semantic
-    /// tables (partitions, vector cache, state); the v6 steps (013) create
-    /// the empty learning tables (v4 feedback rows, group history, published
-    /// dataset lineage). `schema
-    /// = "6"` is published last. Every earlier table, legacy feedback
-    /// included, is preserved, so an interrupted upgrade leaves the store
-    /// wholly old or wholly v6. Only the current version is
-    /// a target; this is a clean cutover.
+    /// Explicit v1..=v6 -> v7 transaction under exclusive ownership. The
+    /// cumulative steps preserve source, memory, graph, semantic and learning
+    /// data. Version 7 adds task_context and its never-reset task_revision.
+    /// Publish the schema last; interrupted upgrades remain wholly old or new.
+    /// Only the current version is a target. Older readers must refuse it.
     pub fn upgrade_store(store_dir: &Path, to: u32, control: &crate::Control) -> FResult<()> {
         if to != SCHEMA_VERSION {
             return Err(FoundryError::UnsupportedMode(format!(
@@ -3411,12 +3407,13 @@ impl Engine {
                         "store has no schema marker".into(),
                     ));
                 }
-                Some(v) if v.value() == "6" => return Ok(()), // already upgraded
+                Some(v) if v.value() == "7" => return Ok(()), // already upgraded
                 Some(v) if v.value() == "1" => 1u32,
                 Some(v) if v.value() == "2" => 2u32,
                 Some(v) if v.value() == "3" => 3u32,
                 Some(v) if v.value() == "4" => 4u32,
                 Some(v) if v.value() == "5" => 5u32,
+                Some(v) if v.value() == "6" => 6u32,
                 Some(v) => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: v.value().to_owned(),
@@ -3486,6 +3483,10 @@ impl Engine {
             // prepare`.
             if from < 6 {
                 crate::learning::init_tables(&tx)?;
+            }
+            if from < 7 {
+                tx.open_table(crate::task_context::TASKS)?;
+                meta.insert("task_revision", "0")?;
             }
             // Publish the schema last inside the same transaction.
             meta.insert("schema", SCHEMA_VERSION.to_string().as_str())?;

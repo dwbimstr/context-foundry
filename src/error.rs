@@ -246,7 +246,10 @@ impl FoundryError {
                 format!("unsupported store schema {found}; no automatic upgrade")
             }
             Self::UpgradeRequired { found } => {
-                format!("store schema {found} requires an explicit upgrade-store --to 6")
+                format!(
+                    "store schema {found} requires an explicit upgrade-store --to {}",
+                    crate::SCHEMA_VERSION
+                )
             }
             Self::CorruptStore(m) => format!("authoritative store data is corrupt: {m}"),
             Self::RepairRequired(m) => format!("derived search index needs explicit repair: {m}"),

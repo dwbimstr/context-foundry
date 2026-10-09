@@ -1,5 +1,12 @@
 # Architecture
 
+Experimental branch update (2026-10-09): schema 7 adds one bounded `task_context`
+record table and a monotonic revision counter in the existing redb owner. Explicit
+CLI/opt-in MCP operations retain task evidence, edit reversible views, advise on exact
+repeated failures and promote selected decisions into ordinary project memory. No
+worker, model call, source-index owner or host-conversation rewrite is added. See the
+[experimental workflow](experimental-context.md) and 008 T003/T004 / 003 T007.
+
 Status reconciled 2026-10-09: the [spec portfolio](../specs/README.md) and
 [validation](validation.md) record implemented/accepted 001, 003, 005, 007 and 008
 work and 009's development acceptance. Gemma is the selected semantic profile;
@@ -13,8 +20,9 @@ The [context ecosystem plan](context-ecosystem-plan.md) proposes retrieval repai
 first, followed by task state, reversible working context and memory lifecycle work.
 The owner activated the first retrieval tranche on 2026-10-09. Bounded diagnostic
 capture and experimental behavioral packing are implemented locally, with the
-candidate default off and full measurement gates pending. Task-state, working-view
-and later memory milestones remain future capabilities.
+candidate default off and quality measurements pending. The experimental branch also
+implements task-state, reversible views, exact-failure reminders and explicit decision
+promotion; applied host control and broader intervention policies remain future work.
 
 The [spec portfolio](../specs/README.md) now owns planned capability sequencing;
 the [constitution](../.specify/memory/constitution.md) owns evidence policy. Sections

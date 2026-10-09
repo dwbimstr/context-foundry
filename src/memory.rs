@@ -1,7 +1,8 @@
 //! 008 explicit project memory: attributed records the caller creates,
-//! corrects, retrieves, exports and forgets. No automatic ingestion, no
-//! transcripts, no model reads or writes; every record comes from an explicit
-//! `put`/`update` and dies only by an explicit `forget`.
+//! corrects, retrieves, exports and forgets. No automatic ingestion or
+//! transcript capture. Records come from explicit `put`/`update` or experimental
+//! task-decision promotion, and die by explicit forget (including task cascades).
+//! Model workers never read or write this table.
 //!
 //! One `memory` table lives in the authoritative store beside sources. The
 //! row, the store-owned revision counter and a typed pending-index key
@@ -487,7 +488,7 @@ impl Engine {
     /// `replace_source`: the parser may have checked, but the engine never
     /// trusts its callers. An id outside `[A-Za-z0-9_-]{1,128}` could forge
     /// wire lines or collide with source search keys, so it is refused here.
-    fn validate_record_fields(fields: &RecordFields) -> FResult<()> {
+    pub(crate) fn validate_record_fields(fields: &RecordFields) -> FResult<()> {
         let valid_id = !fields.id.is_empty()
             && fields.id.len() <= MAX_ID_BYTES
             && fields

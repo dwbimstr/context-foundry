@@ -785,3 +785,28 @@ version and provider in the next live run. No third-party code is vendored.
   fixtures alone cannot establish native adoption. Keep raw sessions private and
   publish aggregate counts, apparatus identities and limitations in validation.
   This plan itself performs no paid host runs or global host configuration changes.
+
+### T007 — Experimental task-context delivery
+
+Status: implemented locally through CLI and the real SDK MCP client; applied-host
+view replacement and measured task outcomes remain pending.
+
+Authorized 2026-10-09 on the experimental branch; measurements do not block sandbox
+implementation. 008 T003/T004 own durable state and mutations. This task exposes the
+same scoped commands through CLI `task-context` and opt-in MCP
+`--experimental-task-context` / `task_context`. Default catalogs remain unchanged.
+The primary admitted root alone owns task state; no session text admits another root.
+The explicit workspace/task IDs are scope, not per-agent authentication or ACLs.
+
+Requests use `{workspace_id,task_id,command:{op,...}}`. MCP retains its 64 KiB frame
+and 256 KiB result envelope limits; large observation ingestion and exact task export
+use CLI (1 MiB request, 2 MiB stored record). A rendered view's `max_bytes` limits the
+compact JSON payload plus newline; MCP additionally checks its final result envelope.
+No operation here replaces a host conversation, restructures tool calls/results or
+controls provider input. `host_application:"unknown"` remains explicit. A future host
+hook must acknowledge an actual final serialized revision/digest and prove protected
+instruction/tool linkage separately. Until then, the rendered view is a tool result.
+
+Verify with the real SDK client and separate CLI processes: discoverable opt-in
+schema, unknown-field refusal, scoped create/apply/peek/render/advise/promote/forget,
+restart recovery and bounded output. Host outcome and cost comparisons remain pending.

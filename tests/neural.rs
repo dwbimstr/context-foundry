@@ -1086,7 +1086,12 @@ fn schema_5_upgrade_from_v4_preserves_every_table_atomically() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap_err();
     fault::disarm_all();
     assert_eq!(testkit::snapshot(&store), before);
     // The previous version is no longer a target.
@@ -1098,9 +1103,14 @@ fn schema_5_upgrade_from_v4_preserves_every_table_atomically() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap_err();
     fault::disarm_all();
-    assert_eq!(testkit::schema_marker(&store), "6");
+    assert_eq!(testkit::schema_marker(&store), "7");
     let after = testkit::snapshot(&store);
     for table in [
         "sources",
@@ -1184,13 +1194,23 @@ fn schema_6_upgrade_from_v5_preserves_every_table_and_the_vector_cache() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&env.store, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(
+        &env.store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap_err();
     fault::disarm_all();
     assert_eq!(testkit::snapshot(&env.store), before);
     assert_eq!(testkit::semantic_cache_rows(&env.store), cache_before);
     assert_eq!(testkit::schema_marker(&env.store), "5");
-    Engine::upgrade_store(&env.store, 6, &Control::unbounded()).unwrap();
-    assert_eq!(testkit::schema_marker(&env.store), "6");
+    Engine::upgrade_store(
+        &env.store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
+    assert_eq!(testkit::schema_marker(&env.store), "7");
     let after = testkit::snapshot(&env.store);
     for (table, rows) in &before {
         let (mut left, mut right) = (after[table].clone(), rows.clone());

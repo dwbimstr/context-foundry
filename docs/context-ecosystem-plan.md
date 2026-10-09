@@ -5,8 +5,10 @@ and measurement discipline through task state, working context and durable memor
 The owner authorized execution on 2026-10-09 (“go for 1 then 2 and onwards”).
 This sequence is not implementation or acceptance evidence.
 The numbered specs own behavior and tasks; this document owns their cross-spec order.
-The first three tasks are **active, in progress**. Later milestones enter implementation
-after their dependency gates; their concrete contracts are refined in the owning specs. Existing acceptance, signing and
+The first three tasks are **active, in progress**. The owner's subsequent instruction
+authorizes experimental sandbox implementation of later milestones without waiting
+for measurements or gates. Their concrete contracts are refined in the owning specs.
+Existing acceptance, signing and
 release requirements remain in force; 013 remains frozen off.
 
 The product objective is **verified task completion with faithful evidence and user
@@ -18,8 +20,9 @@ establish success.
 Execution update: [2026-10-09 validation](validation.md#retrieval-execution--2026-10-09-partial-milestone)
 records implemented bounded traces and an opt-in mixed-intent packing candidate,
 with unchanged defaults. The preserved G1/G2/Gemma apparatus and live host runs are
-still needed before quality acceptance and later milestone entry. Host inspection
-and the matched-run procedure are prepared in 003 T006.
+still needed before quality acceptance, but do not block experimental implementation. Host inspection
+and the matched-run procedure are prepared in 003 T006. The sandbox implementation
+now also exposes [task state, reversible views, reminders and explicit promotion](experimental-context.md). These are local capabilities, not measured host outcomes.
 
 ## Starting evidence
 
@@ -44,18 +47,18 @@ and what causes the 249 anchorless misses, remain measurement questions.
 | --- | --- | --- | --- |
 | 1. Retrieve the required evidence | Behavioral and mixed symbol/behavior questions return useful implementation evidence within the requested budget. | [009 T005](../specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval) diagnoses and repairs anchorless retrieval; [001 T010](../specs/001-source-state-recovery/spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol) repairs mixed intent. | Stage-attributed losses, paired improvement over current Gemma on fresh held-out cases, preserved source/budget invariants and G1 guards. |
 | 2. Improve actual coding tasks | Agents reach the right evidence and a verified patch with fewer unnecessary discovery steps. | [003 T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks) tests current versus repaired retrieval at the real host boundary. | Verified task outcomes, full-task usage and latency, visible failures, and an inspected host capability boundary for the next milestone. |
-| 3. Preserve task state and observations | A restart retains the user constraint, rejected approach, unresolved question and supporting observation. | Proposed amendments to 003 for session/host state and 008 for explicitly scoped retained records; 001 continues to own source identity. | Atomic updates, conflict handling, bounded opt-in capture, exact retained-observation recovery, and no inferred root admission or training permission. |
-| 4. Edit and recover working context | The agent can fold a large observation, keep the task coherent, and recover exact details before acting. | Proposed 003 working-view contract using 001 evidence identities and milestone 3 records. | A real host applies an identified view revision; round-trip recovery, valid tool linkage, interrupted-commit/restart behavior and measured task economics pass. |
-| 5. Reactivate memory when it helps | Relevant constraints and failed attempts influence the next action without constant reminders. | Proposed 003/008 selective-intervention amendment; deterministic triggers first. | Fewer repeated failures and missed obligations than passive memory on held-out tasks, with acceptable total cost and a measured unnecessary-intervention rate. |
-| 6. Grow reliable durable knowledge | Useful decisions survive across tasks, corrections supersede stale beliefs, and forgetting reaches retained derivatives. | Proposed 008 promotion/lifecycle amendment. Re-enter deferred 010 only for a selected source-derived feature that needs it. | Capture/update/retrieve/use evaluated separately; scope, contradiction, export and forget behavior verified through the same lifecycle suite. |
+| 3. Preserve task state and observations | A restart retains the user constraint, rejected approach, unresolved question and supporting observation. | Experimental 003 T007 delivery and 008 T003 explicitly scoped retained records; 001 continues to own source identity. | Atomic updates, conflict handling, bounded opt-in capture, exact retained-observation recovery, and no inferred root admission or training permission. |
+| 4. Edit and recover working context | The agent can fold a large observation, keep the task coherent, and recover exact details before acting. | Experimental 003 T007 / 008 T003 reversible views using source identities and milestone 3 records. | A real host applies an identified view revision; round-trip recovery, valid tool linkage, interrupted-commit/restart behavior and measured task economics pass. |
+| 5. Reactivate memory when it helps | Relevant constraints and failed attempts influence the next action without constant reminders. | Experimental 008 T004 exact-failure reminders; broader triggers remain proposed. | Fewer repeated failures and missed obligations than passive memory on held-out tasks, with acceptable total cost and a measured unnecessary-intervention rate. |
+| 6. Grow reliable durable knowledge | Useful decisions survive across tasks, corrections supersede stale beliefs, and forgetting reaches retained derivatives. | Experimental 008 T004 explicit decision promotion and tracked-copy forgetting. Re-enter deferred 010 only for a selected source-derived feature that needs it. | Capture/update/retrieve/use evaluated separately; scope, contradiction, export and forget behavior verified through the same lifecycle suite. |
 
 Milestone 1's diagnostic checkpoint unlocks its two repairs; they need not wait for
 each other. Milestone 2 evaluates their combined benefit. Host capability inspection
 and lifecycle fixture design can proceed during retrieval work, but implementing
 task-state/context mutation waits for their concrete contracts. Moving on requires a
-useful accepted retrieval increment, not an unsupported promise to eliminate every
-G2 miss. A failed gate leads to a bounded repair or a documented stop, not automatic
-addition of another model.
+useful retrieval increment for the experimental branch; external measurement gates
+do not block building and testing the later stages in the sandbox. Unexecuted quality
+checks remain pending and never imply default promotion or release acceptance.
 
 ## First execution tranche
 
@@ -116,9 +119,9 @@ or unresolved conflict; a later model assertion does not silently replace eviden
 Separate session work from durable project knowledge. A model's “done” is a claim;
 task completion still needs the task's external oracle.
 
-The present 008 contract excludes transcript harvesting and model-written records.
-Amend it before adding either. Capture is scoped, opt-in and bounded by retention and
-size; retrieval consent never implies training consent. Persist an observation before
+008 T003/T004 now authorize explicit caller-written task state and selected decision
+promotion; automatic transcript harvesting remains excluded. Capture is scoped, opt-in
+and bounded by retention and size; retrieval consent never implies training consent. Persist an observation before
 removing its only working copy. Exact recovery is promised only while the payload is
 retained; deletion and expiry must invalidate references honestly. Reuse the existing
 transactional owner and storage unless the selected workflow demonstrates a concrete

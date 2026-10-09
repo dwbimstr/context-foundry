@@ -1,5 +1,63 @@
 # Validation
 
+## Experimental context ecosystem — 2026-10-09
+
+The owner explicitly selected an experimental Git branch, local commits and sandbox
+building/testing without waiting for external measurements. Work is on
+`experimental/context-ecosystem`; the retrieval increment is committed as `556b434`.
+This instruction supersedes the later-milestone implementation stop in the earlier
+retrieval record below. No release, default promotion or publication is claimed.
+
+[008 T003/T004](../specs/008-scoped-durable-memory/spec.md) and
+[003 T007](../specs/003-agent-retrieval-context/spec.md) are implemented experimentally
+in [task_context.rs](../src/task_context.rs), the existing store and CLI/MCP owners:
+
+- Typed task records retain immutable observations and attributed constraints,
+  requirements, hypotheses, decisions, failed attempts, questions, work and artifacts.
+  Updates compare revisions and commit complete batches atomically.
+- Selection, pinning, folding, expansion, checkpoints and restoration edit a working
+  view. Protected constraints remain visible; old views cannot revive superseded
+  constraints. UTF-8 peeks recover exact original bytes and hashes after restart.
+- Exact failed-action matching produces grounded advice or explicit silence within a
+  byte budget. Explicit dismissal survives restart. There is no automatic polling,
+  semantic constraint detector, auxiliary model call or claimed host consumption.
+- Explicit decision promotion atomically writes ordinary project memory, its replay
+  key and task lineage. Forget removes unchanged retained copies and invalidates
+  stale search hits; independently edited copies cause an atomic conflict. Deleted
+  promotion IDs cannot be reassigned within the same task's lineage.
+- Schema 7 adds one table and one revision counter to the existing redb owner. Earlier
+  schemas require explicit upgrade; current-schema corruption is never auto-repaired.
+  The preserved schema-6 baseline binary was run against a disposable schema-7 store
+  and refused with `unsupported_schema` (exit 2). The repository's existing store was
+  not upgraded. Old-binary rollback requires a pre-upgrade closed-store backup.
+- CLI `task-context` and MCP `--experimental-task-context` share engine operations.
+  The default catalog is unchanged. MCP retains its existing frame/result bounds;
+  large observations and exact exports use CLI. See the
+  [usage guide](experimental-context.md) for request shapes and limits.
+
+Verification on Linux, Rust/Cargo 1.90.0, with synthetic fixtures:
+
+- The broad `cargo test --locked --no-fail-fast` run executed 830 ordinary tests:
+  829 passed, one obsolete schema-6 assertion failed, two measurements were ignored.
+  The separate recovery runner exposed a second obsolete schema-6 assertion. Both
+  assertions were updated to the current schema without weakening their preservation
+  checks. All other suites passed in that run.
+- On the final implementation after the lineage-reuse repair,
+  `cargo test --locked --test task_context --test memory --test recovery` passed:
+  **19 task-context tests, 29 memory tests, and every recovery-runner scenario**.
+  This includes real CLI process restarts, a real SDK MCP client, simultaneous MCP
+  edits, stale-source refusal, protected entries, UTF-8 paging, exact export,
+  capacity/refusal behavior, and real abrupt exits before/after apply, promotion and
+  cascading-forget commits. One interaction-only observation is absent from the
+  repository and still recovered exactly after folding and restart.
+- `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, and
+  `cargo check --locked --no-default-features --lib --bin foundry` pass. Local Markdown
+  targets and `git diff --check` are checked before commit.
+- The checks are self-review and executable sandbox evidence. No model solved a live
+  coding task using this working view. Applied host replacement, provider economics,
+  held-out retrieval benefit and broad intervention quality remain unmeasured. They
+  remain future acceptance evidence, not blockers to experimental implementation.
+
 ## Retrieval execution — 2026-10-09 (partial milestone)
 
 The owner authorized the ecosystem sequence (“go for 1 then 2 and onwards”).

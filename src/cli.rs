@@ -184,6 +184,8 @@ enum Command {
         #[command(subcommand)]
         action: SemanticAction,
     },
+    /// Experimental task state: one scoped JSON request on stdin.
+    TaskContext,
     /// 008 explicit project memory: put, update, get, forget, search, export.
     Memory {
         #[command(subcommand)]
@@ -651,6 +653,34 @@ fn run() -> AResult<()> {
         Command::Semantic { action } => semantic_run(&cli.store, action, semantic_started)?,
         Command::Adapter(command) => crate::adapter_cli::run(command, cli.store, store_explicit)?,
         Command::Memory { action } => memory_run(&cli.store, action)?,
+        Command::TaskContext => {
+            let mut bytes = Vec::new();
+            io::stdin()
+                .lock()
+                .take(crate::task_context::MAX_REQUEST_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > crate::task_context::MAX_REQUEST_BYTES {
+                return Err(
+                    FoundryError::InvalidArgument("task request exceeds 1 MiB".into()).into(),
+                );
+            }
+            let value = serde_json::from_slice(&bytes).map_err(|_| {
+                FoundryError::InvalidArgument("expected one task JSON request".into())
+            })?;
+            let request = crate::task_context::parse(value)?;
+            let mut engine = if matches!(
+                request.command,
+                crate::task_context::Command::Promote { .. }
+                    | crate::task_context::Command::Forget { .. }
+            ) {
+                Engine::open_existing(&cli.store)?
+            } else {
+                Engine::open_authoritative(&cli.store)?
+            };
+            let result = engine.task_context(&request, &live_control())?;
+            engine.drain_task_memory(&result);
+            println!("{}", serde_json::to_string(&result)?);
+        }
         Command::Index { root } => {
             let control = live_control();
             let mut engine = open_or_initialize(&cli.store, &root)?;

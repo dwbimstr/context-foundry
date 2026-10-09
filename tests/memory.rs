@@ -682,7 +682,12 @@ fn v2_upgrade_preserves_rows_migrates_pending_keys_and_is_all_or_nothing() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap_err();
     fault::disarm_all();
     assert_eq!(testkit::schema_marker(&store), "2");
     assert_eq!(testkit::snapshot(&store), before);
@@ -702,9 +707,14 @@ fn v2_upgrade_preserves_rows_migrates_pending_keys_and_is_all_or_nothing() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap_err();
     fault::disarm_all();
-    assert_eq!(testkit::schema_marker(&store), "6");
+    assert_eq!(testkit::schema_marker(&store), "7");
     let after = testkit::snapshot(&store);
     for table in [
         "sources",
@@ -752,11 +762,11 @@ fn v2_upgrade_preserves_rows_migrates_pending_keys_and_is_all_or_nothing() {
         testkit::meta_value(&store, "memory_revision").as_deref(),
         Some("0")
     );
-    // Re-running the upgrade is a no-op; the status reports schema 6.
-    ok(run(&store, &["upgrade-store", "--to", "6"], None));
+    // Re-running the upgrade is a no-op; status reports the current schema.
+    ok(run(&store, &["upgrade-store", "--to", "7"], None));
     assert_eq!(
         stdout_json(&ok(run(&store, &["status"], None)))["schema"],
-        6
+        context_foundry::SCHEMA_VERSION
     );
 }
 

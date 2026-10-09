@@ -25,6 +25,9 @@ pub enum AdapterCommand {
         /// Test behavioral support packing; default off pending retrieval/host gates.
         #[arg(long)]
         experimental_behavior_context: bool,
+        /// Enable explicit experimental task state and reversible views.
+        #[arg(long)]
+        experimental_task_context: bool,
         /// Repository root; canonicalized and bound once.
         #[arg(long)]
         root: PathBuf,
@@ -221,6 +224,7 @@ fn serve_mcp(
     policy: Option<crate::policy::PolicyServing>,
     retrieval_trace_dir: Option<PathBuf>,
     experimental_behavior_context: bool,
+    experimental_task_context: bool,
 ) -> AResult<()> {
     let budget = read_budget(budget.as_deref())?;
     let mut parsed = Vec::with_capacity(references.len());
@@ -238,6 +242,7 @@ fn serve_mcp(
         policy,
         retrieval_trace_dir,
         experimental_behavior_context,
+        experimental_task_context,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -324,6 +329,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
         AdapterCommand::Mcp {
             retrieval_trace_dir,
             experimental_behavior_context,
+            experimental_task_context,
             root,
             transport,
             bind,
@@ -352,6 +358,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                 .map(|config| crate::policy::PolicyServing::new(config, development_isolation)),
             retrieval_trace_dir,
             experimental_behavior_context,
+            experimental_task_context,
         )?,
         AdapterCommand::Bootstrap {
             root,

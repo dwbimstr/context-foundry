@@ -52,6 +52,7 @@ pub mod roots;
 pub mod scip;
 pub mod store;
 pub mod syntax;
+pub mod task_context;
 #[cfg(feature = "test-faults")]
 pub mod testkit;
 pub mod usage;
