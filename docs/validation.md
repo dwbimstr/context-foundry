@@ -1,5 +1,31 @@
 # Validation
 
+## Efficiency and incremental-maintenance audit — 2026-10-09
+
+Inspected `62c6c97` on `experimental/context-ecosystem`: ingestion/storage, lexical
+and semantic CPU work, profiles, worker acquisition/geometry, cache commits,
+preparation scheduling, USearch publication, status, watching and brief lifecycle.
+The [audit and model-window sources](context-ecosystem-plan.md#efficiency-audit-after-progressive-bootstrap--2026-10-09)
+separate implemented reuse from pending work. Publisher metadata was read for the
+pinned EmbeddingGemma 2 and Nemotron revisions and official Mistral/Codestral/Gemini
+contracts. No model weights, repository uploads or provider inference were involved.
+
+Findings: exact-input embedding reuse already works; discovery still walks source
+metadata, stopped preparation does not wake on watcher edits, publication rebuilds
+the complete ANN generation, status performs broad validation/censuses, and briefs
+are imported rather than automatically regenerated. Cold ingestion and preparation
+retain serial/repeated work. Current 128-token cards omit multiline implementation
+bodies; the worker's 2,048-token total geometry is narrower than the selected model's
+advertised 8,192-token input window. These are code/contract findings, not a profile
+attributing elapsed time or a demonstration of long-context quality.
+
+The revised plan selects existing 001/009 CPU/startup follow-ups, new 009 T008/T009
+tasks within the existing spec, and dependency-driven 010 generation afterward.
+Runtime behavior is unchanged by this documentation revision. Documentation
+consistency, Markdown links/anchors and whitespace are checked; no additional Rust
+tests or performance runs are warranted for this change. Prior executed evidence
+below remains scoped to the implementation that produced it.
+
 ## Progressive semantic bootstrap — 2026-10-09
 
 [009 T007](../specs/009-optional-semantic-retrieval/spec.md#t007--make-semantic-bootstrap-useful-before-a-complete-corpus-pass)
@@ -53,8 +79,10 @@ not device profiling. Full USearch generation builds and status coverage censuse
 still scale with prepared/source metadata respectively. Device tuning, CPU pool
 reuse, host-pressure admission and 80,000-file performance remain unverified.
 Self-review only; no release, model download, external provider or deployment ran.
-The next selected build increment is governed generation/area knowledge (010 T002),
-followed by boundary joins and task evidence composition.
+At this checkpoint the next selected increment was generation/area knowledge
+(010 T002). The later efficiency audit above puts CPU/startup reuse, changed-work
+maintenance, vector deltas and model-aware inputs before that work. Boundary joins
+and task evidence composition remain selected.
 
 ## Incremental primary-root watching — 2026-10-09
 

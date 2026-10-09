@@ -18,8 +18,13 @@ waves outside writer/serving locks. Schema 8 adds 010 T001: explicit structured-
 import, exact citations, source-hash invalidation and opt-in anchorless lexical
 context. Opt-in `mcp --watch` now maintains the admitted primary root through native
 events, bounded reconciliation and the existing source/index owner (001 T011).
-Automatic generation remains T002; progressive semantic bootstrap, boundary joins
-and task-evidence composition are selected but not implemented.
+Progressive semantic bootstrap (009 T007) is committed at `62c6c97`: priority scopes,
+bounded waves and geometric publication make partial coverage searchable early.
+The subsequent efficiency audit selects CPU/startup reuse, durable changed-work
+maintenance and vector deltas (009 T008), then model-aware body/parent inputs
+(009 T009). These are pending. Automatic generation (010 T002), boundary joins and
+task-evidence composition also remain pending; watch updates currently invalidate
+stale semantic/brief evidence without automatically preparing replacements.
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
 [validation](validation.md). 013 remains frozen. No release or quality gain is claimed.
 

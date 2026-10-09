@@ -23,7 +23,12 @@ reactivates 010 for source-bound LLM knowledge and selects 001 T011 (watching),
 009 T006/T007 (parallel/progressive bootstrap), 005 T005 (boundary relationships)
 and 003 T009 (task evidence). 001 T011 now implements opt-in primary-root watching,
 bounded change reconciliation and foreground priority; 009 T007 now adds progressive
-waves and priority paths. Governed 010 generation is the next build increment. See the revised build order in the ecosystem plan.
+waves and priority paths. The subsequent efficiency audit selects CPU/startup reuse
+first, then [009 T008](009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work)
+(durable changed work, continuous maintenance, delta publication and cheap status)
+and [009 T009](009-optional-semantic-retrieval/spec.md#t009--use-model-owned-geometry-and-contextual-representations)
+(model-aware geometry and body/parent representations). These remain pending, ahead
+of broad 010 generation. See the [revised build order](../docs/context-ecosystem-plan.md#revised-build-order).
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.
 

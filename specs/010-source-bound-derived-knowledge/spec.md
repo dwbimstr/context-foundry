@@ -113,6 +113,10 @@ See [validation](../../docs/validation.md) for executed checks and limits.
 
 ### T002 — Generate useful briefs and area knowledge within idle resources
 
+Status: selected, pending implementation. The efficiency amendment places this after
+changed-work ownership (009 T008) and input/resource identity (009 T009); see the
+[build order](../../docs/context-ecosystem-plan.md#revised-build-order).
+
 After T001, select one accountable generation provider and a pinned recipe. First-
 party orchestration stays Rust; local generation uses an isolated, bounded model
 worker. A remote provider requires an explicitly configured endpoint and data scope.
@@ -138,6 +142,23 @@ Use existing maintained transports and the shared source acceptance seam.
 - Test with a real configured provider at its actual boundary before claiming model
   integration. Compare verified coding tasks and complete generation/maintenance/task
   cost; the owner's sandbox build does not wait on a held-out promotion gate.
+
+Incremental design amendment, 2026-10-09: record exact generation-input identity
+(source/dependency hashes, selected spans, prompt, model and recipe) and reusable
+completed results. A reverse dependency index should identify only affected briefs
+and area ancestors when source changes; compare its durable maintenance cost with
+scanning the bounded selected brief set before adding it. It is not a second source
+ledger. Coalesce superseded obligations and acknowledge generation independently
+from lexical or embedding work. Accept generated output only if dependencies remain
+current; every derived parent retains the full transitive freshness dependency even
+when an intermediate brief's prose happens to stay identical. Unchanged inputs must
+not trigger another generation call. Crash/restart, edits during generation, failed
+ancestors and provider backoff must preserve reusable results and bounded work.
+
+Lexical brief discovery is implemented in T001; dense brief vectors are optional
+follow-up within the same representation/identity contract, not a prerequisite for
+useful generation. Generation tokens, embedding tokens and query delivery remain
+separately accounted. The task does not require describing every file on bootstrap.
 
 ## Pinned reference and differences
 

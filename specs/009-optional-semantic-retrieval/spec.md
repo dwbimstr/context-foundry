@@ -4,6 +4,12 @@ Planning addition, 2026-10-09: [T005](#t005--diagnose-and-improve-anchorless-evi
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
 It does not change T001–T004 acceptance or semantic enablement/package restrictions.
 
+Experimental update, 2026-10-09: T006/T007 implement bounded parallel partitions and
+progressive bootstrap. The subsequent efficiency audit selects their CPU/startup
+follow-up, T008 incremental maintenance/publication and T009 model-aware input
+geometry before broad 010 generation. These follow-ups are pending; see the
+[revised build order](../../docs/context-ecosystem-plan.md#revised-build-order).
+
 Status: T001 (preparation, cache, index and the supervised development worker), T002
 (semantic context within the existing budget) and T003 (progressive preparation in the
 MCP owner) implemented and accepted locally on 2026-10-05, under development isolation
@@ -1234,3 +1240,119 @@ separate coverage from live/last-run stage counters. Existing token geometry, ve
 meaning, model ownership and foreground hysteresis remain unchanged. Reusable CPU
 pools, different model batches, device-pressure admission and 010 generation controls
 need their own runtime evidence; this increment does not claim them completed.
+
+### T006/T007 follow-up — Remove repeated preparation and startup work
+
+Selected, pending implementation after the 2026-10-09 efficiency audit. Keep the
+implemented bounded waves and one resident model. Reuse bounded CPU workers and
+verified intermediates across partition and batch selection: source bytes, parsed
+ranges and token IDs must carry source/recipe identity, have a byte limit, and be
+discardable after a wave. A corpus-wide AST/token cache is unnecessary. Avoid
+repeated prefix tokenization when fitting an input; preserve exact rendered bytes
+and token limits. Coordinate ingestion pipelining with 001 T009/T011.
+
+Acquire the CLI model lazily when inference is actually needed. Avoid verifying the
+same artifact twice within one acquisition by passing a private verified handle
+through the same trust boundary; path or mtime equality alone is insufficient.
+Do not remove worker-boundary verification or allow substitution between checking
+and opening. Maintain cache-byte totals transactionally; full reconciliation remains
+available for repair/upgrade rather than running on every ordinary warm replay.
+Cancellation, pause, panic and shutdown must reclaim bounded workers/buffers and
+leave accepted work reusable. Verify work counts and vector/input equivalence in
+sandbox fixtures; real-device speed remains a separate claim.
+
+### T008 — Maintain and publish only changed semantic work
+
+Selected, pending implementation. Depends on 001 T011's source acceptance seam and
+T006/T007's bounded preparation. Current input-key cache reuse is retained. Replace
+normal edit-time full walks and generation rebuilds with work proportional to the
+changed inputs and their locations. Full reconciliation is still valid for initial
+bootstrap, profile changes, repair and missed filesystem notifications.
+
+- **Durable obligations:** source replacement/deletion records a coalesced current
+  version or tombstone in the same transaction as source publication. Semantic and
+  010 generation completion are independent of lexical `PENDING` acknowledgment.
+  A completion clears only the version/recipe it processed; late results cannot
+  erase newer work. Bound queues and use a durable reconcile-required marker on
+  overflow. Use redb and the existing owner, not a separate broker, journal or
+  generic job service. A versioned schema change, if needed, preserves existing
+  source, user memory, briefs and reusable caches through upgrade/restart.
+- **Lifecycle:** watching alone still starts no model. Add explicit continuous
+  maintenance enablement with a selected profile and resource limits. When enabled,
+  wake the existing preparation owner on changed work and wait when caught up;
+  retain one-shot prepare and explicit pause. Startup resumes only under that
+  explicit mode. This amends T003's stopped-driver behavior for the new mode only.
+  Continuous source traffic must allow bounded semantic progress without delaying
+  source invalidation or foreground queries. Status polling must not perpetually
+  impose the two-input/60-second foreground throttle; observation still uses bounded
+  serving resources. This follow-up amends T003 D5, not its query-priority guarantee.
+- **Publication:** separate vector membership from source/location mapping. A
+  mapping-only change must not reconstruct unchanged ANN data. Select the simplest
+  restart-safe delta design over the existing cache and USearch: evaluate a single
+  immutable base plus a bounded delta and tombstones against in-place USearch edits
+  with safe checkpoints. Adding/removing an in-memory vector alone does not avoid
+  full checkpoint writes or solve atomic publication. Bound query fan-out, delta
+  bytes and compaction scratch; avoid an unbounded segment collection. Preserve
+  current-source eligibility, duplicate suppression, profile identity and fresh-hit
+  recall when stale base entries occupy the candidate window. Publish manifest,
+  vectors and mappings atomically under a generation identity; interrupted writes
+  remain ineligible. Cache commits precede publication. Failed compaction retains a
+  readable generation, durable pending work and a visible bounded-backoff state.
+- **Status:** maintain versioned committed coverage/progress counters with cheap
+  reads and explicit stale/unknown states. Keep reconciliation/audit available;
+  replace neither payload validation on use nor corruption reporting with optimistic
+  counters. Progress polling must not hash an entire index or census every source
+  and cache row. Derive counters from the same accepted transitions as work state.
+- **Verification:** unchanged replay makes zero document calls; an ordinary edit
+  visits only affected derivation work and reuses unchanged input keys. Cover
+  delete/rename/revert, duplicate hints, edit during inference, coalescing, overflow,
+  pause, owner exit and restart at source/cache/publication/compaction boundaries.
+  Below compaction thresholds a small edit performs no full ANN rebuild. Assert
+  mapping-only publication, stale candidate suppression, bounded query merge,
+  convergence under sustained edits, cheap status and foreground service. Fixtures
+  establish work selection and recovery, not real-device throughput.
+
+Reference inspected, not executed: USearch **2.26.2** (the Cargo.lock version),
+[`rust/lib.rs`](https://github.com/unum-cloud/usearch/blob/v2.26.2/rust/lib.rs)
+`Index::{add,remove,save,load}`, test `add_remove_vector`. These maintained operations
+inform T008; Foundry must own source-bound mapping, crash-safe publication and
+bounded compaction. No custom ANN or database implementation is selected.
+
+### T009 — Use model-owned geometry and contextual representations
+
+Selected, pending implementation. The exact publisher contracts and their limits
+are in the [model-window audit](../../docs/context-ecosystem-plan.md#model-windows-and-chunk-representations).
+The selected EmbeddingGemma 2 advertises 8,192 tokens, while the current worker has
+a 2,048-token context/batch limit and the address recipe defaults to 128 tokens.
+Raising the card limit does not add multiline function bodies to that recipe.
+
+- Version provider capabilities independently: per-input tokens, total batch tokens,
+  sequence count, dimensions, tokenizer/template identity, pooling and normalization.
+  Validate actual backend support and retain hard protocol byte/memory ceilings;
+  reject oversize inputs explicitly rather than silently truncating. Use actual
+  token lengths for bounded packing, with length bucketing only where it helps.
+  Preserve foreground latency and single-versus-batched vector parity at every
+  supported geometry. Thread counts, kernels and KV precision are backend-specific
+  experiments; additional CPU cores do not authorize extra resident GPU models.
+- Keep address cards as a reproducible baseline. Add an explicit body-aware recipe
+  for short complete units and bounded windows for oversized units, with surrounding
+  context and exact cited span maps. Select parent/file/area inputs when useful;
+  deduplicate representations by evidence identity and limit their candidate shares.
+  Long embedding inputs and small delivered evidence are independent choices.
+  Unsupported syntax, opaque names, configuration and tests need explicit coverage.
+- Bind reuse to all input and model properties that change vector meaning. Separating
+  path/line locations from vector content is a recipe change, not permission to
+  reuse vectors for different text. Parent context increases the invalidation domain.
+  New profiles/recipes coexist with the old cache namespace until an explicit
+  migration or purge; never mix vector spaces in an ANN generation. Enforce truthful
+  partial coverage while new representations populate.
+- Late chunking is a candidate, not part of the current pooled-vector protocol. It
+  requires contextual token states and correct span pooling/projection/normalization;
+  averaging existing chunk vectors does not implement it. Compare its recomputation
+  and memory costs against independent body units before committing to that backend.
+- Verify body-only edits, small versus oversized units, context-only edits, rename
+  mapping, model/recipe migration, limits, batch parity and recoverable exact spans.
+  Use sandbox fixtures first. Actual long-context quality, device throughput and
+  task economics need the real model/runtime. Publisher window size alone proves
+  none of them. A hosted adapter requires explicit endpoint/data scope; this task
+  does not select a paid endpoint, download weights or send repository source.

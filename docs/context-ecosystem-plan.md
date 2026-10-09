@@ -25,7 +25,10 @@ and the matched-run procedure are prepared in 003 T006. The sandbox implementati
 now also exposes [task state, reversible views, reminders and explicit promotion](experimental-context.md).
 The implemented continuation (008 T005 / 003 T008) connects the task view to source
 retrieval under one allowance and adds content search over retained observations.
-These are local capabilities, not measured host outcomes.
+These are local capabilities, not measured host outcomes. The subsequent efficiency
+review below supersedes the earlier immediate jump from progressive bootstrap to
+broad enrichment: cold throughput, changed-work maintenance and model-aware inputs
+are the next implementation priorities.
 
 ## Architecture correction: useful context across 60,000–80,000 files
 
@@ -46,9 +49,9 @@ omits a caller, configuration dependency or test can make the complete task cost
 | Capability | Current evidence | Required change |
 | --- | --- | --- |
 | Exact source/structural graph | Versioned source, lexical search, 23-language extraction, compiler imports, approximate doors | Preserve it as the evidence base; add evidence about behavior and process boundaries. |
-| CPU parallelism | Source-index document construction already uses at most eight threads and a 64 MiB input bound (001 T009) | Semantic partitioning was serial under the writer and MCP engine slot. 009 T006 separates snapshot, parallel computation and conditional publication. |
+| CPU parallelism | Source-index construction and semantic partition computation now use at most eight scoped workers, with bounded input bytes | Reuse workers and verified parse/token work across stages; initial source ingestion and commits remain largely serial. |
 | Embedding bootstrap | Latest recorded Gemma runs: 112,549 cards in 1,256 s; 332,732 cards in 4,437 s. MCP prefetches one batch; model work has one slot. | Make useful partial coverage available early, overlap independent stages, remove whole-corpus barriers, and tune device batches separately from CPU worker counts. |
-| Repository knowledge | Address cards contain heads/docs; 010 was deferred. Explicit task/project memory is caller-authored. | Add source-bound LLM summaries and area knowledge, indexed for conceptual discovery and linked back to exact source. |
+| Repository knowledge | Address cards contain heads/docs; 010 T001 now stores imported, source-bound briefs with lexical discovery. Explicit task/project memory is caller-authored. | Add selective generation, dependency-driven refresh and area knowledge; import is not an automatic enrichment lane. |
 | Continuous maintenance | Opt-in primary-root watching now supports native events, bounded coalescing, scoped updates and restart/overflow reconciliation (001 T011) | Extend resource policy and validate other platforms/large real repositories; quiet ticks do not reread source bodies. |
 | Task-quality economics | Exact delivery accounting and older host trials exist; recent features have fixture evidence | Compare verified multi-file tasks and complete cost, including bootstrap amortization, maintenance, retries and auxiliary generation. |
 
@@ -120,8 +123,8 @@ model/device residency and publication scratch separately. Avoid repeated body
 copies, parse/tokenize passes and full-store materialization. Use owned buffers and
 existing redb/USearch facilities before introducing a new allocator or custom memory
 mapping. A byte bound on source inputs is not a claim about total process memory.
-One reusable CPU pool, token-shaped device batching and segmented/delta publication
-are candidates for subsequent slices; do not add a generic scheduler or a new store.
+Reusable CPU workers, token-shaped device batching and changed-vector publication
+are now selected follow-ups below; do not add a generic scheduler or a new store.
 
 Watching supplies hints to the existing ingestion owner. Coalesce repeated events;
 reconcile admitted paths with the same no-follow, ignore and deletion rules; handle
@@ -132,17 +135,131 @@ before their replacements are ready. An idle policy should consider foreground w
 CPU pressure, memory/device headroom and battery where available, with explicit
 operator limits and hysteresis. Unknown host signals remain unknown.
 
+### Efficiency audit after progressive bootstrap — 2026-10-09
+
+Inspected baseline: `62c6c97` on `experimental/context-ecosystem`. This is a code and
+publisher-contract audit, not a new runtime profile. The prior increment improves
+first-searchable latency. It does not establish minimum cold-build cost, automatic
+semantic maintenance or efficient publication of a small edit.
+
+| Stage | What the code actually does | Remaining opportunity / owner |
+| --- | --- | --- |
+| Initial source ingestion | [ingest.rs](../src/ingest.rs) `index` walks, reads and calls `replace_source` serially, then drains lexical work. `ChangeScan` handles one entry per owner step. | Bounded parallel read/hash/prepare, batched conditional source commits and overlapping lexical drain. Preserve held-root/no-follow checks, partial progress and deletion rules. 001 T009/T011 follow-up. |
+| Source storage | [store.rs](../src/store.rs) `replace_source` constructs copied 2,048-byte storage blocks before checking whether the stored hash matches; a changed source rewrites all its blocks. | Avoid chunk allocation for unchanged sources; reuse bounded buffers. Storage blocks, syntax units, embedding inputs and delivered evidence need separate policies. 001 T009 follow-up. |
+| CPU preparation | Lexical `index_page` spawns threads per page; [prepare.rs](../src/neural/prepare.rs) `prepare_partitions_with_workers` spawns per wave. Partitioning parses/tokenizes; it retains range/key tuples, then selection reconstructs the source and renders/tokenizes wanted cards again. | Owner-lifetime bounded workers and a bounded, source/recipe-bound handoff of parsed units/token IDs. Keep current-source checks; avoid storing every AST or all token IDs for the repo. 009 T006/T007 follow-up. |
+| Startup and warm replay | CLI `inner` verifies artifacts before acquisition; [supervisor.rs](../src/neural/supervisor.rs) verifies again. Acquisition precedes discovering that all vectors are cached. `semantic_begin_run` scans cache bytes; finalization counts again. | One verified-artifact handoff within a launch, lazy model acquisition where no inference is needed, trusted transactional counters with explicit reconciliation. Retain hash verification at trust boundaries. 009 T006/T007. |
+| Embedding updates | [cache.rs](../src/neural/cache.rs) already commits only supplied keys. Matching inputs reuse vectors, including after restart/revert. Renames alter address text and thus keys. | Preserve exact-input reuse. A body-only edit can reuse a card because the body was never encoded; low call counts alone do not establish behavioral coverage. 009 T008/T009. |
+| Work discovery | [driver.rs](../src/neural/driver.rs) starts a fresh source walk on each preparation and repeats it if the source revision changes. A stopped driver is not restarted by watcher edits. | Durable coalesced changed-source work, compare-and-clear acknowledgment and explicitly enabled continuous maintenance. Ordinary edits should cost affected work, not a corpus walk. 009 T008. |
+| Vector publication | [index.rs](../src/neural/index.rs) rebuilds a complete USearch generation from current cached vectors/locations; geometric thresholds amortize cold publication. A mapping-only change can also rebuild ANN data. | Separate mapping changes from vector changes; bounded delta publication and compaction, with restart-safe generations. 009 T008. |
+| Foreground/resource policy | Every MCP tool call, including status, extends the two-input batch window for 60 seconds. Any pending watcher work denies semantic store steps. Worker context is fixed at 2,048 tokens, flash attention disabled, f32 KV, Metal offload. | Protect real foreground demand while preventing observation-induced throttling and starvation during sustained source work. Admit by CPU/bytes/tokens/device headroom; validate backend-specific kernel/precision changes. 001 T011 / 009 T007/T009. |
+| Status | [status.rs](../src/neural/status.rs) validates/hashes a generation, walks source partitions and performs a cache census; live bootstrap counters overlay that result. | Cheap versioned progress/coverage snapshots, with explicit audit/reconciliation and unknown/stale markers. Frequent progress polling must not scan all source/cache/index data. 009 T008. |
+| Enrichment | [brief.rs](../src/brief.rs) imports strict derived records, checks dependency hashes, and indexes explicit puts/forgets. Source edits suppress stale claims at read time. | No generation runner, regeneration queue, reverse dependency index, area rollups or dense brief lane exists. Build selective, memoized generation on changed-work ownership, with affected-ancestor invalidation. 010 T002. |
+
+The watcher updates source and lexical state incrementally; immediate invalidation
+keeps stale semantic/brief evidence out. Invalidation alone does not schedule or
+produce a replacement. The lexical `PENDING` table is cleared by its own consumer,
+so a new semantic/generation consumer cannot simply treat that same acknowledgment
+as its completed work. Source commits must durably record derivation obligations
+with independent completion. Normal updates target the changed set; profile changes,
+repair and unreported offline filesystem changes may require a bounded full
+reconciliation. An unchanged restart means zero repeated inference, not necessarily
+zero filesystem or metadata work.
+
+### Model windows and chunk representations
+
+Publisher sources checked 2026-10-09; no model was downloaded or executed. Keep exact
+model/version distinctions rather than treating all “Gemini” or “1B” models alike.
+
+| Model / contract | Documented input window | Relevance to Foundry |
+| --- | --- | --- |
+| [EmbeddingGemma 2, revision 914f7f89](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md) | 8,192 tokens | Already the selected local model. Its model card supports 768d and 512/256/128d truncations. Foundry currently limits a whole worker call to 2,048 tokens. Model capacity is not yet proof that the pinned GGUF/backend is correct or efficient at 8K. |
+| [Nemotron-3-Embed-1B-BF16, revision c0c9fea9](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16/blob/c0c9fea93ea424587517f2c59e20db9f1d6bf615/README.md) | 32,768 tokens | Card specifies average pooling and 2,048d with normalized prefix slicing. The larger `max_position_embeddings` configuration value is not a serving promise. Earlier invalid Foundry G2 runs do not establish long-context quality; latest owner request reopens comparison, not automatic model replacement. |
+| [Mistral Embed 23.12](https://docs.mistral.ai/models/mistral-embed-23-12), [Codestral Embed 25.05](https://docs.mistral.ai/models/codestral-embed-25-05) | 8K on each model card | Official text/code embedding APIs are distinct products. “Mistral 1B” does not identify one of these artifacts. Their hosted API contracts do not demonstrate a compatible local 1B worker. |
+| [Gemini Embedding 001 / Embedding 2](https://ai.google.dev/gemini-api/docs/embeddings#model-versions) | 2,048 / 8,192 tokens respectively | Different embedding spaces; migration requires re-embedding. Both offer dimensions through 3,072, above Foundry's current 2,048 cap. Embedding 2 multipart aggregation is distinct from independent batch inputs. A hosted adapter needs explicit endpoint/data scope. |
+
+The current `cards-v1` recipe encodes an address, signature/head and leading docs,
+128 tokens by default. It omits multiline implementation bodies regardless of how
+far its token limit is raised; unsupported/unparsed sources may have no cards.
+[partition.rs](../src/neural/partition.rs) repeatedly tokenizes growing line prefixes
+while fitting a card. [profile.rs](../src/neural/profile.rs) also enforces
+`batch × card_tokens <= 2048`. The nominal 32-sequence protocol cap, default batch
+of eight and foreground cap of two are separate limits. Bigger chunks can therefore
+shrink batches in the current implementation rather than fill the device better.
+
+Revisit four independent sizes: storage blocks; parsed/retrieval units; model input
+windows; and evidence delivered under the caller's budget. A long input can inform
+many small cited results; a large model window need not become a large agent reply.
+Select representations by role and workload:
+
+- Keep compact addresses for identity and navigation. Compare semantic body units
+  containing a full short function/section, with bounded windows only for oversized
+  units. Include necessary local context and exact span maps. Test implementation-
+  only edits, opaque names, config/tests and sources without syntax coverage.
+- Add parent/file/area representations selectively for orientation; retain smaller
+  child evidence for localization. Avoid embedding every possible representation
+  of every source. Deduplicate their results by evidence identity and bound each
+  representation's candidate share. A whole-file vector can dilute a small but
+  essential behavior and makes any included edit invalidate that large input.
+- Make per-input tokens, batch-total tokens, sequences, dimensions and device memory
+  separate verified provider capabilities. Pack actual token lengths, bucket similar
+  lengths where useful, and overlap bounded CPU preparation with one resident model.
+  More CPU cores do not imply more copies of a GPU model. Preserve query priority.
+- Consider late chunking as a separate candidate: encode longer surrounding text,
+  then pool token spans into smaller contextual vectors. It needs token-level
+  states, the model's projection/pooling recipe and a larger invalidation domain;
+  the current pooled-vector-only interface cannot implement it by averaging outputs.
+- Keep vector identity bound to actual model/tokenizer/templates/pooling/normalization
+  and any context that changes meaning. Separating path/line locators from vector
+  content may reduce rename churn, but changes the recipe and must retain enough
+  context to disambiguate equal code. Never reuse an old vector for changed input
+  merely to lower a recomputation counter.
+
+The first runtime baseline remains the existing Metal worker; portable CPU/store
+changes come first. The next hardware target remains unselected.
+CUDA/CPU/remote execution each needs its real adapter and
+capability checks. Larger contexts, flash attention, KV precision and thread policies
+are candidates to validate, not claimed speedups. Preserve no-truncation behavior,
+single-versus-batched parity and foreground responsiveness. Existing G1/G2 results
+remain evidence about their historical recipe only.
+
 ### Revised build order
+
+A–D remain completed experimental capabilities; the owner's efficiency correction
+puts E1–E4 ahead of broad generated knowledge. All follow-ups below are pending
+implementation, and preserve the prior authorization to build/test in the sandbox.
 
 | Order | Concrete increment | Owner/status |
 | --- | --- | --- |
-| A | Snapshot/compute/commit partition pipeline with bounded parallel CPU work and source-version refusal | 009 T006: implemented and tested in this sandbox increment; actual throughput gain unmeasured |
-| B | First source-bound structured brief: strict import/generation seam, lexical discovery, exact citations, stale/forget behavior | 010 T001: explicit import, lexical discovery and lifecycle implemented/tested; generation remains T002 |
-| C | Event-driven incremental source refresh and idle maintenance within the admitted owner | 001 T011: opt-in native watching, bounded reconciliation and foreground priority implemented; platform/scale limits in validation |
-| D | First useful semantic coverage before a full pass; amortized publication and device-batch tuning | 009 T007: progressive waves, explicit priorities, bounded prefetch/publication and accounting implemented; device tuning/throughput remain unverified |
-| E | Governed model generation, area rollups, boundary joins and task-oriented evidence composition | 010 T002, 005 T005, 003 T009: selected, not implemented |
+| A | Bounded parallel semantic partition computation outside serving/writer locks | 009 T006: implemented |
+| B | Source-bound structured brief import, lexical discovery and lifecycle | 010 T001: implemented; automatic generation absent |
+| C | Opt-in native source watching and bounded reconciliation | 001 T011: implemented; platform/scale limits remain |
+| D | First semantic result before full partitioning, priorities and geometric publication | 009 T007: implemented; total throughput/maintenance unresolved |
+| E1 | Remove repeated cold/warm CPU and startup work: persistent bounded workers, verified intermediate reuse, pipelined ingestion, no-op allocation avoidance and artifact handoff | 001 T009/T011 and 009 T006/T007 follow-ups; first implementation slice |
+| E2 | Durable changed-work frontier, explicit continuous semantic maintenance, independent acknowledgments and cheap status | 009 T008 with 001 T011; pending |
+| E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; pending, reuses E2 |
+| E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; pending; compare against current cards, keep old profiles/caches usable |
+| F | Selective memoized LLM generation, reverse dependencies, affected area rollups and indexed derived knowledge | 010 T002 on E2/E4 resource and identity contracts; pending |
+| G | Evidence-bearing boundary joins and task-oriented implementation/caller/test composition | 005 T005 / 003 T009; pending |
 
-B and C need not wait for real-model throughput or held-out quality measurements.
+Use work-count assertions in sandbox tests: unchanged replay sends zero embeddings;
+one edit visits only its derivation work and affected dependencies; unchanged inputs
+are parsed/tokenized once per intended stage; no full ANN build occurs for a small
+delta below compaction thresholds; pause/quiet operation admits no background model
+work. Include changes during compute, burst coalescing, delete/rename/revert, cache
+corruption, profile migration, restart at every commit boundary, overflow fallback
+and foreground demand. These checks reveal repeated work without pretending to
+measure device throughput. Observe actual CPU/device utilization, RAM, total tokens,
+first-result and full-build time when the target machine is available; historical
+wall times cannot identify which stage caused them.
+
+Previously selected work also remains open: 009 T005 anchorless miss repair beyond
+tracing; 001 T010 behavioral retrieval acceptance; 003 T006 real-host outcomes and
+application of working views; 010 T002; 005 T005; 003 T009. Experimental task state,
+recovery and reminders are implemented, but automatic host application and measured
+quality/economics are not. Package signing/installed-artifact acceptance remain
+release follow-up, not a sandbox prerequisite. 013 stays frozen off.
+
+Experimental follow-ups need not wait for full throughput or held-out quality measurements.
 Contract tests and a small sandbox task fixture accompany each implementation.
 Larger evaluations assess usefulness rather than blocking the owner's experimental
 build authorization. Continue on `experimental/context-ecosystem` with local commits;

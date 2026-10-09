@@ -780,3 +780,27 @@ root need the same explicit action. Backend errors are visible and need owner re
 to re-register. Linux native event and synthetic large-workspace evidence is recorded
 in [validation](../../docs/validation.md); macOS, network filesystems, 80,000-file
 throughput and model preparation speed are not inferred from those tests.
+
+T009/T011 efficiency follow-up, selected 2026-10-09; pending implementation:
+
+- Pipeline bounded source reads/hash/preparation and lexical work during initial
+  ingestion instead of waiting for the full walk. Keep one transactional writer,
+  deterministic acceptance, held-root/no-follow checks and incomplete-scan deletion
+  rules. Bound bytes of in-flight bodies and completed results, not only file count.
+  Source commits may be batched only with explicit partial-failure/counting rules;
+  preserve existing accepted versions on read failures and changes during compute.
+- Check existing source identity before allocating replacement storage chunks for
+  unchanged bodies. Reuse bounded buffers and CPU workers where they remove repeated
+  setup/copying. Storage chunk size is not an embedding or delivered-context policy.
+  No custom storage engine, memory allocator or mandatory machine-specific kernel
+  replaces the current maintained libraries.
+- Source publication durably records semantic/generation obligations under
+  [009 T008](../009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work).
+  Existing watcher freshness only invalidates stale evidence; it does not implement
+  that new queue or automatic derivation. Keep source freshness ahead of model work,
+  while preventing an always-pending initial scan/edit stream from starving bounded
+  derivation progress. Watch enablement alone still runs no model.
+- Verify bounded read overlap, unchanged-source allocation avoidance, source changes
+  during preparation, partial failures, shutdown/restart and fair engine admission.
+  Preserve quiet-tick behavior. Initial/recovery reconciliation remains necessary
+  because filesystem notifications alone cannot prove offline completeness.
