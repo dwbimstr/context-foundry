@@ -72,7 +72,7 @@ copied with `cp -cR` and brought to the current schema with `foundry repair-inde
 | 1 | G2 per candidate profile | 009 T004 *G2 and enablement* | whether a profile may be enabled for anchor-less queries | EmbeddingGemma 2 ENABLE; Nemotron INVALID twice, closed by the owner |
 | 2 | G1 with each profile that passed G2 | 009 T004 *G2 and enablement* | same; all targets and guards must still pass | EmbeddingGemma 2 PASS |
 | 3 | Batched against single-sequence vectors | 009 T004 Verification | numerical acceptance of the worker | EmbeddingGemma 2 PASS (development bundle) |
-| 4 | Installed-artifact checks | 009 T004 Verification | advertising semantic retrieval in a signed release | **open**: needs the Developer ID-signed package |
+| 4 | Installed-artifact checks | 009 T004 Verification | advertising semantic retrieval in a signed release | **deferred**: needs the Developer ID-signed package; the owner defers signing until the product is ready for release |
 | 5 | Preparation cost before and after cards | 009 T004 Verification | record only | counts recorded; time not accepted (every attempt swapped) |
 | 6 | Index time and peak memory before and after T009 | 001 T009 Verification | record only | oh-my-pi recorded; rust-lang/rust before T009 not valid (every attempt swapped) |
 | 7 | Door latency for tie groups | 005 T004 amendment | record only (not an acceptance criterion) | recorded |

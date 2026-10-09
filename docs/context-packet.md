@@ -33,12 +33,14 @@ and the measurement handoff `18e27f9`.
 
 ## What remains, in order
 
-1. **Signing.** Developer ID signing and notarization of the macOS package and worker
-   bundles (009 package acceptance, [deployment](deployment.md)). This needs the owner's
-   Apple Developer ID; nothing has been signed yet. After signing, run the
-   installed-artifact checks (row 4 of the [measurement handoff](measurement-handoff.md))
-   with the EmbeddingGemma 2 profile. They decide whether the release packages and
-   advertises semantic retrieval; they gate nothing else.
+1. **Signing, deferred.** This covers Developer ID signing and notarization of the macOS
+   package and worker bundles (009 package acceptance, [deployment](deployment.md)). On
+   2026-10-08 the owner deferred signing until the product is ready for release. No
+   Apple Developer ID is needed before then, and nothing has been signed. After signing,
+   run the installed-artifact checks (row 4 of the
+   [measurement handoff](measurement-handoff.md)) with the EmbeddingGemma 2 profile.
+   They decide whether the release packages and advertises semantic retrieval; they gate
+   nothing else.
 2. **Release.** The [release checklist](release.md) to a GitHub release on
    `dwbimstr/context-foundry` (owner-selected destination). The tag and the publication
    each need the owner's explicit go-ahead.
