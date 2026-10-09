@@ -27,6 +27,171 @@ The implemented continuation (008 T005 / 003 T008) connects the task view to sou
 retrieval under one allowance and adds content search over retained observations.
 These are local capabilities, not measured host outcomes.
 
+## Architecture correction: useful context across 60,000–80,000 files
+
+Owner direction, 2026-10-09: task quality and practical bootstrap/maintenance are
+primary. Bounded tool output and recoverable task memory are necessary but do not
+solve repository understanding or total token economics. The next work returns to
+these foundations. This direction explicitly reactivates the narrowed source-derived
+knowledge work in [010](../specs/010-source-bound-derived-knowledge/spec.md).
+
+`rg` remains an efficient exact-match primitive. The expensive failure is asking an
+agent to discover an unfamiliar system through repeated broad searches and reads,
+with no retained architecture or behavioral model. Foundry must reduce that discovery
+work while supplying the evidence needed for a correct change. A smaller answer that
+omits a caller, configuration dependency or test can make the complete task cost more.
+
+### What exists and what is missing
+
+| Capability | Current evidence | Required change |
+| --- | --- | --- |
+| Exact source/structural graph | Versioned source, lexical search, 23-language extraction, compiler imports, approximate doors | Preserve it as the evidence base; add evidence about behavior and process boundaries. |
+| CPU parallelism | Source-index document construction already uses at most eight threads and a 64 MiB input bound (001 T009) | Semantic partitioning was serial under the writer and MCP engine slot. 009 T006 separates snapshot, parallel computation and conditional publication. |
+| Embedding bootstrap | Latest recorded Gemma runs: 112,549 cards in 1,256 s; 332,732 cards in 4,437 s. MCP prefetches one batch; model work has one slot. | Make useful partial coverage available early, overlap independent stages, remove whole-corpus barriers, and tune device batches separately from CPU worker counts. |
+| Repository knowledge | Address cards contain heads/docs; 010 was deferred. Explicit task/project memory is caller-authored. | Add source-bound LLM summaries and area knowledge, indexed for conceptual discovery and linked back to exact source. |
+| Continuous maintenance | Explicit re-index and semantic resume exist; no watcher | Add event-driven changed-path reconciliation, bounded coalescing, overflow recovery and an idle resource policy. |
+| Task-quality economics | Exact delivery accounting and older host trials exist; recent features have fixture evidence | Compare verified multi-file tasks and complete cost, including bootstrap amortization, maintenance, retries and auxiliary generation. |
+
+The recorded preparation times are complete historical runs, not profiles of where
+time was spent. The source inspection proves serialization, not the percentage of
+the 4,437 seconds attributable to it. The old Nemotron 845-second/2,099-unit run is
+not the current embedding baseline. Memory figures in the record name the process
+measured and must not be treated as whole-host RAM.
+
+### Repository knowledge and task evidence
+
+Keep three complementary representations under existing owners:
+
+1. **Exact evidence:** immutable source versions, definitions, references, manifests,
+   tests and configuration. AST/tree-sitter/SCIP establish declared structural facts
+   within their coverage; they cannot alone explain intent, business constraints or
+   runtime wiring.
+2. **Derived repository knowledge:** short behavioral glosses, structured source
+   briefs and area summaries. Record purpose, entry points, inputs/outputs,
+   dependencies, failure behavior, constraints, relevant tests and explicit unknowns.
+   Each assertion cites source spans and carries model/prompt/input identity. Matching
+   an identifier to bytes validates the reference, not the truth of the model's prose.
+   An area summary inherits the dependency hashes and derived classification of its
+   children. Start with source briefs; materialize higher levels only when useful.
+3. **Task state and evidence selection:** use the retained task requirements and open
+   questions to request implementation, callers, invariants and verification evidence.
+   Return compact summaries for orientation and exact source where an edit depends
+   on it. Recover details on demand; expose missing/conflicting evidence instead of
+   implying that top-k relevance means the task is answerable.
+
+Conceptual search should retrieve a source *through* its generated vocabulary without
+allowing several summaries of that source to consume the whole candidate budget.
+Group candidates by source/evidence identity; preserve exact-name behavior; budget
+orientation, source bodies and tests according to the question. Embedding a longer
+summary by itself does not solve candidate selection or complete-evidence packing.
+Generation is off the query path and optional at startup. Lexical retrieval over
+briefs can help before any new vectors are ready. No generation model or paid endpoint
+is implicitly selected by this plan.
+
+The graph needs both observed structure and explicitly derived relationships.
+Routes, OpenAPI/protobuf contracts, configuration, queue topics and command tables
+can establish joins that a compiler index does not contain. Runtime-assembled links
+remain hypotheses unless supported. Never convert an LLM's suggested `consumes`
+entry into a compiler-confirmed call edge. 005 owns this distinction and the joins;
+010 owns the generated claims. Cross-repository joins still need explicit admission
+and a separate scope amendment.
+
+### Execution and memory design
+
+Use a bounded pipeline: source change hints → verified snapshots → parallel CPU
+parsing/card preparation → controlled device batches → conditional durable commits
+→ searchable publication. Each stage hands off owned, bounded data; no write
+transaction or serving slot spans tokenization or inference. The writer remains one
+owner, and freshness is rechecked at acceptance. More CPU threads are useful only
+for independent CPU work. Replicating a model process on one saturated GPU can make
+throughput and memory worse; first fill appropriate batches and overlap CPU work.
+
+Bootstrap becomes progressive: fast lexical/structural readiness; partial semantic
+coverage as bounded waves finish; useful briefs for requested areas and entry points;
+broader background coverage while idle. File count is not a workload model: also
+track bytes, definitions/cards, input tokens and changed dependency fanout. Full
+partitioning and full ANN publication currently remain barriers; T006 removes only
+the partition computation lock/serialization. T007 removes those remaining barriers
+without losing committed cache work or publishing stale vectors.
+
+Bound retained source bytes, queued token IDs, completed-but-uncommitted outputs,
+model/device residency and publication scratch separately. Avoid repeated body
+copies, parse/tokenize passes and full-store materialization. Use owned buffers and
+existing redb/USearch facilities before introducing a new allocator or custom memory
+mapping. A byte bound on source inputs is not a claim about total process memory.
+One reusable CPU pool, token-shaped device batching and segmented/delta publication
+are candidates for subsequent slices; do not add a generic scheduler or a new store.
+
+Watching supplies hints to the existing ingestion owner. Coalesce repeated events;
+reconcile admitted paths with the same no-follow, ignore and deletion rules; handle
+renames, event overflow and restart through bounded reconciliation. Missed events
+must not become certified freshness. Quiet operation must avoid repeated full-body
+reads. Changed sources invalidate affected vectors, briefs and area dependencies
+before their replacements are ready. An idle policy should consider foreground work,
+CPU pressure, memory/device headroom and battery where available, with explicit
+operator limits and hysteresis. Unknown host signals remain unknown.
+
+### Revised build order
+
+| Order | Concrete increment | Owner/status |
+| --- | --- | --- |
+| A | Snapshot/compute/commit partition pipeline with bounded parallel CPU work and source-version refusal | 009 T006: implemented and tested in this sandbox increment; actual throughput gain unmeasured |
+| B | First source-bound structured brief: strict import/generation seam, lexical discovery, exact citations, stale/forget behavior | 010 T001: selected, not implemented |
+| C | Event-driven incremental source refresh and idle maintenance within the admitted owner | 001 T011: selected, not implemented |
+| D | First useful semantic coverage before a full pass; amortized publication and device-batch tuning | 009 T007: selected, not implemented |
+| E | Governed model generation, area rollups, boundary joins and task-oriented evidence composition | 010 T002, 005 T005, 003 T009: selected, not implemented |
+
+B and C need not wait for real-model throughput or held-out quality measurements.
+Contract tests and a small sandbox task fixture accompany each implementation.
+Larger evaluations assess usefulness rather than blocking the owner's experimental
+build authorization. Continue on `experimental/context-ecosystem` with local commits;
+no default promotion, release, training unfreeze or predecessor deployment is implied.
+
+Use tasks such as tracing a request through configuration and a worker, repairing a
+behavior while preserving its callers, and a multi-service contract change with its
+tests. Compare a native-tools baseline, current Foundry and the candidate with the
+same host/model and task constraints. The primary outcome is a correct, verified
+change without violated requirements; record wrong edits and incomplete evidence.
+For monetary economics, divide all attributable bootstrap, maintenance, retrieval,
+model and retry costs by verified completions over a stated reuse horizon. Report
+latency, RAM and energy separately; add failed attempts to cost rather than dropping
+them. These outcomes remain unmeasured for the new architecture.
+
+### Prakarana reference and intentional differences
+
+Read-only inspection pinned to
+[`3143213d63c22a097c77fb229bfc910e08c6e01e`](https://github.com/dwbimstr/prakarana/tree/3143213d63c22a097c77fb229bfc910e08c6e01e).
+No predecessor binaries, services or tests were executed. Its source and tests inform
+contracts; historical results are not Foundry results.
+
+- **010 vocabulary/briefs:** `src/internal/enrich_worker.cpp::process_one` and
+  `src/internal/enrich_structured.cpp::process_structured`; contract tests
+  `test_structured_docfact_{parse,lane,retire,delivery,feeder}.cpp` and
+  `test_enrich_queue.cpp`. Keep source revalidation, derived provenance, strict
+  bounded output, resumability and salience. Foundry uses existing transactional
+  storage and maintained Rust integrations, not the predecessor's custom sidecar,
+  C ABI, HTTP client or full queue framework. Its M9 recall@3 result of 25%→50% was
+  only two added hits on a small opaque-function fixture; another tiny corpus lost
+  recall through competition. Neither establishes coding-task improvement.
+- **010 area knowledge:** `src/internal/spine_tree.cpp::{render_card,write_spine_tree}`,
+  spec 061 and `tests/contract/test_door_wiring.cpp`. Retain dependency identity and
+  the rule that composing derived text does not turn it into observed fact. The
+  module's `provides/consumes` rollups explicitly say deterministic 063 joins are
+  future work; spec 063 is a draft, not proof of an implemented cross-service loader.
+- **001 continuous maintenance:** `src/internal/workspace.cpp`,
+  `docs/design/watcher-efficiency.md`, `test_watch_scan_efficiency.cpp` and
+  `test_watcher_delete_floor.cpp`. Preserve liveness and safe reconciliation. Avoid
+  the documented failure where each scan retained too much transient work, refused
+  the tail, and repeated expensive scans without useful publication.
+- **009 resource control:** `src/internal/policy_gate.cpp::{gate_decide,embed_gate_step}`,
+  `test_embed_governor.cpp` and `test_embed_governor_live.cpp`. Retain bounded idle
+  work and hysteresis; map them to the actual CPU/device bottlenecks instead of
+  copying constants or creating one resident model per CPU thread.
+- **005 publication cost:** spec 058 and `src/internal/setu_engine.cpp` describe
+  batching and work proportional to touched graph regions. Use that cost question
+  for Foundry publication; retain redb/USearch rather than inheriting custom graph
+  storage. The benefit in Foundry remains to be demonstrated.
+
 ## Starting evidence
 
 The [2026-10-08 measurements](validation.md#measurements-on-the-development-host--2026-10-08)
@@ -53,7 +218,7 @@ and what causes the 249 anchorless misses, remain measurement questions.
 | 3. Preserve task state and observations | A restart retains the user constraint, rejected approach, unresolved question and supporting observation. | Experimental 003 T007 delivery and 008 T003 explicitly scoped retained records; 001 continues to own source identity. | Atomic updates, conflict handling, bounded opt-in capture, exact retained-observation recovery, and no inferred root admission or training permission. |
 | 4. Edit and recover working context | The agent can fold a large observation, keep the task coherent, and recover exact details before acting. | Experimental 003 T007 / 008 T003 reversible views using source identities and milestone 3 records. | A real host applies an identified view revision; round-trip recovery, valid tool linkage, interrupted-commit/restart behavior and measured task economics pass. |
 | 5. Reactivate memory when it helps | Relevant constraints and failed attempts influence the next action without constant reminders. | Experimental 008 T004 exact-failure reminders; broader triggers remain proposed. | Fewer repeated failures and missed obligations than passive memory on held-out tasks, with acceptable total cost and a measured unnecessary-intervention rate. |
-| 6. Grow reliable durable knowledge | Useful decisions survive across tasks, corrections supersede stale beliefs, and forgetting reaches retained derivatives. | Experimental 008 T004 explicit decision promotion and tracked-copy forgetting. Re-enter deferred 010 only for a selected source-derived feature that needs it. | Capture/update/retrieve/use evaluated separately; scope, contradiction, export and forget behavior verified through the same lifecycle suite. |
+| 6. Grow reliable durable knowledge | Useful decisions survive across tasks, corrections supersede stale beliefs, and forgetting reaches retained derivatives. | Experimental 008 T004 explicit decision promotion and tracked-copy forgetting. Reactivated 010 owns source-derived repository knowledge under the revised build order above. | Capture/update/retrieve/use evaluated separately; scope, contradiction, export and forget behavior verified through the same lifecycle suite. |
 
 Milestone 1's diagnostic checkpoint unlocks its two repairs; they need not wait for
 each other. Milestone 2 evaluates their combined benefit. Host capability inspection

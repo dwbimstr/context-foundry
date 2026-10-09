@@ -713,3 +713,31 @@ toolchain: put `<rustup home>/toolchains/1.90.0-<host>/bin` first on `PATH` and 
 `rustc`, `cargo` and `clippy-driver --version`. Do not rely on `rustup run 1.90.0` or
 `cargo +1.90.0` alone: where another package manager's `cargo` precedes the rustup
 proxies, they can resolve to a different compiler.
+
+### T011 — Maintain the admitted workspace from filesystem change hints
+
+Selected 2026-10-09 for the experimental ecosystem; not implemented. The owner
+requires continuous incremental maintenance at 60,000–80,000 files. Reuse this spec's
+source ingestion, ignore/no-follow and reconciliation rules. Watch events do not
+admit roots, certify bytes or become a second source ledger.
+
+- Add explicit watcher enablement to the existing long-lived primary owner. Use a
+  maintained filesystem notification library; bound and coalesce changed paths.
+  Re-read/hash-verify only affected admitted files during ordinary operation.
+- Handle rename/delete/directory changes, ignore-rule changes, missed events and
+  overflow explicitly. Reconcile from a bounded dirty-root marker on overflow and
+  restart; an incomplete walk cannot retire unseen sources. Preserve prior accepted
+  bytes on named read failures. Quiet ticks must not reread every source body.
+- Source publication immediately invalidates old graph/embedding/derived-brief
+  evidence under its existing ownership rule. Record pending derivation without
+  running a model on the source path. Resume source work before optional idle work.
+- Foreground admission, bounded memory and shutdown apply to each reconciliation
+  step. Expose pending/overflow/last-success/error status; no invisible hot scan loop.
+- Verify event bursts, rename/delete, symlink replacement, lost-event reconciliation,
+  restart, edit during refresh and idle operation on a synthetic large-file-count
+  sandbox. That fixture does not establish semantic preparation throughput.
+
+Reference: Prakarana `3143213d`, `src/internal/workspace.cpp`,
+`docs/design/watcher-efficiency.md`, `test_watch_scan_efficiency.cpp` and
+`test_watcher_delete_floor.cpp`, inspected without execution. Preserve the live-update
+capability while avoiding its documented repeated full-scan/transient-budget failure.

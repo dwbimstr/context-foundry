@@ -10,9 +10,10 @@
 //! - every store step takes the owner's ONE engine slot, and only while no
 //!   foreground operation is in flight, and gives it back before the next
 //!   step; a foreground operation arriving during such a step waits for it
-//!   (the owner's `take_engine_slot`), so steps are kept short: a partition
-//!   step and each step of a publication end at their first boundary after
-//!   [`STEP_TIME`], and the generation itself is built with the slot free;
+//!   (the owner's `take_engine_slot`), so steps are kept short: partition
+//!   input collection and publication end at their first boundary after
+//!   [`STEP_TIME`]. Partition CPU work and generation construction run with
+//!   the slot free; computed partitions recheck their source at commit;
 //! - the model call runs on the owner's ONE resident worker
 //!   ([`QueryRuntime`]) with NO engine slot and NO transaction held. Its
 //!   admission is refused, never queued, while that slot is occupied or a
@@ -76,8 +77,6 @@ use std::time::{Duration, Instant};
 /// in-flight grace before stopping the worker; the stop is the resumable
 /// `provider_timeout`.
 pub const DOCUMENT_CALL_TIMEOUT: Duration = Duration::from_secs(60);
-/// New partitions one store step may write.
-const PARTITIONS_PER_STEP: usize = 8;
 /// Sources one selection step may examine.
 const SOURCES_PER_STEP: usize = cache::PAGE;
 /// How long the driver waits before looking again for a free engine slot,
@@ -441,7 +440,7 @@ impl<'a> Run<'a> {
             }
             let (owner, runtime, control) = (self.owner, self.runtime, self.control);
             let (recipe, digest, report) = (&self.recipe, &self.digest, &mut self.report);
-            let progress = hold(owner, |engine| {
+            let (progress, inputs) = hold(owner, |engine| {
                 Steps {
                     engine,
                     cards: Cards {
@@ -451,11 +450,10 @@ impl<'a> Run<'a> {
                     },
                     recipe,
                 }
-                .partition_page(
+                .partition_inputs(
                     &mut after,
-                    PARTITIONS_PER_STEP,
+                    prepare::PARTITION_WAVE,
                     Some(Instant::now() + STEP_TIME),
-                    control,
                     report,
                     &mut || owner.closing().then(cancelled),
                 )
@@ -464,6 +462,37 @@ impl<'a> Run<'a> {
                 Progress::More => {}
                 Progress::Done => return Ok(None),
                 Progress::Halted(stop) => return Ok(Some(stop)),
+            }
+            // Source bodies were verified under a read transaction; no
+            // engine slot or transaction is held during CPU computation.
+            if let Some(stop) = self.requested_stop() {
+                return Ok(Some(stop));
+            }
+            let prepared = Cards {
+                tokenizer: runtime.tokenizer(),
+                profile: &runtime.profile,
+                function_digest: &self.digest,
+            }
+            .prepare_partitions(inputs, &self.recipe, control)?;
+            for partition in prepared {
+                if let Some(stop) = self.requested_stop() {
+                    return Ok(Some(stop));
+                }
+                let preparation = self.preparation;
+                let report = &mut self.report;
+                let stop = hold(owner, |engine| {
+                    if owner.closing() {
+                        return Ok(Some(cancelled()));
+                    }
+                    if preparation.lock().phase == Phase::Pausing {
+                        return Ok(Some(paused()));
+                    }
+                    prepare::commit_partition(engine, partition, control, report)?;
+                    Ok(None)
+                })?;
+                if stop.is_some() {
+                    return Ok(stop);
+                }
             }
         }
     }
@@ -988,6 +1017,93 @@ mod tests {
         while !preparation.idle() {
             assert!(Instant::now() < deadline, "the driver never stopped");
             std::thread::sleep(POLL);
+        }
+    }
+
+    #[test]
+    fn partition_computation_releases_the_engine_slot_and_obeys_pause_and_shutdown() {
+        struct Available {
+            engine: Mutex<Engine>,
+            closing: AtomicBool,
+        }
+        impl Owner for Available {
+            fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
+                step(&self.engine.lock().unwrap());
+                Ok(true)
+            }
+            fn closing(&self) -> bool {
+                self.closing.load(Ordering::SeqCst)
+            }
+        }
+        for stop in ["none", "pause", "shutdown"] {
+            let (_dir, engine, profile) = notes();
+            let descriptor = profile.descriptor.clone();
+            let runtime = QueryRuntime::start(
+                profile,
+                Box::new(move || {
+                    Ok(Box::new(Sizes {
+                        descriptor,
+                        sizes: Arc::new(Mutex::new(Vec::new())),
+                        foreground: None,
+                    }) as Box<dyn EmbeddingProvider>)
+                }),
+            )
+            .unwrap();
+            let owner = Arc::new(Available {
+                engine: Mutex::new(engine),
+                closing: AtomicBool::new(false),
+            });
+            let preparation = Arc::new(Preparation::default());
+            preparation.lock().phase = Phase::Running;
+            let foreground = Arc::clone(&owner);
+            let pause = Arc::clone(&preparation);
+            let entered = Arc::new(AtomicBool::new(false));
+            let seen = Arc::clone(&entered);
+            crate::fault::arm(
+                prepare::fault_names::PARTITION_BEFORE_COMPUTE,
+                0,
+                crate::fault::Action::Call(Box::new(move |_| {
+                    let engine = foreground
+                        .engine
+                        .try_lock()
+                        .expect("partition CPU work must release the serving slot");
+                    let evidence = engine
+                        .context_candidates(
+                            "note00.md",
+                            crate::Strategy::Search,
+                            &Control::unbounded(),
+                        )
+                        .unwrap();
+                    assert!(!evidence.items.is_empty());
+                    // A write succeeds too: there is no lingering redb writer.
+                    engine
+                        .replace_source("foreground.md", "# Foreground source\n")
+                        .unwrap();
+                    seen.store(true, Ordering::SeqCst);
+                    if stop == "pause" {
+                        pause.pause();
+                    }
+                    if stop == "shutdown" {
+                        foreground.closing.store(true, Ordering::SeqCst);
+                    }
+                })),
+            );
+            let control = Control::unbounded();
+            let result = Run::new(&*owner, &runtime, &preparation, &control)
+                .partition_pass()
+                .unwrap();
+            crate::fault::disarm_all();
+            assert!(entered.load(Ordering::SeqCst));
+            let engine = owner.engine.lock().unwrap();
+            if stop == "none" {
+                assert!(result.is_none());
+                assert!(engine.semantic_partition("note00.md").unwrap().is_some());
+            } else {
+                assert!(
+                    matches!(result, Some(Stop::Partial { code, .. }) if code == if stop == "pause" { "paused" } else { "cancelled" })
+                );
+                assert!(engine.semantic_partition("note00.md").unwrap().is_none());
+            }
         }
     }
 

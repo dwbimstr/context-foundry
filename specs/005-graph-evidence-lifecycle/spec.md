@@ -480,3 +480,25 @@ expanded the wrong symbols.
 All three SCs were executed and passed: SC-001 and SC-002 on 2026-10-04, and SC-003 on
 2026-10-05 in one measured run with no failed criterion (validation). A failed scale run
 would not have blocked an already accepted smaller CLI or agent release.
+
+### T005 — Connect repository behavior across process boundaries
+
+Selected 2026-10-09; not implemented. A compiler reference graph does not capture all
+service/configuration dependencies. Start with one supported producer for declared
+routes/contracts and literal consumers inside an admitted repository. Normalize
+versioned API/topic keys with an explicit recipe, retain evidence spans at both ends,
+and publish exact, ambiguous and unresolved joins distinctly. A string used for
+logging alone is not a call. Source/dependency changes invalidate the affected joins.
+
+010 may propose additional links for dynamic behavior, but these stay derived claims;
+they cannot become compiler evidence because an endpoint name appears in source.
+Retrieval preserves the hop's kind, producer, source hashes and uncertainty. Bound
+traversal and make publication proportional to changed regions where supported.
+Cross-repository graph admission remains outside this slice.
+
+Verify one multi-service contract-change fixture with implementation, consumer,
+configuration and tests, including ambiguous providers and an unsupported dynamic
+consumer. Prakarana `3143213d` spec 063 is a draft reference, not implemented-loader
+evidence; `spine_tree.cpp` currently rolls up derived provides/consumes vocabulary.
+Its spec 058 and `setu_engine.cpp` inform the publication-cost question. Those sources
+were inspected, not executed; the ecosystem plan retains the full pin and differences.

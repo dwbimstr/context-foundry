@@ -833,3 +833,20 @@ normal MCP reservation/charge/refund behavior; revision conflicts and packing re
 refund the reservation. Recovery search remains byte-bounded on `task_context`, not a
 provider-token claim. No conversation replacement, host acknowledgment or learned
 policy is introduced. Live-host outcomes remain pending and do not block sandbox work.
+
+### T009 — Compose evidence for a repository task
+
+Selected 2026-10-09; not implemented. Extend T008 using the caller's task requirements
+and open questions to collect the evidence needed for a change: orientation, relevant
+implementation, callers/boundary consumers, constraints and verification tests.
+010 briefs guide discovery; source and 005 graph citations remain recoverable.
+Deduplicate representations of one source and expose missing/conflicting facets.
+Top-k relevance and a generated summary cannot certify complete evidence.
+
+Use one final delivery allowance and retain exact-name/ordinary context behavior.
+Keep the request explicit and bounded, without autonomous extra model calls or a
+claim to control the host's whole conversation. Verify multi-file sandbox tasks and
+trace how the selected evidence supports the patch and its test. Later paired host
+runs compare verified completions, incorrect changes, complete provider usage,
+auxiliary generation and amortized preparation cost. Smaller tool replies alone are
+not success. This acceptance evidence does not block experimental implementation.

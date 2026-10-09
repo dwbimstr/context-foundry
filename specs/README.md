@@ -18,9 +18,11 @@ instruction authorizes sandbox implementation without waiting for measurements o
 gates; 008 T003/T004 own experimental task state, recoverable working context, grounded
 reminders and explicit promotion; 003 T007 owns CLI/opt-in MCP delivery. 008 T005
 and 003 T008 connect task state to source retrieval under one budget and add recovery
-search over retained originals. Later
-milestones require concrete amendments as they enter implementation; they do not
-reactivate deferred specs or reopen accepted tasks. 013 stays frozen off. The task
+search over retained originals. The owner's subsequent large-repository direction
+reactivates 010 for source-bound LLM knowledge and selects 001 T011 (watching),
+009 T006/T007 (parallel/progressive bootstrap), 005 T005 (boundary relationships)
+and 003 T009 (task evidence). See the revised build order in the ecosystem plan.
+Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.
 
 ## Implementation baseline
@@ -66,10 +68,11 @@ work. A release delivers the whole intended product, not basic search alone.
 | [007](007-multi-workspace-context/spec.md) | Ask one question across explicitly admitted repositories and receive one cited, budgeted response | 001 T004–T006; 003 T001–T002 | Admission at owner launch only; no cross-root edges, global snapshot or registry |
 | [008](008-scoped-durable-memory/spec.md) | Remember, correct and forget explicit project knowledge | 001 | Independent extension; no transcript harvesting |
 | [009](009-optional-semantic-retrieval/spec.md) | Prepare neural context progressively and retain expensive work | 001; 003 for foreground coexistence | Optional; from 2026-10-07 address cards on a llama.cpp worker, used only for queries that name nothing, enabled only after G2 shows a gain |
+| [010](010-source-bound-derived-knowledge/spec.md) | Find behavior through source-bound LLM briefs and area knowledge | 001 source identity; 003 delivery; 009 resource admission | Reactivated experimentally 2026-10-09; T001/T002 selected, not implemented |
 | [013](013-owned-learning/spec.md) | Improve decisions through repeated owned Rust fine-tuning of ModernBERT with a decision head | 001/003 for data; 005 for useful graph selection; separate from 009 retrieval vectors | **Frozen off 2026-10-07**: implemented tasks stand; no further work; signed-package items are not release conditions |
 
 A release waits for all of them (owner policy 2026-10-04): every task of 001, 003, 005,
-007, 008 and 009 implemented and accepted, and 013's tasks as frozen on 2026-10-07,
+007, 008, 009 and 010 implemented and accepted, and 013's tasks as frozen on 2026-10-07,
 then the ordinary [release checklist](../docs/release.md). Deferred and superseded
 specs are excluded.
 
@@ -132,7 +135,7 @@ is implied by writing a task, and a missing one fails by name in its spec.
   stdio remains; the 2026-10-01 owner-approved shared SDK MCP mode lives in 003.
   It adds no protocol dialect, federation coordinator or automatic daemon fleet.
 - **004 + 006**: merged source bounds into 001 and the actual scale/producer workflow
-  into 005. A watcher and general producer framework are not prerequisites.
+  into 005. The new watcher scope is 001 T011; no general producer framework is required.
 - **011**: moved deterministic delivery budgets and adapter usage receipts into 003,
   with exact packing in 001. Complete-request control requires real host hooks; there
   is no standalone cost-governance service. The owner's latest answer adds an optional
@@ -140,8 +143,8 @@ is implied by writing a task, and a missing one fails by name in its spec.
 - **012**: merged consent, grouping and dataset handoff into 013. Learning owns its
   input contract; no separate learning-data platform.
 - **015**: replaced a packaging capability with the release checklist.
-- **010, 014**: deferred generated knowledge and migration until a concrete task
-  justifies each. Their stubs state re-entry criteria.
+- **014**: deferred migration until a concrete task
+  justifies it. Its stub states re-entry criteria.
 - **007**: reactivated on 2026-10-03 as launch-time multi-root context; federation,
   registries and cross-root edges stay out of scope.
 - **009**: reactivated after the owner's preparation-cost correction; retain a narrow

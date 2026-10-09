@@ -29,12 +29,13 @@
 //!
 //! 009 T003: the steps are shared with the MCP owner's background driver
 //! ([`super::driver`]), which composes the SAME functions between its own
-//! engine-slot holds: [`Steps::partition_page`], [`Steps::select_batch`],
+//! engine-slot holds: [`Steps::partition_inputs`], [`commit_partition`], [`Steps::select_batch`],
 //! [`Cards::render`], [`commit_batch`], [`publish`], [`begin`] and
 //! [`finalize`]. Only the ownership around them differs: the CLI holds the
 //! store exclusively and calls the provider directly under its budget; the
 //! driver takes the owner's engine slot per store step and embeds through
-//! the resident runtime.
+//! the resident runtime. Both prepare at most eight source partitions in
+//! parallel outside transactions; the driver releases its engine slot too.
 //!
 //! 009 T004: the embedding inputs are cards ([`super::partition`]). A
 //! partition is accepted only as the cards its verified body renders, in
@@ -68,6 +69,9 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// A wave retains at most eight verified source bodies (16 MiB maximum).
+pub(crate) const PARTITION_WAVE: usize = 8;
 
 /// The provider seam: profile, isolation flag and the run control (caller
 /// cancellation plus the budget deadline) to one embedding function.
@@ -176,6 +180,7 @@ pub mod fault_names {
         };
     }
     point!(PARTITION_AFTER_COMMIT, "prepare.partition_after_commit");
+    point!(PARTITION_BEFORE_COMPUTE, "prepare.partition_before_compute");
     point!(CACHE_BEFORE_COMMIT, "prepare.cache_before_commit");
     point!(CACHE_AFTER_COMMIT, "prepare.cache_after_commit");
     point!(BEFORE_PUBLISH, "prepare.before_publish");
@@ -427,6 +432,7 @@ pub(crate) fn lifetime_code(code: &str) -> &'static str {
         "index_unavailable",
         "repair_path_conflict",
         "partition_invalid",
+        "partition_worker_failed",
     ];
     KNOWN
         .iter()
@@ -889,7 +895,7 @@ pub(crate) struct Steps<'a> {
 /// slot and no transaction.
 #[derive(Clone, Copy)]
 pub(crate) struct Cards<'a> {
-    pub tokenizer: &'a dyn TokenCount,
+    pub tokenizer: &'a (dyn TokenCount + Sync),
     pub profile: &'a SemanticProfile,
     pub function_digest: &'a str,
 }
@@ -984,6 +990,87 @@ fn partition_invalid(message: String) -> FoundryError {
 }
 
 impl Cards<'_> {
+    /// CPU-only computation over owned, verified bodies. No store reference
+    /// crosses into these workers; callers release the MCP engine slot first.
+    pub(crate) fn prepare_partitions(
+        &self,
+        sources: Vec<cache::PartitionSource>,
+        recipe: &str,
+        control: &Control,
+    ) -> FResult<Vec<cache::PreparedPartition>> {
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+        prepare_fault!(PARTITION_BEFORE_COMPUTE, Some(control), "")?;
+        let workers = std::thread::available_parallelism().map_or(1, usize::from);
+        self.prepare_partitions_with_workers(sources, recipe, control, workers)
+    }
+
+    fn prepare_partitions_with_workers(
+        &self,
+        sources: Vec<cache::PartitionSource>,
+        recipe: &str,
+        control: &Control,
+        workers: usize,
+    ) -> FResult<Vec<cache::PreparedPartition>> {
+        use std::collections::VecDeque;
+        use std::sync::Mutex;
+        if sources.len() > PARTITION_WAVE {
+            return Err(partition_invalid(
+                "partition wave exceeds its source bound".into(),
+            ));
+        }
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+        let workers = workers.clamp(1, PARTITION_WAVE).min(sources.len());
+        let jobs = Mutex::new(sources.into_iter().enumerate().collect::<VecDeque<_>>());
+        let mut results = std::thread::scope(|scope| -> FResult<Vec<_>> {
+            let mut handles = Vec::new();
+            for _ in 0..workers {
+                let jobs = &jobs;
+                handles.push(scope.spawn(move || {
+                    let mut results = Vec::new();
+                    loop {
+                        let job = jobs.lock().unwrap_or_else(|e| e.into_inner()).pop_front();
+                        let Some((index, source)) = job else { break };
+                        let result = control.check().and_then(|()| {
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                let path = source.path().to_owned();
+                                source.prepare(recipe, self.function_digest, None, &|body| {
+                                    self.units(&path, body)
+                                })
+                            }))
+                            .unwrap_or_else(|_| Err(FoundryError::Semantic {
+                                code: "partition_worker_failed",
+                                message: "a partition worker panicked; unpublished mappings were discarded".into(),
+                            }))
+                        });
+                        results.push((index, result));
+                    }
+                    results
+                }));
+            }
+            let mut results = Vec::new();
+            let mut panicked = false;
+            for handle in handles {
+                match handle.join() {
+                    Ok(rows) => results.extend(rows),
+                    Err(_) => panicked = true,
+                }
+            }
+            if panicked {
+                return Err(FoundryError::Semantic {
+                    code: "partition_worker_failed",
+                    message: "a partition worker exited unexpectedly".into(),
+                });
+            }
+            Ok(results)
+        })?;
+        results.sort_by_key(|(index, _)| *index);
+        results.into_iter().map(|(_, result)| result).collect()
+    }
+
     /// The limits of one document call under the run's profile.
     pub(crate) fn limits(&self) -> DocumentLimits {
         self.profile.document_limits()
@@ -1077,14 +1164,10 @@ impl Cards<'_> {
 }
 
 impl Steps<'_> {
-    /// Partition the current sources after `after`, one page at most, until
-    /// `max_new` partitions were written or, once at least one source was
-    /// examined, `until` passed (009 T003: the MCP owner's driver keeps each
-    /// engine-slot step short): each source without a current partition is
-    /// carded from its committed body and its mapping accepted in its own
-    /// transaction. `halt` is asked before the page and before every source
-    /// that needs work. (`control` reaches only the test-faults point after
-    /// each partition commit.)
+    /// CLI composition of snapshot, parallel computation and ordered commits.
+    /// Select at most min(max_new, eight) new sources, respecting `until` at
+    /// source boundaries. Recheck cancellation and the source version before
+    /// each atomic commit. MCP composes these stages around separate slot holds.
     #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
     pub(crate) fn partition_page(
         &self,
@@ -1095,19 +1178,45 @@ impl Steps<'_> {
         report: &mut PrepareReport,
         halt: &mut dyn FnMut() -> Option<Stop>,
     ) -> FResult<Progress> {
+        let (progress, sources) = self.partition_inputs(after, max_new, until, report, halt)?;
+        if matches!(progress, Progress::Halted(_)) {
+            return Ok(progress);
+        }
+        let prepared = self
+            .cards
+            .prepare_partitions(sources, self.recipe, control)?;
+        for partition in prepared {
+            if let Some(stop) = halt() {
+                return Ok(Progress::Halted(stop));
+            }
+            commit_partition(self.engine, partition, control, report)?;
+        }
+        Ok(progress)
+    }
+
+    /// Snapshot only. Card parsing/tokenization happens after the caller
+    /// releases its engine slot. Source order also determines commit order.
+    pub(crate) fn partition_inputs(
+        &self,
+        after: &mut Option<String>,
+        max_new: usize,
+        until: Option<Instant>,
+        report: &mut PrepareReport,
+        halt: &mut dyn FnMut() -> Option<Stop>,
+    ) -> FResult<(Progress, Vec<cache::PartitionSource>)> {
+        let mut inputs = Vec::new();
         if let Some(stop) = halt() {
-            return Ok(Progress::Halted(stop));
+            return Ok((Progress::Halted(stop), inputs));
         }
         let page = cache::source_page(&self.engine.db, after.as_deref())?;
         if page.is_empty() {
-            return Ok(Progress::Done);
+            return Ok((Progress::Done, inputs));
         }
-        let mut written = 0usize;
         for (examined, (path, meta)) in page.iter().enumerate() {
-            if written == max_new
+            if inputs.len() == max_new.min(PARTITION_WAVE)
                 || (examined > 0 && until.is_some_and(|until| Instant::now() >= until))
             {
-                return Ok(Progress::More);
+                return Ok((Progress::More, inputs));
             }
             report.sources += 1;
             if let Some(existing) = self.engine.semantic_partition(path)?
@@ -1123,23 +1232,12 @@ impl Steps<'_> {
                 continue;
             }
             if let Some(stop) = halt() {
-                return Ok(Progress::Halted(stop));
+                return Ok((Progress::Halted(stop), inputs));
             }
-            let cards = self.cards;
-            self.engine.semantic_record_partition(
-                path,
-                &meta.hash,
-                self.recipe,
-                cards.function_digest,
-                None,
-                &|body| cards.units(path, body),
-            )?;
-            report.partitioned_sources += 1;
-            written += 1;
+            inputs.push(self.engine.semantic_partition_source(path, &meta.hash)?);
             *after = Some(path.clone());
-            prepare_fault!(PARTITION_AFTER_COMMIT, Some(control), path)?;
         }
-        Ok(Progress::More)
+        Ok((Progress::More, inputs))
     }
 
     /// Add the next missing cards to `selection` (a store step: no
@@ -1256,9 +1354,225 @@ impl Steps<'_> {
     }
 }
 
+/// Publish a computed mapping only against its still-current source version.
+#[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
+pub(crate) fn commit_partition(
+    engine: &Engine,
+    partition: cache::PreparedPartition,
+    control: &Control,
+    report: &mut PrepareReport,
+) -> FResult<()> {
+    control.check()?;
+    let path = partition.path().to_owned();
+    engine.semantic_accept_partition(partition)?;
+    report.partitioned_sources += 1;
+    prepare_fault!(PARTITION_AFTER_COMMIT, Some(control), &path)?;
+    Ok(())
+}
+
 #[cfg(all(test, feature = "test-faults"))]
 mod tests {
     use super::*;
+
+    fn partition_fixture() -> (tempfile::TempDir, Engine, SemanticProfile) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        for n in 0..12 {
+            std::fs::write(
+                root.join(format!("note{n:02}.md")),
+                format!("# Note {n} é\n\nRetained detail {n}.\n"),
+            )
+            .unwrap();
+        }
+        let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+        engine.index(&root, &Control::unbounded()).unwrap();
+        let profile = SemanticProfile::load(&crate::testkit::write_semantic_profile(
+            dir.path(),
+            "partitions",
+            |_| {},
+        ))
+        .unwrap();
+        (dir, engine, profile)
+    }
+
+    fn inputs(engine: &Engine, count: usize) -> Vec<cache::PartitionSource> {
+        (0..count)
+            .map(|n| {
+                let path = format!("note{n:02}.md");
+                let hash = engine.source(&path).unwrap().unwrap().hash;
+                engine.semantic_partition_source(&path, &hash).unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parallel_partitions_equal_serial_and_snapshot_admission_is_bounded() {
+        let (_dir, engine, profile) = partition_fixture();
+        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+        let digest = profile.descriptor.digest();
+        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+        let cards = Cards {
+            tokenizer: &tokenizer,
+            profile: &profile,
+            function_digest: &digest,
+        };
+        let control = Control::unbounded();
+        let mut after = None;
+        let mut report = PrepareReport::default();
+        let (_, wave) = Steps {
+            engine: &engine,
+            cards,
+            recipe: &recipe,
+        }
+        .partition_inputs(&mut after, usize::MAX, None, &mut report, &mut || None)
+        .unwrap();
+        assert_eq!(wave.len(), PARTITION_WAVE);
+        assert_eq!(after.as_deref(), Some("note07.md"));
+        assert_eq!(report.partitioned_sources, 0);
+        assert!(engine.semantic_partition("note00.md").unwrap().is_none());
+        let mut snapshots = Vec::new();
+        for workers in [1, 8] {
+            let prepared = cards
+                .prepare_partitions_with_workers(inputs(&engine, 8), &recipe, &control, workers)
+                .unwrap();
+            for (n, partition) in prepared.into_iter().enumerate() {
+                assert_eq!(partition.path(), format!("note{n:02}.md"));
+                engine.semantic_accept_partition(partition).unwrap();
+            }
+            snapshots.push(
+                (0..8)
+                    .map(|n| {
+                        serde_json::to_value(
+                            engine
+                                .semantic_partition(&format!("note{n:02}.md"))
+                                .unwrap(),
+                        )
+                        .unwrap()
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(snapshots[0], snapshots[1]);
+        assert_eq!(
+            cards
+                .prepare_partitions(inputs(&engine, 9), &recipe, &control)
+                .unwrap_err()
+                .code(),
+            "partition_invalid"
+        );
+    }
+
+    #[test]
+    fn partition_cpu_workers_overlap_without_a_store_transaction() {
+        use std::sync::{Condvar, Mutex};
+        struct Concurrent<'a> {
+            inner: &'a DocumentTokenizer,
+            arrivals: Mutex<usize>,
+            ready: Condvar,
+        }
+        impl TokenCount for Concurrent<'_> {
+            fn encode(&self, text: &str) -> Result<partition::TokenizedText, ProviderError> {
+                let mut arrived = self.arrivals.lock().unwrap();
+                *arrived += 1;
+                self.ready.notify_all();
+                let (arrived, timed) = self
+                    .ready
+                    .wait_timeout_while(arrived, Duration::from_secs(5), |arrived| *arrived < 2)
+                    .unwrap();
+                drop(arrived);
+                assert!(
+                    !timed.timed_out(),
+                    "a second CPU worker must enter while the first is blocked"
+                );
+                self.inner.encode(text)
+            }
+        }
+        let (_dir, engine, profile) = partition_fixture();
+        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+        let concurrent = Concurrent {
+            inner: &tokenizer,
+            arrivals: Mutex::new(0),
+            ready: Condvar::new(),
+        };
+        let digest = profile.descriptor.digest();
+        let cards = Cards {
+            tokenizer: &concurrent,
+            profile: &profile,
+            function_digest: &digest,
+        };
+        let prepared = cards
+            .prepare_partitions_with_workers(inputs(&engine, 2), "recipe", &Control::unbounded(), 2)
+            .unwrap();
+        assert_eq!(prepared.len(), 2);
+        assert!(engine.semantic_partition("note00.md").unwrap().is_none());
+    }
+
+    #[test]
+    fn partition_cancellation_and_worker_panic_publish_nothing() {
+        struct Panics;
+        impl TokenCount for Panics {
+            fn encode(&self, _: &str) -> Result<partition::TokenizedText, ProviderError> {
+                panic!("injected tokenizer panic")
+            }
+        }
+        let (_dir, engine, profile) = partition_fixture();
+        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+        let digest = profile.descriptor.digest();
+        let cards = Cards {
+            tokenizer: &tokenizer,
+            profile: &profile,
+            function_digest: &digest,
+        };
+        assert_eq!(
+            cards
+                .prepare_partitions(inputs(&engine, 8), "recipe", &Control::cancelled())
+                .unwrap_err()
+                .code(),
+            "cancelled"
+        );
+        let mut prepared = cards
+            .prepare_partitions(inputs(&engine, 1), "recipe", &Control::unbounded())
+            .unwrap();
+        assert_eq!(
+            commit_partition(
+                &engine,
+                prepared.pop().unwrap(),
+                &Control::cancelled(),
+                &mut PrepareReport::default()
+            )
+            .unwrap_err()
+            .code(),
+            "cancelled"
+        );
+        let panics = Cards {
+            tokenizer: &Panics,
+            ..cards
+        };
+        let error = panics
+            .prepare_partitions_with_workers(inputs(&engine, 8), "recipe", &Control::unbounded(), 8)
+            .unwrap_err();
+        assert_eq!(error.code(), "partition_worker_failed");
+        let mut report = PrepareReport {
+            profile: profile.name.clone(),
+            function_digest: digest,
+            recipe_id: "recipe".into(),
+            dimensions: profile.descriptor.dimensions,
+            ..PrepareReport::default()
+        };
+        finalize(&engine, &mut report, &Err(error)).unwrap();
+        assert_eq!(
+            engine
+                .semantic_state()
+                .unwrap()
+                .unwrap()
+                .last_error
+                .unwrap()
+                .code,
+            "partition_worker_failed"
+        );
+        assert!(engine.semantic_partition("note00.md").unwrap().is_none());
+    }
 
     /// 009 T003, captain decision 2026-10-06: a partition step stops at its
     /// time bound once it examined a source, and at its count bound without
@@ -1318,21 +1632,22 @@ mod tests {
     /// Counts every tokenization: the cost of rendering cards.
     struct Counting<'a> {
         inner: &'a DocumentTokenizer,
-        encodes: std::cell::Cell<usize>,
+        encodes: std::sync::atomic::AtomicUsize,
     }
 
     impl<'a> Counting<'a> {
         fn new(inner: &'a DocumentTokenizer) -> Self {
             Self {
                 inner,
-                encodes: std::cell::Cell::new(0),
+                encodes: std::sync::atomic::AtomicUsize::new(0),
             }
         }
     }
 
     impl TokenCount for Counting<'_> {
         fn encode(&self, rendered: &str) -> Result<partition::TokenizedText, ProviderError> {
-            self.encodes.set(self.encodes.get() + 1);
+            self.encodes
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.inner.encode(rendered)
         }
     }
@@ -1435,8 +1750,8 @@ mod tests {
         }
         assert_eq!(batches, [8; 5]);
         assert_eq!(
-            counting.encodes.get(),
-            once.encodes.get(),
+            counting.encodes.load(std::sync::atomic::Ordering::Relaxed),
+            once.encodes.load(std::sync::atomic::Ordering::Relaxed),
             "each selected card is rendered once, nothing else"
         );
     }

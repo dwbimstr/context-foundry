@@ -1,5 +1,62 @@
 # Validation
 
+## Large-repository architecture and parallel partitioning — 2026-10-09
+
+The owner redirected the experimental work toward verified task quality, practical
+bootstrap at 60,000–80,000 files, LLM-derived repository knowledge, parallel execution
+and continuous incremental maintenance. The
+[revised design and build order](context-ecosystem-plan.md#architecture-correction-useful-context-across-6000080000-files)
+records the comparison with Prakarana, read at commit
+`3143213d63c22a097c77fb229bfc910e08c6e01e`. Its sources, contract tests and historical
+reports were inspected; no predecessor code, service or test suite was executed.
+Prakarana's draft cross-service graph spec is not treated as an implemented loader.
+
+Findings from current Foundry source: source-index construction already parallelizes;
+semantic partition computation held the redb write transaction and, in MCP, the
+serving engine slot. Source watching is absent and 010 was deferred. The latest
+recorded full Gemma preparation took 4,437 s for 332,732 cards; that historical elapsed
+time does not identify the share caused by partitioning. Recent task-state and exact
+delivery-budget features do not establish repository-understanding or task-cost gains.
+
+[009 T006](../specs/009-optional-semantic-retrieval/spec.md#t006--bound-and-parallelize-semantic-partition-computation)
+is implemented in [cache.rs](../src/neural/cache.rs),
+[prepare.rs](../src/neural/prepare.rs) and [driver.rs](../src/neural/driver.rs):
+
+- Snapshot and verify source bodies under short read transactions. Compute card
+  tuples outside all store transactions and the MCP engine slot, with up to
+  min(available parallelism, eight) CPU workers and at most eight source bodies per
+  wave (16 MiB input bound, not a whole-process memory guarantee).
+- Join workers and commit mappings in source order with a current source-hash check.
+  Changed/deleted sources refuse publication; cancellation, pause and shutdown keep
+  unpublished work out of storage. A worker panic is a named persistent error.
+- CLI and MCP share the computation and acceptance path. Existing card recipes,
+  vector identities, schema 7, model admission, caching and source outputs stay intact.
+  This changes CPU preparation concurrency, not model/device batch parallelism.
+
+Linux/Rust 1.90.0 sandbox evidence:
+
+- Five partition tests and seven driver tests passed, including serial/parallel tuple
+  equality, bounded admission, actual overlapping CPU calls, cancellation/panic,
+  foreground retrieval and writes while computation has no engine slot, and pause/
+  shutdown discarding unpublished work. Four of those are new tests.
+- The neural lifecycle suite passed 57 tests, including the new source-change/delete
+  during-computation test and restart preservation. Neural retrieval passed 54 tests
+  with one real-model measurement ignored. The separate recovery runner passed all
+  scenarios. Inputs/providers here are synthetic; no generation/embedding model ran.
+- Final `cargo test --locked --no-fail-fast`: **847 passed, zero failed, two ignored**,
+  plus every scenario in the separate recovery runner. Ignored hardware/model
+  measurements are not counted as passed. `cargo clippy --locked --all-targets --
+  -D warnings`, `cargo check --locked --no-default-features --lib --bin foundry`,
+  `cargo fmt --check`, the repository Markdown link/anchor checker and
+  `git diff --check` pass. No source was edited during the final regression run.
+
+010 T001/T002, 001 T011, 009 T007, 005 T005 and 003 T009 now have selected contracts;
+their LLM briefs, watcher, progressive publication, boundary joins and task composition
+are **not implemented by this increment**. No real bootstrap speedup, 80,000-file
+throughput, live coding-task improvement or provider-dollar saving is claimed.
+013 stays frozen; the owner's instruction permits sandbox implementation without
+waiting for external measurement gates. Evidence is self-review, not independent review.
+
 ## Task-aware retrieval and recovery search — 2026-10-09
 
 The next sandbox increment on `experimental/context-ecosystem` implements

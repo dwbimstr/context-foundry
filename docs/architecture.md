@@ -229,8 +229,8 @@ within one enumeration can make that scan miss names and retire their records un
 next complete scan; no outside bytes are read. 001 records the
 [limitation and its re-entry condition](../specs/001-source-state-recovery/spec.md#reconciliation-rules-and-limits),
 and the scan is not described as rename-proof. A shell `cd` or session
-mention cannot rebind a store. There is no watcher in the prototype; if later needed,
-it supplies change hints to the same ingestion owner for that root. It does not own
+mention cannot rebind a store. There is no watcher yet; selected 001 T011 adds
+change hints to the same ingestion owner for that root. It does not own
 a second truth ledger or discover roots. Source bookkeeping, rebuildable derived
 indexes and consented training manifests have distinct purposes; none authorizes the
 other’s work. No globally atomic multi-repo snapshot is promised.
@@ -336,6 +336,21 @@ compiler or infer new source roots.
 serving owner's background preparation of its primary root (one driver, one resident
 model worker, store steps under the engine slot, inference outside it), and `status`
 reports it in a `semantic` object; there is no separate preparation tool.
+
+Experimental 009 T006 splits semantic partition work into bounded source snapshots,
+parallel CPU computation and source-hash-checked commits. At most eight verified
+source bodies (16 MiB of input) enter a wave, with at most eight CPU workers.
+Tokenization holds neither a store transaction nor the MCP engine slot; acceptance
+still refuses changed/deleted inputs. Model inference keeps its existing admission
+rules. Whole-corpus partition and ANN publication barriers remain for 009 T007.
+
+The owner's 2026-10-09 scale direction also reactivates 010 for source-bound LLM
+briefs and area summaries. These are selected work, not implemented enrichment.
+Exact source/graph evidence, derived repository knowledge and explicit task memory
+have distinct provenance and invalidation rules. The
+[revised ecosystem design](context-ecosystem-plan.md#architecture-correction-useful-context-across-6000080000-files)
+defines progressive readiness, incremental watching, resource bounds, task evidence
+and complete-task economics, with a pinned Prakarana comparison.
 
 Exact paths and identifiers take precedence on locator queries. Lexical retrieval
 is always available. Neural preparation/reuse and dense retrieval are implemented

@@ -1153,3 +1153,64 @@ they do not assign causes to the 249 historical G2 misses.
   Record aggregate results in validation; raw labels, traces and source payloads stay
   outside Git. Validation records the executed diagnostic fixtures; the full G1/G2,
   held-out quality and installed-artifact checks are not claimed by those fixtures.
+
+### T006 — Bound and parallelize semantic partition computation
+
+Status: implemented experimentally in the shared CLI/MCP pipeline; sandbox evidence
+is in [validation](../../docs/validation.md#large-repository-architecture-and-parallel-partitioning--2026-10-09).
+Real-model throughput and task benefit remain unmeasured.
+
+Selected 2026-10-09 for the experimental branch, following the owner's large-repository
+architecture correction. Current `partition_page` tokenizes serially inside a redb
+write transaction and, in MCP, the engine slot. This blocks unrelated source work
+even though card computation only needs an immutable, verified source body.
+
+Split partition acceptance into three ordinary operations: copy and hash-verify a
+bounded source snapshot; compute card tuples outside all store transactions and the
+MCP engine slot; reacquire the writer and compare the current source hash before
+publication. A private prepared value binds the computed tuples to their verified
+input. The public claim-validation API still renders the actual source and refuses
+invented tuples. Source changes/deletion during computation refuse stale publication.
+
+Share the pipeline between CLI and MCP. Keep at most eight source bodies (at most
+16 MiB under the existing per-source bound) in one computation wave, and use at most
+min(available CPU parallelism, eight) scoped workers. Commit in source order, one
+atomic source mapping at a time. Check cancellation before work and before commits;
+join workers on error/panic and surface a named failure. No unbounded channel, new
+database, schema, model process or provider concurrency is introduced. MCP pause
+and shutdown discard unpublished results when observed before commit admission.
+Existing model/query admission stays intact.
+
+Verify serial/parallel tuple equality, actual overlapping CPU work, bounded admission,
+cancellation, source change/deletion before commit, restart reuse, panic propagation
+and foreground engine-slot availability while card computation runs. Local fixtures
+prove those contracts; they do not establish real-model throughput or task outcomes.
+Full-source partition barriers, progressive ANN publication, larger device batches,
+watching and LLM enrichment remain separate work in the revised ecosystem plan.
+
+### T007 — Make semantic bootstrap useful before a complete corpus pass
+
+Selected 2026-10-09; not implemented. T006 removes CPU computation from serving and
+writer locks, but the current whole-source partition pass and generation publication
+still delay first semantic coverage. Replace these barriers with bounded waves of
+partition/select/embed/commit and amortized searchable publication, preserving exact
+source/input identity and resumability. Do not rebuild a full ANN generation after
+every small batch; justify segmented or delta publication against the current USearch
+generation owner before adding another persisted representation.
+
+Prioritize explicitly requested areas and entry points, retain fair background
+progress, and expose partial coverage. Keep lexical retrieval immediately usable.
+Account independently for CPU preparation, provider/device work, cached reuse and
+publication. Reuse CPU workers and buffers when their measured overhead warrants it;
+keep queue bytes, token IDs, completed outputs and publication scratch bounded.
+
+Tune model batches by tokens/sequence geometry and actual device capacity. Additional
+model workers are not inferred from available CPU cores. Any batching change must
+preserve single-versus-batched vector parity and foreground latency; any change to
+vector meaning re-keys the descriptor/cache. Foreground/idle resource admission also
+governs 010 generation, with explicit CPU/memory/device limits and hysteresis.
+
+Verify that the first bounded wave is searchable while later sources remain
+unprepared, edits invalidate immediately, restarts reuse accepted work, and background
+progress neither starves queries nor spins while paused. Record real throughput when
+the selected runtime/device is available; do not extrapolate a fake provider's speed.

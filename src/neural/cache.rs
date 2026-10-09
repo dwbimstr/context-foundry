@@ -79,6 +79,61 @@ pub struct PartitionUnit {
     pub input_key: String,
 }
 
+/// Verified immutable input for off-transaction partition computation. Fields
+/// stay private so acceptance cannot be given arbitrary source bytes or tuples.
+#[derive(Debug)]
+pub(crate) struct PartitionSource {
+    path: String,
+    source_hash: String,
+    body: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparedPartition {
+    path: String,
+    record: PartitionRecord,
+}
+
+impl PartitionSource {
+    #[cfg(feature = "semantic")]
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) fn prepare(
+        self,
+        recipe_id: &str,
+        function_digest: &str,
+        claimed: Option<&[PartitionUnit]>,
+        cards: &dyn Fn(&str) -> FResult<Vec<PartitionUnit>>,
+    ) -> FResult<PreparedPartition> {
+        let units = cards(&self.body)?;
+        validate_units(&units, self.body.len(), Some(&self.body))
+            .map_err(|m| invalid_partition(format!("{}: {m}", self.path)))?;
+        if let Some(claimed) = claimed
+            && let Some(message) = first_difference(claimed, &units)
+        {
+            return Err(invalid_partition(format!("{}: {message}", self.path)));
+        }
+        Ok(PreparedPartition {
+            path: self.path,
+            record: PartitionRecord {
+                source_hash: self.source_hash,
+                recipe_id: recipe_id.to_owned(),
+                function_digest: function_digest.to_owned(),
+                units,
+            },
+        })
+    }
+}
+
+impl PreparedPartition {
+    #[cfg(feature = "semantic")]
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+}
+
 /// The last provider state preparation observed. It is a record of what a
 /// run saw, never a live probe: status reports it with its time and profile.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -386,8 +441,9 @@ impl Engine {
 
     /// Accept one completed card mapping (possibly without cards) for the
     /// CURRENT version of `path`, named by `source_hash`. That version and
-    /// its immutable body are read in the write transaction, and the row
-    /// written is `cards` applied to THAT body (the run's card renderer
+    /// its immutable body are verified in a read transaction, computation
+    /// runs with no transaction, and acceptance rechecks the source hash in
+    /// the write transaction. The row is `cards` applied to THAT body (the run's card renderer
     /// under `recipe_id` and `function_digest`): every accepted
     /// `(start, end, input_key)` tuple is the card the verified body renders
     /// at that range, whether or not its vector is cached, so a vector is
@@ -405,37 +461,53 @@ impl Engine {
         claimed: Option<&[PartitionUnit]>,
         cards: &dyn Fn(&str) -> FResult<Vec<PartitionUnit>>,
     ) -> FResult<()> {
+        let source = self.semantic_partition_source(path, source_hash)?;
+        let prepared = source.prepare(recipe_id, function_digest, claimed, cards)?;
+        self.semantic_accept_partition(prepared)
+    }
+
+    pub(crate) fn semantic_partition_source(
+        &self,
+        path: &str,
+        source_hash: &str,
+    ) -> FResult<PartitionSource> {
+        let tx = self.db.begin_read()?;
+        let sources = tx.open_table(SOURCES)?;
+        let meta: SourceMeta = match sources.get(path)? {
+            Some(raw) => decode(raw.value(), "source")?,
+            None => return Err(FoundryError::NotFound),
+        };
+        if meta.hash != source_hash {
+            return Err(invalid_partition(format!(
+                "{path}: the mapping names a stale source version"
+            )));
+        }
+        let chunks = tx.open_table(CHUNKS)?;
+        let body = reconstruct_verified(&chunks, path, &meta)?.body;
+        Ok(PartitionSource {
+            path: path.to_owned(),
+            source_hash: meta.hash,
+            body,
+        })
+    }
+
+    pub(crate) fn semantic_accept_partition(&self, prepared: PreparedPartition) -> FResult<()> {
+        let PreparedPartition { path, record } = prepared;
         let tx = self.db.begin_write()?;
         {
             let sources = tx.open_table(SOURCES)?;
-            let meta: SourceMeta = match sources.get(path)? {
+            let meta: SourceMeta = match sources.get(path.as_str())? {
                 Some(raw) => decode(raw.value(), "source")?,
                 None => return Err(FoundryError::NotFound),
             };
-            if meta.hash != source_hash {
+            if meta.hash != record.source_hash {
                 return Err(invalid_partition(format!(
                     "{path}: the mapping names a stale source version"
                 )));
             }
-            let chunks = tx.open_table(CHUNKS)?;
-            let body = reconstruct_verified(&chunks, path, &meta)?.body;
-            let units = cards(&body)?;
-            validate_units(&units, body.len(), Some(&body))
-                .map_err(|m| invalid_partition(format!("{path}: {m}")))?;
-            if let Some(claimed) = claimed
-                && let Some(message) = first_difference(claimed, &units)
-            {
-                return Err(invalid_partition(format!("{path}: {message}")));
-            }
-            let record = PartitionRecord {
-                source_hash: meta.hash,
-                recipe_id: recipe_id.to_owned(),
-                function_digest: function_digest.to_owned(),
-                units,
-            };
             let mut table = tx.open_table(PARTITIONS)?;
             table.insert(
-                path,
+                path.as_str(),
                 serde_json::to_string(&record)
                     .map_err(FoundryError::from)?
                     .as_str(),

@@ -10,8 +10,18 @@ what to clone, how to prove the setup reproduces the recorded results), follow
 
 ## Where things stand
 
-Every task of every active spec is implemented, cross-lab reviewed, gated and merged
-on `main` (`dwbimstr/context-foundry`). Nothing is released.
+**Experimental update, 2026-10-09:** the owner authorized local work on
+`experimental/context-ecosystem` without waiting on external measurements. Retrieval
+tracing, opt-in behavioral packing, task state/recovery/promotion and task-aware
+retrieval are committed. The next increment parallelizes semantic partition CPU work
+outside writer/serving locks and revises the architecture for 60,000–80,000 files.
+010 is reactivated for source-bound LLM briefs; watching, progressive bootstrap,
+boundary joins and task-evidence composition are selected but not implemented.
+Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
+[validation](validation.md). 013 remains frozen. No release or quality gain is claimed.
+
+The table below is the **2026-10-08 main-branch baseline**; later experimental
+amendments supersede its completion and next-work descriptions. Nothing is released.
 
 | Spec | State |
 | --- | --- |
@@ -22,8 +32,8 @@ on `main` (`dwbimstr/context-foundry`). Nothing is released.
 | 008 Project memory | T001–T002 done. |
 | 009 Semantic retrieval | T001–T004 done. T004 (address cards on a statically linked llama.cpp worker) is accepted on implementation evidence. On 2026-10-08, G2, G1 with the profile, and vector parity selected EmbeddingGemma 2. Nemotron was INVALID in G2 and closed by the owner. Semantic retrieval stays off by default until the installed-artifact checks pass on the signed package. |
 
-013 is frozen off; 002, 004, 006, 011, 012 and 015 are superseded; 010 and 014 are
-deferred. None of these is release work.
+013 is frozen off; 002, 004, 006, 011, 012 and 015 are superseded; 014 remains
+deferred. 010's experimental reactivation is described above.
 
 Validation for each item, with counts, is in [validation](validation.md). Key commits:
 T007 `4e23dee`, T009 `89a8c54`, 005 T004 `d00fc19`, tie-group amendment `483810a`
@@ -31,7 +41,7 @@ T007 `4e23dee`, T009 `89a8c54`, 005 T004 `d00fc19`, tie-group amendment `483810a
 operator setting `8035faa` (`semantic prepare --cache-cap`, `mcp --semantic-cache-cap`),
 and the measurement handoff `18e27f9`.
 
-## What remains, in order
+## Baseline release follow-up (2026-10-08)
 
 1. **Signing, deferred.** This covers Developer ID signing and notarization of the macOS
    package and worker bundles (009 package acceptance, [deployment](deployment.md)). On

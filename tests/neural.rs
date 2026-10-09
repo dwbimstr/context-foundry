@@ -1734,6 +1734,57 @@ fn mapping_acceptance_validates_the_cards_against_the_current_body() {
 }
 
 #[test]
+fn partition_computation_allows_source_writes_but_refuses_changed_or_deleted_inputs() {
+    for deleted in [false, true] {
+        let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
+        let render = renderer(&env);
+        let engine = env.open();
+        let before = engine.semantic_partition("a.md").unwrap().unwrap();
+        let error = engine
+            .semantic_record_partition(
+                "a.md",
+                &before.source_hash,
+                &before.recipe_id,
+                &before.function_digest,
+                None,
+                &|source| {
+                    // This callback used to run inside the write transaction.
+                    // It can now overlap ingestion; acceptance must recheck it.
+                    let units = render("a.md", source)?;
+                    if deleted {
+                        engine.delete_source("a.md")?;
+                    } else {
+                        engine.replace_source("a.md", "# New source revision\n")?;
+                    }
+                    Ok(units)
+                },
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            if deleted {
+                "not_found"
+            } else {
+                "partition_invalid"
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(engine.semantic_partition("a.md").unwrap().unwrap()).unwrap(),
+            serde_json::to_value(&before).unwrap()
+        );
+        env.close();
+        assert_eq!(
+            env.open()
+                .semantic_partition("a.md")
+                .unwrap()
+                .unwrap()
+                .source_hash,
+            before.source_hash
+        );
+    }
+}
+
+#[test]
 fn a_stored_mapping_with_a_bad_range_is_ineligible_not_a_panic() {
     let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
     let digest = env.digest();
