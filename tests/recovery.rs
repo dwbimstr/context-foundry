@@ -112,6 +112,20 @@ fn child_fault(stage: &str) -> ! {
     let work = work_dir();
     let store = work.join("store");
     match stage {
+        "ingest_after_early_publication" => {
+            let ws = work.join("ws");
+            std::fs::create_dir(&ws).unwrap();
+            for i in 0..257 {
+                std::fs::write(
+                    ws.join(format!("file{i}.rs")),
+                    format!("// earlypublicationmarker\nfn probe{i}() {{}}\n"),
+                )
+                .unwrap();
+            }
+            let mut engine = Engine::initialize(&store, &ws).unwrap();
+            fault::arm(names::INDEX_AFTER_SEARCH_COMMIT, 0, Action::Abort);
+            let _ = engine.index(&ws, &Control::unbounded());
+        }
         "before_source_commit" | "after_source_commit" | "after_search_commit" => {
             seed(&work, 0);
             let mut engine = Engine::open_existing(&store).unwrap();
@@ -702,11 +716,43 @@ fn global_arming_fires_on_worker_threads_for_spawned_processes() {
     fault::disarm_all();
 }
 
+fn exit_after_early_ingestion_publication_replays_only_committed_sources() {
+    let work = crash_at("ingest_after_early_publication");
+    let mut engine = Engine::open_existing(&work.path().join("store")).unwrap();
+    let status = engine.status().unwrap();
+    assert_eq!((status.source_count, status.pending_count), (128, 128));
+    assert_eq!(status.scan_state, "incomplete");
+    assert!(
+        !engine
+            .search("earlypublicationmarker", 5)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
+    let report = engine
+        .index(&work.path().join("ws"), &Control::unbounded())
+        .unwrap();
+    assert_eq!((report.changed, report.unchanged), (129, 128));
+    assert!(report.scan_complete && !report.partial, "{report:?}");
+    assert_eq!(report.pending_sources, 0);
+    for i in 0..257 {
+        let body = format!("// earlypublicationmarker\nfn probe{i}() {{}}\n");
+        assert_eq!(
+            engine.source(&format!("file{i}.rs")).unwrap().unwrap().hash,
+            digest(body.as_bytes())
+        );
+    }
+}
+
 fn main() {
     if let Ok(stage) = std::env::var("FOUNDRY_TEST_FAULT_STAGE") {
         child_fault(&stage);
     }
     let tests: Vec<(&str, fn())> = vec![
+        (
+            "exit_after_early_ingestion_publication",
+            exit_after_early_ingestion_publication_replays_only_committed_sources,
+        ),
         (
             "exit_before_source_commit",
             exit_before_source_commit_leaves_the_prior_state_exactly,

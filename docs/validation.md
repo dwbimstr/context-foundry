@@ -1,5 +1,54 @@
 # Validation
 
+## Pipelined source ingestion — 2026-10-09
+
+The next E1 increment in [001 T009/T011](../specs/001-source-state-recovery/spec.md)
+overlaps bounded source reads/hash with ordered, freshness-checked source commits.
+One Engine-owned Rayon pool serves reads and lexical builds across pages/calls;
+ingestion drains one lexical page after 128 accepted candidates, then finishes the
+existing final drain. No schema, source transaction, pending-acknowledgment or model
+recipe changes. [Usage and limits](experimental-context.md#pipelined-source-ingestion)
+name the separate payload budgets and unchanged explicit MCP engine-slot policy.
+
+Linux/Rust 1.90.0 sandbox tests exercise these boundaries:
+
+- Deliberate out-of-order reads overlap the single writer, retain walker-order
+  commits and occupy at most eight active/completed result slots. Lexical builds
+  run on the same three observed worker threads. A single worker is reused for
+  261 lexical builds across three pages and another refresh call. Serial and
+  eight-worker ingestion produce identical source tables and logical search
+  documents for 260 Rust files, an empty source and an excluded binary file.
+- Buffered in-place edits, atomic replacements, symlinks, removal and a changed
+  exclusion decision preserve the accepted source and defer unseen deletions.
+  Sensitive filenames are checked by descriptor without reading their contents;
+  replacement before deletion preserves the accepted record until a clean retry.
+  A read-worker panic is named, preserves prior data and permits the pool to recover.
+- Cancellation after the first lexical commit in a 257-file scan leaves exactly
+  128 committed sources searchable and retains an unseen old source. Reopen/retry
+  reports 128 unchanged, 129 changed and one verified deletion, with no pending work.
+- A real SIGABRT at the same early-publication boundary leaves 128 sources and
+  their conditional pending acknowledgments. Restart reuses those versions,
+  accepts the remaining 129 and verifies every final hash. The existing child-process
+  source, parallel-index, repair and upgrade recovery scenarios also pass.
+- Parse failures from early pages and the final drain are counted together once;
+  a later unchanged scan does not inherit the previous scan's failures.
+
+`cargo test --locked --no-fail-fast` passes on the final implementation:
+**899 passed, zero failed, two existing measurements ignored**, plus all scenarios
+in the separate recovery runner. This includes the CLI/MCP consumers, semantic
+integration and the 6,000-file watcher fixture with foreground service and no idle
+body rescans. The strengthened read/commit overlap barrier also passes separately.
+`cargo clippy --locked --all-targets -- -D warnings`,
+`cargo check --locked --all-targets`, library/CLI Clippy without default features,
+`cargo fmt --all --check`, Markdown links/anchors and `git diff --check` pass.
+
+These are synthetic source fixtures with real storage, parsers and lexical indexing.
+They establish overlap, reuse and recovery, not a numerical throughput improvement,
+80,000-file scalability or coding-task quality. Source transactions remain individual;
+explicit re-indexing still reads the tree. Remaining E1 artifact handoff/cache accounting
+and per-card fitting, E2/E3 incremental semantic maintenance/publication, E4 representations
+and automatic generation remain pending. Self-review only; no release or deployment.
+
 ## Bootstrap work reuse — 2026-10-09
 
 The first efficiency increment in [009 T006/T007](../specs/009-optional-semantic-retrieval/spec.md#t006t007-follow-up--remove-repeated-preparation-and-startup-work)
@@ -41,9 +90,10 @@ pass. Rust 1.90.0 throughout; self-review only.
 
 These fixtures use synthetic embeddings with real Rust tokenization and storage;
 they demonstrate removed work and preserved inputs, not device throughput or
-coding-task quality. Remaining E1 ingestion/lexical/startup-accounting work, T008
-incremental maintenance/publication, T009 representations and 010 generation remain
-pending. No release, deployment or model-provider execution is part of this slice.
+coding-task quality. Subsequent E1 ingestion/lexical work is recorded above;
+artifact handoff/cache accounting and per-card fitting, T008 incremental
+maintenance/publication, T009 representations and 010 generation remain pending.
+No release, deployment or model-provider execution is part of this slice.
 
 ## Efficiency and incremental-maintenance audit — 2026-10-09
 

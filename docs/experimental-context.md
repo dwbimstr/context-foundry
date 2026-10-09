@@ -1,5 +1,28 @@
 # Experimental task context
 
+## Pipelined source ingestion
+
+Ordinary CLI/MCP `index` now overlaps source reads and hashing with ordered source
+commits and publishes a lexical page after every 128 accepted candidates. A single
+Engine-owned pool serves reads and lexical builds and survives later refresh calls;
+its size is fixed at creation to the smaller of available CPU parallelism and eight.
+The source scan and final pending-work drain still report exact committed counts.
+
+At most eight read/results occupy slots, each containing at most 2 MiB plus one
+sentinel byte; completed results keep their slots until acceptance. Before committing,
+Foundry rechecks the held root/file and the current name. An edit, rename or unsafe
+replacement during preparation preserves the previous accepted record and defers
+unseen deletions. Cancellation/restart reuses committed sources and lexical pages;
+buffered, unaccepted reads are discarded. Normal explicit re-indexing still reads
+the tree; native watching remains the path for targeted updates.
+
+The read payload limit and existing 64 MiB lexical hand-out limit are separate and
+exclude parser, index, thread-stack and allocator overhead. Explicit MCP indexing
+still occupies its engine slot; this change adds early durable publication, while
+foreground admission continues to follow the existing watcher/owner rules. Source
+transactions remain individual. This does not yet add continuous embedding or brief
+regeneration, and sandbox tests do not establish 80,000-file throughput.
+
 ## Progressive semantic bootstrapping
 
 With an admitted semantic profile, start preparation on the existing MCP owner:

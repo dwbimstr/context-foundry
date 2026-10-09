@@ -40,6 +40,7 @@ pub mod names {
     point!(SCAN_AFTER_ROOT_OPEN, "scan.after_root_open");
     point!(SCAN_BEFORE_WALK, "scan.before_walk");
     point!(SCAN_BEFORE_OPEN, "scan.before_open");
+    point!(SCAN_AFTER_READ, "scan.after_read");
     point!(SWEEP_PAGE, "sweep.page");
     point!(SEEN_FLUSH, "scan.seen_flush");
     point!(REPAIR_AFTER_MARKER, "repair.after_marker");

@@ -24,8 +24,10 @@ The subsequent efficiency audit selects CPU/startup reuse, durable changed-work
 maintenance and vector deltas (009 T008), then model-aware body/parent inputs
 (009 T009). The first CPU/startup increment reuses bounded semantic workers and
 verified cards, defers CLI acquisition on cache-only runs and skips unchanged-source
-chunk allocation. Ingestion pipelining and the other maintenance/representation
-work remain pending. Automatic generation (010 T002), boundary joins and
+chunk allocation. The next increment adds bounded read/hash overlap, ordered source
+acceptance, early lexical publication and reusable ingestion/lexical workers. Artifact
+handoff/cache accounting, per-card fitting and maintenance/representation work remain
+pending. Automatic generation (010 T002), boundary joins and
 task-evidence composition also remain pending; watch updates currently invalidate
 stale semantic/brief evidence without automatically preparing replacements.
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and

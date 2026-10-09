@@ -1,4 +1,4 @@
-//! Serial workspace reconciliation with bounded buffers. Never collects all
+//! Ordered workspace reconciliation with bounded read-ahead. Never collects all
 //! paths, keys or reports; samples are bounded and counts are exact u64s.
 //! Candidates are opened relative to a held root-directory descriptor,
 //! refusing symlink components and non-regular files at open time.
@@ -14,6 +14,236 @@ const SAMPLE_LIMIT: usize = 20;
 const SAMPLE_BYTES: usize = 512;
 /// Seen-path commit page: the same 128 bound as every other paged walk.
 const SEEN_PAGE: usize = 128;
+/// At most eight reads/results, each containing at most 2 MiB plus one sentinel
+/// byte. Completed but uncommitted results occupy the same slots as active reads.
+const READ_AHEAD: usize = 8;
+/// Publish lexical progress before the whole enumeration has finished.
+const PUBLISH_EVERY: usize = 128;
+
+#[cfg(feature = "test-faults")]
+pub mod pipeline_hooks {
+    use std::cell::RefCell;
+    use std::sync::Arc;
+
+    #[derive(Debug)]
+    pub enum Event<'a> {
+        Reading(&'a str),
+        Ready(&'a str),
+        Queued(usize),
+    }
+    pub type Observer = Arc<dyn Fn(&Event<'_>) + Send + Sync>;
+    thread_local! {
+        static OBSERVER: RefCell<Option<Observer>> = const { RefCell::new(None) };
+    }
+    pub fn install(observer: Option<Observer>) {
+        OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+    }
+    pub(crate) fn current() -> Option<Observer> {
+        OBSERVER.with(|slot| slot.borrow().clone())
+    }
+}
+
+struct ReadFile {
+    file: std::fs::File,
+    version: std::fs::Metadata,
+    content: Result<crate::store::PreparedSource, &'static str>,
+}
+
+struct PendingRead {
+    path: String,
+    result: std::sync::mpsc::Receiver<Result<ReadFile, OpenFailure>>,
+}
+
+#[derive(Default)]
+struct ScanProgress {
+    report: IndexReport,
+    enumeration_failed: bool,
+    cancel_code: Option<&'static str>,
+    drain_reason: Option<&'static str>,
+    pending: std::collections::VecDeque<PendingRead>,
+    since_publish: usize,
+}
+
+impl ScanProgress {
+    fn check(&mut self, control: &Control) -> bool {
+        if control.check().is_err() {
+            self.cancel_code = Some(control.last_check_error().unwrap_or("cancelled"));
+            self.enumeration_failed = true;
+            false
+        } else {
+            true
+        }
+    }
+
+    fn failed_read(&mut self, path: &str, failure: OpenFailure) {
+        self.enumeration_failed = true;
+        self.report.failures += 1;
+        push_sample(
+            &mut self.report.failure_samples,
+            format!("{path}: {}: {}", failure.code(), failure.detail()),
+        );
+    }
+
+    fn next(
+        &mut self,
+        engine: &mut Engine,
+        root_fd: &std::fs::File,
+        canonical: &Path,
+        control: &Control,
+    ) -> FResult<bool> {
+        if !self.check(control) {
+            return Ok(false);
+        }
+        let pending = self.pending.pop_front().expect("a queued read");
+        let read = pending.result.recv().unwrap_or_else(|_| {
+            Err(OpenFailure::Io(
+                "an ingestion worker exited without its result".into(),
+            ))
+        });
+        if !self.check(control) {
+            return Ok(false);
+        }
+        let path = &pending.path;
+        let (content, _held_file) = match read {
+            Ok(read) => {
+                fault!(SCAN_AFTER_READ, Some(&*engine), Some(control), path)?;
+                if !self.check(control) {
+                    return Ok(false);
+                }
+                if let Err(failure) = verify_read(&read, root_fd, canonical, path) {
+                    self.failed_read(path, failure);
+                    return Ok(true);
+                }
+                (read.content, read.file)
+            }
+            Err(failure) => {
+                self.failed_read(path, failure);
+                return Ok(true);
+            }
+        };
+        if !self.check(control) {
+            return Ok(false);
+        }
+        match content {
+            Ok(source) => {
+                if engine.replace_prepared_source(source)? {
+                    self.report.changed += 1;
+                } else {
+                    self.report.unchanged += 1;
+                }
+            }
+            Err(reason) => {
+                self.report.deleted += u64::from(engine.delete_source(path)?);
+                self.report.excluded += 1;
+                push_sample(
+                    &mut self.report.exclusion_samples,
+                    format!("{path}: {reason}"),
+                );
+            }
+        }
+        self.since_publish += 1;
+        if self.since_publish >= PUBLISH_EVERY && self.drain_reason.is_none() {
+            self.since_publish = 0;
+            let result = engine.refresh_index(control);
+            record_parse_failures(engine, &mut self.report);
+            match result {
+                Ok(_) => {}
+                Err(FoundryError::Cancelled(_) | FoundryError::DeadlineExceeded(_)) => {
+                    self.check(control);
+                    return Ok(false);
+                }
+                Err(FoundryError::RepairRequired(_)) => self.drain_reason = Some("repair_required"),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(true)
+    }
+}
+
+fn record_parse_failures(engine: &mut Engine, report: &mut IndexReport) {
+    let panics = engine.take_parse_failures();
+    report.failures += panics.count;
+    for sample in panics.samples {
+        push_sample(&mut report.failure_samples, sample);
+    }
+}
+
+fn read_file(root: &std::fs::File, path: &str, control: &Control) -> Result<ReadFile, OpenFailure> {
+    control
+        .check()
+        .map_err(|e| OpenFailure::Io(e.to_string()))?;
+    let mut file = held::open_relative(root, &path.split('/').collect::<Vec<_>>())?;
+    let before = file
+        .metadata()
+        .map_err(|e| OpenFailure::Io(e.to_string()))?;
+    // Exclusion is a decision about this exact file too. Hold and recheck it,
+    // but never read the contents of a sensitive filename.
+    if matches!(
+        path.rsplit('/').next(),
+        Some(".env" | "id_rsa" | "id_ed25519")
+    ) {
+        return Ok(ReadFile {
+            file,
+            version: before,
+            content: Err("sensitive filename"),
+        });
+    }
+    let capacity = before
+        .len()
+        .saturating_add(1)
+        .min((MAX_SOURCE_BYTES + 1) as u64) as usize;
+    let mut bytes = Vec::with_capacity(capacity);
+    (&mut file)
+        .take((MAX_SOURCE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| OpenFailure::Io(e.to_string()))?;
+    let after = file
+        .metadata()
+        .map_err(|e| OpenFailure::Io(e.to_string()))?;
+    if !same_file(&before, &after) {
+        return Err(OpenFailure::SourceChanged(
+            "file changed during read".into(),
+        ));
+    }
+    control
+        .check()
+        .map_err(|e| OpenFailure::Io(e.to_string()))?;
+    let content = match source_content(&bytes) {
+        Ok(_) => Ok(crate::store::PreparedSource::new(
+            path.to_owned(),
+            String::from_utf8(bytes).expect("source content validated UTF-8"),
+        )
+        .map_err(|e| OpenFailure::Io(e.to_string()))?),
+        Err(reason) => Err(reason),
+    };
+    Ok(ReadFile {
+        file,
+        version: after,
+        content,
+    })
+}
+
+fn verify_read(
+    read: &ReadFile,
+    root: &std::fs::File,
+    canonical: &Path,
+    path: &str,
+) -> Result<(), OpenFailure> {
+    held::root_still_bound(root, canonical)?;
+    let held = read
+        .file
+        .metadata()
+        .map_err(|e| OpenFailure::Io(e.to_string()))?;
+    let named = held::open_relative(root, &path.split('/').collect::<Vec<_>>())?
+        .metadata()
+        .map_err(|e| OpenFailure::Io(e.to_string()))?;
+    if !same_file(&read.version, &held) || !same_file(&held, &named) {
+        return Err(OpenFailure::SourceChanged(
+            "file changed before publication".into(),
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Default, Debug, Clone, Serialize)]
 pub struct IndexReport {
@@ -355,12 +585,16 @@ pub fn index(engine: &mut Engine, root: &Path, control: &Control) -> FResult<Ind
     fault!(SCAN_BEFORE_WALK, Some(&*engine), Some(control), "")?;
     engine.bind_workspace(&canonical)?;
     let scan_id = engine.begin_scan()?;
-    let mut report = IndexReport {
-        scan_id,
-        ..IndexReport::default()
+    // Periodic page drains contribute only failures from this scan, just as
+    // the final full drain did before ingestion gained read-ahead.
+    let _ = engine.take_parse_failures();
+    let mut progress = ScanProgress {
+        report: IndexReport {
+            scan_id,
+            ..IndexReport::default()
+        },
+        ..ScanProgress::default()
     };
-    let mut enumeration_ok = true;
-    let mut cancel_code: Option<&'static str> = None;
     let mut seen_page: Vec<String> = Vec::with_capacity(SEEN_PAGE);
     let data_directory = engine.directory().to_path_buf();
     let walker = ignore::WalkBuilder::new(&canonical)
@@ -374,114 +608,127 @@ pub fn index(engine: &mut Engine, root: &Path, control: &Control) -> FResult<Ind
                 )
         })
         .build();
-    for entry in walker {
-        if control.check().is_err() {
-            cancel_code = Some(control.last_check_error().unwrap_or("cancelled"));
-            enumeration_ok = false;
-            break;
-        }
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                enumeration_ok = false;
-                report.failures += 1;
-                push_sample(&mut report.failure_samples, format!("(walker): {e}"));
+    let pool = engine.indexing_pool()?;
+    #[cfg(feature = "test-faults")]
+    let observer = pipeline_hooks::current();
+    pool.in_place_scope(|scope| -> FResult<()> {
+        for entry in walker {
+            if !progress.check(control) {
+                break;
+            }
+            let entry = match entry {
+                Ok(e) => e,
+                Err(e) => {
+                    progress.enumeration_failed = true;
+                    progress.report.failures += 1;
+                    push_sample(
+                        &mut progress.report.failure_samples,
+                        format!("(walker): {e}"),
+                    );
+                    continue;
+                }
+            };
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
                 continue;
             }
-        };
-        if !entry.file_type().is_some_and(|t| t.is_file()) {
-            continue;
-        }
-        let rel = match entry
-            .path()
-            .strip_prefix(&canonical)
-            .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_owned()))
-        {
-            Some(rel) => rel,
-            None => {
-                // Path-encoding errors prevent the unseen sweep globally.
-                enumeration_ok = false;
-                report.failures += 1;
+            let rel = match entry
+                .path()
+                .strip_prefix(&canonical)
+                .ok()
+                .and_then(|p| p.to_str().map(|s| s.to_owned()))
+            {
+                Some(rel) => rel,
+                None => {
+                    // Path-encoding errors prevent the unseen sweep globally.
+                    progress.enumeration_failed = true;
+                    progress.report.failures += 1;
+                    push_sample(
+                        &mut progress.report.failure_samples,
+                        format!("(path): not UTF-8 relative path: {:?}", entry.path()),
+                    );
+                    continue;
+                }
+            };
+            // Validate admitted paths against the shared handle rules before any
+            // source commit; unsupported syntax is a named scan failure.
+            if let Err(e) = crate::store::validate_path(&rel) {
+                progress.enumeration_failed = true;
+                progress.report.failures += 1;
                 push_sample(
-                    &mut report.failure_samples,
-                    format!("(path): not UTF-8 relative path: {:?}", entry.path()),
+                    &mut progress.report.failure_samples,
+                    format!("{rel}: invalid_source_path: {e}"),
                 );
                 continue;
             }
-        };
-        // Validate admitted paths against the shared handle rules before any
-        // source commit; unsupported syntax is a named scan failure.
-        if let Err(e) = crate::store::validate_path(&rel) {
-            enumeration_ok = false;
-            report.failures += 1;
-            push_sample(
-                &mut report.failure_samples,
-                format!("{rel}: invalid_source_path: {e}"),
-            );
-            continue;
-        }
-        // Seen when encountered, even if unreadable. Marks are committed in
-        // bounded pages and always flushed before the sweep.
-        seen_page.push(rel.clone());
-        if seen_page.len() >= SEEN_PAGE {
-            engine.mark_seen_batch(&seen_page, scan_id)?;
-            seen_page.clear();
-        }
-        if matches!(
-            entry.file_name().to_str(),
-            Some(".env" | "id_rsa" | "id_ed25519")
-        ) {
-            report.deleted += u64::from(engine.delete_source(&rel)?);
-            report.excluded += 1;
-            push_sample(
-                &mut report.exclusion_samples,
-                format!("{rel}: sensitive filename"),
-            );
-            continue;
-        }
-        let components: Vec<&str> = rel.split('/').collect();
-        let read = (|| -> Result<Vec<u8>, OpenFailure> {
-            // Boundary between enumeration and open. An injected error here is
-            // a deterministic unreadable-file failure for this path.
-            fault!(SCAN_BEFORE_OPEN, Some(&*engine), Some(control), &rel)
-                .map_err(|e| OpenFailure::Io(e.to_string()))?;
-            let file = held::open_relative(&root_fd, &components)?;
-            let mut bytes = Vec::new();
-            file.take((MAX_SOURCE_BYTES + 1) as u64)
-                .read_to_end(&mut bytes)
-                .map_err(|e| OpenFailure::Io(e.to_string()))?;
-            Ok(bytes)
-        })();
-        let bytes = match read {
-            Ok(bytes) => bytes,
-            Err(failure) => {
-                // Named failure: preserve the previous accepted record and
-                // defer the unseen sweep globally.
-                enumeration_ok = false;
-                report.failures += 1;
-                push_sample(
-                    &mut report.failure_samples,
-                    format!("{rel}: {}: {}", failure.code(), failure.detail()),
-                );
-                continue;
+            // Seen when encountered, even if unreadable. Marks are committed in
+            // bounded pages and always flushed before the sweep.
+            seen_page.push(rel.clone());
+            if seen_page.len() >= SEEN_PAGE {
+                engine.mark_seen_batch(&seen_page, scan_id)?;
+                seen_page.clear();
             }
-        };
-        let content = match source_content(&bytes) {
-            Ok(content) => content,
-            Err(reason) => {
-                report.deleted += u64::from(engine.delete_source(&rel)?);
-                report.excluded += 1;
-                push_sample(&mut report.exclusion_samples, format!("{rel}: {reason}"));
-                continue;
+            let (send, result) = std::sync::mpsc::sync_channel(1);
+            // Keep the existing deterministic enumeration/open boundary on
+            // the owner thread. Workers receive no Engine or transaction.
+            let opened = fault!(SCAN_BEFORE_OPEN, Some(&*engine), Some(control), &rel)
+                .map_err(|e| OpenFailure::Io(e.to_string()));
+            match opened {
+                Err(error) => {
+                    let _ = send.send(Err(error));
+                }
+                Ok(()) => {
+                    let path = rel.clone();
+                    let root_fd = &root_fd;
+                    #[cfg(feature = "test-faults")]
+                    let observer = observer.clone();
+                    scope.spawn(move |_| {
+                        let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            #[cfg(feature = "test-faults")]
+                            if let Some(observer) = &observer {
+                                observer(&pipeline_hooks::Event::Reading(&path));
+                            }
+                            let read = read_file(root_fd, &path, control);
+                            #[cfg(feature = "test-faults")]
+                            if let Some(observer) = &observer {
+                                observer(&pipeline_hooks::Event::Ready(&path));
+                            }
+                            read
+                        }))
+                        .unwrap_or_else(|_| {
+                            Err(OpenFailure::Io("an ingestion worker panicked".into()))
+                        });
+                        let _ = send.send(read);
+                    });
+                }
             }
-        };
-        if engine.replace_source(&rel, content)? {
-            report.changed += 1;
-        } else {
-            report.unchanged += 1;
+            progress
+                .pending
+                .push_back(PendingRead { path: rel, result });
+            #[cfg(feature = "test-faults")]
+            if let Some(observer) = &observer {
+                observer(&pipeline_hooks::Event::Queued(progress.pending.len()));
+            }
+            if progress.pending.len() == READ_AHEAD
+                && !progress.next(engine, &root_fd, &canonical, control)?
+            {
+                break;
+            }
         }
-    }
+        while !progress.pending.is_empty() && progress.cancel_code.is_none() {
+            if !progress.next(engine, &root_fd, &canonical, control)? {
+                break;
+            }
+        }
+        Ok(())
+    })?;
+    let ScanProgress {
+        mut report,
+        enumeration_failed,
+        mut cancel_code,
+        mut drain_reason,
+        ..
+    } = progress;
+    let mut enumeration_ok = !enumeration_failed;
     // The root was this directory when the walk started. Re-check before any
     // retirement decision: a root swapped during enumeration must not let the
     // sweep retire rows by names it never enumerated. (Residual: a
@@ -518,7 +765,6 @@ pub fn index(engine: &mut Engine, root: &Path, control: &Control) -> FResult<Ind
     report.deletions_deferred = !enumeration_ok || sweep_interrupted || cancel_code.is_some();
     // Drain pending index work in bounded batches; cancellation and deadline
     // leave committed work durable and the report partial.
-    let mut drain_reason: Option<&'static str> = None;
     match engine.refresh(control) {
         Ok(_) => {}
         Err(FoundryError::Cancelled(_)) | Err(FoundryError::DeadlineExceeded(_)) => {
@@ -530,11 +776,7 @@ pub fn index(engine: &mut Engine, root: &Path, control: &Control) -> FResult<Ind
     // A parse panic is a named scan failure (context-v2 § Parallel indexing):
     // the drained source was indexed as the plain blocks of an unmapped
     // source and `status` names it until it is parsed again.
-    let panics = engine.take_parse_failures();
-    report.failures += panics.count;
-    for sample in panics.samples {
-        push_sample(&mut report.failure_samples, sample);
-    }
+    record_parse_failures(engine, &mut report);
     // Source-scan completion is independent of the derived-index drain: it
     // means complete enumeration AND a finished sweep. A cancelled or failed
     // drain keeps the operation partial and nonzero but does not make a

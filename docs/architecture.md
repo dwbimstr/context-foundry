@@ -224,6 +224,13 @@ one canonical root is bound per store; names are enumerated by the pathname walk
 which skips symlinks, and bytes are read root-relative with no-follow opening of each
 file and its ancestors, so a file or ancestor replaced after enumeration is refused by
 name (`source_changed` or `unsafe_source_path`) and the prior accepted record is kept.
+The experimental ingestion pipeline reads/hashes up to eight candidates ahead,
+then rechecks held/named versions and accepts them in walker order on the one writer.
+One retained CPU pool serves ingestion and lexical builds; periodic lexical pages
+publish before the scan ends. Source/pending transactions and incomplete-scan
+deletion rules retain their existing owner. See the
+[parallel-indexing contract](../specs/001-source-state-recovery/contracts/context-v2.md#parallel-indexing)
+for payload bounds, early publication and interruption behavior.
 Accepted limitation: a same-user process that substitutes a directory and restores it
 within one enumeration can make that scan miss names and retire their records until the
 next complete scan; no outside bytes are read. 001 records the

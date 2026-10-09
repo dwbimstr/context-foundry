@@ -1293,17 +1293,35 @@ definition gets an address:
 
 ### Parallel indexing
 
-Refresh builds the search documents of each page's pending sources on at most
-min(available parallelism, 8) threads, with at most 64 MiB of source bytes handed out
+Explicit ingestion keeps at most eight reads/results in flight, each bounded by
+the 2 MiB source limit plus one sentinel byte. Completed, unaccepted results keep
+their slots. Workers open no-follow relative to the held root, read, validate and
+hash; the owner accepts in walker order through the existing per-source transaction.
+It rechecks the held root, held file and newly opened name before publication,
+including exclusion-driven deletion. Changed or unsafe reads preserve accepted
+versions and defer the unseen sweep. These are freshness checks, not an atomic
+filesystem snapshot; an edit after the final check needs later reconciliation.
+
+After 128 accepted candidates, ingestion drains one pending lexical page; the final
+drain still finishes remaining work. Early pages retain the same commit/reload/ack
+order. Cancellation and process exit retain committed sources and search pages;
+unaccepted read-ahead is discarded and an incomplete scan cannot prove absence.
+Failures from early and final parse pages contribute to the same bounded report.
+Explicit MCP indexing still holds its existing engine slot; this does not introduce
+foreground concurrency during that call. The watcher's smaller steps are unchanged.
+
+Refresh builds the search documents of each page's pending sources on an Engine-owned
+Rayon pool, shared with ingestion, sized at creation to min(available parallelism, 8).
+It is reused across pages and calls, with at most 64 MiB of source bytes handed out
 and not yet consumed (a source is consumed when its documents are added; one source
 always fits). Each source has one outcome: its documents, or, when its parse panics
 or is stopped, a named scan failure and the plain-block documents of an unmapped
 source, whose first document carries the `kind` term `unparsed` (all are rendered and
 searched exactly as blocks); it is never dropped. The one writer adds documents in key
 order as their builds finish; after
-every thread has finished it commits and reloads, and only then are matching pending
+every page job has finished it commits and reloads, and only then are matching pending
 keys cleared, as before. Cancellation is checked at each hand-out and after the commit:
-it stops handing out work and waits for the threads; a page whose sources were all
+it stops handing out work and waits for the jobs; a page whose sources were all
 handed out may still be added and committed, and its pending keys then stay pending
 until a later refresh, whose replay converges. A refresh on 8 threads yields the same
 documents (field values, in key order) and the same store tables as on 1 thread;
@@ -1313,6 +1331,9 @@ them, so its work stays proportional to the failures, until each source is parse
 again: on its next change, or on `repair-index`, which rebuilds every source's
 documents. A source with no searchable text (empty or whitespace only) has no
 documents either way and is named only in the scan report of the refresh that hit it.
+Read payload and lexical hand-out limits are separate; neither includes parser,
+Tantivy, thread-stack or allocator overhead. No all-corpus body collection, new
+durable queue, schema change or model inference is introduced by this pipeline.
 
 ## Failure scope
 

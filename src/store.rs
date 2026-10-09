@@ -903,12 +903,35 @@ pub struct Engine {
     /// The parse panics of the current drain, acknowledged page by page; the
     /// index run that drained them names each as a scan failure.
     parse_panics: ParseFailures,
+    /// Shared ingestion/lexical CPU workers; lazy and retained across refreshes.
+    index_pool: Option<std::sync::Arc<rayon::ThreadPool>>,
     /// The store directory, held as a descriptor opened (`O_DIRECTORY |
     /// O_NOFOLLOW`) exactly once at bind time and kept for the Engine's
     /// life. Semantic purge, publication and validation duplicate it (see
     /// [`crate::neural::anchor`]) and never resolve the store pathname
     /// again, so a substituted ancestor cannot redirect them.
     pub(crate) semantic_dir: crate::neural::anchor::Dir,
+}
+
+/// Immutable, checked source bytes and their digest, computed away from the
+/// writer. Private fields prevent a caller from supplying a mismatched hash.
+pub(crate) struct PreparedSource {
+    path: String,
+    body: String,
+    hash: String,
+}
+
+impl PreparedSource {
+    pub(crate) fn new(path: String, body: String) -> FResult<Self> {
+        validate_path(&path)?;
+        if body.len() > MAX_SOURCE_BYTES {
+            return Err(FoundryError::InvalidArgument(
+                "source exceeds 2 MiB limit".into(),
+            ));
+        }
+        let hash = crate::digest(body.as_bytes());
+        Ok(Self { path, body, hash })
+    }
 }
 
 impl std::fmt::Debug for Engine {
@@ -2148,7 +2171,7 @@ impl IndexHooks {
     }
 }
 
-/// The build threads of one page: min(available parallelism, 8).
+/// The reusable ingestion/build pool: min(available parallelism, 8).
 fn index_threads(hooks: &IndexHooks) -> usize {
     hooks
         .threads()
@@ -2158,6 +2181,32 @@ fn index_threads(hooks: &IndexHooks) -> usize {
                 .min(MAX_INDEX_THREADS)
         })
         .max(1)
+}
+
+fn index_pool(
+    slot: &mut Option<std::sync::Arc<rayon::ThreadPool>>,
+    hooks: &IndexHooks,
+) -> FResult<std::sync::Arc<rayon::ThreadPool>> {
+    let count = index_threads(hooks);
+    if slot
+        .as_ref()
+        .is_none_or(|pool| hooks.threads().is_some() && pool.current_num_threads() != count)
+    {
+        *slot = Some(std::sync::Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(count)
+                .thread_name(|index| format!("foundry-index-{index}"))
+                .build()
+                .map_err(|error| {
+                    FoundryError::Internal(anyhow::anyhow!(
+                        "cannot start indexing workers: {error}"
+                    ))
+                })?,
+        ));
+    }
+    Ok(std::sync::Arc::clone(
+        slot.as_ref().expect("pool initialized"),
+    ))
 }
 
 /// One source handed out to a build thread: its page position and its
@@ -2191,7 +2240,7 @@ struct HandOutState {
     closed: bool,
     /// A build thread unwound outside its panic boundary: the writer never
     /// waits for a build it can no longer get.
-    broken: bool,
+    broken: Option<String>,
 }
 
 /// The hand-out between the calling thread and the build threads of one
@@ -2250,9 +2299,9 @@ impl HandOut {
             if let Some(outcome) = state.built.remove(&position) {
                 return Ok(Some(outcome));
             }
-            if state.broken {
+            if let Some(message) = &state.broken {
                 return Err(FoundryError::Internal(anyhow::anyhow!(
-                    "an index build thread failed"
+                    "an index build thread failed: {message}"
                 )));
             }
             if !wait {
@@ -2275,23 +2324,6 @@ impl HandOut {
     }
 }
 
-/// Marks the hand-out broken when its build thread unwinds outside the
-/// parse panic boundary, so the writer never waits for it.
-struct BuildThread<'a>(&'a HandOut);
-
-impl Drop for BuildThread<'_> {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            let mut state = self.0.lock();
-            state.broken = true;
-            state.closed = true;
-            drop(state);
-            self.0.finished.notify_all();
-            self.0.work.notify_all();
-        }
-    }
-}
-
 /// Closes the hand-out when dropped, an unwind of the writer included, so no
 /// build thread waits for work that never comes and the scope can finish.
 struct Closing<'a>(&'a HandOut);
@@ -2307,8 +2339,8 @@ impl Drop for Closing<'_> {
 /// the one writer, on this thread, adds every key's documents in key order
 /// as they become ready. At most [`HANDOUT_BYTES`] of source bytes are handed
 /// out and not yet consumed — a source's bytes are consumed once the writer
-/// has added its documents. Every build thread has finished when this
-/// returns, and nothing is committed here.
+/// has added its documents. Every page job has finished when this returns;
+/// pool threads remain available for later pages. Nothing is committed here.
 ///
 /// The control is checked before each hand-out: a cancellation or deadline
 /// seen there, or any failure, stops the hand-out and returns the error with
@@ -2328,6 +2360,7 @@ fn index_page<S, C, M, B>(
     briefs: &B,
     control: &crate::Control,
     hooks: &IndexHooks,
+    pool: Option<&rayon::ThreadPool>,
 ) -> FResult<Vec<(usize, String)>>
 where
     S: ReadableTable<&'static str, &'static str>,
@@ -2339,7 +2372,9 @@ where
         .iter()
         .filter(|(key, _)| key.starts_with("source:"))
         .count();
-    let threads = index_threads(hooks).min(jobs);
+    let threads = pool
+        .map_or(0, rayon::ThreadPool::current_num_threads)
+        .min(jobs);
     let queue = HandOut::default();
     let mut page = PageWriter {
         writer,
@@ -2355,40 +2390,43 @@ where
         next: 0,
         panics: Vec::new(),
     };
-    std::thread::scope(|scope| {
-        let _closing = Closing(&queue);
-        let mut workers = Vec::with_capacity(threads);
-        let mut started = Ok(());
-        for _ in 0..threads {
-            let queue = &queue;
-            match std::thread::Builder::new()
-                .name("foundry-index".into())
-                .spawn_scoped(scope, move || build_thread(queue, fields, hooks))
-            {
-                Ok(worker) => workers.push(worker),
-                Err(error) => {
-                    started = Err(FoundryError::from(error));
-                    break;
-                }
+    let indexed = if let Some(pool) = pool {
+        pool.in_place_scope(|scope| {
+            let _closing = Closing(&queue);
+            for _ in 0..threads {
+                let queue = &queue;
+                scope.spawn(move |_| {
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        build_thread(queue, fields, hooks);
+                    }));
+                    if let Err(payload) = outcome {
+                        let mut state = queue.lock();
+                        state.broken = Some(panic_message(&*payload));
+                        state.closed = true;
+                        state.jobs.clear();
+                        drop(state);
+                        queue.finished.notify_all();
+                        queue.work.notify_all();
+                    }
+                });
             }
-        }
-        let indexed = started.and_then(|()| page.hand_out(sources, stored));
-        // Stop handing out. After a failure or cancellation the work no
-        // thread has taken is dropped; each thread finishes its current
-        // source and exits. Every one is joined here, so a panic outside
-        // its parse boundary is this page's named failure, not an unwind.
-        queue.close();
-        let mut joined = Ok(());
-        for worker in workers {
-            if let Err(payload) = worker.join() {
-                joined = Err(FoundryError::Internal(anyhow::anyhow!(
-                    "an index build thread panicked: {}",
-                    panic_message(&*payload)
-                )));
-            }
-        }
-        joined.and(indexed)
-    })?;
+            let indexed = page.hand_out(sources, stored);
+            // Stop handing out. After a failure or cancellation the work no
+            // job has taken is dropped; each job finishes its current source
+            // and returns to the retained pool. The scope joins every job,
+            // including a panic outside its parse boundary.
+            queue.close();
+            indexed
+        })
+    } else {
+        page.hand_out(sources, stored)
+    };
+    if let Some(message) = &queue.lock().broken {
+        return Err(FoundryError::Internal(anyhow::anyhow!(
+            "an index build thread panicked: {message}"
+        )));
+    }
+    indexed?;
     Ok(page.panics)
 }
 
@@ -2571,7 +2609,6 @@ impl<M: ReadableTable<&'static str, &'static str>, B: ReadableTable<&'static str
 /// source's bytes is dropped once the documents exist; the bytes stay
 /// charged until the writer adds those documents.
 fn build_thread(queue: &HandOut, fields: &Fields, hooks: &IndexHooks) {
-    let _unwinding = BuildThread(queue);
     while let Some(job) = queue.take() {
         let outcome = build_source(fields, &job, hooks);
         index_event!(hooks, index_hooks::Event::Built(&job.path));
@@ -3305,6 +3342,7 @@ impl Engine {
             workspace_id,
             schema: SCHEMA_VERSION,
             parse_panics: ParseFailures::default(),
+            index_pool: None,
             semantic_dir,
         })
     }
@@ -3426,6 +3464,7 @@ impl Engine {
             workspace_id,
             schema,
             parse_panics: ParseFailures::default(),
+            index_pool: None,
             semantic_dir,
         })
     }
@@ -3890,6 +3929,14 @@ impl Engine {
             ));
         }
         let hash = crate::digest(content.as_bytes());
+        self.replace_source_with_hash(path, content, &hash)
+    }
+
+    pub(crate) fn replace_prepared_source(&self, source: PreparedSource) -> FResult<bool> {
+        self.replace_source_with_hash(&source.path, &source.body, &source.hash)
+    }
+
+    fn replace_source_with_hash(&self, path: &str, content: &str, hash: &str) -> FResult<bool> {
         let tx = self.db.begin_write()?;
         {
             let mut sources = tx.open_table(SOURCES)?;
@@ -3900,7 +3947,7 @@ impl Engine {
             if old.as_ref().is_some_and(|old| old.hash == hash) {
                 return Ok(false);
             }
-            let pieces = chunks(path, &hash, content);
+            let pieces = chunks(path, hash, content);
             let mut stored = tx.open_table(CHUNKS)?;
             if let Some(old) = &old {
                 for i in 0..old.chunks {
@@ -3916,7 +3963,7 @@ impl Engine {
             sources.insert(
                 path,
                 serde_json::to_string(&SourceMeta {
-                    hash: hash.clone(),
+                    hash: hash.to_owned(),
                     chunks: pieces.len(),
                     bytes: content.len(),
                     lines: content.lines().count(),
@@ -3924,7 +3971,7 @@ impl Engine {
                 .as_str(),
             )?;
             tx.open_table(PENDING)?
-                .insert(source_pending_key(path).as_str(), hash.as_str())?;
+                .insert(source_pending_key(path).as_str(), hash)?;
             bump_revision(&tx, 1)?;
         }
         // A failure here drops the transaction: prior source bytes stay intact.
@@ -4059,6 +4106,10 @@ impl Engine {
         self.refresh_index_page(control, PAGE)
     }
 
+    pub(crate) fn indexing_pool(&mut self) -> FResult<std::sync::Arc<rayon::ThreadPool>> {
+        index_pool(&mut self.index_pool, &IndexHooks::current())
+    }
+
     /// A smaller page for a background owner that yields to foreground requests.
     pub(crate) fn refresh_index_page(
         &mut self,
@@ -4102,6 +4153,11 @@ impl Engine {
             ));
         };
         let hooks = IndexHooks::current();
+        let pool = if pending.iter().any(|(key, _)| key.starts_with("source:")) {
+            Some(index_pool(&mut self.index_pool, &hooks)?)
+        } else {
+            None
+        };
         let memory = tx.open_table(MEMORY)?;
         let briefs = tx.open_table(BRIEFS)?;
         let SearchHandles {
@@ -4109,12 +4165,21 @@ impl Engine {
             writer,
             fields,
         } = handles;
-        // Every build thread has finished here. A page stopped at a hand-out,
+        // Every page job has finished here. A page stopped at a hand-out,
         // or failed while building or adding, returns here uncommitted; one
         // cancelled after its last hand-out is committed below and stops
         // after the commit.
         let panics = index_page(
-            writer, fields, &pending, &sources, &stored, &memory, &briefs, control, &hooks,
+            writer,
+            fields,
+            &pending,
+            &sources,
+            &stored,
+            &memory,
+            &briefs,
+            control,
+            &hooks,
+            pool.as_deref(),
         )?;
         drop(memory);
         drop(briefs);

@@ -30,8 +30,11 @@ review below supersedes the earlier immediate jump from progressive bootstrap to
 broad enrichment: cold throughput, changed-work maintenance and model-aware inputs
 are the next implementation priorities. The first E1 increment now reuses semantic
 CPU workers and bounded verified cards, defers CLI model acquisition until missing
-inputs exist, and avoids chunk allocation for unchanged sources. Remaining E1 work
-and E2 onward are still pending; see [validation](validation.md#bootstrap-work-reuse--2026-10-09).
+inputs exist, and avoids chunk allocation for unchanged sources. The next increment
+adds bounded read/hash overlap, ordered freshness-checked source acceptance, early
+lexical publication and reusable ingestion/lexical workers. Verified-artifact handoff,
+cache accounting and per-card fitting remain in E1; E2 onward is still pending. See
+[validation](validation.md#pipelined-source-ingestion--2026-10-09).
 
 ## Architecture correction: useful context across 60,000–80,000 files
 
@@ -52,7 +55,7 @@ omits a caller, configuration dependency or test can make the complete task cost
 | Capability | Current evidence | Required change |
 | --- | --- | --- |
 | Exact source/structural graph | Versioned source, lexical search, 23-language extraction, compiler imports, approximate doors | Preserve it as the evidence base; add evidence about behavior and process boundaries. |
-| CPU parallelism | Source-index construction and semantic partitions use at most eight workers. Semantic workers and bounded verified cards now survive across waves. | Pipeline initial ingestion and reuse lexical workers; ingestion and commits remain largely serial. |
+| CPU parallelism | Bounded source reads/hash overlap ordered commits and periodic lexical publication on one reusable pool of at most eight workers. Semantic workers and bounded verified cards survive across waves. | Remove remaining artifact verification/accounting and per-card fitting repetition; source transactions remain individual. |
 | Embedding bootstrap | Latest recorded Gemma runs: 112,549 cards in 1,256 s; 332,732 cards in 4,437 s. MCP prefetches one batch; model work has one slot. | Make useful partial coverage available early, overlap independent stages, remove whole-corpus barriers, and tune device batches separately from CPU worker counts. |
 | Repository knowledge | Address cards contain heads/docs; 010 T001 now stores imported, source-bound briefs with lexical discovery. Explicit task/project memory is caller-authored. | Add selective generation, dependency-driven refresh and area knowledge; import is not an automatic enrichment lane. |
 | Continuous maintenance | Opt-in primary-root watching now supports native events, bounded coalescing, scoped updates and restart/overflow reconciliation (001 T011) | Extend resource policy and validate other platforms/large real repositories; quiet ticks do not reread source bodies. |
@@ -239,7 +242,7 @@ below; E2 onward remain pending. Sandbox build/test authorization continues.
 | B | Source-bound structured brief import, lexical discovery and lifecycle | 010 T001: implemented; automatic generation absent |
 | C | Opt-in native source watching and bounded reconciliation | 001 T011: implemented; platform/scale limits remain |
 | D | First semantic result before full partitioning, priorities and geometric publication | 009 T007: implemented; total throughput/maintenance unresolved |
-| E1 | Remove repeated cold/warm CPU and startup work | Semantic worker reuse, bounded tokenized-card handoff, lazy CLI acquisition and no-op chunk allocation avoidance implemented. Initial ingestion pipeline, lexical worker reuse, artifact handoff/counter reconciliation and per-card fitting remain pending under 001 T009/T011 and 009 T006/T007. |
+| E1 | Remove repeated cold/warm CPU and startup work | Semantic worker reuse, bounded tokenized-card handoff, lazy CLI acquisition, no-op chunk allocation avoidance, bounded initial ingestion and lexical worker reuse implemented. Artifact handoff/counter reconciliation and per-card fitting remain pending under 009 T006/T007. |
 | E2 | Durable changed-work frontier, explicit continuous semantic maintenance, independent acknowledgments and cheap status | 009 T008 with 001 T011; pending |
 | E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; pending, reuses E2 |
 | E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; pending; compare against current cards, keep old profiles/caches usable |

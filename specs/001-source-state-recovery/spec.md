@@ -782,8 +782,24 @@ in [validation](../../docs/validation.md); macOS, network filesystems, 80,000-fi
 throughput and model preparation speed are not inferred from those tests.
 
 T009/T011 efficiency follow-up, selected 2026-10-09: unchanged-source chunk allocation
-avoidance is implemented; ingestion pipelining, lexical worker reuse and the other
-follow-ups below remain pending.
+avoidance, bounded ingestion pipelining and lexical worker reuse are implemented.
+The [parallel-indexing contract](contracts/context-v2.md#parallel-indexing) owns the
+read/result bounds, ordered acceptance, early publication and interruption behavior.
+The remaining semantic/generation obligations below are pending under 009 T008.
+
+Implementation in [ingest.rs](../../src/ingest.rs) and [store.rs](../../src/store.rs):
+eight read/result slots overlap no-follow reads and hashes with the one source
+writer; the held descriptor and named version are rechecked before accepting bytes
+or exclusion decisions. Every 128 accepted candidates admits one lexical page,
+followed by the existing final drain. One Engine-owned Rayon 1.12.0 pool serves
+reads and lexical builds, retained across pages/calls. Rayon was already pinned for
+semantic preparation; it is now available in lexical-only builds too. This removes
+per-page thread creation without adding another worker protocol or durable owner.
+Source commits remain individual, pending acknowledgments remain conditional, and
+the watcher retains its existing step/foreground-admission policy. Explicit MCP
+indexing still occupies its engine slot. Sandbox concurrency, interruption and
+restart evidence is recorded in [validation](../../docs/validation.md#pipelined-source-ingestion--2026-10-09);
+no large-repository throughput improvement is inferred.
 
 - Pipeline bounded source reads/hash/preparation and lexical work during initial
   ingestion instead of waiting for the full walk. Keep one transactional writer,

@@ -1268,8 +1268,9 @@ Implemented increment in [prepare.rs](../../src/neural/prepare.rs),
 
 - A lazy Rayon 1.12.0 pool reuses at most `min(available_parallelism, 8)` CPU workers
   for a CLI run and across MCP prepare/pause/resume runs for the owner. Rayon already
-  exists in Cargo.lock through maintained dependencies; making it a semantic-only
-  direct dependency avoids a custom worker/channel/shutdown implementation. Each
+  exists in Cargo.lock through maintained dependencies; using it directly avoids
+  a custom worker/channel/shutdown implementation. 001's subsequent ingestion
+  increment makes it available in lexical-only builds as well. Each
   wave joins before returning, preserves input order and reports tokenizer panics
   without poisoning subsequent work. Empty/current waves start no CPU threads.
 - Fresh verified partitions retain exact cards for selection, capped at 2 MiB per
@@ -1291,8 +1292,9 @@ Implemented increment in [prepare.rs](../../src/neural/prepare.rs),
 - Source replacement checks the current hash before allocating copied storage
   chunks, preserving the transaction and unchanged-source result.
 
-Still pending in E1: parallel/pipelined initial ingestion, reusable lexical workers,
-verified-artifact handoff/cache-counter reconciliation and prefix-fitting work
+001's subsequent E1 increment implements bounded initial ingestion and reusable
+lexical workers; see its [contract](../001-source-state-recovery/contracts/context-v2.md#parallel-indexing).
+Still pending in E1: verified-artifact handoff/cache-counter reconciliation and prefix-fitting work
 within one card. Full artifact checks still precede tokenization and run again at
 real provider acquisition; they are not replaced by unverified path/mtime reuse.
 The token handoff removes a second render, not every tokenization inside the first.
