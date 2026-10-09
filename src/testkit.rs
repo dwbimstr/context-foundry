@@ -1346,3 +1346,16 @@ pub fn set_learning_row(dir: &Path, table: &str, key: &str, raw: Option<&str>) {
         }
     });
 }
+
+/// Resolve a v4 semantic artifact from the manifest for tamper/fault fixtures.
+pub fn semantic_file(directory: &Path, artifact: &str) -> PathBuf {
+    use crate::neural::index::{self, GenerationManifest};
+    let manifest: GenerationManifest =
+        serde_json::from_slice(&std::fs::read(directory.join(index::MANIFEST_FILE)).unwrap())
+            .unwrap();
+    directory.join(match artifact {
+        index::INDEX_FILE => manifest.index_file(),
+        index::LABELS_FILE => manifest.labels_file(),
+        _ => panic!("unknown semantic artifact"),
+    })
+}

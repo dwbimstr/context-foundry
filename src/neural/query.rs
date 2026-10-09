@@ -142,13 +142,20 @@ impl DenseWindow {
 /// from the very buffer whose hash matched the manifest, read through the
 /// store's bound descriptor: no later file substitution can reach it.
 pub struct DenseIndex {
-    index: usearch::Index,
+    segments: Vec<DenseSegment>,
+    dimensions: usize,
     /// `labels[label]` is that ordinal's input key and unit locations.
     labels: Vec<LabelEntry>,
     /// The source revision the label map was read at.
     source_revision: u64,
     /// True when the generation covers every eligible unit at that revision.
     complete: bool,
+}
+
+struct DenseSegment {
+    index: usearch::Index,
+    /// Segment ordinal -> current location ordinal; None is a tombstone.
+    active: Vec<Option<usize>>,
 }
 
 impl DenseIndex {
@@ -199,76 +206,107 @@ impl DenseIndex {
                 }
             };
         neural_fault!(LOAD_AFTER_VERIFY, Some(control), &digest)?;
-        // The deferred T002 check: the library's own dense header, parsed
-        // from the verified bytes and compared with the manifest's geometry
-        // before any vector is searched.
-        let geometry = |detail: String| Fallback::new("index_geometry", detail);
-        let header = usearch::Index::metadata_from_buffer(&bytes)
-            .map_err(|e| Fallback::new("index_unavailable", format!("usearch header: {e}")))?;
+        Self::from_buffers(generation, bytes)
+    }
+
+    pub(crate) fn from_buffers(
+        generation: index::Generation,
+        bytes: index::IndexBuffers,
+    ) -> Result<Arc<Self>, Fallback> {
         let manifest = &generation.manifest;
-        if header.dimensions as usize != manifest.dimensions
-            || header.count_present as usize != manifest.count
-            || header.multi
-            || !format!("{:?}", header.metric).eq_ignore_ascii_case(METRIC)
-            || !format!("{:?}", header.quantization).eq_ignore_ascii_case(SCALAR_KIND)
-        {
-            return Err(geometry(format!(
-                "usearch header disagrees with the generation manifest \
-                 (dimensions {}, metric {:?}, scalar {:?}, multi {}, present {})",
-                header.dimensions,
-                header.metric,
-                header.quantization,
-                header.multi,
-                header.count_present
-            )));
+        let mut segments = Vec::with_capacity(2);
+        let mut load = |bytes: &[u8], keys: &[String]| -> Result<(), Fallback> {
+            let geometry = |detail: String| Fallback::new("index_geometry", detail);
+            let header = usearch::Index::metadata_from_buffer(bytes)
+                .map_err(|e| Fallback::new("index_unavailable", format!("usearch header: {e}")))?;
+            if header.dimensions as usize != manifest.dimensions
+                || header.count_present as usize != keys.len()
+                || header.multi
+                || !format!("{:?}", header.metric).eq_ignore_ascii_case(METRIC)
+                || !format!("{:?}", header.quantization).eq_ignore_ascii_case(SCALAR_KIND)
+            {
+                return Err(geometry(
+                    "usearch header disagrees with generation geometry or segment membership"
+                        .into(),
+                ));
+            }
+            let loaded = usearch::Index::restore_from_buffer(bytes)
+                .map_err(|e| Fallback::new("index_unavailable", format!("usearch load: {e}")))?;
+            if loaded.dimensions() != manifest.dimensions || loaded.size() != keys.len() {
+                return Err(geometry(
+                    "loaded index geometry disagrees with manifest".into(),
+                ));
+            }
+            let active = keys
+                .iter()
+                .map(|key| manifest.entries.binary_search(key).ok())
+                .collect();
+            segments.push(DenseSegment {
+                index: loaded,
+                active,
+            });
+            Ok(())
+        };
+        load(&bytes.base, &manifest.base_entries)?;
+        if let (Some(bytes), Some(delta)) = (&bytes.delta, &manifest.delta) {
+            load(bytes, &delta.entries)?;
         }
-        let loaded = usearch::Index::restore_from_buffer(&bytes)
-            .map_err(|e| Fallback::new("index_unavailable", format!("usearch load: {e}")))?;
-        if loaded.dimensions() != manifest.dimensions || loaded.size() != manifest.count {
-            return Err(geometry(format!(
-                "loaded index geometry disagrees with the manifest (dimensions {}, size {})",
-                loaded.dimensions(),
-                loaded.size()
-            )));
-        }
-        let source_revision = manifest.source_revision;
-        let complete = manifest.coverage == COVERAGE_COMPLETE;
         Ok(Arc::new(Self {
-            index: loaded,
+            segments,
+            dimensions: manifest.dimensions,
             labels: generation.labels.labels,
-            source_revision,
-            complete,
+            source_revision: manifest.source_revision,
+            complete: manifest.coverage == COVERAGE_COMPLETE,
         }))
     }
 
-    /// The top `k` labels by ascending distance. Labels the label map does
-    /// not hold (a disagreement validation somehow missed) are skipped
-    /// rather than served.
+    /// At most two searches and 2*k candidates. Filtering happens INSIDE ANN
+    /// selection, so retired base entries cannot consume the candidate window.
     pub fn search(&self, vector: &[f32], k: usize) -> Result<Vec<DenseHit>, Fallback> {
-        if vector.len() != self.index.dimensions() {
+        if vector.len() != self.dimensions {
             return Err(Fallback::new(
                 "index_unavailable",
                 format!(
-                    "query vector has {} values, the index holds {}",
+                    "query vector has {} values, index holds {}",
                     vector.len(),
-                    self.index.dimensions()
+                    self.dimensions
                 ),
             ));
         }
-        let matches = self
-            .index
-            .search(vector, k)
-            .map_err(|e| Fallback::new("index_unavailable", format!("usearch search: {e}")))?;
-        Ok(matches
-            .keys
-            .iter()
-            .zip(&matches.distances)
-            .filter(|&(&key, _)| (key as usize) < self.labels.len())
-            .map(|(&key, &distance)| DenseHit {
-                label: key as usize,
-                distance,
-            })
-            .collect())
+        let k = k.min(DENSE_WINDOW);
+        if k == 0 {
+            return Ok(Vec::new());
+        }
+        let mut hits = Vec::with_capacity(k * self.segments.len());
+        for segment in &self.segments {
+            let matches = segment
+                .index
+                .filtered_search(vector, k, |key| {
+                    segment
+                        .active
+                        .get(key as usize)
+                        .is_some_and(Option::is_some)
+                })
+                .map_err(|e| Fallback::new("index_unavailable", format!("usearch search: {e}")))?;
+            hits.extend(matches.keys.iter().zip(&matches.distances).filter_map(
+                |(&key, &distance)| {
+                    segment
+                        .active
+                        .get(key as usize)
+                        .copied()
+                        .flatten()
+                        .map(|label| DenseHit { label, distance })
+                },
+            ));
+        }
+        hits.sort_by(|a, b| {
+            a.distance
+                .total_cmp(&b.distance)
+                .then(a.label.cmp(&b.label))
+        });
+        // Membership validation makes segments disjoint, so there are no duplicate keys.
+        hits.truncate(k);
+        Ok(hits)
     }
 }
 

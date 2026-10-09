@@ -31,9 +31,13 @@ implemented. Schema 9 adds independent semantic/knowledge work queues; explicit
 `--semantic-maintain` (or MCP `index {semantic:"maintain"}`) consumes changed-source
 work and waits on notifications when caught up. Add `--watch` for automatic filesystem
 acceptance. Default status reads a versioned observation; audit remains explicit.
-Vector/location deltas (E3), model-aware inputs (E4), automatic generation (010 T002),
-boundary joins and task-evidence composition remain pending. Publication still can
-walk all prepared mappings and rebuild the whole ANN.
+E3 now reuses an immutable base ANN with one bounded delta and independent locations,
+atomically switching a manifest and compacting at bounded thresholds. Small edits and
+location-only changes avoid full ANN builds. Publication still walks all mappings,
+hashes referenced segments, writes the full location map and reloads the resident index;
+affected-location and verified/resident segment reuse remain T008 work. Model-aware
+inputs (E4), automatic generation (010 T002), boundary joins and task-evidence composition
+remain pending.
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
 [validation](validation.md). 013 remains frozen. No release or quality gain is claimed.
 

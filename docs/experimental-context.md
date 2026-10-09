@@ -53,9 +53,19 @@ resource limits pause by name and retain pending work; resume explicitly after f
 the cause. Status polling does not extend the foreground batch throttle. A restarted
 owner prepares automatically only when `--semantic-maintain` is explicitly supplied.
 
-Vector publication still walks prepared mappings and can rebuild the whole ANN. The
-next E3 increment owns vector/location deltas and compaction; changed-input selection
-alone does not establish efficient total edit cost on an 80,000-file repository.
+Generation v4 keeps one immutable base ANN and one bounded delta. Small edits rebuild
+only the delta; location-only changes build and write no ANN data. Retired base keys
+are filtered before query candidate selection. Compaction runs at bounded churn/byte
+thresholds, and an atomic manifest switch preserves a readable generation on failure.
+Publication I/O/index failures in MCP retry after 250 ms, 1 s and 3 s; status exposes
+`bootstrap.publication_backoff_ms`, `publication_retries` and `publication_error`.
+Exhaustion pauses with pending work intact. No embedding is repeated by these retries.
+`generation_builds`, `delta_publications` and `mapping_publications` distinguish work.
+
+Publication still walks prepared mappings, validates all referenced file hashes and
+writes the complete location map. A changed publication also reloads the resident
+index. Incremental location reconciliation and verified/resident segment reuse remain
+T008 work; this slice does not establish total edit cost at 80,000-file scale.
 
 ## Progressive semantic bootstrapping
 

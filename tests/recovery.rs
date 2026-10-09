@@ -112,6 +112,8 @@ fn child_fault(stage: &str) -> ! {
     let work = work_dir();
     let store = work.join("store");
     match stage {
+        #[cfg(feature = "semantic")]
+        stage if stage.starts_with("semantic_") => semantic_crash_child(&work, stage),
         "ingest_after_early_publication" => {
             let ws = work.join("ws");
             std::fs::create_dir(&ws).unwrap();
@@ -755,11 +757,174 @@ fn exit_after_early_ingestion_publication_replays_only_committed_sources() {
     }
 }
 
+#[cfg(feature = "semantic")]
+fn semantic_crash_child(work: &Path, stage: &str) {
+    use context_foundry::neural::{cache, fake, index, prepare, profile::SemanticProfile};
+    let store_path = work.join("store");
+    let root = work.join("ws");
+    std::fs::create_dir(&root).unwrap();
+    let profile_path = testkit::write_semantic_profile(work, "recovery", |_| {});
+    let profile = SemanticProfile::load(&profile_path).unwrap();
+    let factory = fake::FakeFactory::new(profile.descriptor.clone(), fake::FakeBehavior::Ok);
+    let engine = Engine::initialize(&store_path, &root).unwrap();
+    for n in 0..100 {
+        engine
+            .replace_source(&format!("a{n:03}.rs"), &format!("fn version_{n}() {{}}\n"))
+            .unwrap();
+    }
+    drop(engine);
+    prepare::run(
+        &store_path,
+        &prepare::PrepareOptions {
+            priority_paths: &[],
+            profile_path: &profile_path,
+            budget_seconds: 60,
+            development: false,
+            cache_cap_bytes: cache::DEFAULT_CACHE_CAP_BYTES,
+            started: std::time::Instant::now(),
+            control: &Control::unbounded(),
+        },
+        factory.acquire(),
+    )
+    .unwrap();
+    let engine = Engine::open_existing(&store_path).unwrap();
+    engine
+        .semantic_rebuild_index(&Control::unbounded())
+        .unwrap();
+    let directory = index::generation_dir(&store_path, &profile.descriptor.digest());
+    std::fs::copy(
+        directory.join(index::MANIFEST_FILE),
+        work.join("prior-generation.json"),
+    )
+    .unwrap();
+    if stage.contains("compaction") {
+        for n in 0..70 {
+            engine.delete_source(&format!("a{n:03}.rs")).unwrap();
+        }
+    } else {
+        let body = "fn changed() {}\n";
+        engine.replace_source("a000.rs", body).unwrap();
+        let state = engine.semantic_state().unwrap().unwrap();
+        let digest = state.function_digest.unwrap();
+        let recipe = state.recipe_id.unwrap();
+        let key = context_foundry::digest(b"recovery fixture input");
+        engine
+            .semantic_record_partition(
+                "a000.rs",
+                &context_foundry::digest(body.as_bytes()),
+                &recipe,
+                &digest,
+                None,
+                &|body| {
+                    Ok(vec![cache::PartitionUnit {
+                        start: 0,
+                        end: body.len(),
+                        input_key: key.clone(),
+                    }])
+                },
+            )
+            .unwrap();
+        let mut vector = vec![0.0; profile.descriptor.dims()];
+        vector[0] = 1.0;
+        engine
+            .semantic_cache_commit(
+                &[(key, vector)],
+                &digest,
+                profile.descriptor.dims(),
+                cache::DEFAULT_CACHE_CAP_BYTES,
+            )
+            .unwrap();
+    }
+    let point = if stage.ends_with("after") {
+        context_foundry::neural::fault_names::PUBLISH_AFTER_MANIFEST
+    } else {
+        context_foundry::neural::fault_names::PUBLISH_BEFORE_MANIFEST
+    };
+    fault::arm(point, 0, Action::Abort);
+    engine
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+}
+
+#[cfg(feature = "semantic")]
+fn exits_during_delta_and_compaction_recover_with_pending_work_and_no_inference() {
+    use context_foundry::neural::{anchor::Dir, index, work::Lane};
+    for stage in [
+        "semantic_delta_before",
+        "semantic_delta_after",
+        "semantic_compaction_before",
+        "semantic_compaction_after",
+    ] {
+        let work = crash_at(stage);
+        let path = work.path().join("store");
+        let engine = Engine::open_existing(&path).unwrap();
+        let state = engine.semantic_state().unwrap().unwrap();
+        let digest = state.function_digest.unwrap();
+        let recipe = state.recipe_id.unwrap();
+        let dims = state.dimensions.unwrap() as usize;
+        let anchor = Dir::open_path(&path).unwrap();
+        let prior: index::GenerationManifest = serde_json::from_slice(
+            &std::fs::read(work.path().join("prior-generation.json")).unwrap(),
+        )
+        .unwrap();
+        let generation = index::validate_generation(&anchor, &digest, &recipe, dims).unwrap();
+        if stage.ends_with("before") {
+            assert_eq!(generation.manifest.entries, prior.entries);
+        } else {
+            assert_ne!(generation.manifest.entries, prior.entries);
+        }
+        let count = if stage.contains("compaction") { 70 } else { 1 };
+        assert_eq!(
+            engine.derivation_pending(Lane::Semantic).unwrap().paths,
+            count
+        );
+        let cache_before = engine.semantic_state().unwrap().unwrap().cache_bytes;
+        // This operation has no provider: recovery uses committed vectors only.
+        let published = engine
+            .semantic_publish_pending(&Control::unbounded())
+            .unwrap();
+        if stage.ends_with("after") {
+            assert!(matches!(published, index::Publication::Current(_)));
+        } else if stage.contains("delta") {
+            assert!(matches!(published, index::Publication::Delta(_)));
+        } else {
+            assert!(matches!(published, index::Publication::Rebuilt(_)));
+        }
+        let current = index::validate_generation(&anchor, &digest, &recipe, dims).unwrap();
+        assert_eq!(current.manifest.count, if count == 70 { 30 } else { 100 });
+        assert_eq!(
+            current.manifest.source_revision,
+            engine.source_revision().unwrap()
+        );
+        assert_eq!(
+            engine.semantic_state().unwrap().unwrap().cache_bytes,
+            cache_before
+        );
+        while engine.derivation_pending(Lane::Semantic).unwrap().paths != 0 {
+            let batch = engine
+                .derivation_batch(Lane::Semantic, &format!("{digest}:{recipe}"))
+                .unwrap();
+            engine.derivation_ack(Lane::Semantic, &batch).unwrap();
+        }
+        assert_eq!(
+            engine
+                .semantic_publish_pending(&Control::unbounded())
+                .unwrap(),
+            index::Publication::Current(current.manifest.count)
+        );
+    }
+}
+
 fn main() {
     if let Ok(stage) = std::env::var("FOUNDRY_TEST_FAULT_STAGE") {
         child_fault(&stage);
     }
     let tests: Vec<(&str, fn())> = vec![
+        #[cfg(feature = "semantic")]
+        (
+            "exits_during_delta_and_compaction",
+            exits_during_delta_and_compaction_recover_with_pending_work_and_no_inference,
+        ),
         (
             "exit_after_early_ingestion_publication",
             exit_after_early_ingestion_publication_replays_only_committed_sources,

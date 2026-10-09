@@ -646,3 +646,11 @@ from prior state on restart; watching alone loads no model. Pause through
 `index {"semantic":"pause"}`. Provider/resource failures retain pending work and
 require explicit resume. Ordinary status reads a publication observation; use
 `semantic status --audit` or MCP `status {"semantic_audit":true}` for integrity/census.
+
+Semantic generation format v4 is derived data under schema 9: existing vector-cache
+rows and partitions remain reusable. Older generation formats are refused by name;
+explicit preparation or `repair-index` republishes them from cache. Small edits publish
+one bounded delta and independent locations; compaction publishes a new immutable base.
+The manifest switches after referenced files are durable. MCP retries transient publication
+failures three times with visible bounded backoff, then pauses with pending work; provider
+failures retain the explicit-resume behavior above. No automatic download is added.

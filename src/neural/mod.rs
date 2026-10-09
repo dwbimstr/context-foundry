@@ -28,6 +28,8 @@ pub mod fault_names {
     point!(PURGE_AFTER_PLAN, "semantic.purge_after_plan");
     // Publication: the semantic root and generation directory are open;
     // nothing has been written yet.
+    point!(PUBLISH_BEFORE_MANIFEST, "semantic.publish_before_manifest");
+    point!(PUBLISH_AFTER_MANIFEST, "semantic.publish_after_manifest");
     point!(PUBLISH_AFTER_CHECK, "semantic.publish_after_check");
     // Serving load: the index bytes were read once and matched the manifest;
     // the USearch header check and restore from those bytes come next.

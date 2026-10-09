@@ -748,30 +748,18 @@ fn provider_stop(error: ProviderError, control: &Control) -> Stop {
     )
 }
 
-/// Publish committed coverage under the run control: `rebuild` replays the
-/// generation from the cache; otherwise only pending (uncovered) coverage is
-/// published. The outcome is recorded in the report — a publication that
+/// Publish committed coverage under the run control, reusing immutable base
+/// vectors and rebuilding only a bounded delta unless compaction is due. The outcome is recorded in the report — a publication that
 /// cannot finish is a named stop with its reason, never swallowed.
 pub(crate) fn publish(
     engine: &Engine,
     control: &Control,
     budget: u64,
     report: &mut PrepareReport,
-    rebuild: bool,
 ) -> Result<Option<Stop>, FoundryError> {
     let started = Instant::now();
     prepare_fault!(BEFORE_PUBLISH, Some(control), "")?;
-    let outcome = if rebuild {
-        engine.semantic_rebuild_index(control).map(|summary| {
-            if summary.rebuilt {
-                Publication::Rebuilt(summary.entries)
-            } else {
-                Publication::Nothing
-            }
-        })
-    } else {
-        engine.semantic_publish_pending(control)
-    };
+    let outcome = engine.semantic_publish_pending(control);
     let stop = record_publication(outcome, budget, report);
     report.bootstrap.publication_ms += elapsed_ms(started);
     if stop.is_none() {
@@ -792,9 +780,19 @@ pub(crate) fn record_publication(
     if matches!(&outcome, Ok(Publication::Rebuilt(_))) {
         report.bootstrap.generation_builds += 1;
     }
+    match &outcome {
+        Ok(Publication::Delta(_)) => report.bootstrap.delta_publications += 1,
+        Ok(Publication::Mapped(_)) => report.bootstrap.mapping_publications += 1,
+        _ => {}
+    }
     match outcome {
         Ok(Publication::Nothing) => None,
-        Ok(Publication::Current(entries) | Publication::Rebuilt(entries)) => {
+        Ok(
+            Publication::Current(entries)
+            | Publication::Rebuilt(entries)
+            | Publication::Delta(entries)
+            | Publication::Mapped(entries),
+        ) => {
             report.index_published = true;
             report.index_entries = entries as u64;
             report.index_reason = None;
@@ -877,7 +875,7 @@ fn inner(
     };
     // Recover accepted coverage before admitting new inference. A cold store's
     // publication visits zero prepared rows, not the whole source corpus.
-    if let Some(stop) = publish(engine, control, budget, report, false)? {
+    if let Some(stop) = publish(engine, control, budget, report)? {
         return Ok(stop);
     }
     let mut published = report.index_entries;
@@ -1010,7 +1008,7 @@ fn inner(
                 // Geometric publication: first batch, then approximately doubled
                 // coverage. The total cold-build vector work is amortized.
                 if unpublished >= published.max(1) {
-                    if let Some(halted) = publish(engine, control, budget, report, true)? {
+                    if let Some(halted) = publish(engine, control, budget, report)? {
                         stop = Some(halted);
                         break 'waves;
                     }
@@ -1025,7 +1023,7 @@ fn inner(
             // Repartitioned inputs may all hit retained cache rows. Make the
             // first such wave searchable even without a document call.
             if published == 0 && report.reused_cached_units > 0 {
-                if let Some(halted) = publish(engine, control, budget, report, false)? {
+                if let Some(halted) = publish(engine, control, budget, report)? {
                     stop = Some(halted);
                     break;
                 }
@@ -1046,7 +1044,7 @@ fn inner(
     // in the report and the state; the original stop reason is kept.
     let cancelled = matches!(&stop, Some(Stop::Partial { code, .. }) if *code == "cancelled");
     if !cancelled {
-        match publish(engine, control, budget, report, unpublished > 0)? {
+        match publish(engine, control, budget, report)? {
             None => {}
             Some(published_stop) => stop = Some(merge_publication(stop, published_stop)),
         }

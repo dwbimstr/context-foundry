@@ -681,4 +681,8 @@ commit notifications when caught up, and acknowledges versions after publication
 Ordinary status reads the last recorded publication and transactional cache totals;
 source/profile mismatch is stale or unknown, and full audit remains explicit.
 See [009 T008](../specs/009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work).
-Full ANN publication remains until E3; automatic LLM generation remains 010 T002.
+Generation v4 adds an immutable base, at most one bounded delta and independent
+locations, committed through one atomic content-bound manifest. Compaction is bounded
+by churn and payload; queries filter retired keys inside ANN selection and merge at
+most two candidate windows. Full mapping walks, file-hash validation and resident reload
+remain T008 costs. Automatic LLM generation remains 010 T002.

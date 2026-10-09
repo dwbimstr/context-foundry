@@ -1328,7 +1328,8 @@ evidence; no real-device throughput or task-quality gain is claimed.
 
 ### T008 — Maintain and publish only changed semantic work
 
-Selected; E2 implemented experimentally, E3 publication deltas pending. Depends on
+Selected; E2 and E3 ANN delta publication implemented experimentally. Incremental
+location reconciliation and publication-validation reuse remain open under T008. Depends on
 001 T011's source acceptance seam and T006/T007's bounded preparation. Current input-key cache reuse is retained. Replace
 normal edit-time full walks and generation rebuilds with work proportional to the
 changed inputs and their locations. Full reconciliation is still valid for initial
@@ -1417,17 +1418,65 @@ Implemented E2 in [work.rs](../../src/neural/work.rs), [driver.rs](../../src/neu
   foreground throttle. This amends T001 readiness, T003 D4/D5 and startup behavior
   only for the explicitly selected mode.
 
-E3 remains pending: each publication can still walk all prepared mappings and rebuild
-one full ANN generation, including mapping-only changes. E2's affected-source bound
-applies to partition/input selection, not total edit publication cost. Generation
-format and lookup freshness checks are unchanged. No 80,000-file throughput, real
-model cost or task-quality claim follows from the sandbox work-count tests.
+Implemented E3 ANN publication in [publication.rs](../../src/neural/index/publication.rs)
+and [query.rs](../../src/neural/query.rs), shared by CLI preparation and the existing
+MCP driver:
+
+- Generation **v4** separates sorted active input/location labels from immutable base
+  membership. There is one USearch F16/cosine base and at most one F16/cosine delta.
+  Missing active base keys are tombstones; a reverted base key reactivates its existing
+  vector. Duplicate source locations share one input vector. Location-only publication
+  decodes no cached vectors and builds/writes no ANN bytes. A changed overlay decodes
+  and rebuilds only its bounded active keys; explicit repair still compacts from cache.
+- Compact when either delta membership or retired base membership exceeds
+  `clamp(base_count / 4, 64, 4096)`, or delta f32 payload would exceed 32 MiB. The delta
+  serialized file also has a 32 MiB hard bound. Compaction retains the existing 2 GiB
+  logical f32 payload, 4 GiB serialized base and 256 MiB per-metadata-file bounds.
+  These are payload limits, not total RSS or a measured device throughput guarantee.
+- One manifest atomically references content-named base, delta and location files.
+  Private-stage files are synced, promoted and directory-synced before the manifest
+  rename; the manifest directory is synced afterwards. All operations use held
+  descriptors with no symlink traversal. Failed compaction leaves the prior manifest
+  and referenced artifacts readable. Next staging reclaims only owned unreferenced
+  content files and abandoned private stages; current artifacts remain. This replaces
+  the former three-file overwrite that could destroy the last readable pair.
+- Cache commits still precede publication; E2 acknowledgment follows publication.
+  Crashes before the manifest switch leave the prior generation; crashes after it
+  leave the complete new generation and pending work that can replay without inference.
+  The MCP owner retries publication I/O/index failures after 250 ms, 1 s and 3 s,
+  exposing `publication_backoff_ms`, retry count and last publication error in progress.
+  Backoff releases the serving slot, observes pause/shutdown and admits no model work.
+  Exhaustion pauses by name with pending work intact; finalization does not retry again.
+  CLI publication retains its existing bounded-command, named-failure behavior.
+- Query fan-out is at most two USearch filtered searches and 128 candidates before
+  merging the final 64. Segment ordinals translate to active location ordinals.
+  Tombstones are excluded inside ANN selection, before the candidate window is limited;
+  final source-hash/range eligibility remains unchanged. Segment memberships are
+  disjoint and validated, so shared inputs cannot appear twice. Approximate ANN search
+  remains approximate; the stale-neighbor fixture establishes suppression behavior,
+  not general recall or task quality.
+- In-place USearch edits were rejected for this slice because a restart-safe checkpoint
+  would still serialize the entire base or require a separate mutation journal. The
+  bounded overlay reuses the maintained library's serialization, redb's authoritative
+  cache and the existing preparation owner. No new table, broker, dependency or thread.
+  Format v1–v3 generations are refused by name and republished from cache by preparation
+  or repair; schema 9, partition identities and vector cache format do not change.
+
+**Remaining T008 work:** publication still pages all prepared mappings, probes their
+cache layouts, hashes the referenced base/delta files, serializes a full location map,
+and reloads the resident generation after a changed publication. E3 removes full ANN
+reconstruction/checkpoint writes below compaction thresholds; it does not yet make total
+edit publication proportional to changed paths. Persisted affected-location reconciliation,
+verified-segment reuse and resident segment reuse retain that goal. E4 remains separate.
+No 80,000-file throughput, real model cost or task-quality result is claimed.
 
 Reference inspected, not executed: USearch **2.26.2** (the Cargo.lock version),
 [`rust/lib.rs`](https://github.com/unum-cloud/usearch/blob/v2.26.2/rust/lib.rs)
-`Index::{add,remove,save,load}`, test `add_remove_vector`. These maintained operations
-inform T008; Foundry must own source-bound mapping, crash-safe publication and
-bounded compaction. No custom ANN or database implementation is selected.
+`Index::{add,remove,filtered_search,save_to_buffer,restore_from_buffer}`, tests
+`add_remove_vector`, `search_with_stateless_filter` and `search_with_stateful_filter`.
+Inspected at the pinned Cargo.lock release, not executed upstream. These operations
+inform T008: Foundry supplies source-bound locations, validated disjoint membership,
+atomic publication and bounded compaction; USearch supplies ANN storage and search.
 
 ### T009 — Use model-owned geometry and contextual representations
 

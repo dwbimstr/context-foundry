@@ -1832,10 +1832,12 @@ fn a_usearch_header_that_disagrees_with_the_manifest_is_refused_by_name() {
     }
     let mut buffer = vec![0u8; foreign.serialized_length()];
     foreign.save_to_buffer(&mut buffer).unwrap();
-    let index_path = directory.join(index::INDEX_FILE);
+    let index_path = testkit::semantic_file(&directory, index::INDEX_FILE);
     std::fs::remove_file(&index_path).unwrap();
     std::fs::write(&index_path, &buffer).unwrap();
-    manifest["index_sha256"] = serde_json::Value::String(context_foundry::digest(&buffer));
+    let hash = context_foundry::digest(&buffer);
+    std::fs::rename(&index_path, directory.join(format!("ann-{hash}.usearch"))).unwrap();
+    manifest["index_sha256"] = serde_json::Value::String(hash);
     std::fs::remove_file(&manifest_path).unwrap();
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 
@@ -1893,7 +1895,10 @@ fn the_fixture_costs_are_exact_and_recorded() {
     assert!(corpus.probe.document_tokens() < source_bytes);
     // The preparation report carries the same input-token total itself.
     assert_eq!(report.input_tokens, corpus.probe.document_tokens());
-    let index_file = index::generation_dir(&corpus.store, &corpus.digest()).join(index::INDEX_FILE);
+    let index_file = testkit::semantic_file(
+        &index::generation_dir(&corpus.store, &corpus.digest()),
+        index::INDEX_FILE,
+    );
     let vector_bytes = std::fs::metadata(index_file).unwrap().len();
     let slot = corpus.slot();
     let delivered: Vec<usize> = [DUSK_QUERY, LEDGER_QUERY, CODE_QUERY]
@@ -2309,7 +2314,7 @@ fn bytes_replaced_after_verification_never_reach_the_loaded_index() {
     }
     let mut replacement = vec![0u8; foreign.serialized_length()];
     foreign.save_to_buffer(&mut replacement).unwrap();
-    let target = directory.join(index::INDEX_FILE);
+    let target = testkit::semantic_file(&directory, index::INDEX_FILE);
     fault::arm(
         LOAD_AFTER_VERIFY,
         0,
@@ -2343,7 +2348,7 @@ fn bytes_replaced_after_verification_never_reach_the_loaded_index() {
 fn a_v1_generation_is_unavailable_by_name_and_prepare_republishes_it_without_document_calls() {
     let mut corpus = Corpus::new(&[]);
     let directory = index::generation_dir(&corpus.store, &corpus.digest());
-    let labels_path = directory.join(index::LABELS_FILE);
+    let labels_path = testkit::semantic_file(&directory, index::LABELS_FILE);
     let manifest_path = directory.join(index::MANIFEST_FILE);
     let read = |path: &Path| -> serde_json::Value {
         serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
@@ -5083,6 +5088,11 @@ async fn continuous_maintenance_selects_edits_and_reuses_reverts_then_pauses_and
         })
         .await;
     let selected = first["bootstrap"]["selected_sources"].as_u64().unwrap();
+    let base_path = testkit::semantic_file(
+        &index::generation_dir(&corpus.store, &corpus.digest()),
+        index::INDEX_FILE,
+    );
+    let base_before = std::fs::metadata(&base_path).unwrap();
     let calls = corpus.probe.document_calls();
     corpus.write("src/extra0.rs", "pub fn changed_entry() {}\n");
     served.index().await;
@@ -5100,6 +5110,20 @@ async fn continuous_maintenance_selects_edits_and_reuses_reverts_then_pauses_and
     );
     assert_eq!(corpus.probe.document_calls(), calls + 1);
     assert_eq!(edited["missing_units"], 0);
+    assert_eq!(
+        edited["bootstrap"]["generation_builds"],
+        first["bootstrap"]["generation_builds"]
+    );
+    assert!(
+        edited["bootstrap"]["delta_publications"].as_u64().unwrap()
+            > first["bootstrap"]["delta_publications"].as_u64().unwrap()
+    );
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(
+        std::fs::metadata(&base_path).unwrap().ino(),
+        base_before.ino(),
+        "an ordinary maintained edit does not replace the base ANN"
+    );
     corpus.write("src/extra0.rs", "pub fn extra_0() {}\n");
     served.index().await;
     let reverted = served

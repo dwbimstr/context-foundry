@@ -593,7 +593,11 @@ fn repair_index_rebuilds_the_semantic_generation_with_zero_calls() {
     // Corrupt the published index file; validation must refuse it.
     env.close();
     let generation = index::generation_dir(&env.store, &env.digest());
-    std::fs::write(generation.join(index::INDEX_FILE), b"broken").unwrap();
+    std::fs::write(
+        testkit::semantic_file(&generation, index::INDEX_FILE),
+        b"broken",
+    )
+    .unwrap();
     let engine = Engine::open_existing(&env.store).unwrap();
     let status = engine.semantic_status(&Control::unbounded()).unwrap();
     assert!(!status.index.available, "{status:?}");
@@ -2207,7 +2211,10 @@ fn publication_is_anchored_to_the_descriptors_not_the_path() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect();
-    assert_eq!(published.len(), 3, "{published:?}");
+    assert!(
+        published.len() <= 6,
+        "current and preceding artifacts: {published:?}"
+    );
 }
 
 /// C1 bootstrap binding: the store-directory descriptor is taken ONCE, when
@@ -2268,16 +2275,14 @@ fn purge_and_publication_follow_the_bound_store_not_a_substituted_ancestor() {
             .exists()
     );
 
+    let bound_file = testkit::semantic_file(
+        &moved.join("store/semantic").join(&digest),
+        index::INDEX_FILE,
+    );
     // Publication on the still-open Engine: the bound generation's index file
     // is removed (reached through the moved path), so pending coverage must
     // be rebuilt — into the bound directory, not into the decoy.
-    std::fs::remove_file(
-        moved
-            .join("store/semantic")
-            .join(&digest)
-            .join(index::INDEX_FILE),
-    )
-    .unwrap();
+    std::fs::remove_file(&bound_file).unwrap();
     match engine
         .semantic_publish_pending(&Control::unbounded())
         .unwrap()
@@ -2286,11 +2291,7 @@ fn purge_and_publication_follow_the_bound_store_not_a_substituted_ancestor() {
         other => panic!("expected a rebuild into the bound store, got {other:?}"),
     }
     assert!(
-        moved
-            .join("store/semantic")
-            .join(&digest)
-            .join(index::INDEX_FILE)
-            .exists(),
+        bound_file.exists(),
         "the bound store's generation was rebuilt"
     );
     assert_eq!(
@@ -2706,7 +2707,8 @@ fn progressive_cli_priority_and_background_publish_before_the_corpus_is_partitio
     assert_eq!(report.reason_code, Some("cancelled"));
     assert_eq!(report.bootstrap.waves, 2);
     assert_eq!(report.bootstrap.priority_waves, 1);
-    assert_eq!(report.bootstrap.generation_builds, 2);
+    assert_eq!(report.bootstrap.generation_builds, 1);
+    assert_eq!(report.bootstrap.delta_publications, 1);
     assert_eq!(report.embedded_units, 16);
     let status = env.status();
     assert_eq!(status.searchable_current_units, 16);

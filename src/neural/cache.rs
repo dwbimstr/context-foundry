@@ -223,6 +223,16 @@ pub struct BootstrapProgress {
     pub provider_ms: u64,
     pub publication_ms: u64,
     pub generation_builds: u64,
+    #[serde(default)]
+    pub delta_publications: u64,
+    #[serde(default)]
+    pub mapping_publications: u64,
+    #[serde(default)]
+    pub publication_retries: u64,
+    #[serde(default)]
+    pub publication_backoff_ms: Option<u64>,
+    #[serde(default)]
+    pub publication_error: Option<String>,
     pub published_entries: u64,
     pub first_searchable_ms: Option<u64>,
     pub elapsed_ms: u64,

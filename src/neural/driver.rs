@@ -506,7 +506,7 @@ impl<'a> Run<'a> {
             )
         })?;
         // Recover prior committed coverage before doing more provider work.
-        if let Some(stop) = self.publish(false)? {
+        if let Some(stop) = self.publish()? {
             return Ok(stop);
         }
         loop {
@@ -522,7 +522,7 @@ impl<'a> Run<'a> {
             }
             // Also publish new locations/complete coverage when every card was
             // reused: cache hits do not increment the new-vector counter.
-            if let Some(stop) = self.publish(false)? {
+            if let Some(stop) = self.publish()? {
                 return Ok(stop);
             }
             if hold(self.owner, |engine| engine.source_revision())? == revision {
@@ -582,7 +582,7 @@ impl<'a> Run<'a> {
             if let Some(stop) = self.embed_pass(&mut frontier)? {
                 return Ok(Some(stop));
             }
-            if let Some(stop) = self.publish(false)? {
+            if let Some(stop) = self.publish()? {
                 return Ok(Some(stop));
             }
             hold(self.owner, |engine| {
@@ -813,7 +813,7 @@ impl<'a> Run<'a> {
                     }
                     if self.published == 0
                         && self.report.reused_cached_units > 0
-                        && let Some(stop) = self.publish(false)?
+                        && let Some(stop) = self.publish()?
                     {
                         return Ok(Selected::Halted(stop));
                     }
@@ -946,7 +946,7 @@ impl<'a> Run<'a> {
             return Err(error);
         }
         if self.unpublished >= self.published.max(1) {
-            return self.publish(true);
+            return self.publish();
         }
         Ok(None)
     }
@@ -972,16 +972,52 @@ impl<'a> Run<'a> {
         )
     }
 
-    /// Publish committed coverage (`rebuild` replays the generation from the
-    /// cache; otherwise only pending coverage), then drop the runtime's
+    /// Publish committed coverage using bounded deltas, then drop the runtime's
     /// loaded index so the next request loads the new generation.
-    fn publish(&mut self, rebuild: bool) -> FResult<Option<Stop>> {
+    fn publish(&mut self) -> FResult<Option<Stop>> {
         let started = Instant::now();
-        let outcome = match self.generation(rebuild) {
-            Ok(publication) => Ok(publication),
-            Err(Failed::Step(error)) => Err(error),
-            Err(Failed::Owner(error)) => return Err(error),
+        let mut attempt = 0usize;
+        let delays = [250u64, 1000, 3000];
+        let outcome = loop {
+            match self.generation() {
+                Ok(publication) => break Ok(publication),
+                Err(Failed::Owner(error)) => return Err(error),
+                Err(Failed::Step(error)) => {
+                    if attempt == delays.len()
+                        || !matches!(error.code(), "internal" | "index_unavailable")
+                    {
+                        break Err(error);
+                    }
+                    let delay = delays[attempt];
+                    attempt += 1;
+                    self.report.index_published = false;
+                    self.report.index_reason = Some(error.to_string());
+                    self.report.bootstrap.publication_retries += 1;
+                    self.report.bootstrap.publication_backoff_ms = Some(delay);
+                    self.report.bootstrap.publication_error =
+                        Some(error.to_string().chars().take(240).collect());
+                    self.sync_progress();
+                    let until = Instant::now() + Duration::from_millis(delay);
+                    while Instant::now() < until {
+                        if let Err(error) = self.control.check() {
+                            self.report.bootstrap.publication_backoff_ms = None;
+                            self.sync_progress();
+                            return Err(error);
+                        }
+                        if let Some(stop) = self.requested_stop() {
+                            self.report.bootstrap.publication_backoff_ms = None;
+                            self.sync_progress();
+                            return Ok(Some(stop));
+                        }
+                        std::thread::sleep(Duration::from_millis(25));
+                    }
+                }
+            }
         };
+        self.report.bootstrap.publication_backoff_ms = None;
+        if outcome.is_ok() {
+            self.report.bootstrap.publication_error = None;
+        }
         let stop = prepare::record_publication(outcome, 0, &mut self.report);
         self.report.bootstrap.publication_ms += prepare::elapsed_ms(started);
         self.sync_progress();
@@ -1003,7 +1039,7 @@ impl<'a> Run<'a> {
     /// built and staged with the engine slot free; the slot is taken again
     /// only to publish the staged set. Sources edited between the steps make
     /// the mapping incomplete, never wrong: locations revalidate per request.
-    fn generation(&self, rebuild: bool) -> Result<Publication, Failed> {
+    fn generation(&self) -> Result<Publication, Failed> {
         let control = self.control;
         let Some((identity, store, mut walk)) = self.step(|engine| {
             let Some(identity) = engine.semantic_identity()? else {
@@ -1017,13 +1053,7 @@ impl<'a> Run<'a> {
         };
         while !self.step(|engine| walk.step(engine, control, Some(Instant::now() + STEP_TIME)))? {}
         let mapping = self.step(|engine| walk.finish(engine))?;
-        if !rebuild {
-            if mapping.units.is_empty() {
-                self.step(|engine| engine.semantic_record_coverage(mapping.coverage))?;
-                return Ok(Publication::Nothing);
-            }
-            // Current means the same keys, unit locations, coverage AND
-            // source revision.
+        let previous = {
             match validate_generation_with(
                 &store,
                 &identity.digest,
@@ -1035,20 +1065,24 @@ impl<'a> Run<'a> {
                     self.step(|engine| engine.semantic_record_coverage(mapping.coverage))?;
                     return Ok(Publication::Current(generation.manifest.count));
                 }
+                Ok(generation) => Some(generation.manifest),
                 Err(GenerationError::Interrupted(error)) => return Err(Failed::Step(error)),
-                _ => {}
+                Err(_) => None,
             }
+        };
+        if previous.is_none() && mapping.units.is_empty() {
+            self.step(|engine| engine.semantic_record_coverage(mapping.coverage))?;
+            return Ok(Publication::Nothing);
         }
-        let mut coverage = mapping.coverage;
-        let mut scope = mapping.scope;
-        let mut keys = mapping.units.into_iter();
+        let mut plan = index::publication::Plan::new(mapping, previous);
+        let mut keys = plan.needed().into_iter();
         let mut entries = Vec::with_capacity(keys.len());
         while !self.step(|engine| {
             index::lookup_entries(
                 engine,
                 &mut keys,
                 &identity,
-                &mut scope,
+                &mut plan.scope,
                 &mut entries,
                 control,
                 Some(Instant::now() + STEP_TIME),
@@ -1058,18 +1092,15 @@ impl<'a> Run<'a> {
         let built = || self.owner.staging();
         #[cfg(not(feature = "test-faults"))]
         let built = || {};
-        let staged = index::stage_generation(&store, &identity, &entries, scope, control, &built)
+        let (staged, coverage, publication) = plan
+            .stage(&store, &identity, &entries, control, &built)
             .map_err(Failed::Step)?;
-        coverage.cached_current_units = entries.iter().map(|entry| entry.units.len() as u64).sum();
-        coverage.searchable_current_units = coverage.cached_current_units;
         drop(entries);
-        let count = self.step(|engine| {
-            let count = staged.publish(control)?;
-            coverage.index_entries = count as u64;
-            engine.semantic_record_coverage(coverage)?;
-            Ok(count)
+        self.step(|engine| {
+            staged.publish(control)?;
+            engine.semantic_record_coverage(coverage)
         })?;
-        Ok(Publication::Rebuilt(count))
+        Ok(publication)
     }
 
     /// One short store step of a publication under the engine slot. A run
@@ -1095,10 +1126,13 @@ impl<'a> Run<'a> {
         let cancelled = self.owner.closing()
             || matches!(&outcome, Ok(Stop::Partial { code, .. }) if *code == "cancelled");
         let mut outcome = outcome;
-        if !cancelled && (self.unpublished > 0 || !matches!(&outcome, Ok(Stop::Complete))) {
+        if !cancelled
+            && self.report.index_reason.is_none()
+            && (self.unpublished > 0 || !matches!(&outcome, Ok(Stop::Complete)))
+        {
             // A paused wave may have updated only locations/partition coverage
             // through cache reuse. Publish that scope even without new vectors.
-            match self.publish(self.unpublished > 0) {
+            match self.publish() {
                 Ok(None) => {}
                 Ok(Some(published)) => {
                     outcome = outcome.map(|stop| prepare::merge_publication(Some(stop), published));
@@ -1344,6 +1378,105 @@ mod tests {
         let state = engine.semantic_state().unwrap().unwrap();
         assert_eq!(state.bootstrap.unwrap().published_entries, 11);
         assert_eq!(sizes.lock().unwrap().iter().sum::<usize>(), 12);
+    }
+
+    #[test]
+    fn publication_failure_backs_off_visibly_without_the_owner_slot_or_model_calls() {
+        use crate::fault::{self, Action};
+        use crate::neural::fault_names::PUBLISH_BEFORE_MANIFEST;
+        let (_dir, engine, profile) = notes();
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let provider = Sizes {
+            descriptor: profile.descriptor.clone(),
+            sizes: Arc::clone(&sizes),
+            foreground: None,
+        };
+        let runtime = QueryRuntime::start(
+            profile,
+            Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+        )
+        .unwrap();
+        let owner = Quiet(Mutex::new(engine));
+        let preparation = Preparation::default();
+        preparation.lock().phase = Phase::Running;
+        let control = Control::unbounded();
+        let mut run = Run::new(&owner, &runtime, &preparation, &control);
+        run.begin().unwrap();
+        assert!(matches!(run.passes().unwrap(), Stop::Complete));
+        owner.0.lock().unwrap().delete_source("note00.md").unwrap();
+        let before = fault::reached(PUBLISH_BEFORE_MANIFEST);
+        fault::arm(
+            PUBLISH_BEFORE_MANIFEST,
+            0,
+            Action::Fail("publication disk failure".into()),
+        );
+        let stop = std::thread::scope(|scope| {
+            let observed = scope.spawn(|| {
+                let until = Instant::now() + Duration::from_secs(10);
+                loop {
+                    if preparation
+                        .progress()
+                        .unwrap()
+                        .publication_backoff_ms
+                        .is_some()
+                    {
+                        let engine = owner.0.try_lock().expect("backoff holds no serving slot");
+                        let status = engine.semantic_status(&Control::unbounded()).unwrap();
+                        assert!(status.index.available, "prior generation is still readable");
+                        assert!(preparation.progress().unwrap().publication_error.is_some());
+                        break;
+                    }
+                    assert!(Instant::now() < until, "backoff not observable");
+                    std::thread::sleep(POLL);
+                }
+            });
+            let stop = run
+                .publish()
+                .unwrap()
+                .expect("persistent failure stops after bounded retries");
+            observed.join().unwrap();
+            stop
+        });
+        assert_eq!(run.report.bootstrap.publication_retries, 3);
+        assert_eq!(fault::reached(PUBLISH_BEFORE_MANIFEST), before + 4);
+        assert!(run.report.index_reason.is_some());
+        preparation.decided();
+        assert!(!run.finish(Ok(stop)));
+        assert_eq!(
+            fault::reached(PUBLISH_BEFORE_MANIFEST),
+            before + 4,
+            "finalization must not start another retry cycle"
+        );
+        fault::disarm_all();
+        assert_eq!(
+            owner
+                .0
+                .lock()
+                .unwrap()
+                .derivation_pending(crate::neural::work::Lane::Semantic)
+                .unwrap()
+                .paths,
+            1
+        );
+        preparation.lock().phase = Phase::Running;
+        let mut resumed = Run::new(&owner, &runtime, &preparation, &control);
+        resumed.begin().unwrap();
+        assert!(matches!(resumed.passes().unwrap(), Stop::Complete));
+        assert_eq!(
+            sizes.lock().unwrap().iter().sum::<usize>(),
+            12,
+            "publication retries do not repeat inference"
+        );
+        assert_eq!(
+            owner
+                .0
+                .lock()
+                .unwrap()
+                .derivation_pending(crate::neural::work::Lane::Semantic)
+                .unwrap()
+                .paths,
+            0
+        );
     }
 
     #[test]

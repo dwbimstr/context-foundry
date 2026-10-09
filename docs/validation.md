@@ -1764,3 +1764,40 @@ its unchanged 1,000-token limit. A CLI smoke check verified cheap status, explic
 selection and recovery; publication still walks prepared mappings and can rebuild the
 full ANN. E3 vector/location deltas and E4 model-aware inputs remain pending. No
 80,000-file throughput, real-provider token economics or task-quality result is claimed.
+
+## ANN delta publication — 2026-10-09
+
+Experimental 009 T008/E3 introduces generation v4: one immutable USearch base, one
+bounded delta, independent active locations and a single atomic manifest switch.
+The actual tokenizer/redb/USearch/MCP paths use counted fixture providers here.
+
+Focused tests verify zero vector decodes/builds for location-only changes, unchanged
+base/delta file identities, one-vector delta work, duplicate input suppression,
+reactivation of reverted base keys, compaction thresholds, empty generations,
+malformed membership refusal and bounded orphan reclamation. An 80-tombstone fixture
+places retired vectors ahead of fresh base hits in the 64-candidate window; filtered
+ANN selection still returns a full active window merged with the new delta hit.
+Real child-process aborts before/after the manifest switch cover both delta publication
+and compaction: reopen keeps a readable generation and pending obligations, then
+publishes from committed cache without a provider. These establish application ordering,
+not hardware power-loss immunity.
+
+The driver fixture exercises three visible publication retries, serviceable foreground
+reads during backoff, exhaustion without a second finalization retry cycle, durable
+pending work and explicit recovery without more embedding. The real MCP maintenance
+fixture verifies that an edit increments delta publications without replacing the base
+ANN, then covers revert, rename, deletion, pause and restart.
+
+Focused checks passed: nine index tests, the four child-process crash boundaries, all
+62 neural library tests and the continuous-maintenance MCP case. Clippy all targets
+and the build without default features passed. Across the full all-targets run,
+**919 regular tests passed**, with two intentional ignores, including the 6,000-file
+watcher fixture. A concurrent test rebuild replaced the self-executing recovery binary
+mid-run, causing five harness restart failures (`ENOENT`); after builds finished, the
+complete recovery runner passed **all 20 cases** separately. This was test orchestration,
+not a product recovery failure. Final Clippy, formatting, build without default features
+and Markdown link checks passed (47 files, 694 links, 153 heading anchors).
+
+Full mapping scans, cache-layout probes, referenced-file hashing, complete location-map
+writes and resident-generation reload remain T008 costs. E4 model-aware inputs remain
+pending. This is no real-device speed, provider-token-cost or task-quality claim.
