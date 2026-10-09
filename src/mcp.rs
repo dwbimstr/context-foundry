@@ -334,6 +334,9 @@ pub fn context_primary_with_options(
     control: &Control,
     requested: crate::store::ContextOptions<'_>,
 ) -> FResult<crate::memory::MemoryContext> {
+    if let Some(task) = requested.task {
+        engine.check_task_scope(task)?;
+    }
     #[cfg(feature = "semantic")]
     let plan = plan_semantic(slot, engine, query, None, control, requested.anchors);
     #[cfg(feature = "semantic")]
@@ -352,6 +355,7 @@ pub fn context_primary_with_options(
     #[cfg(not(feature = "semantic"))]
     let _ = slot;
     let options = crate::store::ContextOptions {
+        task: requested.task,
         memory: requested.memory,
         experimental_behavior: requested.experimental_behavior,
         #[cfg(feature = "semantic")]
@@ -1374,6 +1378,19 @@ impl FoundryMcp {
         if !state.experimental_task_context {
             tool_router.remove_route("task_context");
         }
+        if state.experimental_task_context {
+            let route = tool_router
+                .map
+                .get_mut("context")
+                .expect("context route exists");
+            let schema = Arc::make_mut(&mut route.attr.input_schema);
+            let properties = schema
+                .get_mut("properties")
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("context properties");
+            properties.insert("task_id".into(), serde_json::json!({"type":"string","minLength":1,"maxLength":128,"description":"Primary task ID; requires task_revision."}));
+            properties.insert("task_revision".into(), serde_json::json!({"type":"integer","minimum":1,"description":"Expected task revision; requires task_id."}));
+        }
         if state.no_memory {
             tool_router.remove_route("memory");
         }
@@ -1490,9 +1507,44 @@ impl FoundryMcp {
     ) -> Result<CallToolResult, ErrorData> {
         if let Err(e) = unknown_fields(
             &arguments,
-            &["query", "tokens", "strategy", "roots", "include_memory"],
+            &[
+                "query",
+                "tokens",
+                "strategy",
+                "roots",
+                "include_memory",
+                "task_id",
+                "task_revision",
+            ],
         ) {
             return Ok(foundry_error_result(&e));
+        }
+        let task = match (arguments.get("task_id"), arguments.get("task_revision")) {
+            (None, None) => None,
+            (Some(serde_json::Value::String(id)), Some(revision))
+                if !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                    && revision.as_u64().is_some_and(|r| r > 0) =>
+            {
+                Some((id.clone(), revision.as_u64().expect("validated revision")))
+            }
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "task_id and positive task_revision must be supplied together",
+                    false,
+                ));
+            }
+        };
+        if task.is_some() && !self.state.experimental_task_context {
+            return Ok(error_result(
+                "unsupported_mode",
+                "task-aware context requires --experimental-task-context",
+                false,
+            ));
         }
         let query = match required_str(&arguments, "query") {
             Ok(query) => query,
@@ -1560,9 +1612,10 @@ impl FoundryMcp {
         let query = query.to_owned();
         if self.state.meta.len() > 1 {
             return Ok(self
-                .context_roots(&ctx, tokens, query, strategy, roots, include_memory)
+                .context_roots(&ctx, tokens, query, strategy, roots, include_memory, task)
                 .await);
         }
+        let task_requested = task.is_some();
         let semantic = self.state.semantic.clone();
         let policy = Arc::clone(&self.state.policy);
         let experimental_behavior = self.state.experimental_behavior_context;
@@ -1571,12 +1624,28 @@ impl FoundryMcp {
                 &ctx,
                 tokens,
                 "context",
-                || response::refusal_floor("context", None),
+                move || {
+                    if task_requested {
+                        response::MAX_BUDGET_TOKENS
+                    } else {
+                        response::refusal_floor("context", None)
+                    }
+                },
                 move |engines, control, _budget| {
                     let engine = engines[0].as_ref().expect("the primary engine is open");
                     // 013 T003: a configured policy routes `auto`; without
                     // one this is exactly the baseline path.
                     let routed = policy.routes().then_some(&*policy);
+                    let workspace_id = engine
+                        .workspace_id()
+                        .ok_or(FoundryError::WorkspaceUnbound)?;
+                    let task_scope =
+                        task.as_ref()
+                            .map(|(id, revision)| crate::task_context::Scope {
+                                workspace_id: &workspace_id,
+                                task_id: id,
+                                expected_revision: *revision,
+                            });
                     let combined = context_primary_with_options(
                         &semantic,
                         engine,
@@ -1584,23 +1653,26 @@ impl FoundryMcp {
                         strategy,
                         control,
                         crate::store::ContextOptions {
+                            task: task_scope,
                             memory: include_memory,
                             policy: routed,
                             experimental_behavior,
                             ..crate::store::ContextOptions::default()
                         },
                     )?;
-                    let (batch, hits) = (combined.batch, combined.hits);
-                    Ok((batch, hits))
+                    Ok(combined)
                 },
-                |outcome: &(crate::store::CandidateBatch, Vec<memory::MemoryHit>),
+                |outcome: &memory::MemoryContext,
                  budget: response::Budget,
                  boundary: response::ByteMeasure| {
-                    if outcome.1.is_empty() {
-                        response::pack_context(&outcome.0, budget, boundary)
-                    } else {
-                        response::pack_context_with_memory(&outcome.0, &outcome.1, budget, boundary)
-                    }
+                    response::pack_task_context(
+                        &outcome.batch,
+                        None,
+                        &outcome.hits,
+                        outcome.task_view.as_ref(),
+                        budget,
+                        boundary,
+                    )
                 },
             )
             .await)
@@ -2200,7 +2272,7 @@ impl FoundryMcp {
     #[tool(
         name = "task_context",
         description = "Experimental task state and recoverable views. Explicit scoped JSON commands; export uses CLI.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["workspace_id","task_id","command"],"properties":{"workspace_id":{"type":"string"},"task_id":{"type":"string"},"command":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["create","apply","inspect","peek","render","forget","advise","promote"]},"title":{"type":"string"},"expected_revision":{"type":"integer","minimum":0},"edits":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["add","select","pin","fold","expand","checkpoint","restore","dismiss"]},"entry":{"type":"object","additionalProperties":false,"required":["id","kind","text","author","provenance","source_links"],"properties":{"id":{"type":"string"},"kind":{"enum":["requirement","constraint","observation","hypothesis","decision","rejected_attempt","question","work","artifact"]},"text":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"source_links":{"type":"array","items":{"type":"string"}},"supersedes":{"type":["string","null"]},"action_key":{"type":["string","null"]}}},"entry_id":{"type":"string"},"selected":{"type":"boolean"},"pinned":{"type":"boolean"},"summary":{"type":"string"},"name":{"type":"string"}}},"minItems":1,"maxItems":32},"entry_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"bytes":{"type":"integer","minimum":4,"maximum":65536},"max_bytes":{"type":"integer","minimum":256,"maximum":1048576},"action_key":{"type":"string"},"memory_id":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"}}}}}"#),
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["workspace_id","task_id","command"],"properties":{"workspace_id":{"type":"string"},"task_id":{"type":"string"},"command":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["create","apply","inspect","peek","render","forget","advise","promote","search"]},"title":{"type":"string"},"expected_revision":{"type":"integer","minimum":0},"edits":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["add","select","pin","fold","expand","checkpoint","restore","dismiss"]},"entry":{"type":"object","additionalProperties":false,"required":["id","kind","text","author","provenance","source_links"],"properties":{"id":{"type":"string"},"kind":{"enum":["requirement","constraint","observation","hypothesis","decision","rejected_attempt","question","work","artifact"]},"text":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"source_links":{"type":"array","items":{"type":"string"}},"supersedes":{"type":["string","null"]},"action_key":{"type":["string","null"]}}},"entry_id":{"type":"string"},"selected":{"type":"boolean"},"pinned":{"type":"boolean"},"summary":{"type":"string"},"name":{"type":"string"}}},"minItems":1,"maxItems":32},"entry_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"bytes":{"type":"integer","minimum":4,"maximum":65536},"max_bytes":{"type":"integer","minimum":256,"maximum":1048576},"action_key":{"type":"string"},"memory_id":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":32},"after_id":{"type":["string","null"]},"include_history":{"type":"boolean"}}}}}"#),
         annotations(read_only_hint = false, open_world_hint = false)
     )]
     async fn task_context(
@@ -2229,7 +2301,8 @@ impl FoundryMcp {
         }
         let read = matches!(
             request.command,
-            crate::task_context::Command::Advise { .. }
+            crate::task_context::Command::Search { .. }
+                | crate::task_context::Command::Advise { .. }
                 | crate::task_context::Command::Inspect {}
                 | crate::task_context::Command::Peek { .. }
                 | crate::task_context::Command::Render { .. }
@@ -2762,6 +2835,7 @@ impl FoundryMcp {
     /// 007 combined context: same flow as [`Self::search_roots`] over
     /// `context_candidates`; graph items keep their seed root's alias and
     /// identity, freshness and graph evidence stay inside each root.
+    #[allow(clippy::too_many_arguments)]
     async fn context_roots(
         &self,
         ctx: &RequestContext<RoleServer>,
@@ -2770,6 +2844,7 @@ impl FoundryMcp {
         strategy: Strategy,
         selected: Option<Vec<String>>,
         include_memory: bool,
+        task: Option<(String, u64)>,
     ) -> CallToolResult {
         let selection = match self.state.resolve_roots(selected.as_deref()) {
             Ok(selection) => selection,
@@ -2780,6 +2855,13 @@ impl FoundryMcp {
             .copied()
             .filter(|&index| self.state.meta[index].coverage.serves_search())
             .collect();
+        if task.is_some() && !serving.contains(&0) {
+            return error_result(
+                "unsupported_mode",
+                "task-aware context requires the primary root to be selected and serving",
+                false,
+            );
+        }
         if serving.is_empty() {
             // The refusal names every root the response would have listed:
             // all admitted roots when `roots` was omitted, the selected ones
@@ -2793,6 +2875,7 @@ impl FoundryMcp {
         let floor_labels = self.root_labels();
         let run_meta = Arc::clone(&meta);
         let pack_meta = Arc::clone(&meta);
+        let task_requested = task.is_some();
         let semantic = self.state.semantic.clone();
         let policy = Arc::clone(&self.state.policy);
         let experimental_behavior = self.state.experimental_behavior_context;
@@ -2800,7 +2883,13 @@ impl FoundryMcp {
             ctx,
             tokens,
             "context",
-            move || response::refusal_floor_roots("context", None, &floor_labels),
+            move || {
+                if task_requested {
+                    response::MAX_BUDGET_TOKENS
+                } else {
+                    response::refusal_floor_roots("context", None, &floor_labels)
+                }
+            },
             move |engines, control, _budget| {
                 // 008: memory lives only in the primary store, and only when
                 // the primary is selected AND serving. The primary's memory
@@ -2810,6 +2899,7 @@ impl FoundryMcp {
                 let primary_memory = include_memory && serving.contains(&0);
                 let mut hits: Vec<memory::MemoryHit> = Vec::new();
                 let hits_ref = &mut hits;
+                let mut task_view = None;
                 let engines = &*engines;
                 // 005 T004: the first serving root's resolved doors request
                 // (a policy may have made it) governs every later root, so
@@ -2829,6 +2919,14 @@ impl FoundryMcp {
                             engine,
                             engines[0].as_ref().expect("the primary engine is open"),
                         );
+                        let task_scope =
+                            task.as_ref().filter(|_| is_primary).map(|(id, revision)| {
+                                crate::task_context::Scope {
+                                    workspace_id: &run_meta[0].workspace_id,
+                                    task_id: id,
+                                    expected_revision: *revision,
+                                }
+                            });
                         // 009 T002: semantic evidence belongs to the PRIMARY
                         // root's store only (the merged header says so); so
                         // does 013 T003 routing, whose state the primary
@@ -2842,6 +2940,7 @@ impl FoundryMcp {
                                 strategy,
                                 control,
                                 crate::store::ContextOptions {
+                                    task: task_scope,
                                     memory: primary_memory,
                                     policy: routed,
                                     anchors: Some(anchors),
@@ -2850,6 +2949,7 @@ impl FoundryMcp {
                                 },
                             )?;
                             *hits_ref = combined.hits;
+                            task_view = combined.task_view;
                             combined.batch
                         } else {
                             // No catch-all for the primary's memory:
@@ -2858,6 +2958,7 @@ impl FoundryMcp {
                             // excluded by `serving` above and its coverage
                             // stays in the header.
                             let options = crate::store::ContextOptions {
+                                task: task_scope,
                                 memory: primary_memory && is_primary,
                                 experimental_behavior,
                                 anchors: Some(anchors),
@@ -2865,6 +2966,9 @@ impl FoundryMcp {
                             };
                             let combined = engine
                                 .context_candidates_with(&query, strategy, control, &options)?;
+                            if is_primary {
+                                task_view = combined.task_view;
+                            }
                             if options.memory {
                                 *hits_ref = combined.hits;
                             }
@@ -2879,25 +2983,27 @@ impl FoundryMcp {
                     },
                 )?;
                 Ok(MultiOutcome {
-                    served: (roots::merge_context(&batches), hits),
+                    served: (roots::merge_context(&batches), hits, task_view),
                     root_facts: facts,
                 })
             },
             move |outcome: &MultiOutcome<(
                 crate::store::CandidateBatch,
                 Vec<memory::MemoryHit>,
+                Option<crate::task_context::ContextView>,
             )>,
                   budget: response::Budget,
                   boundary: response::ByteMeasure| {
                 let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
-                let (batch, hits) = &outcome.served;
-                if hits.is_empty() {
-                    response::pack_context_roots(batch, &headers, budget, boundary)
-                } else {
-                    response::pack_context_roots_with_memory(
-                        batch, &headers, hits, budget, boundary,
-                    )
-                }
+                let (batch, hits, task_view) = &outcome.served;
+                response::pack_task_context(
+                    batch,
+                    Some(&headers),
+                    hits,
+                    task_view.as_ref(),
+                    budget,
+                    boundary,
+                )
             },
         )
         .await

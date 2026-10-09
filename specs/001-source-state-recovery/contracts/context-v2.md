@@ -1383,3 +1383,34 @@ must not create a store or start repair. Syntax, ranking, outline and multi-root
 checks are listed in 001 T005/T006 and 007 T001. These extend the owning tasks'
 focused cases; they are not a portfolio-wide validation stage, and no provider-cost or
 complete-recall claim follows.
+
+### Experimental task view in context — 008 T005 / 003 T008
+
+A context request that explicitly selects a primary task and expected revision adds
+one line immediately after the ordinary context header:
+
+```text
+task-view: {"sha256":"<digest>","view":{...}}
+```
+
+`view` is the complete selected active task view: workspace/task identities,
+revision, title, `boundary:"foundry_task_context"`, `host_application:"unknown"`, and
+attributed entries with immutable payload hashes, original/caller-summary labels,
+text and current source-link statuses. The digest is SHA-256 of the compact UTF-8
+JSON serialization of `view` (the pinned serde_json representation, sorted object
+keys). Caller text stays JSON-escaped; it cannot create a separate header or source
+item. The task line is mandatory and included in every packing/counting trial.
+
+The source/graph ladder, anchor selection and optional memory tail retain their
+existing order within the remaining allowance. Header `shown`/`omitted` count
+ordinary evidence items; they do not count task entries. A small budget refuses the
+response rather than hiding task evidence. If even the task line plus header cannot
+fit the maximum token/byte capacity, return `unsupported_mode` with an explicit
+fold/selection instruction. No task state is mutated by this refusal or by retrieval.
+
+Task revision and primary source-link freshness validate in the same final read as
+primary source evidence. The expected revision is checked again there even if an
+earlier preflight succeeded. Multi-root context includes the primary task once and
+retains per-root source snapshots. Without task selection, existing context-v2
+responses and default MCP schemas are unchanged. This remains delivery evidence,
+not host-request replacement or provider usage accounting.

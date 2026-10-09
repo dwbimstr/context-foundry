@@ -69,6 +69,12 @@ enum Command {
         experimental_behavior_context: bool,
         #[arg(long, default_value = "auto")]
         strategy: String,
+        /// Include this experimental task's complete selected view.
+        #[arg(long, requires = "task_revision")]
+        task: Option<String>,
+        /// Expected task revision; refuses changed or forgotten task state.
+        #[arg(long, requires = "task")]
+        task_revision: Option<u64>,
         /// 008: append compact `mem:` lines for validated memory hits.
         #[arg(long = "include-memory")]
         include_memory: bool,
@@ -737,6 +743,8 @@ fn run() -> AResult<()> {
             experimental_behavior_context,
             strategy,
             include_memory,
+            task,
+            task_revision,
             semantic_profile,
             policy_config,
             development_isolation,
@@ -787,6 +795,14 @@ fn run() -> AResult<()> {
                     Control::unbounded()
                 }
                 .with_trace(trace.clone());
+                let workspace_id = engine
+                    .workspace_id()
+                    .ok_or(FoundryError::WorkspaceUnbound)?;
+                let task_scope = task.as_deref().map(|task_id| crate::task_context::Scope {
+                    workspace_id: &workspace_id,
+                    task_id,
+                    expected_revision: task_revision.expect("clap requires paired task revision"),
+                });
                 let combined = crate::mcp::context_primary_with_options(
                     &slot,
                     &engine,
@@ -794,28 +810,22 @@ fn run() -> AResult<()> {
                     strategy,
                     &control,
                     crate::store::ContextOptions {
+                        task: task_scope,
                         memory: include_memory,
                         policy: routed,
                         experimental_behavior: experimental_behavior_context,
                         ..crate::store::ContextOptions::default()
                     },
                 )?;
-                let (batch, memory) = (combined.batch, combined.hits);
-                let packed = if memory.is_empty() {
-                    response::pack_context(
-                        &batch,
-                        Budget::request(tokens),
-                        &response::stdout_bytes,
-                    )?
-                } else {
-                    response::pack_context_with_memory(
-                        &batch,
-                        &memory,
-                        Budget::request(tokens),
-                        &response::stdout_bytes,
-                    )?
-                };
-                Ok((packed, batch.doors.is_some()))
+                let packed = response::pack_task_context(
+                    &combined.batch,
+                    None,
+                    &combined.hits,
+                    combined.task_view.as_ref(),
+                    Budget::request(tokens),
+                    &response::stdout_bytes,
+                )?;
+                Ok((packed, combined.batch.doors.is_some()))
             })();
             if let (Some(sink), Some(trace)) = (&trace_sink, &trace) {
                 let outcome = match &result {

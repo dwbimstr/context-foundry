@@ -69,6 +69,50 @@ failure or constraint detection. A CAS `dismiss` edit acknowledges a displayed e
 dismissal survives restart and view restore. There is no autonomous polling or extra
 model call, and no claim that a host read the reminder.
 
+To find a retained observation when its ID has been forgotten, search the originals:
+
+```json
+{"op":"search","expected_revision":5,"query":"retry-after","limit":8,"max_bytes":4096}
+```
+
+Recovery search includes folded and deselected entries. It uses literal matching
+with ASCII case folding, ordered by entry ID. Each hit supplies the original hash,
+matching byte range, an exact UTF-8 excerpt and its offsets, attribution and current
+source-link statuses. Use the returned entry ID and offset with `peek`. When
+`next_after_id` is non-null, pass it as `after_id` with the same task revision to
+continue. A changed revision refuses the page so you can inspect and restart the
+search. Superseded entries are excluded unless `include_history:true` is explicit.
+`matching_entries` counts all eligible matches before applying the page cursor.
+
+Task-aware source retrieval now combines the selected view with source evidence:
+
+```sh
+foundry --store STORE context 'How is retry delay calculated?' \
+  --task retry-investigation --task-revision 5 --tokens 2048
+```
+
+On an MCP owner with `--experimental-task-context`, call the ordinary `context` tool:
+
+```json
+{"query":"How is retry delay calculated?","task_id":"retry-investigation","task_revision":5,"tokens":2048}
+```
+
+Use the current revision returned by your own mutations; the example's `5` is only
+illustrative. The response has the normal context header, one `task-view:` JSON line
+with a digest and the complete selected view, then cited source/graph/project-memory
+items. **One token budget covers all of this text.** Requirements, constraints and
+other selected entries cannot silently disappear to make room for source. If the
+view will not fit, explicitly fold or deselect an unprotected entry before retrying.
+The request itself never edits the view. Source omissions remain visible in the
+normal context header; a fitting task view does not guarantee a code answer fits.
+
+The task revision, selected representations and source-link freshness are checked in
+the source query's final snapshot. The digest binds the delivered view, including
+those freshness statuses. It does not acknowledge host consumption. Multi-root
+context includes only the primary task, once; the primary must be selected and
+serving. Reference sources still use their own snapshots. Optional `--include-memory`
+and experimental behavioral packing work with the combined response.
+
 Promote a selected decision explicitly:
 
 ```json
@@ -94,8 +138,9 @@ Limits are 128 live tasks, 128 entries per task, 256 KiB text per ordinary entry
 lasts until explicit forget; there is no automatic expiry. CLI requests are at most
 1 MiB. MCP retains its 64 KiB input-frame and 256 KiB serialized-result limits, so use
 CLI for large observations and exports. Peek pages hold 4–65,536 payload bytes; JSON
-escaping/envelopes add overhead. Render and advice budgets count JSON bytes, not
-provider tokens. Views exceeding the budget require an explicit fold or selection
+escaping/envelopes add overhead. Standalone render, search and advice budgets count JSON bytes. Task-aware `context`
+uses the existing o200k token budget for the complete delivered text; provider token
+usage remains unknown. Views exceeding the budget require an explicit fold or selection
 change; protected evidence is never silently dropped.
 
 Foundry delivers a view; it does not replace a host conversation. Results say

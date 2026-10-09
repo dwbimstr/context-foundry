@@ -271,6 +271,8 @@ impl RootHeader {
 
 /// Header facts that do not depend on packing; `line` adds the budget and counts.
 struct HeaderV2<'a> {
+    /// Mandatory experimental task-view line, counted in every packing trial.
+    task_view: Option<&'a str>,
     op: &'static str,
     /// The per-root segments of a multi-root owner (007). When present they
     /// replace the single-root `r<rev>`/`scan:`/`pending:` segments; each
@@ -305,6 +307,21 @@ struct HeaderV2<'a> {
 }
 
 impl HeaderV2<'_> {
+    fn check_task_capacity(
+        &self,
+        omitted: usize,
+        limited_by: BudgetLimiter,
+        boundary: ByteMeasure,
+    ) -> FResult<()> {
+        if self.task_view.is_some() {
+            let minimum = self.line(MAX_BUDGET_TOKENS, limited_by, 0, omitted);
+            if boundary(&minimum) > BYTE_CAP || count_tokens(&minimum) > MAX_BUDGET_TOKENS {
+                return Err(FoundryError::UnsupportedMode("selected task view and context header exceed delivery capacity; explicitly fold or deselect entries".into()));
+            }
+        }
+        Ok(())
+    }
+
     /// Segments in contract order joined by ` · `; optional segments appear
     /// only when not at their default.
     fn line(
@@ -368,6 +385,9 @@ impl HeaderV2<'_> {
         }
         let mut line = segments.join(" · ");
         line.push('\n');
+        if let Some(task) = self.task_view {
+            line.push_str(task);
+        }
         line
     }
 }
@@ -574,6 +594,7 @@ fn refusal_floor_impl(
 ) -> usize {
     let longest = u64::MAX;
     let header = HeaderV2 {
+        task_view: None,
         op,
         roots,
         revision: longest,
@@ -650,6 +671,7 @@ fn pack(
         text
     };
     let fits = |text: &str| boundary(text) <= byte_cap && count_tokens(text) <= budget.tokens;
+    header.check_task_capacity(items.len(), budget.limited_by, boundary)?;
     let mut included: Vec<(usize, usize)> = Vec::new();
     let mut omitted = 0usize;
     for (index, forms) in items.iter().enumerate() {
@@ -762,6 +784,7 @@ fn pack_retrieve_impl(
         .map_err(|e| FoundryError::Internal(anyhow::anyhow!("span is not UTF-8: {e}")))?;
     let f = &out.freshness;
     let header = HeaderV2 {
+        task_view: None,
         op: "retrieve",
         roots,
         revision: f.source_revision,
@@ -851,6 +874,7 @@ fn pack_retrieve_outline_impl(
 ) -> FResult<PackedText> {
     let f = &out.freshness;
     let header = HeaderV2 {
+        task_view: None,
         op: "retrieve",
         roots,
         revision: f.source_revision,
@@ -935,7 +959,7 @@ pub fn pack_context(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_impl(batch, None, &[], budget, boundary)
+    pack_context_impl(batch, None, &[], None, budget, boundary)
 }
 
 /// [`pack_context`] with 008 memory included: after the ladder places the
@@ -949,7 +973,7 @@ pub fn pack_context_with_memory(
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
     let tail: Vec<String> = hits.iter().map(memory_line).collect();
-    pack_context_impl(batch, None, &tail, budget, boundary)
+    pack_context_impl(batch, None, &tail, None, budget, boundary)
 }
 
 /// The multi-root form of [`pack_context`]: the batch is the 007 merge of
@@ -962,7 +986,7 @@ pub fn pack_context_roots(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_impl(batch, Some(roots), &[], budget, boundary)
+    pack_context_impl(batch, Some(roots), &[], None, budget, boundary)
 }
 
 /// [`pack_context_roots`] with 008 memory from the primary root.
@@ -974,7 +998,39 @@ pub fn pack_context_roots_with_memory(
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
     let tail: Vec<String> = hits.iter().map(memory_line).collect();
-    pack_context_impl(batch, Some(roots), &tail, budget, boundary)
+    pack_context_impl(batch, Some(roots), &tail, None, budget, boundary)
+}
+
+/// Compose a selected task view with ordinary source/graph/project-memory
+/// context. The mandatory view is inside every render/count, never appended
+/// after packing or charged against a separate allowance.
+pub fn pack_task_context(
+    batch: &CandidateBatch,
+    roots: Option<&[RootHeader]>,
+    hits: &[crate::memory::MemoryHit],
+    task_view: Option<&crate::task_context::ContextView>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    if let Some(task) = task_view {
+        // Even the view alone cannot fit; no larger token allowance can
+        // repair a byte refusal. Preserve the view and require an explicit edit.
+        if boundary(&task.line) >= BYTE_CAP || count_tokens(&task.line) >= MAX_BUDGET_TOKENS {
+            return Err(FoundryError::UnsupportedMode(
+                "selected task view exceeds delivery capacity; explicitly fold or deselect entries"
+                    .into(),
+            ));
+        }
+    }
+    let tail: Vec<String> = hits.iter().map(memory_line).collect();
+    pack_context_impl(
+        batch,
+        roots,
+        &tail,
+        task_view.map(|v| v.line.as_str()),
+        budget,
+        boundary,
+    )
 }
 
 /// A resolved anchor lists at most this many of its other definitions as
@@ -992,6 +1048,7 @@ fn context_header<'a>(
 ) -> HeaderV2<'a> {
     let f = &batch.freshness;
     HeaderV2 {
+        task_view: None,
         op: "context",
         roots,
         revision: f.source_revision,
@@ -1013,14 +1070,16 @@ fn pack_context_impl(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
     tail: &[String],
+    task_view: Option<&str>,
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
     if batch.anchored() {
-        return pack_anchored(batch, roots, tail, budget, boundary);
+        return pack_anchored(batch, roots, tail, task_view, budget, boundary);
     }
     let items: Vec<Vec<String>> = batch.items.iter().map(ranked_forms).collect();
-    let header = context_header(batch, roots, None, false);
+    let mut header = context_header(batch, roots, None, false);
+    header.task_view = task_view;
     pack(&items, tail, &header, budget, BYTE_CAP, boundary)
 }
 
@@ -1147,6 +1206,7 @@ fn pack_anchored(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
     tail: &[String],
+    task_view: Option<&str>,
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
@@ -1269,7 +1329,9 @@ fn pack_anchored(
                 .is_none_or(|handle| !selected.contains(&handle.to_v2()))
         })
         .count();
-    let header = context_header(batch, roots, defs, true);
+    let mut header = context_header(batch, roots, defs, true);
+    header.task_view = task_view;
+    header.check_task_capacity(outside + slots.len(), budget.limited_by, boundary)?;
     let render =
         |slots: &[Slot], dropped: usize, more: bool, tail_kept: &[usize], at_budget, limited_by| {
             let shown = slots.iter().filter(|slot| slot.chosen.is_some()).count();
@@ -1532,6 +1594,7 @@ fn pack_search_impl(
         })
         .collect();
     let header = HeaderV2 {
+        task_view: None,
         op: "search",
         roots,
         revision: outcome.source_revision,
@@ -1566,6 +1629,7 @@ pub fn pack_memory_search(
         .collect();
     let f = &outcome.freshness;
     let header = HeaderV2 {
+        task_view: None,
         op: "memory",
         roots: None,
         revision: f.source_revision,

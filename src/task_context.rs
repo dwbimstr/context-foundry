@@ -12,6 +12,20 @@ pub(crate) const TASKS: TableDefinition<&str, &str> = TableDefinition::new("task
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 const MAX_RECORD_BYTES: usize = 2 * 1024 * 1024;
 
+/// A primary-root task revision explicitly selected for source context.
+#[derive(Clone, Copy)]
+pub struct Scope<'a> {
+    pub workspace_id: &'a str,
+    pub task_id: &'a str,
+    pub expected_revision: u64,
+}
+
+/// Complete mandatory view, validated in the source batch's final read.
+#[derive(Clone, Debug)]
+pub struct ContextView {
+    pub(crate) line: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -40,6 +54,16 @@ pub enum Command {
         memory_id: String,
         author: String,
         provenance: String,
+    },
+    Search {
+        expected_revision: u64,
+        query: String,
+        limit: usize,
+        max_bytes: usize,
+        #[serde(default)]
+        after_id: Option<String>,
+        #[serde(default)]
+        include_history: bool,
     },
     Inspect {},
     Peek {
@@ -371,7 +395,7 @@ fn validate_view(view: &View) -> FResult<()> {
     }
     Ok(())
 }
-fn decode(raw: &str, request: &Request) -> FResult<Task> {
+fn decode(raw: &str, task_id: &str, workspace_id: &str) -> FResult<Task> {
     if raw.len() > MAX_RECORD_BYTES {
         return Err(FoundryError::CorruptStore(
             "task_context record exceeds its byte limit".into(),
@@ -379,10 +403,7 @@ fn decode(raw: &str, request: &Request) -> FResult<Task> {
     }
     let task: Task = serde_json::from_str(raw)
         .map_err(|_| FoundryError::CorruptStore("task_context record cannot be decoded".into()))?;
-    if task.task_id != request.task_id
-        || task.workspace_id != request.workspace_id
-        || task.valid().is_err()
-    {
+    if task.task_id != task_id || task.workspace_id != workspace_id || task.valid().is_err() {
         return Err(FoundryError::CorruptStore(
             "task_context record failed validation".into(),
         ));
@@ -394,6 +415,77 @@ pub fn parse(value: Value) -> FResult<Request> {
         return Err(invalid("task request exceeds 1 MiB"));
     }
     serde_json::from_value(value).map_err(|_| invalid("invalid task request fields"))
+}
+
+fn source_links(tx: &redb::ReadTransaction, entry: &Entry) -> FResult<Vec<Value>> {
+    let sources = tx.open_table(SOURCES)?;
+    entry
+        .source_links
+        .iter()
+        .map(|handle| {
+            let parsed = store::HandleRef::parse(handle)?;
+            let status = match sources.get(parsed.path.as_str())? {
+                None => "missing",
+                Some(raw) => {
+                    let source: store::SourceMeta =
+                        serde_json::from_str(raw.value()).map_err(|_| {
+                            FoundryError::CorruptStore("linked source cannot be decoded".into())
+                        })?;
+                    if source.hash.starts_with(&parsed.sha32) {
+                        "fresh"
+                    } else {
+                        "stale"
+                    }
+                }
+            };
+            Ok(json!({"handle":handle,"status":status}))
+        })
+        .collect()
+}
+fn render_view(tx: &redb::ReadTransaction, task: &Task) -> FResult<Value> {
+    let entries = task.entries.iter().filter(|e| e.view.selected && !task.superseded(&e.entry.id)).map(|e| -> FResult<Value> {
+        Ok(json!({"id":e.entry.id,"kind":e.entry.kind,"author":e.entry.author,"provenance":e.entry.provenance,"sha256":e.sha256,"representation":if e.view.summary.is_some() { "caller_summary" } else { "original" },"text":e.view.summary.as_ref().unwrap_or(&e.entry.text),"source_links":source_links(tx,&e.entry)?}))
+    }).collect::<FResult<Vec<_>>>()?;
+    Ok(
+        json!({"workspace_id":task.workspace_id,"task_id":task.task_id,"revision":task.revision,"boundary":"foundry_task_context","host_application":"unknown","title":task.title,"entries":entries}),
+    )
+}
+
+impl Engine {
+    fn task_in(&self, tx: &redb::ReadTransaction, scope: Scope<'_>) -> FResult<Task> {
+        id(scope.task_id)?;
+        if self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)? != scope.workspace_id {
+            return Err(FoundryError::WrongWorkspace);
+        }
+        let table = tx.open_table(TASKS)?;
+        let raw = table.get(scope.task_id)?.ok_or(FoundryError::NotFound)?;
+        let task = decode(raw.value(), scope.task_id, scope.workspace_id)?;
+        if task.revision != scope.expected_revision {
+            return Err(FoundryError::Conflict(
+                "task revision changed; inspect before requesting context".into(),
+            ));
+        }
+        Ok(task)
+    }
+    /// Preflight before optional embedding/route work. Final-read validation
+    /// repeats it; this early check cannot authorize a later changed view.
+    pub(crate) fn check_task_scope(&self, scope: Scope<'_>) -> FResult<()> {
+        self.task_in(&self.db.begin_read()?, scope).map(|_| ())
+    }
+    pub(crate) fn task_view_in(
+        &self,
+        tx: &redb::ReadTransaction,
+        scope: Scope<'_>,
+    ) -> FResult<ContextView> {
+        let task = self.task_in(tx, scope)?;
+        let view = render_view(tx, &task)?;
+        let sha256 = crate::digest(&serde_json::to_vec(&view)?);
+        let line = format!(
+            "task-view: {}\n",
+            serde_json::to_string(&json!({"sha256":sha256,"view":view}))?
+        );
+        Ok(ContextView { line })
+    }
 }
 
 impl Engine {
@@ -419,35 +511,91 @@ impl Engine {
                 let raw = table
                     .get(request.task_id.as_str())?
                     .ok_or(FoundryError::NotFound)?;
-                let task = decode(raw.value(), request)?;
-                let sources = tx.open_table(SOURCES)?;
-                let links = |e: &Entry| -> FResult<Vec<Value>> {
-                    e.source_links
-                        .iter()
-                        .map(|handle| {
-                            let parsed = store::HandleRef::parse(handle)?;
-                            let status = match sources.get(parsed.path.as_str())? {
-                                None => "missing",
-                                Some(raw) => {
-                                    let source: store::SourceMeta =
-                                        serde_json::from_str(raw.value()).map_err(|_| {
-                                            FoundryError::CorruptStore(
-                                                "linked source cannot be decoded".into(),
-                                            )
-                                        })?;
-                                    if source.hash.starts_with(&parsed.sha32) {
-                                        "fresh"
-                                    } else {
-                                        "stale"
-                                    }
-                                }
-                            };
-                            Ok(json!({"handle":handle,"status":status}))
-                        })
-                        .collect()
-                };
+                let task = decode(raw.value(), &request.task_id, &request.workspace_id)?;
+                let links = |entry: &Entry| source_links(&tx, entry);
                 let mut result = json!({"workspace_id":task.workspace_id,"task_id":task.task_id,"revision":task.revision,"boundary":"foundry_task_context","host_application":"unknown"});
                 match &request.command {
+                    Command::Search {
+                        expected_revision,
+                        query,
+                        limit,
+                        max_bytes,
+                        after_id,
+                        include_history,
+                    } => {
+                        if task.revision != *expected_revision {
+                            return Err(FoundryError::Conflict(
+                                "task revision changed; inspect before continuing search".into(),
+                            ));
+                        }
+                        text(query, 256)?;
+                        if !(1..=32).contains(limit) || !(512..=65536).contains(max_bytes) {
+                            return Err(invalid(
+                                "search limit must be 1..32 and max_bytes 512..65536",
+                            ));
+                        }
+                        if let Some(after) = after_id {
+                            id(after)?;
+                        }
+                        let needle = query.to_ascii_lowercase();
+                        let mut matches = Vec::new();
+                        for item in &task.entries {
+                            control.check()?;
+                            if !*include_history && task.superseded(&item.entry.id) {
+                                continue;
+                            }
+                            if let Some(at) = item.entry.text.to_ascii_lowercase().find(&needle) {
+                                matches.push((item, at));
+                            }
+                        }
+                        matches.sort_by_key(|(item, _)| &item.entry.id);
+                        result["matching_entries"] = json!(matches.len());
+                        result["hits"] = json!([]);
+                        result["next_after_id"] = Value::Null;
+                        let eligible: Vec<_> = matches
+                            .into_iter()
+                            .filter(|(item, _)| {
+                                after_id.as_ref().is_none_or(|after| item.entry.id > *after)
+                            })
+                            .collect();
+                        for (index, (item, at)) in eligible.iter().enumerate() {
+                            if index == *limit {
+                                break;
+                            }
+                            let body = &item.entry.text;
+                            let mut start = at.saturating_sub(80);
+                            while !body.is_char_boundary(start) {
+                                start += 1;
+                            }
+                            let mut end = (at + query.len() + 160).min(body.len());
+                            while !body.is_char_boundary(end) {
+                                end -= 1;
+                            }
+                            let hit = json!({"entry_id":item.entry.id,"kind":item.entry.kind,"sha256":item.sha256,"author":item.entry.author,"provenance":item.entry.provenance,"historical":task.superseded(&item.entry.id),"source_links":links(&item.entry)?,"offset":start,"end":end,"match_start":at,"match_end":at+query.len(),"excerpt":&body[start..end]});
+                            let mut candidate = result.clone();
+                            candidate["hits"]
+                                .as_array_mut()
+                                .expect("hits is an array")
+                                .push(hit);
+                            candidate["next_after_id"] = if index + 1 < eligible.len() {
+                                json!(item.entry.id)
+                            } else {
+                                Value::Null
+                            };
+                            if serde_json::to_vec(&candidate)?.len() + 1 > *max_bytes {
+                                if index == 0 {
+                                    return Err(invalid(
+                                        "search hit cannot fit; increase max_bytes",
+                                    ));
+                                }
+                                break;
+                            }
+                            result = candidate;
+                        }
+                        if serde_json::to_vec(&result)?.len() + 1 > *max_bytes {
+                            return Err(invalid("search envelope exceeds max_bytes"));
+                        }
+                    }
                     Command::Advise {
                         action_key,
                         max_bytes,
@@ -527,8 +675,7 @@ impl Engine {
                         if !(256..=MAX_REQUEST_BYTES).contains(max_bytes) {
                             return Err(invalid("render max_bytes must be 256..1048576"));
                         }
-                        result["title"] = json!(task.title);
-                        result["entries"] = Value::Array(task.entries.iter().filter(|e| e.view.selected && !task.superseded(&e.entry.id)).map(|e| -> FResult<Value> { Ok(json!({"id":e.entry.id,"kind":e.entry.kind,"author":e.entry.author,"provenance":e.entry.provenance,"sha256":e.sha256,"representation":if e.view.summary.is_some() { "caller_summary" } else { "original" },"text":e.view.summary.as_ref().unwrap_or(&e.entry.text),"source_links":links(&e.entry)?})) }).collect::<FResult<_>>()?);
+                        result = render_view(&tx, &task)?;
                         if serde_json::to_vec(&result)?.len() + 1 > *max_bytes {
                             return Err(invalid(
                                 "selected view exceeds byte budget; explicitly fold or deselect unprotected entries",
@@ -563,7 +710,7 @@ impl Engine {
             let mut meta = tx.open_table(META)?;
             let previous = table
                 .get(request.task_id.as_str())?
-                .map(|v| decode(v.value(), request))
+                .map(|v| decode(v.value(), &request.task_id, &request.workspace_id))
                 .transpose()?;
             let mut task = match (&request.command, previous) {
                 (Command::Create { title }, None) => {

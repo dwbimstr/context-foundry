@@ -144,6 +144,7 @@ pub(crate) struct MemoryPlan {
 /// The combined context outcome (008): the source/graph batch plus the
 /// memory hits validated in the batch's own final read transaction.
 pub struct MemoryContext {
+    pub task_view: Option<crate::task_context::ContextView>,
     pub batch: crate::store::CandidateBatch,
     pub hits: Vec<MemoryHit>,
 }

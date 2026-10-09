@@ -308,3 +308,48 @@ Tests must exercise silence, exact-match advice, persistent dismissal, promotion
 indexed retrieval, revision collision, stale source refusal, correction/forget
 conflicts, and abrupt exit before/after promotion commit. Broader contradiction or
 constraint-violation detection and real-host benefit remain pending experiments.
+
+### T005 — Recover evidence by content and compose task-aware retrieval
+
+Status: implemented locally in the experimental branch. Sandbox verification and
+remaining host-outcome limits are recorded in [validation](../../docs/validation.md#task-aware-retrieval-and-recovery-search--2026-10-09).
+
+Authorized continuation on the experimental branch: connect retained task state to
+source retrieval. Current failure: `peek` needs a remembered entry ID, and separate
+`render` and `context` calls have independent snapshots and budgets. Add read-only
+search over one bounded task and select its view inside source retrieval's final
+read transaction. Reuse the existing table, revision, tokenizer and packing ladder;
+no new schema, index, worker or background capture. A separate task index would add
+replay and deletion machinery for at most 128 entries / 2 MiB per task.
+
+- `task-context` command `search` takes `expected_revision`, `query` (1..256 nonblank
+  bytes), `limit` (1..32), `max_bytes` (512..65536), optional `after_id` and
+  `include_history` (default false). It searches original text, including folded and
+  deselected entries. Matching is literal UTF-8 with ASCII case folding; it does not
+  infer semantic equivalence. Sort by entry ID, return one first-match excerpt per
+  entry with original byte offsets/digest, attribution and source-link freshness.
+  A cursor is valid only against the same requested task revision; active entries
+  are the default. Byte-limited pages identify continuation or refuse if no hit fits.
+- Source `context` optionally names a task ID and expected revision together. The
+  task belongs to the primary store. Task revision, immutable entry bytes, current
+  view, supersession and source-link statuses validate in the **same final read** as
+  that root's source/graph/project-memory evidence. Missing/forgotten/stale-revision
+  task state fails the request rather than silently dropping its constraints.
+- Every selected active entry is mandatory, with its current original/summary
+  representation and attribution. Requirements and constraints remain expanded.
+  A `task-view:` JSON line carries the view plus its SHA-256; the hash binds the exact
+  canonical serialized view, including freshness. It identifies delivered content,
+  not host consumption or verified truth. No stored state is edited by retrieval.
+- The ordinary source ladder consumes the remaining shared token/byte allowance.
+  Every packing trial counts the task line too. Source items may be omitted visibly;
+  task entries cannot be silently omitted or newly folded. A view too large to fit
+  requires an explicit fold/selection edit. Optional project memory retains normal
+  source-first packing after the mandatory task view.
+- Multi-root queries retain per-root snapshots; only the primary task state is
+  included, once. Selecting a task requires the primary to be selected and serving.
+  Reference-root text is never interpreted as primary task state. No global snapshot
+  or cross-root admission is implied.
+- Verify folded/deselected observation discovery and UTF-8 exact recovery after
+  restart; pagination/conflicts/forget; final-read task change and source staleness;
+  protected entries and exact token/serialized-byte caps under anchored, unanchored
+  and multi-root retrieval. Keep default source-context responses byte-identical.

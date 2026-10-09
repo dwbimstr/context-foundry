@@ -22,7 +22,10 @@ records implemented bounded traces and an opt-in mixed-intent packing candidate,
 with unchanged defaults. The preserved G1/G2/Gemma apparatus and live host runs are
 still needed before quality acceptance, but do not block experimental implementation. Host inspection
 and the matched-run procedure are prepared in 003 T006. The sandbox implementation
-now also exposes [task state, reversible views, reminders and explicit promotion](experimental-context.md). These are local capabilities, not measured host outcomes.
+now also exposes [task state, reversible views, reminders and explicit promotion](experimental-context.md).
+The implemented continuation (008 T005 / 003 T008) connects the task view to source
+retrieval under one allowance and adds content search over retained observations.
+These are local capabilities, not measured host outcomes.
 
 ## Starting evidence
 

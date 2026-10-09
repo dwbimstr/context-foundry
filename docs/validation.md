@@ -1,5 +1,49 @@
 # Validation
 
+## Task-aware retrieval and recovery search — 2026-10-09
+
+The next sandbox increment on `experimental/context-ecosystem` implements
+[008 T005](../specs/008-scoped-durable-memory/spec.md#t005--recover-evidence-by-content-and-compose-task-aware-retrieval)
+and [003 T008](../specs/003-agent-retrieval-context/spec.md#t008--deliver-task-aware-source-context-under-one-allowance):
+
+- Source `context` can include the complete selected task view. Task revision,
+  original/summary representations and linked-source freshness validate inside the
+  primary source query's final read transaction. A changed or forgotten task refuses
+  the whole response. Multi-root retrieval includes primary task state once and
+  retains the existing separate source snapshot for each root.
+- The task line and ordinary evidence share one exact o200k token allowance and the
+  existing byte cap. Selected entries cannot silently disappear or become summaries.
+  Oversized views require explicit edits; conflicts and packing refusals refund MCP
+  reservations, and successful replies charge the entire delivered text.
+- Read-only task search finds retained originals, including folded/deselected
+  observations, with byte-bounded pages, exact UTF-8 excerpts, hashes, attribution,
+  revision checks and source freshness. Superseded history requires explicit opt-in.
+- The existing schema-7 table, source transaction and packing ladder own the work.
+  No new schema, index, background worker or automatic capture is introduced. The
+  default MCP catalog remains unchanged; task-aware fields require the experimental
+  task-context flag. See the [usage guide](experimental-context.md).
+
+Verification on Linux, Rust/Cargo 1.90.0, using synthetic fixtures:
+
+- `cargo test --locked --no-fail-fast`: **842 passed, zero failed, two ignored**,
+  plus every scenario in the separate recovery runner. The ignored hardware/model
+  measurements are not counted as passed. This complete run also verifies the
+  schema assertions repaired in the preceding increment.
+- [task_retrieval.rs](../tests/task_retrieval.rs) adds **11 integration tests**:
+  real CLI/SDK MCP delivery, opt-in schema, exact shared budgets and MCP refunds,
+  single/multi-root scope, source staleness and task-change/forget fault hooks,
+  restart recovery, Unicode offsets, history and byte-limited search pagination.
+  The byte-cap edge fixture was then strengthened to keep tokens below their cap
+  while the mandatory context header makes the bytes overflow; all 11 tests pass
+  again. The existing 19 task-context tests pass in the complete run.
+- `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`, and
+  `cargo check --locked --no-default-features --lib --bin foundry` pass. Local
+  Markdown targets and `git diff --check` are checked before commit.
+- Evidence is self-review and local execution. Tool delivery is verified; actual
+  host application, held-out retrieval improvement, coding-task outcomes and provider
+  economics remain unmeasured. These remain future acceptance evidence and do not
+  block the owner's authorized experimental sandbox work.
+
 ## Experimental context ecosystem — 2026-10-09
 
 The owner explicitly selected an experimental Git branch, local commits and sandbox

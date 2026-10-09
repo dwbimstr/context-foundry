@@ -1459,6 +1459,7 @@ impl QueryAnchors {
 /// chooses them from this store's index).
 #[derive(Clone, Copy, Default)]
 pub struct ContextOptions<'a> {
+    pub task: Option<crate::task_context::Scope<'a>>,
     pub memory: bool,
     pub experimental_behavior: bool,
     #[cfg(feature = "semantic")]
@@ -5004,6 +5005,9 @@ impl Engine {
         control: &crate::Control,
         options: &ContextOptions,
     ) -> FResult<crate::memory::MemoryContext> {
+        if let Some(task) = options.task {
+            self.check_task_scope(task)?;
+        }
         let (policy, anchors) = (options.policy, options.anchors);
         if let Some(trace) = control.trace() {
             trace.record(serde_json::json!({
@@ -5075,6 +5079,10 @@ impl Engine {
             ""
         )?;
         let tx = self.db.begin_read()?;
+        let task_view = options
+            .task
+            .map(|scope| self.task_view_in(&tx, scope))
+            .transpose()?;
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
         let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
@@ -5334,6 +5342,7 @@ impl Engine {
             item.rank = rank;
         }
         let context = crate::memory::MemoryContext {
+            task_view,
             batch: CandidateBatch {
                 semantic,
                 route,

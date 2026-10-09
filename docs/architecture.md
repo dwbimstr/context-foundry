@@ -7,6 +7,11 @@ repeated failures and promote selected decisions into ordinary project memory. N
 worker, model call, source-index owner or host-conversation rewrite is added. See the
 [experimental workflow](experimental-context.md) and 008 T003/T004 / 003 T007.
 
+Task-aware retrieval (008 T005 / 003 T008) validates the selected task revision and
+source evidence in one primary-store read, packs them under one delivery budget and
+retains ordinary per-root snapshots for multi-root queries. Recovery search scans
+one bounded task's original observations; it adds no index or schema change.
+
 Status reconciled 2026-10-09: the [spec portfolio](../specs/README.md) and
 [validation](validation.md) record implemented/accepted 001, 003, 005, 007 and 008
 work and 009's development acceptance. Gemma is the selected semantic profile;

@@ -16,7 +16,9 @@ editing, selective intervention and durable knowledge. The owner authorized exec
 (real-host outcomes and economics). They are in progress. The owner's subsequent
 instruction authorizes sandbox implementation without waiting for measurements or
 gates; 008 T003/T004 own experimental task state, recoverable working context, grounded
-reminders and explicit promotion; 003 T007 owns CLI/opt-in MCP delivery. Later
+reminders and explicit promotion; 003 T007 owns CLI/opt-in MCP delivery. 008 T005
+and 003 T008 connect task state to source retrieval under one budget and add recovery
+search over retained originals. Later
 milestones require concrete amendments as they enter implementation; they do not
 reactivate deferred specs or reopen accepted tasks. 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.

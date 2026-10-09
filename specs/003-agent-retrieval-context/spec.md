@@ -810,3 +810,26 @@ instruction/tool linkage separately. Until then, the rendered view is a tool res
 Verify with the real SDK client and separate CLI processes: discoverable opt-in
 schema, unknown-field refusal, scoped create/apply/peek/render/advise/promote/forget,
 restart recovery and bounded output. Host outcome and cost comparisons remain pending.
+
+### T008 — Deliver task-aware source context under one allowance
+
+Status: implemented locally through CLI and the real SDK MCP client; see
+[validation](../../docs/validation.md#task-aware-retrieval-and-recovery-search--2026-10-09).
+Applied-host replacement and measured task outcomes remain pending.
+
+Experimental continuation of T007 and 008 T005. Add paired CLI context options
+`--task ID --task-revision REV`, and paired MCP context fields `task_id` and
+`task_revision`. Only an owner launched with `--experimental-task-context` advertises
+or accepts the MCP extension; default catalog schemas remain unchanged. The task
+scope is the explicitly admitted primary store. Existing root selection, optional
+semantic/behavioral retrieval and memory disabling still apply.
+
+The combined response starts with the ordinary v2 context header, then one mandatory
+`task-view: {"sha256":...,"view":...}` line, then ordinary cited source/graph/memory
+items. Entry counts in the header remain evidence-item counts, not task entries.
+The locked o200k tokenizer counts the **entire delivered text**, including task data.
+CLI uses stdout bytes, MCP additionally caps its serialized result envelope. Reuse
+normal MCP reservation/charge/refund behavior; revision conflicts and packing refusals
+refund the reservation. Recovery search remains byte-bounded on `task_context`, not a
+provider-token claim. No conversation replacement, host acknowledgment or learned
+policy is introduced. Live-host outcomes remain pending and do not block sandbox work.
