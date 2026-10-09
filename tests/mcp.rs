@@ -5746,7 +5746,7 @@ async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_1000
     let expected = [
         (
             "context",
-            "Use INSTEAD of exploratory file reads: one budgeted, cited bundle of the most relevant symbols (verbatim, or signatures when large), graph edges and file outlines.",
+            "Use INSTEAD of exploratory file reads: budgeted, cited symbols (verbatim or signatures when large), graph edges and outlines.",
         ),
         (
             "index",
@@ -5762,11 +5762,11 @@ async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_1000
         ),
         (
             "retrieve",
-            r#"Read exact indexed source for a handle. `lines` narrows to a line range; `view:"outline"` returns a skeleton with elided line ranges. Stale handles are rejected."#,
+            r#"Read exact indexed source by handle; stale handles rejected. `lines`: line range; `view:"outline"`: skeleton with elided line ranges."#,
         ),
         (
             "search",
-            "Use BEFORE grep/rg to find code in the indexed repo(s): one line per hit with a handle, line, symbol and matching text. Follow handles with retrieve. Indexed snapshot, not live disk.",
+            "Use BEFORE grep/rg for indexed code: one line per hit with handle, line, symbol and match. Follow handles with retrieve. Indexed snapshot, not live disk.",
         ),
         (
             "status",

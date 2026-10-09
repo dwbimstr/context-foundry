@@ -57,6 +57,30 @@ pub const METRIC: &str = "cos";
 const MAX_META_BYTES: u64 = 256 * 1024 * 1024;
 /// An index file larger than this is refused before it is read into memory.
 const MAX_INDEX_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// Logical f32 payload retained while building a generation. This bounds
+/// scratch payloads, not allocator overhead or total process RSS.
+#[cfg(feature = "semantic")]
+const MAX_VECTOR_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+#[cfg(feature = "semantic")]
+fn within_publication_limit(bytes: u64, limit: u64, what: &str) -> FResult<()> {
+    if bytes > limit {
+        return Err(FoundryError::Semantic {
+            code: "resource_limit",
+            message: format!("publication {what} exceeds {limit} bytes; cached vectors stay"),
+        });
+    }
+    Ok(())
+}
+
+/// Conservative JSON size including worst-case string escapes and scalar
+/// fields; also bounds the keys/locations retained by the mapping walk.
+#[cfg(feature = "semantic")]
+fn location_bytes(path: &str, hash: &str) -> u64 {
+    (path.len() as u64 + hash.len() as u64)
+        .saturating_mul(6)
+        .saturating_add(160)
+}
 /// The manifest's coverage words.
 pub const COVERAGE_COMPLETE: &str = "complete";
 pub const COVERAGE_PARTIAL: &str = "partial";
@@ -661,7 +685,7 @@ impl Engine {
     }
 }
 
-/// [`Engine::semantic_current_mapping`] read a page of sources at a time, so
+/// [`Engine::semantic_current_mapping`] reads prepared partition keys a page at a time, so
 /// the MCP owner's preparation driver reads it in short engine-slot steps
 /// (009 T003, captain decision 2026-10-06). A source change between the
 /// steps leaves the mapping incomplete, exactly as one during a single walk
@@ -671,11 +695,14 @@ pub(crate) struct MappingWalk {
     digest: String,
     recipe: String,
     source_revision: u64,
+    sources: u64,
+    current_partitions: u64,
     complete: bool,
     units: std::collections::BTreeMap<String, Vec<UnitLocation>>,
     /// One cache probe per distinct key: true when its vector is current.
     probed: std::collections::HashMap<String, bool>,
     after: Option<String>,
+    metadata_bytes: u64,
 }
 
 #[cfg(feature = "semantic")]
@@ -685,14 +712,17 @@ impl MappingWalk {
             digest: function_digest.to_owned(),
             recipe: recipe_id.to_owned(),
             source_revision: engine.source_revision()?,
+            sources: cache::source_count(&engine.db)?,
+            current_partitions: 0,
             complete: true,
             units: std::collections::BTreeMap::new(),
             probed: std::collections::HashMap::new(),
             after: None,
+            metadata_bytes: 64,
         })
     }
 
-    /// Walk pages of sources until the walk ends (`true`), or until `until`
+    /// Walk pages of prepared rows until the walk ends (`true`), or until `until`
     /// passed once a page was read (`false`: call again).
     pub(crate) fn step(
         &mut self,
@@ -702,21 +732,35 @@ impl MappingWalk {
     ) -> FResult<bool> {
         loop {
             control.check()?;
-            let page = cache::source_page(&engine.db, self.after.as_deref())?;
+            let page = cache::partition_paths(&engine.db, self.after.as_deref())?;
             if page.is_empty() {
                 return Ok(true);
             }
-            for (path, meta) in &page {
+            for path in &page {
+                let Some(meta) = engine.source(path)? else {
+                    continue;
+                };
                 let Some(record) = engine.semantic_partition(path)?.filter(|record| {
-                    cache::partition_is_current(record, meta, &self.recipe, &self.digest)
+                    cache::partition_is_current(record, &meta, &self.recipe, &self.digest)
                 }) else {
                     self.complete = false;
                     continue;
                 };
+                self.current_partitions += 1;
                 for unit in &record.units {
                     let cached = match self.probed.get(&unit.input_key) {
                         Some(&cached) => cached,
                         None => {
+                            self.metadata_bytes = self.metadata_bytes.saturating_add(
+                                (unit.input_key.len() as u64)
+                                    .saturating_mul(6)
+                                    .saturating_add(96),
+                            );
+                            within_publication_limit(
+                                self.metadata_bytes,
+                                MAX_META_BYTES,
+                                "mapping",
+                            )?;
                             let cached = engine
                                 .semantic_cache_probe(&unit.input_key, &self.digest)?
                                 == CacheProbe::Current;
@@ -728,6 +772,10 @@ impl MappingWalk {
                         self.complete = false;
                         continue;
                     }
+                    self.metadata_bytes = self
+                        .metadata_bytes
+                        .saturating_add(location_bytes(path, &record.source_hash));
+                    within_publication_limit(self.metadata_bytes, MAX_META_BYTES, "mapping")?;
                     self.units
                         .entry(unit.input_key.clone())
                         .or_default()
@@ -739,7 +787,7 @@ impl MappingWalk {
                         });
                 }
             }
-            self.after = page.last().map(|(path, _)| path.clone());
+            self.after = page.last().cloned();
             if until.is_some_and(|until| Instant::now() >= until) {
                 return Ok(false);
             }
@@ -750,7 +798,9 @@ impl MappingWalk {
     /// leaves a mixed mapping: its locations still revalidate per request,
     /// but it is never complete.
     pub(crate) fn finish(self, engine: &Engine) -> FResult<CurrentMapping> {
-        let complete = self.complete && engine.source_revision()? == self.source_revision;
+        let complete = self.complete
+            && self.current_partitions == self.sources
+            && engine.source_revision()? == self.source_revision;
         Ok(CurrentMapping {
             units: self.units,
             scope: GenerationScope {
@@ -788,6 +838,10 @@ pub(crate) fn lookup_entries(
             control.check()?;
         }
         read += 1;
+        let bytes = (entries.len() as u64 + 1)
+            .saturating_mul(identity.dimensions as u64)
+            .saturating_mul(4);
+        within_publication_limit(bytes, MAX_VECTOR_BYTES, "vectors")?;
         match engine.semantic_cache_lookup(&input_key, &identity.digest, identity.dimensions)? {
             CacheLookup::Hit(vector) => entries.push(GenerationEntry {
                 input_key,
@@ -892,6 +946,25 @@ pub(crate) fn stage_generation(
         .ok_or_else(|| FoundryError::RepairPathConflict("generation directory vanished".into()))?;
     neural_fault!(PUBLISH_AFTER_CHECK, Some(control), function_digest)?;
 
+    // Check before cloning labels or reserving ANN memory, including callers
+    // that construct entries directly rather than through MappingWalk.
+    let mut metadata_bytes = 64u64;
+    let mut vector_bytes = 0u64;
+    for entry in entries {
+        metadata_bytes = metadata_bytes.saturating_add(
+            (entry.input_key.len() as u64)
+                .saturating_mul(6)
+                .saturating_add(96),
+        );
+        for unit in &entry.units {
+            metadata_bytes =
+                metadata_bytes.saturating_add(location_bytes(&unit.path, &unit.source_sha256));
+        }
+        vector_bytes = vector_bytes.saturating_add((entry.vector.len() as u64).saturating_mul(4));
+        within_publication_limit(metadata_bytes, MAX_META_BYTES, "mapping")?;
+        within_publication_limit(vector_bytes, MAX_VECTOR_BYTES, "vectors")?;
+    }
+
     // Deterministic generation: sorted unique keys, ordinal labels.
     let mut sorted: Vec<&GenerationEntry> = entries.iter().collect();
     sorted.sort_by(|a, b| a.input_key.cmp(&b.input_key));
@@ -948,7 +1021,9 @@ pub(crate) fn stage_generation(
     }
     built();
     // Serialize to memory: no library call touches a pathname.
-    let mut buffer = vec![0u8; index.serialized_length()];
+    let serialized_length = index.serialized_length();
+    within_publication_limit(serialized_length as u64, MAX_INDEX_BYTES, "index")?;
+    let mut buffer = vec![0u8; serialized_length];
     index
         .save_to_buffer(&mut buffer)
         .map_err(|e| unavailable_index("serialization", &e))?;
@@ -969,6 +1044,8 @@ pub(crate) fn stage_generation(
         coverage: scope.coverage().to_owned(),
     };
     let manifest_bytes = serde_json::to_vec(&manifest).map_err(FoundryError::from)?;
+    within_publication_limit(labels_bytes.len() as u64, MAX_META_BYTES, "labels")?;
+    within_publication_limit(manifest_bytes.len() as u64, MAX_META_BYTES, "manifest")?;
     control.check()?;
 
     let build_name = format!(".building-{}", std::process::id());
@@ -1026,6 +1103,36 @@ mod tests {
         let store = Dir::open_path(scratch.path()).unwrap();
         let err = validate_generation(&store, "abc", "recipe", 768).unwrap_err();
         assert!(err.contains("no generation manifest"), "{err}");
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn oversized_publication_preserves_the_previous_generation() {
+        let scratch = tempfile::tempdir().unwrap();
+        let store = Dir::open_path(scratch.path()).unwrap();
+        let identity = identity(128);
+        let scope = GenerationScope {
+            source_revision: 1,
+            complete: true,
+        };
+        let control = Control::unbounded();
+        let mut entries = entries(128);
+        build_generation(&store, &identity, &entries, scope, &control).unwrap();
+        let original = validate_generation(&store, &identity.digest, "r1", 128).unwrap();
+        // A direct builder caller can bypass admitted-path bounds. Refuse
+        // before cloning labels, allocating ANN storage or replacing files.
+        entries[0].units[0].path = "x".repeat((MAX_META_BYTES / 6) as usize);
+        let error = build_generation(&store, &identity, &entries, scope, &control).unwrap_err();
+        assert_eq!(error.code(), "resource_limit");
+        let retained = validate_generation(&store, &identity.digest, "r1", 128).unwrap();
+        assert_eq!(
+            retained.manifest.index_sha256,
+            original.manifest.index_sha256
+        );
+        assert_eq!(
+            retained.manifest.labels_sha256,
+            original.manifest.labels_sha256
+        );
     }
 
     #[cfg(feature = "semantic")]

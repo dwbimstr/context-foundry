@@ -109,10 +109,11 @@ throughput and memory worse; first fill appropriate batches and overlap CPU work
 Bootstrap becomes progressive: fast lexical/structural readiness; partial semantic
 coverage as bounded waves finish; useful briefs for requested areas and entry points;
 broader background coverage while idle. File count is not a workload model: also
-track bytes, definitions/cards, input tokens and changed dependency fanout. Full
-partitioning and full ANN publication currently remain barriers; T006 removes only
-the partition computation lock/serialization. T007 removes those remaining barriers
-without losing committed cache work or publishing stale vectors.
+track bytes, definitions/cards, input tokens and changed dependency fanout. T006 removes
+the partition computation lock/serialization. T007 now interleaves bounded waves
+and publishes early coverage from prepared rows; geometric full-generation builds
+amortize cold publication without a new segment format. Accepted cache work survives
+restart and source locations still revalidate before delivery.
 
 Bound retained source bytes, queued token IDs, completed-but-uncommitted outputs,
 model/device residency and publication scratch separately. Avoid repeated body
@@ -138,7 +139,7 @@ operator limits and hysteresis. Unknown host signals remain unknown.
 | A | Snapshot/compute/commit partition pipeline with bounded parallel CPU work and source-version refusal | 009 T006: implemented and tested in this sandbox increment; actual throughput gain unmeasured |
 | B | First source-bound structured brief: strict import/generation seam, lexical discovery, exact citations, stale/forget behavior | 010 T001: explicit import, lexical discovery and lifecycle implemented/tested; generation remains T002 |
 | C | Event-driven incremental source refresh and idle maintenance within the admitted owner | 001 T011: opt-in native watching, bounded reconciliation and foreground priority implemented; platform/scale limits in validation |
-| D | First useful semantic coverage before a full pass; amortized publication and device-batch tuning | 009 T007: selected, not implemented |
+| D | First useful semantic coverage before a full pass; amortized publication and device-batch tuning | 009 T007: progressive waves, explicit priorities, bounded prefetch/publication and accounting implemented; device tuning/throughput remain unverified |
 | E | Governed model generation, area rollups, boundary joins and task-oriented evidence composition | 010 T002, 005 T005, 003 T009: selected, not implemented |
 
 B and C need not wait for real-model throughput or held-out quality measurements.

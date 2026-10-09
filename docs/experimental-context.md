@@ -1,5 +1,54 @@
 # Experimental task context
 
+## Progressive semantic bootstrapping
+
+With an admitted semantic profile, start preparation on the existing MCP owner:
+
+```json
+{"semantic":"prepare","priority_paths":["src/retrieval","src/main.rs"]}
+```
+
+These are arguments to `index`. Priority paths name already indexed files or
+subtrees, relative to the workspace; they do not enroll new paths. Up to 16 scopes
+rotate in request order, alternating with the ordinary source walk. Repeating
+`prepare` with a list replaces preferences at the next wave; omitting it retains
+preferences for that owner, and `[]` clears them. A new owner starts with none.
+Pause through `index {"semantic":"pause"}`; explicit preparation resumes from the
+accepted partitions and vector cache. Nothing auto-starts on restart.
+
+The equivalent bounded CLI run is:
+
+```sh
+foundry --store STORE semantic prepare --profile PROFILE --budget-seconds 300 --priority src/retrieval --priority src/main.rs
+```
+
+Preparation now partitions, selects and embeds in waves, with at most eight new
+source bodies per wave. The first committed batch can become searchable while later
+sources remain unpartitioned. Publication uses the existing USearch generation:
+first batch, approximately doubled new-vector coverage, and completion/pause. Its
+mapping visits prepared rows, so cold publication avoids a whole-source census.
+No new segment format, job store or worker process is introduced. MCP overlaps one
+bounded prefetch with one provider call; overlapping priority inputs are deduplicated
+before another call. Model batch geometry and foreground admission are unchanged.
+
+`status.semantic` remains the authoritative coverage census: inspect
+`unpartitioned_sources`, `missing_units` and `searchable_current_units`. Context stays
+`partial` until coverage is complete; source edits immediately invalidate old vector
+locations, and lexical retrieval remains available. Its additional `bootstrap`
+object reports waves, priority waves, partition/render/provider/publication wall
+milliseconds, cache reuse, embedded units, input tokens, generation builds and time
+to first searchable coverage. MCP exposes live snapshots; the last finalized run is
+also stored for CLI status/restart. These timings can overlap and exclude unsampled
+in-flight time; they are not additive CPU utilization or device profiling. Examined
+unit/reuse counters can revisit priority sources; coverage counts remain unique.
+
+Publication refuses oversized logical mapping metadata (256 MiB), assembled f32
+vectors (2 GiB), or serialized ANN data (4 GiB), preserving the accepted cache and
+previous generation. These are payload bounds, not total-process RAM guarantees.
+A generation still rebuilds in memory. Real-device throughput, larger model batches,
+80,000-file performance and task-quality improvements remain unmeasured in this
+Linux sandbox; integration tests use synthetic embedding providers.
+
 ## Incremental workspace watching
 
 After initializing or bootstrapping a disposable store, enable source maintenance on

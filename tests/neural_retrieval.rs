@@ -345,6 +345,7 @@ impl Corpus {
         let report = prepare::run(
             &self.store,
             &PrepareOptions {
+                priority_paths: &[],
                 profile_path: &self.profile_path,
                 budget_seconds,
                 development: false,
@@ -3056,6 +3057,171 @@ async fn context_is_baseline_while_preparing_then_partial_then_ready_and_an_edit
         header_word(&served.context(DUSK_QUERY).await),
         Some("ready")
     );
+    served.close().await;
+}
+
+/// A cold priority wave is searchable before the rest of the repository is
+/// partitioned. A zero-card tail cannot turn the one prefetch into a full pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn progressive_bootstrap_serves_priority_before_the_unprepared_tail_and_resumes() {
+    let extra: Vec<_> = (0..80)
+        .map(|n| {
+            (
+                format!("00-background/{n:03}.rs"),
+                format!("// Empty source {n}\n"),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&extra);
+    let hold = Hold::gated();
+    let served = corpus.serve_stdio(Some(corpus.held(&hold))).await;
+    for arguments in [
+        serde_json::json!({"priority_paths": [DUSK_PATH]}),
+        serde_json::json!({"semantic": "pause", "priority_paths": []}),
+        serde_json::json!({"semantic": "prepare", "priority_paths": ["../escape"]}),
+        serde_json::json!({"semantic": "prepare", "priority_paths": null}),
+        serde_json::json!({"semantic": "prepare", "priority_paths": vec!["docs"; 17]}),
+    ] {
+        let (error, text) = served.raw("index", arguments).await;
+        assert!(error && text.contains("invalid_argument"), "{text}");
+    }
+    served
+        .ok(
+            "index",
+            serde_json::json!({
+                "semantic": "prepare", "priority_paths": [DUSK_PATH]
+            }),
+        )
+        .await;
+    hold.wait_entered(1).await;
+    let active = served
+        .until("a fair background wave", |s| {
+            s["bootstrap"]["waves"].as_u64().is_some_and(|n| n >= 2)
+        })
+        .await;
+    assert!(
+        active["unpartitioned_sources"].as_u64().unwrap() >= 77,
+        "{active}"
+    );
+    assert_eq!(active["bootstrap"]["priority_waves"], 1);
+    assert!(item_of(&served.search("parse_record").await, "src/records.rs").is_some());
+    let (error, pause) = served.semantic_action("pause").await;
+    assert!(!error, "{pause}");
+    hold.release();
+    let partial = served
+        .until("first coverage", |s| s["searchable_current_units"] == 1)
+        .await;
+    assert!(
+        partial["unpartitioned_sources"].as_u64().unwrap() >= 77,
+        "{partial}"
+    );
+    assert!(
+        partial["bootstrap"]["first_searchable_ms"].is_u64(),
+        "{partial}"
+    );
+    let context = served.context(DUSK_QUERY).await;
+    assert_eq!(header_word(&context), Some("partial"));
+    assert!(item_of(&context, DUSK_PATH).is_some_and(|item| item.semantic));
+    served.close().await;
+    corpus.reopen().await;
+    assert!(
+        corpus
+            .engine()
+            .semantic_partition(DUSK_PATH)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        corpus
+            .engine()
+            .semantic_partition("00-background/000.rs")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        corpus
+            .engine()
+            .semantic_partition("00-background/079.rs")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        corpus
+            .engine()
+            .semantic_state()
+            .unwrap()
+            .unwrap()
+            .bootstrap
+            .unwrap()
+            .first_searchable_ms
+            .is_some()
+    );
+
+    // A new owner recovers accepted vectors without submitting them again.
+    let inputs = corpus.probe.document_inputs();
+    let resumed = Hold::default();
+    let served = corpus.serve_stdio(Some(corpus.held(&resumed))).await;
+    served.prepare().await;
+    let done = served.stopped().await;
+    assert_eq!(done["unpartitioned_sources"], 0, "{done}");
+    assert_eq!(done["missing_units"], 0, "{done}");
+    assert_eq!(
+        corpus.probe.document_inputs() - inputs,
+        done["eligible_units"].as_u64().unwrap() - 1
+    );
+    assert_eq!(
+        header_word(&served.context(DUSK_QUERY).await),
+        Some("ready")
+    );
+    let calls = resumed.entered();
+    served.prepare().await;
+    served.stopped().await;
+    assert_eq!(
+        resumed.entered(),
+        calls,
+        "a completed restart is cache-only"
+    );
+    assert_eq!(resumed.max_in_call(), 1);
+    served.close().await;
+}
+
+/// A priority file can occur in the background prefetch while its vector is
+/// still in flight. It must be embedded once, even across wave boundaries.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn progressive_priority_overlap_does_not_duplicate_in_flight_inputs() {
+    let extra: Vec<_> = (0..20)
+        .map(|n| {
+            (
+                format!("00-notes/{n:03}.md"),
+                format!("# Note {n}\n\nUnique topic {n}.\n"),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&extra);
+    let hold = Hold::gated();
+    let served = corpus.serve_stdio(Some(corpus.held(&hold))).await;
+    served
+        .ok(
+            "index",
+            serde_json::json!({
+                "semantic": "prepare", "priority_paths": ["00-notes/000.md"]
+            }),
+        )
+        .await;
+    hold.wait_entered(1).await;
+    served
+        .until("overlapping background wave", |s| {
+            s["bootstrap"]["waves"] == 2
+        })
+        .await;
+    hold.open();
+    let done = served.stopped().await;
+    assert_eq!(done["missing_units"], 0, "{done}");
+    assert_eq!(
+        corpus.probe.document_inputs(),
+        done["eligible_units"].as_u64().unwrap()
+    );
+    assert_eq!(hold.max_in_call(), 1);
     served.close().await;
 }
 

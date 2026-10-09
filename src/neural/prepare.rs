@@ -29,7 +29,7 @@
 //!
 //! 009 T003: the steps are shared with the MCP owner's background driver
 //! ([`super::driver`]), which composes the SAME functions between its own
-//! engine-slot holds: [`Steps::partition_inputs`], [`commit_partition`], [`Steps::select_batch`],
+//! engine-slot holds: [`Steps::partition_inputs_in`], [`commit_partition`], [`Steps::select_batch`],
 //! [`Cards::render`], [`commit_batch`], [`publish`], [`begin`] and
 //! [`finalize`]. Only the ownership around them differs: the CLI holds the
 //! store exclusively and calls the provider directly under its budget; the
@@ -65,7 +65,7 @@ use crate::store::Engine;
 use crate::syntax::{Lang, Unit};
 use serde::Serialize;
 use std::cell::OnceCell;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -87,6 +87,7 @@ pub fn publication_reserve(budget_seconds: u64) -> Duration {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct PrepareReport {
+    pub bootstrap: cache::BootstrapProgress,
     pub profile: String,
     pub function_digest: String,
     pub recipe_id: String,
@@ -168,6 +169,80 @@ pub struct PrepareOptions<'a> {
     /// Budget origin: the instant argument parsing finished.
     pub started: Instant,
     pub control: &'a Control,
+    /// Bounded workspace-relative files/subtrees, interleaved with the normal walk.
+    pub priority_paths: &'a [String],
+}
+
+/// Explicit priority never enrolls disk paths: it orders already admitted sources.
+pub fn validate_priority_paths(paths: &[String]) -> FResult<()> {
+    if paths.len() > 16 {
+        return Err(FoundryError::InvalidArgument(
+            "at most 16 semantic priority paths are allowed".into(),
+        ));
+    }
+    for path in paths {
+        crate::store::validate_path(path)?;
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+pub(crate) struct SourceCursor {
+    pub scope: Option<String>,
+    pub after: Option<String>,
+}
+
+/// At most sixteen priority cursors and one ordinary cursor. Alternate one wave
+/// of each; priority scopes rotate so neither an area nor the background starves.
+pub(crate) struct SourceOrder {
+    priority: VecDeque<SourceCursor>,
+    background: Option<SourceCursor>,
+    priority_turn: bool,
+}
+impl SourceOrder {
+    pub(crate) fn prioritize(&mut self, paths: &[String]) -> FResult<()> {
+        self.priority = Self::new(paths)?.priority;
+        Ok(())
+    }
+    pub(crate) fn new(paths: &[String]) -> FResult<Self> {
+        validate_priority_paths(paths)?;
+        let mut unique = Vec::new();
+        for path in paths {
+            if !unique.contains(path) {
+                unique.push(path.clone());
+            }
+        }
+        Ok(Self {
+            priority: unique
+                .into_iter()
+                .map(|scope| SourceCursor {
+                    scope: Some(scope),
+                    after: None,
+                })
+                .collect(),
+            background: Some(SourceCursor::default()),
+            priority_turn: true,
+        })
+    }
+    pub(crate) fn next(&mut self) -> Option<SourceCursor> {
+        if (self.priority_turn || self.background.is_none()) && !self.priority.is_empty() {
+            self.priority_turn = false;
+            self.priority.pop_front()
+        } else {
+            self.priority_turn = true;
+            self.background.take()
+        }
+    }
+    pub(crate) fn advance(&mut self, cursor: SourceCursor, done: bool) {
+        if done {
+            return;
+        }
+        if cursor.scope.is_some() {
+            self.priority.push_back(cursor);
+        } else {
+            self.background = Some(cursor);
+        }
+    }
 }
 
 /// Named fault points of the preparation boundary (test-faults only;
@@ -229,6 +304,29 @@ pub fn cli_prepare(
     started: Instant,
     control: &Control,
 ) -> FResult<PrepareReport> {
+    cli_prepare_with_priorities(
+        store_dir,
+        profile_path,
+        budget_seconds,
+        development,
+        cache_cap_bytes,
+        started,
+        control,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn cli_prepare_with_priorities(
+    store_dir: &Path,
+    profile_path: &Path,
+    budget_seconds: u64,
+    development: bool,
+    cache_cap_bytes: u64,
+    started: Instant,
+    control: &Control,
+    priority_paths: &[String],
+) -> FResult<PrepareReport> {
     run(
         store_dir,
         &PrepareOptions {
@@ -238,6 +336,7 @@ pub fn cli_prepare(
             cache_cap_bytes,
             started,
             control,
+            priority_paths,
         },
         supervisor_acquire(),
     )
@@ -270,6 +369,28 @@ fn unix_now() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
+pub(crate) fn elapsed_ms(start: Instant) -> u64 {
+    start.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+pub(crate) fn snapshot_progress(
+    report: &mut PrepareReport,
+    started: Instant,
+) -> cache::BootstrapProgress {
+    report.bootstrap.elapsed_ms = elapsed_ms(started);
+    report.bootstrap.embedded_units = report.embedded_units;
+    report.bootstrap.reused_cached_units = report.reused_cached_units;
+    report.bootstrap.input_tokens = report.input_tokens;
+    report.bootstrap.published_entries = report.index_entries;
+    if report.index_published
+        && report.index_entries > 0
+        && report.bootstrap.first_searchable_ms.is_none()
+    {
+        report.bootstrap.first_searchable_ms = Some(report.bootstrap.elapsed_ms);
+    }
+    report.bootstrap.clone()
+}
+
 /// One bounded preparation run. Committed work is never rolled back; every
 /// stop is named and recorded in the state row.
 pub fn run(
@@ -278,6 +399,7 @@ pub fn run(
     acquire: Acquire,
 ) -> FResult<PrepareReport> {
     options.control.check()?;
+    validate_priority_paths(options.priority_paths)?;
     let deadline = options
         .started
         .checked_add(Duration::from_secs(options.budget_seconds))
@@ -334,6 +456,7 @@ pub fn run(
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX);
+    snapshot_progress(&mut report, options.started);
     finalize(&engine, &mut report, &outcome)?;
     match outcome {
         Ok(_) => Ok(report),
@@ -356,6 +479,7 @@ pub(crate) fn begin(engine: &Engine, report: &PrepareReport) -> FResult<()> {
         state.cache_cap_bytes = Some(report.cache_cap_bytes);
         state.state = "running".into();
         state.last_error = None;
+        state.bootstrap = None;
     })
 }
 
@@ -374,6 +498,7 @@ pub(crate) fn finalize(
     final_state.dimensions = Some(report.dimensions);
     let (totals_rows, totals_bytes) = engine.semantic_cache_totals()?;
     final_state.cache_bytes = totals_bytes;
+    final_state.bootstrap = Some(report.bootstrap.clone());
     let (state_name, reason) = match outcome {
         Ok(Stop::Complete) => ("stopped", None),
         Ok(Stop::Partial { code, message }) => ("paused", Some((*code, message.clone()))),
@@ -503,6 +628,7 @@ pub(crate) fn publish(
     report: &mut PrepareReport,
     rebuild: bool,
 ) -> Result<Option<Stop>, FoundryError> {
+    let started = Instant::now();
     prepare_fault!(BEFORE_PUBLISH, Some(control), "")?;
     let outcome = if rebuild {
         engine.semantic_rebuild_index(control).map(|summary| {
@@ -516,6 +642,7 @@ pub(crate) fn publish(
         engine.semantic_publish_pending(control)
     };
     let stop = record_publication(outcome, budget, report);
+    report.bootstrap.publication_ms += elapsed_ms(started);
     if stop.is_none() {
         prepare_fault!(AFTER_PUBLISH, Some(control), "")?;
     }
@@ -531,6 +658,9 @@ pub(crate) fn record_publication(
     budget: u64,
     report: &mut PrepareReport,
 ) -> Option<Stop> {
+    if matches!(&outcome, Ok(Publication::Rebuilt(_))) {
+        report.bootstrap.generation_builds += 1;
+    }
     match outcome {
         Ok(Publication::Nothing) => None,
         Ok(Publication::Current(entries) | Publication::Rebuilt(entries)) => {
@@ -566,8 +696,8 @@ pub(crate) fn record_publication(
     }
 }
 
-/// The bounded work: verification, partition pass, pending publication,
-/// embed pass, publication.
+/// The bounded work: verification, retained coverage, then partition/embed
+/// waves with geometric and final publication.
 #[allow(clippy::too_many_arguments)]
 fn inner(
     engine: &Engine,
@@ -635,89 +765,130 @@ fn inner(
         },
         recipe,
     };
-    // --- Partition pass: current sources, pages of 128, commit per source.
-    let mut after: Option<String> = None;
-    loop {
-        match steps.partition_page(&mut after, usize::MAX, None, control, report, &mut || {
-            halt(control, budget)
-        })? {
-            Progress::More => {}
-            Progress::Done => break,
-            Progress::Halted(stop) => return Ok(stop),
-        }
-    }
-
-    // --- Pending publication: committed coverage from earlier runs becomes
-    // searchable BEFORE any new inference is admitted.
+    // Recover accepted coverage before admitting new inference. A cold store's
+    // publication visits zero prepared rows, not the whole source corpus.
     if let Some(stop) = publish(engine, control, budget, report, false)? {
         return Ok(stop);
     }
-
-    // --- Embed pass: remaining work = current cards minus valid cached
-    // results, pages of 128, batches of at most the profile's batch, one
-    // outstanding, commit per batch. Admission checks the run control AND
-    // the publication reserve immediately before every batch, and the
-    // control after every flush.
-    let mut walk = Walk::default();
-    let mut committed: u64 = 0;
+    let mut published = report.index_entries;
+    snapshot_progress(report, options.started);
+    let mut unpublished = 0u64;
+    let mut order = SourceOrder::new(options.priority_paths)?;
     let mut stop: Option<Stop> = None;
-    loop {
-        let mut selection = Selection::default();
-        let end = match steps.select_batch(
-            &mut walk,
-            &mut selection,
-            steps.cards.limits().inputs,
-            usize::MAX,
+    'waves: while let Some(mut cursor) = order.next() {
+        let before = cursor.after.clone();
+        let (progress, inputs) = steps.partition_inputs_in(
+            &mut cursor.after,
+            cursor.scope.as_deref(),
+            PARTITION_WAVE,
+            None,
             report,
             &mut || halt(control, budget),
-        )? {
-            Selected::Full => false,
-            Selected::End => true,
-            Selected::Yield => continue,
-            Selected::Halted(halted) => {
+        )?;
+        if let Progress::Halted(halted) = progress {
+            stop = Some(halted);
+            break;
+        }
+        let computed = Instant::now();
+        let prepared = steps.cards.prepare_partitions(inputs, recipe, control);
+        report.bootstrap.partition_compute_ms += elapsed_ms(computed);
+        let prepared = prepared?;
+        for partition in prepared {
+            if let Some(halted) = halt(control, budget) {
                 stop = Some(halted);
-                break;
+                break 'waves;
             }
-        };
-        let batch = steps.cards.render(selection)?;
-        if batch.is_empty() {
-            break;
+            commit_partition(engine, partition, control, report)?;
         }
-        if let Some(halted) = admit(control, budget, deadline, reserve) {
-            stop = Some(halted);
-            break;
-        }
-        let size = batch.len() as u64;
-        match flush_batch(
-            &steps,
-            provider.as_mut(),
-            batch,
-            options.cache_cap_bytes,
-            control,
-            report,
-        ) {
-            Ok(()) => committed += size,
-            Err(StopOrError::Stop(partial)) => {
-                stop = Some(partial);
-                break;
+        let done = matches!(progress, Progress::Done);
+        if cursor.after != before {
+            report.bootstrap.waves += 1;
+            report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
+            let mut walk = Walk::wave(cursor.scope.clone(), before, cursor.after.clone());
+            loop {
+                let mut selection = Selection::default();
+                let end = match steps.select_batch(
+                    &mut walk,
+                    &mut selection,
+                    steps.cards.limits().inputs,
+                    usize::MAX,
+                    report,
+                    &mut || halt(control, budget),
+                )? {
+                    Selected::Full => false,
+                    Selected::End => true,
+                    Selected::Yield => continue,
+                    Selected::Halted(halted) => {
+                        stop = Some(halted);
+                        break 'waves;
+                    }
+                };
+                let rendered = Instant::now();
+                let batch = steps.cards.render(selection);
+                report.bootstrap.render_ms += elapsed_ms(rendered);
+                let batch = batch?;
+                if batch.is_empty() {
+                    break;
+                }
+                if let Some(halted) = admit(control, budget, deadline, reserve) {
+                    stop = Some(halted);
+                    break 'waves;
+                }
+                let size = batch.len() as u64;
+                match flush_batch(
+                    &steps,
+                    provider.as_mut(),
+                    batch,
+                    options.cache_cap_bytes,
+                    control,
+                    report,
+                ) {
+                    Ok(()) => {
+                        walk.seen.clear(); // Accepted keys are now in the durable cache.
+                        report.embedded_units += size;
+                        unpublished += size;
+                    }
+                    Err(StopOrError::Stop(partial)) => {
+                        stop = Some(partial);
+                        break 'waves;
+                    }
+                    Err(StopOrError::Error(error)) => return Err(error),
+                }
+                if let Some(halted) = halt(control, budget) {
+                    stop = Some(halted);
+                    break 'waves;
+                }
+                // Geometric publication: first batch, then approximately doubled
+                // coverage. The total cold-build vector work is amortized.
+                if unpublished >= published.max(1) {
+                    if let Some(halted) = publish(engine, control, budget, report, true)? {
+                        stop = Some(halted);
+                        break 'waves;
+                    }
+                    published = report.index_entries;
+                    unpublished = 0;
+                    snapshot_progress(report, options.started);
+                }
+                if end {
+                    break;
+                }
             }
-            Err(StopOrError::Error(error)) => return Err(error),
+            // Repartitioned inputs may all hit retained cache rows. Make the
+            // first such wave searchable even without a document call.
+            if published == 0 && report.reused_cached_units > 0 {
+                if let Some(halted) = publish(engine, control, budget, report, false)? {
+                    stop = Some(halted);
+                    break;
+                }
+                published = report.index_entries;
+                snapshot_progress(report, options.started);
+            }
         }
-        // Every batch, the short final one included, gets the post-flush
-        // check: a budget that expired during the call is reported, never
-        // silently swallowed as success.
-        if let Some(halted) = halt(control, budget) {
-            stop = Some(halted);
-            break;
-        }
-        if end {
-            break;
-        }
+        order.advance(cursor, done);
     }
-    report.embedded_units = committed;
     report.missing_units = report
         .eligible_units
-        .saturating_sub(report.reused_cached_units + committed);
+        .saturating_sub(report.reused_cached_units + report.embedded_units);
 
     // --- Publication: new vectors were committed, so replay the generation
     // from the cache under the run control — after a complete pass AND after
@@ -725,8 +896,8 @@ fn inner(
     // publishes nothing more. If publication cannot finish, that is recorded
     // in the report and the state; the original stop reason is kept.
     let cancelled = matches!(&stop, Some(Stop::Partial { code, .. }) if *code == "cancelled");
-    if committed > 0 && !cancelled {
-        match publish(engine, control, budget, report, true)? {
+    if !cancelled {
+        match publish(engine, control, budget, report, unpublished > 0)? {
             None => {}
             Some(published_stop) => stop = Some(merge_publication(stop, published_stop)),
         }
@@ -774,7 +945,10 @@ fn flush_batch(
         return Err(StopOrError::Error(FoundryError::from(e)));
     }
     count_document_call(report, &batch.inputs);
-    let vectors = match provider.embed_documents(&batch.inputs, control) {
+    let started = Instant::now();
+    let outcome = provider.embed_documents(&batch.inputs, control);
+    report.bootstrap.provider_ms += elapsed_ms(started);
+    let vectors = match outcome {
         Ok(vectors) => vectors,
         Err(e) => {
             let stop = provider_stop(e, control);
@@ -922,14 +1096,35 @@ pub(crate) enum Selected {
 }
 
 /// The embed walk's position: every source up to `after` is done, `partial`
-/// is the source version in progress and its next card, and `seen` holds
-/// the input keys this run already resolved — identical rendered inputs
-/// share one result.
+/// is the source version in progress and its next card. `seen` deduplicates
+/// pending inputs; callers replace it at batch boundaries, and accepted
+/// inputs deduplicate through the durable cache.
 #[derive(Default)]
 pub(crate) struct Walk {
     after: Option<String>,
+    scope: Option<String>,
+    through: Option<String>,
     partial: Option<(Rc<SourceVersion>, usize)>,
     seen: HashSet<String>,
+}
+impl Walk {
+    pub(crate) fn exclude(&mut self, keys: impl IntoIterator<Item = String>) {
+        self.seen.clear();
+        self.seen.extend(keys);
+    }
+
+    pub(crate) fn wave(
+        scope: Option<String>,
+        after: Option<String>,
+        through: Option<String>,
+    ) -> Self {
+        Self {
+            scope,
+            after,
+            through,
+            ..Self::default()
+        }
+    }
 }
 
 /// One source version a selection drew cards from: its verified body and,
@@ -1168,7 +1363,7 @@ impl Steps<'_> {
     /// Select at most min(max_new, eight) new sources, respecting `until` at
     /// source boundaries. Recheck cancellation and the source version before
     /// each atomic commit. MCP composes these stages around separate slot holds.
-    #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
+    #[cfg(test)]
     pub(crate) fn partition_page(
         &self,
         after: &mut Option<String>,
@@ -1196,9 +1391,23 @@ impl Steps<'_> {
 
     /// Snapshot only. Card parsing/tokenization happens after the caller
     /// releases its engine slot. Source order also determines commit order.
+    #[cfg(test)]
     pub(crate) fn partition_inputs(
         &self,
         after: &mut Option<String>,
+        max_new: usize,
+        until: Option<Instant>,
+        report: &mut PrepareReport,
+        halt: &mut dyn FnMut() -> Option<Stop>,
+    ) -> FResult<(Progress, Vec<cache::PartitionSource>)> {
+        self.partition_inputs_in(after, None, max_new, until, report, halt)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn partition_inputs_in(
+        &self,
+        after: &mut Option<String>,
+        scope: Option<&str>,
         max_new: usize,
         until: Option<Instant>,
         report: &mut PrepareReport,
@@ -1208,7 +1417,7 @@ impl Steps<'_> {
         if let Some(stop) = halt() {
             return Ok((Progress::Halted(stop), inputs));
         }
-        let page = cache::source_page(&self.engine.db, after.as_deref())?;
+        let page = cache::source_page_in(&self.engine.db, after.as_deref(), scope)?;
         if page.is_empty() {
             return Ok((Progress::Done, inputs));
         }
@@ -1268,11 +1477,18 @@ impl Steps<'_> {
             if selection.len >= room {
                 return Ok(Selected::Full);
             }
-            let page = cache::source_page(&self.engine.db, walk.after.as_deref())?;
+            let page = cache::source_page_in(
+                &self.engine.db,
+                walk.after.as_deref(),
+                walk.scope.as_deref(),
+            )?;
             if page.is_empty() {
                 return Ok(Selected::End);
             }
             for (path, meta) in &page {
+                if walk.through.as_ref().is_some_and(|end| path > end) {
+                    return Ok(Selected::End);
+                }
                 if examined == max_sources {
                     return Ok(Selected::Yield);
                 }
@@ -1295,7 +1511,7 @@ impl Steps<'_> {
                     let mut full_at = None;
                     for (index, unit) in record.units.iter().enumerate().skip(first) {
                         report.eligible_units += 1;
-                        if !walk.seen.insert(unit.input_key.clone()) {
+                        if walk.seen.contains(&unit.input_key) {
                             // Identical rendered inputs share this run's result.
                             report.reused_cached_units += 1;
                             continue;
@@ -1320,6 +1536,7 @@ impl Steps<'_> {
                             report.reused_cached_units += 1;
                             continue;
                         }
+                        walk.seen.insert(unit.input_key.clone());
                         wanted.push((index, unit.clone()));
                         if selection.len + wanted.len() == room {
                             full_at = Some(index + 1);

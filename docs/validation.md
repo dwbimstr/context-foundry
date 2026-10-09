@@ -1,5 +1,61 @@
 # Validation
 
+## Progressive semantic bootstrap — 2026-10-09
+
+[009 T007](../specs/009-optional-semantic-retrieval/spec.md#t007--make-semantic-bootstrap-useful-before-a-complete-corpus-pass)
+now composes bounded partition/select/embed waves in CLI and the existing MCP owner.
+Explicit priority scopes alternate with the general cursor; one in-flight batch and
+one bounded prefetch preserve model ownership. Publication visits prepared rows and
+rebuilds the existing USearch generation at geometric growth boundaries and final
+coverage changes. Cache-only pauses also publish changed locations. No schema,
+model geometry, segment format or additional process changes. [Usage and limits](experimental-context.md#progressive-semantic-bootstrapping)
+describe priorities, stage accounting, coverage and payload bounds.
+
+Executed Linux/Rust 1.90.0 sandbox evidence:
+
+- A real MCP SDK/client/server fixture with 86 indexed sources serves the explicitly
+  requested semantic document while at least 77 sources remain unpartitioned. The
+  general walk also progresses. A zero-card tail cannot make prefetch traverse the
+  whole corpus before the first publication. A new owner resumes without repeating
+  the accepted input; a completed preparation adds zero document calls on replay.
+- An overlapping priority/background fixture counts one document input per eligible
+  unit, including overlap with the first in-flight call. No concurrent provider calls
+  are added. Invalid priorities and priorities on non-prepare operations are refused.
+- CLI cancellation after two nonempty publications leaves 16 searchable inputs from
+  priority and ordinary waves, with 48 of 64 sources unpartitioned. Resume embeds
+  exactly those 48 and uses at most three further generation builds.
+- An oversized generation request returns `resource_limit` before replacing the
+  previously validated generation. A pause after source deletion republishes the
+  remaining 11 locations without additional document work.
+- Focused semantic checks: 48 unit tests and 114 integration tests pass, with one
+  existing real-model measurement ignored. Existing malformed-provider, edit,
+  cancellation, bounded prefetch, foreground admission and recovery assertions pass.
+
+`cargo clippy --locked --all-targets -- -D warnings`,
+`cargo check --locked --all-targets`, the library/CLI Clippy build without default
+features, `cargo fmt --all --check`, Markdown links/anchors and `git diff --check`
+pass. CLI help exposes the repeatable `--priority PATH` option.
+
+The full `cargo test --locked --no-fail-fast` run completed with 884 passed, one
+catalog-budget failure and two existing model/hardware measurements ignored; the
+separate recovery runner also passed. Adding priority metadata took `tools/list` to
+1,021 o200k tokens. The only subsequent code change shortened three tool descriptions,
+preserving their guidance and schema constraints. The exact catalog contract now
+passes at **997 tokens** under its unchanged 1,000-token ceiling. The final complete
+MCP suite passes **90/90**, resolving the only failure: **885 unique tests passed**
+across the full run and affected-suite rerun, with two measurements ignored. The
+full run's other checks were not repeated for this wording-only correction. All
+targets and the build without default features pass Clippy/check again afterward.
+These tests use synthetic embedding functions with real Rust tokenization, redb,
+USearch and MCP delivery; they establish scheduling/freshness/reuse behavior, not
+real-model speed or task-quality gains. Stage times overlap and are wall accounting,
+not device profiling. Full USearch generation builds and status coverage censuses
+still scale with prepared/source metadata respectively. Device tuning, CPU pool
+reuse, host-pressure admission and 80,000-file performance remain unverified.
+Self-review only; no release, model download, external provider or deployment ran.
+The next selected build increment is governed generation/area knowledge (010 T002),
+followed by boundary joins and task evidence composition.
+
 ## Incremental primary-root watching — 2026-10-09
 
 [001 T011](../specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints)
@@ -47,8 +103,8 @@ Self-review only. No embedding/generation provider, real-host task-quality trial
 macOS/native-network-filesystem validation or release promotion ran. Native watch
 registration memory is outside the queue bound. Notifications silently lost without
 a rescan signal and ignore-policy files outside the root need explicit indexing or
-owner restart; there is no periodic all-source polling. The next selected increment
-is progressive semantic bootstrap (009 T007).
+owner restart; there is no periodic all-source polling. Progressive semantic bootstrap
+(009 T007) follows in the newer record above.
 
 ## Source-bound brief import and conceptual discovery — 2026-10-09
 

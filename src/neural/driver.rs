@@ -135,6 +135,9 @@ struct State {
     phase: Phase,
     /// The driver's own document call is in flight.
     in_call: bool,
+    priority_paths: Vec<String>,
+    priority_revision: u64,
+    bootstrap: crate::neural::cache::BootstrapProgress,
 }
 
 /// The live state of this owner's driver, overlaid on the committed row.
@@ -161,6 +164,9 @@ impl Default for Preparation {
             state: Mutex::new(State {
                 phase: Phase::Idle,
                 in_call: false,
+                priority_paths: Vec::new(),
+                priority_revision: 0,
+                bootstrap: Default::default(),
             }),
             foreground: Mutex::new(None),
         }
@@ -202,6 +208,20 @@ impl Preparation {
         owner: Arc<dyn Owner>,
         runtime: Arc<QueryRuntime>,
     ) -> FResult<()> {
+        self.prepare_with_priorities(owner, runtime, None)
+    }
+
+    /// A new explicit list replaces scheduling preferences at the next wave;
+    /// ordinary work always retains its alternating turn.
+    pub fn prepare_with_priorities(
+        self: &Arc<Self>,
+        owner: Arc<dyn Owner>,
+        runtime: Arc<QueryRuntime>,
+        paths: Option<Vec<String>>,
+    ) -> FResult<()> {
+        if let Some(paths) = &paths {
+            prepare::validate_priority_paths(paths)?;
+        }
         let busy = || FoundryError::Semantic {
             code: "provider_busy",
             message: "an earlier model call still occupies the runtime slot; nothing was \
@@ -209,6 +229,13 @@ impl Preparation {
                 .into(),
         };
         let mut state = self.lock();
+        if state.phase != Phase::Running && runtime.occupied() && !state.in_call {
+            return Err(busy());
+        }
+        if let Some(paths) = paths {
+            state.priority_paths = paths;
+            state.priority_revision = state.priority_revision.wrapping_add(1);
+        }
         match state.phase {
             Phase::Running => Ok(()),
             Phase::Pausing | Phase::Stopping => {
@@ -255,6 +282,11 @@ impl Preparation {
     /// No driver thread exists (none started, or it recorded its stop).
     pub fn idle(&self) -> bool {
         self.lock().phase == Phase::Idle
+    }
+
+    pub fn progress(&self) -> Option<crate::neural::cache::BootstrapProgress> {
+        let state = self.lock();
+        (state.phase != Phase::Idle).then(|| state.bootstrap.clone())
     }
 
     fn set_in_call(&self, in_call: bool) {
@@ -332,9 +364,16 @@ enum Failed {
     Step(FoundryError),
 }
 
-/// One run of the driver: the profile identity, its report and the
-/// publication bookkeeping.
+/// Bounded scheduling state; accepted work lives in partitions and cache.
+struct Frontier {
+    order: prepare::SourceOrder,
+    walk: Option<Walk>,
+    priority_revision: Option<u64>,
+}
+
+/// One run of the driver: identity, accounting and publication bookkeeping.
 struct Run<'a> {
+    started: Instant,
     owner: &'a dyn Owner,
     runtime: &'a QueryRuntime,
     preparation: &'a Preparation,
@@ -364,6 +403,7 @@ impl<'a> Run<'a> {
             owner,
             runtime,
             preparation,
+            started: Instant::now(),
             control,
             report: PrepareReport {
                 profile: profile.name.clone(),
@@ -393,30 +433,37 @@ impl<'a> Run<'a> {
                 message: "the worker's document function does not match the profile".into(),
             });
         }
+        self.sync_progress();
         let report = &self.report;
         hold(self.owner, |engine| prepare::begin(engine, report))
     }
 
+    fn sync_progress(&mut self) {
+        self.preparation.lock().bootstrap =
+            prepare::snapshot_progress(&mut self.report, self.started);
+    }
+
     /// Passes until one saw an unchanged source revision, or a stop.
     fn passes(&mut self) -> FResult<Stop> {
+        // Recover prior committed coverage before doing more provider work.
+        if let Some(stop) = self.publish(false)? {
+            return Ok(stop);
+        }
         loop {
             let revision = hold(self.owner, |engine| engine.source_revision())?;
-            if let Some(stop) = self.partition_pass()? {
+            let mut frontier = Frontier {
+                order: prepare::SourceOrder::new(&[])?,
+                walk: None,
+                priority_revision: None,
+            };
+            if let Some(stop) = self.embed_pass(&mut frontier)? {
                 return Ok(stop);
             }
-            if let Some(stop) = self.requested_stop() {
-                return Ok(stop);
-            }
-            // Committed coverage of earlier runs becomes searchable before
-            // any new inference.
+            // Also publish new locations/complete coverage when every card was
+            // reused: cache hits do not increment the new-vector counter.
             if let Some(stop) = self.publish(false)? {
                 return Ok(stop);
             }
-            if let Some(stop) = self.embed_pass()? {
-                return Ok(stop);
-            }
-            // An explicit `index` during the pass can change sources the walk
-            // already passed; walk again until a pass saw one revision.
             if hold(self.owner, |engine| engine.source_revision())? == revision {
                 return Ok(Stop::Complete);
             }
@@ -432,69 +479,67 @@ impl<'a> Run<'a> {
         (self.preparation.lock().phase == Phase::Pausing).then(paused)
     }
 
-    fn partition_pass(&mut self) -> FResult<Option<Stop>> {
-        let mut after: Option<String> = None;
-        loop {
-            if let Some(stop) = self.requested_stop() {
-                return Ok(Some(stop));
+    fn partition_wave(&mut self, cursor: &mut prepare::SourceCursor) -> FResult<Progress> {
+        if let Some(stop) = self.requested_stop() {
+            return Ok(Progress::Halted(stop));
+        }
+        let (owner, runtime, control) = (self.owner, self.runtime, self.control);
+        let (recipe, digest, report) = (&self.recipe, &self.digest, &mut self.report);
+        let (progress, inputs) = hold(owner, |engine| {
+            Steps {
+                engine,
+                cards: Cards {
+                    tokenizer: runtime.tokenizer(),
+                    profile: &runtime.profile,
+                    function_digest: digest,
+                },
+                recipe,
             }
-            let (owner, runtime, control) = (self.owner, self.runtime, self.control);
-            let (recipe, digest, report) = (&self.recipe, &self.digest, &mut self.report);
-            let (progress, inputs) = hold(owner, |engine| {
-                Steps {
-                    engine,
-                    cards: Cards {
-                        tokenizer: runtime.tokenizer(),
-                        profile: &runtime.profile,
-                        function_digest: digest,
-                    },
-                    recipe,
+            .partition_inputs_in(
+                &mut cursor.after,
+                cursor.scope.as_deref(),
+                prepare::PARTITION_WAVE,
+                Some(Instant::now() + STEP_TIME),
+                report,
+                &mut || owner.closing().then(cancelled),
+            )
+        })?;
+        if matches!(progress, Progress::Halted(_)) {
+            return Ok(progress);
+        }
+        if let Some(stop) = self.requested_stop() {
+            return Ok(Progress::Halted(stop));
+        }
+        let computed = Instant::now();
+        let prepared = Cards {
+            tokenizer: runtime.tokenizer(),
+            profile: &runtime.profile,
+            function_digest: &self.digest,
+        }
+        .prepare_partitions(inputs, &self.recipe, control);
+        self.report.bootstrap.partition_compute_ms += prepare::elapsed_ms(computed);
+        let prepared = prepared?;
+        for partition in prepared {
+            if let Some(stop) = self.requested_stop() {
+                return Ok(Progress::Halted(stop));
+            }
+            let preparation = self.preparation;
+            let report = &mut self.report;
+            let stop = hold(owner, |engine| {
+                if owner.closing() {
+                    return Ok(Some(cancelled()));
                 }
-                .partition_inputs(
-                    &mut after,
-                    prepare::PARTITION_WAVE,
-                    Some(Instant::now() + STEP_TIME),
-                    report,
-                    &mut || owner.closing().then(cancelled),
-                )
+                if preparation.lock().phase == Phase::Pausing {
+                    return Ok(Some(paused()));
+                }
+                prepare::commit_partition(engine, partition, control, report)?;
+                Ok(None)
             })?;
-            match progress {
-                Progress::More => {}
-                Progress::Done => return Ok(None),
-                Progress::Halted(stop) => return Ok(Some(stop)),
-            }
-            // Source bodies were verified under a read transaction; no
-            // engine slot or transaction is held during CPU computation.
-            if let Some(stop) = self.requested_stop() {
-                return Ok(Some(stop));
-            }
-            let prepared = Cards {
-                tokenizer: runtime.tokenizer(),
-                profile: &runtime.profile,
-                function_digest: &self.digest,
-            }
-            .prepare_partitions(inputs, &self.recipe, control)?;
-            for partition in prepared {
-                if let Some(stop) = self.requested_stop() {
-                    return Ok(Some(stop));
-                }
-                let preparation = self.preparation;
-                let report = &mut self.report;
-                let stop = hold(owner, |engine| {
-                    if owner.closing() {
-                        return Ok(Some(cancelled()));
-                    }
-                    if preparation.lock().phase == Phase::Pausing {
-                        return Ok(Some(paused()));
-                    }
-                    prepare::commit_partition(engine, partition, control, report)?;
-                    Ok(None)
-                })?;
-                if stop.is_some() {
-                    return Ok(stop);
-                }
+            if let Some(stop) = stop {
+                return Ok(Progress::Halted(stop));
             }
         }
+        Ok(progress)
     }
 
     /// Select batches of up to the profile's batch of cards and embed them.
@@ -502,9 +547,8 @@ impl<'a> Run<'a> {
     /// inputs, in walk order, for the next admission; the walk resumes only
     /// once fewer inputs remain than the current batch size. While a call
     /// runs, the next batch is selected and rendered ([`Self::embed`]).
-    fn embed_pass(&mut self) -> FResult<Option<Stop>> {
+    fn embed_pass(&mut self, frontier: &mut Frontier) -> FResult<Option<Stop>> {
         let full = self.runtime.profile.document_limits().inputs;
-        let mut walk = Walk::default();
         let mut batch = Batch::default();
         let mut end = false;
         loop {
@@ -513,7 +557,7 @@ impl<'a> Run<'a> {
             }
             if !end && batch.len() < self.preparation.batch_limit(Instant::now(), full) {
                 let room = full - batch.len();
-                match self.fill(&mut walk, &mut batch, room)? {
+                match self.fill(frontier, &mut batch, room, &[])? {
                     Selected::Full => {}
                     Selected::End => end = true,
                     Selected::Yield => continue,
@@ -521,7 +565,7 @@ impl<'a> Run<'a> {
                 }
             }
             if !batch.is_empty()
-                && let Some(stop) = self.embed(&mut walk, &mut batch, &mut end, full)?
+                && let Some(stop) = self.embed(frontier, &mut batch, &mut end, full)?
             {
                 return Ok(Some(stop));
             }
@@ -534,36 +578,113 @@ impl<'a> Run<'a> {
     /// Up to `room` more cards into `batch`: one selection step under the
     /// engine slot (the missing cards and their sources' bodies), then their
     /// rendering and tokenization with NO engine slot and no transaction.
-    fn fill(&mut self, walk: &mut Walk, batch: &mut Batch, room: usize) -> FResult<Selected> {
-        let (owner, runtime) = (self.owner, self.runtime);
-        let (recipe, report) = (&self.recipe, &mut self.report);
-        let cards = Cards {
-            tokenizer: runtime.tokenizer(),
-            profile: &runtime.profile,
-            function_digest: &self.digest,
-        };
-        let mut selection = Selection::default();
-        let selected = hold(owner, |engine| {
-            Steps {
-                engine,
-                cards,
-                recipe,
+    fn fill(
+        &mut self,
+        frontier: &mut Frontier,
+        batch: &mut Batch,
+        room: usize,
+        in_flight: &[String],
+    ) -> FResult<Selected> {
+        let target = batch.len() + room;
+        let mut waves = 0;
+        loop {
+            if let Some(stop) = self.requested_stop() {
+                return Ok(Selected::Halted(stop));
             }
-            .select_batch(
-                walk,
-                &mut selection,
-                room,
-                SOURCES_PER_STEP,
-                report,
-                &mut || owner.closing().then(cancelled),
-            )
-        })?;
-        if selection.len() > 0 {
-            let rendered = cards.render(selection)?;
-            batch.keys.extend(rendered.keys);
-            batch.inputs.extend(rendered.inputs);
+            if frontier.walk.is_none() {
+                // A prefetch must not become an all-corpus partition barrier
+                // when the next areas have only cached or zero-card sources.
+                if waves == 1 {
+                    return Ok(Selected::Yield);
+                }
+                waves += 1;
+                {
+                    let state = self.preparation.lock();
+                    if frontier.priority_revision != Some(state.priority_revision) {
+                        frontier.order.prioritize(&state.priority_paths)?;
+                        frontier.priority_revision = Some(state.priority_revision);
+                    }
+                }
+                let Some(mut cursor) = frontier.order.next() else {
+                    return Ok(Selected::End);
+                };
+                let before = cursor.after.clone();
+                let progress = self.partition_wave(&mut cursor)?;
+                if let Progress::Halted(stop) = progress {
+                    return Ok(Selected::Halted(stop));
+                }
+                let done = matches!(progress, Progress::Done);
+                if cursor.after != before {
+                    self.report.bootstrap.waves += 1;
+                    self.report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
+                    frontier.walk = Some(Walk::wave(
+                        cursor.scope.clone(),
+                        before,
+                        cursor.after.clone(),
+                    ));
+                    self.sync_progress();
+                }
+                frontier.order.advance(cursor, done);
+                if frontier.walk.is_none() {
+                    continue;
+                }
+            }
+            let (owner, runtime) = (self.owner, self.runtime);
+            let (recipe, report) = (&self.recipe, &mut self.report);
+            let cards = Cards {
+                tokenizer: runtime.tokenizer(),
+                profile: &runtime.profile,
+                function_digest: &self.digest,
+            };
+            // Priority and background waves can overlap the active call. Keep
+            // only bounded pending keys across waves; committed keys use cache.
+            frontier
+                .walk
+                .as_mut()
+                .expect("wave exists")
+                .exclude(in_flight.iter().chain(batch.keys.iter()).cloned());
+            let mut selection = Selection::default();
+            let selected = hold(owner, |engine| {
+                Steps {
+                    engine,
+                    cards,
+                    recipe,
+                }
+                .select_batch(
+                    frontier.walk.as_mut().expect("wave exists"),
+                    &mut selection,
+                    target - batch.len(),
+                    SOURCES_PER_STEP,
+                    report,
+                    &mut || owner.closing().then(cancelled),
+                )
+            })?;
+            if selection.len() > 0 {
+                let started = Instant::now();
+                let rendered = cards.render(selection);
+                self.report.bootstrap.render_ms += prepare::elapsed_ms(started);
+                let rendered = rendered?;
+                batch.keys.extend(rendered.keys);
+                batch.inputs.extend(rendered.inputs);
+            }
+            match selected {
+                Selected::End => {
+                    frontier.walk = None;
+                    // Send a short first wave without waiting for later sources.
+                    // The following wave is prepared by the one in-call prefetch.
+                    if !batch.is_empty() {
+                        return Ok(Selected::Full);
+                    }
+                    if self.published == 0
+                        && self.report.reused_cached_units > 0
+                        && let Some(stop) = self.publish(false)?
+                    {
+                        return Ok(Selected::Halted(stop));
+                    }
+                }
+                other => return Ok(other),
+            }
         }
-        Ok(selected)
     }
 
     /// One admission: the first inputs of `batch`, as many as the batch size
@@ -582,7 +703,7 @@ impl<'a> Run<'a> {
     /// the committed batch is counted first, so the stop publishes it.
     fn embed(
         &mut self,
-        walk: &mut Walk,
+        frontier: &mut Frontier,
         batch: &mut Batch,
         end: &mut bool,
         full: usize,
@@ -590,6 +711,7 @@ impl<'a> Run<'a> {
         #[cfg(feature = "test-faults")]
         self.owner.admitting();
         let preparation = self.preparation;
+        let started = Instant::now();
         let (keys, tokens, call) = {
             let mut state = preparation.lock();
             if self.owner.closing() {
@@ -624,7 +746,7 @@ impl<'a> Run<'a> {
         // The prefetch: a halt (owner shutdown) is caught by the wait below.
         let mut prefetch_error = None;
         if !*end && batch.len() < full {
-            match self.fill(walk, batch, full - batch.len()) {
+            match self.fill(frontier, batch, full - batch.len(), &keys) {
                 Ok(Selected::End) => *end = true,
                 Ok(_) => {}
                 Err(error) => prefetch_error = Some(error),
@@ -637,6 +759,7 @@ impl<'a> Run<'a> {
                 // The uncommitted result is discarded; the call itself may
                 // run on and keeps the runtime slot until it really ends.
                 self.preparation.set_in_call(false);
+                self.report.bootstrap.provider_ms += prepare::elapsed_ms(started);
                 self.control.cancel();
                 return Ok(Some(cancelled()));
             }
@@ -645,6 +768,7 @@ impl<'a> Run<'a> {
             }
         };
         self.preparation.set_in_call(false);
+        self.report.bootstrap.provider_ms += prepare::elapsed_ms(started);
         let vectors = match result {
             Ok(vectors) => vectors,
             Err(error) => return Ok(Some(self.failed(error))),
@@ -680,6 +804,8 @@ impl<'a> Run<'a> {
         // Committed is unpublished until a publication, whatever stops the
         // run next: the stop ([`Self::finish`]) publishes it.
         self.unpublished += size;
+        self.report.embedded_units += size;
+        self.sync_progress();
         if let Some(error) = prefetch_error {
             return Err(error);
         }
@@ -714,12 +840,15 @@ impl<'a> Run<'a> {
     /// cache; otherwise only pending coverage), then drop the runtime's
     /// loaded index so the next request loads the new generation.
     fn publish(&mut self, rebuild: bool) -> FResult<Option<Stop>> {
+        let started = Instant::now();
         let outcome = match self.generation(rebuild) {
             Ok(publication) => Ok(publication),
             Err(Failed::Step(error)) => Err(error),
             Err(Failed::Owner(error)) => return Err(error),
         };
         let stop = prepare::record_publication(outcome, 0, &mut self.report);
+        self.report.bootstrap.publication_ms += prepare::elapsed_ms(started);
+        self.sync_progress();
         if stop.is_none() {
             if self.report.index_published {
                 self.runtime.forget_index();
@@ -820,8 +949,10 @@ impl<'a> Run<'a> {
         let cancelled = self.owner.closing()
             || matches!(&outcome, Ok(Stop::Partial { code, .. }) if *code == "cancelled");
         let mut outcome = outcome;
-        if !cancelled && self.unpublished > 0 {
-            match self.publish(true) {
+        if !cancelled && (self.unpublished > 0 || !matches!(&outcome, Ok(Stop::Complete))) {
+            // A paused wave may have updated only locations/partition coverage
+            // through cache reuse. Publish that scope even without new vectors.
+            match self.publish(self.unpublished > 0) {
                 Ok(None) => {}
                 Ok(Some(published)) => {
                     outcome = outcome.map(|stop| prepare::merge_publication(Some(stop), published));
@@ -829,6 +960,7 @@ impl<'a> Run<'a> {
                 Err(error) => outcome = outcome.and(Err(error)),
             }
         }
+        self.sync_progress();
         let (owner, preparation, report) = (self.owner, self.preparation, &mut self.report);
         let resumed = hold(owner, |engine| {
             let mut state = preparation.lock();
@@ -1021,6 +1153,40 @@ mod tests {
     }
 
     #[test]
+    fn a_pause_publishes_changed_locations_without_new_vectors() {
+        let (_dir, engine, profile) = notes();
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let provider = Sizes {
+            descriptor: profile.descriptor.clone(),
+            sizes: Arc::clone(&sizes),
+            foreground: None,
+        };
+        let runtime = QueryRuntime::start(
+            profile,
+            Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+        )
+        .unwrap();
+        let owner = Quiet(Mutex::new(engine));
+        let preparation = Preparation::default();
+        preparation.lock().phase = Phase::Running;
+        let control = Control::unbounded();
+        let mut run = Run::new(&owner, &runtime, &preparation, &control);
+        run.begin().unwrap();
+        assert!(matches!(run.passes().unwrap(), Stop::Complete));
+        assert_eq!(run.published, 12);
+        assert_eq!(run.unpublished, 0);
+        owner.0.lock().unwrap().delete_source("note00.md").unwrap();
+        preparation.pause();
+        assert!(!run.finish(Ok(paused())));
+        let engine = owner.0.lock().unwrap();
+        let status = engine.semantic_status(&control).unwrap();
+        assert_eq!(status.searchable_current_units, 11);
+        let state = engine.semantic_state().unwrap().unwrap();
+        assert_eq!(state.bootstrap.unwrap().published_entries, 11);
+        assert_eq!(sizes.lock().unwrap().iter().sum::<usize>(), 12);
+    }
+
+    #[test]
     fn partition_computation_releases_the_engine_slot_and_obeys_pause_and_shutdown() {
         struct Available {
             engine: Mutex<Engine>,
@@ -1090,17 +1256,17 @@ mod tests {
             );
             let control = Control::unbounded();
             let result = Run::new(&*owner, &runtime, &preparation, &control)
-                .partition_pass()
+                .partition_wave(&mut prepare::SourceCursor::default())
                 .unwrap();
             crate::fault::disarm_all();
             assert!(entered.load(Ordering::SeqCst));
             let engine = owner.engine.lock().unwrap();
             if stop == "none" {
-                assert!(result.is_none());
+                assert!(!matches!(result, Progress::Halted(_)));
                 assert!(engine.semantic_partition("note00.md").unwrap().is_some());
             } else {
                 assert!(
-                    matches!(result, Some(Stop::Partial { code, .. }) if code == if stop == "pause" { "paused" } else { "cancelled" })
+                    matches!(result, Progress::Halted(Stop::Partial { code, .. }) if code == if stop == "pause" { "paused" } else { "cancelled" })
                 );
                 assert!(engine.semantic_partition("note00.md").unwrap().is_none());
             }

@@ -62,6 +62,7 @@ macro_rules! status_fault {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SemanticStatus {
+    pub bootstrap: Option<cache::BootstrapProgress>,
     pub workspace_id: Option<String>,
     pub source_revision: u64,
     pub profile: Option<ProfileIdentity>,
@@ -261,6 +262,7 @@ impl Engine {
                 .map(|state| state.state.clone())
                 .unwrap_or_else(|| "stopped".into()),
             last_error: state.as_ref().and_then(|state| state.last_error.clone()),
+            bootstrap: state.as_ref().and_then(|state| state.bootstrap.clone()),
             sources,
             unpartitioned_sources: unpartitioned,
             partition_coverage,

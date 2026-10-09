@@ -232,6 +232,9 @@ enum SemanticAction {
             value_parser = clap::value_parser!(u64).range(1..)
         )]
         cache_cap: Option<u64>,
+        /// Prioritize an admitted source file or subtree; repeat up to 16 times.
+        #[arg(long = "priority", value_name = "PATH")]
+        priority_paths: Vec<String>,
     },
     /// Metadata-only readiness: never loads the tokenizer, the worker, the
     /// model or a broken profile.
@@ -1242,11 +1245,12 @@ fn semantic_run(
             budget_seconds,
             development_isolation,
             cache_cap,
+            priority_paths,
         } => {
             #[cfg(feature = "semantic")]
             {
                 let control = live_control();
-                let report = crate::neural::prepare::cli_prepare(
+                let report = crate::neural::prepare::cli_prepare_with_priorities(
                     store,
                     &profile,
                     budget_seconds,
@@ -1254,6 +1258,7 @@ fn semantic_run(
                     cache_cap.unwrap_or(crate::neural::cache::DEFAULT_CACHE_CAP_BYTES),
                     started,
                     &control,
+                    &priority_paths,
                 )?;
                 println!("{}", serde_json::to_string_pretty(&report)?);
                 if let Some(error) = report.error() {
@@ -1267,6 +1272,7 @@ fn semantic_run(
                     budget_seconds,
                     development_isolation,
                     cache_cap,
+                    priority_paths,
                     started,
                 );
                 return Err(FoundryError::Semantic {

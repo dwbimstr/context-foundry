@@ -149,9 +149,9 @@ tokens with 008 (661 after 007 T001; 598 after T006; ceiling 800).
 schema still lists `include_memory`. Tool descriptions, exactly:
 
 ~~~text
-search: Use BEFORE grep/rg to find code in the indexed repo(s): one line per hit with a handle, line, symbol and matching text. Follow handles with retrieve. Indexed snapshot, not live disk.
-context: Use INSTEAD of exploratory file reads: one budgeted, cited bundle of the most relevant symbols (verbatim, or signatures when large), graph edges and file outlines.
-retrieve: Read exact indexed source for a handle. `lines` narrows to a line range; `view:"outline"` returns a skeleton with elided line ranges. Stale handles are rejected.
+search: Use BEFORE grep/rg for indexed code: one line per hit with handle, line, symbol and match. Follow handles with retrieve. Indexed snapshot, not live disk.
+context: Use INSTEAD of exploratory file reads: budgeted, cited symbols (verbatim or signatures when large), graph edges and outlines.
+retrieve: Read exact indexed source by handle; stale handles rejected. `lines`: line range; `view:"outline"`: skeleton with elided line ranges.
 index: Re-index after edits: the bound repo, or an admitted reference root via `root`.
 status: Revision, pending work, index/scan state and coverage for each admitted root.
 memory: Explicit project memory records.

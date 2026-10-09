@@ -1459,7 +1459,7 @@ impl FoundryMcp {
 
     #[tool(
         name = "search",
-        description = "Use BEFORE grep/rg to find code in the indexed repo(s): one line per hit with a handle, line, symbol and matching text. Follow handles with retrieve. Indexed snapshot, not live disk.",
+        description = "Use BEFORE grep/rg for indexed code: one line per hit with handle, line, symbol and match. Follow handles with retrieve. Indexed snapshot, not live disk.",
         input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4096},"limit":{"type":"integer","minimum":1,"maximum":64,"default":10},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":1024},"path":{"type":"string","minLength":1},"roots":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":9,"uniqueItems":true}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -1543,7 +1543,7 @@ impl FoundryMcp {
 
     #[tool(
         name = "context",
-        description = "Use INSTEAD of exploratory file reads: one budgeted, cited bundle of the most relevant symbols (verbatim, or signatures when large), graph edges and file outlines.",
+        description = "Use INSTEAD of exploratory file reads: budgeted, cited symbols (verbatim or signatures when large), graph edges and outlines.",
         input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4096},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":2048},"strategy":{"type":"string","enum":["auto","search","graph"],"default":"auto"},"roots":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":9,"uniqueItems":true},"include_memory":{"type":"boolean"}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -1727,7 +1727,7 @@ impl FoundryMcp {
 
     #[tool(
         name = "retrieve",
-        description = r#"Read exact indexed source for a handle. `lines` narrows to a line range; `view:"outline"` returns a skeleton with elided line ranges. Stale handles are rejected."#,
+        description = r#"Read exact indexed source by handle; stale handles rejected. `lines`: line range; `view:"outline"`: skeleton with elided line ranges."#,
         input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["handle"],"properties":{"handle":{"type":"string","maxLength":4200},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":2048},"lines":{"type":["string","array"],"pattern":"^[1-9][0-9]*(-[1-9][0-9]*)?$","items":{"type":"integer"}},"view":{"type":"string","enum":["text","outline"],"default":"text"}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -1850,7 +1850,7 @@ impl FoundryMcp {
     #[tool(
         name = "index",
         description = "Re-index after edits: the bound repo, or an admitted reference root via `root`.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"},"scip":{"type":"object","additionalProperties":false,"required":["index_file","snapshot_file"],"properties":{"index_file":{"type":"string"},"snapshot_file":{"type":"string"}}},"semantic":{"enum":["prepare","pause"]}}}"#),
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"},"scip":{"type":"object","additionalProperties":false,"required":["index_file","snapshot_file"],"properties":{"index_file":{"type":"string"},"snapshot_file":{"type":"string"}}},"semantic":{"enum":["prepare","pause"]},"priority_paths":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":4096}}}}"#),
         // `index` writes only Foundry's own store for the bound root; it
         // never modifies workspace files, and re-indexing converges.
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
@@ -1860,7 +1860,10 @@ impl FoundryMcp {
         ctx: RequestContext<RoleServer>,
         arguments: JsonObject,
     ) -> Result<CallToolResult, ErrorData> {
-        if let Err(e) = unknown_fields(&arguments, &["timeout_ms", "root", "scip", "semantic"]) {
+        if let Err(e) = unknown_fields(
+            &arguments,
+            &["timeout_ms", "root", "scip", "semantic", "priority_paths"],
+        ) {
             return Ok(foundry_error_result(&e));
         }
         // 009 T003: `semantic` starts/resumes or pauses the owner's
@@ -1886,7 +1889,31 @@ impl FoundryMcp {
                 ) {
                     return Ok(foundry_error_result(&e));
                 }
-                return Ok(self.index_semantic(&ctx, action == "prepare").await);
+                let priorities = match arguments.get("priority_paths") {
+                    Some(value) if action == "prepare" => {
+                        match serde_json::from_value::<Vec<String>>(value.clone()) {
+                            Ok(paths) => Some(paths),
+                            Err(_) => {
+                                return Ok(error_result(
+                                    "invalid_argument",
+                                    "priority_paths must be an array of relative paths",
+                                    false,
+                                ));
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        return Ok(error_result(
+                            "invalid_argument",
+                            "priority_paths requires semantic prepare",
+                            false,
+                        ));
+                    }
+                    None => None,
+                };
+                return Ok(self
+                    .index_semantic(&ctx, action == "prepare", priorities)
+                    .await);
             }
             Some(serde_json::Value::Null) => {
                 return Ok(error_result(
@@ -1902,6 +1929,13 @@ impl FoundryMcp {
                     false,
                 ));
             }
+        }
+        if arguments.contains_key("priority_paths") {
+            return Ok(error_result(
+                "invalid_argument",
+                "priority_paths requires semantic prepare",
+                false,
+            ));
         }
         // `root` re-indexes one admitted alias through its own store
         // (default `primary`), validated before dispatch: a root whose
@@ -2272,6 +2306,9 @@ impl FoundryMcp {
                         &runtime,
                         control,
                     )?;
+                    if let Some(progress) = preparation.progress() {
+                        value["semantic"]["bootstrap"] = serde_json::to_value(progress)?;
+                    }
                 }
                 #[cfg(not(feature = "semantic"))]
                 let _ = (&semantic, control);
@@ -2512,6 +2549,7 @@ impl FoundryMcp {
         &self,
         ctx: &RequestContext<RoleServer>,
         prepare: bool,
+        priority_paths: Option<Vec<String>>,
     ) -> CallToolResult {
         #[cfg(feature = "semantic")]
         {
@@ -2536,7 +2574,8 @@ impl FoundryMcp {
             let preparation = Arc::clone(&self.state.preparation);
             if prepare {
                 let owner: Arc<dyn crate::neural::driver::Owner> = self.state.clone();
-                if let Err(e) = preparation.prepare(owner, runtime) {
+                if let Err(e) = preparation.prepare_with_priorities(owner, runtime, priority_paths)
+                {
                     return foundry_error_result(&e);
                 }
             } else {
@@ -2568,7 +2607,7 @@ impl FoundryMcp {
         }
         #[cfg(not(feature = "semantic"))]
         {
-            let _ = (ctx, prepare);
+            let _ = (ctx, prepare, priority_paths);
             foundry_error_result(&refuse_unsupported_semantic())
         }
     }

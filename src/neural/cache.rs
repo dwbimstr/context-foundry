@@ -176,6 +176,28 @@ pub struct SemanticState {
     /// The last provider state a preparation run observed, if any.
     #[serde(default)]
     pub provider: Option<ProviderObservation>,
+    /// Last completed/paused run's stage accounting; older rows have none.
+    #[serde(default)]
+    pub bootstrap: Option<BootstrapProgress>,
+}
+
+/// Observed run accounting, not a model/device throughput estimate. Provider wait
+/// overlaps card prefetch, so durations are not additive CPU/device utilization.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct BootstrapProgress {
+    pub waves: u64,
+    pub priority_waves: u64,
+    pub partition_compute_ms: u64,
+    pub render_ms: u64,
+    pub provider_ms: u64,
+    pub publication_ms: u64,
+    pub generation_builds: u64,
+    pub published_entries: u64,
+    pub first_searchable_ms: Option<u64>,
+    pub elapsed_ms: u64,
+    pub reused_cached_units: u64,
+    pub embedded_units: u64,
+    pub input_tokens: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -232,19 +254,66 @@ pub(crate) fn source_page(
     db: &Database,
     after: Option<&str>,
 ) -> FResult<Vec<(String, SourceMeta)>> {
+    source_page_in(db, after, None)
+}
+
+/// One path or subtree, preserving the same ordered source cursor. No siblings
+/// are enumerated for an explicitly requested area.
+pub(crate) fn source_page_in(
+    db: &Database,
+    after: Option<&str>,
+    scope: Option<&str>,
+) -> FResult<Vec<(String, SourceMeta)>> {
     let tx = db.begin_read()?;
     let sources = tx.open_table(SOURCES)?;
-    let rows = match after {
-        None => sources.range::<&str>(..)?,
-        Some(key) => sources.range::<&str>((Bound::Excluded(key), Bound::Unbounded))?,
-    };
     let mut page = Vec::with_capacity(PAGE);
-    for row in rows.take(PAGE) {
+    let prefix = scope.map(|path| format!("{path}/"));
+    if after.is_none()
+        && let Some(path) = scope
+        && let Some(raw) = sources.get(path)?
+    {
+        page.push((path.to_owned(), decode(raw.value(), "source")?));
+    }
+    let start = match (after, prefix.as_deref()) {
+        (Some(key), Some(prefix)) if key < prefix => Bound::Included(prefix),
+        (Some(key), _) => Bound::Excluded(key),
+        (None, Some(prefix)) => Bound::Included(prefix),
+        (None, None) => Bound::Unbounded,
+    };
+    for row in sources
+        .range::<&str>((start, Bound::Unbounded))?
+        .take(PAGE - page.len())
+    {
         let (key, raw) = row?;
+        if prefix
+            .as_deref()
+            .is_some_and(|prefix| !key.value().starts_with(prefix))
+        {
+            break;
+        }
         let meta: SourceMeta = decode(raw.value(), "source")?;
         page.push((key.value().to_owned(), meta));
     }
     Ok(page)
+}
+
+/// Publication visits prepared rows, so a cold first wave does not census every
+/// unprepared source. Keep only keys in the page; decode one partition at a time.
+#[cfg(feature = "semantic")]
+pub(crate) fn partition_paths(db: &Database, after: Option<&str>) -> FResult<Vec<String>> {
+    let tx = db.begin_read()?;
+    let partitions = tx.open_table(PARTITIONS)?;
+    let start = after.map_or(Bound::Unbounded, Bound::Excluded);
+    partitions
+        .range::<&str>((start, Bound::Unbounded))?
+        .take(PAGE)
+        .map(|row| Ok(row?.0.value().to_owned()))
+        .collect()
+}
+
+#[cfg(feature = "semantic")]
+pub(crate) fn source_count(db: &Database) -> FResult<u64> {
+    Ok(db.begin_read()?.open_table(SOURCES)?.len()?)
 }
 
 /// Create the three semantic tables (initialization and the v5 upgrade).

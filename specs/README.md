@@ -22,8 +22,8 @@ search over retained originals. The owner's subsequent large-repository directio
 reactivates 010 for source-bound LLM knowledge and selects 001 T011 (watching),
 009 T006/T007 (parallel/progressive bootstrap), 005 T005 (boundary relationships)
 and 003 T009 (task evidence). 001 T011 now implements opt-in primary-root watching,
-bounded change reconciliation and foreground priority; 009 T007 is the next build
-increment. See the revised build order in the ecosystem plan.
+bounded change reconciliation and foreground priority; 009 T007 now adds progressive
+waves and priority paths. Governed 010 generation is the next build increment. See the revised build order in the ecosystem plan.
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.
 

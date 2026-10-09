@@ -116,6 +116,7 @@ impl Env {
         let report = prepare::run(
             &self.store,
             &PrepareOptions {
+                priority_paths: &[],
                 profile_path: &profile,
                 budget_seconds,
                 development: false,
@@ -136,6 +137,7 @@ impl Env {
         let error = prepare::run(
             &self.store,
             &PrepareOptions {
+                priority_paths: &[],
                 profile_path: &profile,
                 budget_seconds,
                 development: false,
@@ -187,6 +189,7 @@ fn run_once(store: &Path, profile: &Path, slot: &mut Option<Engine>) -> (u64, Pr
     let report = prepare::run(
         store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: profile,
             budget_seconds: 60,
             development: false,
@@ -527,6 +530,7 @@ fn short_and_nonfinite_vectors_preserve_valid_data() {
         let report = prepare::run(
             &store,
             &PrepareOptions {
+                priority_paths: &[],
                 profile_path: &profile,
                 budget_seconds: 60,
                 development: false,
@@ -1540,6 +1544,7 @@ fn caller_cancellation_reaches_the_provider_call() {
     let report = prepare::run(
         &env.store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: &profile,
             budget_seconds: 60,
             development: false,
@@ -2104,6 +2109,7 @@ fn purge_and_publication_follow_the_bound_store_not_a_substituted_ancestor() {
     let report = prepare::run(
         &store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: &profile,
             budget_seconds: 60,
             development: false,
@@ -2240,6 +2246,7 @@ fn artifact_verification_obeys_caller_cancellation() {
     let report = prepare::run(
         &env.store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: &profile,
             budget_seconds: 60,
             development: false,
@@ -2401,6 +2408,7 @@ fn status_reports_the_last_provider_observation_never_a_live_probe() {
     let error = prepare::run(
         &refused.store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: &profile,
             budget_seconds: 60,
             development: false,
@@ -2493,6 +2501,7 @@ fn a_v1_profile_is_refused_by_name_and_its_retained_data_is_kept() {
     let error = prepare::run(
         &env.store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: &v1,
             budget_seconds: 60,
             development: false,
@@ -2528,4 +2537,60 @@ fn a_v1_profile_is_refused_by_name_and_its_retained_data_is_kept() {
         .unwrap();
     assert_eq!(report.removed_cache_entries, 1);
     assert_eq!(report.removed_generation_dirs, 1);
+}
+
+#[test]
+fn progressive_cli_priority_and_background_publish_before_the_corpus_is_partitioned() {
+    use context_foundry::fault::{self, Action};
+    let sources: Vec<_> = (0..64)
+        .map(|n| {
+            (
+                format!("{}/{n:03}.md", if n < 32 { "a" } else { "z" }),
+                body(100 + n),
+            )
+        })
+        .collect();
+    let borrowed: Vec<_> = sources
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect();
+    let mut env = Env::new(&borrowed);
+    let control = Control::unbounded();
+    // Initial empty publication, first priority wave, then first background
+    // wave. Cancel after the second nonempty publication has reached disk.
+    fault::arm(prepare::fault_names::AFTER_PUBLISH, 2, Action::Cancel);
+    env.close();
+    let report = prepare::run(
+        &env.store,
+        &PrepareOptions {
+            profile_path: &env.profile,
+            budget_seconds: 60,
+            development: false,
+            cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+            started: Instant::now(),
+            control: &control,
+            priority_paths: &["z".to_owned()],
+        },
+        env.factory.acquire(),
+    )
+    .unwrap();
+    fault::disarm_all();
+    assert_eq!(report.reason_code, Some("cancelled"));
+    assert_eq!(report.bootstrap.waves, 2);
+    assert_eq!(report.bootstrap.priority_waves, 1);
+    assert_eq!(report.bootstrap.generation_builds, 2);
+    assert_eq!(report.embedded_units, 16);
+    let status = env.status();
+    assert_eq!(status.searchable_current_units, 16);
+    assert_eq!(status.unpartitioned_sources, 48);
+    assert!(env.open().semantic_partition("z/032.md").unwrap().is_some());
+    assert!(env.open().semantic_partition("a/000.md").unwrap().is_some());
+    assert!(env.open().semantic_partition("a/031.md").unwrap().is_none());
+    let resumed = env.prepare(60);
+    assert_eq!(resumed.embedded_units, 48);
+    assert_eq!(env.status().searchable_current_units, 64);
+    assert!(
+        resumed.bootstrap.generation_builds <= 3,
+        "geometric publication: {resumed:?}"
+    );
 }

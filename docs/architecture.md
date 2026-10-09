@@ -343,7 +343,14 @@ parallel CPU computation and source-hash-checked commits. At most eight verified
 source bodies (16 MiB of input) enter a wave, with at most eight CPU workers.
 Tokenization holds neither a store transaction nor the MCP engine slot; acceptance
 still refuses changed/deleted inputs. Model inference keeps its existing admission
-rules. Whole-corpus partition and ANN publication barriers remain for 009 T007.
+rules. Experimental 009 T007 interleaves partition/select/embed waves, alternates
+explicit priority scopes with the ordinary walk, and publishes the first accepted
+batch before unprepared sources are visited. Mapping publication walks prepared
+rows; geometric growth amortizes full USearch builds without a new segment format.
+One prefetch can prepare one more wave while the provider runs. Bounded pending
+keys prevent duplicate calls where priority/background waves overlap. Status exposes
+partial coverage and stage accounting; exact-profile cache reuse survives restart.
+See [usage and limits](experimental-context.md#progressive-semantic-bootstrapping).
 
 The owner's 2026-10-09 scale direction also reactivates 010 for source-bound LLM
 briefs and area summaries. T001 now implements explicit structured-brief import,

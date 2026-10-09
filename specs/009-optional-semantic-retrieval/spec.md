@@ -1190,9 +1190,10 @@ watching and LLM enrichment remain separate work in the revised ecosystem plan.
 
 ### T007 — Make semantic bootstrap useful before a complete corpus pass
 
-Selected 2026-10-09; not implemented. T006 removes CPU computation from serving and
-writer locks, but the current whole-source partition pass and generation publication
-still delay first semantic coverage. Replace these barriers with bounded waves of
+Selected 2026-10-09; progressive scheduling/publication implemented experimentally,
+with device tuning and real throughput still unverified. T006 removes CPU computation
+from serving and writer locks. Replace the whole-source partition and initial
+generation barriers with bounded waves of
 partition/select/embed/commit and amortized searchable publication, preserving exact
 source/input identity and resumability. Do not rebuild a full ANN generation after
 every small batch; justify segmented or delta publication against the current USearch
@@ -1214,3 +1215,22 @@ Verify that the first bounded wave is searchable while later sources remain
 unprepared, edits invalidate immediately, restarts reuse accepted work, and background
 progress neither starves queries nor spins while paused. Record real throughput when
 the selected runtime/device is available; do not extrapolate a fake provider's speed.
+
+
+T007 implementation (experimental): [prepare.rs](../../src/neural/prepare.rs) and
+[driver.rs](../../src/neural/driver.rs) compose up to eight new partitions with
+selection/embedding, alternate at most 16 priority cursors with a general cursor,
+and keep one provider call plus one bounded prefetch. Priority revisits use the
+cache or pending-key exclusion, not duplicate inference. No durable cursor is needed:
+restart replays accepted partition/cache state. [index.rs](../../src/neural/index.rs)
+walks prepared keys and compares current-partition count/source revision for complete
+coverage, publishing first coverage and then geometric growth plus final scope.
+Retaining the existing generation format avoids a second persisted owner, query
+fusion and recovery protocol; bounded logical metadata/vector/serialization payloads
+fail with `resource_limit` while accepted work stays. A full generation still needs
+memory and rebuild time. Segmentation is not ruled out if later device/scale evidence
+requires it. [Usage and accounting](../../docs/experimental-context.md#progressive-semantic-bootstrapping)
+separate coverage from live/last-run stage counters. Existing token geometry, vector
+meaning, model ownership and foreground hysteresis remain unchanged. Reusable CPU
+pools, different model batches, device-pressure admission and 010 generation controls
+need their own runtime evidence; this increment does not claim them completed.
