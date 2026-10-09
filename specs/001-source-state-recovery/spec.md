@@ -716,7 +716,7 @@ proxies, they can resolve to a different compiler.
 
 ### T011 — Maintain the admitted workspace from filesystem change hints
 
-Selected 2026-10-09 for the experimental ecosystem; not implemented. The owner
+Implemented locally 2026-10-09 for the experimental ecosystem. The owner
 requires continuous incremental maintenance at 60,000–80,000 files. Reuse this spec's
 source ingestion, ignore/no-follow and reconciliation rules. Watch events do not
 admit roots, certify bytes or become a second source ledger.
@@ -741,3 +741,42 @@ Reference: Prakarana `3143213d`, `src/internal/workspace.cpp`,
 `docs/design/watcher-efficiency.md`, `test_watch_scan_efficiency.cpp` and
 `test_watcher_delete_floor.cpp`, inspected without execution. Preserve the live-update
 capability while avoiding its documented repeated full-scan/transient-budget failure.
+
+Implementation: [`watch.rs`](../../src/watch.rs), `ingest::{ChangeReader,ChangeScan}`,
+`store::{sweep_unseen_page,refresh_index_page}` and the existing `mcp::Shared` owner.
+`mcp --watch` is explicit and primary-only on both existing transports. `notify` 8.2
+owns native registration, with symlink following disabled. One owned Rust driver
+uses the same foreground-prioritized engine slot as semantic preparation; source
+maintenance takes priority over optional preparation. No new service, store table,
+schema, model call or root discovery is introduced.
+
+The queue coalesces subtree prefixes, bounds itself to 2,048 paths / 1 MiB path text,
+and collapses overflow into one root marker. Debounce is 75 ms with a one-second
+maximum. Native access reads and store/build-directory noise do not enqueue work.
+Every startup begins dirty, replacing a durable event journal. Policy hints and
+overflow change a reconciliation epoch; superseded walks cannot sweep. Explicit
+indexing supersedes background scans through the existing scan ID.
+
+Known-file updates use held-root, descriptor-relative no-follow reads, check file
+identity/size/mtime/ctime before and after reading and recheck the named inode before
+publication. Scoped walks use the same ignore library as full indexing. New-file
+admission may enumerate sibling metadata to retain ignore precedence; it reads only
+the requested file's body. Failed walks never sweep unseen sources. Seen marks use
+existing redb rows, buffered in pages of 128. Source commits and index refresh reuse
+existing freshness and crash-recovery rules, including source-dependent briefs.
+
+One step processes one walk entry/file, 128 sweep keys or eight lexical keys. During
+long walks and busy edit queues lexical pages publish every 32 source steps;
+remaining index work drains when hints settle. Cancellation is cooperative between
+these steps; an individual OS call or commit is not a hard latency bound. Read failures retry after 2–30 seconds
+with a visible error. The queue bound excludes OS/native-library registrations.
+Status exposes pending work, overflows, last success and sticky backend errors.
+
+Intentional differences from the pinned Prakarana implementation: native hints drive
+maintenance, idle ticks do not read source bodies, no periodic all-source treadmill,
+and no separate ledger/graph service. Notification loss without a rescan signal is
+not detectable: explicit indexing or restart reconciles it. Ignore files outside the
+root need the same explicit action. Backend errors are visible and need owner restart
+to re-register. Linux native event and synthetic large-workspace evidence is recorded
+in [validation](../../docs/validation.md); macOS, network filesystems, 80,000-file
+throughput and model preparation speed are not inferred from those tests.

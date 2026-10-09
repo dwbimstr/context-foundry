@@ -467,37 +467,16 @@ pub fn index(engine: &mut Engine, root: &Path, control: &Control) -> FResult<Ind
                 continue;
             }
         };
-        let excluded = if bytes.len() > MAX_SOURCE_BYTES {
-            Some("over 2 MiB")
-        } else if bytes.contains(&0) {
-            Some("binary NUL")
-        } else if std::str::from_utf8(&bytes).is_err() {
-            Some("not UTF-8")
-        } else {
-            None
+        let content = match source_content(&bytes) {
+            Ok(content) => content,
+            Err(reason) => {
+                report.deleted += u64::from(engine.delete_source(&rel)?);
+                report.excluded += 1;
+                push_sample(&mut report.exclusion_samples, format!("{rel}: {reason}"));
+                continue;
+            }
         };
-        if let Some(reason) = excluded {
-            report.deleted += u64::from(engine.delete_source(&rel)?);
-            report.excluded += 1;
-            push_sample(&mut report.exclusion_samples, format!("{rel}: {reason}"));
-            continue;
-        }
-        let Ok(content) = String::from_utf8(bytes) else {
-            continue;
-        };
-        // A narrow deny rule, not a claim that arbitrary prose secrets can be detected.
-        if content.contains("-----BEGIN PRIVATE KEY-----")
-            || content.contains("-----BEGIN RSA PRIVATE KEY-----")
-        {
-            report.deleted += u64::from(engine.delete_source(&rel)?);
-            report.excluded += 1;
-            push_sample(
-                &mut report.exclusion_samples,
-                format!("{rel}: private key marker"),
-            );
-            continue;
-        }
-        if engine.replace_source(&rel, &content)? {
+        if engine.replace_source(&rel, content)? {
             report.changed += 1;
         } else {
             report.unchanged += 1;
@@ -594,6 +573,297 @@ pub fn index(engine: &mut Engine, root: &Path, control: &Control) -> FResult<Ind
         None
     };
     Ok(report)
+}
+
+/// One held root reused by the watcher. Paths are hints, never trusted bytes.
+pub(crate) struct ChangeReader {
+    pub(crate) root: std::path::PathBuf,
+    root_fd: std::fs::File,
+    store: std::path::PathBuf,
+}
+
+impl ChangeReader {
+    pub(crate) fn new(engine: &Engine, root: &Path) -> FResult<Self> {
+        let root = engine.verify_binding(root)?;
+        let root_fd = held::open_root(&root).map_err(OpenFailure::into_root_error)?;
+        held::root_still_bound(&root_fd, &root).map_err(OpenFailure::into_root_error)?;
+        Ok(Self {
+            root,
+            root_fd,
+            store: engine.directory().to_path_buf(),
+        })
+    }
+    pub(crate) fn check_root(&self) -> FResult<()> {
+        held::root_still_bound(&self.root_fd, &self.root).map_err(OpenFailure::into_root_error)
+    }
+    /// Known file edits avoid walking siblings. Unknown paths use the same ignore
+    /// walker as explicit indexing; a symlink/directory replacement is a scoped walk.
+    pub(crate) fn direct(&self, engine: &Engine, path: &str) -> FResult<bool> {
+        if engine.source(path)?.is_none() {
+            return Ok(false);
+        }
+        self.check_root()?;
+        match std::fs::symlink_metadata(self.root.join(path)) {
+            Ok(meta) => Ok(meta.is_file()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(_) => Ok(true), // the descriptor read below reports the named failure
+        }
+    }
+    pub(crate) fn update(
+        &self,
+        engine: &Engine,
+        path: &str,
+        control: &Control,
+    ) -> FResult<ChangeCounts> {
+        crate::store::validate_path(path)?;
+        control.check()?;
+        self.check_root()?;
+        let parts: Vec<&str> = path.split('/').collect();
+        fault!(WATCH_BEFORE_OPEN, Some(engine), Some(control), path)?;
+        let mut file = match held::open_relative(&self.root_fd, &parts) {
+            Ok(file) => file,
+            Err(OpenFailure::SourceChanged(_)) => {
+                // Absence is verified through no-follow ancestors, not inferred
+                // from a remove hint. A permission/symlink error cannot delete.
+                self.check_root()?;
+                control.check()?;
+                return Ok(ChangeCounts {
+                    deleted: u64::from(engine.delete_source(path)?),
+                    ..Default::default()
+                });
+            }
+            Err(failure) => return Err(change_error(path, failure)),
+        };
+        let before = file.metadata()?;
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take((MAX_SOURCE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
+        fault!(WATCH_AFTER_READ, Some(engine), Some(control), path)?;
+        let after = file.metadata()?;
+        let named = held::open_relative(&self.root_fd, &parts)
+            .map_err(|f| change_error(path, f))?
+            .metadata()?;
+        if !same_file(&before, &after) || !same_file(&after, &named) {
+            return Err(change_error(
+                path,
+                OpenFailure::SourceChanged("file changed during refresh".into()),
+            ));
+        }
+        self.check_root()?;
+        control.check()?;
+        let content = if matches!(
+            path.rsplit('/').next(),
+            Some(".env" | "id_rsa" | "id_ed25519")
+        ) {
+            Err("sensitive filename")
+        } else {
+            source_content(&bytes)
+        };
+        match content {
+            Ok(content) => {
+                let changed = engine.replace_source(path, content)?;
+                Ok(ChangeCounts {
+                    read: 1,
+                    changed: u64::from(changed),
+                    unchanged: u64::from(!changed),
+                    ..Default::default()
+                })
+            }
+            Err(_) => Ok(ChangeCounts {
+                read: 1,
+                excluded: 1,
+                deleted: u64::from(engine.delete_source(path)?),
+                ..Default::default()
+            }),
+        }
+    }
+}
+
+fn change_error(path: &str, failure: OpenFailure) -> FoundryError {
+    FoundryError::InvalidArgument(format!("{path}: {}: {}", failure.code(), failure.detail()))
+}
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        a.dev() == b.dev()
+            && a.ino() == b.ino()
+            && a.size() == b.size()
+            && a.mtime() == b.mtime()
+            && a.mtime_nsec() == b.mtime_nsec()
+            && a.ctime() == b.ctime()
+            && a.ctime_nsec() == b.ctime_nsec()
+    }
+    #[cfg(not(unix))]
+    {
+        a.len() == b.len() && a.modified().ok() == b.modified().ok()
+    }
+}
+fn source_content(bytes: &[u8]) -> Result<&str, &'static str> {
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return Err("over 2 MiB");
+    }
+    if bytes.contains(&0) {
+        return Err("binary NUL");
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "not UTF-8")?;
+    if text.contains("-----BEGIN PRIVATE KEY-----")
+        || text.contains("-----BEGIN RSA PRIVATE KEY-----")
+    {
+        return Err("private key marker");
+    }
+    Ok(text)
+}
+
+#[derive(Default, Clone, Debug, Serialize)]
+pub(crate) struct ChangeCounts {
+    pub read: u64,
+    pub changed: u64,
+    pub unchanged: u64,
+    pub deleted: u64,
+    pub excluded: u64,
+}
+
+/// A streaming root/scoped walk. One step visits at most one yielded entry or
+/// one 128-row deletion page, with no root-sized in-memory seen set. The existing
+/// redb seen table supplies the deletion proof. Failed walks never enter sweep.
+pub(crate) struct ChangeScan {
+    reader: std::sync::Arc<ChangeReader>,
+    scope: Option<String>,
+    scan_id: u64,
+    walker: ignore::Walk,
+    sweeping: bool,
+    seen: Vec<String>,
+    after: Option<String>,
+    failed: Option<String>,
+}
+impl ChangeScan {
+    pub(crate) fn start(
+        engine: &Engine,
+        reader: std::sync::Arc<ChangeReader>,
+        scope: Option<String>,
+    ) -> FResult<Self> {
+        reader.check_root()?;
+        if let Some(path) = &scope {
+            crate::store::validate_path(path)?;
+        }
+        let scan_id = engine.begin_scan_kind(scope.is_none())?;
+        let wanted = scope.as_ref().map(|s| reader.root.join(s));
+        let store = reader.store.clone();
+        let walker = ignore::WalkBuilder::new(&reader.root)
+            .hidden(true)
+            .follow_links(false)
+            .filter_entry(move |entry| {
+                entry.path() != store
+                    && !matches!(
+                        entry.file_name().to_str(),
+                        Some("target" | "node_modules" | ".context-foundry")
+                    )
+                    && wanted.as_ref().is_none_or(|path| {
+                        path.starts_with(entry.path()) || entry.path().starts_with(path)
+                    })
+            })
+            .build();
+        Ok(Self {
+            reader,
+            scope,
+            scan_id,
+            walker,
+            sweeping: false,
+            seen: Vec::with_capacity(SEEN_PAGE),
+            after: None,
+            failed: None,
+        })
+    }
+    pub(crate) fn abort(&self, engine: &Engine) -> FResult<()> {
+        if self.scope.is_none() && engine.current_scan_id()? == self.scan_id {
+            engine.finish_scan(false)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn step(
+        &mut self,
+        engine: &Engine,
+        control: &Control,
+    ) -> FResult<(ChangeCounts, bool)> {
+        control.check()?;
+        self.reader.check_root()?;
+        if engine.current_scan_id()? != self.scan_id {
+            return Err(FoundryError::Conflict(
+                "watch reconciliation superseded by an explicit scan".into(),
+            ));
+        }
+        if !self.sweeping {
+            match self.walker.next() {
+                Some(Err(error)) => {
+                    self.failed = Some(format!("watch walk: {error}"));
+                }
+                Some(Ok(entry)) => {
+                    if let Some(error) = entry.error() {
+                        self.failed = Some(format!("watch ignore rules: {error}"));
+                    }
+                    if entry.file_type().is_some_and(|ty| ty.is_file()) {
+                        let Some(path) = entry
+                            .path()
+                            .strip_prefix(&self.reader.root)
+                            .ok()
+                            .and_then(Path::to_str)
+                        else {
+                            self.failed = Some("watch path is not relative UTF-8".into());
+                            return Ok((ChangeCounts::default(), false));
+                        };
+                        if let Err(error) = crate::store::validate_path(path) {
+                            self.failed = Some(error.to_string());
+                            return Ok((ChangeCounts::default(), false));
+                        }
+                        // Persist seen before reading: a failure cannot prove absence.
+                        self.seen.push(path.to_owned());
+                        if self.seen.len() >= SEEN_PAGE {
+                            engine.mark_seen_batch(&self.seen, self.scan_id)?;
+                            self.seen.clear();
+                        }
+                        match self.reader.update(engine, path, control) {
+                            Ok(counts) => return Ok((counts, false)),
+                            Err(error) => {
+                                self.failed = Some(error.to_string());
+                            }
+                        }
+                    }
+                }
+                None => {
+                    engine.mark_seen_batch(&self.seen, self.scan_id)?;
+                    self.seen.clear();
+                    if let Some(reason) = &self.failed {
+                        self.abort(engine)?;
+                        return Err(FoundryError::InvalidArgument(reason.clone()));
+                    }
+                    self.sweeping = true;
+                }
+            }
+            return Ok((ChangeCounts::default(), false));
+        }
+        // Recheck the held root before EVERY deletion page. The caller also
+        // cancels this scan if ignore/overflow hints changed its admission epoch.
+        let (deleted, after) = engine.sweep_unseen_page(
+            self.scan_id,
+            self.scope.as_deref(),
+            self.after.as_deref(),
+            control,
+        )?;
+        let done = after.is_none();
+        self.after = after;
+        if done && self.scope.is_none() {
+            engine.finish_scan(true)?;
+        }
+        Ok((
+            ChangeCounts {
+                deleted,
+                ..Default::default()
+            },
+            done,
+        ))
+    }
 }
 
 #[cfg(test)]

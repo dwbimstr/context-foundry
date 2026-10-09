@@ -2271,6 +2271,7 @@ async fn a_policy_chosen_graph_reaches_the_reference_root_holding_the_definition
             budget: context_foundry::config::BudgetConfig::default(),
             no_memory: false,
             experimental_task_context: false,
+            watch: false,
             semantic: None,
             policy: Some(PolicyServing::with_worker_args(
                 config.clone(),

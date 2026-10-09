@@ -28,6 +28,9 @@ pub enum AdapterCommand {
         /// Enable explicit experimental task state and reversible views.
         #[arg(long)]
         experimental_task_context: bool,
+        /// Watch the admitted primary repository for source changes.
+        #[arg(long)]
+        watch: bool,
         /// Repository root; canonicalized and bound once.
         #[arg(long)]
         root: PathBuf,
@@ -225,6 +228,7 @@ fn serve_mcp(
     retrieval_trace_dir: Option<PathBuf>,
     experimental_behavior_context: bool,
     experimental_task_context: bool,
+    watch: bool,
 ) -> AResult<()> {
     let budget = read_budget(budget.as_deref())?;
     let mut parsed = Vec::with_capacity(references.len());
@@ -243,6 +247,7 @@ fn serve_mcp(
         retrieval_trace_dir,
         experimental_behavior_context,
         experimental_task_context,
+        watch,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -330,6 +335,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             retrieval_trace_dir,
             experimental_behavior_context,
             experimental_task_context,
+            watch,
             root,
             transport,
             bind,
@@ -359,6 +365,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             retrieval_trace_dir,
             experimental_behavior_context,
             experimental_task_context,
+            watch,
         )?,
         AdapterCommand::Bootstrap {
             root,

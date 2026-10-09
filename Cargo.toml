@@ -102,6 +102,7 @@ usearch = { version = "=2.26.2", optional = true }
 # the LibTorch tree at build time; build.rs records its lib directory as
 # the rpath of every linked target, so nothing depends on DYLD_LIBRARY_PATH.
 tch = { version = "=0.24.0", optional = true }
+notify = "8.2.0"
 
 [features]
 default = ["semantic"]

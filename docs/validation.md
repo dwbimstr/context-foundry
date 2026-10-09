@@ -1,5 +1,55 @@
 # Validation
 
+## Incremental primary-root watching — 2026-10-09
+
+[001 T011](../specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints)
+adds explicit `mcp --watch` on the existing stdio/shared-HTTP owner. Native `notify`
+events feed a bounded, coalescing queue in [watch.rs](../src/watch.rs); the held-root
+reader and streaming reconciler in [ingest.rs](../src/ingest.rs) publish through the
+existing source transactions, seen marks and pending lexical index. No schema change
+or additional service is required. [Usage and recovery](experimental-context.md#incremental-workspace-watching)
+describe source delay, status, startup reconciliation and platform limits.
+
+Executed Linux/Rust 1.90.0 sandbox evidence:
+
+- Ten watcher unit tests cover 10,000 duplicate hints, path/byte overflow, read and
+  store-event noise, ignore precedence, subtree deletion boundaries, incomplete and
+  superseded scans, edits during reads, cancellation, symlink/root replacement,
+  deliberately lost hints followed by rescan/restart, visible error backoff, and
+  handle/brief invalidation before lexical drain. A busy known-file queue publishes
+  searchable changes before its hints drain. A deterministic MCP owner test
+  holds a watcher step while a foreground request waits and verifies source work
+  yields to foreground admission.
+- Four real SDK integration tests in [tests/watch.rs](../tests/watch.rs) pass. Native
+  events drive atomic saves, new files, directory moves/deletes and ignore edits.
+  Prior handles become stale. A killed stdio owner recovers edits, deletion and new
+  files made offline. Default-off behavior, HTTP primary-only maintenance, reference
+  isolation, bind-failure cleanup and clean store release pass.
+- A synthetic **6,000-file** workspace starts from an empty store. Foreground status
+  succeeds during partial reconciliation; after convergence the watcher reports
+  exactly 6,000 source reads. A known-file edit needs at most three additional body
+  reads (allowing duplicate native hints), causes no new root reconciliation, and is
+  searchable. Both observed quiet intervals add zero source reads. This fixture
+  verifies work selection and coexistence, not 80,000-file throughput or a speedup.
+- The shared drain now checks pending work before treating a zero source/memory
+  count as completion: briefs can occupy an entire page. A regression with 129
+  pending briefs followed by source work drains completely and preserves public
+  source/memory counters. All 18 brief tests pass.
+- Final `cargo test --locked --no-fail-fast`: **880 passed, zero failed, two existing
+  model/hardware measurements ignored**, plus all scenarios in the separate recovery
+  runner. Source stayed fixed during this full run; subsequent warning cleanup only
+  renamed a fault-hook parameter and gated the semantic-only status helper.
+- `cargo clippy --locked --all-targets -- -D warnings`,
+  `cargo check --locked --all-targets`, the build without default features,
+  `cargo fmt --all --check`, Markdown link/anchor checks and `git diff --check` pass.
+
+Self-review only. No embedding/generation provider, real-host task-quality trial,
+macOS/native-network-filesystem validation or release promotion ran. Native watch
+registration memory is outside the queue bound. Notifications silently lost without
+a rescan signal and ignore-policy files outside the root need explicit indexing or
+owner restart; there is no periodic all-source polling. The next selected increment
+is progressive semantic bootstrap (009 T007).
+
 ## Source-bound brief import and conceptual discovery — 2026-10-09
 
 [010 T001](../specs/010-source-bound-derived-knowledge/spec.md) is implemented on the

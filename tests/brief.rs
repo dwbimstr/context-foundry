@@ -41,6 +41,24 @@ fn drain(engine: &mut Engine) {
         engine.refresh_index(&Control::unbounded()).unwrap();
     }
 }
+
+#[test]
+fn refresh_drains_source_work_after_a_full_page_of_briefs() {
+    let env = env();
+    let mut engine = Engine::open_existing(&env.store).unwrap();
+    for i in 0..129 {
+        let mut brief = input(&env.wid);
+        brief["recipe_sha256"] = format!("{i:064x}").into();
+        call(&engine, json!({"op":"put","brief":brief})).unwrap();
+    }
+    engine
+        .replace_source("later.rs", "fn later_source() {}\n")
+        .unwrap();
+    assert_eq!(engine.pending().unwrap(), 130);
+    assert_eq!(engine.refresh(&Control::unbounded()).unwrap(), (1, 0));
+    assert_eq!(engine.pending().unwrap(), 0);
+    assert!(!engine.search("later_source", 8).unwrap().hits.is_empty());
+}
 fn handle(wid: &str, path: &str, body: &str) -> String {
     format!(
         "{path}#0-{}@{}.{}",

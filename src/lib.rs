@@ -57,6 +57,7 @@ pub mod task_context;
 #[cfg(feature = "test-faults")]
 pub mod testkit;
 pub mod usage;
+mod watch;
 
 pub use control::Control;
 pub use error::{FResult, FoundryError, PartialIndexCounts};

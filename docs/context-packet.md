@@ -16,8 +16,10 @@ tracing, opt-in behavioral packing, task state/recovery/promotion and task-aware
 retrieval are committed. Semantic partition CPU work now runs in bounded parallel
 waves outside writer/serving locks. Schema 8 adds 010 T001: explicit structured-brief
 import, exact citations, source-hash invalidation and opt-in anchorless lexical
-context. Automatic generation remains T002; watching, progressive bootstrap,
-boundary joins and task-evidence composition are selected but not implemented.
+context. Opt-in `mcp --watch` now maintains the admitted primary root through native
+events, bounded reconciliation and the existing source/index owner (001 T011).
+Automatic generation remains T002; progressive semantic bootstrap, boundary joins
+and task-evidence composition are selected but not implemented.
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
 [validation](validation.md). 013 remains frozen. No release or quality gain is claimed.
 

@@ -183,6 +183,7 @@ pub(crate) struct Shared {
     /// `include_memory:true` is refused. Disabling never touches records.
     no_memory: bool,
     experimental_task_context: bool,
+    watch: Option<Arc<crate::watch::Watch>>,
     /// 009 T002: the owner's resident query runtime, or the named fallback
     /// word every request reports when it could not start. 009 T003: the
     /// same runtime embeds the preparation driver's document batches.
@@ -569,6 +570,9 @@ impl Shared {
 
     fn cancel_active(&self) {
         self.shutdown.cancel();
+        if let Some(watch) = &self.watch {
+            watch.cancel();
+        }
     }
 
     /// A single-root owner (no references admitted), for in-crate tests.
@@ -595,6 +599,7 @@ impl Shared {
             shutdown: CancellationToken::new(),
             no_memory: false,
             experimental_task_context: false,
+            watch: None,
             semantic: SemanticSlot::default(),
             #[cfg(feature = "semantic")]
             preparation: Arc::default(),
@@ -635,6 +640,12 @@ impl Shared {
     async fn shut_down(&self) {
         self.cancel_active();
         self.wait_engine_idle(SHUTDOWN_ENGINE_WAIT).await;
+        if let Some(watch) = &self.watch {
+            let start = Instant::now();
+            while !watch.idle() && start.elapsed() <= SHUTDOWN_ENGINE_WAIT {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
         self.wait_preparation_idle(SHUTDOWN_ENGINE_WAIT).await;
         #[cfg(feature = "semantic")]
         if let Some(Ok(runtime)) = &self.semantic {
@@ -658,6 +669,13 @@ impl Shared {
 #[cfg(feature = "semantic")]
 impl crate::neural::driver::Owner for Shared {
     fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
+        if self
+            .watch
+            .as_ref()
+            .is_some_and(|watch| watch.source_pending())
+        {
+            return Ok(false);
+        }
         if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
             return Ok(false);
         }
@@ -684,6 +702,34 @@ impl crate::neural::driver::Owner for Shared {
         Ok(true)
     }
 
+    fn closing(&self) -> bool {
+        self.shutdown.is_cancelled()
+    }
+}
+
+/// Source maintenance uses the SAME slot and foreground admission as semantic
+/// preparation. Each callback is one file, walk entry, deletion or index page.
+impl crate::watch::Owner for Shared {
+    fn try_watch_step(&self, step: &mut dyn FnMut(&mut Engine)) -> FResult<bool> {
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        let mut engines = match self.engines.try_lock() {
+            Ok(engines) => SlotGuard::mark(engines, &self.slot_holder, SLOT_DRIVER),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(FoundryError::Internal(anyhow::anyhow!(
+                    "engine state was poisoned by an earlier panic"
+                )));
+            }
+        };
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        let engine = engines[0].as_mut().expect("primary engine is open");
+        step(engine);
+        Ok(true)
+    }
     fn closing(&self) -> bool {
         self.shutdown.is_cancelled()
     }
@@ -2200,6 +2246,7 @@ impl FoundryMcp {
         // object (committed metadata plus its live driver state); without a
         // profile the status is unchanged.
         let semantic = self.state.semantic.clone();
+        let watch = self.state.watch.clone();
         #[cfg(feature = "semantic")]
         let preparation = Arc::clone(&self.state.preparation);
         let mut outcome = match run_engine_op(
@@ -2228,6 +2275,9 @@ impl FoundryMcp {
                 }
                 #[cfg(not(feature = "semantic"))]
                 let _ = (&semantic, control);
+                if let Some(watch) = &watch {
+                    value["watch"] = watch.status(primary.pending()?);
+                }
                 if multi {
                     // 007: every admitted root, with nulls where a store
                     // could not be opened.
@@ -3386,6 +3436,8 @@ pub struct ServerOptions {
     pub no_memory: bool,
     /// Enable the experimental, explicitly scoped task-context tool.
     pub experimental_task_context: bool,
+    /// Maintain the primary source snapshot from bounded filesystem hints.
+    pub watch: bool,
     /// 009 T002: the semantic profile this owner serves, if any. `None`
     /// keeps every response byte-identical to a build without semantics.
     pub semantic: Option<SemanticServing>,
@@ -3509,6 +3561,13 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
     if bound != primary.workspace_id {
         return Err(FoundryError::WrongWorkspace.into());
     }
+    let watch_reader = options
+        .watch
+        .then(|| crate::ingest::ChangeReader::new(&engine, &primary.root).map(Arc::new))
+        .transpose()?;
+    let watch = options
+        .watch
+        .then(|| crate::watch::Watch::new(primary.root.clone(), engine.directory().to_owned()));
     let primary_coverage = match engine.status() {
         Ok(status) if status.index_state == "repair_required" => Coverage::RepairRequired,
         Ok(_) => Coverage::Ok,
@@ -3544,7 +3603,7 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         policy_launch,
         Some(&primary.workspace_id),
     ));
-    Ok(Arc::new(Shared {
+    let state = Arc::new(Shared {
         experimental_behavior_context: options.experimental_behavior_context,
         trace_sink: options
             .retrieval_trace_dir
@@ -3563,11 +3622,16 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         shutdown,
         no_memory: options.no_memory,
         experimental_task_context: options.experimental_task_context,
+        watch: watch.clone(),
         semantic,
         #[cfg(feature = "semantic")]
         preparation: Arc::default(),
         policy,
-    }))
+    });
+    if let (Some(watch), Some(reader)) = (watch, watch_reader) {
+        watch.start(state.clone(), reader)?;
+    }
+    Ok(state)
 }
 
 /// Open one reference store once; the outcome is that root's coverage for
@@ -3797,15 +3861,17 @@ pub async fn serve_http(options: ServerOptions, http: HttpOptions) -> AResult<Ht
                 Ok(value)
             }
         })?;
-    // 007 launch-time admission (refused before serving) and the one-time
-    // open of every root; the owner-level shutdown token is the HTTP one.
-    let state = open_owner(options, http.shutdown.clone())?;
+    // Bind before starting an owned watcher/runtime. A bind failure must not
+    // leave background work retaining a store whose HTTP owner never started.
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", http.port))
         .await
         .map_err(|e| FoundryError::InvalidArgument(format!("bind 127.0.0.1:{}: {e}", http.port)))?;
     let address = listener
         .local_addr()
         .map_err(|e| FoundryError::Internal(e.into()))?;
+    // 007 launch-time admission (refused before serving) and the one-time
+    // open of every root; the owner-level shutdown token is the HTTP one.
+    let state = open_owner(options, http.shutdown.clone())?;
     let mut inner_manager = LocalSessionManager::default();
     // `SessionConfig` is #[non_exhaustive]: start from the SDK default and
     // pin only the documented fields.
@@ -4228,6 +4294,60 @@ mod tests {
             fitted.iter().any(|t| *t != fitted[0]),
             "the labels cost different token counts, or this test proves nothing: {fitted:?}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn foreground_waits_for_a_watch_step_and_blocks_further_source_work() {
+        use crate::watch::Owner;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+        let shared = Arc::new(Shared::single_root(engine, root, BudgetConfig::default()));
+        let (reached_tx, reached_rx) = tokio::sync::oneshot::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn({
+            let shared = shared.clone();
+            move || {
+                let mut reached_tx = Some(reached_tx);
+                shared
+                    .try_watch_step(&mut |engine| {
+                        reached_tx.take().unwrap().send(()).unwrap();
+                        go_rx.recv_timeout(Duration::from_secs(30)).unwrap();
+                        engine.replace_source("a.rs", "fn watched() {}\n").unwrap();
+                    })
+                    .unwrap()
+            }
+        });
+        reached_rx.await.unwrap();
+        let foreground = tokio::spawn({
+            let shared = shared.clone();
+            async move {
+                run_engine_op(
+                    &shared,
+                    Instant::now() + READ_DEADLINE,
+                    None,
+                    None,
+                    |engines, _| Ok(engines[0].as_ref().unwrap().status()?.source_count),
+                )
+                .await
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while shared.in_flight_engine.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline);
+            tokio::task::yield_now().await;
+        }
+        assert!(!foreground.is_finished());
+        assert!(
+            !shared
+                .try_watch_step(&mut |_| panic!("foreground must have priority"))
+                .unwrap()
+        );
+        go_tx.send(()).unwrap();
+        assert_eq!(foreground.await.unwrap().unwrap(), 1);
+        assert!(worker.join().unwrap());
+        assert!(shared.try_watch_step(&mut |_| {}).unwrap());
     }
 
     /// Concurrent same-session reservations released together never reserve
@@ -5293,6 +5413,7 @@ mod tests {
                     references: Vec::new(),
                     no_memory: false,
                     experimental_task_context: false,
+                    watch: false,
                     semantic: Some(semantic),
                     policy: None,
                     budget: BudgetConfig::default(),

@@ -22,6 +22,8 @@ pub mod names {
             pub const $ident: &str = concat!("ctxfoundry-fault/", $name);
         };
     }
+    point!(WATCH_BEFORE_OPEN, "watch.before_open");
+    point!(WATCH_AFTER_READ, "watch.after_read");
     point!(BRIEF_BEFORE_ADMISSION, "brief.before_admission");
     point!(BRIEF_BEFORE_COMMIT, "brief.before_commit");
     point!(BRIEF_AFTER_COMMIT, "brief.after_commit");

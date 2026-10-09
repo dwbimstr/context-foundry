@@ -1,5 +1,50 @@
 # Experimental task context
 
+## Incremental workspace watching
+
+After initializing or bootstrapping a disposable store, enable source maintenance on
+its long-lived MCP owner:
+
+```sh
+foundry --store STORE mcp --root ROOT --watch
+```
+
+The same flag works with the existing shared HTTP owner. It watches only the admitted
+primary root; reference stores remain read-only. The flag defaults off and
+adds no MCP tools. Call `status` to inspect its `watch` object: phase, pending paths
+and index work, overflow count, source reads/changes/deletions, reconciliation counts,
+last successful drain time and errors. Source freshness still means the committed
+snapshot, with asynchronous disk-to-store delay visible through this status.
+
+Native notifications coalesce for 75 ms (at most one second). Known file edits read
+only that file. New paths and directory changes use scoped walks with the same ignore
+rules as indexing; new-file admission can enumerate sibling metadata but does not
+read sibling bodies. Ignore-policy changes, notification overflow and every owner
+restart trigger a streaming root reconciliation. Quiet ticks do not reread source
+bodies. Changes immediately invalidate old handles and dependent graph/vector/brief
+evidence through existing source commits; lexical updates publish in small batches.
+Generation and embedding inference do not run on the watcher path.
+
+The pending hint queue holds at most 2,048 paths or 1 MiB of path text, then collapses
+to one dirty-root marker. Each owner step handles one walk entry/file, at most 128
+retirements, or eight lexical keys; foreground calls have priority between steps.
+These are work and queue bounds, not whole-process RAM or hard latency guarantees:
+filesystem calls, parsers, database commits and the notification library's OS watch
+registrations have their own costs. Optional semantic preparation yields to pending
+source work. Shutdown cancels maintenance and releases the existing store owner.
+
+Failed reads preserve accepted bytes; an incomplete reconciliation cannot retire
+unseen sources. Failures back off from two to 30 seconds and remain visible. A native
+registration failure refuses startup; a later backend error stays visible in
+`backend_error` even after a successful source reconciliation. Restart the owner to
+re-register a failed backend. No durable event log or periodic whole-tree polling is
+added: unreported notification loss is recovered by explicit indexing or restart.
+Ignore files outside the watched root (for example global Git excludes) likewise
+require an explicit index or restart. Native event integration is tested on Linux;
+macOS and network-filesystem event behavior remain unverified.
+
+## Recoverable task context
+
 This branch adds recoverable task state beside retrieval. Start with a disposable
 store. New stores use schema 8; an existing store needs an explicit
 `foundry --store STORE upgrade-store --to 8`. Take a closed-store backup first if

@@ -49,7 +49,7 @@ omits a caller, configuration dependency or test can make the complete task cost
 | CPU parallelism | Source-index document construction already uses at most eight threads and a 64 MiB input bound (001 T009) | Semantic partitioning was serial under the writer and MCP engine slot. 009 T006 separates snapshot, parallel computation and conditional publication. |
 | Embedding bootstrap | Latest recorded Gemma runs: 112,549 cards in 1,256 s; 332,732 cards in 4,437 s. MCP prefetches one batch; model work has one slot. | Make useful partial coverage available early, overlap independent stages, remove whole-corpus barriers, and tune device batches separately from CPU worker counts. |
 | Repository knowledge | Address cards contain heads/docs; 010 was deferred. Explicit task/project memory is caller-authored. | Add source-bound LLM summaries and area knowledge, indexed for conceptual discovery and linked back to exact source. |
-| Continuous maintenance | Explicit re-index and semantic resume exist; no watcher | Add event-driven changed-path reconciliation, bounded coalescing, overflow recovery and an idle resource policy. |
+| Continuous maintenance | Opt-in primary-root watching now supports native events, bounded coalescing, scoped updates and restart/overflow reconciliation (001 T011) | Extend resource policy and validate other platforms/large real repositories; quiet ticks do not reread source bodies. |
 | Task-quality economics | Exact delivery accounting and older host trials exist; recent features have fixture evidence | Compare verified multi-file tasks and complete cost, including bootstrap amortization, maintenance, retries and auxiliary generation. |
 
 The recorded preparation times are complete historical runs, not profiles of where
@@ -137,7 +137,7 @@ operator limits and hysteresis. Unknown host signals remain unknown.
 | --- | --- | --- |
 | A | Snapshot/compute/commit partition pipeline with bounded parallel CPU work and source-version refusal | 009 T006: implemented and tested in this sandbox increment; actual throughput gain unmeasured |
 | B | First source-bound structured brief: strict import/generation seam, lexical discovery, exact citations, stale/forget behavior | 010 T001: explicit import, lexical discovery and lifecycle implemented/tested; generation remains T002 |
-| C | Event-driven incremental source refresh and idle maintenance within the admitted owner | 001 T011: selected, not implemented |
+| C | Event-driven incremental source refresh and idle maintenance within the admitted owner | 001 T011: opt-in native watching, bounded reconciliation and foreground priority implemented; platform/scale limits in validation |
 | D | First useful semantic coverage before a full pass; amortized publication and device-batch tuning | 009 T007: selected, not implemented |
 | E | Governed model generation, area rollups, boundary joins and task-oriented evidence composition | 010 T002, 005 T005, 003 T009: selected, not implemented |
 

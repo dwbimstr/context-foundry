@@ -3712,6 +3712,11 @@ impl Engine {
     /// Begin a scan: checked scan-id increment and `running` status, before
     /// any tree mutation.
     pub(crate) fn begin_scan(&self) -> FResult<u64> {
+        self.begin_scan_kind(true)
+    }
+
+    /// Scoped watcher walks share seen IDs but do not claim a whole-root scan.
+    pub(crate) fn begin_scan_kind(&self, full: bool) -> FResult<u64> {
         let tx = self.db.begin_write()?;
         let scan_id = {
             let mut meta = tx.open_table(META)?;
@@ -3722,11 +3727,17 @@ impl Engine {
                 .checked_add(1)
                 .ok_or(FoundryError::ScanIdExhausted)?;
             meta.insert("scan_id", next.to_string().as_str())?;
-            meta.insert("scan_status", "running")?;
+            if full {
+                meta.insert("scan_status", "running")?;
+            }
             next
         };
         tx.commit()?;
         Ok(scan_id)
+    }
+
+    pub(crate) fn current_scan_id(&self) -> FResult<u64> {
+        read_counter(&self.db.begin_read()?.open_table(META)?, "scan_id")
     }
 
     pub(crate) fn finish_scan(&self, complete: bool) -> FResult<()> {
@@ -3768,72 +3779,105 @@ impl Engine {
         scan_id: u64,
         control: &crate::Control,
     ) -> FResult<(u64, bool)> {
-        let mut deleted = 0u64;
-        let mut after: Option<String> = None;
+        let mut deleted = 0;
+        let mut after = None;
         loop {
             if control.check().is_err() {
                 return Ok((deleted, true));
             }
-            let page: Vec<String> = {
-                let tx = self.db.begin_read()?;
-                let sources = tx.open_table(SOURCES)?;
-                let rows = match &after {
-                    None => sources.range::<&str>(..)?,
-                    Some(key) => {
-                        sources.range::<&str>((Bound::Excluded(key.as_str()), Bound::Unbounded))?
-                    }
-                };
-                rows.take(PAGE)
-                    .map(|row| row.map(|(k, _)| k.value().to_owned()))
-                    .collect::<Result<Vec<String>, redb::StorageError>>()
-                    .map_err(FoundryError::from)?
-            };
-            if page.is_empty() {
+            let (count, next) = self.sweep_unseen_page(scan_id, None, after.as_deref(), control)?;
+            deleted += count;
+            let Some(next) = next else {
                 return Ok((deleted, false));
-            }
-            // A cancel armed here lets this page commit and stops before the next.
-            fault!(
-                SWEEP_PAGE,
-                Some(self),
-                Some(control),
-                &page.len().to_string()
-            )?;
-            let mut retired = 0u64;
-            let tx = self.db.begin_write()?;
-            {
-                let mut sources = tx.open_table(SOURCES)?;
-                let mut stored = tx.open_table(CHUNKS)?;
-                let mut pending = tx.open_table(PENDING)?;
-                let mut seen = tx.open_table(SEEN)?;
-                let mut meta = tx.open_table(META)?;
-                for path in &page {
-                    let seen_now = seen
-                        .get(path.as_str())?
-                        .and_then(|v| v.value().parse::<u64>().ok());
-                    if seen_now != Some(scan_id)
-                        && let Some(old) = sources.remove(path.as_str())?
-                    {
-                        let old: SourceMeta = decode(old.value(), "source")?;
-                        for i in 0..old.chunks {
-                            stored.remove(chunk_key(path, i).as_str())?;
-                        }
-                        pending.insert(source_pending_key(path).as_str(), "deleted")?;
-                        seen.remove(path.as_str())?;
-                        retired += 1;
-                    }
-                }
-                if retired > 0 {
-                    let revision = read_counter(&meta, "source_revision")?;
-                    let next = revision
-                        .checked_add(retired)
-                        .ok_or(FoundryError::RevisionExhausted)?;
-                    meta.insert("source_revision", next.to_string().as_str())?;
-                }
-            }
-            tx.commit()?;
-            deleted += retired;
-            after = page.last().cloned();
+            };
+            after = Some(next);
         }
+    }
+
+    /// One bounded deletion transaction, optionally restricted to one path/subtree.
+    /// The caller must have completed its walk without failures before the first page.
+    pub(crate) fn sweep_unseen_page(
+        &self,
+        scan_id: u64,
+        scope: Option<&str>,
+        after: Option<&str>,
+        _control: &crate::Control,
+    ) -> FResult<(u64, Option<String>)> {
+        let page: Vec<String> = {
+            let tx = self.db.begin_read()?;
+            let sources = tx.open_table(SOURCES)?;
+            let mut page = Vec::new();
+            let prefix = scope.map(|path| format!("{path}/"));
+            if after.is_none()
+                && let Some(path) = scope
+                && sources.get(path)?.is_some()
+            {
+                page.push(path.to_owned());
+            }
+            let start = match (after, prefix.as_deref()) {
+                (Some(key), Some(prefix)) if key < prefix => Bound::Included(prefix),
+                (Some(key), _) => Bound::Excluded(key),
+                (None, Some(prefix)) => Bound::Included(prefix),
+                (None, None) => Bound::Unbounded,
+            };
+            for row in sources
+                .range::<&str>((start, Bound::Unbounded))?
+                .take(PAGE - page.len())
+            {
+                let (key, _) = row?;
+                if prefix
+                    .as_deref()
+                    .is_some_and(|p| !key.value().starts_with(p))
+                {
+                    break;
+                }
+                page.push(key.value().to_owned());
+            }
+            page
+        };
+        if page.is_empty() {
+            return Ok((0, None));
+        }
+        fault!(
+            SWEEP_PAGE,
+            Some(self),
+            Some(_control),
+            &page.len().to_string()
+        )?;
+        let mut retired = 0u64;
+        let tx = self.db.begin_write()?;
+        {
+            let mut sources = tx.open_table(SOURCES)?;
+            let mut stored = tx.open_table(CHUNKS)?;
+            let mut pending = tx.open_table(PENDING)?;
+            let mut seen = tx.open_table(SEEN)?;
+            let mut meta = tx.open_table(META)?;
+            for path in &page {
+                let seen_now = seen
+                    .get(path.as_str())?
+                    .and_then(|v| v.value().parse::<u64>().ok());
+                if seen_now != Some(scan_id)
+                    && let Some(old) = sources.remove(path.as_str())?
+                {
+                    let old: SourceMeta = decode(old.value(), "source")?;
+                    for i in 0..old.chunks {
+                        stored.remove(chunk_key(path, i).as_str())?;
+                    }
+                    pending.insert(source_pending_key(path).as_str(), "deleted")?;
+                    seen.remove(path.as_str())?;
+                    retired += 1;
+                }
+            }
+            if retired > 0 {
+                let revision = read_counter(&meta, "source_revision")?;
+                let next = revision
+                    .checked_add(retired)
+                    .ok_or(FoundryError::RevisionExhausted)?;
+                meta.insert("source_revision", next.to_string().as_str())?;
+            }
+        }
+        tx.commit()?;
+        Ok((retired, page.last().cloned()))
     }
 
     /// All authoritative source/chunk changes, pending index work and the
@@ -4012,6 +4056,15 @@ impl Engine {
     /// commit its documents, then stops before the pending clear: its keys
     /// stay pending, a later refresh clears them, and replay converges.
     pub fn refresh_index(&mut self, control: &crate::Control) -> FResult<(usize, usize)> {
+        self.refresh_index_page(control, PAGE)
+    }
+
+    /// A smaller page for a background owner that yields to foreground requests.
+    pub(crate) fn refresh_index_page(
+        &mut self,
+        control: &crate::Control,
+        limit: usize,
+    ) -> FResult<(usize, usize)> {
         if let Some(reason) = &self.repair_reason {
             return Err(FoundryError::RepairRequired(reason.clone()));
         }
@@ -4021,7 +4074,7 @@ impl Engine {
         let pending: Vec<(String, String)> = tx
             .open_table(PENDING)?
             .iter()?
-            .take(PAGE)
+            .take(limit.clamp(1, PAGE))
             .map(|row| {
                 let (k, v) = row?;
                 Ok((k.value().into(), v.value().into()))
@@ -4102,8 +4155,8 @@ impl Engine {
             }
         }
         tx.commit()?;
-        // (sources drained, memory documents drained); any other key shape
-        // was refused above, so the split covers the whole batch.
+        // Preserve the public (sources, memory documents) counters. Briefs
+        // also drain here, so (0, 0) alone does not prove the queue is empty.
         Ok((
             pending
                 .iter()
@@ -4125,7 +4178,7 @@ impl Engine {
             // Cooperative cancellation between index batches.
             control.check()?;
             match self.refresh_index(control) {
-                Ok((0, 0)) => return Ok(total),
+                Ok((0, 0)) if self.pending()? == 0 => return Ok(total),
                 Ok((sources, memories)) => {
                     total.0 += sources;
                     total.1 += memories;
@@ -6234,7 +6287,7 @@ impl Engine {
         loop {
             control.check()?;
             match engine.refresh_index(control)? {
-                (0, 0) => break,
+                (0, 0) if engine.pending()? == 0 => break,
                 (sources, memories) => {
                     drained.0 += sources;
                     drained.1 += memories;

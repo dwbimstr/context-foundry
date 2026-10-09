@@ -229,8 +229,9 @@ within one enumeration can make that scan miss names and retire their records un
 next complete scan; no outside bytes are read. 001 records the
 [limitation and its re-entry condition](../specs/001-source-state-recovery/spec.md#reconciliation-rules-and-limits),
 and the scan is not described as rename-proof. A shell `cd` or session
-mention cannot rebind a store. There is no watcher yet; selected 001 T011 adds
-change hints to the same ingestion owner for that root. It does not own
+mention cannot rebind a store. Experimental 001 T011 adds opt-in `mcp --watch`
+change hints to the same ingestion owner for that root, with bounded coalescing,
+scoped updates, restart/overflow reconciliation and foreground priority. It does not own
 a second truth ledger or discover roots. Source bookkeeping, rebuildable derived
 indexes and consented training manifests have distinct purposes; none authorizes the
 other’s work. No globally atomic multi-repo snapshot is promised.
