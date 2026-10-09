@@ -1000,6 +1000,44 @@ T004 is accepted and a semantic profile is enabled, its placement (dense candida
 first, then lexical) overrides these rules for anchor-less queries only. `search` orders
 anchored locator lines by the resolver; `retrieve` is unchanged.
 
+#### Experimental behavioral support — 001 T010, 2026-10-09
+
+The owner authorized this candidate for implementation; it is **off by default**
+until T010 and 003 T006 pass their measurement gates. Enable it explicitly with
+`context --experimental-behavior-context` or the same flag at MCP owner startup.
+The MCP tool schema and ordinary response wire do not change.
+
+The first candidate repairs packing only. It does not expand candidate windows,
+change the four-per-file cap, invoke an embedding model for anchors, or change
+anchorless retrieval. It recognizes the ASCII-insensitive prefixes `how does`,
+`how do`, `how is`, `why does`, `explain how`, and `describe how`, followed by a
+space, only when the query has exactly one resolved type anchor (`struct`, `class`,
+`interface`, `enum`, `trait`) and the selected strategy is search. Locator words
+`find`, `locate`, `defined`, `definition`, `definitions`, unknown wording, ambiguous
+or multiple anchors and graph/door requests retain the existing selection.
+
+The existing, already capped candidates may supply methods whose syntax address
+extends the type's address with `::` or `.`, in the same workspace, source path and
+source hash. The verbatim method must contain at least one meaningful query subtoken
+after removal of the anchor's name and the fixed function-word list in
+`store::behavior_terms`. This is lexical/syntactic support, not a compiler relationship
+or a claim that all necessary evidence has been found. Revalidate both owner and
+support in the ordinary final read; a changed owner cannot retarget the selection.
+
+With eligible support, place the resolved owner's address first, then at most four
+supporting units in their existing order through the verbatim/signature ladder.
+Keep the owner as an address, then place its directory lines; the behavioral answer
+uses its budget for the supporting implementation instead of repeating the type body.
+Wire order remains owner/directory/support; memory still fills only the remainder.
+All whole-response token/byte checks and omitted counts apply. When no support is
+eligible, use the unchanged anchored ladder. After a multi-root merge, support is
+allowed only if the global anchor remains uniquely resolved to that same workspace
+and source identity. No unit of another root may attach to it merely by name.
+
+This candidate does not solve missing methods, prior cap losses, cross-file behavior,
+unrecognized intent, or the 249 anchorless G2 misses. Its default stays off until
+those explicitly scoped retrieval and task-outcome gates are evaluated.
+
 ### Doors
 
 **Requests.** Under `auto`, a query requests doors when a token, ASCII-lowercased, is one

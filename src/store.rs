@@ -457,6 +457,9 @@ pub enum RenderedForm {
 
 /// Ranking tiers: exact definitions (1), lexical hits (2), file outlines.
 pub const TIER_OUTLINE: u8 = 4;
+/// Experimental behavioral support: existing lexical candidates owned by the
+/// uniquely resolved type. Selected only by 001 T010's opt-in context policy.
+pub const TIER_BEHAVIOR: u8 = 3;
 
 /// One ranked, already revalidated candidate (context-v2 § Candidate seam).
 /// `handle` keeps the full identities of the source item;
@@ -1457,10 +1460,93 @@ impl QueryAnchors {
 #[derive(Clone, Copy, Default)]
 pub struct ContextOptions<'a> {
     pub memory: bool,
+    pub experimental_behavior: bool,
     #[cfg(feature = "semantic")]
     pub dense: Option<&'a crate::neural::query::DenseWindow>,
     pub policy: Option<&'a crate::policy::Policy>,
     pub anchors: Option<&'a [AnchorCandidate]>,
+}
+
+/// Conservative, bounded intent recognition. Unknown wording, locator and
+/// relationship requests keep the baseline. No model or language guess is used.
+fn behavior_terms(
+    query: &str,
+    anchors: &[AnchorWindow],
+) -> Option<std::collections::BTreeSet<String>> {
+    let lower = query.trim().to_ascii_lowercase();
+    if ![
+        "how does ",
+        "how do ",
+        "how is ",
+        "why does ",
+        "explain how ",
+        "describe how ",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+        || anchors.len() != 1
+        || !anchors[0].resolved()
+    {
+        return None;
+    }
+    let anchor = anchors[0].entries.first()?;
+    let (kind, name) = anchor.label.split_once(' ')?;
+    if !["struct", "class", "interface", "enum", "trait"].contains(&kind) {
+        return None;
+    }
+    let words = analyzed_terms(crate::syntax::code_subtokens, query);
+    if words.iter().any(|word| {
+        ["find", "locate", "defined", "definition", "definitions"].contains(&word.as_str())
+    }) {
+        return None;
+    }
+    let names = analyzed_terms(crate::syntax::code_subtokens, name);
+    let terms: std::collections::BTreeSet<_> = words
+        .into_iter()
+        .filter(|word| {
+            !names.contains(word)
+                && ![
+                    "how", "does", "do", "is", "why", "explain", "describe", "the", "a", "an",
+                    "it", "its", "and", "or", "to", "of", "in", "on", "with", "for", "when",
+                    "before", "after", "first", "that", "this", "handle", "handles",
+                ]
+                .contains(&word.as_str())
+        })
+        .collect();
+    (!terms.is_empty()).then_some(terms)
+}
+
+fn behavior_supports(
+    anchor: &RankedItem,
+    item: &RankedItem,
+    terms: &std::collections::BTreeSet<String>,
+) -> bool {
+    let (Some(owner), Some(unit)) = (&anchor.handle, &item.handle) else {
+        return false;
+    };
+    if owner.workspace_id != unit.workspace_id
+        || owner.path != unit.path
+        || owner.sha256 != unit.sha256
+        || owner == unit
+    {
+        return false;
+    }
+    let (Some((_, name)), Some((kind, method))) =
+        (anchor.label.split_once(' '), item.label.split_once(' '))
+    else {
+        return false;
+    };
+    if !["fn", "method", "function"].contains(&kind)
+        || !(method.starts_with(&format!("{name}::")) || method.starts_with(&format!("{name}.")))
+    {
+        return false;
+    }
+    item.forms.iter().any(|form| match form {
+        RenderedForm::Verbatim(body) => analyzed_terms(crate::syntax::code_subtokens, body)
+            .iter()
+            .any(|word| terms.contains(word)),
+        _ => false,
+    })
 }
 
 /// The query's tokens for path detection: whitespace- and backtick-separated
@@ -2791,6 +2877,17 @@ impl Candidate {
     fn unit(&self) -> (String, u64, u64) {
         (self.path.clone(), self.unit_start, self.unit_end)
     }
+
+    fn trace(&self, control: &crate::Control, workspace: &str, rank: usize, outcome: &str) {
+        if let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({
+                "stage": "selection", "origin": "lexical", "tier": self.tier,
+                "rank": rank, "outcome": outcome, "label": self.qname,
+                "unit": {"workspace_id": workspace, "path": self.path,
+                    "sha256": self.hash, "start": self.unit_start, "end": self.unit_end},
+            }));
+        }
+    }
 }
 
 /// One revalidated candidate as a ranked item over its verified source
@@ -4120,7 +4217,7 @@ impl Engine {
         let mut per_file: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
         let mut kept: Vec<&Candidate> = Vec::new();
-        for candidate in first.iter().chain(&second) {
+        for (rank, candidate) in first.iter().chain(&second).enumerate() {
             if !current.contains_key(&candidate.path) {
                 let meta = match sources.get(candidate.path.as_str())? {
                     Some(raw) => Some(decode::<SourceMeta>(raw.value(), "source")?),
@@ -4133,21 +4230,26 @@ impl Engine {
                 .is_none_or(|meta| meta.hash != candidate.hash)
             {
                 counters.stale += 1;
+                candidate.trace(control, &workspace_id, rank, "stale");
                 continue;
             }
             if !seen.insert(candidate.unit()) {
+                candidate.trace(control, &workspace_id, rank, "duplicate");
                 continue;
             }
             let count = per_file.entry(candidate.path.clone()).or_default();
             if *count == PER_FILE_CAP {
                 counters.capped += 1;
+                candidate.trace(control, &workspace_id, rank, "per_file_cap");
                 continue;
             }
             *count += 1;
             if kept.len() == limit {
                 counters.truncated = true;
+                candidate.trace(control, &workspace_id, rank, "limit");
                 continue;
             }
+            candidate.trace(control, &workspace_id, rank, "kept");
             kept.push(candidate);
         }
         let wanted: std::collections::BTreeSet<String> =
@@ -4566,26 +4668,40 @@ impl Engine {
         )?;
         // Lexical documents of the current source version only.
         let mut lexical: Vec<Candidate> = Vec::with_capacity(first.len() + second.len());
-        for candidate in first.into_iter().chain(second) {
+        for (rank, candidate) in first.into_iter().chain(second).enumerate() {
             load(&mut current, &candidate.path)?;
             if current[&candidate.path]
                 .as_ref()
                 .is_some_and(|meta| meta.hash == candidate.hash)
             {
+                candidate.trace(control, &workspace_id, rank, "eligible");
                 lexical.push(candidate);
             } else {
+                candidate.trace(control, &workspace_id, rank, "stale");
                 counters.stale += 1;
             }
         }
         // Dense locations in similarity order: the path restriction first,
         // then freshness.
         let mut placed: Vec<((String, u64, u64), bool)> = Vec::new();
-        for hit in &dense.hits {
+        for (rank, hit) in dense.hits.iter().enumerate() {
             for location in dense.units(hit) {
+                let trace_location = |outcome: &str| {
+                    if let Some(trace) = control.trace() {
+                        trace.record(serde_json::json!({
+                            "stage": "selection", "origin": "dense", "rank": rank,
+                            "distance": hit.distance, "input_key": dense.input_key(hit), "outcome": outcome,
+                            "unit": {"workspace_id": workspace_id, "path": location.path,
+                                "sha256": location.source_sha256, "start": location.start,
+                                "end": location.end},
+                        }));
+                    }
+                };
                 if filter
                     .as_deref()
                     .is_some_and(|filter| !within_filter(&location.path, filter))
                 {
+                    trace_location("path_filter");
                     continue;
                 }
                 load(&mut current, &location.path)?;
@@ -4596,9 +4712,11 @@ impl Engine {
                             meta.hash == location.source_sha256 && location.end <= meta.bytes as u64
                         });
                 if !current_location {
+                    trace_location("stale");
                     counters.stale += 1;
                     continue;
                 }
+                trace_location("eligible");
                 placed.push(((location.path.clone(), location.start, location.end), true));
             }
         }
@@ -4618,20 +4736,35 @@ impl Engine {
         let mut per_file: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
         let mut kept: Vec<(&(String, u64, u64), bool)> = Vec::new();
-        for (unit, from_dense) in &placed {
+        for (rank, (unit, from_dense)) in placed.iter().enumerate() {
+            let trace_placement = |outcome: &str| {
+                if let Some(trace) = control.trace() {
+                    trace.record(serde_json::json!({
+                        "stage": "placement", "origin": if *from_dense { "dense" } else { "lexical" },
+                        "rank": rank, "outcome": outcome,
+                        "unit": {"workspace_id": workspace_id, "path": unit.0,
+                            "sha256": current.get(&unit.0).and_then(|m| m.as_ref()).map(|m| &m.hash),
+                            "start": unit.1, "end": unit.2},
+                    }));
+                }
+            };
             if !seen.insert(unit) {
+                trace_placement("duplicate");
                 continue;
             }
             let count = per_file.entry(unit.0.clone()).or_default();
             if *count == PER_FILE_CAP {
                 counters.capped += 1;
+                trace_placement("per_file_cap");
                 continue;
             }
             *count += 1;
             if kept.len() == limit {
                 counters.truncated = true;
+                trace_placement("limit");
                 continue;
             }
+            trace_placement("kept");
             kept.push((unit, *from_dense));
         }
         let mut items = Vec::with_capacity(kept.len());
@@ -4871,6 +5004,12 @@ impl Engine {
         options: &ContextOptions,
     ) -> FResult<crate::memory::MemoryContext> {
         let (policy, anchors) = (options.policy, options.anchors);
+        if let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({
+                "stage": "query", "query_sha256": crate::digest(query.as_bytes()),
+                "workspace_id": self.workspace_id, "strategy": strategy.to_string(),
+            }));
+        }
         let memory = options
             .memory
             .then(|| self.memory_plan(query))
@@ -4907,6 +5046,19 @@ impl Engine {
             (Strategy::Auto, None) => (response::strategy_for_query(query), None),
             (explicit, _) => (explicit, None),
         };
+        let behavior_terms = (options.experimental_behavior && resolved == Strategy::Search)
+            .then(|| behavior_terms(query, &search.anchors))
+            .flatten()
+            .and_then(|terms| {
+                search
+                    .anchors
+                    .first()?
+                    .entries
+                    .first()?
+                    .handle
+                    .clone()
+                    .map(|owner| (owner, terms))
+            });
         // A context resolved to graph requests doors (context-v2 § Doors),
         // for the first anchor's target as resolved from the collected
         // windows: the final read can drop that definition, never retarget.
@@ -4949,6 +5101,11 @@ impl Engine {
             if fresh {
                 units.push(item);
             } else {
+                if let Some(trace) = control.trace() {
+                    trace.record(
+                        serde_json::json!({"stage":"validation", "outcome":"stale", "unit":handle}),
+                    );
+                }
                 dropped.insert((handle.path.clone(), handle.start, handle.end));
                 counters.stale += 1;
             }
@@ -4965,10 +5122,34 @@ impl Engine {
                 if current_meta(&handle.path)?.is_some_and(|meta| meta.hash == handle.sha256) {
                     fresh_entries.push(entry);
                 } else if dropped.insert((handle.path.clone(), handle.start, handle.end)) {
+                    if let Some(trace) = control.trace() {
+                        trace.record(serde_json::json!({"stage":"validation", "origin":"anchor", "outcome":"stale", "unit":handle}));
+                    }
                     counters.stale += 1;
                 }
             }
             window.entries = fresh_entries;
+        }
+        // A packing repair, not another candidate generator: preserve the
+        // original lexical window, caps and ranks. Final-read identity must
+        // still match the one used to recognize behavioral intent.
+        if let Some((owner, terms)) = behavior_terms
+            && anchors.len() == 1
+            && anchors[0].resolved()
+            && let Some(anchor) = anchors[0].entries.first()
+            && anchor.handle.as_ref() == Some(&owner)
+        {
+            for item in &mut units {
+                control.check()?;
+                if behavior_supports(anchor, item, &terms) {
+                    item.tier = TIER_BEHAVIOR;
+                    if let Some(trace) = control.trace() {
+                        trace.record(serde_json::json!({"stage":"behavior_support",
+                            "unit":item.handle, "anchor":anchor.handle,
+                            "reason":"same_source_owned_method_with_query_terms"}));
+                    }
+                }
+            }
         }
         // Doors, from the validated windows, in this same read.
         let doors = match &collected {
@@ -5151,7 +5332,7 @@ impl Engine {
         for (rank, item) in items.iter_mut().enumerate() {
             item.rank = rank;
         }
-        Ok(crate::memory::MemoryContext {
+        let context = crate::memory::MemoryContext {
             batch: CandidateBatch {
                 semantic,
                 route,
@@ -5166,7 +5347,22 @@ impl Engine {
                 collected: collected.flatten(),
             },
             hits,
-        })
+        };
+        if let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({
+                "stage": "packing_input", "workspace_id": self.workspace_id,
+                "source_revision": context.batch.freshness.source_revision,
+                "semantic": context.batch.semantic, "anchored": context.batch.anchored(),
+                "items": context.batch.items.iter().map(|i| serde_json::json!({
+                    "unit":i.handle, "label":i.label, "rank":i.rank, "tier":i.tier,
+                })).collect::<Vec<_>>(),
+                "anchors": context.batch.anchors.iter().map(|a| serde_json::json!({
+                    "resolved": a.resolved(), "definitions": a.definitions,
+                    "units": a.entries.iter().filter_map(|i| i.handle.as_ref()).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+            }));
+        }
+        Ok(context)
     }
 
     /// The doors of a context that requested them (context-v2 § Doors),

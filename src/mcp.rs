@@ -155,6 +155,8 @@ struct Refusal {
 }
 
 pub(crate) struct Shared {
+    trace_sink: Option<Arc<crate::retrieval_trace::TraceSink>>,
+    experimental_behavior_context: bool,
     /// One engine per admitted root behind ONE mutex: the single engine slot
     /// spans every root, so admission stays one-active/zero-queued across
     /// the whole owner. `None` where a reference could not be opened.
@@ -306,19 +308,58 @@ pub fn context_primary(
     memory: bool,
     anchors: Option<&[crate::store::AnchorCandidate]>,
 ) -> FResult<crate::memory::MemoryContext> {
+    context_primary_with_options(
+        slot,
+        engine,
+        query,
+        strategy,
+        control,
+        crate::store::ContextOptions {
+            memory,
+            policy,
+            anchors,
+            ..crate::store::ContextOptions::default()
+        },
+    )
+}
+
+/// The same production path with explicitly configured experimental packing.
+/// The default wrapper above remains available to existing library callers.
+pub fn context_primary_with_options(
+    slot: &SemanticSlot,
+    engine: &Engine,
+    query: &str,
+    strategy: Strategy,
+    control: &Control,
+    requested: crate::store::ContextOptions<'_>,
+) -> FResult<crate::memory::MemoryContext> {
     #[cfg(feature = "semantic")]
-    let plan = plan_semantic(slot, engine, query, None, control, anchors);
+    let plan = plan_semantic(slot, engine, query, None, control, requested.anchors);
+    #[cfg(feature = "semantic")]
+    if let Some(trace) = control.trace() {
+        let state = match &plan {
+            SemanticPlan::Off => serde_json::json!({"state":"off"}),
+            SemanticPlan::Dense(window) => {
+                serde_json::json!({"state":"dense", "hits":window.hits.len(), "complete_at":window.complete_at()})
+            }
+            SemanticPlan::Fallback(reason) => {
+                serde_json::json!({"state":"fallback", "reason":reason})
+            }
+        };
+        trace.record(serde_json::json!({"stage":"semantic", "query_sha256":crate::digest(query.as_bytes()), "decision":state}));
+    }
     #[cfg(not(feature = "semantic"))]
     let _ = slot;
     let options = crate::store::ContextOptions {
-        memory,
+        memory: requested.memory,
+        experimental_behavior: requested.experimental_behavior,
         #[cfg(feature = "semantic")]
         dense: match &plan {
             SemanticPlan::Dense(window) => Some(window),
             _ => None,
         },
-        policy: policy.filter(|policy| policy.routes()),
-        anchors,
+        policy: requested.policy.filter(|policy| policy.routes()),
+        anchors: requested.anchors,
     };
     #[cfg_attr(not(feature = "semantic"), allow(unused_mut))]
     let mut context = engine.context_candidates_with(query, strategy, control, &options)?;
@@ -529,6 +570,8 @@ impl Shared {
     fn single_root(engine: Engine, root: PathBuf, budget: BudgetConfig) -> Self {
         let workspace_id = engine.workspace_id().unwrap_or_default();
         Self {
+            trace_sink: None,
+            experimental_behavior_context: false,
             engines: Arc::new(Mutex::new(vec![Some(engine)])),
             meta: Arc::new(vec![RootMeta {
                 alias: "primary".to_owned(),
@@ -1517,6 +1560,7 @@ impl FoundryMcp {
         }
         let semantic = self.state.semantic.clone();
         let policy = Arc::clone(&self.state.policy);
+        let experimental_behavior = self.state.experimental_behavior_context;
         Ok(self
             .deliver(
                 &ctx,
@@ -1528,28 +1572,20 @@ impl FoundryMcp {
                     // 013 T003: a configured policy routes `auto`; without
                     // one this is exactly the baseline path.
                     let routed = policy.routes().then_some(&*policy);
-                    let (batch, hits) = if semantic_on(&semantic) || routed.is_some() {
-                        let combined = context_primary(
-                            &semantic,
-                            routed,
-                            engine,
-                            &query,
-                            strategy,
-                            control,
-                            include_memory,
-                            None,
-                        )?;
-                        (combined.batch, combined.hits)
-                    } else if include_memory {
-                        let combined =
-                            engine.context_candidates_memory(&query, strategy, control)?;
-                        (combined.batch, combined.hits)
-                    } else {
-                        (
-                            engine.context_candidates(&query, strategy, control)?,
-                            Vec::new(),
-                        )
-                    };
+                    let combined = context_primary_with_options(
+                        &semantic,
+                        engine,
+                        &query,
+                        strategy,
+                        control,
+                        crate::store::ContextOptions {
+                            memory: include_memory,
+                            policy: routed,
+                            experimental_behavior,
+                            ..crate::store::ContextOptions::default()
+                        },
+                    )?;
+                    let (batch, hits) = (combined.batch, combined.hits);
                     Ok((batch, hits))
                 },
                 |outcome: &(crate::store::CandidateBatch, Vec<memory::MemoryHit>),
@@ -2397,6 +2433,64 @@ impl FoundryMcp {
         P: Fn(&T, response::Budget, response::ByteMeasure) -> FResult<response::PackedText>,
         R: FnOnce() -> usize,
     {
+        let trace = self
+            .state
+            .trace_sink
+            .as_ref()
+            .map(|_| crate::retrieval_trace::RetrievalTrace::default());
+        if let Some(trace) = &trace {
+            trace.record(serde_json::json!({"stage":"request", "request_id":ctx.id,
+                "session_id":Shared::session_key(ctx), "requested_tokens":tokens}));
+        }
+        let run_trace = trace.clone();
+        let result = self
+            .deliver_inner(
+                ctx,
+                tokens,
+                what,
+                floor,
+                move |engines, control, budget| {
+                    let control = control
+                        .bounded_by(control.deadline().expect("delivery deadline"))
+                        .with_trace(run_trace);
+                    run(engines, &control, budget)
+                },
+                pack,
+            )
+            .await;
+        if let (Some(sink), Some(trace)) = (&self.state.trace_sink, trace) {
+            // This is the server's result, not a client/provider receipt. A write
+            // failure cannot change an already settled delivery allowance.
+            if sink
+                .save(
+                    what,
+                    &trace,
+                    serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+                )
+                .is_err()
+            {
+                eprintln!("retrieval_trace_unavailable: run is incomplete");
+            }
+        }
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn deliver_inner<T, F, P, R>(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        tokens: u64,
+        what: &'static str,
+        floor: R,
+        run: F,
+        pack: P,
+    ) -> CallToolResult
+    where
+        F: FnOnce(&mut Vec<Option<Engine>>, &Control, usize) -> FResult<T> + Send + 'static,
+        T: Send + 'static,
+        P: Fn(&T, response::Budget, response::ByteMeasure) -> FResult<response::PackedText>,
+        R: FnOnce() -> usize,
+    {
         let deadline = Instant::now() + READ_DEADLINE;
         let session = Shared::session_key(ctx);
         let (effective, limiter) = match self.state.reserve_effective(&session, tokens) {
@@ -2650,6 +2744,7 @@ impl FoundryMcp {
         let pack_meta = Arc::clone(&meta);
         let semantic = self.state.semantic.clone();
         let policy = Arc::clone(&self.state.policy);
+        let experimental_behavior = self.state.experimental_behavior_context;
         self.deliver(
             ctx,
             tokens,
@@ -2689,15 +2784,19 @@ impl FoundryMcp {
                         // store composes.
                         let routed = policy.routes().then_some(&*policy);
                         let batch = if is_primary && (semantic_on(&semantic) || routed.is_some()) {
-                            let combined = context_primary(
+                            let combined = context_primary_with_options(
                                 &semantic,
-                                routed,
                                 engine,
                                 &query,
                                 strategy,
                                 control,
-                                primary_memory,
-                                Some(anchors),
+                                crate::store::ContextOptions {
+                                    memory: primary_memory,
+                                    policy: routed,
+                                    anchors: Some(anchors),
+                                    experimental_behavior,
+                                    ..crate::store::ContextOptions::default()
+                                },
                             )?;
                             *hits_ref = combined.hits;
                             combined.batch
@@ -2709,6 +2808,7 @@ impl FoundryMcp {
                             // stays in the header.
                             let options = crate::store::ContextOptions {
                                 memory: primary_memory && is_primary,
+                                experimental_behavior,
                                 anchors: Some(anchors),
                                 ..crate::store::ContextOptions::default()
                             };
@@ -3114,6 +3214,10 @@ impl SessionManager for CappedSessionManager {
 }
 
 pub struct ServerOptions {
+    /// Explicit opt-in; a new private directory, never an existing run.
+    pub retrieval_trace_dir: Option<PathBuf>,
+    /// Default off until 001 T010's retrieval and real-host gates pass.
+    pub experimental_behavior_context: bool,
     pub store: PathBuf,
     pub root: PathBuf,
     /// `--reference ROOT=STORE` admissions (007), at most 8, validated and
@@ -3281,6 +3385,13 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         Some(&primary.workspace_id),
     ));
     Ok(Arc::new(Shared {
+        experimental_behavior_context: options.experimental_behavior_context,
+        trace_sink: options
+            .retrieval_trace_dir
+            .as_deref()
+            .map(crate::retrieval_trace::TraceSink::create)
+            .transpose()?
+            .map(Arc::new),
         engines: Arc::new(Mutex::new(engines)),
         meta: Arc::new(meta),
         budget: options.budget,
@@ -5014,6 +5125,8 @@ mod tests {
             let (input, output) = tokio::io::split(server_io);
             let server = tokio::spawn(serve_streams(
                 ServerOptions {
+                    retrieval_trace_dir: None,
+                    experimental_behavior_context: false,
                     store,
                     root,
                     references: Vec::new(),

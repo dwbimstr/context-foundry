@@ -61,6 +61,12 @@ enum Command {
         query: String,
         #[arg(long, default_value_t = 2048)]
         tokens: usize,
+        /// Write bounded private diagnostics in a NEW directory; never changes evidence.
+        #[arg(long, value_name = "DIR")]
+        retrieval_trace_dir: Option<PathBuf>,
+        /// Test behavioral support packing; default off pending retrieval/host gates.
+        #[arg(long)]
+        experimental_behavior_context: bool,
         #[arg(long, default_value = "auto")]
         strategy: String,
         /// 008: append compact `mem:` lines for validated memory hits.
@@ -697,6 +703,8 @@ fn run() -> AResult<()> {
         Command::Context {
             query,
             tokens,
+            retrieval_trace_dir,
+            experimental_behavior_context,
             strategy,
             include_memory,
             semantic_profile,
@@ -709,63 +717,87 @@ fn run() -> AResult<()> {
             }
             let strategy = parse_strategy(&strategy)?;
             check_token_budget(tokens)?;
-            let engine = Engine::open_existing(&cli.store)?;
-            // 008: memory candidates validate in the SAME final read as the
-            // source and graph items; one snapshot governs the response.
-            // 009 T002: with a profile the worker loads at command start
-            // (bounded by the profile's load timeout); the query ceiling
-            // then applies to the embedding call only. A refused or failed
-            // worker leaves baseline results with the reason in the header.
-            let semantic = semantic_launch(semantic_profile, development_isolation);
-            // 013 T003: the policy config is validated and its worker loaded
-            // at command start, outside the request's read deadline; an
-            // invalid config or a failed start keeps deterministic routing
-            // with the reason in the header. No config, or a disabled one,
-            // leaves the output byte-identical.
-            let policy = policy_config.map(|config| {
-                crate::policy::Policy::start(
-                    Some(crate::policy::PolicyServing::new(
-                        config,
-                        development_isolation,
-                    )),
-                    engine.workspace_id().as_deref(),
-                )
-            });
-            let routed = policy.as_ref().filter(|policy| policy.routes());
-            let (batch, memory) = if semantic.is_some() || routed.is_some() {
+            let trace_sink = retrieval_trace_dir
+                .as_deref()
+                .map(crate::retrieval_trace::TraceSink::create)
+                .transpose()?;
+            let trace = trace_sink
+                .as_ref()
+                .map(|_| crate::retrieval_trace::RetrievalTrace::default());
+            let result = (|| -> AResult<_> {
+                let engine = Engine::open_existing(&cli.store)?;
+                // 008: memory candidates validate in the SAME final read as the
+                // source and graph items; one snapshot governs the response.
+                // 009 T002: with a profile the worker loads at command start
+                // (bounded by the profile's load timeout); the query ceiling
+                // then applies to the embedding call only. A refused or failed
+                // worker leaves baseline results with the reason in the header.
+                let semantic = semantic_launch(semantic_profile, development_isolation);
+                // 013 T003: the policy config is validated and its worker loaded
+                // at command start, outside the request's read deadline; an
+                // invalid config or a failed start keeps deterministic routing
+                // with the reason in the header. No config, or a disabled one,
+                // leaves the output byte-identical.
+                let policy = policy_config.map(|config| {
+                    crate::policy::Policy::start(
+                        Some(crate::policy::PolicyServing::new(
+                            config,
+                            development_isolation,
+                        )),
+                        engine.workspace_id().as_deref(),
+                    )
+                });
+                let routed = policy.as_ref().filter(|policy| policy.routes());
+                let bounded_query = semantic.is_some() || routed.is_some();
+                // Worker admission/load stays outside the query deadline.
                 let slot = crate::mcp::semantic_slot(semantic)?;
-                let control = Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE);
-                let combined = crate::mcp::context_primary(
+                let control = if bounded_query {
+                    Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE)
+                } else {
+                    Control::unbounded()
+                }
+                .with_trace(trace.clone());
+                let combined = crate::mcp::context_primary_with_options(
                     &slot,
-                    routed,
                     &engine,
                     &query,
                     strategy,
                     &control,
-                    include_memory,
-                    None,
+                    crate::store::ContextOptions {
+                        memory: include_memory,
+                        policy: routed,
+                        experimental_behavior: experimental_behavior_context,
+                        ..crate::store::ContextOptions::default()
+                    },
                 )?;
-                (combined.batch, combined.hits)
-            } else if include_memory {
-                let combined =
-                    engine.context_candidates_memory(&query, strategy, &Control::unbounded())?;
-                (combined.batch, combined.hits)
-            } else {
-                (
-                    engine.context_candidates(&query, strategy, &Control::unbounded())?,
-                    Vec::new(),
-                )
-            };
-            let packed = if memory.is_empty() {
-                response::pack_context(&batch, Budget::request(tokens), &response::stdout_bytes)?
-            } else {
-                response::pack_context_with_memory(
-                    &batch,
-                    &memory,
-                    Budget::request(tokens),
-                    &response::stdout_bytes,
-                )?
-            };
+                let (batch, memory) = (combined.batch, combined.hits);
+                let packed = if memory.is_empty() {
+                    response::pack_context(
+                        &batch,
+                        Budget::request(tokens),
+                        &response::stdout_bytes,
+                    )?
+                } else {
+                    response::pack_context_with_memory(
+                        &batch,
+                        &memory,
+                        Budget::request(tokens),
+                        &response::stdout_bytes,
+                    )?
+                };
+                Ok((packed, batch.doors.is_some()))
+            })();
+            if let (Some(sink), Some(trace)) = (&trace_sink, &trace) {
+                let outcome = match &result {
+                    Ok((packed, _)) => serde_json::json!({"status":"success", "text":packed.text,
+                        "tokens":packed.tokens, "sha256":crate::digest(packed.text.as_bytes())}),
+                    Err(error) => {
+                        serde_json::json!({"status":"error", "error":error.bounded_json()})
+                    }
+                };
+                sink.save("context", trace, outcome)?;
+            }
+            let (packed, graph) = result?;
             print!("{}", packed.text);
             eprintln!(
                 "{}",
@@ -773,7 +805,7 @@ fn run() -> AResult<()> {
                     "stdout_tokens": packed.tokens,
                     "tokenizer": response::TOKENIZER,
                     "omitted": packed.omitted,
-                    "strategy": if batch.doors.is_some() { "graph" } else { "search" },
+                    "strategy": if graph { "graph" } else { "search" },
                 })
             );
         }

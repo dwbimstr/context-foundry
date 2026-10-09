@@ -3,6 +3,23 @@
 Restarting this work on another host or with a fresh agent: start with the
 [context packet](../docs/context-packet.md).
 
+## Next planning direction — 2026-10-09
+
+The [context ecosystem plan](../docs/context-ecosystem-plan.md) starts with retrieval
+and then sequences real-host task results, persistent task state, reversible context
+editing, selective intervention and durable knowledge. The owner authorized execution on 2026-10-09. Its first active tasks are
+[009 T005](009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval)
+(miss attribution and anchorless repair),
+[001 T010](001-source-state-recovery/spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol)
+(mixed symbol/behavior retrieval), and
+[003 T006](003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
+(real-host outcomes and economics). They are in progress and retain their full acceptance gates. Later milestones
+require concrete amendments as their dependency gates pass; they do not
+reactivate deferred specs or reopen accepted tasks. 013 stays frozen off. The task
+table below records the existing implementation baseline and remaining obligations.
+
+## Implementation baseline
+
 Status: revised portfolio. 001 and 003 T001–T003, including the optional shared MCP
 owner for concurrent OMP/Codex sessions, were implemented and verified locally on
 2026-10-01 ([validation](../docs/validation.md)); they are not yet released. On
@@ -14,14 +31,15 @@ economics tests, operator hook) and 007 T001 were implemented and accepted local
 The same spec pass classified the remaining specified unknowns
 of 003 T004, 005, 008, 009 and 013 as settled decisions, named open owned decisions
 (005 T002's `references` header segments; 009 T002's semantic-item line form, both
-decided 2026-10-04 in context-v2) or external prerequisites (below); those specs stay
-proposed. The owner requested
+decided 2026-10-04 in context-v2) or external prerequisites (below). Their subsequent
+acceptance and 013's freeze are recorded in the task table. The owner requested
 thoughtful subtraction, not a Rust translation of the old system. The other active
 goals remain.
 
 The [validated implementation](../docs/validation.md) is the baseline. The user
 outcomes below retain the product goals. All active tasks specify behavior and
-acceptance, including 013's replacement ModernBERT/head contract. The token-economics
+acceptance; 013's replacement ModernBERT/head contract is retained as frozen research.
+The token-economics
 tranche is implemented locally; a release waits until every active spec is complete,
 then runs the ordinary [release checklist](../docs/release.md) (owner policy 2026-10-04).
 The [team handoff simulation](../docs/review/handoff-simulation.md) traces startable
@@ -50,8 +68,9 @@ A release waits for all of them (owner policy 2026-10-04): every task of 001, 00
 then the ordinary [release checklist](../docs/release.md). Deferred and superseded
 specs are excluded.
 
-009 is now planned alongside source ownership, before full-corpus model preparation.
-Its earlier blanket deferral missed first-use and repeated preparation costs.
+009 was planned alongside source ownership and is now implemented under development
+isolation, with installed-artifact acceptance still pending. Its earlier blanket
+deferral missed first-use and repeated preparation costs.
 Lexical retrieval works without it, but a release includes 009.
 Neural readiness does not depend on policy training or generating summaries.
 

@@ -409,7 +409,7 @@ fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
             }
             match item.tier {
                 1 => tier1.push(unit),
-                2 => {
+                2 | crate::store::TIER_BEHAVIOR => {
                     rank2 += 1;
                     let mut ranked = unit.clone();
                     ranked.rrf = 1.0 / (RRF_K + rank2 as f64);

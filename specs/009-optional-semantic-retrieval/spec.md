@@ -1,5 +1,9 @@
 # 009 — Neural context that becomes useful and stays prepared
 
+Planning addition, 2026-10-09: [T005](#t005--diagnose-and-improve-anchorless-evidence-retrieval)
+is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
+It does not change T001–T004 acceptance or semantic enablement/package restrictions.
+
 Status: T001 (preparation, cache, index and the supervised development worker), T002
 (semantic context within the existing budget) and T003 (progressive preparation in the
 MCP owner) implemented and accepted locally on 2026-10-05, under development isolation
@@ -1053,3 +1057,99 @@ selected EmbeddingGemma 2, and replaces the MLX worker. Signing and installed-pa
 acceptance remain open in the measurement handoff. The owned learning head (013,
 frozen off) cannot substitute
 for this proof.
+
+### T005 — Diagnose and improve anchorless evidence retrieval
+
+**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted. T004's
+selected Gemma profile and current implementation are the comparison baseline.
+The original G2 verdict remains valid for its original question: gain over no profile.
+This task asks which current losses can be repaired at the same delivery budget.
+
+**Implementation in progress:** `src/retrieval_trace.rs` owns opt-in request-local
+diagnostics, shared through `Control` by the ordinary selection/final-read paths.
+`context --retrieval-trace-dir DIR` and `mcp --retrieval-trace-dir DIR` require a new
+run directory; existing paths, including symlinks, are refused. Unix directories are
+0700 and files are created exclusively as 0600. No automatic capture occurs.
+Events contain source identities, candidate origin/rank, stale/filter/dedup/cap/cut
+outcomes and packing inputs. Dense events identify the card input key. Context queries
+are correlated by SHA-256; MCP records also retain their request ID. The actual
+Foundry response is retained privately; it is not a host-consumption acknowledgment.
+
+Limits per request: 8,192 events and 2 MiB of serialized event data, with `truncated`
+set on overflow, and 4 MiB per persisted record. One owner writes at most 4,096
+records / 256 MiB, including failed-write reservations. CLI diagnostic failures fail
+the explicit measurement command before successful stdout. MCP diagnostic failures
+emit `retrieval_trace_unavailable: run is incomplete` on stderr without changing an
+already settled delivery. A missing, malformed, truncated or uncorrelated report
+invalidates attribution; no missing event proves absence. Invalid requests rejected
+before the delivery path still require the harness's request/refusal accounting.
+Diagnostics are outside the evidence allowance but their I/O/latency is measured
+separately. Their payloads can contain private source/memory; keep the directory
+outside indexed source and Git, and explicitly remove it when its retention ends.
+
+The private G1/G2 questions/results, prepared Gemma stores and macOS measurement host
+are absent from this cloud workspace. That blocks full miss attribution and quality
+acceptance. Local traced examples and fixture results must remain separately labelled;
+they do not assign causes to the 249 historical G2 misses.
+
+- **Depends:** T004 implementation and preserved G1/G2 apparatus from the
+  [measurement handoff](../../docs/measurement-handoff.md). The diagnostic checkpoint
+  below unlocks 001 T010; completion of one repair is not a prerequisite for starting
+  the other. 003 T006 owns integrated real-host acceptance.
+- **Scope:** opt-in bounded retrieval traces through `src/neural/{partition,query}.rs`,
+  `src/store.rs`, `src/response.rs` and `src/mcp.rs`; measurement harness outside Git;
+  regression fixtures in existing retrieval tests. Reuse ordinary source validation,
+  deterministic ordering and the existing worker. No new model, service or mandatory
+  reranker. Query traces are retrieval diagnostics, never automatic training records.
+- **Diagnostic checkpoint:**
+  - Pin binary, profile, source commits, source/index generations, prepared coverage,
+    query set, harness, token cap and runtime configuration. Trace both successful and
+    unsuccessful queries. Preserve the original response bytes when tracing is off;
+    diagnostics stay off protocol stdout and outside the evidence/token allowance.
+    Measure trace overhead separately from normal latency.
+  - Trace unit identity and eligibility, candidate origin/rank, exclusion by
+    freshness/deduplication/per-file/global caps, packed evidence/form and adapter
+    delivery. Join expected answers offline in the evaluator; ground-truth labels
+    must never affect candidate generation, ranking or packing. Persist only bounded,
+    explicitly requested diagnostics in the private
+    run directory. Never infer provider consumption from server delivery.
+  - Account for all 388 queries and partition the 249 recorded misses by first
+    observed loss. Retain `unknown` with its missing input where historical results
+    cannot support attribution. A new traced run is a new run, not retroactive proof
+    of the historical path. Report reproduction differences rather than forcing its
+    counts to match. A claim that a card omits behavioral meaning requires a labelled
+    example and a controlled representation comparison, not just low similarity.
+  - Deliver stage counts, examples, current-baseline G1 wins/losses and one selected
+    repair hypothesis. If dominant losses remain unexplained, improve diagnostics
+    before selecting an embedding or ranking replacement.
+- **Candidate checkpoint:**
+  - Hold Gemma fixed and predeclare at most three variants targeting the demonstrated
+    loss: representation, candidate coverage, ordering or packing. Keep other stages
+    fixed for each ablation. If a source representation changes, update its recipe
+    identity and test invalidation/reuse, interrupted preparation and retained cache
+    safety; report preparation time, footprint and query cold/warm latency.
+  - Reuse the existing G1/G2 files unchanged as regression/development evidence.
+    Freeze fresh held-out anchorless questions and their required definitions before
+    candidate tuning, with per-corpus results and the original leakage/answer-quality
+    checks. Exposed old misses cannot serve as a fresh holdout. Keep labels private
+    from implementation/tuning and do not repeatedly select against the final set.
+  - Before evaluation freeze candidate count, sample-size rationale, paired statistic,
+    multiplicity correction, per-corpus guards and latency/resource bounds. Proposed
+    promotion requires a positive lower bound on paired delivered-evidence gain at
+    95% confidence over current Gemma, at no more mean delivered tokens under the same
+    cap, and all existing G1 gates. Publish absolute coverage, gained/lost task counts,
+    refusals, missing/retried/duplicate tasks and uncertainty. Preserve frozen-run
+    invalidity rules. If no candidate clears the gate, retain the baseline and record
+    a no-promotion result instead of opening an unbounded model search.
+  - A successful amendment names exactly which T004 representation/placement rule it
+    replaces in this spec and the shared context contract; no parallel undocumented
+    ranking path. Every newly lost current-baseline G1 case is reviewed and counted;
+    passing historical guards alone does not erase those losses.
+- **Verification:** fixtures establish trace attribution for absent candidates,
+  stale units, rank/cap exclusion and packing omission; invalid traces cannot certify
+  coverage. Test the selected repair's relevant source/budget/cache invariants and run
+  the repository's required implementation checks when code changes. Linux fixtures
+  do not substitute for the real Gemma/Metal measurements or signed installed checks.
+  Record aggregate results in validation; raw labels, traces and source payloads stay
+  outside Git. Validation records the executed diagnostic fixtures; the full G1/G2,
+  held-out quality and installed-artifact checks are not claimed by those fixtures.

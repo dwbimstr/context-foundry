@@ -1,13 +1,20 @@
 # Architecture
 
-Status: 001 and 003 T001–T003 implemented and verified locally, 2026-10-01
-([validation](validation.md)); not released. The token-economics tranche (001
-T004–T006, 003 T005, 007 T001) was approved on 2026-10-03. 001 T004–T006 are locally
-implemented, accepted at the reviewer's SHIP and committed (`5edf32c`), unreleased;
-003 T005 (usage import, economics tests, operator hook) and 007 T001 were implemented
-and accepted on 2026-10-04, committed locally (`5e99ffd`, `cc402e0`) and unreleased.
-Other capabilities are proposed as marked below. This is a design and ownership
-contract, not a performance claim.
+Status reconciled 2026-10-09: the [spec portfolio](../specs/README.md) and
+[validation](validation.md) record implemented/accepted 001, 003, 005, 007 and 008
+work and 009's development acceptance. Gemma is the selected semantic profile;
+semantic retrieval remains optional and off by default, with installed-artifact
+checks pending signing. 013 is frozen off and excluded from the release package.
+The product is not released. This is a design and ownership contract, not a
+performance claim; historical decisions below remain subordinate to the current
+owning spec's amendments.
+
+The [context ecosystem plan](context-ecosystem-plan.md) proposes retrieval repairs
+first, followed by task state, reversible working context and memory lifecycle work.
+The owner activated the first retrieval tranche on 2026-10-09. Bounded diagnostic
+capture and experimental behavioral packing are implemented locally, with the
+candidate default off and full measurement gates pending. Task-state, working-view
+and later memory milestones remain future capabilities.
 
 The [spec portfolio](../specs/README.md) now owns planned capability sequencing;
 the [constitution](../.specify/memory/constitution.md) owns evidence policy. Sections
@@ -21,10 +28,10 @@ source spans and useful relationships, with citations, freshness, and explicit
 limits. Updates replace a source's owned content atomically. Models can improve
 selection but cannot decide whether a source exists or rewrite source truth.
 
-The product is intended to store explicit user memories and local task feedback.
-Feedback exists in the first slice; a separate user-memory service does not. Learning
-improves a bounded decision such as retrieval strategy; it does not create a new
-general agent or require training before the engine is useful.
+The product stores explicit scoped project memory (008) and local task feedback
+under the existing owner. Automatic transcript capture, task-state consolidation and
+model-written memory are not current 008 capabilities. Owned learning remains frozen
+research; retrieval does not require training.
 
 The agent integration (003, implemented and verified 2026-10-01) makes Foundry the
 first source-discovery route for explicitly admitted repositories, before grep/ripgrep.
@@ -33,8 +40,8 @@ The existing adapter owns
 small project guidance, ordinary tools and real-host acceptance. MCP availability
 alone proves neither adoption nor enforced routing. Exact-pattern/live-file checks
 retain their host tools; no shell interception, discovery daemon or model dependency
-is introduced. Launch-time multi-root context is approved in
-[007](../specs/007-multi-workspace-context/spec.md) (2026-10-03, not implemented);
+is introduced. Launch-time multi-root context is implemented and locally accepted in
+[007](../specs/007-multi-workspace-context/spec.md) (2026-10-04);
 cross-repository graph joins are still not planned.
 
 ## Sophisticated behavior through simple ownership
@@ -183,7 +190,7 @@ for inferred ownership, root overlap, cleanup and consent across unrelated repos
 The selected interface reuses explicit `index` and query operations against one
 bound store. The caller chooses B's separate store when B needs durable retrieval;
 query text never changes A's ownership. On 2026-10-03 the owner reactivated
-[007](../specs/007-multi-workspace-context/spec.md) (approved, not implemented): the
+[007](../specs/007-multi-workspace-context/spec.md) (implemented and accepted 2026-10-04): the
 operator may admit B as a reference when launching A's owner, and one search/context
 call then merges A's and B's rankings into one cited, budgeted response, each root
 keeping its own store, revision and handles. Admission stays explicit and launch-only;
@@ -318,43 +325,42 @@ model worker, store steps under the engine slot, inference outside it), and `sta
 reports it in a `semantic` object; there is no separate preparation tool.
 
 Exact paths and identifiers take precedence on locator queries. Lexical retrieval
-is always available. Neural preparation/reuse is now an active proposed workflow
-under 009: its former blanket deferral missed cold-start and repeat-compute costs.
-The prototype has no dense retrieval. Graph expansion enriches selected evidence
-rather than generating another long sequence of tool calls.
+is always available. Neural preparation/reuse and dense retrieval are implemented
+under 009. T004 supplies address cards through the llama.cpp worker and selects Gemma
+using the recorded G2/G1 checks; signed installed-artifact checks remain open.
+Graph expansion enriches selected evidence rather than generating another long
+sequence of tool calls.
 
 ### Embedding models and the policy head have different jobs
 
-An embedding model supplies similarity candidates. The owned head chooses a retrieval strategy
-from permitted task feedback. Neither owns source admission or watchers; changing
+An embedding model supplies similarity candidates. The frozen research head can choose
+a retrieval strategy from permitted task feedback. Neither owns source admission or watchers; changing
 one model does not automatically retrain the other. ModernBERT policy identity binds
 its own tokenizer, weights, head and complete ordered decision input. Changing only
-Nemotron's query function does not invalidate that model artifact, although changed
+the embedding query function does not invalidate that model artifact, although changed
 retrieval evidence may change the policy input and workflow benefit. Prior quality
 results do not prove benefit for a changed workflow.
 
-The planned normal path is lexical plus available semantic candidates → deterministic
-merge/order (009 D001: exact definitions first, then reciprocal-rank fusion) → bounded
-graph expansion when selected → verbatim or deterministically outlined evidence and
-exact budget packing. The source owner validates freshness throughout. Keep the roles
-narrow:
+The current path follows 001 T007 and 009 T004. Anchored queries resolve definitions,
+directories and available doors without calling the embedding model. For anchorless
+queries with a prepared, explicitly enabled profile, dense candidates precede lexical
+candidates through the ordinary unit ladder; T004 replaced the earlier reciprocal-rank
+fusion. Evidence remains verbatim or deterministically outlined and exactly budgeted.
+The source owner validates freshness throughout. Proposed mixed-intent changes are
+owned by 001 T010; its implemented candidate is opt-in and not part of the default
+path. Keep the roles narrow:
 
 | Component | Responsibility | What does not follow from enabling it |
 | --- | --- | --- |
-| Nemotron embedding runtime | Similarity candidates from prepared source inputs | No automatic training, graph creation or mandatory second ranking model |
+| Selected Gemma embedding runtime | Similarity candidates from prepared source inputs | No automatic training, graph creation or mandatory second ranking model |
 | Core ranking and packer | Merge, deduplicate, order and deliver cited evidence | No learned-model requirement; truncation cannot masquerade as localization |
 | Compiler graph | Current supported definition/reference relationships | No vector per occurrence or autonomous producer execution |
-| Optional policy head | Learn whether graph expansion benefits a task | No passage reranking, chunk selection, embedder fine-tuning or source admission |
+| Frozen research policy head | Study whether graph expansion benefits a task | No released routing, passage reranking, chunk selection, embedder fine-tuning or source admission |
 
-Owned training remains a repeated isolated batch workflow with ModernBERT decision
-inputs, independent of 009 query vectors. Semantic preparation and the baseline
-release do not depend on training. Normal learned routing stays off; since 2026-10-06
-`learning select` accepts, and owner startup serves, a candidate only when its routed
-option gains required task-checker evidence over deterministic routing on more
-evaluation tasks than it loses (013); classifier-label eligibility and token savings
-alone are not that evidence. The visible `--lifecycle-check` override exists only for
-lifecycle and package verification and is not enablement.
-Explicit strategy requests and unavailable/stale graph skip the router entirely.
+013's retained training code is an isolated ModernBERT batch workflow, independent of
+009 query vectors, frozen off by the owner on 2026-10-07. It is not packaged or
+advertised. Reopening it requires an owner-selected task and evidence of improved
+task outcomes; classifier-label eligibility and token savings alone do not suffice.
 A future reranker belongs inside 009 only if a bounded candidate set already contains
 the required passages but ordering loses them after ordinary defects are corrected.
 It is not a remedy for missing input, cold preparation or excessively coarse units.
@@ -572,19 +578,19 @@ there is no bootstrap job database. Deployment specifies exact command/failure b
 [003's economics contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md)
 distinguishes CLI output, MCP delivery, host hooks and explicit request forwarding.
 The owner requested both delivery control and an owned gateway. The latter is an
-optional Rust command with no source-store access, one supported Responses HTTP/SSE
-protocol and private loopback authentication. It forwards completed host requests;
+optional Rust command with no source-store access, the supported OMP/Z.ai
+`glm-5.3-flash` OpenAI-compatible chat-completions/SSE profile and private loopback
+authentication (003 T004, accepted 2026-10-04). It forwards completed host requests;
 it does not inject context or rewrite warm prefixes. MCP alone cannot redirect them.
 Measuring provider usage needs no gateway: the approved `foundry usage import` reads
 the host's own session records (003 T005).
 
-Meter mode records actual usage. Enforce mode additionally verifies the complete
-input using the provider count endpoint and reserves input plus bounded output before
-generation. Missing counts refuse generation in that mode; missing terminal usage
-retains the reservation as unknown. No automatic retries, direct-upstream bypass or
-implied durable account-wide dollar cap. Credentials stay outside ML workers.
-Exact host/stream/tool-call compatibility needs 003 T004's real proof; subscription
-authentication, other provider dialects and invisible traffic are not presumed supported.
+Meter mode records actual usage. It is the only accepted gateway mode; `enforce`
+refuses at startup with `gateway_feature_unsupported`. Missing terminal usage remains
+unknown. No automatic retries, direct-upstream bypass or implied durable account-wide
+dollar cap. Credentials stay outside ML workers. T004's real-host proof applies to
+its pinned protocol; subscription authentication, other provider dialects and
+invisible traffic are not presumed supported.
 Preparation/training costs and all observed provider attempts matter to savings claims.
 
 ## Release discipline

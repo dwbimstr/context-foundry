@@ -1,5 +1,10 @@
 # 001 — Reliable local context
 
+Planning addition, 2026-10-09: [T010](#t010--retrieve-behavioral-evidence-for-a-named-symbol)
+is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
+Existing task acceptance stands; default city-map behavior is unchanged. The
+implemented mixed-intent candidate is opt-in pending its full acceptance gates.
+
 Status: T001–T006 implemented and verified locally; not released. T001–T003 were
 verified on 2026-10-01 (owner-approved scope: 001 + 003 first implementation). T004–T006
 (token-economics tranche, approved 2026-10-03) were each accepted locally at the
@@ -536,6 +541,75 @@ owed: every attempt swapped
   baseline's. Index time and peak memory for oh-my-pi (8,436 files, 65 s
   single-threaded on 2026-10-07) and rust-lang/rust before and after are recorded by
   the [measurement handoff](../../docs/measurement-handoff.md).
+
+### T010 — Retrieve behavioral evidence for a named symbol
+
+**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
+
+The first candidate is implemented behind `--experimental-behavior-context` (CLI
+context / MCP owner), default off. It changes packing of existing, fresh candidates,
+not their recall or the embedding model. The
+[experimental amendment](contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)
+defines its exact supported intent and ownership/budget behavior. Local trace evidence
+found `QueryRuntime::dense_index` already selected at candidate rank 2 but omitted
+by anchored packing. On that frozen local query the candidate supplies the method
+and the owner's address at 357 delivered tokens versus 437 for the baseline's struct
+alone. This is one development example, not a G1/G2 or real-agent acceptance result.
+The full gates below remain pending; see [validation](../../docs/validation.md).
+
+- **Problem:** T007 resolves identity well, but its anchored packing can deliver a
+  type definition or directory without the implementation needed by a question about
+  that type. For example, “How does `QueryRuntime` load the dense index on the first
+  query?” needs the load path, not merely the structure. This is a mixed-intent
+  retrieval problem, separate from 009's anchorless G2 misses.
+- **Depends:** T007 and 005 T004; 009 T005's diagnostic checkpoint supplies the shared
+  stage trace, not a dependency on completing the semantic repair. 003 T006 owns
+  evidence that the repair improves actual agent tasks.
+- **Scope:** intent/resolution at `src/mcp.rs` and the ordinary query entry points,
+  candidate selection in `src/store.rs`, packing in `src/response.rs`, and the
+  [context v2 contract](contracts/context-v2.md). Keep one query path for CLI/MCP;
+  reuse existing source identity, budgets and graph availability rules. A new public
+  intent parameter is not assumed necessary: compare the current query interface
+  with a minimal explicit selector only if bounded intent recognition cannot work.
+- **Proposed behavior:**
+  - Separate identity resolution from evidence needs: locate a definition; explain
+    behavior; follow usages/relationships; or report ambiguous/insufficient evidence.
+    Define the supported cases and fallback in the existing contract before coding.
+    Pure locator requests retain today's deterministic identity/qualifier semantics.
+  - Use a resolved symbol as a constraint, then admit relevant implementation units,
+    lexical matches and supported current graph neighbors. Start with bounded
+    deterministic selection, without model inference for anchored queries. Expansion
+    cannot cross root admission or treat a lexical relationship as compiler proof.
+  - For behavioral intent, amend the anchored packing ladder so useful supporting
+    units can accompany the anchor within the same budget. Identify why each unit
+    supports the query. If support does not fit or remains uncertain, show the
+    limitation and an existing retrieve handle; do not imply a complete explanation
+    because one definition was found. Source spans remain verbatim or existing
+    deterministic outlines. Any claim of complete coverage is restricted to an
+    explicitly enumerated, checkable evidence requirement.
+  - Preserve ambiguous-name directory behavior where identity is unresolved. No
+    implicit broadening of admission, stale-handle acceptance, extra model call,
+    replacement source store or learned router.
+- **Acceptance:**
+  - Freeze development and held-out mixed-intent cases before tuning, including
+    type-to-method behavior, qualified duplicate names, usage/caller evidence, absent
+    graph, stale support and a budget too small for all required evidence. Ground
+    truth names the necessary spans, not just an answer file. Include paired pure
+    locator controls, unmarked names and more-than-16-way ambiguity.
+  - Explain loss through the shared trace and score complete support as well as
+    first relevant evidence. Compare with the current city-map/Gemma binary under
+    identical token caps and source revisions. Require improvement under the paired,
+    preregistered evaluation in 009 T005, report current-baseline gains/losses by
+    intent, and preserve G1's existing guards and source/budget invariants.
+  - Unknown intent safely retains current behavior; no new claim of sufficiency on
+    an unknown case. Frozen pure-locator controls retain evidence identities and
+    ordering. A changed accepted contract must identify the replaced T007 rule and
+    its regression fixtures, rather than silently invalidating the old tests.
+- **Verification:** targeted core/MCP fixtures for relevant support, identity
+  ambiguity, unavailable/stale graph, bounded packing and scope isolation, followed
+  by the required implementation checks and the frozen measurements when this task
+  is implemented. Local implementation evidence is recorded in validation; the full
+  benchmark and real-host acceptance gates are still open.
 
 ### G1 — city-map measurement
 

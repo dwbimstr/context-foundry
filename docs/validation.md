@@ -1,5 +1,59 @@
 # Validation
 
+## Retrieval execution — 2026-10-09 (partial milestone)
+
+The owner authorized the ecosystem sequence (“go for 1 then 2 and onwards”).
+001 T010, 009 T005 and 003 T006 are active; none is fully accepted by this record.
+Implementation and self-review ran in the Linux cloud workspace on Rust/Cargo 1.90.0.
+
+- [Request-local diagnostics](../src/retrieval_trace.rs) are available through
+  `context --retrieval-trace-dir DIR` and the same MCP startup flag. The directory
+  must be new. Records have explicit truncation and run limits, full source identity,
+  selection losses, packing inputs, and the actual Foundry result. Host consumption
+  remains unknown. Source/memory payloads and raw traces stay outside Git.
+- [Behavioral packing](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)
+  is implemented behind `--experimental-behavior-context`, **default off**. It uses
+  existing candidates and changes neither embeddings nor candidate recall. Locator,
+  unknown-intent, ambiguous-name and graph behavior retain the default path.
+- On the preserved local Foundry index at source revision 222, the development query
+  “How does `QueryRuntime` load the dense index on the first query?” exposed a packing
+  loss: `QueryRuntime::dense_index` was candidate rank 2 (zero based), survived the
+  four-per-file and 32-unit limits, and reached packing, but the baseline delivered
+  only the struct. The candidate delivers the method body and the owner's address.
+  At the same 1,024-token request cap, delivered tokens are **437 → 357**, and shown
+  items **1 → 2**. Both use the same indexed source identity and no semantic profile.
+  This is one local development example, not a retrieval-quality rate, provider-cost
+  result or live coding-task result. A separate public Rust fixture exercises
+  the same candidate-kept/packing-omitted mechanism.
+- Fixtures cover stale and capped candidates, dense/lexical placement tracing,
+  incomplete traces and private file permissions, unchanged traced response bytes,
+  actual stdio success/refusal records, Rust/Python/TypeScript methods, budget sweeps,
+  locator/unknown/graph controls and cross-root ambiguity. The actual stdio test
+  confirms that the opt-in flag reaches the packing policy without a tool-schema
+  change.
+- Rust validation: `cargo fmt --check`, `cargo check --locked --all-targets`,
+  `cargo clippy --locked --all-targets -- -D warnings`, and
+  `cargo check --locked --no-default-features --lib --bin foundry` pass on 1.90.0.
+  The final `cargo test --locked --no-fail-fast` run after review changes passed
+  **812 tests, zero failed, two ignored**, plus the recovery runner. The ignored
+  hardware/lifecycle measurements are not counted as passed. This is local contract
+  verification, not the unexecuted retrieval-quality or live-host gates below.
+- [003 T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
+  records the host capability inspection and matched-run procedure. Codex CLI
+  `0.159.0-alpha.3` parses the command-local MCP configuration; no model task or
+  provider-usage measurement ran. Pinned OMP source exposes context/payload hooks,
+  but that corpus pin is package 18.5.0, distinct from the previously measured 18.6.0
+  host. Upstream source/tests were inspected, not executed or treated as host proof.
+
+**Remaining gates:** the private G1/G2 questions/responses, prepared Gemma apparatus
+and Metal-capable measurement host are absent here. The 249 historical G2 misses
+remain unattributed; no anchorless repair has been selected and no fresh holdout
+comparison has run. OMP/Bun are not installed here, and matched live host tasks,
+complete provider economics and applied-view acknowledgment are unexecuted. The
+candidate stays opt-in. Milestones 3–6 retain their dependency gates and are not
+implemented by this change. Existing signed-package requirements and the 013 freeze
+remain in force.
+
 ## v0.1.0 local release — 2026-10-04 (withdrawn)
 
 **Withdrawn the same day.** The owner decided that a version is released only when

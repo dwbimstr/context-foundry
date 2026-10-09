@@ -17,6 +17,241 @@ fn drain(engine: &mut Engine) {
     engine.refresh(&Control::unbounded()).unwrap();
 }
 
+#[test]
+fn retrieval_trace_distinguishes_selection_caps_from_anchored_packing_omissions() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    let mut body = "pub struct Session;\nimpl Session {\n".to_owned();
+    for n in 0..12 {
+        body.push_str(&format!("fn request_{n}(&self) {{ retry_requests(); }}\n"));
+    }
+    body.push_str("}\n");
+    engine.replace_source("session.rs", &body).unwrap();
+    drain(&mut engine);
+    let query = "How does `Session` retry requests?";
+    let baseline = engine
+        .context_candidates(query, Strategy::Auto, &Control::unbounded())
+        .unwrap();
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let control = Control::unbounded().with_trace(Some(trace.clone()));
+    let batch = engine
+        .context_candidates(query, Strategy::Auto, &control)
+        .unwrap();
+    let pack = |batch: &_| {
+        response::pack_context(batch, Budget::request(2048), &response::stdout_bytes).unwrap()
+    };
+    let packed = pack(&batch);
+    assert_eq!(packed.text, pack(&baseline).text);
+    assert!(!packed.text.contains("retry_requests"));
+    assert!(
+        batch
+            .items
+            .iter()
+            .any(|item| item.label.starts_with("fn Session::request_"))
+    );
+    let data = trace.snapshot();
+    let events = data["events"].as_array().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event["outcome"] == "per_file_cap")
+    );
+    assert!(events.iter().any(|event| {
+        event["outcome"] == "kept"
+            && event["label"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("Session::request_"))
+    }));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["stage"] == "packing_input" && event["anchored"] == true)
+    );
+    assert_eq!(data["truncated"], false);
+    // A later source edit without an index refresh must be attributed to
+    // validation, rather than misreported as an absent candidate.
+    engine
+        .replace_source("session.rs", "pub struct Session; // changed\n")
+        .unwrap();
+    let stale_trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    engine
+        .context_candidates(
+            query,
+            Strategy::Auto,
+            &Control::unbounded().with_trace(Some(stale_trace.clone())),
+        )
+        .unwrap();
+    assert!(
+        stale_trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["outcome"] == "stale")
+    );
+}
+
+#[test]
+fn behavioral_context_delivers_owned_methods_and_preserves_locator_and_unknown_queries() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    engine
+        .replace_source(
+            "session.rs",
+            r#"
+pub struct Session { attempts: u32 }
+impl Session {
+    /// Retry requests using exponential delay.
+    pub fn retry(&self) { exponential_delay(self.attempts); }
+    pub fn stop(&self) { close_connection(); }
+}
+pub struct Other;
+impl Other { pub fn retry(&self) { unrelated_retry(); } }
+"#,
+        )
+        .unwrap();
+    drain(&mut engine);
+    let context = |query, enabled, strategy| {
+        engine
+            .context_candidates_with(
+                query,
+                strategy,
+                &Control::unbounded(),
+                &context_foundry::store::ContextOptions {
+                    experimental_behavior: enabled,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .batch
+    };
+    let pack = |batch: &_, tokens| {
+        response::pack_context(batch, Budget::request(tokens), &response::stdout_bytes).unwrap()
+    };
+    let query = "How does `Session` retry requests?";
+    let baseline = context(query, false, Strategy::Auto);
+    let candidate = context(query, true, Strategy::Auto);
+    assert!(!pack(&baseline, 2048).text.contains("exponential_delay"));
+    let result = pack(&candidate, 2048);
+    assert!(result.text.contains("exponential_delay"), "{}", result.text);
+    assert!(!result.text.contains("unrelated_retry"));
+    assert!(!result.text.contains("close_connection"));
+    assert!(parse_v2(&result.text).is_ok());
+    for tokens in [80, 100, 128, 256, 512, 1024, 2048] {
+        let packed = pack(&candidate, tokens);
+        assert!(packed.tokens <= tokens);
+        assert!(parse_v2(&packed.text).is_ok());
+    }
+    for query in [
+        "where is `Session`",
+        "find `Session`",
+        "How do I find `Session`?",
+        "`Session` retry requests",
+        "who calls `Session`",
+    ] {
+        assert_eq!(
+            pack(&context(query, false, Strategy::Auto), 2048).text,
+            pack(&context(query, true, Strategy::Auto), 2048).text,
+            "{query}"
+        );
+    }
+    assert_eq!(
+        pack(&context(query, false, Strategy::Graph), 2048).text,
+        pack(&context(query, true, Strategy::Graph), 2048).text
+    );
+}
+
+#[test]
+fn behavioral_context_keeps_global_ambiguity_and_never_crosses_root_identity() {
+    use context_foundry::roots::{RootBatch, merge_context};
+    let fixture = tempfile::tempdir().unwrap();
+    let mut roots = Vec::new();
+    let mut stores = Vec::new();
+    for name in ["one", "two"] {
+        let (store, mut engine) = setup(&fixture.path().join(name));
+        engine.replace_source("session.rs", &format!("pub struct Session;\nimpl Session {{ pub fn retry(&self) {{ retry_{name}(); }} }}\n")).unwrap();
+        drain(&mut engine);
+        roots.push(engine);
+        stores.push(store);
+    }
+    let query = "How does `Session` retry requests?";
+    let batches: Vec<_> = roots
+        .iter()
+        .enumerate()
+        .map(|(n, engine)| RootBatch {
+            alias: format!("root{n}"),
+            batch: engine
+                .context_candidates_with(
+                    query,
+                    Strategy::Auto,
+                    &Control::unbounded(),
+                    &context_foundry::store::ContextOptions {
+                        experimental_behavior: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .batch,
+        })
+        .collect();
+    assert!(batches.iter().all(|b| b.batch.anchors[0].resolved()));
+    let merged = merge_context(&batches);
+    assert!(!merged.anchors[0].resolved());
+    let packed =
+        response::pack_context(&merged, Budget::request(2048), &response::stdout_bytes).unwrap();
+    assert!(!packed.text.contains("retry_one"));
+    assert!(!packed.text.contains("retry_two"));
+    assert!(packed.text.contains("defs:2"));
+}
+
+#[test]
+fn behavioral_context_uses_syntax_owned_methods_in_python_and_typescript() {
+    for (path, body) in [
+        (
+            "relay.py",
+            "class Relay:\n    def retry(self):\n        return retry_network_request()\n",
+        ),
+        (
+            "relay.ts",
+            "export class Relay { retry() { return retryNetworkRequest(); } }\n",
+        ),
+    ] {
+        let fixture = tempfile::tempdir().unwrap();
+        let (_store, mut engine) = setup(&fixture.path().join("ws"));
+        engine.replace_source(path, body).unwrap();
+        drain(&mut engine);
+        let batch = engine
+            .context_candidates_with(
+                "How does `Relay` retry requests?",
+                Strategy::Auto,
+                &Control::unbounded(),
+                &context_foundry::store::ContextOptions {
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .batch;
+        assert!(
+            batch
+                .items
+                .iter()
+                .any(|i| i.tier == context_foundry::store::TIER_BEHAVIOR),
+            "{path}: {:?}",
+            batch.items
+        );
+        let packed =
+            response::pack_context(&batch, Budget::request(512), &response::stdout_bytes).unwrap();
+        assert!(
+            packed.text.contains("retry_network_request")
+                || packed.text.contains("retryNetworkRequest"),
+            "{}",
+            packed.text
+        );
+        assert!(packed.tokens <= 512);
+        assert!(parse_v2(&packed.text).is_ok());
+    }
+}
+
 fn endpoint(path: &str, body: &str) -> Endpoint {
     Endpoint {
         path: path.into(),

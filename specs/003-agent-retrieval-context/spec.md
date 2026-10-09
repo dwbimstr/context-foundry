@@ -1,5 +1,10 @@
 # 003 — Context inside coding agents
 
+Planning addition, 2026-10-09: [T006](#t006--validate-retrieval-repairs-in-real-coding-tasks)
+is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
+Later task-state and working-view milestones require amendments to this spec; the
+current MCP and meter-only gateway do not claim conversation-editing authority.
+
 Status: T001–T003 and the optional shared owner implemented and verified locally,
 2026-10-01, including concurrent OMP 18.4.9 and Codex 0.159.2 service on one store
 ([validation](../../docs/validation.md)). Not released. T004 gateway, retargeted
@@ -678,6 +683,105 @@ Hosts: OMP 18.4.10 (`omp --version`); Codex CLI version recorded at run time.
   Claims carry the economics contract's label.
 
 SC-001..SC-005 are the pass conditions of T001..T005 above. SC-001–SC-003 passed on
-2026-10-01; SC-004 (gateway) and SC-005 (token-economics adoption) are unexecuted.
+2026-10-01; SC-004 (gateway) and SC-005 (token-economics adoption) were accepted
+2026-10-04, with their real-host results and limits recorded in validation.
 T004 is one additional task because the owner added credential-bearing forwarding,
 not hidden work inside packing; T005 carries the owner's 2026-10-03 economics priority.
+
+### T006 — Validate retrieval repairs in real coding tasks
+
+**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
+
+**Executed boundary checks, 2026-10-09:** the Rust SDK/real Foundry stdio tests
+exercise opt-in behavior and diagnostic flags, byte-identical untraced/traced text,
+request IDs and error-result recording. Codex CLI `0.159.0-alpha.3` accepts the
+Foundry startup configuration with the experimental flag via command-local `-c`
+overrides; no global configuration changed. This is configuration parsing, not an
+agent-task run or evidence that the provider consumed a response. OMP and Bun are
+not installed in this cloud workspace; live paired task/usage acceptance is pending.
+
+**Host capability inspection (source only):** the corpus pin
+[`can1357/oh-my-pi@5b8d5b8a15ab1711597584aadbdc112c55befed1`](https://github.com/can1357/oh-my-pi/tree/5b8d5b8a15ab1711597584aadbdc112c55befed1)
+identifies package version **18.5.0**, not the 18.6.0 binary used for T004's earlier
+acceptance. `packages/coding-agent/src/extensibility/extensions/runner.ts` exposes
+`ExtensionRunner::emitContext` and `emitBeforeProviderRequest`; `types.ts` defines
+`ContextEventResult` / `BeforeProviderRequestEvent`. Message and payload replacements
+chain, with context replacements leaving persisted history unchanged. Relevant
+`packages/coding-agent/test/extensions-runner.test.ts` cases are “chains payload
+replacements across handlers in load order”, “keeps chaining after handler errors”,
+and “rejects instead of returning untransformed context when its caller aborts a
+pending handler”. These upstream tests were inspected, not executed here.
+
+The proposed Foundry integration must differ deliberately: final-byte budget and
+view-revision acknowledgment are checked after all transformations at the actual
+supported transport. An early hook acknowledgment can be invalidated by later hooks;
+an error may leave the prior payload in use. Upstream `docs/extensions.md` says
+`before_provider_request` depends on the provider transport calling `onPayload`
+(`devin-agent` does not), and an ephemeral turn's `maxContextBytes` check precedes
+payload replacement. Consequently this inspection proves neither end-to-end budget
+enforcement nor applied-view acknowledgment. Recheck the selected installed host
+version and provider in the next live run. No third-party code is vendored.
+
+**Run procedure when measurement inputs are available:**
+
+1. Pin the binary SHA-256, host version, model/settings, corpora/store generations,
+   prompts, task oracles and declared cost/time/sample-size limits. Use a dedicated
+   host profile with an explicitly admitted fixture repository, following T005's
+   runbook. Freeze holdout labels before tuning. A public fixture run establishes
+   plumbing only, not general task-quality improvement.
+2. Control: launch the existing Foundry MCP command without the experimental flag.
+   Candidate: use the identical command plus `--experimental-behavior-context`.
+   The current anchorless repair is unselected, so do not invent its ablation result
+   or claim the combined milestone has passed.
+3. For attribution runs, append `--retrieval-trace-dir <new-private-directory>` to
+   each owner launch; use a distinct new directory per process, and capture stderr.
+   Match request IDs/session IDs and context-query hashes to the harness's frozen
+   requests. Keep successful and refused results. A missing/truncated record or
+   `retrieval_trace_unavailable` invalidates attribution. Run normal latency/economics
+   comparisons without trace I/O, and measure that overhead separately.
+4. Compare actual model-request evidence, verified patches/tests and imported provider
+   usage under the experiment below. Preserve every failure and paid attempt. Record
+   aggregate results and limitations in validation. If the gate fails or remains
+   inconclusive, keep the default unchanged and repair the identified cause.
+
+- **Depends:** 001 T010 and 009 T005 supply the candidate retrieval changes; T003/T005
+  supply the existing host integration and economics boundary. Baseline collection,
+  public fixture design and host capability inspection can start before the repairs.
+- **Scope:** existing CLI/MCP/host adapters and the T005 real-host runbook. Use a
+  dedicated explicitly configured host profile. Planning assumption: inspect OMP
+  first because it has a measured integration; selecting it does not establish
+  context-editing capability. Keep Codex/other hosts' existing MCP behavior.
+- **Experiment:**
+  - Use matched bug-fix tasks with independently specified patch/test oracles,
+    including anchorless discovery, mixed behavior, ambiguity and exact locators.
+    Keep prompts, repository revisions, host/model/settings and budgets identical.
+    Separate pilot/development tasks from held-out evaluation tasks. Preserve failed
+    and invalid runs and include their paid attempts in cost totals.
+  - Compare current Foundry, mixed-intent repair alone, anchorless repair alone and
+    both repairs. Repeated paired runs account for model variability. Before final
+    runs, freeze sample-size rationale, total spend/time ceiling, stop rules,
+    task-success noninferiority margin, required improvement and cost/latency limits.
+    Do not choose those limits after reading candidate outcomes. This is one shared
+    task suite to extend in later milestones, not a new benchmark for every feature.
+  - Record first useful evidence, complete supporting evidence, exploratory calls,
+    steps to a verified patch, constraint violations, retries, task success, turns,
+    latency and complete available provider usage under the economics contract.
+    Separate Foundry delivery from evidence actually included in a model request.
+    Unknown consumption/usage remains unknown, not a zero or a savings claim.
+- **Acceptance:** the selected retrieval change preserves verified task success
+  within the preregistered margin and improves the declared evidence/discovery
+  outcome within the declared total-cost/latency bounds. Report paired uncertainty,
+  per-intent regressions and absolute success. An underpowered or incomplete run
+  cannot promote the default or establish dollar savings. Retain the baseline if
+  the outcome gate fails, even if G2 improved.
+- **Next-milestone capability artifact:** inspect the pinned real host for tool
+  interception, pre-send context mutation, protected message/tool pairing, restart
+  persistence and application acknowledgments. Classify each as supported with
+  observed evidence, unsupported or unverified. A proposed view ID is not proof
+  that the provider request used it. Document the smallest host/003 amendment
+  required for task-state and reversible context work; do not implement a generic
+  adapter platform or rewrite the gateway under this measurement task.
+- **Verification:** exercise actual installed host behavior at the claimed boundary;
+  fixtures alone cannot establish native adoption. Keep raw sessions private and
+  publish aggregate counts, apparatus identities and limitations in validation.
+  This plan itself performs no paid host runs or global host configuration changes.

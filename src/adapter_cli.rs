@@ -19,6 +19,12 @@ pub enum AdapterCommand {
             .args(["semantic_profile", "policy_config"])
     ))]
     Mcp {
+        /// Write bounded retrieval diagnostics in a NEW private run directory.
+        #[arg(long, value_name = "DIR")]
+        retrieval_trace_dir: Option<PathBuf>,
+        /// Test behavioral support packing; default off pending retrieval/host gates.
+        #[arg(long)]
+        experimental_behavior_context: bool,
         /// Repository root; canonicalized and bound once.
         #[arg(long)]
         root: PathBuf,
@@ -213,6 +219,8 @@ fn serve_mcp(
     no_memory: bool,
     semantic: Option<crate::mcp::SemanticServing>,
     policy: Option<crate::policy::PolicyServing>,
+    retrieval_trace_dir: Option<PathBuf>,
+    experimental_behavior_context: bool,
 ) -> AResult<()> {
     let budget = read_budget(budget.as_deref())?;
     let mut parsed = Vec::with_capacity(references.len());
@@ -228,6 +236,8 @@ fn serve_mcp(
         no_memory,
         semantic,
         policy,
+        retrieval_trace_dir,
+        experimental_behavior_context,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -312,6 +322,8 @@ fn serve_mcp(
 pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> AResult<()> {
     match command {
         AdapterCommand::Mcp {
+            retrieval_trace_dir,
+            experimental_behavior_context,
             root,
             transport,
             bind,
@@ -338,6 +350,8 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             }),
             policy_config
                 .map(|config| crate::policy::PolicyServing::new(config, development_isolation)),
+            retrieval_trace_dir,
+            experimental_behavior_context,
         )?,
         AdapterCommand::Bootstrap {
             root,

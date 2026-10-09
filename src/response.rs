@@ -1109,9 +1109,40 @@ fn group_slots(group: &DoorGroup) -> Vec<Slot> {
 /// group with it. Otherwise the door lines of § Doors, when the context
 /// requested doors and they were built: each placed when it fits, then the
 /// `⋯ <m> more files` line when it fits (navigation, not an item). Nothing
-/// else is packed: every other candidate is counted in `omitted:<n>`.
+/// else is packed by default: every other candidate is counted in `omitted:<n>`.
+/// Experimental behavioral support keeps the resolved owner's address and packs
+/// its selected methods before spending on directory lines (001 T010).
 /// Opt-in 008 memory lines then fill the remaining budget under their
 /// existing rule.
+fn behavior_support_items(batch: &CandidateBatch) -> Vec<&RankedItem> {
+    // 001 T010's opt-in support survives a multi-root merge only when its
+    // owner is still the single resolved anchor. Never attach a local root's
+    // methods to an ambiguous or differently resolved global name.
+    let support_owner = (batch.anchors.len() == 1 && batch.anchors[0].resolved())
+        .then(|| {
+            batch.anchors[0]
+                .entries
+                .first()
+                .and_then(|i| i.handle.as_ref())
+        })
+        .flatten();
+    batch
+        .items
+        .iter()
+        .filter(|item| {
+            item.tier == crate::store::TIER_BEHAVIOR
+                && support_owner.is_some_and(|owner| {
+                    item.handle.as_ref().is_some_and(|handle| {
+                        handle.workspace_id == owner.workspace_id
+                            && handle.path == owner.path
+                            && handle.sha256 == owner.sha256
+                    })
+                })
+        })
+        .take(4)
+        .collect()
+}
+
 fn pack_anchored(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
@@ -1119,6 +1150,7 @@ fn pack_anchored(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    let support = behavior_support_items(batch);
     enum Plan {
         Resolved {
             first: usize,
@@ -1201,6 +1233,16 @@ fn pack_anchored(
     }
     // The door lines (context-v2 § Doors), after every anchor's entries,
     // unless they are the entries' own groups.
+    let support_start = slots.len();
+    for item in support {
+        if let Some(handle) = &item.handle
+            && selected.insert(handle.to_v2())
+        {
+            slots.push(Slot::ladder(item));
+        }
+    }
+    let support_slots = support_start..slots.len();
+    let behavior = !support_slots.is_empty();
     let doors = doors.filter(|doors| doors.state != DoorState::Each);
     let group = doors.and_then(|doors| doors.groups.first());
     let door_slots = slots.len();
@@ -1297,11 +1339,17 @@ fn pack_anchored(
                 group,
                 directory,
             } => {
-                let ladder: Vec<usize> = (0..slots[*first].forms.len()).collect();
+                let ladder: Vec<usize> = if behavior {
+                    slots[*first].address.into_iter().collect()
+                } else {
+                    (0..slots[*first].forms.len()).collect()
+                };
                 place(&mut slots, *first, &ladder, &mut dropped);
                 place_group(&mut slots, *first, group, &mut dropped);
-                for index in directory.clone() {
-                    place(&mut slots, index, &[0], &mut dropped);
+                if !behavior {
+                    for index in directory.clone() {
+                        place(&mut slots, index, &[0], &mut dropped);
+                    }
                 }
             }
             Plan::Ambiguous(entries) => {
@@ -1338,6 +1386,19 @@ fn pack_anchored(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+    for index in support_slots {
+        let ladder: Vec<usize> = (0..slots[index].forms.len()).collect();
+        place(&mut slots, index, &ladder, &mut dropped);
+    }
+    if behavior {
+        for plan in &plans {
+            if let Plan::Resolved { directory, .. } = plan {
+                for index in directory.clone() {
+                    place(&mut slots, index, &[0], &mut dropped);
                 }
             }
         }

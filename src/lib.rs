@@ -47,6 +47,7 @@ pub mod neural;
 pub mod policy;
 pub mod receipts;
 pub mod response;
+pub mod retrieval_trace;
 pub mod roots;
 pub mod scip;
 pub mod store;

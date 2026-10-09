@@ -14,6 +14,7 @@ pub struct Control {
     deadline: Option<Instant>,
     /// 0 none, 1 cancelled, 2 deadline exceeded — set by the failing check.
     last_error: AtomicU64,
+    trace: Option<crate::retrieval_trace::RetrievalTrace>,
 }
 
 impl Default for Control {
@@ -22,6 +23,7 @@ impl Default for Control {
             flag: Arc::new(AtomicBool::new(false)),
             deadline: None,
             last_error: AtomicU64::new(0),
+            trace: None,
         }
     }
 }
@@ -53,7 +55,18 @@ impl Control {
             flag: self.flag.clone(),
             deadline: Some(self.deadline.map_or(deadline, |own| own.min(deadline))),
             last_error: AtomicU64::new(0),
+            trace: self.trace.clone(),
         }
+    }
+
+    /// Attach diagnostics to this request; selection never reads the trace.
+    pub fn with_trace(mut self, trace: Option<crate::retrieval_trace::RetrievalTrace>) -> Self {
+        self.trace = trace;
+        self
+    }
+
+    pub fn trace(&self) -> Option<&crate::retrieval_trace::RetrievalTrace> {
+        self.trace.as_ref()
     }
 
     /// Shared cancel flag for signal handlers and MCP session cancellation.

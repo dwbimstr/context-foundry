@@ -161,6 +161,131 @@ fn bootstrap_apply(store: &Path, root: &Path) {
     );
 }
 
+#[tokio::test]
+async fn retrieval_trace_preserves_mcp_text_and_records_the_actual_result_and_request_id() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("workspace");
+    let store = fixture.path().join("store");
+    let traces = fixture.path().join("traces");
+    write_fixture(&root, 4);
+    bootstrap_apply(&store, &root);
+    let query = "find `parse_record_0000`";
+    let baseline = std::process::Command::new(BIN)
+        .arg("--store")
+        .arg(&store)
+        .args(["context", query, "--tokens", "2048"])
+        .output()
+        .unwrap();
+    assert!(baseline.status.success());
+    let client = stdio_client_with(
+        &store,
+        &root,
+        &["--retrieval-trace-dir".into(), traces.display().to_string()],
+    )
+    .await;
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("context").with_arguments(
+                serde_json::json!({"query":query, "tokens":2048})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        assert_single_text_success(&result),
+        String::from_utf8(baseline.stdout).unwrap()
+    );
+    let reports: Vec<_> = std::fs::read_dir(&traces)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(reports.len(), 1);
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&reports[0]).unwrap()).unwrap();
+    assert_eq!(record["outcome"], serde_json::to_value(&result).unwrap());
+    assert_eq!(record["host_consumption"], "unknown");
+    assert!(
+        record["trace"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["stage"] == "request" && !e["request_id"].is_null())
+    );
+    assert_eq!(record["trace"]["truncated"], false);
+    let refused = client
+        .call_tool(
+            CallToolRequestParams::new("context").with_arguments(
+                serde_json::json!({"query":query, "tokens":1})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refused.is_error, Some(true));
+    let records: Vec<serde_json::Value> = std::fs::read_dir(&traces)
+        .unwrap()
+        .map(|e| serde_json::from_slice(&std::fs::read(e.unwrap().path()).unwrap()).unwrap())
+        .collect();
+    assert_eq!(records.len(), 2);
+    assert!(
+        records
+            .iter()
+            .any(|r| r["outcome"] == serde_json::to_value(&refused).unwrap())
+    );
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn behavioral_context_is_opt_in_at_the_real_mcp_boundary() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("workspace");
+    let store = fixture.path().join("store");
+    write_fixture(&root, 1);
+    std::fs::write(
+        root.join("session.rs"),
+        "pub struct Session;\nimpl Session { pub fn retry(&self) { exponential_delay(); } }\n",
+    )
+    .unwrap();
+    bootstrap_apply(&store, &root);
+    let query = "How does `Session` retry requests?";
+    let baseline = std::process::Command::new(BIN)
+        .arg("--store")
+        .arg(&store)
+        .args(["context", query])
+        .output()
+        .unwrap();
+    assert!(baseline.status.success());
+    assert!(!String::from_utf8_lossy(&baseline.stdout).contains("exponential_delay"));
+    let client =
+        stdio_client_with(&store, &root, &["--experimental-behavior-context".into()]).await;
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("context").with_arguments(
+                serde_json::json!({"query":query, "tokens":512})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    let text = assert_single_text_success(&result);
+    assert!(text.contains("exponential_delay"), "{text}");
+    assert!(count_tokens(&text) <= 512);
+    assert!(
+        v2(&text)
+            .items
+            .iter()
+            .any(|item| item.label.as_deref() == Some("fn Session::retry"))
+    );
+    client.cancel().await.unwrap();
+}
+
 fn text_of(result: &rmcp::model::CallToolResult) -> String {
     let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
         panic!("expected one text block");
@@ -1077,6 +1202,8 @@ async fn start_http(store: &Path, root: &Path) -> HttpServer {
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
@@ -1324,6 +1451,8 @@ async fn session_allowance_exhaustion_refuses_before_dispatch() {
     .unwrap();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
@@ -2554,6 +2683,8 @@ async fn http_refuses_absent_or_blank_token_before_opening_the_store() {
 async fn assert_http_refused(token_env: &str, store: &Path, root: &Path) {
     let result = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
@@ -2773,6 +2904,8 @@ async fn http_sessions_expire_and_admit_again_after_keep_alive() {
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.clone(),
             root: root.clone(),
             references: Vec::new(),
@@ -4677,6 +4810,8 @@ async fn http_sessions_have_independent_allowances_and_a_lost_delivery_stays_cha
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.clone(),
             root: root.clone(),
             references: Vec::new(),

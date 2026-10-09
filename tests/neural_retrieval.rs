@@ -953,13 +953,14 @@ fn capped_dense_units_are_followed_by_a_known_lexical_only_candidate_in_exact_or
         .engine()
         .search_candidates(query, None, 64, &Control::unbounded())
         .unwrap();
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
     let placed = mcp::search_primary(
         &slot,
         corpus.engine(),
         query,
         None,
         64,
-        &Corpus::control(),
+        &Corpus::control().with_trace(Some(trace.clone())),
         None,
     )
     .unwrap();
@@ -1006,6 +1007,19 @@ fn capped_dense_units_are_followed_by_a_known_lexical_only_candidate_in_exact_or
     assert_eq!(glow.len(), PER_FILE_CAP);
     assert!(glow.iter().all(|item| item.semantic.is_some()));
     assert!(capped >= 2, "the fifth and sixth glow cards were capped");
+    let data = trace.snapshot();
+    let events = data["events"].as_array().unwrap();
+    assert!(events.iter().any(|e| e["stage"] == "selection"
+        && e["origin"] == "dense"
+        && e["input_key"].is_string()));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["stage"] == "placement" && e["outcome"] == "per_file_cap")
+            .count(),
+        capped as usize
+    );
+    assert_eq!(data["truncated"], false);
     // The lexical-only candidate is placed, untagged, after every dense unit.
     let first_lexical = placed
         .items
@@ -1951,6 +1965,8 @@ async fn serve(
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = mcp::serve_http(
         ServerOptions {
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: corpus.store.clone(),
             root: corpus.root.clone(),
             references: Vec::new(),
@@ -2728,6 +2744,8 @@ impl Corpus {
         let (input, output) = tokio::io::split(server_io);
         let server = tokio::spawn(mcp::serve_streams(
             ServerOptions {
+                retrieval_trace_dir: None,
+                experimental_behavior_context: false,
                 store: self.store.clone(),
                 root: self.root.clone(),
                 references: Vec::new(),
@@ -4135,6 +4153,8 @@ async fn owner_with(
     let (input, output) = tokio::io::split(server_io);
     let server = tokio::spawn(mcp::serve_streams(
         ServerOptions {
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references,
