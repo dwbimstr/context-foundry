@@ -600,13 +600,25 @@ fn schema_seven_upgrade_is_explicit_atomic_and_preserves_task_and_memory() {
         0,
         Action::Fail("stop before commit".into()),
     );
-    assert!(Engine::upgrade_store(&e.store, 8, &Control::unbounded()).is_err());
+    assert!(
+        Engine::upgrade_store(
+            &e.store,
+            context_foundry::SCHEMA_VERSION,
+            &Control::unbounded()
+        )
+        .is_err()
+    );
     assert!(matches!(
         Engine::open_existing(&e.store),
         Err(FoundryError::UpgradeRequired { .. })
     ));
     fault::disarm_all();
-    Engine::upgrade_store(&e.store, 8, &Control::unbounded()).unwrap();
+    Engine::upgrade_store(
+        &e.store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
     let engine = Engine::open_existing(&e.store).unwrap();
     assert_eq!(engine.status().unwrap().source_revision, 2);
     assert_eq!(

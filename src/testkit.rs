@@ -147,7 +147,9 @@ pub const KNOWLEDGE_TABLES: [&str; 15] = [
     "learning_datasets",
 ];
 
-const TABLES: [&str; 19] = [
+const TABLES: [&str; 21] = [
+    "semantic_work",
+    "knowledge_work",
     "sources",
     "chunks",
     "pending_index",

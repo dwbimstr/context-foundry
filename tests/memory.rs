@@ -714,7 +714,7 @@ fn v2_upgrade_preserves_rows_migrates_pending_keys_and_is_all_or_nothing() {
     )
     .unwrap_err();
     fault::disarm_all();
-    assert_eq!(testkit::schema_marker(&store), "8");
+    assert_eq!(testkit::schema_marker(&store), "9");
     let after = testkit::snapshot(&store);
     for table in [
         "sources",
@@ -763,7 +763,7 @@ fn v2_upgrade_preserves_rows_migrates_pending_keys_and_is_all_or_nothing() {
         Some("0")
     );
     // Re-running the upgrade is a no-op; status reports the current schema.
-    ok(run(&store, &["upgrade-store", "--to", "8"], None));
+    ok(run(&store, &["upgrade-store", "--to", "9"], None));
     assert_eq!(
         stdout_json(&ok(run(&store, &["status"], None)))["schema"],
         context_foundry::SCHEMA_VERSION

@@ -31,8 +31,11 @@ and [009 T009](009-optional-semantic-retrieval/spec.md#t009--use-model-owned-geo
 now reuses semantic workers and verified cards, defers CLI model acquisition when
 vectors are cached and avoids unchanged-source chunk allocation. The next slice adds
 bounded source reads/hash, ordered acceptance, periodic lexical publication and a
-reusable ingestion/lexical pool. Artifact handoff/cache accounting, per-card fitting
-and T008/T009 are pending, ahead of broad 010 generation. See the
+reusable ingestion/lexical pool. Verified artifact handoff, transactional cache accounting
+and exact per-card fitting reuse now implement the remaining E1 work. T008 E2 adds
+schema-9 durable changed-work queues, explicit continuous maintenance and cheap status.
+T008 E3 delta publication and T009 model-aware geometry remain pending before broad
+010 generation. See the
 [revised build order](../docs/context-ecosystem-plan.md#revised-build-order).
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.

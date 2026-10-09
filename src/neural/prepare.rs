@@ -231,6 +231,7 @@ pub fn validate_priority_paths(paths: &[String]) -> FResult<()> {
 
 #[derive(Default)]
 pub(crate) struct SourceCursor {
+    pub exact: bool,
     pub scope: Option<String>,
     pub after: Option<String>,
 }
@@ -243,6 +244,19 @@ pub(crate) struct SourceOrder {
     priority_turn: bool,
 }
 impl SourceOrder {
+    pub(crate) fn changed(paths: impl Iterator<Item = String>) -> Self {
+        Self {
+            priority: paths
+                .map(|path| SourceCursor {
+                    scope: Some(path),
+                    after: None,
+                    exact: true,
+                })
+                .collect(),
+            background: None,
+            priority_turn: true,
+        }
+    }
     pub(crate) fn prioritize(&mut self, paths: &[String]) -> FResult<()> {
         self.priority = Self::new(paths)?.priority;
         Ok(())
@@ -261,6 +275,7 @@ impl SourceOrder {
                 .map(|scope| SourceCursor {
                     scope: Some(scope),
                     after: None,
+                    exact: false,
                 })
                 .collect(),
             background: Some(SourceCursor::default()),
@@ -486,6 +501,7 @@ pub(crate) fn snapshot_progress(
     started: Instant,
 ) -> cache::BootstrapProgress {
     report.bootstrap.elapsed_ms = elapsed_ms(started);
+    report.bootstrap.selected_sources = report.sources;
     report.bootstrap.embedded_units = report.embedded_units;
     report.bootstrap.reused_cached_units = report.reused_cached_units;
     report.bootstrap.input_tokens = report.input_tokens;
@@ -539,6 +555,10 @@ pub fn run(
         publication_reserve_seconds: reserve.as_secs(),
         ..PrepareReport::default()
     };
+    let work = engine.derivation_reconcile(
+        crate::neural::work::Lane::Semantic,
+        &format!("{function_digest}:{recipe}"),
+    )?;
     begin(&engine, &report)?;
 
     let outcome = inner(
@@ -565,6 +585,9 @@ pub fn run(
         .try_into()
         .unwrap_or(u64::MAX);
     snapshot_progress(&mut report, options.started);
+    if matches!(outcome, Ok(Stop::Complete)) {
+        engine.derivation_ack(crate::neural::work::Lane::Semantic, &work)?;
+    }
     finalize(&engine, &mut report, &outcome)?;
     match outcome {
         Ok(_) => Ok(report),
@@ -867,6 +890,7 @@ fn inner(
         let (progress, inputs) = steps.partition_inputs_in(
             &mut cursor.after,
             cursor.scope.as_deref(),
+            cursor.exact,
             PARTITION_WAVE,
             None,
             report,
@@ -1226,6 +1250,7 @@ pub(crate) enum Selected {
 /// inputs deduplicate through the durable cache.
 #[derive(Default)]
 pub(crate) struct Walk {
+    pub(crate) exact: bool,
     after: Option<String>,
     scope: Option<String>,
     through: Option<String>,
@@ -1535,7 +1560,27 @@ impl Steps<'_> {
         report: &mut PrepareReport,
         halt: &mut dyn FnMut() -> Option<Stop>,
     ) -> FResult<(Progress, Vec<cache::PartitionSource>)> {
-        self.partition_inputs_in(after, None, max_new, until, report, halt)
+        self.partition_inputs_in(after, None, false, max_new, until, report, halt)
+    }
+
+    fn source_page(
+        &self,
+        after: Option<&str>,
+        scope: Option<&str>,
+        exact: bool,
+    ) -> FResult<Vec<(String, crate::store::SourceMeta)>> {
+        if !exact {
+            return cache::source_page_in(&self.engine.db, after, scope);
+        }
+        if after.is_some() {
+            return Ok(Vec::new());
+        }
+        let path = scope.expect("exact source cursor has a path");
+        Ok(self
+            .engine
+            .source(path)?
+            .map(|meta| vec![(path.to_owned(), meta)])
+            .unwrap_or_default())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1543,6 +1588,7 @@ impl Steps<'_> {
         &self,
         after: &mut Option<String>,
         scope: Option<&str>,
+        exact: bool,
         max_new: usize,
         until: Option<Instant>,
         report: &mut PrepareReport,
@@ -1552,7 +1598,7 @@ impl Steps<'_> {
         if let Some(stop) = halt() {
             return Ok((Progress::Halted(stop), inputs));
         }
-        let page = cache::source_page_in(&self.engine.db, after.as_deref(), scope)?;
+        let page = self.source_page(after.as_deref(), scope, exact)?;
         if page.is_empty() {
             return Ok((Progress::Done, inputs));
         }
@@ -1612,11 +1658,8 @@ impl Steps<'_> {
             if selection.len >= room {
                 return Ok(Selected::Full);
             }
-            let page = cache::source_page_in(
-                &self.engine.db,
-                walk.after.as_deref(),
-                walk.scope.as_deref(),
-            )?;
+            let page =
+                self.source_page(walk.after.as_deref(), walk.scope.as_deref(), walk.exact)?;
             if page.is_empty() {
                 return Ok(Selected::End);
             }

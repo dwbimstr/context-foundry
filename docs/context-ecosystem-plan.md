@@ -33,8 +33,10 @@ CPU workers and bounded verified cards, defers CLI model acquisition until missi
 inputs exist, and avoids chunk allocation for unchanged sources. The next increment
 adds bounded read/hash overlap, ordered freshness-checked source acceptance, early
 lexical publication and reusable ingestion/lexical workers. Verified-artifact handoff,
-cache accounting and per-card fitting remain in E1; E2 onward is still pending. See
-[validation](validation.md#pipelined-source-ingestion--2026-10-09).
+transactional cache accounting and exact per-card segment reuse now complete the selected
+E1 implementation. E2 adds durable changed-source queues, opt-in continuous maintenance
+and cheap progress observations. E3 delta publication and E4 model-aware inputs remain
+pending. See [validation](validation.md#continuous-semantic-maintenance--2026-10-09).
 
 ## Architecture correction: useful context across 60,000–80,000 files
 
@@ -147,8 +149,9 @@ Inspected baseline: `62c6c97` on `experimental/context-ecosystem`. This is a cod
 publisher-contract audit, not a new runtime profile. The prior increment improves
 first-searchable latency. It does not establish minimum cold-build cost, automatic
 semantic maintenance or efficient publication of a small edit.
-The table records that baseline; the later E1 implementation above addresses part
-of its CPU, startup and source-allocation findings.
+The table records the audit baseline. E1 now addresses CPU, startup and source-allocation
+reuse; E2 implements changed-source selection and cheap status. Publication below remains
+the E3 opportunity; the baseline rows are not a description of the updated implementation.
 
 | Stage | What the code actually does | Remaining opportunity / owner |
 | --- | --- | --- |
@@ -233,8 +236,8 @@ remain evidence about their historical recipe only.
 ### Revised build order
 
 A–D remain completed experimental capabilities; the owner's efficiency correction
-puts E1–E4 ahead of broad generated knowledge. E1 is partially implemented as recorded
-below; E2 onward remain pending. Sandbox build/test authorization continues.
+puts E1–E4 ahead of broad generated knowledge. E1 and E2 are implemented experimentally as recorded
+below; E3 onward remain pending. Sandbox build/test authorization continues.
 
 | Order | Concrete increment | Owner/status |
 | --- | --- | --- |
@@ -242,8 +245,8 @@ below; E2 onward remain pending. Sandbox build/test authorization continues.
 | B | Source-bound structured brief import, lexical discovery and lifecycle | 010 T001: implemented; automatic generation absent |
 | C | Opt-in native source watching and bounded reconciliation | 001 T011: implemented; platform/scale limits remain |
 | D | First semantic result before full partitioning, priorities and geometric publication | 009 T007: implemented; total throughput/maintenance unresolved |
-| E1 | Remove repeated cold/warm CPU and startup work | Semantic worker reuse, bounded tokenized-card handoff, lazy CLI acquisition, no-op chunk allocation avoidance, bounded initial ingestion and lexical worker reuse implemented. Artifact handoff/counter reconciliation and per-card fitting remain pending under 009 T006/T007. |
-| E2 | Durable changed-work frontier, explicit continuous semantic maintenance, independent acknowledgments and cheap status | 009 T008 with 001 T011; pending |
+| E1 | Remove repeated cold/warm CPU and startup work | Semantic worker reuse, bounded tokenized-card handoff, lazy CLI acquisition, no-op chunk allocation avoidance, bounded initial ingestion and lexical worker reuse implemented. Verified artifact handoff, transactional counters/reconciliation and exact per-card fitting reuse implemented under 009 T006/T007; macOS model handoff and real-device throughput remain unexecuted here. |
+| E2 | Durable changed-work frontier, explicit continuous semantic maintenance, independent acknowledgments and cheap status | 009 T008 with 001 T011; implemented experimentally in schema 9; ordinary changed-input selection is bounded, whole-index publication remains E3 |
 | E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; pending, reuses E2 |
 | E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; pending; compare against current cards, keep old profiles/caches usable |
 | F | Selective memoized LLM generation, reverse dependencies, affected area rollups and indexed derived knowledge | 010 T002 on E2/E4 resource and identity contracts; pending |

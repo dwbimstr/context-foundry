@@ -814,8 +814,9 @@ no large-repository throughput improvement is inferred.
   replaces the current maintained libraries.
 - Source publication durably records semantic/generation obligations under
   [009 T008](../009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work).
-  Existing watcher freshness only invalidates stale evidence; it does not implement
-  that new queue or automatic derivation. Keep source freshness ahead of model work,
+  Schema 9 now implements independent bounded obligations in source transactions;
+  explicit continuous semantic mode consumes them through the existing owner. Keep
+  source freshness ahead of model work,
   while preventing an always-pending initial scan/edit stream from starving bounded
   derivation progress. Watch enablement alone still runs no model.
 - Verify bounded read overlap, unchanged-source allocation avoidance, source changes

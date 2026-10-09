@@ -79,6 +79,9 @@ pub enum AdapterCommand {
             value_parser = clap::value_parser!(u64).range(1..)
         )]
         semantic_cache_cap: Option<u64>,
+        /// Continuously prepare accepted source changes; pair with --watch for filesystem edits.
+        #[arg(long, requires = "semantic_profile")]
+        semantic_maintain: bool,
     },
     /// Inspect repository bootstrap; `--apply` creates/opens the store and indexes baseline source.
     Bootstrap {
@@ -347,6 +350,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             policy_config,
             development_isolation,
             semantic_cache_cap,
+            semantic_maintain,
         } => serve_mcp(
             store,
             root,
@@ -358,6 +362,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             no_memory,
             semantic_profile.map(|profile| crate::mcp::SemanticServing {
                 cache_cap_bytes: semantic_cache_cap,
+                maintain: semantic_maintain,
                 ..crate::mcp::SemanticServing::new(profile, development_isolation)
             }),
             policy_config

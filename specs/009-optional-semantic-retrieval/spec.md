@@ -7,8 +7,9 @@ It does not change T001–T004 acceptance or semantic enablement/package restric
 Experimental update, 2026-10-09: T006/T007 implement bounded parallel partitions and
 progressive bootstrap. The subsequent efficiency audit selects their CPU/startup
 follow-up, T008 incremental maintenance/publication and T009 model-aware input
-geometry before broad 010 generation. The first CPU/startup increment below is
-implemented experimentally; the remaining follow-ups are pending. See the
+geometry before broad 010 generation. CPU/startup reuse (E1) and durable continuous
+maintenance/cheap status (E2) are implemented experimentally. Delta publication (E3)
+and model-aware inputs (E4) remain pending. See the
 [revised build order](../../docs/context-ecosystem-plan.md#revised-build-order).
 
 Status: T001 (preparation, cache, index and the supervised development worker), T002
@@ -1320,14 +1321,15 @@ Upstream inspected: tokenizers **0.23.2**, `tokenizer/mod.rs`
 only bounded per-card deterministic segment memoization differs. Sandbox tests compare
 exact IDs, offsets, spans and keys, including Unicode and overflow. The macOS descriptor
 handoff has not been executed on this Linux sandbox; real-device throughput is unverified.
-T008/T009 and 010 generation remain separate pending increments. See
+T008 E2 is implemented below; E3 delta publication, T009 and 010 generation remain
+separate pending increments. See
 [validation](../../docs/validation.md#bootstrap-work-reuse--2026-10-09) for sandbox
 evidence; no real-device throughput or task-quality gain is claimed.
 
 ### T008 — Maintain and publish only changed semantic work
 
-Selected, pending implementation. Depends on 001 T011's source acceptance seam and
-T006/T007's bounded preparation. Current input-key cache reuse is retained. Replace
+Selected; E2 implemented experimentally, E3 publication deltas pending. Depends on
+001 T011's source acceptance seam and T006/T007's bounded preparation. Current input-key cache reuse is retained. Replace
 normal edit-time full walks and generation rebuilds with work proportional to the
 changed inputs and their locations. Full reconciliation is still valid for initial
 bootstrap, profile changes, repair and missed filesystem notifications.
@@ -1374,6 +1376,52 @@ bootstrap, profile changes, repair and missed filesystem notifications.
   mapping-only publication, stale candidate suppression, bounded query merge,
   convergence under sustained edits, cheap status and foreground service. Fixtures
   establish work selection and recovery, not real-device throughput.
+
+Implemented E2 in [work.rs](../../src/neural/work.rs), [driver.rs](../../src/neural/driver.rs),
+[status.rs](../../src/neural/status.rs) and the existing source/MCP owner:
+
+- Schema 9 adds two domain-specific redb tables, `semantic_work` and `knowledge_work`.
+  One shared queue would let one consumer erase or crowd out the other's obligations;
+  each table owns a metadata row, at most 1,024 paths and 1 MiB of queued path text
+  plus one bounded rotation cursor. Updates,
+  tombstones and overflow markers commit with source/chunk/revision publication,
+  including scan sweeps. There is no new broker, service, model thread or dependency.
+- Overflow clears the bounded lane and advances its reconciliation epoch; subsequent
+  changes continue to be recorded. A baseline completion clears only its epoch and
+  versions at or before its start revision. Ordinary batches select eight exact paths
+  with a persisted rotating cursor, so repeatedly edited paths cannot starve the tail.
+  Acknowledgment requires the same owner, lane, epoch, function/recipe and exact version;
+  it follows successful cache work and publication. Source/lexical acknowledgment
+  never clears derivation obligations. Upgrade initializes reconciliation and preserves
+  source, briefs, memory, task, graph, semantic cache and learning data.
+- `index {semantic:"maintain"}` enables the existing driver for this owner. Explicit
+  `mcp --semantic-maintain --semantic-profile FILE` starts it at launch; `--watch` is
+  separately needed for automatic filesystem acceptance. One-shot `prepare` remains
+  an explicit full reconciliation and persists that obligation before publication.
+  `pause`, shutdown, provider errors and cache limits retain unfinished work; named
+  failures require explicit resume, with no hidden provider retry. Quiet mode waits
+  on committed-source notifications without body/cache/index polling; pause/shutdown
+  is observed within the 250 ms notification wait, apart from existing in-flight work.
+- Source work gets eight owner steps before a requested semantic step may reserve
+  the slot briefly (100 ms reservation ceiling); foreground requests still go first.
+  Existing CPU, cache, profile batch and document-call limits apply. Continuous mode
+  does not grant new filesystem roots or model download/execution permission.
+- Publication records versioned coverage from its existing mapping walk; no extra
+  census is added. Ordinary CLI/MCP status reads transactional cache totals, pending
+  metadata and the last recorded publication. Source/profile mismatch yields stale
+  or unknown counters (`null`), with the prior observation labeled separately.
+  `index.available` is unknown and `validation:not_checked`; this observation does
+  not certify on-disk integrity or claim live cache census totals. Use
+  `semantic status --audit` or MCP `status {semantic_audit:true}` for the bounded audit.
+  Status still obeys serving admission but does not renew the two-input/60-second
+  foreground throttle. This amends T001 readiness, T003 D4/D5 and startup behavior
+  only for the explicitly selected mode.
+
+E3 remains pending: each publication can still walk all prepared mappings and rebuild
+one full ANN generation, including mapping-only changes. E2's affected-source bound
+applies to partition/input selection, not total edit publication cost. Generation
+format and lookup freshness checks are unchanged. No 80,000-file throughput, real
+model cost or task-quality claim follows from the sandbox work-count tests.
 
 Reference inspected, not executed: USearch **2.26.2** (the Cargo.lock version),
 [`rust/lib.rs`](https://github.com/unum-cloud/usearch/blob/v2.26.2/rust/lib.rs)

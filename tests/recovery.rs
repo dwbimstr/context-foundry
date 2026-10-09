@@ -327,6 +327,17 @@ fn exit_after_source_commit_keeps_new_bytes_and_rejects_the_old_hit() {
         V2_UNIT
     );
     drop(engine);
+    let durable = snapshot(&store);
+    for lane in ["semantic_work", "knowledge_work"] {
+        let row = &durable[lane]
+            .iter()
+            .find(|(path, _)| path == "a.rs")
+            .unwrap()
+            .1;
+        let work: serde_json::Value = serde_json::from_str(row).unwrap();
+        assert_eq!(work["hash"], digest(V2.as_bytes()), "{lane}");
+        assert!(work["revision"].as_u64().unwrap() > 0);
+    }
     // Graph rows and feedback records are exactly what was committed before.
     let now = knowledge_owned(&store);
     for table in ["feedback", "provider_bundles", "edges_out", "edges_in"] {
@@ -625,7 +636,7 @@ fn exit_during_upgrade_transaction_leaves_wholly_v1() {
         &Control::unbounded(),
     )
     .unwrap();
-    assert_eq!(schema_marker(&store), "8");
+    assert_eq!(schema_marker(&store), "9");
     let engine = Engine::open_existing(&store).unwrap();
     assert_eq!(engine.status().unwrap().source_count, 1);
     assert_eq!(
@@ -643,7 +654,7 @@ fn exit_during_upgrade_transaction_leaves_wholly_v1() {
 fn exit_after_upgrade_commit_is_wholly_v2() {
     let work = crash_at("upgrade_after_commit");
     let store = work.path().join("store");
-    assert_eq!(schema_marker(&store), "8");
+    assert_eq!(schema_marker(&store), "9");
     let engine = Engine::open_existing(&store).unwrap();
     let status = engine.status().unwrap();
     assert_eq!(

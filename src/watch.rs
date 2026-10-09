@@ -162,7 +162,8 @@ impl Watch {
     pub(crate) fn idle(&self) -> bool {
         !self.running.load(Ordering::SeqCst)
     }
-    /// Optional model work yields while source maintenance is outstanding.
+    /// Source work is pending: the owner gives it eight steps before admitting
+    /// a bounded semantic step, with foreground operations always first.
     #[cfg(feature = "semantic")]
     pub(crate) fn source_pending(&self) -> bool {
         if self.idle() || self.stop.is_cancelled() {

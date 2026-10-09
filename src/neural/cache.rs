@@ -190,12 +190,32 @@ pub struct SemanticState {
     /// Last completed/paused run's stage accounting; older rows have none.
     #[serde(default)]
     pub bootstrap: Option<BootstrapProgress>,
+    #[serde(default)]
+    pub coverage: Option<CoverageSnapshot>,
+}
+
+/// Last successful publication observation. Freshness is checked against source
+/// revision and profile at read time; it is never proof of on-disk integrity.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CoverageSnapshot {
+    pub version: u32,
+    pub source_revision: u64,
+    pub function_digest: String,
+    pub recipe_id: String,
+    pub sources: u64,
+    pub unpartitioned_sources: u64,
+    pub eligible_units: u64,
+    pub cached_current_units: u64,
+    pub searchable_current_units: u64,
+    pub index_entries: u64,
 }
 
 /// Observed run accounting, not a model/device throughput estimate. Provider wait
 /// overlaps card prefetch, so durations are not additive CPU/device utilization.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct BootstrapProgress {
+    #[serde(default)]
+    pub selected_sources: u64,
     pub waves: u64,
     pub priority_waves: u64,
     pub partition_compute_ms: u64,
@@ -322,7 +342,6 @@ pub(crate) fn partition_paths(db: &Database, after: Option<&str>) -> FResult<Vec
         .collect()
 }
 
-#[cfg(feature = "semantic")]
 pub(crate) fn source_count(db: &Database) -> FResult<u64> {
     Ok(db.begin_read()?.open_table(SOURCES)?.len()?)
 }
@@ -672,6 +691,7 @@ impl Engine {
                 state.cache_entries = current.cache_entries;
                 state.cache_accounting_version = current.cache_accounting_version;
                 state.committed_units = current.committed_units;
+                state.coverage = current.coverage;
             } else {
                 state.cache_bytes = 0;
                 state.cache_entries = None;
@@ -723,6 +743,35 @@ impl Engine {
                     .map_err(FoundryError::from)?
                     .as_str(),
             )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Record counters from the same mapping that was successfully published.
+    /// A concurrent edit/profile change leaves the previous observation stale.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn semantic_record_coverage(&self, coverage: CoverageSnapshot) -> FResult<()> {
+        let tx = self.db.begin_write()?;
+        {
+            if crate::store::revision_in(&tx)? != coverage.source_revision {
+                return Ok(());
+            }
+            let mut table = tx.open_table(STATE)?;
+            let Some(mut state) = table
+                .get(STATE_KEY)?
+                .map(|raw| decode_state(raw.value()))
+                .transpose()?
+            else {
+                return Ok(());
+            };
+            if state.function_digest.as_ref() != Some(&coverage.function_digest)
+                || state.recipe_id.as_ref() != Some(&coverage.recipe_id)
+            {
+                return Ok(());
+            }
+            state.coverage = Some(coverage);
+            table.insert(STATE_KEY, serde_json::to_string(&state)?.as_str())?;
         }
         tx.commit()?;
         Ok(())
@@ -1031,7 +1080,9 @@ impl Engine {
                         .as_str(),
                 )?;
             }
+            crate::neural::work::invalidate(&tx, crate::neural::work::Lane::Semantic)?;
             tx.commit()?;
+            self.semantic_wake.notify();
             (partitions, rows, bytes)
         };
         // Rows are gone; the descriptor-relative deletion follows. The hook

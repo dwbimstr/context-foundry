@@ -25,11 +25,15 @@ maintenance and vector deltas (009 T008), then model-aware body/parent inputs
 (009 T009). The first CPU/startup increment reuses bounded semantic workers and
 verified cards, defers CLI acquisition on cache-only runs and skips unchanged-source
 chunk allocation. The next increment adds bounded read/hash overlap, ordered source
-acceptance, early lexical publication and reusable ingestion/lexical workers. Artifact
-handoff/cache accounting, per-card fitting and maintenance/representation work remain
-pending. Automatic generation (010 T002), boundary joins and
-task-evidence composition also remain pending; watch updates currently invalidate
-stale semantic/brief evidence without automatically preparing replacements.
+acceptance, early lexical publication and reusable ingestion/lexical workers. Verified
+artifact handoff, transactional cache totals and exact per-card fitting reuse are now
+implemented. Schema 9 adds independent semantic/knowledge work queues; explicit
+`--semantic-maintain` (or MCP `index {semantic:"maintain"}`) consumes changed-source
+work and waits on notifications when caught up. Add `--watch` for automatic filesystem
+acceptance. Default status reads a versioned observation; audit remains explicit.
+Vector/location deltas (E3), model-aware inputs (E4), automatic generation (010 T002),
+boundary joins and task-evidence composition remain pending. Publication still can
+walk all prepared mappings and rebuild the whole ANN.
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
 [validation](validation.md). 013 remains frozen. No release or quality gain is claimed.
 

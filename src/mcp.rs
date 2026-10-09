@@ -184,6 +184,10 @@ pub(crate) struct Shared {
     no_memory: bool,
     experimental_task_context: bool,
     watch: Option<Arc<crate::watch::Watch>>,
+    #[cfg(feature = "semantic")]
+    semantic_turn: Mutex<Option<Instant>>,
+    #[cfg(feature = "semantic")]
+    source_steps: AtomicUsize,
     /// 009 T002: the owner's resident query runtime, or the named fallback
     /// word every request reports when it could not start. 009 T003: the
     /// same runtime embeds the preparation driver's document batches.
@@ -600,6 +604,10 @@ impl Shared {
             no_memory: false,
             experimental_task_context: false,
             watch: None,
+            #[cfg(feature = "semantic")]
+            semantic_turn: Mutex::new(None),
+            #[cfg(feature = "semantic")]
+            source_steps: AtomicUsize::new(0),
             semantic: SemanticSlot::default(),
             #[cfg(feature = "semantic")]
             preparation: Arc::default(),
@@ -674,7 +682,13 @@ impl crate::neural::driver::Owner for Shared {
             .as_ref()
             .is_some_and(|watch| watch.source_pending())
         {
-            return Ok(false);
+            if self.source_steps.load(Ordering::SeqCst) < 8 {
+                return Ok(false);
+            }
+            *self
+                .semantic_turn
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
         }
         if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
             return Ok(false);
@@ -698,6 +712,11 @@ impl crate::neural::driver::Owner for Shared {
                 "the primary engine is not open"
             )));
         };
+        self.source_steps.store(0, Ordering::SeqCst);
+        *self
+            .semantic_turn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         step(engine);
         Ok(true)
     }
@@ -711,6 +730,15 @@ impl crate::neural::driver::Owner for Shared {
 /// preparation. Each callback is one file, walk entry, deletion or index page.
 impl crate::watch::Owner for Shared {
     fn try_watch_step(&self, step: &mut dyn FnMut(&mut Engine)) -> FResult<bool> {
+        #[cfg(feature = "semantic")]
+        if self
+            .semantic_turn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(100))
+        {
+            return Ok(false);
+        }
         if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
             return Ok(false);
         }
@@ -727,6 +755,12 @@ impl crate::watch::Owner for Shared {
             return Ok(false);
         }
         let engine = engines[0].as_mut().expect("primary engine is open");
+        #[cfg(feature = "semantic")]
+        let _ = self
+            .source_steps
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |steps| {
+                Some((steps + 1).min(8))
+            });
         step(engine);
         Ok(true)
     }
@@ -1849,8 +1883,8 @@ impl FoundryMcp {
 
     #[tool(
         name = "index",
-        description = "Re-index after edits: the bound repo, or an admitted reference root via `root`.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"},"scip":{"type":"object","additionalProperties":false,"required":["index_file","snapshot_file"],"properties":{"index_file":{"type":"string"},"snapshot_file":{"type":"string"}}},"semantic":{"enum":["prepare","pause"]},"priority_paths":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":4096}}}}"#),
+        description = "Index an admitted root or control semantic preparation.",
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"},"scip":{"type":"object","additionalProperties":false,"required":["index_file","snapshot_file"],"properties":{"index_file":{"type":"string"},"snapshot_file":{"type":"string"}}},"semantic":{"enum":["prepare","maintain","pause"]},"priority_paths":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":4096}}}}"#),
         // `index` writes only Foundry's own store for the bound root; it
         // never modifies workspace files, and re-indexing converges.
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
@@ -1871,7 +1905,7 @@ impl FoundryMcp {
         match arguments.get("semantic") {
             None => {}
             Some(serde_json::Value::String(action))
-                if matches!(action.as_str(), "prepare" | "pause") =>
+                if matches!(action.as_str(), "prepare" | "maintain" | "pause") =>
             {
                 if arguments.contains_key("root") || arguments.contains_key("scip") {
                     return Ok(error_result(
@@ -1890,7 +1924,7 @@ impl FoundryMcp {
                     return Ok(foundry_error_result(&e));
                 }
                 let priorities = match arguments.get("priority_paths") {
-                    Some(value) if action == "prepare" => {
+                    Some(value) if action != "pause" => {
                         match serde_json::from_value::<Vec<String>>(value.clone()) {
                             Ok(paths) => Some(paths),
                             Err(_) => {
@@ -1905,15 +1939,13 @@ impl FoundryMcp {
                     Some(_) => {
                         return Ok(error_result(
                             "invalid_argument",
-                            "priority_paths requires semantic prepare",
+                            "priority_paths requires semantic prepare or maintain",
                             false,
                         ));
                     }
                     None => None,
                 };
-                return Ok(self
-                    .index_semantic(&ctx, action == "prepare", priorities)
-                    .await);
+                return Ok(self.index_semantic(&ctx, action, priorities).await);
             }
             Some(serde_json::Value::Null) => {
                 return Ok(error_result(
@@ -1925,7 +1957,7 @@ impl FoundryMcp {
             Some(_) => {
                 return Ok(error_result(
                     "invalid_argument",
-                    "argument `semantic` must be \"prepare\" or \"pause\"",
+                    "argument `semantic` must be prepare, maintain or pause",
                     false,
                 ));
             }
@@ -2255,8 +2287,8 @@ impl FoundryMcp {
 
     #[tool(
         name = "status",
-        description = "Revision, pending work, index/scan state and coverage for each admitted root.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{}}"#),
+        description = "Progress and coverage for admitted roots; optional semantic audit.",
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"semantic_audit":{"type":"boolean","default":false}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn status(
@@ -2264,16 +2296,20 @@ impl FoundryMcp {
         ctx: RequestContext<RoleServer>,
         arguments: JsonObject,
     ) -> Result<CallToolResult, ErrorData> {
-        if let Err(e) = unknown_fields(&arguments, &[]) {
+        if let Err(e) = unknown_fields(&arguments, &["semantic_audit"]) {
             return Ok(foundry_error_result(&e));
         }
-        if !arguments.is_empty() {
-            return Ok(error_result(
-                "invalid_argument",
-                "status takes no arguments",
-                false,
-            ));
-        }
+        let semantic_audit = match arguments.get("semantic_audit") {
+            None => false,
+            Some(serde_json::Value::Bool(audit)) => *audit,
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "semantic_audit must be boolean",
+                    false,
+                ));
+            }
+        };
         let meta = Arc::clone(&self.state.meta);
         let multi = meta.len() > 1;
         // 009 T003: an owner serving a semantic profile adds the `semantic`
@@ -2300,18 +2336,18 @@ impl FoundryMcp {
                         Ok(runtime) => runtime.status_word(),
                         Err(word) => word.clone(),
                     };
-                    value["semantic"] = crate::neural::driver::status_object(
-                        primary,
-                        preparation.live(),
-                        &runtime,
-                        control,
-                    )?;
+                    value["semantic"] =
+                        (if semantic_audit {
+                            crate::neural::driver::status_audit_object
+                        } else {
+                            crate::neural::driver::status_object
+                        })(primary, preparation.live(), &runtime, control)?;
                     if let Some(progress) = preparation.progress() {
                         value["semantic"]["bootstrap"] = serde_json::to_value(progress)?;
                     }
                 }
                 #[cfg(not(feature = "semantic"))]
-                let _ = (&semantic, control);
+                let _ = (&semantic, control, semantic_audit);
                 if let Some(watch) = &watch {
                     value["watch"] = watch.status(primary.pending()?);
                 }
@@ -2548,7 +2584,7 @@ impl FoundryMcp {
     async fn index_semantic(
         &self,
         ctx: &RequestContext<RoleServer>,
-        prepare: bool,
+        action: &str,
         priority_paths: Option<Vec<String>>,
     ) -> CallToolResult {
         #[cfg(feature = "semantic")]
@@ -2572,10 +2608,14 @@ impl FoundryMcp {
                 }
             };
             let preparation = Arc::clone(&self.state.preparation);
-            if prepare {
+            if action != "pause" {
                 let owner: Arc<dyn crate::neural::driver::Owner> = self.state.clone();
-                if let Err(e) = preparation.prepare_with_priorities(owner, runtime, priority_paths)
-                {
+                let result = if action == "maintain" {
+                    preparation.maintain(owner, runtime, priority_paths)
+                } else {
+                    preparation.prepare_with_priorities(owner, runtime, priority_paths)
+                };
+                if let Err(e) = result {
                     return foundry_error_result(&e);
                 }
             } else {
@@ -2607,7 +2647,7 @@ impl FoundryMcp {
         }
         #[cfg(not(feature = "semantic"))]
         {
-            let _ = (ctx, prepare, priority_paths);
+            let _ = (ctx, action, priority_paths);
             foundry_error_result(&refuse_unsupported_semantic())
         }
     }
@@ -3224,17 +3264,17 @@ impl FoundryMcp {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for FoundryMcp {
-    /// 009 T003: every served tool call — search, context, retrieve,
-    /// index (its `semantic` prepare and pause included), status, memory,
-    /// references — is foreground activity for the preparation driver's
-    /// batch size, marked before the tool runs.
+    /// Foreground work bounds document batches. Status observation uses the
+    /// ordinary request slot but does not renew the 60-second batch throttle.
     async fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
         #[cfg(feature = "semantic")]
-        self.state.preparation.foreground();
+        if request.name != "status" {
+            self.state.preparation.foreground();
+        }
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         self.tool_router.call(tcc).await
     }
@@ -3488,6 +3528,8 @@ pub struct ServerOptions {
 /// The launch-time semantic configuration (`mcp --semantic-profile FILE
 /// [--development-isolation] [--semantic-cache-cap BYTES]`).
 pub struct SemanticServing {
+    /// Explicit continuous maintenance, resumed only by this launch option.
+    pub maintain: bool,
     pub profile: PathBuf,
     pub development: bool,
     /// The owner's preparation cache cap; `None` is the 2 GiB default.
@@ -3505,6 +3547,7 @@ impl SemanticServing {
             profile,
             development,
             cache_cap_bytes: None,
+            maintain: false,
             #[cfg(all(feature = "test-faults", feature = "semantic"))]
             provider: None,
         }
@@ -3517,6 +3560,7 @@ impl SemanticServing {
             profile,
             development: true,
             cache_cap_bytes: None,
+            maintain: false,
             provider: Some(make),
         }
     }
@@ -3587,6 +3631,11 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
     let admitted = roots::validate_admission(&options.root, &options.references)
         .map_err(|error| AdapterError::named(error.code(), error.message()))?;
     let primary = &admitted[0];
+    #[cfg(feature = "semantic")]
+    let maintain = options
+        .semantic
+        .as_ref()
+        .is_some_and(|launch| launch.maintain);
     let semantic_launch = options.semantic.take();
     let policy_launch = options.policy.take();
     #[cfg(not(feature = "semantic"))]
@@ -3631,8 +3680,8 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
     // 009 T002: ONE resident worker starts here, before serving, when a
     // semantic profile is configured; the owner never loads behind a query.
     // A refused or failed start is the named fallback every later request
-    // reports, with baseline results intact. 009 T003: startup never resumes
-    // preparation; only `index {semantic: "prepare"}` starts the driver.
+    // reports, with baseline results intact. Only explicit continuous mode
+    // starts preparation at launch; otherwise an index action is required.
     let semantic = semantic_slot(semantic_launch)?;
     // 013 T003: the config is validated and its worker loaded HERE, once,
     // before serving (bounded by the load ceiling). An invalid config or a
@@ -3662,11 +3711,29 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         no_memory: options.no_memory,
         experimental_task_context: options.experimental_task_context,
         watch: watch.clone(),
+        #[cfg(feature = "semantic")]
+        semantic_turn: Mutex::new(None),
+        #[cfg(feature = "semantic")]
+        source_steps: AtomicUsize::new(0),
         semantic,
         #[cfg(feature = "semantic")]
         preparation: Arc::default(),
         policy,
     });
+    #[cfg(feature = "semantic")]
+    if maintain {
+        let runtime = match &state.semantic {
+            Some(Ok(runtime)) => Arc::clone(runtime),
+            _ => {
+                return Err(FoundryError::Semantic {
+                    code: "semantic_unavailable",
+                    message: "continuous maintenance requires an available semantic profile".into(),
+                }
+                .into());
+            }
+        };
+        state.preparation.maintain(state.clone(), runtime, None)?;
+    }
     if let (Some(watch), Some(reader)) = (watch, watch_reader) {
         watch.start(state.clone(), reader)?;
     }

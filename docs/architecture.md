@@ -673,3 +673,12 @@ those goals to independently usable releases.
 
 Library references: [redb](https://docs.rs/redb/4.3.0/redb/),
 [Tantivy](https://docs.rs/tantivy/0.26.2/tantivy/).
+
+The experimental schema-9 continuation adds independent bounded semantic and knowledge
+obligations to source transactions. The existing semantic preparation owner consumes
+exact changed paths only when continuous maintenance is explicitly enabled, waits on
+commit notifications when caught up, and acknowledges versions after publication.
+Ordinary status reads the last recorded publication and transactional cache totals;
+source/profile mismatch is stale or unknown, and full audit remains explicit.
+See [009 T008](../specs/009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work).
+Full ANN publication remains until E3; automatic LLM generation remains 010 T002.

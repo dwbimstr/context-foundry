@@ -378,7 +378,12 @@ fn schema_six_upgrade_preserves_existing_source_and_memory_and_refuses_implicit_
     assert!(
         matches!(Engine::open_existing(&e.store),Err(FoundryError::UpgradeRequired{found}) if found=="6")
     );
-    Engine::upgrade_store(&e.store, 8, &Control::unbounded()).unwrap();
+    Engine::upgrade_store(
+        &e.store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
     let engine = Engine::open_existing(&e.store).unwrap();
     assert_eq!(engine.status().unwrap().source_revision, 1);
     assert_eq!(

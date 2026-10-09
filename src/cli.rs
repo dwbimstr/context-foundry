@@ -238,7 +238,11 @@ enum SemanticAction {
     },
     /// Metadata-only readiness: never loads the tokenizer, the worker, the
     /// model or a broken profile.
-    Status,
+    Status {
+        /// Explicit full source/cache census and generation integrity validation.
+        #[arg(long)]
+        audit: bool,
+    },
     /// Offline removal of every semantic partition, cache entry and index
     /// generation under sole ownership. Sources, graph, memory and feedback
     /// stay; nothing repopulates.
@@ -1230,9 +1234,13 @@ fn semantic_run(
     started: std::time::Instant,
 ) -> AResult<()> {
     match action {
-        SemanticAction::Status => {
+        SemanticAction::Status { audit } => {
             let engine = Engine::open_existing(store)?;
-            let status = engine.semantic_status(&live_control())?;
+            let status = if audit {
+                serde_json::to_value(engine.semantic_status(&live_control())?)?
+            } else {
+                engine.semantic_progress(&live_control())?
+            };
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
         SemanticAction::Purge => {

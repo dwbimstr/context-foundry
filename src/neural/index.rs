@@ -169,6 +169,7 @@ impl GenerationScope {
 /// current cached vector, the unit locations carrying it, and the scope.
 #[cfg(feature = "semantic")]
 pub struct CurrentMapping {
+    pub(crate) coverage: cache::CoverageSnapshot,
     pub units: std::collections::BTreeMap<String, Vec<UnitLocation>>,
     pub scope: GenerationScope,
 }
@@ -636,6 +637,7 @@ impl Engine {
         identity: &Prepared,
         control: &Control,
     ) -> FResult<usize> {
+        let mut coverage = mapping.coverage;
         let mut scope = mapping.scope;
         let mut keys = mapping.units.into_iter();
         let mut entries: Vec<GenerationEntry> = Vec::with_capacity(keys.len());
@@ -649,7 +651,12 @@ impl Engine {
             None,
         )?;
         let store = self.semantic_anchor()?;
-        build_generation(&store, identity, &entries, scope, control)
+        let count = build_generation(&store, identity, &entries, scope, control)?;
+        coverage.cached_current_units = entries.iter().map(|entry| entry.units.len() as u64).sum();
+        coverage.searchable_current_units = coverage.cached_current_units;
+        coverage.index_entries = count as u64;
+        self.semantic_record_coverage(coverage)?;
+        Ok(count)
     }
 
     /// Publish pending committed coverage: when a validated generation
@@ -662,6 +669,7 @@ impl Engine {
         };
         let wanted = self.semantic_current_mapping(control, &identity.digest, &identity.recipe)?;
         if wanted.units.is_empty() {
+            self.semantic_record_coverage(wanted.coverage)?;
             return Ok(Publication::Nothing);
         }
         // Current means the same keys, unit locations, coverage AND source
@@ -675,6 +683,7 @@ impl Engine {
             control,
         ) {
             Ok(generation) if wanted.published_by(&generation) => {
+                self.semantic_record_coverage(wanted.coverage)?;
                 return Ok(Publication::Current(generation.manifest.count));
             }
             Err(GenerationError::Interrupted(error)) => return Err(error),
@@ -697,6 +706,7 @@ pub(crate) struct MappingWalk {
     source_revision: u64,
     sources: u64,
     current_partitions: u64,
+    eligible_units: u64,
     complete: bool,
     units: std::collections::BTreeMap<String, Vec<UnitLocation>>,
     /// One cache probe per distinct key: true when its vector is current.
@@ -714,6 +724,7 @@ impl MappingWalk {
             source_revision: engine.source_revision()?,
             sources: cache::source_count(&engine.db)?,
             current_partitions: 0,
+            eligible_units: 0,
             complete: true,
             units: std::collections::BTreeMap::new(),
             probed: std::collections::HashMap::new(),
@@ -747,6 +758,7 @@ impl MappingWalk {
                     continue;
                 };
                 self.current_partitions += 1;
+                self.eligible_units += record.units.len() as u64;
                 for unit in &record.units {
                     let cached = match self.probed.get(&unit.input_key) {
                         Some(&cached) => cached,
@@ -802,6 +814,18 @@ impl MappingWalk {
             && self.current_partitions == self.sources
             && engine.source_revision()? == self.source_revision;
         Ok(CurrentMapping {
+            coverage: cache::CoverageSnapshot {
+                version: 1,
+                source_revision: self.source_revision,
+                function_digest: self.digest,
+                recipe_id: self.recipe,
+                sources: self.sources,
+                unpartitioned_sources: self.sources.saturating_sub(self.current_partitions),
+                eligible_units: self.eligible_units,
+                cached_current_units: self.units.values().map(|units| units.len() as u64).sum(),
+                searchable_current_units: self.units.values().map(|units| units.len() as u64).sum(),
+                index_entries: self.units.len() as u64,
+            },
             units: self.units,
             scope: GenerationScope {
                 source_revision: self.source_revision,

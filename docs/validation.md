@@ -1738,3 +1738,29 @@ runs, stale finalizers, duplicate keys, mixed retained rows and restart. Card te
 exact IDs/offsets/keys/spans with the ordinary tokenizer and bounded overflow fallback.
 These fixtures establish work reuse and equivalence, not model speed, cost or task quality.
 macOS supervised `/dev/fd` loading remains unexecuted here.
+
+## Continuous semantic maintenance — 2026-10-09
+
+Experimental E2 implements schema-9 source-transaction obligations, independent bounded
+semantic/knowledge lanes, exact conditional acknowledgments, fair changed-path selection,
+explicit continuous preparation and cheap publication observations. Fixtures run the
+real redb, tokenizer, USearch and MCP/watch paths with a counted fake embedding provider.
+They cover edit/revert/rename/delete, inference races, pause/restart, explicit startup,
+queue overflow and late acknowledgments, hot-path rotation, schema upgrade, status
+polling without census/model work or batch throttling, and progress during filesystem
+traffic followed by convergence. Recovery snapshots now include both obligation tables.
+
+Focused checks passed: 170 library, 65 neural, 61 neural retrieval/MCP, 18 brief and
+19 task-context tests (one real-model lifecycle test remains ignored). The full
+`cargo test --locked --all-targets --no-fail-fast` run passed **915 tests**, with two
+intentional ignores, plus the custom crash-recovery runner. The 6,000-file watcher
+fixture passed. Subsequent review checks reran all 170 library and 61 neural
+retrieval tests, including explicit mode switching, and the five work-queue tests
+with owner/lane fences. `cargo clippy --locked --all-targets -- -D warnings`,
+`cargo fmt --all --check`, `cargo check --locked --no-default-features --lib` and the
+Markdown link check passed. The real MCP catalog measured **996 o200k tokens**, inside
+its unchanged 1,000-token limit. A CLI smoke check verified cheap status, explicit
+`--audit` and refusal of `--semantic-maintain` without a profile. These tests establish work
+selection and recovery; publication still walks prepared mappings and can rebuild the
+full ANN. E3 vector/location deltas and E4 model-aware inputs remain pending. No
+80,000-file throughput, real-provider token economics or task-quality result is claimed.

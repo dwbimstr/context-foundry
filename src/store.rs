@@ -33,7 +33,7 @@ pub(crate) const META: TableDefinition<&str, &str> = TableDefinition::new("meta"
 pub(crate) const SEEN: TableDefinition<&str, &str> = TableDefinition::new("scan_seen");
 pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("feedback");
 
-pub const SCHEMA_VERSION: u32 = 8;
+pub const SCHEMA_VERSION: u32 = 9;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
 /// Refresh builds a page's search documents on at most this many threads,
@@ -905,6 +905,8 @@ pub struct Engine {
     parse_panics: ParseFailures,
     /// Shared ingestion/lexical CPU workers; lazy and retained across refreshes.
     index_pool: Option<std::sync::Arc<rayon::ThreadPool>>,
+    /// Source-commit notification for this Engine lifetime; redb owns durable work.
+    pub(crate) semantic_wake: std::sync::Arc<crate::neural::work::Wake>,
     /// The store directory, held as a descriptor opened (`O_DIRECTORY |
     /// O_NOFOLLOW`) exactly once at bind time and kept for the Engine's
     /// life. Semantic purge, publication and validation duplicate it (see
@@ -3251,6 +3253,7 @@ fn initialize_tables(tx: &WriteTransaction) -> FResult<()> {
     crate::graph::init(tx)?;
     crate::graph::init_compiler(tx)?;
     crate::neural::cache::init_tables(tx)?;
+    crate::neural::work::init(tx)?;
     crate::learning::init_tables(tx)?;
     Ok(())
 }
@@ -3344,6 +3347,7 @@ impl Engine {
             parse_panics: ParseFailures::default(),
             index_pool: None,
             semantic_dir,
+            semantic_wake: Default::default(),
         })
     }
 
@@ -3385,12 +3389,12 @@ impl Engine {
                 ));
             };
             match version.value() {
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" => {
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" => {
                     return Err(FoundryError::UpgradeRequired {
                         found: version.value().to_owned(),
                     });
                 }
-                "8" => 8u32,
+                "9" => 9u32,
                 other => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: other.to_owned(),
@@ -3398,8 +3402,8 @@ impl Engine {
                 }
             }
         };
-        // Confirm the schema-8 tables exist; missing authoritative tables in
-        // a schema-8 store are corruption, not something an open recreates.
+        // Confirm the schema-9 tables exist; missing authoritative tables in
+        // a schema-9 store are corruption, not something an open recreates.
         {
             let tx = db.begin_read()?;
             tx.open_table(SEEN).map_err(|e| {
@@ -3421,6 +3425,7 @@ impl Engine {
             read_counter(&tx.open_table(META)?, "brief_revision")?;
             crate::graph::check_compiler_tables(&tx)?;
             crate::neural::cache::check_tables(&db)?;
+            crate::neural::work::check(&db)?;
             crate::learning::check_tables(&db)?;
         }
         let (workspace, workspace_id) = Self::read_binding(&db)?;
@@ -3466,6 +3471,7 @@ impl Engine {
             parse_panics: ParseFailures::default(),
             index_pool: None,
             semantic_dir,
+            semantic_wake: Default::default(),
         })
     }
 
@@ -3506,7 +3512,7 @@ impl Engine {
                         "store has no schema marker".into(),
                     ));
                 }
-                Some(v) if v.value() == "8" => return Ok(()), // already upgraded
+                Some(v) if v.value() == "9" => return Ok(()), // already upgraded
                 Some(v) if v.value() == "1" => 1u32,
                 Some(v) if v.value() == "2" => 2u32,
                 Some(v) if v.value() == "3" => 3u32,
@@ -3514,6 +3520,7 @@ impl Engine {
                 Some(v) if v.value() == "5" => 5u32,
                 Some(v) if v.value() == "6" => 6u32,
                 Some(v) if v.value() == "7" => 7u32,
+                Some(v) if v.value() == "8" => 8u32,
                 Some(v) => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: v.value().to_owned(),
@@ -3592,6 +3599,7 @@ impl Engine {
                 tx.open_table(BRIEFS)?;
                 meta.insert("brief_revision", "0")?;
             }
+            crate::neural::work::init(&tx)?;
             // Publish the schema last inside the same transaction.
             meta.insert("schema", SCHEMA_VERSION.to_string().as_str())?;
         }
@@ -3905,6 +3913,10 @@ impl Engine {
                     pending.insert(source_pending_key(path).as_str(), "deleted")?;
                     seen.remove(path.as_str())?;
                     retired += 1;
+                    let revision = read_counter(&meta, "source_revision")?
+                        .checked_add(retired)
+                        .ok_or(FoundryError::RevisionExhausted)?;
+                    crate::neural::work::changed(&tx, path, None, revision)?;
                 }
             }
             if retired > 0 {
@@ -3916,6 +3928,9 @@ impl Engine {
             }
         }
         tx.commit()?;
+        if retired > 0 {
+            self.semantic_wake.notify();
+        }
         Ok((retired, page.last().cloned()))
     }
 
@@ -3973,10 +3988,12 @@ impl Engine {
             tx.open_table(PENDING)?
                 .insert(source_pending_key(path).as_str(), hash)?;
             bump_revision(&tx, 1)?;
+            crate::neural::work::changed(&tx, path, Some(hash), revision_in(&tx)?)?;
         }
         // A failure here drops the transaction: prior source bytes stay intact.
         fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
         tx.commit()?;
+        self.semantic_wake.notify();
         fault!(SOURCE_AFTER_COMMIT, Some(self), None, path)?;
         Ok(true)
     }
@@ -4000,9 +4017,11 @@ impl Engine {
             tx.open_table(PENDING)?
                 .insert(source_pending_key(path).as_str(), "deleted")?;
             bump_revision(&tx, 1)?;
+            crate::neural::work::changed(&tx, path, None, revision_in(&tx)?)?;
         }
         fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
         tx.commit()?;
+        self.semantic_wake.notify();
         fault!(SOURCE_AFTER_COMMIT, Some(self), None, path)?;
         Ok(true)
     }
@@ -6470,6 +6489,10 @@ pub fn workspace_id_for_root(root: &Path) -> FResult<String> {
         .to_str()
         .map(|s| crate::digest(s.as_bytes()))
         .ok_or_else(|| FoundryError::InvalidArgument("workspace path is not UTF-8".into()))
+}
+
+pub(crate) fn revision_in(tx: &WriteTransaction) -> FResult<u64> {
+    read_counter(&tx.open_table(META)?, "source_revision")
 }
 
 fn bump_revision(tx: &WriteTransaction, by: u64) -> FResult<()> {

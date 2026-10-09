@@ -20,8 +20,42 @@ The read payload limit and existing 64 MiB lexical hand-out limit are separate a
 exclude parser, index, thread-stack and allocator overhead. Explicit MCP indexing
 still occupies its engine slot; this change adds early durable publication, while
 foreground admission continues to follow the existing watcher/owner rules. Source
-transactions remain individual. This does not yet add continuous embedding or brief
-regeneration, and sandbox tests do not establish 80,000-file throughput.
+transactions remain individual. Continuous embedding is separately enabled below;
+brief regeneration remains pending. Sandbox tests do not establish 80,000-file throughput.
+
+## Continuous semantic maintenance
+
+On an owner already serving an admitted semantic profile, call:
+
+```json
+{"semantic":"maintain"}
+```
+
+This `index` action keeps preparation enabled for the owner's lifetime. For explicit
+startup/resume, use `mcp --semantic-profile PROFILE --semantic-maintain`, with the
+profile's required isolation flags and optional `--semantic-cache-cap BYTES`. Add
+`--watch` for filesystem updates; without watching, an explicit `index` accepts edits.
+Watching alone starts no model. `index {"semantic":"pause"}` stops further admission;
+`prepare` remains a one-shot full reconciliation.
+
+Schema 9 stores independent semantic and future generated-knowledge obligations with
+each source commit/delete. Each lane retains at most 1,024 paths / 1 MiB path text;
+overflow leaves a durable full-reconciliation marker. Cold/profile-change/overflow
+runs walk the corpus. Normal changes select eight exact paths at a time, with fair
+rotation and conditional acknowledgments after successful publication. Edits during
+inference stay pending. Unchanged exact inputs, including reverts, reuse cached vectors.
+Renames change rendered addresses and can require new embeddings. The generated-knowledge
+lane records obligations but runs no LLM generator yet.
+
+When caught up, semantic status says `waiting`: the same preparation thread waits for
+committed-source notifications without repeated index/source/cache scans. Errors or
+resource limits pause by name and retain pending work; resume explicitly after fixing
+the cause. Status polling does not extend the foreground batch throttle. A restarted
+owner prepares automatically only when `--semantic-maintain` is explicitly supplied.
+
+Vector publication still walks prepared mappings and can rebuild the whole ANN. The
+next E3 increment owns vector/location deltas and compaction; changed-input selection
+alone does not establish efficient total edit cost on an 80,000-file repository.
 
 ## Progressive semantic bootstrapping
 
@@ -68,8 +102,13 @@ accepted partitions and prior cached coverage remain reusable. No new provider
 observation is reported for a run that never attempted acquisition. MCP's existing
 resident model for query serving is unchanged.
 
-`status.semantic` remains the authoritative coverage census: inspect
-`unpartitioned_sources`, `missing_units` and `searchable_current_units`. Context stays
+`status.semantic` is a cheap observation of the last recorded publication. Its
+`coverage_observation` is `current`, `stale` or `unknown` against source/profile identity;
+stale/unknown current counters are null. `index.validation` is `not_checked` and
+availability is unknown until actual use or audit. Explicit MCP
+`status {"semantic_audit":true}` and CLI `semantic status --audit` retain the full census
+and generation validation. Inspect `unpartitioned_sources`, `missing_units` and
+`searchable_current_units` with that observation boundary in mind. Context stays
 `partial` until coverage is complete; source edits immediately invalidate old vector
 locations, and lexical retrieval remains available. Its additional `bootstrap`
 object reports waves, priority waves, partition/render/provider/publication wall
@@ -116,8 +155,8 @@ to one dirty-root marker. Each owner step handles one walk entry/file, at most 1
 retirements, or eight lexical keys; foreground calls have priority between steps.
 These are work and queue bounds, not whole-process RAM or hard latency guarantees:
 filesystem calls, parsers, database commits and the notification library's OS watch
-registrations have their own costs. Optional semantic preparation yields to pending
-source work. Shutdown cancels maintenance and releases the existing store owner.
+registrations have their own costs. Source work gets eight steps before a waiting
+semantic step may reserve the owner briefly; foreground operations retain priority. Shutdown cancels maintenance and releases the existing store owner.
 
 Failed reads preserve accepted bytes; an incomplete reconciliation cannot retire
 unseen sources. Failures back off from two to 30 seconds and remain visible. A native
@@ -132,9 +171,9 @@ macOS and network-filesystem event behavior remain unverified.
 ## Recoverable task context
 
 This branch adds recoverable task state beside retrieval. Start with a disposable
-store. New stores use schema 8; an existing store needs an explicit
-`foundry --store STORE upgrade-store --to 8`. Take a closed-store backup first if
-using an existing store: schema 7 and earlier binaries cannot open schema 8, and rollback means
+store. New stores use schema 9; an existing store needs an explicit
+`foundry --store STORE upgrade-store --to 9`. Take a closed-store backup first if
+using an existing store: schema 8 and earlier binaries cannot open schema 9, and rollback means
 restoring that backup. This work does not upgrade stores automatically.
 
 The core works through `foundry --store STORE task-context`, which accepts one JSON

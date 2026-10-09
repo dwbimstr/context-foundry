@@ -624,15 +624,25 @@ VM compatibility and the library choices remain unexecuted proof obligations. Ex
 publication authorization and destination are still required to upload any artifact.
 
 
-## Experimental schema 8
+## Experimental schema 9
 
-The experimental context branch uses schema 8 for source-bound derived briefs, in
-addition to schema 7's task state. Existing schemas 1–7 require explicit
-`foundry --store STORE upgrade-store --to 8`; initialization and ordinary open do not
+The experimental context branch uses schema 9 for independent durable semantic and
+generated-knowledge obligations, preserving schema 8 briefs and schema 7 task state.
+Existing schemas 1–8 require explicit
+`foundry --store STORE upgrade-store --to 9`; initialization and ordinary open do not
 upgrade. Preserve a closed-store backup before upgrading an existing store. Older
-binaries refuse schema 8; rollback requires the backup or a compatible binary.
+binaries refuse schema 9; rollback requires the backup or a compatible binary.
 Upgrade preserves source, graph, memory, task, semantic and learning tables. No
 source scanning, provider call or automatic generation is part of the upgrade.
 See the [experimental workflow](experimental-context.md#source-bound-derived-briefs)
 for import and retrieval; `repair-index` rebuilds brief search documents from the
 same authoritative store.
+
+Continuous semantic maintenance is separately explicit: start MCP with
+`--semantic-profile FILE --semantic-maintain` and existing isolation/cache settings,
+or call `index {"semantic":"maintain"}` on an owner already serving a profile.
+Add `--watch` to accept filesystem edits automatically. The mode is not inferred
+from prior state on restart; watching alone loads no model. Pause through
+`index {"semantic":"pause"}`. Provider/resource failures retain pending work and
+require explicit resume. Ordinary status reads a publication observation; use
+`semantic status --audit` or MCP `status {"semantic_audit":true}` for integrity/census.

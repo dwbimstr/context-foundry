@@ -53,9 +53,11 @@
 //! - completion, a pass over an unchanged source revision, is `stopped` with
 //!   no reason.
 //!
-//! There are no hidden retries, job journal, leases, retry queue or watcher.
-//! Startup never resumes preparation: only an explicit `prepare` starts (or
-//! resumes) the driver.
+//! Continuous maintenance is explicit (`maintain` / `--semantic-maintain`). It
+//! consumes durable coalesced source obligations through this same driver and waits
+//! on source notifications when caught up. Ordinary startup and watching alone do
+//! not prepare. Provider/resource failures pause with pending work retained; retries
+//! require an explicit action. No extra job service or model owner is introduced.
 use crate::control::Control;
 use crate::error::{FResult, FoundryError};
 use crate::neural::cache::{self, SemanticState};
@@ -138,12 +140,15 @@ struct State {
     priority_paths: Vec<String>,
     priority_revision: u64,
     bootstrap: crate::neural::cache::BootstrapProgress,
+    continuous: bool,
+    waiting: bool,
 }
 
 /// The live state of this owner's driver, overlaid on the committed row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Live {
     Running,
+    Waiting,
     /// A pause was requested; at most the in-flight call still finishes.
     Paused,
 }
@@ -169,6 +174,8 @@ impl Default for Preparation {
                 priority_paths: Vec::new(),
                 priority_revision: 0,
                 bootstrap: Default::default(),
+                continuous: false,
+                waiting: false,
             }),
             foreground: Mutex::new(None),
             workers: prepare::PartitionWorkers::default(),
@@ -181,8 +188,8 @@ impl Preparation {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// 009 T003: the owner calls this for every MCP request it serves
-    /// (search, context, retrieve, index, status, memory, references). For
+    /// The owner calls this for foreground operations (status observation is
+    /// excluded). For
     /// the next [`FOREGROUND_WINDOW`] the driver embeds at most
     /// [`FOREGROUND_BATCH`] inputs per document call.
     pub fn foreground(&self) {
@@ -222,6 +229,25 @@ impl Preparation {
         runtime: Arc<QueryRuntime>,
         paths: Option<Vec<String>>,
     ) -> FResult<()> {
+        self.start(owner, runtime, paths, false)
+    }
+
+    pub fn maintain(
+        self: &Arc<Self>,
+        owner: Arc<dyn Owner>,
+        runtime: Arc<QueryRuntime>,
+        paths: Option<Vec<String>>,
+    ) -> FResult<()> {
+        self.start(owner, runtime, paths, true)
+    }
+
+    fn start(
+        self: &Arc<Self>,
+        owner: Arc<dyn Owner>,
+        runtime: Arc<QueryRuntime>,
+        paths: Option<Vec<String>>,
+        continuous: bool,
+    ) -> FResult<()> {
         if let Some(paths) = &paths {
             prepare::validate_priority_paths(paths)?;
         }
@@ -239,6 +265,10 @@ impl Preparation {
             state.priority_paths = paths;
             state.priority_revision = state.priority_revision.wrapping_add(1);
         }
+        if state.continuous != continuous {
+            state.waiting = false;
+        }
+        state.continuous = continuous;
         match state.phase {
             Phase::Running => Ok(()),
             Phase::Pausing | Phase::Stopping => {
@@ -268,6 +298,8 @@ impl Preparation {
     /// `index {semantic: "pause"}`: no new batch is admitted.
     pub fn pause(&self) {
         let mut state = self.lock();
+        state.continuous = false;
+        state.waiting = false;
         if matches!(state.phase, Phase::Running | Phase::Stopping) {
             state.phase = Phase::Pausing;
         }
@@ -275,8 +307,10 @@ impl Preparation {
 
     /// The live state while a driver thread exists.
     pub fn live(&self) -> Option<Live> {
-        match self.lock().phase {
+        let state = self.lock();
+        match state.phase {
             Phase::Idle => None,
+            Phase::Running if state.waiting => Some(Live::Waiting),
             Phase::Pausing => Some(Live::Paused),
             Phase::Running | Phase::Stopping => Some(Live::Running),
         }
@@ -372,6 +406,7 @@ struct Frontier {
     order: prepare::SourceOrder,
     walk: Option<Walk>,
     priority_revision: Option<u64>,
+    changed_only: bool,
 }
 
 /// One run of the driver: identity, accounting and publication bookkeeping.
@@ -448,6 +483,28 @@ impl<'a> Run<'a> {
 
     /// Passes until one saw an unchanged source revision, or a stop.
     fn passes(&mut self) -> FResult<Stop> {
+        loop {
+            if self.preparation.lock().continuous {
+                if let Some(stop) = self.maintain()? {
+                    return Ok(stop);
+                }
+                continue;
+            }
+            let stop = self.one_shot()?;
+            if matches!(stop, Stop::Complete) && self.preparation.lock().continuous {
+                continue;
+            }
+            return Ok(stop);
+        }
+    }
+
+    fn one_shot(&mut self) -> FResult<Stop> {
+        let work = hold(self.owner, |engine| {
+            engine.derivation_reconcile(
+                crate::neural::work::Lane::Semantic,
+                &format!("{}:{}", self.digest, self.recipe),
+            )
+        })?;
         // Recover prior committed coverage before doing more provider work.
         if let Some(stop) = self.publish(false)? {
             return Ok(stop);
@@ -458,6 +515,7 @@ impl<'a> Run<'a> {
                 order: prepare::SourceOrder::new(&[])?,
                 walk: None,
                 priority_revision: None,
+                changed_only: false,
             };
             if let Some(stop) = self.embed_pass(&mut frontier)? {
                 return Ok(stop);
@@ -468,7 +526,71 @@ impl<'a> Run<'a> {
                 return Ok(stop);
             }
             if hold(self.owner, |engine| engine.source_revision())? == revision {
+                hold(self.owner, |engine| {
+                    engine.derivation_ack(crate::neural::work::Lane::Semantic, &work)
+                })?;
                 return Ok(Stop::Complete);
+            }
+        }
+    }
+
+    /// `None` hands control back to an explicitly requested one-shot pass.
+    fn maintain(&mut self) -> FResult<Option<Stop>> {
+        use crate::neural::work::Lane;
+        let identity = format!("{}:{}", self.digest, self.recipe);
+        let wake = hold(self.owner, |engine| Ok(Arc::clone(&engine.semantic_wake)))?;
+        loop {
+            if let Some(stop) = self.requested_stop() {
+                return Ok(Some(stop));
+            }
+            let stamp = wake.stamp();
+            let work = hold(self.owner, |engine| {
+                engine.derivation_batch(Lane::Semantic, &identity)
+            })?;
+            if !work.requires_reconcile() && work.paths().is_empty() {
+                self.sync_progress();
+                hold(self.owner, |engine| {
+                    prepare::finalize(engine, &mut self.report, &Ok(Stop::Complete))
+                })?;
+                self.preparation.lock().waiting = true;
+                loop {
+                    if let Some(stop) = self.requested_stop() {
+                        return Ok(Some(stop));
+                    }
+                    if !self.preparation.lock().continuous {
+                        self.preparation.lock().waiting = false;
+                        return Ok(None);
+                    }
+                    if wake.wait(stamp) {
+                        break;
+                    }
+                }
+                self.preparation.lock().waiting = false;
+                hold(self.owner, |engine| prepare::begin(engine, &self.report))?;
+                continue;
+            }
+            let mut frontier = Frontier {
+                order: if work.requires_reconcile() {
+                    prepare::SourceOrder::new(&[])?
+                } else {
+                    prepare::SourceOrder::changed(work.paths().iter().map(|(path, _)| path.clone()))
+                },
+                walk: None,
+                priority_revision: None,
+                changed_only: !work.requires_reconcile(),
+            };
+            if let Some(stop) = self.embed_pass(&mut frontier)? {
+                return Ok(Some(stop));
+            }
+            if let Some(stop) = self.publish(false)? {
+                return Ok(Some(stop));
+            }
+            hold(self.owner, |engine| {
+                engine.derivation_ack(Lane::Semantic, &work)
+            })?;
+            if !self.preparation.lock().continuous {
+                self.preparation.lock().waiting = false;
+                return Ok(None);
             }
         }
     }
@@ -504,6 +626,7 @@ impl<'a> Run<'a> {
             .partition_inputs_in(
                 &mut cursor.after,
                 cursor.scope.as_deref(),
+                cursor.exact,
                 prepare::PARTITION_WAVE,
                 Some(Instant::now() + STEP_TIME),
                 report,
@@ -612,7 +735,9 @@ impl<'a> Run<'a> {
                 waves += 1;
                 {
                     let state = self.preparation.lock();
-                    if frontier.priority_revision != Some(state.priority_revision) {
+                    if !frontier.changed_only
+                        && frontier.priority_revision != Some(state.priority_revision)
+                    {
                         frontier.order.prioritize(&state.priority_paths)?;
                         frontier.priority_revision = Some(state.priority_revision);
                     }
@@ -629,10 +754,10 @@ impl<'a> Run<'a> {
                 if cursor.after != before {
                     self.report.bootstrap.waves += 1;
                     self.report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
-                    frontier.walk = Some(
-                        Walk::wave(cursor.scope.clone(), before, cursor.after.clone())
-                            .with_retained(retained),
-                    );
+                    let mut walk = Walk::wave(cursor.scope.clone(), before, cursor.after.clone())
+                        .with_retained(retained);
+                    walk.exact = cursor.exact;
+                    frontier.walk = Some(walk);
                     self.sync_progress();
                 }
                 frontier.order.advance(cursor, done);
@@ -894,6 +1019,7 @@ impl<'a> Run<'a> {
         let mapping = self.step(|engine| walk.finish(engine))?;
         if !rebuild {
             if mapping.units.is_empty() {
+                self.step(|engine| engine.semantic_record_coverage(mapping.coverage))?;
                 return Ok(Publication::Nothing);
             }
             // Current means the same keys, unit locations, coverage AND
@@ -906,12 +1032,14 @@ impl<'a> Run<'a> {
                 control,
             ) {
                 Ok(generation) if mapping.published_by(&generation) => {
+                    self.step(|engine| engine.semantic_record_coverage(mapping.coverage))?;
                     return Ok(Publication::Current(generation.manifest.count));
                 }
                 Err(GenerationError::Interrupted(error)) => return Err(Failed::Step(error)),
                 _ => {}
             }
         }
+        let mut coverage = mapping.coverage;
         let mut scope = mapping.scope;
         let mut keys = mapping.units.into_iter();
         let mut entries = Vec::with_capacity(keys.len());
@@ -932,8 +1060,15 @@ impl<'a> Run<'a> {
         let built = || {};
         let staged = index::stage_generation(&store, &identity, &entries, scope, control, &built)
             .map_err(Failed::Step)?;
+        coverage.cached_current_units = entries.iter().map(|entry| entry.units.len() as u64).sum();
+        coverage.searchable_current_units = coverage.cached_current_units;
         drop(entries);
-        let count = self.step(|_| staged.publish(control))?;
+        let count = self.step(|engine| {
+            let count = staged.publish(control)?;
+            coverage.index_entries = count as u64;
+            engine.semantic_record_coverage(coverage)?;
+            Ok(count)
+        })?;
         Ok(Publication::Rebuilt(count))
     }
 
@@ -980,6 +1115,8 @@ impl<'a> Run<'a> {
             }
             let written = prepare::finalize(engine, report, &outcome);
             state.phase = Phase::Idle;
+            state.waiting = false;
+            state.continuous = false;
             state.in_call = false;
             written.map(|()| false)
         });
@@ -998,14 +1135,22 @@ impl<'a> Run<'a> {
     }
 }
 
-/// The `semantic` object of the MCP `status`: T001's metadata-only census of
-/// the committed rows (paged, never a source body, tokenizer or model), with
-/// this owner's live driver state overlaid, `reason` (the last error's code)
-/// and the resident `runtime` (`ready` or its `fallback:` word). The census
-/// gets half of the remaining read deadline; when that runs out, the object
-/// carries the committed state row and names the cut-off census instead of
-/// failing the whole status.
+/// Cheap committed publication observation plus this owner's live state.
+/// Source changes mark counters stale; payload integrity is checked on use/audit.
 pub fn status_object(
+    engine: &Engine,
+    live: Option<Live>,
+    runtime: &str,
+    control: &Control,
+) -> FResult<serde_json::Value> {
+    let mut value = engine.semantic_progress(control)?;
+    overlay(&mut value, live);
+    value["runtime"] = runtime.into();
+    Ok(value)
+}
+
+/// Explicit full audit, bounded to half of the remaining read deadline.
+pub fn status_audit_object(
     engine: &Engine,
     live: Option<Live>,
     runtime: &str,
@@ -1059,6 +1204,10 @@ pub fn brief(live: Option<Live>, row: Option<&SemanticState>) -> serde_json::Val
 fn overlay(value: &mut serde_json::Value, live: Option<Live>) {
     match live {
         None => {}
+        Some(Live::Waiting) => {
+            value["state"] = "waiting".into();
+            value["last_error"] = serde_json::Value::Null;
+        }
         Some(Live::Running) => {
             value["state"] = "running".into();
             value["last_error"] = serde_json::Value::Null;

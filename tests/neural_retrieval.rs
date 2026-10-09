@@ -2742,6 +2742,14 @@ impl Corpus {
 
     /// This corpus's MCP owner over the stdio transport; it opens the store.
     async fn serve_stdio(&mut self, semantic: Option<SemanticServing>) -> Served {
+        self.serve_stdio_watching(semantic, false).await
+    }
+
+    async fn serve_stdio_watching(
+        &mut self,
+        semantic: Option<SemanticServing>,
+        watch: bool,
+    ) -> Served {
         self.engine = None;
         let (client_io, server_io) = tokio::io::duplex(1 << 20);
         let (input, output) = tokio::io::split(server_io);
@@ -2754,7 +2762,7 @@ impl Corpus {
                 references: Vec::new(),
                 no_memory: false,
                 experimental_task_context: false,
-                watch: false,
+                watch,
                 semantic,
                 policy: None,
                 budget: BudgetConfig::default(),
@@ -3529,8 +3537,17 @@ async fn a_late_result_after_deletion_may_be_cached_but_its_source_is_never_elig
     let done = served.stopped().await;
     assert_eq!(done["sources"], 5, "{done}");
     assert_eq!(done["missing_units"], 0, "{done}");
+    let audited: serde_json::Value = serde_json::from_str(
+        &served
+            .ok("status", serde_json::json!({"semantic_audit": true}))
+            .await,
+    )
+    .unwrap();
     assert!(
-        done["cache"]["orphan_entries"].as_u64().unwrap() >= 1,
+        audited["semantic"]["cache"]["orphan_entries"]
+            .as_u64()
+            .unwrap()
+            >= 1,
         "the late result is retained, not eligible: {done}"
     );
     let context = served.context(DUSK_QUERY).await;
@@ -3752,7 +3769,20 @@ async fn model_failures_stop_preparation_by_name_and_never_wedge_foreground_oper
         .await;
     assert_eq!(malformed["reason"], "provider_malformed", "{malformed}");
     assert_eq!(malformed["committed_units"], 0, "{malformed}");
-    assert_eq!(malformed["index"]["available"], false, "{malformed}");
+    assert_eq!(
+        malformed["index"]["validation"], "not_checked",
+        "{malformed}"
+    );
+    let audited: serde_json::Value = serde_json::from_str(
+        &served
+            .ok("status", serde_json::json!({"semantic_audit": true}))
+            .await,
+    )
+    .unwrap();
+    assert_eq!(
+        audited["semantic"]["index"]["available"], false,
+        "{audited}"
+    );
     assert!(starts_with(&served.context(DUSK_QUERY).await, "fallback:"));
     served.close().await;
 
@@ -5026,5 +5056,358 @@ fn a_worker_dying_mid_query_falls_back_by_name_and_stays_named_unavailable() {
             "the dead worker was never reaped"
         );
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Continuous maintenance uses the ordinary MCP owner and durable source seam.
+/// Selection work is observed separately from E3's still-full index publication.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn continuous_maintenance_selects_edits_and_reuses_reverts_then_pauses_and_restarts() {
+    let extra: Vec<_> = (0..40)
+        .map(|n| {
+            (
+                format!("src/extra{n}.rs"),
+                format!("pub fn extra_{n}() {{}}\n"),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&extra);
+    let hold = Hold::default();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    let (error, reply) = served.semantic_action("maintain").await;
+    assert!(!error, "{reply}");
+    let first = served
+        .until("caught up", |s| {
+            s["state"] == "waiting" && s["pending"]["paths"] == 0
+        })
+        .await;
+    let selected = first["bootstrap"]["selected_sources"].as_u64().unwrap();
+    let calls = corpus.probe.document_calls();
+    corpus.write("src/extra0.rs", "pub fn changed_entry() {}\n");
+    served.index().await;
+    let edited = served
+        .until("edit maintained", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && s["source_revision"] != first["source_revision"]
+        })
+        .await;
+    assert_eq!(
+        edited["bootstrap"]["selected_sources"].as_u64().unwrap() - selected,
+        1,
+        "{edited}"
+    );
+    assert_eq!(corpus.probe.document_calls(), calls + 1);
+    assert_eq!(edited["missing_units"], 0);
+    corpus.write("src/extra0.rs", "pub fn extra_0() {}\n");
+    served.index().await;
+    let reverted = served
+        .until("revert maintained", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && s["source_revision"] != edited["source_revision"]
+        })
+        .await;
+    assert_eq!(
+        corpus.probe.document_calls(),
+        calls + 1,
+        "exact input reuse on revert"
+    );
+    std::fs::rename(
+        corpus.root.join("src/extra0.rs"),
+        corpus.root.join("src/moved.rs"),
+    )
+    .unwrap();
+    served.index().await;
+    let renamed = served
+        .until("rename maintained", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && s["source_revision"] != reverted["source_revision"]
+        })
+        .await;
+    assert_eq!(
+        corpus.probe.document_calls(),
+        calls + 2,
+        "the new address is a new input"
+    );
+    std::fs::remove_file(corpus.root.join("src/moved.rs")).unwrap();
+    served.index().await;
+    let deleted = served
+        .until("delete maintained", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && s["source_revision"] != renamed["source_revision"]
+        })
+        .await;
+    assert_eq!(corpus.probe.document_calls(), calls + 2);
+    assert_eq!(
+        deleted["sources"].as_u64().unwrap() + 1,
+        first["sources"].as_u64().unwrap()
+    );
+    assert!(!served.semantic_action("pause").await.0);
+    served.until("paused", |s| s["state"] == "paused").await;
+    corpus.write("src/extra1.rs", "pub fn paused_edit() {}\n");
+    served.index().await;
+    let pending = served.semantic().await;
+    assert_eq!(pending["pending"]["paths"], 1);
+    assert_eq!(pending["coverage_observation"], "stale");
+    assert!(pending["cached_current_units"].is_null());
+    served.close().await;
+    // Restart without the explicit mode leaves work pending and starts no documents.
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    assert_eq!(served.semantic().await["pending"]["paths"], 1);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(corpus.probe.document_calls(), calls + 2);
+    served.close().await;
+    let mut semantic = corpus.held(&hold);
+    semantic.maintain = true;
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    let resumed = served
+        .until("explicit startup catches up", |s| {
+            s["state"] == "waiting" && s["pending"]["paths"] == 0
+        })
+        .await;
+    assert_eq!(resumed["bootstrap"]["selected_sources"], 1, "{resumed}");
+    assert_eq!(corpus.probe.document_calls(), calls + 3);
+    // Switching a caught-up continuous owner to one-shot must execute the
+    // requested full reconciliation, then stop; it must not just disable wakeups.
+    served.prepare().await;
+    let once = served.stopped().await;
+    assert!(once["bootstrap"]["selected_sources"].as_u64().unwrap() > 1);
+    assert_eq!(corpus.probe.document_calls(), calls + 3);
+    served.close().await;
+    corpus.reopen().await;
+    assert!(
+        corpus
+            .engine()
+            .derivation_pending(context_foundry::neural::work::Lane::Knowledge)
+            .unwrap()
+            .paths
+            > 0
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn watching_wakes_continuous_semantics_and_status_does_not_shrink_batches() {
+    let extra: Vec<_> = (0..18)
+        .map(|n| {
+            (
+                format!("src/batch{n}.rs"),
+                format!("pub fn batch_{n}() {{}}\n"),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&extra);
+    let hold = Hold::gated();
+    let mut semantic = corpus.held(&hold);
+    semantic.maintain = true;
+    let served = corpus.serve_stdio_watching(Some(semantic), true).await;
+    hold.wait_entered(1).await;
+    for _ in 0..4 {
+        served.status().await;
+    }
+    hold.release();
+    hold.wait_entered(2).await;
+    assert!(
+        hold.batch(2) > 2,
+        "progress polling imposed the foreground throttle"
+    );
+    hold.open();
+    hold.release();
+    let first = served
+        .until("watched bootstrap", |s| {
+            s["state"] == "waiting" && s["pending"]["paths"] == 0
+        })
+        .await;
+    corpus.write("src/watched.rs", "pub fn automatically_observed() {}\n");
+    let current = served
+        .until("watch-triggered semantic work", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && s["source_revision"] != first["source_revision"]
+        })
+        .await;
+    assert_eq!(current["missing_units"], 0);
+    assert_eq!(
+        current["bootstrap"]["selected_sources"].as_u64().unwrap(),
+        first["bootstrap"]["selected_sources"].as_u64().unwrap() + 1
+    );
+    served.close().await;
+}
+
+#[test]
+fn ordinary_semantic_status_is_a_cheap_observation_with_explicit_stale_and_audit() {
+    let corpus = Corpus::new(&[]);
+    let engine = corpus.engine();
+    for name in [
+        context_foundry::neural::fault_names::PARTITION_READ,
+        context_foundry::neural::fault_names::CACHE_RECONCILE,
+        context_foundry::neural::status::fault_names::BEFORE_VALIDATION,
+    ] {
+        fault::arm(
+            name,
+            1,
+            Action::Fail("ordinary status must not perform a census".into()),
+        );
+    }
+    for _ in 0..20 {
+        let value = engine.semantic_progress(&Control::unbounded()).unwrap();
+        assert_eq!(value["coverage_observation"], "current");
+        assert_eq!(value["missing_units"], 0);
+        assert_eq!(value["index"]["validation"], "not_checked");
+        assert!(value["index"]["available"].is_null());
+    }
+    assert!(
+        engine.semantic_status(&Control::unbounded()).is_err(),
+        "the explicit audit still validates"
+    );
+    fault::disarm_all();
+    engine
+        .replace_source("src/new.rs", "fn new_source() {}\n")
+        .unwrap();
+    let stale = engine.semantic_progress(&Control::unbounded()).unwrap();
+    assert_eq!(stale["coverage_observation"], "stale");
+    assert!(stale["cached_current_units"].is_null());
+    assert!(
+        stale["last_observed"]["cached_current_units"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(stale["index"]["validation"], "not_checked");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn continuous_edit_during_inference_and_pause_keep_the_new_version_pending() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::gated();
+    let mut semantic = corpus.held(&hold);
+    semantic.maintain = true;
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    hold.wait_entered(1).await;
+    corpus.write(
+        DUSK_PATH,
+        "# Changed while embedding\n\nTwilight starts here.\n",
+    );
+    served.index().await;
+    assert!(!served.semantic_action("pause").await.0);
+    hold.release();
+    served
+        .until("paused after its in-flight call", |s| {
+            s["state"] == "paused" && s["provider"]["state"] == "ready"
+        })
+        .await;
+    assert!(
+        served.semantic().await["pending"]["reconcile_required"]
+            .as_bool()
+            .unwrap()
+    );
+    hold.open();
+    assert!(!served.semantic_action("maintain").await.0);
+    served
+        .until("new version caught up", |s| {
+            s["state"] == "waiting" && s["pending"]["paths"] == 0
+        })
+        .await;
+    served.close().await;
+    corpus.reopen().await;
+    let engine = corpus.engine();
+    assert_eq!(
+        engine
+            .semantic_partition(DUSK_PATH)
+            .unwrap()
+            .unwrap()
+            .source_hash,
+        engine.source(DUSK_PATH).unwrap().unwrap().hash
+    );
+    assert_eq!(
+        engine
+            .semantic_status(&Control::unbounded())
+            .unwrap()
+            .missing_units,
+        0
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn continuous_semantics_progresses_during_filesystem_traffic_and_converges() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::default();
+    let mut semantic = corpus.held(&hold);
+    semantic.maintain = true;
+    let served = corpus.serve_stdio_watching(Some(semantic), true).await;
+    served
+        .until("initial continuous coverage", |s| s["state"] == "waiting")
+        .await;
+    let calls = corpus.probe.document_calls();
+    let stop = Arc::new(AtomicBool::new(false));
+    let writer = std::thread::spawn({
+        let stop = Arc::clone(&stop);
+        let root = corpus.root.clone();
+        move || {
+            let end = Instant::now() + Duration::from_secs(15);
+            let mut n = 0;
+            while !stop.load(Ordering::SeqCst) && Instant::now() < end {
+                std::fs::write(
+                    root.join(format!("src/stream{}.rs", n % 2)),
+                    format!("pub fn streamed_{n}() {{}}\n"),
+                )
+                .unwrap();
+                n += 1;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            n
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while corpus.probe.document_calls() == calls {
+        assert!(
+            Instant::now() < deadline,
+            "no semantic progress during source traffic"
+        );
+        assert!(!writer.is_finished());
+        served.status().await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !writer.is_finished(),
+        "progress must precede the end of source traffic"
+    );
+    assert!(
+        !served.search("parse_record").await.items.is_empty(),
+        "foreground source retrieval remains serviceable"
+    );
+    stop.store(true, Ordering::SeqCst);
+    assert!(writer.join().unwrap() > 1);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let status = served.status().await;
+        if status["watch"]["phase"] == "idle"
+            && status["watch"]["pending_paths"] == 0
+            && status["semantic"]["state"] == "waiting"
+            && status["semantic"]["pending"]["paths"] == 0
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "did not converge: {status}");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    served.close().await;
+    corpus.reopen().await;
+    for path in ["src/stream0.rs", "src/stream1.rs"] {
+        let hash = context_foundry::digest(&std::fs::read(corpus.root.join(path)).unwrap());
+        assert_eq!(corpus.engine().source(path).unwrap().unwrap().hash, hash);
+        assert_eq!(
+            corpus
+                .engine()
+                .semantic_partition(path)
+                .unwrap()
+                .unwrap()
+                .source_hash,
+            hash
+        );
     }
 }

@@ -5750,7 +5750,7 @@ async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_1000
         ),
         (
             "index",
-            "Re-index after edits: the bound repo, or an admitted reference root via `root`.",
+            "Index an admitted root or control semantic preparation.",
         ),
         (
             "memory",
@@ -5770,7 +5770,7 @@ async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_1000
         ),
         (
             "status",
-            "Revision, pending work, index/scan state and coverage for each admitted root.",
+            "Progress and coverage for admitted roots; optional semantic audit.",
         ),
     ]
     .map(|(name, description)| (name.to_owned(), description.to_owned()));
