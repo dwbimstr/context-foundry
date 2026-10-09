@@ -41,10 +41,10 @@
 //! partition is accepted only as the cards its verified body renders, in
 //! the acceptance transaction. A batch is selected in a store step (which
 //! cards are missing, with their recorded tuples and their source's body)
-//! and only those cards are rendered and tokenized by [`Cards::render`],
-//! which needs no engine and no transaction and checks each against its
-//! recorded tuple, so the driver can prepare the next batch while one
-//! inference runs.
+//! and only those cards are needed by [`Cards::render`]. A bounded wave
+//! handoff reuses fresh tokenized cards; other selections render on demand.
+//! Both paths check each card against its recorded tuple with no engine or
+//! transaction, so the driver can prepare the next batch while inference runs.
 //!
 //! The provider comes through the [`Acquire`] seam (slice B's supervised
 //! worker); whenever no accepted isolation profile admits model execution it
@@ -63,15 +63,53 @@ use crate::neural::provider::{
 use crate::neural::tokenize::DocumentTokenizer;
 use crate::store::Engine;
 use crate::syntax::{Lang, Unit};
+use rayon::prelude::*;
 use serde::Serialize;
 use std::cell::OnceCell;
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// A wave retains at most eight verified source bodies (16 MiB maximum).
 pub(crate) const PARTITION_WAVE: usize = 8;
+/// Retained card payload per source, including allocated ids/key/array capacity.
+/// At most one eight-source wave survives into selection. Larger sources use
+/// the existing bounded on-demand render path instead of retaining their cards.
+const RETAINED_CARD_BYTES: usize = 2 * 1024 * 1024;
+
+/// Lazily started CPU workers, reused across waves (and MCP prepare runs).
+/// No store, profile or source is retained here. `install` joins each wave,
+/// including errors/panics, before its borrowed inputs can leave the caller.
+pub(crate) struct PartitionWorkers {
+    count: usize,
+    pool: OnceLock<Result<rayon::ThreadPool, String>>,
+}
+
+impl Default for PartitionWorkers {
+    fn default() -> Self {
+        Self::new(std::thread::available_parallelism().map_or(1, usize::from))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ComputedPartition {
+    pub partition: cache::PreparedPartition,
+    pub retained: Option<PreparedCards>,
+}
+
+/// Only produced by rendering a verified PartitionSource. Never accepted
+/// from persisted or caller-supplied token ids. Selection checks source,
+/// recipe and function identity; rendering still compares every stored tuple.
+#[derive(Debug)]
+pub(crate) struct PreparedCards {
+    path: String,
+    hash: String,
+    recipe: String,
+    function_digest: String,
+    cards: Vec<partition::Card>,
+}
 
 /// The provider seam: profile, isolation flag and the run control (caller
 /// cancellation plus the budget deadline) to one embedding function.
@@ -291,6 +329,70 @@ pub(crate) fn hit_fault(name: &str, control: Option<&Control>, detail: &str) -> 
             detail,
         },
     )
+}
+
+impl PartitionWorkers {
+    fn new(count: usize) -> Self {
+        Self {
+            count: count.clamp(1, PARTITION_WAVE),
+            pool: OnceLock::new(),
+        }
+    }
+
+    pub(crate) fn prepare(
+        &self,
+        cards: Cards<'_>,
+        sources: Vec<cache::PartitionSource>,
+        recipe: &str,
+        control: &Control,
+    ) -> FResult<Vec<ComputedPartition>> {
+        if sources.len() > PARTITION_WAVE {
+            return Err(partition_invalid(
+                "partition wave exceeds its source bound".into(),
+            ));
+        }
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+        control.check()?;
+        prepare_fault!(PARTITION_BEFORE_COMPUTE, Some(control), "")?;
+        let pool = self
+            .pool
+            .get_or_init(|| {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(self.count)
+                    .thread_name(|index| format!("foundry-partition-{index}"))
+                    .build()
+                    .map_err(|error| error.to_string())
+            })
+            .as_ref()
+            .map_err(|message| FoundryError::Semantic {
+                code: "partition_worker_failed",
+                message: format!("cannot start partition workers: {message}"),
+            })?;
+        // Indexed parallel collection preserves source order. Collect every
+        // result before propagating errors so all borrowed work has finished.
+        let results: Vec<_> = pool.install(|| {
+            sources
+                .into_par_iter()
+                .map(|source| {
+                    control.check()?;
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        cards.prepare_source(source, recipe, RETAINED_CARD_BYTES)
+                    })) {
+                        Ok(result) => result,
+                        Err(_) => Err(FoundryError::Semantic {
+                            code: "partition_worker_failed",
+                            message:
+                                "a partition worker panicked; unpublished mappings were discarded"
+                                    .into(),
+                        }),
+                    }
+                })
+                .collect()
+        });
+        results.into_iter().collect()
+    }
 }
 
 /// The CLI entry: the provider seam resolves to the supervised worker on
@@ -727,34 +829,10 @@ fn inner(
         return Ok(stop);
     }
     let tokenizer = DocumentTokenizer::load(profile)?;
-    // The provider seam gets the run control. A failure caused by the budget
-    // or the caller's cancellation is that named stop; any other refusal
-    // (isolation, profile) is a hard error that touches nothing.
-    let mut provider = match acquire(profile, options.development, control) {
-        Ok(provider) => {
-            report.provider_state = Some("ready");
-            provider
-        }
-        Err(error) => {
-            return match halt(control, budget) {
-                Some(stop) => Ok(stop),
-                None => {
-                    report.provider_state = Some("refused");
-                    report.provider_code = Some(lifetime_code(error.code()));
-                    Err(FoundryError::from(error))
-                }
-            };
-        }
-    };
-    if provider.descriptor().digest() != function_digest {
-        return Err(FoundryError::Semantic {
-            code: "provider_malformed",
-            message: "the worker's document function does not match the profile".into(),
-        });
-    }
-    if let Some(stop) = halt(control, budget) {
-        return Ok(stop);
-    }
+    // Cached-only preparation needs no model worker. Artifact verification
+    // still precedes tokenization; acquisition retains its own trust checks.
+    let mut provider: Option<Box<dyn EmbeddingProvider>> = None;
+    let workers = PartitionWorkers::default();
 
     let steps = Steps {
         engine,
@@ -790,21 +868,24 @@ fn inner(
             break;
         }
         let computed = Instant::now();
-        let prepared = steps.cards.prepare_partitions(inputs, recipe, control);
+        let prepared = workers.prepare(steps.cards, inputs, recipe, control);
         report.bootstrap.partition_compute_ms += elapsed_ms(computed);
         let prepared = prepared?;
-        for partition in prepared {
+        let mut retained = Vec::new();
+        for computed in prepared {
             if let Some(halted) = halt(control, budget) {
                 stop = Some(halted);
                 break 'waves;
             }
-            commit_partition(engine, partition, control, report)?;
+            commit_partition(engine, computed.partition, control, report)?;
+            retained.extend(computed.retained);
         }
         let done = matches!(progress, Progress::Done);
         if cursor.after != before {
             report.bootstrap.waves += 1;
             report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
-            let mut walk = Walk::wave(cursor.scope.clone(), before, cursor.after.clone());
+            let mut walk = Walk::wave(cursor.scope.clone(), before, cursor.after.clone())
+                .with_retained(retained);
             loop {
                 let mut selection = Selection::default();
                 let end = match steps.select_batch(
@@ -834,10 +915,43 @@ fn inner(
                     stop = Some(halted);
                     break 'waves;
                 }
+                if provider.is_none() {
+                    let acquired = match acquire(profile, options.development, control) {
+                        Ok(provider) => provider,
+                        Err(error) => {
+                            if let Some(halted) = halt(control, budget) {
+                                stop = Some(halted);
+                                break 'waves;
+                            }
+                            report.provider_state = Some("refused");
+                            report.provider_code = Some(lifetime_code(error.code()));
+                            return Err(FoundryError::from(error));
+                        }
+                    };
+                    if acquired.descriptor().digest() != function_digest {
+                        report.provider_state = Some("refused");
+                        report.provider_code = Some("provider_malformed");
+                        return Err(FoundryError::Semantic {
+                            code: "provider_malformed",
+                            message: "the worker's document function does not match the profile"
+                                .into(),
+                        });
+                    }
+                    report.provider_state = Some("ready");
+                    provider = Some(acquired);
+                    // Startup shares the same deadline and publication reserve.
+                    if let Some(halted) = admit(control, budget, deadline, reserve) {
+                        stop = Some(halted);
+                        break 'waves;
+                    }
+                }
                 let size = batch.len() as u64;
                 match flush_batch(
                     &steps,
-                    provider.as_mut(),
+                    provider
+                        .as_mut()
+                        .expect("acquired for missing inputs")
+                        .as_mut(),
                     batch,
                     options.cache_cap_bytes,
                     control,
@@ -1106,8 +1220,14 @@ pub(crate) struct Walk {
     through: Option<String>,
     partial: Option<(Rc<SourceVersion>, usize)>,
     seen: HashSet<String>,
+    retained: Vec<PreparedCards>,
 }
 impl Walk {
+    pub(crate) fn with_retained(mut self, retained: Vec<PreparedCards>) -> Self {
+        self.retained = retained;
+        self
+    }
+
     pub(crate) fn exclude(&mut self, keys: impl IntoIterator<Item = String>) {
         self.seen.clear();
         self.seen.extend(keys);
@@ -1127,15 +1247,21 @@ impl Walk {
     }
 }
 
-/// One source version a selection drew cards from: its verified body and,
-/// once rendering needed them, its carded units. The version the walk
-/// pauses in carries both to its next selection, so a source consumed over
-/// many batches is read and parsed once.
+/// One verified source version: either fresh prepared cards or its body
+/// and lazily parsed units. A partially consumed source carries this input
+/// across batches; unchanged fresh inputs need no second body read or parse.
 struct SourceVersion {
     path: String,
     hash: String,
-    body: String,
-    units: OnceCell<Vec<Unit>>,
+    content: SourceCards,
+}
+
+enum SourceCards {
+    Body {
+        body: String,
+        units: OnceCell<Vec<Unit>>,
+    },
+    Prepared(PreparedCards),
 }
 
 /// Cards a selection step found missing, not yet rendered: per source
@@ -1185,22 +1311,17 @@ fn partition_invalid(message: String) -> FoundryError {
 }
 
 impl Cards<'_> {
-    /// CPU-only computation over owned, verified bodies. No store reference
-    /// crosses into these workers; callers release the MCP engine slot first.
-    pub(crate) fn prepare_partitions(
+    #[cfg(test)]
+    fn prepare_partitions(
         &self,
         sources: Vec<cache::PartitionSource>,
         recipe: &str,
         control: &Control,
     ) -> FResult<Vec<cache::PreparedPartition>> {
-        if sources.is_empty() {
-            return Ok(Vec::new());
-        }
-        prepare_fault!(PARTITION_BEFORE_COMPUTE, Some(control), "")?;
-        let workers = std::thread::available_parallelism().map_or(1, usize::from);
-        self.prepare_partitions_with_workers(sources, recipe, control, workers)
+        self.prepare_partitions_with_workers(sources, recipe, control, PARTITION_WAVE)
     }
 
+    #[cfg(test)]
     fn prepare_partitions_with_workers(
         &self,
         sources: Vec<cache::PartitionSource>,
@@ -1208,62 +1329,71 @@ impl Cards<'_> {
         control: &Control,
         workers: usize,
     ) -> FResult<Vec<cache::PreparedPartition>> {
-        use std::collections::VecDeque;
-        use std::sync::Mutex;
-        if sources.len() > PARTITION_WAVE {
-            return Err(partition_invalid(
-                "partition wave exceeds its source bound".into(),
-            ));
-        }
-        if sources.is_empty() {
-            return Ok(Vec::new());
-        }
-        let workers = workers.clamp(1, PARTITION_WAVE).min(sources.len());
-        let jobs = Mutex::new(sources.into_iter().enumerate().collect::<VecDeque<_>>());
-        let mut results = std::thread::scope(|scope| -> FResult<Vec<_>> {
-            let mut handles = Vec::new();
-            for _ in 0..workers {
-                let jobs = &jobs;
-                handles.push(scope.spawn(move || {
-                    let mut results = Vec::new();
-                    loop {
-                        let job = jobs.lock().unwrap_or_else(|e| e.into_inner()).pop_front();
-                        let Some((index, source)) = job else { break };
-                        let result = control.check().and_then(|()| {
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                let path = source.path().to_owned();
-                                source.prepare(recipe, self.function_digest, None, &|body| {
-                                    self.units(&path, body)
-                                })
-                            }))
-                            .unwrap_or_else(|_| Err(FoundryError::Semantic {
-                                code: "partition_worker_failed",
-                                message: "a partition worker panicked; unpublished mappings were discarded".into(),
-                            }))
-                        });
-                        results.push((index, result));
+        Ok(PartitionWorkers::new(workers)
+            .prepare(*self, sources, recipe, control)?
+            .into_iter()
+            .map(|computed| computed.partition)
+            .collect())
+    }
+
+    fn prepare_source(
+        &self,
+        source: cache::PartitionSource,
+        recipe: &str,
+        retain_limit: usize,
+    ) -> FResult<ComputedPartition> {
+        let path = source.path().to_owned();
+        let hash = source.source_hash().to_owned();
+        let mut retained = None;
+        let partition = source.prepare(recipe, self.function_digest, None, |body| {
+            let units = partition::carded_units(body, Lang::from_path(&path));
+            let identity_bytes = std::mem::size_of::<PreparedCards>()
+                + path.capacity()
+                + hash.capacity()
+                + recipe.len()
+                + self.function_digest.len();
+            let mut kept_bytes = identity_bytes.saturating_add(
+                units
+                    .len()
+                    .saturating_mul(std::mem::size_of::<partition::Card>()),
+            );
+            let mut kept = (kept_bytes <= retain_limit).then(|| Vec::with_capacity(units.len()));
+            let mut tuples = Vec::with_capacity(units.len());
+            for unit in &units {
+                let card = partition::card(body, &path, unit, &self.recipe(), self.tokenizer)?;
+                tuples.push(PartitionUnit {
+                    start: card.start,
+                    end: card.end,
+                    input_key: card.input_key.clone(),
+                });
+                if kept.is_some() {
+                    kept_bytes = kept_bytes
+                        .saturating_add(card.input_key.capacity())
+                        .saturating_add(
+                            card.ids
+                                .capacity()
+                                .saturating_mul(std::mem::size_of::<u32>()),
+                        );
+                    if kept_bytes <= retain_limit {
+                        kept.as_mut().expect("retaining cards").push(card);
+                    } else {
+                        kept = None;
                     }
-                    results
-                }));
-            }
-            let mut results = Vec::new();
-            let mut panicked = false;
-            for handle in handles {
-                match handle.join() {
-                    Ok(rows) => results.extend(rows),
-                    Err(_) => panicked = true,
                 }
             }
-            if panicked {
-                return Err(FoundryError::Semantic {
-                    code: "partition_worker_failed",
-                    message: "a partition worker exited unexpectedly".into(),
-                });
-            }
-            Ok(results)
+            retained = kept;
+            Ok(tuples)
         })?;
-        results.sort_by_key(|(index, _)| *index);
-        results.into_iter().map(|(_, result)| result).collect()
+        Ok(ComputedPartition {
+            partition,
+            retained: retained.map(|cards| PreparedCards {
+                path,
+                hash,
+                recipe: recipe.to_owned(),
+                function_digest: self.function_digest.to_owned(),
+                cards,
+            }),
+        })
     }
 
     /// The limits of one document call under the run's profile.
@@ -1284,54 +1414,48 @@ impl Cards<'_> {
         }
     }
 
-    /// The card tuples of one source body: what acceptance records.
-    fn units(&self, path: &str, body: &str) -> FResult<Vec<PartitionUnit>> {
-        let cards = partition::cards(
-            body,
-            path,
-            Lang::from_path(path),
-            &self.recipe(),
-            self.tokenizer,
-        )?;
-        Ok(cards
-            .into_iter()
-            .map(|card| PartitionUnit {
-                start: card.start,
-                end: card.end,
-                input_key: card.input_key,
-            })
-            .collect())
-    }
-
-    /// Render and tokenize a selection into its batch, in selection order,
-    /// with no engine and no transaction. Only the selected cards are
-    /// rendered (a source version's units are parsed once per walk), and
-    /// each must be exactly the card its partition records, the same range
-    /// under the same key, else the mapping is `partition_invalid`.
+    /// Form the selected batch without an engine or transaction. Reuse
+    /// privately prepared cards when available; otherwise render only the
+    /// selected units. Both paths require each recorded range/key to match.
     pub(crate) fn render(&self, selection: Selection) -> FResult<Batch> {
         let recipe = self.recipe();
         let mut batch = Batch::default();
         for selected in selection.sources {
             let source = &selected.source;
-            let units = source.units.get_or_init(|| {
-                partition::carded_units(&source.body, Lang::from_path(&source.path))
-            });
-            if units.len() != selected.cards {
+            let count = match &source.content {
+                SourceCards::Body { body, units } => units
+                    .get_or_init(|| partition::carded_units(body, Lang::from_path(&source.path)))
+                    .len(),
+                SourceCards::Prepared(prepared) => {
+                    if prepared.function_digest != self.function_digest
+                        || prepared.recipe
+                            != partition::recipe_id(
+                                &self.profile.descriptor.tokenizer,
+                                self.profile.card_tokens,
+                            )
+                    {
+                        return Err(partition_invalid("retained card identity changed".into()));
+                    }
+                    prepared.cards.len()
+                }
+            };
+            if count != selected.cards {
                 return Err(partition_invalid(format!(
                     "{}: the partition records {} cards, but the body has {} carded units",
-                    source.path,
-                    selected.cards,
-                    units.len()
+                    source.path, selected.cards, count
                 )));
             }
             for (index, recorded) in selected.wanted {
-                let card = partition::card(
-                    &source.body,
-                    &source.path,
-                    &units[index],
-                    &recipe,
-                    self.tokenizer,
-                )?;
+                let card = match &source.content {
+                    SourceCards::Prepared(prepared) => prepared.cards[index].clone(),
+                    SourceCards::Body { body, units } => partition::card(
+                        body,
+                        &source.path,
+                        &units.get().expect("units initialized")[index],
+                        &recipe,
+                        self.tokenizer,
+                    )?,
+                };
                 if (card.start, card.end, card.input_key.as_str())
                     != (recorded.start, recorded.end, recorded.input_key.as_str())
                 {
@@ -1546,12 +1670,28 @@ impl Steps<'_> {
                     if !wanted.is_empty() {
                         let source = match resumed {
                             Some((source, _)) => source,
-                            None => Rc::new(SourceVersion {
-                                path: path.clone(),
-                                hash: meta.hash.clone(),
-                                body: self.engine.semantic_source_body(path, meta)?,
-                                units: OnceCell::new(),
-                            }),
+                            None => {
+                                let retained = walk.retained.iter().position(|cards| {
+                                    cards.path == *path
+                                        && cards.hash == meta.hash
+                                        && cards.recipe == self.recipe
+                                        && cards.function_digest == self.cards.function_digest
+                                });
+                                let content = match retained {
+                                    Some(index) => {
+                                        SourceCards::Prepared(walk.retained.swap_remove(index))
+                                    }
+                                    None => SourceCards::Body {
+                                        body: self.engine.semantic_source_body(path, meta)?,
+                                        units: OnceCell::new(),
+                                    },
+                                };
+                                Rc::new(SourceVersion {
+                                    path: path.clone(),
+                                    hash: meta.hash.clone(),
+                                    content,
+                                })
+                            }
                         };
                         selection.len += wanted.len();
                         selection.sources.push(SelectedSource {
@@ -1867,6 +2007,261 @@ mod tests {
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.inner.encode(rendered)
         }
+    }
+
+    #[test]
+    fn cpu_pool_is_lazy_reused_and_recovers_after_a_panicking_wave() {
+        use std::sync::Mutex;
+        struct Threads<'a> {
+            inner: &'a DocumentTokenizer,
+            seen: Mutex<HashSet<std::thread::ThreadId>>,
+        }
+        impl TokenCount for Threads<'_> {
+            fn encode(&self, text: &str) -> Result<partition::TokenizedText, ProviderError> {
+                self.seen
+                    .lock()
+                    .unwrap()
+                    .insert(std::thread::current().id());
+                self.inner.encode(text)
+            }
+        }
+        struct Panics;
+        impl TokenCount for Panics {
+            fn encode(&self, _: &str) -> Result<partition::TokenizedText, ProviderError> {
+                panic!("injected partition panic")
+            }
+        }
+        let (_dir, engine, profile) = partition_fixture();
+        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+        let threads = Threads {
+            inner: &tokenizer,
+            seen: Mutex::new(HashSet::new()),
+        };
+        let digest = profile.descriptor.digest();
+        let cards = Cards {
+            tokenizer: &threads,
+            profile: &profile,
+            function_digest: &digest,
+        };
+        let pool = PartitionWorkers::new(1);
+        pool.prepare(cards, vec![], "recipe", &Control::unbounded())
+            .unwrap();
+        assert!(pool.pool.get().is_none(), "idle work starts no threads");
+        assert!(
+            pool.prepare(cards, inputs(&engine, 1), "recipe", &Control::cancelled())
+                .is_err()
+        );
+        assert!(
+            pool.pool.get().is_none(),
+            "cancelled work starts no threads"
+        );
+        for _ in 0..3 {
+            pool.prepare(cards, inputs(&engine, 2), "recipe", &Control::unbounded())
+                .unwrap();
+        }
+        let error = pool
+            .prepare(
+                Cards {
+                    tokenizer: &Panics,
+                    ..cards
+                },
+                inputs(&engine, 2),
+                "recipe",
+                &Control::unbounded(),
+            )
+            .unwrap_err();
+        assert_eq!(error.code(), "partition_worker_failed");
+        pool.prepare(cards, inputs(&engine, 2), "recipe", &Control::unbounded())
+            .unwrap();
+        assert_eq!(
+            threads.seen.lock().unwrap().len(),
+            1,
+            "same CPU thread across waves and failure"
+        );
+        assert!(engine.semantic_partition("note00.md").unwrap().is_none());
+    }
+
+    #[test]
+    fn retained_cards_avoid_second_tokenization_across_batches_with_bounded_fallback() {
+        use std::sync::atomic::Ordering;
+        let (_dir, engine, profile) = partition_fixture();
+        let body: String = (0..40)
+            .map(|n| format!("/// Item {n}.\npub fn item_{n:02}() -> u32 {{\n    {n}\n}}\n\n"))
+            .collect();
+        engine.replace_source("lib.rs", &body).unwrap();
+        let hash = engine.source("lib.rs").unwrap().unwrap().hash;
+        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+        let counting = Counting::new(&tokenizer);
+        let digest = profile.descriptor.digest();
+        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+        let cards = Cards {
+            tokenizer: &counting,
+            profile: &profile,
+            function_digest: &digest,
+        };
+        let expected = partition::cards(
+            &body,
+            "lib.rs",
+            Lang::from_path("lib.rs"),
+            &cards.recipe(),
+            &counting,
+        )
+        .unwrap();
+        let once = counting.encodes.load(Ordering::Relaxed);
+        let pool = PartitionWorkers::new(2);
+        // 512 admits the array poorly; 4096 allows some ids before overflowing.
+        // Both must fall back without changing any card or dropping later units.
+        for limit in [RETAINED_CARD_BYTES, 0, 512, 4096] {
+            counting.encodes.store(0, Ordering::Relaxed);
+            let source = engine.semantic_partition_source("lib.rs", &hash).unwrap();
+            let computed = if limit == RETAINED_CARD_BYTES {
+                pool.prepare(cards, vec![source], &recipe, &Control::unbounded())
+                    .unwrap()
+                    .pop()
+                    .unwrap()
+            } else {
+                cards.prepare_source(source, &recipe, limit).unwrap()
+            };
+            let kept = computed.retained.is_some();
+            assert_eq!(kept, limit == RETAINED_CARD_BYTES);
+            engine
+                .semantic_accept_partition(computed.partition)
+                .unwrap();
+            let mut walk = Walk::wave(Some("lib.rs".into()), None, Some("lib.rs".into()))
+                .with_retained(computed.retained.into_iter().collect());
+            let steps = Steps {
+                engine: &engine,
+                cards,
+                recipe: &recipe,
+            };
+            let mut actual = Vec::new();
+            loop {
+                let mut selection = Selection::default();
+                let end = matches!(
+                    steps
+                        .select_batch(
+                            &mut walk,
+                            &mut selection,
+                            8,
+                            usize::MAX,
+                            &mut PrepareReport::default(),
+                            &mut || None
+                        )
+                        .unwrap(),
+                    Selected::End
+                );
+                let batch = cards.render(selection).unwrap();
+                actual.extend(
+                    batch
+                        .keys
+                        .into_iter()
+                        .zip(batch.inputs.into_iter().map(|input| input.ids)),
+                );
+                if end {
+                    break;
+                }
+            }
+            assert_eq!(
+                actual,
+                expected
+                    .iter()
+                    .map(|card| (card.input_key.clone(), card.ids.clone()))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                counting.encodes.load(Ordering::Relaxed),
+                once * if kept { 1 } else { 2 }
+            );
+        }
+    }
+
+    #[test]
+    fn retained_cards_recheck_versions_and_reject_differing_recorded_tuples() {
+        let (_dir, engine, profile) = partition_fixture();
+        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+        let digest = profile.descriptor.digest();
+        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+        let cards = Cards {
+            tokenizer: &tokenizer,
+            profile: &profile,
+            function_digest: &digest,
+        };
+        let pool = PartitionWorkers::new(1);
+        let computed = pool
+            .prepare(cards, inputs(&engine, 1), &recipe, &Control::unbounded())
+            .unwrap()
+            .pop()
+            .unwrap();
+        engine
+            .semantic_accept_partition(computed.partition)
+            .unwrap();
+        let stale = computed.retained.unwrap();
+        engine
+            .replace_source("note00.md", "# Changed source\n\nNew behavior.\n")
+            .unwrap();
+        let computed = pool
+            .prepare(cards, inputs(&engine, 1), &recipe, &Control::unbounded())
+            .unwrap()
+            .pop()
+            .unwrap();
+        engine
+            .semantic_accept_partition(computed.partition)
+            .unwrap();
+        let current = computed.retained.unwrap();
+        let expected = current.cards.clone();
+        let counting = Counting::new(&tokenizer);
+        let steps = Steps {
+            engine: &engine,
+            cards: Cards {
+                tokenizer: &counting,
+                ..cards
+            },
+            recipe: &recipe,
+        };
+        let mut walk = Walk::wave(Some("note00.md".into()), None, Some("note00.md".into()))
+            .with_retained(vec![stale]);
+        let mut selection = Selection::default();
+        steps
+            .select_batch(
+                &mut walk,
+                &mut selection,
+                8,
+                usize::MAX,
+                &mut PrepareReport::default(),
+                &mut || None,
+            )
+            .unwrap();
+        let batch = steps.cards.render(selection).unwrap();
+        assert_eq!(
+            batch.keys,
+            expected
+                .iter()
+                .map(|card| card.input_key.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            counting.encodes.load(std::sync::atomic::Ordering::Relaxed) > 0,
+            "a newer version is freshly rendered, never taken from the old handoff"
+        );
+
+        let mut walk = Walk::wave(Some("note00.md".into()), None, Some("note00.md".into()))
+            .with_retained(vec![current]);
+        let mut selection = Selection::default();
+        steps
+            .select_batch(
+                &mut walk,
+                &mut selection,
+                8,
+                usize::MAX,
+                &mut PrepareReport::default(),
+                &mut || None,
+            )
+            .unwrap();
+        selection.sources[0].wanted[0].1.input_key = "00".repeat(32);
+        assert_eq!(
+            cards.render(selection).err().unwrap().code(),
+            "partition_invalid"
+        );
     }
 
     /// 009 T004 M4: the embed walk renders and tokenizes only the cards it

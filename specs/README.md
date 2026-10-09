@@ -27,8 +27,11 @@ waves and priority paths. The subsequent efficiency audit selects CPU/startup re
 first, then [009 T008](009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work)
 (durable changed work, continuous maintenance, delta publication and cheap status)
 and [009 T009](009-optional-semantic-retrieval/spec.md#t009--use-model-owned-geometry-and-contextual-representations)
-(model-aware geometry and body/parent representations). These remain pending, ahead
-of broad 010 generation. See the [revised build order](../docs/context-ecosystem-plan.md#revised-build-order).
+(model-aware geometry and body/parent representations). The first CPU/startup slice
+now reuses semantic workers and verified cards, defers CLI model acquisition when
+vectors are cached and avoids unchanged-source chunk allocation. Its remaining
+follow-ups and T008/T009 are pending, ahead of broad 010 generation. See the
+[revised build order](../docs/context-ecosystem-plan.md#revised-build-order).
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.
 

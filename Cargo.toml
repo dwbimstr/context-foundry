@@ -96,6 +96,8 @@ bytes = "1"
 # `--no-default-features` builds the lexical-only core.
 tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
 usearch = { version = "=2.26.2", optional = true }
+# Reuse a bounded semantic CPU pool; already present through tokenizers/Tantivy.
+rayon = { version = "=1.12.0", optional = true }
 # 013 T002 learning worker only (`learning-worker`): LibTorch through tch,
 # the pin D001 accepted on Rust 1.90 (torch-sys 0.24.0 checks for LibTorch
 # 2.11.0). `foundry` and the default build never link it. `LIBTORCH` names
@@ -106,7 +108,7 @@ notify = "8.2.0"
 
 [features]
 default = ["semantic"]
-semantic = ["dep:tokenizers", "dep:usearch"]
+semantic = ["dep:tokenizers", "dep:usearch", "dep:rayon"]
 # 009 T004 embedding worker only: `foundry-embed` on a pinned, statically
 # linked llama.cpp (Metal). build.rs builds the pinned commit's tree with
 # CMake and fixed flags into OUT_DIR, generates its FFI bindings with

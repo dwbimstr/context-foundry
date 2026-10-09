@@ -100,12 +100,17 @@ impl PartitionSource {
         &self.path
     }
 
+    #[cfg(feature = "semantic")]
+    pub(crate) fn source_hash(&self) -> &str {
+        &self.source_hash
+    }
+
     pub(crate) fn prepare(
         self,
         recipe_id: &str,
         function_digest: &str,
         claimed: Option<&[PartitionUnit]>,
-        cards: &dyn Fn(&str) -> FResult<Vec<PartitionUnit>>,
+        cards: impl FnOnce(&str) -> FResult<Vec<PartitionUnit>>,
     ) -> FResult<PreparedPartition> {
         let units = cards(&self.body)?;
         validate_units(&units, self.body.len(), Some(&self.body))

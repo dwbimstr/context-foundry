@@ -7,7 +7,8 @@ It does not change T001–T004 acceptance or semantic enablement/package restric
 Experimental update, 2026-10-09: T006/T007 implement bounded parallel partitions and
 progressive bootstrap. The subsequent efficiency audit selects their CPU/startup
 follow-up, T008 incremental maintenance/publication and T009 model-aware input
-geometry before broad 010 generation. These follow-ups are pending; see the
+geometry before broad 010 generation. The first CPU/startup increment below is
+implemented experimentally; the remaining follow-ups are pending. See the
 [revised build order](../../docs/context-ecosystem-plan.md#revised-build-order).
 
 Status: T001 (preparation, cache, index and the supervised development worker), T002
@@ -1243,7 +1244,8 @@ need their own runtime evidence; this increment does not claim them completed.
 
 ### T006/T007 follow-up — Remove repeated preparation and startup work
 
-Selected, pending implementation after the 2026-10-09 efficiency audit. Keep the
+Selected after the 2026-10-09 efficiency audit; first increment implemented
+experimentally, with the remainder explicitly pending below. Keep the
 implemented bounded waves and one resident model. Reuse bounded CPU workers and
 verified intermediates across partition and batch selection: source bytes, parsed
 ranges and token IDs must carry source/recipe identity, have a byte limit, and be
@@ -1260,6 +1262,43 @@ available for repair/upgrade rather than running on every ordinary warm replay.
 Cancellation, pause, panic and shutdown must reclaim bounded workers/buffers and
 leave accepted work reusable. Verify work counts and vector/input equivalence in
 sandbox fixtures; real-device speed remains a separate claim.
+
+Implemented increment in [prepare.rs](../../src/neural/prepare.rs),
+[driver.rs](../../src/neural/driver.rs) and 001's `replace_source`:
+
+- A lazy Rayon 1.12.0 pool reuses at most `min(available_parallelism, 8)` CPU workers
+  for a CLI run and across MCP prepare/pause/resume runs for the owner. Rayon already
+  exists in Cargo.lock through maintained dependencies; making it a semantic-only
+  direct dependency avoids a custom worker/channel/shutdown implementation. Each
+  wave joins before returning, preserves input order and reports tokenizer panics
+  without poisoning subsequent work. Empty/current waves start no CPU threads.
+- Fresh verified partitions retain exact cards for selection, capped at 2 MiB per
+  source (16 MiB per eight-source wave), including ids, key strings and array capacity.
+  This is a retained-payload bound, not a process RAM limit. Sources that exceed it
+  discard retained cards and use the existing on-demand rendering path. Retained
+  cards are private in-memory values bound to source hash, recipe and function;
+  both paths compare every selected range/key to its accepted partition. No new
+  persisted cache, recipe, schema or vector meaning is introduced. Input reconstruction,
+  parsing and tokenization need not repeat for a retained source in that wave.
+- CLI acquisition occurs only after selecting missing input and checking the run
+  budget/reserve. Cache-only replay, mapping-only republishing and zero-card sources
+  need no model. Startup uses the existing run control, and admission rechecks the
+  reserve afterward. A startup refusal/timeout can leave verified partitions and
+  prior cached coverage published; it cannot commit vectors from a refused worker.
+  Provider observations change only when acquisition is actually attempted; a
+  cache-only run preserves the previous observation. MCP's query runtime remains
+  resident under its existing ownership rule.
+- Source replacement checks the current hash before allocating copied storage
+  chunks, preserving the transaction and unchanged-source result.
+
+Still pending in E1: parallel/pipelined initial ingestion, reusable lexical workers,
+verified-artifact handoff/cache-counter reconciliation and prefix-fitting work
+within one card. Full artifact checks still precede tokenization and run again at
+real provider acquisition; they are not replaced by unverified path/mtime reuse.
+The token handoff removes a second render, not every tokenization inside the first.
+T008/T009 and 010 generation remain separate pending increments. See
+[validation](../../docs/validation.md#bootstrap-work-reuse--2026-10-09) for sandbox
+evidence; no real-device throughput or task-quality gain is claimed.
 
 ### T008 — Maintain and publish only changed semantic work
 

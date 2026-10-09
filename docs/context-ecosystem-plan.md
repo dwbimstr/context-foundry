@@ -28,7 +28,10 @@ retrieval under one allowance and adds content search over retained observations
 These are local capabilities, not measured host outcomes. The subsequent efficiency
 review below supersedes the earlier immediate jump from progressive bootstrap to
 broad enrichment: cold throughput, changed-work maintenance and model-aware inputs
-are the next implementation priorities.
+are the next implementation priorities. The first E1 increment now reuses semantic
+CPU workers and bounded verified cards, defers CLI model acquisition until missing
+inputs exist, and avoids chunk allocation for unchanged sources. Remaining E1 work
+and E2 onward are still pending; see [validation](validation.md#bootstrap-work-reuse--2026-10-09).
 
 ## Architecture correction: useful context across 60,000–80,000 files
 
@@ -49,7 +52,7 @@ omits a caller, configuration dependency or test can make the complete task cost
 | Capability | Current evidence | Required change |
 | --- | --- | --- |
 | Exact source/structural graph | Versioned source, lexical search, 23-language extraction, compiler imports, approximate doors | Preserve it as the evidence base; add evidence about behavior and process boundaries. |
-| CPU parallelism | Source-index construction and semantic partition computation now use at most eight scoped workers, with bounded input bytes | Reuse workers and verified parse/token work across stages; initial source ingestion and commits remain largely serial. |
+| CPU parallelism | Source-index construction and semantic partitions use at most eight workers. Semantic workers and bounded verified cards now survive across waves. | Pipeline initial ingestion and reuse lexical workers; ingestion and commits remain largely serial. |
 | Embedding bootstrap | Latest recorded Gemma runs: 112,549 cards in 1,256 s; 332,732 cards in 4,437 s. MCP prefetches one batch; model work has one slot. | Make useful partial coverage available early, overlap independent stages, remove whole-corpus barriers, and tune device batches separately from CPU worker counts. |
 | Repository knowledge | Address cards contain heads/docs; 010 T001 now stores imported, source-bound briefs with lexical discovery. Explicit task/project memory is caller-authored. | Add selective generation, dependency-driven refresh and area knowledge; import is not an automatic enrichment lane. |
 | Continuous maintenance | Opt-in primary-root watching now supports native events, bounded coalescing, scoped updates and restart/overflow reconciliation (001 T011) | Extend resource policy and validate other platforms/large real repositories; quiet ticks do not reread source bodies. |
@@ -141,6 +144,8 @@ Inspected baseline: `62c6c97` on `experimental/context-ecosystem`. This is a cod
 publisher-contract audit, not a new runtime profile. The prior increment improves
 first-searchable latency. It does not establish minimum cold-build cost, automatic
 semantic maintenance or efficient publication of a small edit.
+The table records that baseline; the later E1 implementation above addresses part
+of its CPU, startup and source-allocation findings.
 
 | Stage | What the code actually does | Remaining opportunity / owner |
 | --- | --- | --- |
@@ -225,8 +230,8 @@ remain evidence about their historical recipe only.
 ### Revised build order
 
 A–D remain completed experimental capabilities; the owner's efficiency correction
-puts E1–E4 ahead of broad generated knowledge. All follow-ups below are pending
-implementation, and preserve the prior authorization to build/test in the sandbox.
+puts E1–E4 ahead of broad generated knowledge. E1 is partially implemented as recorded
+below; E2 onward remain pending. Sandbox build/test authorization continues.
 
 | Order | Concrete increment | Owner/status |
 | --- | --- | --- |
@@ -234,7 +239,7 @@ implementation, and preserve the prior authorization to build/test in the sandbo
 | B | Source-bound structured brief import, lexical discovery and lifecycle | 010 T001: implemented; automatic generation absent |
 | C | Opt-in native source watching and bounded reconciliation | 001 T011: implemented; platform/scale limits remain |
 | D | First semantic result before full partitioning, priorities and geometric publication | 009 T007: implemented; total throughput/maintenance unresolved |
-| E1 | Remove repeated cold/warm CPU and startup work: persistent bounded workers, verified intermediate reuse, pipelined ingestion, no-op allocation avoidance and artifact handoff | 001 T009/T011 and 009 T006/T007 follow-ups; first implementation slice |
+| E1 | Remove repeated cold/warm CPU and startup work | Semantic worker reuse, bounded tokenized-card handoff, lazy CLI acquisition and no-op chunk allocation avoidance implemented. Initial ingestion pipeline, lexical worker reuse, artifact handoff/counter reconciliation and per-card fitting remain pending under 001 T009/T011 and 009 T006/T007. |
 | E2 | Durable changed-work frontier, explicit continuous semantic maintenance, independent acknowledgments and cheap status | 009 T008 with 001 T011; pending |
 | E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; pending, reuses E2 |
 | E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; pending; compare against current cards, keep old profiles/caches usable |

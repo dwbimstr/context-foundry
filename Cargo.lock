@@ -584,6 +584,7 @@ dependencies = [
  "notify",
  "protobuf",
  "pulldown-cmark",
+ "rayon",
  "redb",
  "reqwest",
  "rmcp",

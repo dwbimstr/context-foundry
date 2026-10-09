@@ -3890,7 +3890,6 @@ impl Engine {
             ));
         }
         let hash = crate::digest(content.as_bytes());
-        let pieces = chunks(path, &hash, content);
         let tx = self.db.begin_write()?;
         {
             let mut sources = tx.open_table(SOURCES)?;
@@ -3901,6 +3900,7 @@ impl Engine {
             if old.as_ref().is_some_and(|old| old.hash == hash) {
                 return Ok(false);
             }
+            let pieces = chunks(path, &hash, content);
             let mut stored = tx.open_table(CHUNKS)?;
             if let Some(old) = &old {
                 for i in 0..old.chunks {

@@ -22,7 +22,10 @@ Progressive semantic bootstrap (009 T007) is committed at `62c6c97`: priority sc
 bounded waves and geometric publication make partial coverage searchable early.
 The subsequent efficiency audit selects CPU/startup reuse, durable changed-work
 maintenance and vector deltas (009 T008), then model-aware body/parent inputs
-(009 T009). These are pending. Automatic generation (010 T002), boundary joins and
+(009 T009). The first CPU/startup increment reuses bounded semantic workers and
+verified cards, defers CLI acquisition on cache-only runs and skips unchanged-source
+chunk allocation. Ingestion pipelining and the other maintenance/representation
+work remain pending. Automatic generation (010 T002), boundary joins and
 task-evidence composition also remain pending; watch updates currently invalidate
 stale semantic/brief evidence without automatically preparing replacements.
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and

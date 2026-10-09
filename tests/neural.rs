@@ -249,6 +249,123 @@ fn unchanged_restart_makes_zero_document_calls() {
 }
 
 #[test]
+fn cache_only_replay_and_mapping_changes_do_not_acquire_a_model() {
+    let (mut env, first) = first_preparation(&[("a.md", &body(100)), ("b.md", &body(120))]);
+    for delete in [false, true] {
+        if delete {
+            env.open().delete_source("a.md").unwrap();
+        }
+        env.close();
+        let report = prepare::run(
+            &env.store,
+            &PrepareOptions {
+                priority_paths: &[],
+                profile_path: &env.profile,
+                budget_seconds: 60,
+                development: false,
+                cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+                started: Instant::now(),
+                control: &Control::unbounded(),
+            },
+            Box::new(|_, _, _| panic!("cached-only preparation must not acquire a model")),
+        )
+        .unwrap();
+        assert!(!report.partial, "{report:?}");
+        assert_eq!(report.provider_state, None, "no new provider observation");
+        assert_eq!(report.document_calls, 0);
+        assert_eq!(
+            report.index_entries,
+            if delete { 1 } else { first.index_entries }
+        );
+        assert!(report.index_published);
+        assert_eq!(
+            env.status().provider.state,
+            "ready",
+            "keep the prior observation"
+        );
+    }
+}
+
+#[test]
+fn empty_or_uncarded_sources_prepare_without_a_provider() {
+    for sources in [
+        vec![],
+        vec![("empty.rs", ""), ("data.unknown", "uncarded bytes")],
+    ] {
+        let mut env = Env::new(&sources);
+        env.close();
+        let report = prepare::run(
+            &env.store,
+            &PrepareOptions {
+                priority_paths: &[],
+                profile_path: &env.profile,
+                budget_seconds: 60,
+                development: false,
+                cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+                started: Instant::now(),
+                control: &Control::unbounded(),
+            },
+            Box::new(|_, _, _| panic!("no eligible cards means no model startup")),
+        )
+        .unwrap();
+        assert!(!report.partial, "{report:?}");
+        assert_eq!(report.eligible_units, 0);
+        assert_eq!(report.provider_state, None);
+        assert_eq!(report.partitioned_sources, sources.len() as u64);
+        assert_eq!(env.status().provider.state, "unknown");
+    }
+}
+
+#[test]
+fn cold_waves_acquire_once_and_low_budget_does_not_start_a_worker() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let owned: Vec<_> = (0..25)
+        .map(|n| (format!("n{n:02}.md"), body(100 + n)))
+        .collect();
+    let sources: Vec<_> = owned
+        .iter()
+        .map(|(path, body)| (path.as_str(), body.as_str()))
+        .collect();
+    let mut env = Env::new(&sources);
+    let acquired = Arc::new(AtomicUsize::new(0));
+    for budget_seconds in [4, 60] {
+        env.close();
+        let calls = Arc::clone(&acquired);
+        let factory = env.factory.acquire();
+        let report = prepare::run(
+            &env.store,
+            &PrepareOptions {
+                priority_paths: &[],
+                profile_path: &env.profile,
+                budget_seconds,
+                development: false,
+                cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+                started: Instant::now(),
+                control: &Control::unbounded(),
+            },
+            Box::new(move |profile, development, control| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                factory(profile, development, control)
+            }),
+        )
+        .unwrap();
+        if budget_seconds == 4 {
+            assert_eq!(report.reason_code, Some("budget_exhausted"));
+            assert_eq!(acquired.load(Ordering::SeqCst), 0);
+            assert_eq!(report.document_calls, 0);
+        } else {
+            assert!(!report.partial, "{report:?}");
+            assert_eq!(report.embedded_units, 25);
+            assert!(report.document_calls > 1);
+            assert_eq!(acquired.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+#[test]
 fn edited_input_reembeds_only_its_units() {
     let (mut env, first) = first_preparation(&[
         ("a.md", &body(100)),
@@ -1564,15 +1681,20 @@ fn caller_cancellation_reaches_the_provider_call() {
 fn the_run_budget_reaches_worker_acquisition_and_names_budget_exhausted() {
     let mut env = env_with(&nine_sources(), FakeBehavior::StallAcquire);
     let started = Instant::now();
-    let report = env.prepare(1);
+    // Startup is lazy: leave room outside the five-second publication
+    // reserve so this actually reaches acquisition after the first wave.
+    let report = env.prepare(6);
     assert!(
-        started.elapsed() < Duration::from_secs(7),
+        started.elapsed() >= Duration::from_secs(5) && started.elapsed() < Duration::from_secs(8),
         "acquisition was not bounded"
     );
     assert!(report.partial, "{report:?}");
     assert_eq!(report.reason_code, Some("budget_exhausted"), "{report:?}");
     assert_eq!(env.calls(), 0, "no document call before a provider exists");
-    assert_eq!(report.partitioned_sources, 0, "nothing was partitioned");
+    assert_eq!(
+        report.partitioned_sources, 8,
+        "verified partitions survive startup expiry"
+    );
     let status = env.status();
     assert_eq!(status.state, "paused");
     assert_eq!(status.last_error.as_ref().unwrap().code, "budget_exhausted");

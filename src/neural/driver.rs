@@ -156,6 +156,8 @@ pub struct Preparation {
     state: Mutex<State>,
     /// When the owner last started a foreground operation.
     foreground: Mutex<Option<Instant>>,
+    /// CPU-only pool is lazy and survives explicit pause/resume runs.
+    workers: prepare::PartitionWorkers,
 }
 
 impl Default for Preparation {
@@ -169,6 +171,7 @@ impl Default for Preparation {
                 bootstrap: Default::default(),
             }),
             foreground: Mutex::new(None),
+            workers: prepare::PartitionWorkers::default(),
         }
     }
 }
@@ -479,9 +482,12 @@ impl<'a> Run<'a> {
         (self.preparation.lock().phase == Phase::Pausing).then(paused)
     }
 
-    fn partition_wave(&mut self, cursor: &mut prepare::SourceCursor) -> FResult<Progress> {
+    fn partition_wave(
+        &mut self,
+        cursor: &mut prepare::SourceCursor,
+    ) -> FResult<(Progress, Vec<prepare::PreparedCards>)> {
         if let Some(stop) = self.requested_stop() {
-            return Ok(Progress::Halted(stop));
+            return Ok((Progress::Halted(stop), Vec::new()));
         }
         let (owner, runtime, control) = (self.owner, self.runtime, self.control);
         let (recipe, digest, report) = (&self.recipe, &self.digest, &mut self.report);
@@ -505,23 +511,28 @@ impl<'a> Run<'a> {
             )
         })?;
         if matches!(progress, Progress::Halted(_)) {
-            return Ok(progress);
+            return Ok((progress, Vec::new()));
         }
         if let Some(stop) = self.requested_stop() {
-            return Ok(Progress::Halted(stop));
+            return Ok((Progress::Halted(stop), Vec::new()));
         }
         let computed = Instant::now();
-        let prepared = Cards {
-            tokenizer: runtime.tokenizer(),
-            profile: &runtime.profile,
-            function_digest: &self.digest,
-        }
-        .prepare_partitions(inputs, &self.recipe, control);
+        let prepared = self.preparation.workers.prepare(
+            Cards {
+                tokenizer: runtime.tokenizer(),
+                profile: &runtime.profile,
+                function_digest: &self.digest,
+            },
+            inputs,
+            &self.recipe,
+            control,
+        );
         self.report.bootstrap.partition_compute_ms += prepare::elapsed_ms(computed);
         let prepared = prepared?;
-        for partition in prepared {
+        let mut retained = Vec::new();
+        for computed in prepared {
             if let Some(stop) = self.requested_stop() {
-                return Ok(Progress::Halted(stop));
+                return Ok((Progress::Halted(stop), Vec::new()));
             }
             let preparation = self.preparation;
             let report = &mut self.report;
@@ -532,14 +543,15 @@ impl<'a> Run<'a> {
                 if preparation.lock().phase == Phase::Pausing {
                     return Ok(Some(paused()));
                 }
-                prepare::commit_partition(engine, partition, control, report)?;
+                prepare::commit_partition(engine, computed.partition, control, report)?;
                 Ok(None)
             })?;
             if let Some(stop) = stop {
-                return Ok(Progress::Halted(stop));
+                return Ok((Progress::Halted(stop), Vec::new()));
             }
+            retained.extend(computed.retained);
         }
-        Ok(progress)
+        Ok((progress, retained))
     }
 
     /// Select batches of up to the profile's batch of cards and embed them.
@@ -609,7 +621,7 @@ impl<'a> Run<'a> {
                     return Ok(Selected::End);
                 };
                 let before = cursor.after.clone();
-                let progress = self.partition_wave(&mut cursor)?;
+                let (progress, retained) = self.partition_wave(&mut cursor)?;
                 if let Progress::Halted(stop) = progress {
                     return Ok(Selected::Halted(stop));
                 }
@@ -617,11 +629,10 @@ impl<'a> Run<'a> {
                 if cursor.after != before {
                     self.report.bootstrap.waves += 1;
                     self.report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
-                    frontier.walk = Some(Walk::wave(
-                        cursor.scope.clone(),
-                        before,
-                        cursor.after.clone(),
-                    ));
+                    frontier.walk = Some(
+                        Walk::wave(cursor.scope.clone(), before, cursor.after.clone())
+                            .with_retained(retained),
+                    );
                     self.sync_progress();
                 }
                 frontier.order.advance(cursor, done);
@@ -1255,7 +1266,7 @@ mod tests {
                 })),
             );
             let control = Control::unbounded();
-            let result = Run::new(&*owner, &runtime, &preparation, &control)
+            let (result, _) = Run::new(&*owner, &runtime, &preparation, &control)
                 .partition_wave(&mut prepare::SourceCursor::default())
                 .unwrap();
             crate::fault::disarm_all();

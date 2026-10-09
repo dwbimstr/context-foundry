@@ -781,7 +781,9 @@ to re-register. Linux native event and synthetic large-workspace evidence is rec
 in [validation](../../docs/validation.md); macOS, network filesystems, 80,000-file
 throughput and model preparation speed are not inferred from those tests.
 
-T009/T011 efficiency follow-up, selected 2026-10-09; pending implementation:
+T009/T011 efficiency follow-up, selected 2026-10-09: unchanged-source chunk allocation
+avoidance is implemented; ingestion pipelining, lexical worker reuse and the other
+follow-ups below remain pending.
 
 - Pipeline bounded source reads/hash/preparation and lexical work during initial
   ingestion instead of waiting for the full walk. Keep one transactional writer,

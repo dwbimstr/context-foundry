@@ -1,5 +1,50 @@
 # Validation
 
+## Bootstrap work reuse — 2026-10-09
+
+The first efficiency increment in [009 T006/T007](../specs/009-optional-semantic-retrieval/spec.md#t006t007-follow-up--remove-repeated-preparation-and-startup-work)
+reuses bounded semantic CPU workers and exact tokenized cards across pipeline
+stages. CLI model acquisition is lazy; source replacement no longer allocates
+replacement storage chunks for unchanged content. Source/cache schemas, input
+recipes, model geometry and vector meaning are unchanged.
+
+Focused Linux/Rust 1.90.0 preparation evidence: all eight unit tests pass. A
+40-definition source produces identical keys/token IDs across five batches with
+one rendering/tokenization pass; retained-payload overflow takes the original
+on-demand path and preserves every input. Source replacement invalidates the
+handoff, differing stored tuples are refused, serial/parallel mappings match,
+workers overlap, and the same CPU thread handles multiple waves and recovers
+after an injected tokenizer panic. Empty/cancelled work starts no pool. Existing
+partition cancellation, source-step limits and no-publication-on-error tests pass.
+
+The full `cargo test --locked --no-fail-fast` run on the final code passes:
+**891 passed, zero failed, two existing measurements ignored**, plus all scenarios
+in the separate recovery runner. The 61 semantic-preparation and 56 semantic/MCP
+integration tests include these new boundary checks:
+
+- Cache-only restart and deletion-only mapping publication never call the acquisition
+  seam; accepted vectors remain searchable and the previous provider observation is
+  preserved. Empty/uncarded work also starts no model.
+- A cold 25-source run acquires exactly once across multiple waves. A run inside
+  its publication reserve never attempts startup. An acquisition that outlasts its
+  deadline retains verified partitions, commits no vectors and reports the named
+  budget stop. Existing provider refusal/malformed-output tests still pass.
+- Existing pause/shutdown, stale-source rejection, prefetch, partial publication,
+  cache corruption and child-process recovery cases pass. The watcher suite's
+  6,000-file fixture retains foreground service, targeted edit updates and zero
+  idle body rescans.
+
+`cargo clippy --locked --all-targets -- -D warnings`,
+`cargo check --locked --all-targets`, Clippy for the library/CLI without default
+features, `cargo fmt --all --check`, Markdown links/anchors and `git diff --check`
+pass. Rust 1.90.0 throughout; self-review only.
+
+These fixtures use synthetic embeddings with real Rust tokenization and storage;
+they demonstrate removed work and preserved inputs, not device throughput or
+coding-task quality. Remaining E1 ingestion/lexical/startup-accounting work, T008
+incremental maintenance/publication, T009 representations and 010 generation remain
+pending. No release, deployment or model-provider execution is part of this slice.
+
 ## Efficiency and incremental-maintenance audit — 2026-10-09
 
 Inspected `62c6c97` on `experimental/context-ecosystem`: ingestion/storage, lexical

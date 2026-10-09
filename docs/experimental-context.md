@@ -31,6 +31,20 @@ No new segment format, job store or worker process is introduced. MCP overlaps o
 bounded prefetch with one provider call; overlapping priority inputs are deduplicated
 before another call. Model batch geometry and foreground admission are unchanged.
 
+The semantic CPU pool starts only when a new partition needs computation and is
+reused across waves (and MCP prepare runs), with at most eight workers. Fresh
+verified cards pass directly to selection under a 2 MiB retained-payload limit per
+source, at most 16 MiB per wave; larger inputs use on-demand rendering. A source or
+recipe change cannot reuse the old handoff. These payload limits exclude parser,
+tokenizer, thread-stack and allocator overhead.
+
+CLI preparation now acquires a model only when a missing input needs embedding and
+the budget admits startup. Cache-only replay and mapping-only publication need no
+worker; profiles/artifacts are still verified. If startup fails after a CPU wave,
+accepted partitions and prior cached coverage remain reusable. No new provider
+observation is reported for a run that never attempted acquisition. MCP's existing
+resident model for query serving is unchanged.
+
 `status.semantic` remains the authoritative coverage census: inspect
 `unpartitioned_sources`, `missing_units` and `searchable_current_units`. Context stays
 `partial` until coverage is complete; source edits immediately invalidate old vector
