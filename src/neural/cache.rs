@@ -174,6 +174,12 @@ pub struct SemanticState {
     /// Exact byte total of the cache rows (their actual lengths), updated
     /// with each batch commit.
     pub cache_bytes: u64,
+    /// Versioned accounting travels in the state row. Older writers drop these
+    /// fields when rewriting it, forcing one reconciliation on the next run.
+    #[serde(default)]
+    pub cache_accounting_version: Option<u32>,
+    #[serde(default)]
+    pub cache_entries: Option<u64>,
     /// The cache cap of the last run that began; `None` before one recorded
     /// it, which means [`DEFAULT_CACHE_CAP_BYTES`].
     #[serde(default)]
@@ -356,6 +362,43 @@ fn decode_state(raw: &str) -> FResult<SemanticState> {
     serde_json::from_str(raw).map_err(|e| {
         FoundryError::CorruptStore(format!("semantic state row cannot be decoded: {e}"))
     })
+}
+
+fn cache_accounting(
+    table: &impl ReadableTable<&'static str, &'static [u8]>,
+    state: &mut SemanticState,
+    reconcile: bool,
+) -> FResult<()> {
+    if state
+        .cache_accounting_version
+        .is_some_and(|version| version != 1)
+    {
+        return Err(FoundryError::CorruptStore(
+            "unknown semantic cache accounting version".into(),
+        ));
+    }
+    if !reconcile && state.cache_accounting_version == Some(1) {
+        if state.cache_entries != Some(table.len()?) {
+            return Err(FoundryError::CorruptStore(
+                "semantic cache entry accounting disagrees with the table; reconcile the cache"
+                    .into(),
+            ));
+        }
+        return Ok(());
+    }
+    neural_fault!(CACHE_RECONCILE, None, "")?;
+    let mut bytes = 0u64;
+    for row in table.iter()? {
+        bytes = bytes
+            .checked_add(row?.1.value().len() as u64)
+            .ok_or_else(|| {
+                FoundryError::CorruptStore("semantic cache byte total overflow".into())
+            })?;
+    }
+    state.cache_bytes = bytes;
+    state.cache_entries = Some(table.len()?);
+    state.cache_accounting_version = Some(1);
+    Ok(())
 }
 
 /// Validate a card list against a source of `len` bytes: nonempty ranges
@@ -620,9 +663,24 @@ impl Engine {
         let tx = self.db.begin_write()?;
         {
             let mut table = tx.open_table(STATE)?;
+            let mut state = state.clone();
+            // A finalizer or provider observation cannot overwrite accounting
+            // from a cache batch committed after it read the state.
+            if let Some(raw) = table.get(STATE_KEY)? {
+                let current = decode_state(raw.value())?;
+                state.cache_bytes = current.cache_bytes;
+                state.cache_entries = current.cache_entries;
+                state.cache_accounting_version = current.cache_accounting_version;
+                state.committed_units = current.committed_units;
+            } else {
+                state.cache_bytes = 0;
+                state.cache_entries = None;
+                state.cache_accounting_version = None;
+                state.committed_units = 0;
+            }
             table.insert(
                 STATE_KEY,
-                serde_json::to_string(state)
+                serde_json::to_string(&state)
                     .map_err(FoundryError::from)?
                     .as_str(),
             )?;
@@ -632,27 +690,33 @@ impl Engine {
     }
 
     /// Record a preparation run's start in ONE write transaction: `start`
-    /// sets the run's identity on the state row, after the row's cache-byte
-    /// total was reconciled from the actual row lengths. Another binary may
-    /// have recorded a different total (a pre-T004 finalizer counts 8,256
-    /// bytes per row); nothing is purged, and cache-cap admission counts real
-    /// bytes from the run's first commit on.
+    /// sets the run identity after checking versioned transactional accounting.
+    /// A legacy writer drops the accounting version: reconcile once in that
+    /// case, rather than scanning the whole cache on every warm run.
     pub fn semantic_begin_run(&self, start: impl FnOnce(&mut SemanticState)) -> FResult<()> {
         let tx = self.db.begin_write()?;
         {
             let cache = tx.open_table(CACHE)?;
-            let mut bytes = 0u64;
-            for row in cache.iter()? {
-                bytes += row?.1.value().len() as u64;
-            }
             let mut table = tx.open_table(STATE)?;
             let mut state = table
                 .get(STATE_KEY)?
                 .map(|raw| decode_state(raw.value()))
                 .transpose()?
                 .unwrap_or_default();
-            state.cache_bytes = bytes;
+            cache_accounting(&cache, &mut state, false)?;
+            let accounting = (
+                state.cache_bytes,
+                state.cache_entries,
+                state.cache_accounting_version,
+                state.committed_units,
+            );
             start(&mut state);
+            (
+                state.cache_bytes,
+                state.cache_entries,
+                state.cache_accounting_version,
+                state.committed_units,
+            ) = accounting;
             table.insert(
                 STATE_KEY,
                 serde_json::to_string(&state)
@@ -721,17 +785,51 @@ impl Engine {
         }
     }
 
-    /// Cache rows and the exact sum of their actual lengths (one read).
+    /// Committed cache totals, without walking rows. Legacy state falls back
+    /// to a census; the next begin/commit records its versioned accounting.
     pub fn semantic_cache_totals(&self) -> FResult<(u64, u64)> {
         let tx = self.db.begin_read()?;
         let table = tx.open_table(CACHE)?;
-        let (mut rows, mut bytes) = (0u64, 0u64);
-        for row in table.iter()? {
-            let (_, value) = row?;
-            rows += 1;
-            bytes += value.value().len() as u64;
+        let mut state = tx
+            .open_table(STATE)?
+            .get(STATE_KEY)?
+            .map(|raw| decode_state(raw.value()))
+            .transpose()?
+            .unwrap_or_default();
+        cache_accounting(&table, &mut state, false)?;
+        Ok((
+            state.cache_entries.expect("accounted entries"),
+            state.cache_bytes,
+        ))
+    }
+
+    /// Explicit repair of accounting only; vectors and their eligibility are
+    /// unchanged. Payload validation still happens whenever a vector is used.
+    pub fn semantic_reconcile_cache(&self) -> FResult<(u64, u64)> {
+        if self.semantic_state()?.is_none()
+            && self.db.begin_read()?.open_table(CACHE)?.is_empty()?
+        {
+            return Ok((0, 0));
         }
-        Ok((rows, bytes))
+        let tx = self.db.begin_write()?;
+        let totals = {
+            let cache = tx.open_table(CACHE)?;
+            let mut table = tx.open_table(STATE)?;
+            let mut state = table
+                .get(STATE_KEY)?
+                .map(|raw| decode_state(raw.value()))
+                .transpose()?
+                .unwrap_or_else(SemanticState::stopped);
+            cache_accounting(&cache, &mut state, true)?;
+            let totals = (
+                state.cache_entries.expect("accounted entries"),
+                state.cache_bytes,
+            );
+            table.insert(STATE_KEY, serde_json::to_string(&state)?.as_str())?;
+            totals
+        };
+        tx.commit()?;
+        Ok(totals)
     }
 
     /// Paged, metadata-only census of the whole cache: each row is validated
@@ -820,16 +918,36 @@ impl Engine {
                 .map(|raw| decode_state(raw.value()))
                 .transpose()?
                 .unwrap_or_else(SemanticState::stopped);
+            // Repairing a malformed/replaced cache row may also need to repair
+            // its byte accounting. Ordinary valid commits never run a census.
+            let repair = entries
+                .iter()
+                .try_fold(false, |repair, (key, _)| -> FResult<bool> {
+                    Ok(repair
+                        || table.get(key.as_str())?.is_some_and(|old| {
+                            probe_row(old.value(), function_digest) != CacheProbe::Current
+                                || layout(old.value()) != Layout::Dims(dims)
+                        }))
+                })?;
+            cache_accounting(&table, &mut state, repair)?;
             let mut bytes = state.cache_bytes;
             let mut replaced: HashSet<&str> = HashSet::new();
             for (key, _) in entries {
                 if replaced.insert(key.as_str())
                     && let Some(old) = table.get(key.as_str())?
                 {
-                    bytes = bytes.saturating_sub(old.value().len() as u64);
+                    bytes = bytes.checked_sub(old.value().len() as u64).ok_or_else(|| {
+                        FoundryError::CorruptStore(
+                            "semantic cache byte accounting underflow; reconcile the cache".into(),
+                        )
+                    })?;
                 }
             }
-            bytes += replaced.len() as u64 * row_bytes(dims) as u64;
+            bytes = bytes
+                .checked_add(replaced.len() as u64 * row_bytes(dims) as u64)
+                .ok_or_else(|| {
+                    FoundryError::CorruptStore("semantic cache byte accounting overflow".into())
+                })?;
             if bytes > cap_bytes {
                 return Err(FoundryError::Semantic {
                     code: "cache_full",
@@ -845,6 +963,7 @@ impl Engine {
             }
             state.committed_units += entries.len() as u64;
             state.cache_bytes = bytes;
+            state.cache_entries = Some(table.len()?);
             state_table.insert(
                 STATE_KEY,
                 serde_json::to_string(&state)

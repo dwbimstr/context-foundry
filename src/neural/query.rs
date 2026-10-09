@@ -474,16 +474,22 @@ impl QueryRuntime {
         let profile = Arc::new(SemanticProfile::load(profile_path)?);
         #[cfg(target_os = "macos")]
         {
+            let control = Control::unbounded()
+                .bounded_by(Instant::now() + Duration::from_secs(profile.load_timeout_seconds));
+            let artifacts = Arc::new(profile.verified_artifacts_until(&control)?);
+            let tokenizer = DocumentTokenizer::load_verified(&profile, &artifacts)?;
             let for_worker = Arc::clone(&profile);
-            Self::start(
+            Self::start_tokenized(
                 profile,
                 Box::new(move || {
-                    crate::neural::supervisor::acquire_until(
+                    crate::neural::supervisor::acquire_verified_until(
                         &for_worker,
+                        &artifacts,
                         development,
-                        &Control::unbounded(),
+                        &control,
                     )
                 }),
+                tokenizer,
             )
         }
         #[cfg(not(target_os = "macos"))]
@@ -498,6 +504,15 @@ impl QueryRuntime {
     /// Start a runtime over `make` (the supervised worker, or a test
     /// provider). Blocks until the provider is built or refused.
     pub fn start(profile: Arc<SemanticProfile>, make: MakeProvider) -> Result<Self, ProviderError> {
+        let tokenizer = DocumentTokenizer::load(&profile)?;
+        Self::start_tokenized(profile, make, tokenizer)
+    }
+
+    fn start_tokenized(
+        profile: Arc<SemanticProfile>,
+        make: MakeProvider,
+        tokenizer: DocumentTokenizer,
+    ) -> Result<Self, ProviderError> {
         let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
         let (ready_tx, ready_rx) =
             mpsc::channel::<Result<(String, Option<LateCall>), ProviderError>>();
@@ -552,7 +567,6 @@ impl QueryRuntime {
                 ));
             }
         };
-        let tokenizer = DocumentTokenizer::load(&profile)?;
         Ok(Self {
             profile,
             tokenizer,

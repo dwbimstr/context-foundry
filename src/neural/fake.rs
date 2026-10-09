@@ -233,6 +233,7 @@ impl FakeFactory {
         let wiring = self.handle.clone();
         Box::new(
             move |_profile: &SemanticProfile,
+                  _artifacts: &Arc<crate::neural::profile::VerifiedArtifacts>,
                   _development: bool,
                   control: &Control|
                   -> Result<Box<dyn EmbeddingProvider>, ProviderError> {

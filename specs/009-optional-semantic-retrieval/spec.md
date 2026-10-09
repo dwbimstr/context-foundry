@@ -1294,10 +1294,32 @@ Implemented increment in [prepare.rs](../../src/neural/prepare.rs),
 
 001's subsequent E1 increment implements bounded initial ingestion and reusable
 lexical workers; see its [contract](../001-source-state-recovery/contracts/context-v2.md#parallel-indexing).
-Still pending in E1: verified-artifact handoff/cache-counter reconciliation and prefix-fitting work
-within one card. Full artifact checks still precede tokenization and run again at
-real provider acquisition; they are not replaced by unverified path/mtime reuse.
-The token handoff removes a second render, not every tokenization inside the first.
+The remaining E1 work now implements verified artifact handoff, transactional cache
+accounting and per-card fitting:
+
+- `VerifiedArtifacts` retains verified open regular files and the tokenizer bytes read
+  while hashing. Acquisition consumes the same receipt; descriptor/path identity and
+  descriptor metadata are checked before use and after model load/inference. The macOS
+  worker inherits the verified GGUF descriptor and loads `/dev/fd`, avoiding pathname
+  substitution. This is not an immutable filesystem snapshot. Inventory is bounded at
+  64 files and tokenizer bytes at 64 MiB. Worker-executable verification remains.
+- Versioned cache row/byte totals update in the vector transaction. Warm begin/finalize
+  reads these totals; older writers remove the new accounting marker when rewriting
+  state, triggering one reconciliation. Explicit repair can recount. Stale finalizers
+  cannot overwrite newer totals; payload validation still occurs on vector use.
+- Each card owns a bounded memo of identical normalized segments (128 KiB logical
+  payload, 1,024 entries). Every complete candidate still passes through normalization,
+  added-token extraction, pretokenization and postprocessing, preserving first-overflow
+  fitting even when prefix lengths are nonmonotone. Overflow uses ordinary tokenization;
+  BPE dropout disables memoization. No recipe/input-key change or persistent token cache.
+
+Upstream inspected: tokenizers **0.23.2**, `tokenizer/mod.rs`
+`encode_single_sequence`, `do_tokenize`, `post_process`; `added_vocabulary.rs`
+`extract_and_normalize`; byte-level test `offsets_when_char_split_up` and BPE test
+`test_tokenize_with_and_without_dropout`. T006/T007 reuse that public pipeline;
+only bounded per-card deterministic segment memoization differs. Sandbox tests compare
+exact IDs, offsets, spans and keys, including Unicode and overflow. The macOS descriptor
+handoff has not been executed on this Linux sandbox; real-device throughput is unverified.
 T008/T009 and 010 generation remain separate pending increments. See
 [validation](../../docs/validation.md#bootstrap-work-reuse--2026-10-09) for sandbox
 evidence; no real-device throughput or task-quality gain is claimed.

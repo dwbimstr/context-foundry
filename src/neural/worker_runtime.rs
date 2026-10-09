@@ -110,8 +110,11 @@ const SPLIT_COUNT: &str = "split.count";
 /// any `split.count` other than one u16 of at most 1, and any header it
 /// cannot read to its last pair. Only a single-file GGUF is supported.
 pub fn refuse_split_gguf(path: &Path) -> Result<(), String> {
+    use std::io::{Seek, SeekFrom};
     let shown = path.display();
-    let file = std::fs::File::open(path).map_err(|e| format!("{shown}: {e}"))?;
+    let mut file = std::fs::File::open(path).map_err(|e| format!("{shown}: {e}"))?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| format!("{shown}: {e}"))?;
     let left = file.metadata().map_err(|e| format!("{shown}: {e}"))?.len();
     let mut header = GgufHeader {
         reader: io::BufReader::new(file),
@@ -164,6 +167,13 @@ pub fn refuse_split_gguf(path: &Path) -> Result<(), String> {
         }
         header.skip_values(kind, count).map_err(read)?;
     }
+    // /dev/fd may duplicate the inherited file description, including its
+    // offset. Leave the verified descriptor at the beginning for llama.cpp.
+    header
+        .reader
+        .into_inner()
+        .seek(SeekFrom::Start(0))
+        .map_err(|e| format!("{shown}: {e}"))?;
     Ok(())
 }
 
@@ -241,6 +251,9 @@ pub struct WorkerArgs {
     pub liveness_fd: i32,
     pub expected: FunctionDescriptor,
     pub model_dir: PathBuf,
+    /// The supervisor's verified GGUF descriptor. The loader uses this held
+    /// file instead of resolving a model pathname after verification.
+    pub model_fd: Option<i32>,
     /// Test hooks, armed only by `foundry-embed-fake`.
     #[cfg(feature = "test-faults")]
     pub hooks: Hooks,
@@ -254,6 +267,7 @@ impl WorkerArgs {
         let mut liveness_fd = None;
         let mut descriptor: Option<FunctionDescriptor> = None;
         let mut model_dir = None;
+        let mut model_fd = None;
         let mut rest = Vec::new();
         let mut raw = args.into_iter().peekable();
         while let Some(flag) = raw.next() {
@@ -283,6 +297,15 @@ impl WorkerArgs {
                     );
                 }
                 "--model-dir" => model_dir = Some(PathBuf::from(value("--model-dir")?)),
+                "--model-fd" => {
+                    let fd: i32 = value("--model-fd")?
+                        .parse()
+                        .map_err(|_| "--model-fd needs an FD")?;
+                    if fd < 3 {
+                        return Err("--model-fd must be an inherited file descriptor".into());
+                    }
+                    model_fd = Some(fd);
+                }
                 other => rest.push(other.to_string()),
             }
         }
@@ -296,6 +319,7 @@ impl WorkerArgs {
                 liveness_fd: liveness_fd.ok_or("--liveness-fd is required")?,
                 expected,
                 model_dir: model_dir.ok_or("--model-dir is required")?,
+                model_fd,
                 #[cfg(feature = "test-faults")]
                 hooks: Hooks::default(),
             },

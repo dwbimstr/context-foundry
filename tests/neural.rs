@@ -267,7 +267,7 @@ fn cache_only_replay_and_mapping_changes_do_not_acquire_a_model() {
                 started: Instant::now(),
                 control: &Control::unbounded(),
             },
-            Box::new(|_, _, _| panic!("cached-only preparation must not acquire a model")),
+            Box::new(|_, _, _, _| panic!("cached-only preparation must not acquire a model")),
         )
         .unwrap();
         assert!(!report.partial, "{report:?}");
@@ -305,7 +305,7 @@ fn empty_or_uncarded_sources_prepare_without_a_provider() {
                 started: Instant::now(),
                 control: &Control::unbounded(),
             },
-            Box::new(|_, _, _| panic!("no eligible cards means no model startup")),
+            Box::new(|_, _, _, _| panic!("no eligible cards means no model startup")),
         )
         .unwrap();
         assert!(!report.partial, "{report:?}");
@@ -346,9 +346,9 @@ fn cold_waves_acquire_once_and_low_budget_does_not_start_a_worker() {
                 started: Instant::now(),
                 control: &Control::unbounded(),
             },
-            Box::new(move |profile, development, control| {
+            Box::new(move |profile, artifacts, development, control| {
                 calls.fetch_add(1, Ordering::SeqCst);
-                factory(profile, development, control)
+                factory(profile, artifacts, development, control)
             }),
         )
         .unwrap();
@@ -2005,6 +2005,8 @@ fn old_binary_counter(env: &mut Env, per_row: u64) {
     let object = state.as_object_mut().unwrap();
     object.remove("dimensions");
     object.remove("cache_cap_bytes");
+    object.remove("cache_accounting_version");
+    object.remove("cache_entries");
     object.insert("cache_bytes".into(), (rows * per_row).into());
     testkit::tamper_semantic_state(&env.store, &state.to_string());
 }
@@ -2538,7 +2540,7 @@ fn status_reports_the_last_provider_observation_never_a_live_probe() {
             started: Instant::now(),
             control: &Control::unbounded(),
         },
-        Box::new(|_profile, _development, _control| {
+        Box::new(|_profile, _artifacts, _development, _control| {
             Err(ProviderError::IsolationUnavailable("no profile".into()))
         }),
     )
@@ -2581,6 +2583,10 @@ fn mixed_retained_rows_open_and_account_their_actual_lengths() {
     assert_eq!(status.cache.corrupt_entries, 0);
     assert_eq!(status.cached_current_units, 1);
     assert!(status.index.available, "{status:?}");
+    // Out-of-band rows also invalidate the committed entry counter; explicit
+    // reconciliation repairs that counter without touching the retained rows.
+    assert!(env.open().semantic_cache_totals().is_err());
+    assert_eq!(env.open().semantic_reconcile_cache().unwrap(), (3, total));
     assert_eq!(env.open().semantic_cache_totals().unwrap(), (3, total));
     // Neither retained row is served under the current profile.
     let digest = env.digest();
@@ -2715,4 +2721,148 @@ fn progressive_cli_priority_and_background_publish_before_the_corpus_is_partitio
         resumed.bootstrap.generation_builds <= 3,
         "geometric publication: {resumed:?}"
     );
+}
+
+#[test]
+fn verified_artifacts_are_hashed_once_and_reject_changed_files_or_profiles() {
+    use context_foundry::fault::{self, Action};
+    use context_foundry::neural::fault_names;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let env = Env::new(&[]);
+    let profile = SemanticProfile::load(&env.profile).unwrap();
+    let hashes = Rc::new(RefCell::new(Vec::new()));
+    let observed = hashes.clone();
+    fault::arm(
+        fault_names::ARTIFACT_HASH,
+        0,
+        Action::Call(Box::new(move |ctx| {
+            observed.borrow_mut().push(ctx.detail.to_owned());
+        })),
+    );
+    let receipt = profile
+        .verified_artifacts_until(&Control::unbounded())
+        .unwrap();
+    let tokenizer = DocumentTokenizer::load_verified(&profile, &receipt).unwrap();
+    let expected = tokenizer.encode("doc: exact bytes é\n").unwrap();
+    for _ in 0..3 {
+        receipt.check(&profile, &Control::unbounded()).unwrap();
+    }
+    assert_eq!(
+        hashes.borrow().len(),
+        profile.descriptor.artifact_files.len()
+    );
+    fault::disarm_all();
+    let mut other = profile.clone();
+    other.descriptor.document_template = "different {text}".into();
+    assert!(receipt.check(&other, &Control::unbounded()).is_err());
+    // Replacement cannot substitute bytes used by the already loaded tokenizer.
+    let path = profile.model_dir.join("tokenizer.json");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, "substitution").unwrap();
+    assert!(receipt.check(&profile, &Control::unbounded()).is_err());
+    assert!(DocumentTokenizer::load_verified(&profile, &receipt).is_err());
+    assert_eq!(tokenizer.encode("doc: exact bytes é\n").unwrap(), expected);
+}
+
+#[test]
+fn artifact_receipt_detects_in_place_changes_and_symlink_replacement() {
+    for symlink in [false, true] {
+        let env = Env::new(&[]);
+        let profile = SemanticProfile::load(&env.profile).unwrap();
+        let receipt = profile
+            .verified_artifacts_until(&Control::unbounded())
+            .unwrap();
+        let model = profile.model_dir.join(&profile.descriptor.gguf);
+        if symlink {
+            let outside = env._dir.path().join("substitute");
+            std::fs::write(&outside, "outside").unwrap();
+            std::fs::remove_file(&model).unwrap();
+            std::os::unix::fs::symlink(outside, &model).unwrap();
+        } else {
+            std::fs::write(&model, "changed in place").unwrap();
+        }
+        assert!(receipt.check(&profile, &Control::unbounded()).is_err());
+    }
+}
+
+#[test]
+fn acquisition_receives_the_same_verified_artifacts_without_rehashing() {
+    use context_foundry::fault::{self, Action};
+    use context_foundry::neural::fault_names;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let mut env = Env::new(&[("a.md", &body(100))]);
+    env.close();
+    let hashes = Rc::new(Cell::new(0));
+    let observed = hashes.clone();
+    fault::arm(
+        fault_names::ARTIFACT_HASH,
+        0,
+        Action::Call(Box::new(move |_| {
+            observed.set(observed.get() + 1);
+        })),
+    );
+    let factory = env.factory.acquire();
+    let report = prepare::run(
+        &env.store,
+        &PrepareOptions {
+            priority_paths: &[],
+            profile_path: &env.profile,
+            budget_seconds: 60,
+            development: false,
+            cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+            started: Instant::now(),
+            control: &Control::unbounded(),
+        },
+        Box::new(move |profile, artifacts, development, control| {
+            artifacts.check(profile, control)?;
+            factory(profile, artifacts, development, control)
+        }),
+    )
+    .unwrap();
+    fault::disarm_all();
+    assert!(!report.partial, "{report:?}");
+    assert_eq!(hashes.get(), 2, "one hash per model/tokenizer artifact");
+}
+
+#[test]
+fn warm_cache_runs_and_finalizers_use_transactional_counters_without_censuses() {
+    use context_foundry::fault::{self, Action};
+    use context_foundry::neural::fault_names;
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
+    fault::arm(
+        fault_names::CACHE_RECONCILE,
+        0,
+        Action::Fail("warm cache census".into()),
+    );
+    for _ in 0..2 {
+        let report = env.prepare(60);
+        assert!(!report.partial, "{report:?}");
+        assert_eq!(
+            (
+                report.cache_entries,
+                report.cache_bytes,
+                report.document_calls
+            ),
+            (1, ROW, 0)
+        );
+    }
+    let stale = env.open().semantic_state().unwrap().unwrap();
+    let digest = env.digest();
+    let mut vector = vec![0.0; DIMS];
+    vector[0] = 1.0;
+    let entries = [("ab".repeat(32), vector.clone()), ("ab".repeat(32), vector)];
+    env.open()
+        .semantic_cache_commit(&entries, &digest, DIMS, 2 * ROW)
+        .unwrap();
+    env.open().semantic_set_state(&stale).unwrap();
+    assert_eq!(env.open().semantic_cache_totals().unwrap(), (2, 2 * ROW));
+    assert_eq!(
+        env.open().semantic_state().unwrap().unwrap().cache_bytes,
+        2 * ROW
+    );
+    fault::disarm_all();
+    env.close();
+    assert_eq!(env.open().semantic_cache_totals().unwrap(), (2, 2 * ROW));
 }

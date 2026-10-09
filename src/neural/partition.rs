@@ -72,6 +72,12 @@ pub struct TokenizedText {
 pub trait TokenCount {
     fn encode(&self, rendered: &str) -> Result<TokenizedText, ProviderError>;
 
+    /// Optional bounded reuse local to one card's exact prefix fitting.
+    /// Implementations must preserve each candidate's complete token stream.
+    fn fitting(&self) -> Option<Box<dyn TokenCount + '_>> {
+        None
+    }
+
     fn count(&self, rendered: &str) -> Result<usize, ProviderError> {
         Ok(self.encode(rendered)?.ids.len())
     }
@@ -178,6 +184,8 @@ fn render_card(
     recipe: &CardRecipe<'_>,
     tokens: &dyn TokenCount,
 ) -> Result<(String, Vec<u32>), ProviderError> {
+    let fitting = tokens.fitting();
+    let tokens = fitting.as_deref().unwrap_or(tokens);
     let limit = recipe.card_tokens;
     let encode = |text: &str| -> Result<(String, Vec<u32>), ProviderError> {
         let rendered = provider::render(recipe.template, text);

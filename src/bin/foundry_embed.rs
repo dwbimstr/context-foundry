@@ -72,7 +72,11 @@ fn real_run(engine: &mut context_foundry::neural::worker_runtime::Engine) -> i32
         engine.fail_load("descriptor_unsupported", &message);
         return 1;
     }
-    let gguf = engine.args.model_dir.join(&engine.args.expected.gguf);
+    let gguf = engine
+        .args
+        .model_fd
+        .map(|fd| std::path::PathBuf::from(format!("/dev/fd/{fd}")))
+        .unwrap_or_else(|| engine.args.model_dir.join(&engine.args.expected.gguf));
     let mut embedder = match llama::Embedder::load(&gguf, &engine.args.expected) {
         Ok(embedder) => embedder,
         Err(message) => {

@@ -37,6 +37,9 @@ pub mod fault_names {
     point!(FOOTPRINT_MEASURE, "supervisor.footprint_measure");
     // Every read of one stored partition row (tests count them).
     point!(PARTITION_READ, "semantic.partition_read");
+    point!(CACHE_RECONCILE, "semantic.cache_reconcile");
+    point!(ARTIFACT_HASH, "semantic.artifact_hash");
+    point!(CARD_SEGMENT, "semantic.card_segment");
     // 009 T003 admission: a document admission has begun (before its one
     // decision under the admission lock); a foreground query has registered
     // (before it claims the model slot); either path has claimed the slot

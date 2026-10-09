@@ -1727,3 +1727,14 @@ This is a local build fingerprint, not a signed distribution artifact.
 gradient, vector-index and Rust 1.90 MCP probes. They live in a separate scratch-probe
 crate and do not change the root product or retroactively complete its proposed specs.
 No production test suite rerun was needed for these documentation/probe-only edits.
+
+## Artifact, accounting and card reuse — 2026-10-09
+
+Experimental E1 continuation: verified artifact receipts, transactional cache totals and
+exact per-card normalized-segment reuse. Linux sandbox: 165 library tests and 65 neural
+integration tests passed; Clippy all targets passed. Receipt tests count artifact reads,
+refuse replacement/in-place modification and descriptor mismatch; cache tests cover warm
+runs, stale finalizers, duplicate keys, mixed retained rows and restart. Card tests compare
+exact IDs/offsets/keys/spans with the ordinary tokenizer and bounded overflow fallback.
+These fixtures establish work reuse and equivalence, not model speed, cost or task quality.
+macOS supervised `/dev/fd` loading remains unexecuted here.

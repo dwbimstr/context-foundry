@@ -114,7 +114,12 @@ pub(crate) struct PreparedCards {
 /// The provider seam: profile, isolation flag and the run control (caller
 /// cancellation plus the budget deadline) to one embedding function.
 pub type Acquire = Box<
-    dyn Fn(&SemanticProfile, bool, &Control) -> Result<Box<dyn EmbeddingProvider>, ProviderError>,
+    dyn Fn(
+        &SemanticProfile,
+        &std::sync::Arc<crate::neural::profile::VerifiedArtifacts>,
+        bool,
+        &Control,
+    ) -> Result<Box<dyn EmbeddingProvider>, ProviderError>,
 >;
 
 /// The publication reserve: new batches stop when the remaining budget falls
@@ -451,10 +456,11 @@ pub fn cli_prepare_with_priorities(
 /// `isolation_unavailable` and no model work is attempted.
 fn supervisor_acquire() -> Acquire {
     #[cfg(target_os = "macos")]
-    return Box::new(crate::neural::supervisor::acquire_until);
+    return Box::new(crate::neural::supervisor::acquire_verified_until);
     #[cfg(not(target_os = "macos"))]
     return Box::new(
         |_profile: &SemanticProfile,
+         _artifacts: &std::sync::Arc<crate::neural::profile::VerifiedArtifacts>,
          _development: bool,
          _control: &Control|
          -> Result<Box<dyn EmbeddingProvider>, ProviderError> {
@@ -819,16 +825,19 @@ fn inner(
     }
     // Budget counts from argument parsing: artifact verification included,
     // and it obeys the run control (budget deadline, caller cancellation).
-    if let Err(e) = profile.verify_artifacts_until(control) {
-        return match halt(control, budget) {
-            Some(stop) => Ok(stop),
-            None => Err(FoundryError::from(e)),
-        };
-    }
+    let artifacts = match profile.verified_artifacts_until(control) {
+        Ok(artifacts) => std::sync::Arc::new(artifacts),
+        Err(e) => {
+            return match halt(control, budget) {
+                Some(stop) => Ok(stop),
+                None => Err(FoundryError::from(e)),
+            };
+        }
+    };
     if let Some(stop) = halt(control, budget) {
         return Ok(stop);
     }
-    let tokenizer = DocumentTokenizer::load(profile)?;
+    let tokenizer = DocumentTokenizer::load_verified(profile, &artifacts)?;
     // Cached-only preparation needs no model worker. Artifact verification
     // still precedes tokenization; acquisition retains its own trust checks.
     let mut provider: Option<Box<dyn EmbeddingProvider>> = None;
@@ -916,7 +925,9 @@ fn inner(
                     break 'waves;
                 }
                 if provider.is_none() {
-                    let acquired = match acquire(profile, options.development, control) {
+                    artifacts.check(profile, control)?;
+                    let acquired = match acquire(profile, &artifacts, options.development, control)
+                    {
                         Ok(provider) => provider,
                         Err(error) => {
                             if let Some(halted) = halt(control, budget) {

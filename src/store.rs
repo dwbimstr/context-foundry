@@ -6389,6 +6389,7 @@ impl Engine {
         // the retained f32 cache — derived state both, zero document calls.
         // A semantic failure is named in the report, never a rollback of the
         // lexical repair.
+        engine.semantic_reconcile_cache()?;
         #[cfg(feature = "semantic")]
         let semantic_index = Some(engine.semantic_rebuild_index(control).unwrap_or_else(|e| {
             crate::neural::index::SemanticIndexReport {

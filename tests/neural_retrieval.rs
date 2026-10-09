@@ -330,7 +330,7 @@ impl Corpus {
     fn prepare_within(&mut self, budget_seconds: u64) -> PrepareReport {
         let descriptor = self.profile.descriptor.clone();
         let probe = self.probe.clone();
-        let acquire: Acquire = Box::new(move |_profile, _development, _control| {
+        let acquire: Acquire = Box::new(move |_profile, _artifacts, _development, _control| {
             Ok(Box::new(ConceptProvider {
                 descriptor: descriptor.clone(),
                 probe: probe.clone(),
@@ -2484,7 +2484,7 @@ fn a_failed_footprint_measurement_of_a_live_worker_stops_it_with_resource_limit(
     // 250 ms memory poll.
     let hooks = vec!["--slow-ms".to_owned(), "2000".to_owned()];
     let descriptor = corpus.profile.descriptor.clone();
-    let acquire: Acquire = Box::new(move |_profile, _development, _control| {
+    let acquire: Acquire = Box::new(move |_profile, _artifacts, _development, _control| {
         let worker = WorkerProvider::launch(&worker_profile, hooks.clone())?;
         // The worker is up; from now on every measurement fails. The poll
         // runs on the supervisor's own thread, hence process-wide arming
