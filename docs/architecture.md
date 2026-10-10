@@ -681,13 +681,15 @@ commit notifications when caught up, and acknowledges versions after publication
 Ordinary status reads the last recorded publication and transactional cache totals;
 source/profile mismatch is stale or unknown, and full audit remains explicit.
 See [009 T008](../specs/009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work).
-Generation v4 adds an immutable base, at most one bounded delta and independent
-locations, committed through one atomic content-bound manifest. Compaction is bounded
-by churn and payload; queries filter retired keys inside ANN selection and merge at
-most two candidate windows. A bounded, owner-local mapping view refreshes committed
-paths/cache keys; restart, overflow, identity changes and explicit repair reconcile.
-Two held-file verification receipts retain immutable USearch segments across location
-and delta publications. Warm requests check owner, profile and manifest version;
-refresh validates file versions and rebuilds generation-specific labels. Explicit audit
-still hashes. Full location serialization/metadata bookkeeping and restart baselines
-remain T008 costs. Automatic LLM generation remains 010 T002.
+Generation v5 retains one immutable ANN base and at most one bounded delta, committed
+through one atomic manifest. Immutable membership and location bases are reused; one
+location overlay holds at most 4,096 changes / 32 MiB. Location rebasing preserves both
+ANN segments. Queries filter retired keys before selecting their bounded windows.
+A bounded owner-local mapping view refreshes committed paths/cache keys. Persistent
+ordered maps share unchanged tree nodes across that view, publication and serving.
+Held-file receipts retain decoded metadata and two immutable USearch segments; refresh
+reads only new artifacts, with full independent validation on audit. Warm requests check
+owner, profile and manifest version. A transactional mapping revision lets an unchanged
+restart reuse its verified publication without a database mapping scan. Changed-input
+restart, overflow, identity change and repair reconcile; cold reads and compaction remain
+corpus-sized. Automatic LLM generation remains 010 T002.

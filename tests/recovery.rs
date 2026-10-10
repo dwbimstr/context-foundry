@@ -801,6 +801,25 @@ fn semantic_crash_child(work: &Path, stage: &str) {
         for n in 0..70 {
             engine.delete_source(&format!("a{n:03}.rs")).unwrap();
         }
+    } else if stage.contains("location") {
+        let partition = engine.semantic_partition("a000.rs").unwrap().unwrap();
+        let body = "\nfn version_0() {}\n";
+        engine.replace_source("a000.rs", body).unwrap();
+        let mut units = partition.units;
+        for unit in &mut units {
+            unit.start += 1;
+            unit.end += 1;
+        }
+        engine
+            .semantic_record_partition(
+                "a000.rs",
+                &context_foundry::digest(body.as_bytes()),
+                &partition.recipe_id,
+                &partition.function_digest,
+                Some(&units),
+                &|_| Ok(units.clone()),
+            )
+            .unwrap();
     } else {
         let body = "fn changed() {}\n";
         engine.replace_source("a000.rs", body).unwrap();
@@ -854,6 +873,8 @@ fn exits_during_delta_and_compaction_recover_with_pending_work_and_no_inference(
         "semantic_delta_after",
         "semantic_compaction_before",
         "semantic_compaction_after",
+        "semantic_location_before",
+        "semantic_location_after",
     ] {
         let work = crash_at(stage);
         let path = work.path().join("store");
@@ -869,9 +890,9 @@ fn exits_during_delta_and_compaction_recover_with_pending_work_and_no_inference(
         .unwrap();
         let generation = index::validate_generation(&anchor, &digest, &recipe, dims).unwrap();
         if stage.ends_with("before") {
-            assert_eq!(generation.manifest.entries, prior.entries);
+            assert_eq!(generation.manifest.mapping_id(), prior.mapping_id());
         } else {
-            assert_ne!(generation.manifest.entries, prior.entries);
+            assert_ne!(generation.manifest.mapping_id(), prior.mapping_id());
         }
         let count = if stage.contains("compaction") { 70 } else { 1 };
         assert_eq!(
@@ -887,6 +908,8 @@ fn exits_during_delta_and_compaction_recover_with_pending_work_and_no_inference(
             assert!(matches!(published, index::Publication::Current(_)));
         } else if stage.contains("delta") {
             assert!(matches!(published, index::Publication::Delta(_)));
+        } else if stage.contains("location") {
+            assert!(matches!(published, index::Publication::Mapped(_)));
         } else {
             assert!(matches!(published, index::Publication::Rebuilt(_)));
         }

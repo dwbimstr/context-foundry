@@ -16,7 +16,7 @@
 use crate::control::Control;
 use crate::error::FoundryError;
 use crate::neural::index::{
-    self, COVERAGE_COMPLETE, GenerationError, LabelEntry, METRIC, SCALAR_KIND, UnitLocation,
+    self, COVERAGE_COMPLETE, GenerationError, METRIC, SCALAR_KIND, UnitLocation,
 };
 use crate::neural::partition::TokenCount as _;
 use crate::neural::profile::SemanticProfile;
@@ -115,13 +115,13 @@ impl std::fmt::Debug for DenseWindow {
 impl DenseWindow {
     /// The document-input key of one hit.
     pub fn input_key(&self, hit: &DenseHit) -> &str {
-        &self.generation.labels[hit.label].input_key
+        self.generation.input_key(hit.label)
     }
 
     /// The unit locations one hit stood for at publication. Each is a
     /// candidate only after the request's final read revalidates it.
     pub fn units(&self, hit: &DenseHit) -> &[UnitLocation] {
-        &self.generation.labels[hit.label].units
+        &self.generation.labels[self.input_key(hit)]
     }
 
     /// The source revision a COMPLETE generation was published at; `None`
@@ -156,8 +156,8 @@ pub struct DenseIndex {
     owner: Option<Arc<crate::neural::work::Wake>>,
     receipt: Arc<index::verification::ManifestReceipt>,
     dimensions: usize,
-    /// `labels[label]` is that ordinal's input key and unit locations.
-    labels: Vec<LabelEntry>,
+    /// Shared current locations keyed by the segment ordinal's input key.
+    labels: index::Locations,
     /// The source revision the label map was read at.
     source_revision: u64,
     /// True when the generation covers every eligible unit at that revision.
@@ -166,8 +166,7 @@ pub struct DenseIndex {
 
 struct DenseSegment {
     index: Arc<usearch::Index>,
-    /// Segment ordinal -> current location ordinal; None is a tombstone.
-    active: Vec<Option<usize>>,
+    keys: Arc<Vec<String>>,
 }
 
 impl DenseIndex {
@@ -236,7 +235,7 @@ impl DenseIndex {
     ) -> Result<Arc<Self>, Fallback> {
         let manifest = &generation.manifest;
         let mut segments = Vec::with_capacity(2);
-        let mut load = |segment: index::Segment, keys: &[String]| -> Result<(), Fallback> {
+        let mut load = |segment: index::Segment, keys: Arc<Vec<String>>| -> Result<(), Fallback> {
             let geometry = |detail: String| Fallback::new("index_geometry", detail);
             let loaded = match segment {
                 index::Segment::Bytes(bytes) => {
@@ -267,19 +266,15 @@ impl DenseIndex {
                     "loaded index geometry disagrees with manifest".into(),
                 ));
             }
-            let active = keys
-                .iter()
-                .map(|key| manifest.entries.binary_search(key).ok())
-                .collect();
             segments.push(DenseSegment {
                 index: loaded,
-                active,
+                keys,
             });
             Ok(())
         };
-        load(bytes.base, &manifest.base_entries)?;
+        load(bytes.base, manifest.base_entries.clone())?;
         if let (Some(bytes), Some(delta)) = (bytes.delta, &manifest.delta) {
-            load(bytes, &delta.entries)?;
+            load(bytes, Arc::new(delta.entries.clone()))?;
         }
         Ok(Arc::new(Self {
             segments,
@@ -291,10 +286,19 @@ impl DenseIndex {
             owner: None,
             receipt: generation.receipt,
             dimensions: manifest.dimensions,
-            labels: generation.labels.labels,
+            labels: generation.labels,
             source_revision: manifest.source_revision,
             complete: manifest.coverage == COVERAGE_COMPLETE,
         }))
+    }
+
+    pub(crate) fn input_key(&self, label: usize) -> &str {
+        let base = &self.segments[0].keys;
+        if label < base.len() {
+            &base[label]
+        } else {
+            &self.segments[1].keys[label - base.len()]
+        }
     }
 
     /// At most two searches and 2*k candidates. Filtering happens INSIDE ANN
@@ -315,31 +319,35 @@ impl DenseIndex {
             return Ok(Vec::new());
         }
         let mut hits = Vec::with_capacity(k * self.segments.len());
+        let mut offset = 0;
         for segment in &self.segments {
             let matches = segment
                 .index
                 .filtered_search(vector, k, |key| {
                     segment
-                        .active
+                        .keys
                         .get(key as usize)
-                        .is_some_and(Option::is_some)
+                        .is_some_and(|key| self.labels.contains_key(key))
                 })
                 .map_err(|e| Fallback::new("index_unavailable", format!("usearch search: {e}")))?;
             hits.extend(matches.keys.iter().zip(&matches.distances).filter_map(
                 |(&key, &distance)| {
                     segment
-                        .active
+                        .keys
                         .get(key as usize)
-                        .copied()
-                        .flatten()
-                        .map(|label| DenseHit { label, distance })
+                        .filter(|key| self.labels.contains_key(*key))
+                        .map(|_| DenseHit {
+                            label: offset + key as usize,
+                            distance,
+                        })
                 },
             ));
+            offset += segment.keys.len();
         }
         hits.sort_by(|a, b| {
             a.distance
                 .total_cmp(&b.distance)
-                .then(a.label.cmp(&b.label))
+                .then_with(|| self.input_key(a.label).cmp(self.input_key(b.label)))
         });
         // Membership validation makes segments disjoint, so there are no duplicate keys.
         hits.truncate(k);

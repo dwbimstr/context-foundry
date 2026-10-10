@@ -173,14 +173,7 @@ impl Engine {
         };
         let indexed: HashSet<&str> = generation
             .as_ref()
-            .map(|generation| {
-                generation
-                    .manifest
-                    .entries
-                    .iter()
-                    .map(String::as_str)
-                    .collect()
-            })
+            .map(|generation| generation.labels.keys().map(String::as_str).collect())
             .unwrap_or_default();
         let mut after: Option<String> = None;
         loop {

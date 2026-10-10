@@ -573,7 +573,28 @@ fn encode_row(function_digest: &str, vector: &[f32]) -> Vec<u8> {
     value
 }
 
+fn mapping_revision(table: &impl ReadableTable<&'static str, &'static str>) -> FResult<u64> {
+    table
+        .get("semantic_mapping_revision")?
+        .map(|raw| {
+            raw.value()
+                .parse()
+                .map_err(|_| FoundryError::CorruptStore("invalid semantic mapping revision".into()))
+        })
+        .transpose()
+        .map(|revision| revision.unwrap_or(0))
+}
+
 impl Engine {
+    /// Every mapping-affecting commit, including builds without ANN support,
+    /// advances this durable revision in the SAME authoritative transaction.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn semantic_mapping_revision(&self) -> FResult<u64> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(crate::store::META)?;
+        mapping_revision(&table)
+    }
+
     /// Commit and notify the disposable mapping view without an observation gap.
     /// The same short mutex orders cursor snapshots with redb publication.
     pub(crate) fn semantic_commit<'a>(
@@ -583,6 +604,13 @@ impl Engine {
         keys: impl IntoIterator<Item = &'a str>,
         reset: bool,
     ) -> FResult<()> {
+        {
+            let mut meta = tx.open_table(crate::store::META)?;
+            let revision = mapping_revision(&meta)?
+                .checked_add(1)
+                .ok_or(FoundryError::RevisionExhausted)?;
+            meta.insert("semantic_mapping_revision", revision.to_string().as_str())?;
+        }
         #[cfg(feature = "semantic")]
         {
             self.semantic_mapping

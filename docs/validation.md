@@ -1837,6 +1837,51 @@ formatting, the build without default features and Markdown link checks passed
 (47 files, 696 links, 153 heading anchors).
 
 These fixtures establish work selection, identity checks and recovery, not model quality,
-provider-token savings or 80,000-file throughput. Full location serialization,
-membership/label metadata work and a restart baseline remain; compaction still rebuilds
-the base.
+provider-token savings or 80,000-file throughput. At this checkpoint, full location
+serialization, membership/label metadata work and a restart baseline remained; the
+following continuation addresses those repeated costs.
+
+## Compact publication metadata — 2026-10-10
+
+Experimental 009 T008 generation v5 now publishes immutable base membership and a
+location base with one bounded replacement/tombstone overlay. Persistent ordered maps
+share unchanged nodes across the mapping view, publication and serving. Metadata receipts
+reuse decoded artifacts; a redb mapping revision lets an unchanged restart reuse verified
+publication coverage without a database mapping scan. Schema remains 9.
+
+Focused fixtures exercise real redb, publication, metadata validation and USearch:
+
+- A location edit writes one overlay; serving reads/hashes/decodes only that new metadata
+  file. An empty source then changes coverage without location comparisons or metadata
+  writes/reads. A failed manifest switch retries from the warm view without a full scan.
+- One ANN-delta addition plus 4,095 shifted inputs fits the 4,096-key location overlay.
+  The next shift rebases locations while ANN base/delta and membership inodes remain
+  identical. Failed rebase leaves the prior generation readable; retry converges, cleanup
+  stays bounded, and edits/reverts operate against the new location base. The fixture
+  manifest remains below 2 KiB with over 4,000 base keys.
+- Cold clean publication returns Current with zero mapping pages, partition reads or
+  cache-layout probes; it still reads and verifies the immutable artifacts. Same-source-
+  revision partition changes and offline source edits invalidate this reuse and rebuild
+  the baseline. Failed source commits leave the durable mapping revision unchanged.
+- Duplicate membership/overlay keys, malformed units, redundant replacements, excess
+  overlay entries and unbound active keys refuse even with matching content hashes.
+  Same-size in-place edits and replacements invalidate metadata receipts; cancellation,
+  changes during verification and byte limits cannot mint/reuse an invalid receipt.
+- Older derived formats republish from cache without inference; generation v4 has an
+  explicit migration fixture in addition to the existing v1 case. Process recovery adds
+  before/after location-overlay manifest switches to the ANN delta/compaction scenarios.
+
+Regression verification passed **934 regular tests** (two intentional measurement
+ignores) and **all 20 child-process recovery cases**, including six semantic crash
+boundaries across delta, ANN compaction and location publication. The 6,000-file watcher
+fixture passed in the regression run (89.43 s for its suite). One prior-format file-count
+assertion was updated from six to seven; the complete affected suite and remaining
+regression suites then passed. Earlier successful suites were retained. Final all-target
+Clippy with warnings denied, formatting, the build without default features and Markdown
+link checks passed (47 files, 700 links, 154 heading anchors).
+
+These fixtures establish bounded work, integrity and recovery. They do not measure
+large-repository throughput, actual provider-token savings or task quality. Initial
+bootstrap, cold artifact verification, changed-input restart baselines and compaction
+remain corpus-sized. The first changed mapping after a clean restart still needs its
+baseline; the revision shortcut applies to publication, not preparation's source walk.

@@ -66,11 +66,70 @@ struct Receipt {
     resident: Option<Arc<usearch::Index>>,
 }
 
+/// Verified immutable metadata, retained once per artifact role.
+pub(super) struct Metadata<T> {
+    hash: String,
+    file: File,
+    stamp: Stamp,
+    value: T,
+}
+pub(super) fn metadata<T: Clone>(
+    slot: &mut Option<Metadata<T>>,
+    mut file: File,
+    hash: &str,
+    limit: u64,
+    control: &Control,
+    decode: impl FnOnce(&[u8]) -> Result<T, GenerationError>,
+) -> Result<T, GenerationError> {
+    control.check().map_err(GenerationError::Interrupted)?;
+    let stamp = Stamp::read(&file)?;
+    if stamp.2 > limit {
+        return Err(unavailable("metadata exceeds its byte bound"));
+    }
+    if let Some(old) = slot.as_ref()
+        && old.hash == hash
+        && old.stamp == stamp
+        && Stamp::read(&old.file).is_ok_and(|now| now == stamp)
+    {
+        return Ok(old.value.clone());
+    }
+    *slot = None;
+    neural_fault!(METADATA_READ, Some(control), hash).map_err(GenerationError::Interrupted)?;
+    let mut bytes = Vec::new();
+    (&mut file)
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| unavailable(e.to_string()))?;
+    if bytes.len() as u64 > limit {
+        return Err(unavailable("metadata exceeds its byte bound"));
+    }
+    if crate::digest(&bytes) != hash {
+        return Err(unavailable("metadata does not match the manifest hash"));
+    }
+    if Stamp::read(&file)? != stamp {
+        return Err(unavailable("metadata changed during verification"));
+    }
+    let value = decode(&bytes)?;
+    control.check().map_err(GenerationError::Interrupted)?;
+    *slot = Some(Metadata {
+        hash: hash.into(),
+        file,
+        stamp,
+        value: value.clone(),
+    });
+    Ok(value)
+}
+
 /// At most the two segments named by the latest validated manifest. Old queries
 /// own their immutable Arc separately; no cache entry can grow a delta chain.
 #[derive(Default)]
 pub(crate) struct Cache {
     directory: Option<(u64, u64)>,
+    pub(super) members: Option<Metadata<Arc<Vec<String>>>>,
+    pub(super) locations: Option<Metadata<Locations>>,
+    pub(super) overlay: Option<Metadata<locations::Overlay>>,
+    pub(super) outside: Option<(String, String, std::collections::BTreeSet<String>)>,
+    pub(super) snapshot: Option<(String, Locations)>,
     receipts: std::collections::BTreeMap<String, Receipt>,
 }
 impl Cache {
@@ -82,6 +141,11 @@ impl Cache {
         let directory = dir.identity().map_err(|e| unavailable(e.to_string()))?;
         if self.directory != Some(directory) {
             self.receipts.clear();
+            self.members = None;
+            self.locations = None;
+            self.overlay = None;
+            self.outside = None;
+            self.snapshot = None;
             self.directory = Some(directory);
         }
         self.receipts.retain(|hash, _| {
@@ -151,6 +215,19 @@ impl Cache {
         Ok(bytes)
     }
     #[cfg(feature = "semantic")]
+    pub(crate) fn remember_locations(
+        &mut self,
+        directory: (u64, u64),
+        id: String,
+        locations: Locations,
+    ) {
+        if self.directory != Some(directory) {
+            *self = Self::default();
+            self.directory = Some(directory);
+        }
+        self.snapshot = Some((id, locations));
+    }
+    #[cfg(feature = "semantic")]
     pub(crate) fn remember(&mut self, hash: &str, index: Arc<usearch::Index>) {
         if let Some(receipt) = self.receipts.get_mut(hash) {
             receipt.resident = Some(index);
@@ -183,6 +260,60 @@ mod tests {
     use crate::fault::{self, Action};
     use crate::neural::fault_names::SEGMENT_HASH;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn metadata_receipts_obey_bounds_cancellation_and_file_replacement() {
+        use crate::neural::fault_names::METADATA_READ;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("metadata");
+        let bytes = b"[1,2,3]";
+        let hash = crate::digest(bytes);
+        std::fs::write(&path, bytes).unwrap();
+        let mut slot = None;
+        let read = |slot: &mut Option<Metadata<Vec<u8>>>, limit, control: &Control| {
+            metadata(
+                slot,
+                File::open(&path).unwrap(),
+                &hash,
+                limit,
+                control,
+                |b| Ok(b.to_vec()),
+            )
+        };
+        assert!(read(&mut slot, 64, &Control::cancelled()).is_err());
+        assert!(slot.is_none());
+        let target = path.clone();
+        fault::arm(
+            METADATA_READ,
+            0,
+            Action::Call(Box::new(move |_| {
+                std::fs::write(&target, bytes).unwrap();
+            })),
+        );
+        assert!(read(&mut slot, 64, &Control::unbounded()).is_err());
+        assert!(slot.is_none());
+        fault::disarm_all();
+        assert_eq!(read(&mut slot, 64, &Control::unbounded()).unwrap(), bytes);
+        assert_eq!(fault::reached(METADATA_READ), 1);
+        assert_eq!(read(&mut slot, 64, &Control::unbounded()).unwrap(), bytes);
+        assert_eq!(
+            fault::reached(METADATA_READ),
+            1,
+            "unchanged metadata is not reread"
+        );
+        assert!(
+            read(&mut slot, 2, &Control::unbounded()).is_err(),
+            "limits apply even to receipts"
+        );
+        let replacement = tmp.path().join("new");
+        std::fs::write(&replacement, b"[4,5,6]").unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        assert!(read(&mut slot, 64, &Control::unbounded()).is_err());
+        assert!(
+            slot.is_none(),
+            "substituted metadata cannot inherit a receipt"
+        );
+    }
 
     #[test]
     fn cancellation_and_change_during_read_never_mint_a_receipt() {
@@ -259,10 +390,14 @@ mod tests {
             scalar: SCALAR_KIND.into(),
             count: 0,
             index_sha256: String::new(),
-            base_entries: vec![],
+            base_entries: Arc::new(vec![]),
+            base_count: 0,
+            members_sha256: "ab".repeat(32),
             delta: None,
             labels_sha256: "cd".repeat(32),
-            entries: vec![],
+            locations_delta: None,
+            mapping_revision: None,
+            coverage_stats: None,
             source_revision: 0,
             coverage: COVERAGE_PARTIAL.into(),
         };

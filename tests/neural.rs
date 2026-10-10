@@ -2212,7 +2212,8 @@ fn publication_is_anchored_to_the_descriptors_not_the_path() {
         .map(|entry| entry.unwrap().file_name())
         .collect();
     assert!(
-        published.len() <= 6,
+        // Two full generations each have ANN, locations and membership; one manifest.
+        published.len() <= 7,
         "current and preceding artifacts: {published:?}"
     );
 }

@@ -53,7 +53,7 @@ resource limits pause by name and retain pending work; resume explicitly after f
 the cause. Status polling does not extend the foreground batch throttle. A restarted
 owner prepares automatically only when `--semantic-maintain` is explicitly supplied.
 
-Generation v4 keeps one immutable base ANN and one bounded delta. Small edits rebuild
+Generation v5 keeps one immutable base ANN and one bounded delta. Small edits rebuild
 only the delta; location-only changes build and write no ANN data. Retired base keys
 are filtered before query candidate selection. Compaction runs at bounded churn/byte
 thresholds, and an atomic manifest switch preserves a readable generation on failure.
@@ -63,16 +63,20 @@ Exhaustion pauses with pending work intact. No embedding is repeated by these re
 `generation_builds`, `delta_publications` and `mapping_publications` distinguish work.
 
 Within an open owner, publication now refreshes only paths affected by source,
-partition or cache commits. Bounded dirty-state overflow, restart, identity changes
-and repair reconcile from redb. Publication and serving share verified-file receipts
+partition or cache commits. Bounded dirty-state overflow, changed-input restart, identity
+changes and repair reconcile from redb. Publication and serving share verified-file receipts
 and at most two immutable resident ANN segments: unchanged segments are neither
 rehashed nor restored when locations or the other segment change. Explicit audits
 still hash; changed file versions are reverified on refresh. Warm queries detect a
 changed manifest or prepared profile without needing an invalidation hint.
 
-Full location-map serialization and generation metadata/label bookkeeping remain
-corpus-sized. Restart performs one mapping baseline; compaction rebuilds the base.
-This slice does not establish total edit cost at 80,000-file scale.
+Membership and location bases are immutable; one location overlay holds at most 4,096
+changed keys / 32 MiB. A larger change compacts locations without rebuilding ANN.
+Decoded metadata and persistent mapping trees are shared across publications and
+requests. Unchanged restart publication verifies files and checks a transactional
+revision instead of scanning partitions/cache layouts. The first changed-input restart
+still reconciles; cold verification and compaction remain corpus-sized. These fixtures
+do not establish total edit cost at 80,000-file scale.
 
 ## Progressive semantic bootstrapping
 

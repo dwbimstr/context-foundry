@@ -1,6 +1,6 @@
 //! 009 derived semantic index: one validated generation per profile digest
 //! under `<store>/semantic/<function digest>/`: an immutable F16 base, one bounded
-//! F16 delta, and separate current locations. A v4 manifest atomically names
+//! F16 delta, and separate current locations. A v5 manifest atomically names
 //! content-addressed artifacts; retired base keys are filtered during ANN selection.
 //! The base is compacted only at bounded churn thresholds or explicit repair.
 //! Earlier formats used one F16 index file,
@@ -51,7 +51,9 @@ pub(crate) mod publication;
 #[cfg(feature = "semantic")]
 pub(crate) use mapping::MappingWalk;
 
+pub(crate) mod locations;
 pub(crate) mod verification;
+pub use locations::Locations;
 
 pub const SEMANTIC_DIR: &str = "semantic";
 pub const INDEX_FILE: &str = "index.usearch";
@@ -60,10 +62,12 @@ pub const MANIFEST_FILE: &str = "generation.json";
 /// Layout version of the manifest and label map below. v2 (009 T002) added
 /// each label's unit locations and the coverage record serving needs; v3
 /// (009 T004) records geometry; v4 (T008) separates immutable vector segments
-/// from current locations under one atomic manifest. An older generation is
+/// from current locations under one atomic manifest; v5 adds independent bounded
+/// location overlays, immutable membership and a transactional mapping revision.
+/// An older generation is
 /// unavailable by name until preparation republishes it from the cache
 /// (zero document calls).
-pub const GENERATION_VERSION: u32 = 4;
+pub const GENERATION_VERSION: u32 = 5;
 /// The scalar kind and metric of the derived index (D001 chosen values).
 pub const SCALAR_KIND: &str = "f16";
 pub const METRIC: &str = "cos";
@@ -113,13 +117,21 @@ pub struct GenerationManifest {
     /// SHA-256 of the index file bytes.
     pub index_sha256: String,
     /// Ordinals in the immutable base, including retired keys.
-    pub base_entries: Vec<String>,
+    #[serde(skip)]
+    pub base_entries: std::sync::Arc<Vec<String>>,
+    #[serde(default)]
+    pub base_count: usize,
+    #[serde(default)]
+    pub members_sha256: String,
     /// At most one bounded delta; ordinals are local to this segment.
     pub delta: Option<DeltaManifest>,
     /// SHA-256 of the label-map bytes this manifest was written with.
     pub labels_sha256: String,
-    /// The UNIQUE cache entries (document input keys) this generation covers.
-    pub entries: Vec<String>,
+    /// One bounded replacement/tombstone overlay over the immutable location base.
+    pub locations_delta: Option<String>,
+    /// Absent when the mapping walk observed concurrent commits.
+    pub mapping_revision: Option<u64>,
+    pub coverage_stats: Option<crate::neural::cache::CoverageSnapshot>,
     /// The store source revision the label map's unit locations were read at.
     pub source_revision: u64,
     /// [`COVERAGE_COMPLETE`] when every admitted source had a current
@@ -139,6 +151,26 @@ impl GenerationManifest {
     /// Content-named files are published before the single manifest switch.
     pub fn index_file(&self) -> String {
         format!("ann-{}.usearch", self.index_sha256)
+    }
+    pub fn members_file(&self) -> String {
+        format!("members-{}.json", self.members_sha256)
+    }
+    pub fn location_delta_file(&self) -> Option<String> {
+        self.locations_delta
+            .as_ref()
+            .map(|hash| format!("location-delta-{hash}.json"))
+    }
+    pub fn mapping_id(&self) -> String {
+        format!(
+            "{}:{}",
+            self.labels_sha256,
+            self.locations_delta.as_deref().unwrap_or("")
+        )
+    }
+    pub fn metadata_files(&self) -> Vec<String> {
+        let mut files = vec![self.labels_file(), self.members_file()];
+        files.extend(self.location_delta_file());
+        files
     }
     pub fn labels_file(&self) -> String {
         format!("locations-{}.json", self.labels_sha256)
@@ -231,7 +263,8 @@ impl GenerationScope {
 #[cfg(feature = "semantic")]
 pub struct CurrentMapping {
     pub(crate) coverage: cache::CoverageSnapshot,
-    pub units: std::collections::BTreeMap<String, Vec<UnitLocation>>,
+    pub units: Locations,
+    pub(crate) mapping_revision: Option<u64>,
     pub scope: GenerationScope,
 }
 
@@ -240,15 +273,11 @@ impl CurrentMapping {
     /// True when `generation` publishes exactly this mapping and scope.
     pub(crate) fn published_by(&self, generation: &Generation) -> bool {
         let manifest = &generation.manifest;
-        manifest.source_revision == self.scope.source_revision
+        manifest.mapping_revision == self.mapping_revision
+            && manifest.source_revision == self.scope.source_revision
             && manifest.coverage == self.scope.coverage()
-            && generation.labels.labels.len() == self.units.len()
-            && generation
-                .labels
-                .labels
-                .iter()
-                .zip(&self.units)
-                .all(|(entry, (key, units))| &entry.input_key == key && &entry.units == units)
+            && generation.labels.len() == self.units.len()
+            && generation.labels == self.units
     }
 }
 
@@ -256,7 +285,11 @@ impl CurrentMapping {
 #[derive(Clone, Debug)]
 pub struct Generation {
     pub manifest: GenerationManifest,
-    pub labels: LabelMap,
+    pub labels: Locations,
+    #[cfg(feature = "semantic")]
+    pub(crate) location_base: Locations,
+    #[cfg(feature = "semantic")]
+    pub(crate) location_overlay: locations::Overlay,
     #[cfg(feature = "semantic")]
     pub(crate) receipt: std::sync::Arc<verification::ManifestReceipt>,
 }
@@ -539,7 +572,7 @@ fn validate_inner(
             version.v
         )));
     }
-    let manifest: GenerationManifest = serde_json::from_slice(&manifest_bytes)
+    let mut manifest: GenerationManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| unavailable(format!("generation manifest cannot be decoded: {e}")))?;
     if manifest.coverage != COVERAGE_COMPLETE && manifest.coverage != COVERAGE_PARTIAL {
         return Err(unavailable("generation coverage record is malformed"));
@@ -566,9 +599,6 @@ fn validate_inner(
         )));
     }
     validate_membership(&manifest)?;
-    let labels_file = generation
-        .open_file(manifest.labels_file())
-        .map_err(|e| partial("label map", e))?;
     let index_file = generation
         .open_file(manifest.index_file())
         .map_err(|e| partial("index file", e))?;
@@ -580,11 +610,10 @@ fn validate_inner(
                 .map_err(|e| partial("delta file", e))
         })
         .transpose()?;
-    let labels_bytes = read_bounded(labels_file, "label map")?;
-    if crate::digest(&labels_bytes) != manifest.labels_sha256 {
-        return Err(unavailable("label map does not match the manifest hash"));
-    }
     cache.prepare(&generation, &manifest)?;
+    let (labels, _location_base, _location_overlay) =
+        locations::read(&generation, &mut manifest, cache, control)?;
+    validate_membership(&manifest)?;
     let base = cache.verify(
         index_file,
         &manifest.index_sha256,
@@ -599,26 +628,6 @@ fn validate_inner(
         _ => None,
     };
     let index_bytes = base.map(|base| IndexBuffers { base, delta });
-    let labels: LabelMap = serde_json::from_slice(&labels_bytes)
-        .map_err(|e| unavailable(format!("label map cannot be decoded: {e}")))?;
-    if labels.labels.len() != manifest.count || manifest.entries.len() != manifest.count {
-        return Err(unavailable("generation counts disagree with the label map"));
-    }
-    for (ordinal, entry) in labels.labels.iter().enumerate() {
-        if entry.label != ordinal as u64 {
-            return Err(unavailable("label map is not the sorted ordinal sequence"));
-        }
-        if manifest.entries.get(ordinal) != Some(&entry.input_key) {
-            return Err(unavailable("label map and manifest entries disagree"));
-        }
-        if entry.units.is_empty()
-            || entry.units.iter().any(|unit| {
-                unit.path.is_empty() || unit.start >= unit.end || !is_hex64(&unit.source_sha256)
-            })
-        {
-            return Err(unavailable("label map unit locations are malformed"));
-        }
-    }
     // The manifest binds the expected identity and geometry (dimensions,
     // metric and scalar kind, checked above), the coverage record and source
     // revision, to the index and label-map bytes through their SHA-256
@@ -630,6 +639,10 @@ fn validate_inner(
             manifest,
             labels,
             #[cfg(feature = "semantic")]
+            location_base: _location_base,
+            #[cfg(feature = "semantic")]
+            location_overlay: _location_overlay,
+            #[cfg(feature = "semantic")]
             receipt,
         },
         index_bytes,
@@ -637,30 +650,28 @@ fn validate_inner(
 }
 
 fn validate_membership(manifest: &GenerationManifest) -> Result<(), GenerationError> {
-    let sorted = |keys: &[String]| {
-        keys.iter().all(|key| is_hex64(key)) && keys.windows(2).all(|pair| pair[0] < pair[1])
-    };
     if !is_hex64(&manifest.index_sha256)
+        || !is_hex64(&manifest.members_sha256)
         || !is_hex64(&manifest.labels_sha256)
-        || !sorted(&manifest.entries)
-        || !sorted(&manifest.base_entries)
+        || manifest
+            .locations_delta
+            .as_ref()
+            .is_some_and(|hash| !is_hex64(hash))
+        || (manifest.base_count as u64).saturating_mul(67) > MAX_META_BYTES
     {
         return Err(unavailable(
             "generation membership or artifact hash is malformed",
         ));
     }
-    let delta = manifest
-        .delta
-        .as_ref()
-        .map(|delta| delta.entries.as_slice())
-        .unwrap_or_default();
-    if let Some(record) = &manifest.delta
-        && (!is_hex64(&record.sha256)
-            || delta.is_empty()
-            || !sorted(delta)
-            || delta.len() > churn_limit(manifest.base_entries.len())
-            || delta.len() as u64 * manifest.dimensions as u64 * 4 > MAX_DELTA_BYTES
+    if let Some(delta) = &manifest.delta
+        && (!is_hex64(&delta.sha256)
+            || delta.entries.is_empty()
+            || !delta.entries.iter().all(|key| is_hex64(key))
+            || !delta.entries.windows(2).all(|pair| pair[0] < pair[1])
+            || delta.entries.len() > churn_limit(manifest.base_count)
+            || delta.entries.len() as u64 * manifest.dimensions as u64 * 4 > MAX_DELTA_BYTES
             || delta
+                .entries
                 .iter()
                 .any(|key| manifest.base_entries.binary_search(key).is_ok()))
     {
@@ -668,21 +679,20 @@ fn validate_membership(manifest: &GenerationManifest) -> Result<(), GenerationEr
             "delta membership is malformed or exceeds its bound",
         ));
     }
-    if manifest.entries.iter().any(|key| {
-        manifest.base_entries.binary_search(key).is_err() && delta.binary_search(key).is_err()
-    }) || delta
-        .iter()
-        .any(|key| manifest.entries.binary_search(key).is_err())
-        || manifest
-            .base_entries
-            .iter()
-            .filter(|key| manifest.entries.binary_search(key).is_err())
-            .count()
-            > churn_limit(manifest.base_entries.len())
+    if let Some(stats) = &manifest.coverage_stats
+        && (stats.version != 1
+            || stats.source_revision != manifest.source_revision
+            || stats.function_digest != manifest.function_digest
+            || stats.recipe_id != manifest.recipe_id
+            || stats.index_entries != manifest.count as u64
+            || stats.unpartitioned_sources > stats.sources
+            || stats.cached_current_units > stats.eligible_units
+            || stats.searchable_current_units != stats.cached_current_units
+            || (manifest.coverage == COVERAGE_COMPLETE
+                && (stats.unpartitioned_sources != 0
+                    || stats.cached_current_units != stats.eligible_units)))
     {
-        return Err(unavailable(
-            "generation membership disagrees with its segments",
-        ));
+        return Err(unavailable("generation coverage counters are malformed"));
     }
     Ok(())
 }
@@ -852,36 +862,90 @@ impl Engine {
         )?;
         let store = self.semantic_anchor()?;
         let (staged, coverage, result) = plan.stage(&store, identity, &entries, control, &|| {})?;
-        staged.publish(control)?;
+        self.semantic_publish_staged(staged, control)?;
         self.semantic_record_coverage(coverage)?;
         Ok(result)
     }
 
-    /// Reuse immutable vectors and publish only the bounded delta and locations.
+    /// Clean restart/replay can use an independently validated publication. The
+    /// revision includes cache/partition changes even without source changes.
+    pub(crate) fn semantic_generation_current(&self, generation: &Generation) -> FResult<bool> {
+        if generation.manifest.mapping_revision == Some(self.semantic_mapping_revision()?)
+            && generation.manifest.source_revision == self.source_revision()?
+            && let Some(coverage) = &generation.manifest.coverage_stats
+        {
+            self.semantic_record_coverage(coverage.clone())?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub(crate) fn semantic_remember_mapping(
+        &self,
+        id: String,
+        units: Locations,
+        directory: (u64, u64),
+        control: &Control,
+    ) -> FResult<()> {
+        let mut cache =
+            verification::lock(&self.semantic_segments, control).map_err(|e| match e {
+                GenerationError::Interrupted(error) => error,
+                GenerationError::Unavailable(message) => FoundryError::Semantic {
+                    code: "index_unavailable",
+                    message,
+                },
+            })?;
+        cache.remember_locations(directory, id, units);
+        Ok(())
+    }
+    pub(crate) fn semantic_publish_staged(
+        &self,
+        staged: Staged,
+        control: &Control,
+    ) -> FResult<usize> {
+        let snapshot = staged.snapshot.clone();
+        let directory = staged.directory_identity()?;
+        let count = staged.publish(control)?;
+        if let Some((id, units)) = snapshot {
+            self.semantic_remember_mapping(id, units, directory, control)?;
+        }
+        Ok(count)
+    }
+
+    /// Reuse immutable vectors and publish bounded vector/location changes.
     pub fn semantic_publish_pending(&self, control: &Control) -> FResult<Publication> {
         let Some(identity) = self.semantic_identity()? else {
             return Ok(Publication::Nothing);
         };
+        let store = self.semantic_anchor()?;
+        let previous =
+            match validate_cached(&store, &identity, control, false, &self.semantic_segments) {
+                Ok((generation, _)) => Some(generation),
+                Err(GenerationError::Interrupted(error)) => return Err(error),
+                Err(_) => None,
+            };
+        if let Some(generation) = &previous
+            && self.semantic_generation_current(generation)?
+        {
+            return Ok(Publication::Current(generation.manifest.count));
+        }
         let mut walk = MappingWalk::start(self, &identity.digest, &identity.recipe)?;
         while !walk.step(self, control, None)? {}
         let wanted = walk.finish(self)?;
-        let previous = match validate_cached(
-            &self.semantic_anchor()?,
-            &identity,
-            control,
-            false,
-            &self.semantic_segments,
-        )
-        .map(|(generation, _)| generation)
+        if let Some(generation) = &previous
+            && wanted.published_by(generation)
         {
-            Ok(generation) if wanted.published_by(&generation) => {
-                self.semantic_record_coverage(wanted.coverage)?;
-                return Ok(Publication::Current(generation.manifest.count));
-            }
-            Ok(generation) => Some(generation.manifest),
-            Err(GenerationError::Interrupted(error)) => return Err(error),
-            Err(_) => None,
-        };
+            let dir = open_generation_dir(&store, &identity.digest, false)?
+                .expect("validated generation");
+            self.semantic_remember_mapping(
+                generation.manifest.mapping_id(),
+                wanted.units,
+                dir.identity()?,
+                control,
+            )?;
+            self.semantic_record_coverage(wanted.coverage)?;
+            return Ok(Publication::Current(generation.manifest.count));
+        }
         if previous.is_none() && wanted.units.is_empty() {
             self.semantic_record_coverage(wanted.coverage)?;
             return Ok(Publication::Nothing);
@@ -1061,7 +1125,7 @@ mod tests {
         // The serving mapping and its scope are part of the validated set.
         assert_eq!(ok.manifest.source_revision, 7);
         assert_eq!(ok.manifest.coverage, COVERAGE_PARTIAL);
-        assert_eq!(ok.labels.labels[1].units, entries[1].units);
+        assert_eq!(*ok.labels[&entries[1].input_key], entries[1].units);
         // Serving restores exactly the bytes that matched the manifest.
         let (_, bytes) =
             load_generation_with(&store, digest, "r1", 768, &Control::unbounded()).unwrap();
@@ -1097,7 +1161,7 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
-        assert_eq!(leftovers.len(), 3, "{leftovers:?}");
+        assert_eq!(leftovers.len(), 4, "{leftovers:?}");
     }
 
     /// 009 T004: every supported Matryoshka dimension builds, records its
@@ -1169,6 +1233,6 @@ mod tests {
         value["v"] = 2.into();
         std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
         let err = validate_generation(&store, &identity.digest, "r1", 256).unwrap_err();
-        assert!(err.contains("format v2 is not v4"), "{err}");
+        assert!(err.contains("format v2 is not v5"), "{err}");
     }
 }

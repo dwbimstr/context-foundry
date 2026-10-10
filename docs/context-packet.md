@@ -34,8 +34,9 @@ acceptance. Default status reads a versioned observation; audit remains explicit
 E3 now reuses an immutable base ANN with one bounded delta and independent locations,
 atomically switching a manifest and compacting at bounded thresholds. Small edits and
 location-only changes avoid full ANN builds. Warm publication now refreshes affected
-locations and reuses verified/resident ANN segments. Restart/overflow/repair reconcile;
-full location-map serialization and generation metadata bookkeeping remain T008 costs. Model-aware
+locations and reuses verified/resident ANN segments. Generation v5 adds bounded location
+overlays, shared mapping/metadata snapshots and clean-restart publication reuse. Changed
+restart/overflow/repair still reconcile; cold verification and compaction remain. Model-aware
 inputs (E4), automatic generation (010 T002), boundary joins and task-evidence composition
 remain pending.
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and

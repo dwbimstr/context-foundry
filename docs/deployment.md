@@ -647,10 +647,11 @@ from prior state on restart; watching alone loads no model. Pause through
 require explicit resume. Ordinary status reads a publication observation; use
 `semantic status --audit` or MCP `status {"semantic_audit":true}` for integrity/census.
 
-Semantic generation format v4 is derived data under schema 9: existing vector-cache
+Semantic generation format v5 is derived data under schema 9: existing vector-cache
 rows and partitions remain reusable. Older generation formats are refused by name;
 explicit preparation or `repair-index` republishes them from cache. Small edits publish
-one bounded delta and independent locations; compaction publishes a new immutable base.
+one bounded ANN delta and a separate bounded location overlay. Location compaction
+retains unchanged ANN files. Immutable membership is stored outside the small manifest.
 The manifest switches after referenced files are durable. MCP retries transient publication
 failures three times with visible bounded backoff, then pauses with pending work; provider
 failures retain the explicit-resume behavior above. No automatic download is added.
@@ -658,7 +659,12 @@ failures retain the explicit-resume behavior above. No automatic download is add
 An open owner retains a bounded affected-location view and at most two verified,
 resident ANN segments. Source/partition/cache commits refresh affected mappings;
 unchanged segments skip hashing and restoration during publication/serving refresh.
-Restart, overflow, identity changes and explicit repair rebuild the mapping view;
-verification receipts never survive restart. Warm queries check owner/profile/manifest
-identity, and refresh rechecks ANN file versions. Explicit audits always validate the
-files independently. Full location JSON and generation metadata remain corpus-sized.
+Metadata receipts also reuse decoded membership and location bases. An additive META
+revision advances transactionally with source/partition/cache changes, including in
+lexical-only builds. A clean restart verifies the generation and reuses matching
+publication coverage without a mapping scan. Changed-input restart, overflow, identity
+changes and explicit repair rebuild the mapping view; receipts never survive restart.
+Warm queries check owner/profile/manifest identity; refresh rechecks file versions.
+Explicit audits always validate independently. Cold verification and compaction remain
+corpus-sized. Generation v5 is replaceable derived data; no store upgrade is required
+for this continuation on schema 9.

@@ -5497,6 +5497,200 @@ fn accept_fixture_edit(corpus: &Corpus, path: &str, body: &str) {
 }
 
 #[test]
+fn a_v4_generation_republishes_immutable_metadata_from_cache_without_inference() {
+    let mut corpus = Corpus::new(&[]);
+    corpus
+        .engine()
+        .semantic_rebuild_index(&Control::unbounded())
+        .unwrap();
+    let directory = index::generation_dir(&corpus.store, &corpus.digest());
+    let path = directory.join(index::MANIFEST_FILE);
+    let bytes = std::fs::read(&path).unwrap();
+    let current: index::GenerationManifest = serde_json::from_slice(&bytes).unwrap();
+    let mut prior: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    prior["v"] = 4.into();
+    let keys: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join(current.members_file())).unwrap())
+            .unwrap();
+    prior["base_entries"] = keys.clone();
+    prior["entries"] = keys;
+    for name in [
+        "base_count",
+        "members_sha256",
+        "locations_delta",
+        "mapping_revision",
+        "coverage_stats",
+    ] {
+        prior.as_object_mut().unwrap().remove(name);
+    }
+    std::fs::write(&path, serde_json::to_vec(&prior).unwrap()).unwrap();
+    let calls = corpus.probe.document_calls();
+    let report = corpus.prepare();
+    assert!(report.index_published && !report.partial, "{report:?}");
+    assert_eq!(report.document_calls, 0);
+    assert_eq!(corpus.probe.document_calls(), calls);
+    let current: index::GenerationManifest =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(current.v, index::GENERATION_VERSION);
+    assert!(current.mapping_revision.is_some());
+    assert!(directory.join(current.members_file()).exists());
+    let slot = corpus.slot();
+    assert_eq!(
+        corpus.context(&slot, DUSK_QUERY, BUDGET).word(),
+        Some("ready")
+    );
+}
+
+#[test]
+fn clean_restart_reuses_published_mapping_but_partition_and_offline_changes_reconcile() {
+    use context_foundry::neural::fault_names::{
+        MAPPING_CACHE_PROBE, MAPPING_FULL_PAGE, METADATA_READ, PARTITION_READ,
+    };
+    let mut corpus = Corpus::new(&[]);
+    let control = Control::unbounded();
+    corpus.engine().semantic_publish_pending(&control).unwrap();
+    let calls = corpus.probe.document_calls.load(Ordering::SeqCst);
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    assert!(matches!(
+        corpus.engine().semantic_publish_pending(&control).unwrap(),
+        index::Publication::Current(_)
+    ));
+    assert!(
+        fault::reached(METADATA_READ) >= 2,
+        "cold owner still verifies artifacts"
+    );
+    for point in [MAPPING_FULL_PAGE, MAPPING_CACHE_PROBE, PARTITION_READ] {
+        assert_eq!(fault::reached(point), 0, "clean restart: {point}");
+    }
+    let reads = fault::reached(METADATA_READ);
+    corpus.engine().semantic_publish_pending(&control).unwrap();
+    assert_eq!(fault::reached(METADATA_READ), reads);
+    // Partition changes at the same source revision must invalidate reuse too.
+    let engine = corpus.engine();
+    let revision = engine.source_revision().unwrap();
+    let state = engine.semantic_state().unwrap().unwrap();
+    engine
+        .semantic_record_partition(
+            CODE_PATH,
+            &engine.source(CODE_PATH).unwrap().unwrap().hash,
+            state.recipe_id.as_deref().unwrap(),
+            state.function_digest.as_deref().unwrap(),
+            Some(&[]),
+            &|_| Ok(vec![]),
+        )
+        .unwrap();
+    assert_eq!(engine.source_revision().unwrap(), revision);
+    let changed = engine.semantic_publish_pending(&control).unwrap();
+    assert!(!matches!(changed, index::Publication::Current(_)));
+    assert!(
+        fault::reached(MAPPING_FULL_PAGE) > 0,
+        "changed cold owner builds its baseline"
+    );
+    // A durable source change made before closing cannot borrow an older fence.
+    engine
+        .replace_source(DUSK_PATH, "# Offline change\n")
+        .unwrap();
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    assert!(!matches!(
+        corpus.engine().semantic_publish_pending(&control).unwrap(),
+        index::Publication::Current(_)
+    ));
+    assert!(fault::reached(MAPPING_FULL_PAGE) > 0);
+    assert_eq!(corpus.probe.document_calls.load(Ordering::SeqCst), calls);
+}
+
+#[test]
+fn location_publication_shares_unchanged_metadata_and_failed_edits_remain_retryable() {
+    use context_foundry::neural::fault_names::{
+        LOCATION_COMPARE, LOCATION_WRITE, MAPPING_FULL_PAGE, METADATA_READ, PUBLISH_BEFORE_MANIFEST,
+    };
+    let corpus = Corpus::new(&[]);
+    let engine = corpus.engine();
+    let control = Control::unbounded();
+    engine.semantic_rebuild_index(&control).unwrap();
+    engine.semantic_publish_pending(&control).unwrap();
+    let runtime = corpus.runtime();
+    let window = || {
+        runtime
+            .window(
+                engine,
+                DUSK_QUERY,
+                Instant::now() + Duration::from_secs(30),
+                &control,
+            )
+            .unwrap()
+    };
+    window();
+    let original = corpus.source(CODE_PATH);
+    accept_fixture_edit(&corpus, CODE_PATH, &format!("\n{original}"));
+    fault::disarm_all();
+    fault::arm(
+        PUBLISH_BEFORE_MANIFEST,
+        0,
+        Action::Fail("location publication failed".into()),
+    );
+    assert!(engine.semantic_publish_pending(&control).is_err());
+    fault::disarm_all();
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Mapped(_)
+    ));
+    assert_eq!(
+        fault::reached(MAPPING_FULL_PAGE),
+        0,
+        "retry retains the warm mapping view"
+    );
+    assert_eq!(
+        fault::reached(LOCATION_WRITE),
+        1,
+        "only the bounded overlay is written"
+    );
+    let compares = fault::reached(LOCATION_COMPARE);
+    assert!(compares > 0);
+    let reads = fault::reached(METADATA_READ);
+    window();
+    assert_eq!(
+        fault::reached(METADATA_READ) - reads,
+        1,
+        "only the new overlay is read/hashed/decoded"
+    );
+    let reads = fault::reached(METADATA_READ);
+    // A zero-card source changes coverage, with no vector or location changes.
+    accept_fixture_edit(&corpus, "empty.rs", "\n");
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Mapped(_)
+    ));
+    window();
+    assert_eq!(fault::reached(LOCATION_COMPARE), compares);
+    assert_eq!(fault::reached(LOCATION_WRITE), 1);
+    assert_eq!(fault::reached(METADATA_READ), reads);
+    // The receipt must not bless a same-length edit of a retained metadata file.
+    let directory = index::generation_dir(&corpus.store, &corpus.profile.descriptor.digest());
+    let manifest: index::GenerationManifest =
+        serde_json::from_slice(&std::fs::read(directory.join(index::MANIFEST_FILE)).unwrap())
+            .unwrap();
+    let path = directory.join(manifest.location_delta_file().unwrap());
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[0] ^= 1;
+    std::fs::write(&path, bytes).unwrap();
+    runtime.forget_index();
+    let error = runtime
+        .window(
+            engine,
+            DUSK_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &control,
+        )
+        .expect_err("changed metadata refused");
+    assert!(error.detail.contains("manifest hash"), "{error:?}");
+}
+
+#[test]
 fn warm_publications_reuse_verification_and_resident_segments_with_fresh_locations() {
     use context_foundry::neural::fault_names::{
         MAPPING_FULL_PAGE, PARTITION_READ, SEGMENT_HASH, SEGMENT_RESTORE,

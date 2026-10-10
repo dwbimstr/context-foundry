@@ -1045,36 +1045,51 @@ impl<'a> Run<'a> {
     /// the mapping incomplete, never wrong: locations revalidate per request.
     fn generation(&self) -> Result<Publication, Failed> {
         let control = self.control;
-        let Some((identity, store, segments, mut walk)) = self.step(|engine| {
+        let Some((identity, store, segments)) = self.step(|engine| {
             let Some(identity) = engine.semantic_identity()? else {
                 return Ok(None);
             };
-            let walk = MappingWalk::start(engine, &identity.digest, &identity.recipe)?;
             Ok(Some((
                 identity,
                 engine.semantic_anchor()?,
                 engine.semantic_segments.clone(),
-                walk,
             )))
         })?
         else {
             return Ok(Publication::Nothing);
         };
+        let previous = match validate_cached(&store, &identity, control, false, &segments) {
+            Ok((generation, _)) => Some(generation),
+            Err(GenerationError::Interrupted(error)) => return Err(Failed::Step(error)),
+            Err(_) => None,
+        };
+        if let Some(generation) = &previous
+            && self.step(|engine| engine.semantic_generation_current(generation))?
+        {
+            return Ok(Publication::Current(generation.manifest.count));
+        }
+        let mut walk =
+            self.step(|engine| MappingWalk::start(engine, &identity.digest, &identity.recipe))?;
         while !self.step(|engine| walk.step(engine, control, Some(Instant::now() + STEP_TIME)))? {}
         let mapping = self.step(|engine| walk.finish(engine))?;
-        let previous = {
-            match validate_cached(&store, &identity, control, false, &segments)
-                .map(|(generation, _)| generation)
-            {
-                Ok(generation) if mapping.published_by(&generation) => {
-                    self.step(|engine| engine.semantic_record_coverage(mapping.coverage))?;
-                    return Ok(Publication::Current(generation.manifest.count));
-                }
-                Ok(generation) => Some(generation.manifest),
-                Err(GenerationError::Interrupted(error)) => return Err(Failed::Step(error)),
-                Err(_) => None,
-            }
-        };
+        if let Some(generation) = &previous
+            && mapping.published_by(generation)
+        {
+            let directory = index::open_generation_dir(&store, &identity.digest, false)
+                .map_err(Failed::Step)?
+                .expect("validated generation");
+            let id = directory.identity().map_err(|e| Failed::Step(e.into()))?;
+            self.step(|engine| {
+                engine.semantic_remember_mapping(
+                    generation.manifest.mapping_id(),
+                    mapping.units,
+                    id,
+                    control,
+                )?;
+                engine.semantic_record_coverage(mapping.coverage)
+            })?;
+            return Ok(Publication::Current(generation.manifest.count));
+        }
         if previous.is_none() && mapping.units.is_empty() {
             self.step(|engine| engine.semantic_record_coverage(mapping.coverage))?;
             return Ok(Publication::Nothing);
@@ -1102,7 +1117,7 @@ impl<'a> Run<'a> {
             .map_err(Failed::Step)?;
         drop(entries);
         self.step(|engine| {
-            staged.publish(control)?;
+            engine.semantic_publish_staged(staged, control)?;
             engine.semantic_record_coverage(coverage)
         })?;
         Ok(publication)

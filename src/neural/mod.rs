@@ -40,6 +40,9 @@ pub mod fault_names {
     // Every read of one stored partition row (tests count them).
     point!(MAPPING_FULL_PAGE, "semantic.mapping_full_page");
     point!(MAPPING_CACHE_PROBE, "semantic.mapping_cache_probe");
+    point!(METADATA_READ, "semantic.metadata_read");
+    point!(LOCATION_WRITE, "semantic.location_write");
+    point!(LOCATION_COMPARE, "semantic.location_compare");
     point!(SEGMENT_HASH, "semantic.segment_hash");
     point!(SEGMENT_RESTORE, "semantic.segment_restore");
     point!(PARTITION_READ, "semantic.partition_read");

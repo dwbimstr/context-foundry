@@ -20,6 +20,7 @@ tokio add client/process features only for tests.
 | futures-util | 0.3.34 | MIT OR Apache-2.0 | normal |
 | http | 1.5.0 | MIT OR Apache-2.0 | normal |
 | ignore | 0.4.33 | Unlicense OR MIT | normal |
+| imbl | 7.0.2 | MPL-2.0+ | normal (009 T008 persistent location snapshots; unmodified) |
 | libc | 0.2.189 | MIT OR Apache-2.0 | normal (held-root opens) |
 | pulldown-cmark | 0.13.4 | MIT | normal (Markdown sections; default features off) |
 | redb | 4.3.0 | MIT OR Apache-2.0 | normal |
@@ -138,3 +139,12 @@ above. It forwards and meters only; no provider token-counting implementation ex
 which is why `enforce` mode stays refused.
 
 Use `cargo metadata --locked` for the full transitive graph. `Cargo.lock` pins it.
+
+009 T008 pins `imbl` 7.0.2 for structurally shared ordered maps. The locked release
+requires Rust 1.85 and is built here with Rust 1.90. It adds `archery` 1.2.3,
+`imbl-sized-chunks` 0.2.0, `rand_xoshiro` 0.7.0, `bytemuck` 1.25.2,
+`safe_arch` 0.7.4 and `wide` 0.7.33. Source/design references and intentional differences
+are retained in [009 T008](../specs/009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work).
+The MPL license/notice and source-availability obligations apply to that upstream
+package when distributing; Foundry's own code remains MIT. No upstream source is
+modified or vendored.

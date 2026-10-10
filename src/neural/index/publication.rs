@@ -6,39 +6,54 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) struct Plan {
     coverage: cache::CoverageSnapshot,
     pub scope: GenerationScope,
-    units: BTreeMap<String, Vec<UnitLocation>>,
-    previous: Option<GenerationManifest>,
+    units: Locations,
+    previous: Option<Generation>,
     delta_keys: Vec<String>,
     delta_changed: bool,
+    mapping_revision: Option<u64>,
 }
 
+fn changed_keys(before: &Locations, after: &Locations) -> impl Iterator<Item = String> {
+    before.diff(after).map(|change| match change {
+        imbl::ordmap::DiffItem::Add(key, _) | imbl::ordmap::DiffItem::Remove(key, _) => key.clone(),
+        imbl::ordmap::DiffItem::Update { new: (key, _), .. } => key.clone(),
+    })
+}
 impl Plan {
-    pub fn new(mapping: CurrentMapping, mut previous: Option<GenerationManifest>) -> Self {
-        let mut delta_keys = Vec::new();
-        if let Some(base) = &previous {
-            delta_keys = mapping
-                .units
-                .keys()
-                .filter(|key| base.base_entries.binary_search(key).is_err())
-                .cloned()
-                .collect();
+    pub fn new(mapping: CurrentMapping, mut previous: Option<Generation>) -> Self {
+        let mut delta_keys = BTreeSet::new();
+        if let Some(generation) = &previous {
+            let base = &generation.manifest;
+            delta_keys.extend(
+                base.delta
+                    .iter()
+                    .flat_map(|delta| delta.entries.iter().cloned()),
+            );
+            for key in changed_keys(&generation.labels, &mapping.units) {
+                if base.base_entries.binary_search(&key).is_err() {
+                    if mapping.units.contains_key(&key) {
+                        delta_keys.insert(key);
+                    } else {
+                        delta_keys.remove(&key);
+                    }
+                }
+            }
             let retired = base
-                .base_entries
-                .iter()
-                .filter(|key| !mapping.units.contains_key(*key))
-                .count();
-            if delta_keys.len() > churn_limit(base.base_entries.len())
-                || retired > churn_limit(base.base_entries.len())
+                .base_count
+                .saturating_sub(mapping.units.len().saturating_sub(delta_keys.len()));
+            if delta_keys.len() > churn_limit(base.base_count)
+                || retired > churn_limit(base.base_count)
                 || delta_keys.len() as u64 * base.dimensions as u64 * 4 > MAX_DELTA_BYTES
             {
                 previous = None;
                 delta_keys.clear();
             }
         }
+        let delta_keys: Vec<_> = delta_keys.into_iter().collect();
         let old_delta = previous
             .as_ref()
-            .and_then(|base| base.delta.as_ref())
-            .map(|delta| delta.entries.as_slice())
+            .and_then(|g| g.manifest.delta.as_ref())
+            .map(|d| d.entries.as_slice())
             .unwrap_or_default();
         let delta_changed = old_delta != delta_keys;
         Self {
@@ -48,23 +63,25 @@ impl Plan {
             previous,
             delta_keys,
             delta_changed,
+            mapping_revision: mapping.mapping_revision,
         }
     }
-
-    /// Only a compaction reads the full vector cache. Mapping-only plans read none.
     pub fn needed(&self) -> BTreeMap<String, Vec<UnitLocation>> {
         if self.previous.is_none() {
-            return self.units.clone();
+            return self
+                .units
+                .iter()
+                .map(|(key, units)| (key.clone(), (**units).clone()))
+                .collect();
         }
         if !self.delta_changed {
             return BTreeMap::new();
         }
         self.delta_keys
             .iter()
-            .map(|key| (key.clone(), self.units[key].clone()))
+            .map(|key| (key.clone(), (*self.units[key]).clone()))
             .collect()
     }
-
     pub fn stage(
         mut self,
         store: &Dir,
@@ -74,26 +91,69 @@ impl Plan {
         built: &dyn Fn(),
     ) -> FResult<(Staged, cache::CoverageSnapshot, Publication)> {
         let full = self.previous.is_none();
-        // Failed cache decodes cannot leave labels pointing at absent vectors.
-        let loaded: BTreeSet<_> = entries
-            .iter()
-            .map(|entry| entry.input_key.as_str())
-            .collect();
-        if full {
-            self.units.retain(|key, _| loaded.contains(key.as_str()));
+        let loaded: BTreeSet<_> = entries.iter().map(|e| e.input_key.as_str()).collect();
+        let missing: Vec<_> = if full {
+            self.units
+                .keys()
+                .filter(|key| !loaded.contains(key.as_str()))
+                .cloned()
+                .collect()
         } else if self.delta_changed {
-            self.units.retain(|key, _| {
-                self.delta_keys.binary_search(key).is_err() || loaded.contains(key.as_str())
-            });
+            self.delta_keys
+                .iter()
+                .filter(|key| !loaded.contains(key.as_str()))
+                .cloned()
+                .collect()
+        } else {
+            vec![]
+        };
+        for key in missing {
+            if let Some(units) = self.units.remove(&key) {
+                self.coverage.cached_current_units -= units.len() as u64;
+            }
+            self.scope.complete = false;
         }
-        let labels = labels(&self.units);
         let mut artifacts = Vec::new();
+        let previous_overlay = self
+            .previous
+            .as_ref()
+            .and_then(|g| g.manifest.locations_delta.clone());
+        let mut overlay = self
+            .previous
+            .as_ref()
+            .map(|g| g.location_overlay.clone())
+            .unwrap_or_default();
+        if let Some(previous) = &self.previous {
+            for key in changed_keys(&previous.labels, &self.units) {
+                neural_fault!(LOCATION_COMPARE, Some(control), &key)?;
+                let wanted = self.units.get(&key);
+                if previous.location_base.get(&key) == wanted {
+                    overlay.remove(&key);
+                } else {
+                    overlay.insert(key, wanted.cloned());
+                }
+            }
+        }
+        let mut overlay_bytes = if overlay.is_empty() {
+            None
+        } else {
+            Some(locations::encode(&overlay)?)
+        };
+        let compact_locations = full
+            || overlay.len() > locations::MAX_CHANGES
+            || overlay_bytes
+                .as_ref()
+                .is_some_and(|bytes| bytes.len() as u64 > locations::MAX_DELTA_BYTES);
         let mut manifest = match self.previous {
-            Some(base) => base,
+            Some(previous) => previous.manifest,
             None => {
                 let bytes = encode_index(identity, entries, control, built)?;
                 let hash = crate::digest(&bytes);
                 artifacts.push((format!("ann-{hash}.usearch"), bytes));
+                let keys: Vec<_> = self.units.keys().cloned().collect();
+                let members = serde_json::to_vec(&keys)?;
+                let members_sha256 = crate::digest(&members);
+                artifacts.push((format!("members-{members_sha256}.json"), members));
                 GenerationManifest {
                     v: GENERATION_VERSION,
                     function_digest: identity.digest.clone(),
@@ -103,10 +163,14 @@ impl Plan {
                     scalar: SCALAR_KIND.into(),
                     count: 0,
                     index_sha256: hash,
-                    base_entries: self.units.keys().cloned().collect(),
+                    base_count: keys.len(),
+                    base_entries: std::sync::Arc::new(keys),
+                    members_sha256,
                     delta: None,
                     labels_sha256: String::new(),
-                    entries: Vec::new(),
+                    locations_delta: None,
+                    mapping_revision: self.mapping_revision,
+                    coverage_stats: None,
                     source_revision: 0,
                     coverage: String::new(),
                 }
@@ -122,21 +186,44 @@ impl Plan {
                 artifacts.push((format!("ann-{hash}.usearch"), bytes));
                 Some(DeltaManifest {
                     sha256: hash,
-                    entries: self
-                        .units
-                        .keys()
-                        .filter(|key| loaded.contains(key.as_str()))
-                        .cloned()
-                        .collect(),
+                    entries: entries.iter().map(|e| e.input_key.clone()).collect(),
                 })
             };
         }
-        let labels_bytes = serde_json::to_vec(&labels)?;
-        manifest.labels_sha256 = crate::digest(&labels_bytes);
-        manifest.count = labels.labels.len();
-        manifest.entries = self.units.keys().cloned().collect();
+        if compact_locations {
+            let labels = LabelMap {
+                labels: self
+                    .units
+                    .iter()
+                    .enumerate()
+                    .map(|(label, (key, units))| LabelEntry {
+                        label: label as u64,
+                        input_key: key.clone(),
+                        units: (**units).clone(),
+                    })
+                    .collect(),
+            };
+            let bytes = serde_json::to_vec(&labels)?;
+            manifest.labels_sha256 = crate::digest(&bytes);
+            neural_fault!(LOCATION_WRITE, Some(control), "base")?;
+            artifacts.push((manifest.labels_file(), bytes));
+            overlay_bytes = None;
+        }
+        manifest.locations_delta = overlay_bytes.as_ref().map(|bytes| crate::digest(bytes));
+        if let Some(bytes) = overlay_bytes {
+            let file = manifest.location_delta_file().expect("overlay named");
+            if manifest.locations_delta != previous_overlay {
+                neural_fault!(LOCATION_WRITE, Some(control), "overlay")?;
+                artifacts.push((file, bytes));
+            }
+        }
+        manifest.count = self.units.len();
         manifest.source_revision = self.scope.source_revision;
         manifest.coverage = self.scope.coverage().into();
+        manifest.mapping_revision = self.mapping_revision;
+        self.coverage.searchable_current_units = self.coverage.cached_current_units;
+        self.coverage.index_entries = manifest.count as u64;
+        manifest.coverage_stats = Some(self.coverage.clone());
         let result = if full {
             Publication::Rebuilt(manifest.count)
         } else if self.delta_changed {
@@ -144,27 +231,9 @@ impl Plan {
         } else {
             Publication::Mapped(manifest.count)
         };
-        artifacts.push((manifest.labels_file(), labels_bytes));
-        self.coverage.cached_current_units =
-            self.units.values().map(|units| units.len() as u64).sum();
-        self.coverage.searchable_current_units = self.coverage.cached_current_units;
-        self.coverage.index_entries = manifest.count as u64;
-        let staged = Staged::write(store, &manifest, artifacts, control)?;
+        let mut staged = Staged::write(store, &manifest, artifacts, control)?;
+        staged.snapshot = Some((manifest.mapping_id(), self.units));
         Ok((staged, self.coverage, result))
-    }
-}
-
-fn labels(units: &BTreeMap<String, Vec<UnitLocation>>) -> LabelMap {
-    LabelMap {
-        labels: units
-            .iter()
-            .enumerate()
-            .map(|(ordinal, (key, units))| LabelEntry {
-                label: ordinal as u64,
-                input_key: key.clone(),
-                units: units.clone(),
-            })
-            .collect(),
     }
 }
 
@@ -180,7 +249,12 @@ pub(super) fn full(
     check_entries(entries)?;
     let units = entries
         .iter()
-        .map(|entry| (entry.input_key.clone(), entry.units.clone()))
+        .map(|entry| {
+            (
+                entry.input_key.clone(),
+                std::sync::Arc::new(entry.units.clone()),
+            )
+        })
         .collect();
     let mapping = CurrentMapping {
         units,
@@ -192,11 +266,12 @@ pub(super) fn full(
             recipe_id: identity.recipe.clone(),
             sources: 0,
             unpartitioned_sources: 0,
-            eligible_units: 0,
-            cached_current_units: 0,
+            eligible_units: entries.iter().map(|e| e.units.len() as u64).sum(),
+            cached_current_units: entries.iter().map(|e| e.units.len() as u64).sum(),
             searchable_current_units: 0,
             index_entries: 0,
         },
+        mapping_revision: None,
     };
     Plan::new(mapping, None)
         .stage(store, identity, entries, control, built)
@@ -279,6 +354,7 @@ pub(crate) struct Staged {
     build_name: String,
     artifacts: Vec<String>,
     count: usize,
+    pub(crate) snapshot: Option<(String, Locations)>,
 }
 
 impl Staged {
@@ -311,8 +387,12 @@ impl Staged {
         };
         let keep: BTreeSet<_> = keep
             .iter()
-            .flat_map(|m| [Some(m.index_file()), Some(m.labels_file()), m.delta_file()])
-            .flatten()
+            .flat_map(|m| {
+                m.metadata_files()
+                    .into_iter()
+                    .chain(std::iter::once(m.index_file()))
+                    .chain(m.delta_file())
+            })
             .collect();
         for (name, kind) in generation
             .entries_while(|| control.check().is_ok())
@@ -327,6 +407,14 @@ impl Staged {
                 .and_then(|s| s.strip_suffix(".usearch"))
                 .or_else(|| {
                     text.strip_prefix("locations-")
+                        .and_then(|s| s.strip_suffix(".json"))
+                })
+                .or_else(|| {
+                    text.strip_prefix("members-")
+                        .and_then(|s| s.strip_suffix(".json"))
+                })
+                .or_else(|| {
+                    text.strip_prefix("location-delta-")
                         .and_then(|s| s.strip_suffix(".json"))
                 })
                 .is_some_and(is_hex64);
@@ -355,6 +443,7 @@ impl Staged {
             build_name,
             artifacts: artifacts.iter().map(|(name, _)| name.clone()).collect(),
             count: manifest.count,
+            snapshot: None,
         };
         for (name, bytes) in artifacts {
             control.check()?;
@@ -380,6 +469,10 @@ impl Staged {
             .map_err(io_error("manifest"))?;
         staged.build.sync_all().map_err(io_error("build sync"))?;
         Ok(staged)
+    }
+
+    pub(crate) fn directory_identity(&self) -> FResult<(u64, u64)> {
+        Ok(self.generation.identity()?)
     }
 
     pub(crate) fn publish(self, control: &Control) -> FResult<usize> {
@@ -444,9 +537,10 @@ mod tests {
     fn mapping(entries: &[GenerationEntry], revision: u64) -> CurrentMapping {
         let identity = identity();
         CurrentMapping {
+            mapping_revision: None,
             units: entries
                 .iter()
-                .map(|e| (e.input_key.clone(), e.units.clone()))
+                .map(|e| (e.input_key.clone(), std::sync::Arc::new(e.units.clone())))
                 .collect(),
             scope: GenerationScope {
                 source_revision: revision,
@@ -459,9 +553,9 @@ mod tests {
                 recipe_id: identity.recipe,
                 sources: entries.len() as u64,
                 unpartitioned_sources: 0,
-                eligible_units: entries.len() as u64,
-                cached_current_units: entries.len() as u64,
-                searchable_current_units: entries.len() as u64,
+                eligible_units: entries.iter().map(|e| e.units.len() as u64).sum(),
+                cached_current_units: entries.iter().map(|e| e.units.len() as u64).sum(),
+                searchable_current_units: entries.iter().map(|e| e.units.len() as u64).sum(),
                 index_entries: entries.len() as u64,
             },
         }
@@ -485,7 +579,7 @@ mod tests {
     type ArcIndex = std::sync::Arc<DenseIndex>;
     fn publish(store: &Dir, entries: &[GenerationEntry], revision: u64) -> Publication {
         let prior = validate(store);
-        let plan = Plan::new(mapping(entries, revision), Some(prior.manifest));
+        let plan = Plan::new(mapping(entries, revision), Some(prior));
         let needed = plan.needed();
         let vectors: Vec<_> = entries
             .iter()
@@ -529,7 +623,7 @@ mod tests {
         let mut added = entries(401).pop().unwrap();
         added.vector[1] = 0.0;
         current.push(added);
-        let plan = Plan::new(mapping(&current, 2), Some(old.manifest.clone()));
+        let plan = Plan::new(mapping(&current, 2), Some(old.clone()));
         assert_eq!(plan.needed().len(), 1, "only the one new input is decoded");
         assert_eq!(publish(&store, &current, 2), Publication::Delta(321));
         assert_eq!(std::fs::metadata(&base).unwrap().ino(), inode);
@@ -538,26 +632,24 @@ mod tests {
         assert_eq!(generation.manifest.delta.as_ref().unwrap().entries.len(), 1);
         let mut query = vec![0.0; 128];
         query[0] = 1.0;
-        let hits = load(&store).search(&query, DENSE_WINDOW).unwrap();
+        let loaded = load(&store);
+        let hits = loaded.search(&query, DENSE_WINDOW).unwrap();
         assert_eq!(
             hits.len(),
             DENSE_WINDOW,
             "retired neighbors do not consume the window"
         );
-        assert_eq!(
-            generation.labels.labels[hits[0].label].input_key,
-            format!("{:064x}", 400)
-        );
-        let keys: BTreeSet<_> = hits
-            .iter()
-            .map(|h| &generation.labels.labels[h.label].input_key)
-            .collect();
+        assert_eq!(loaded.input_key(hits[0].label), format!("{:064x}", 400));
+        let keys: BTreeSet<_> = hits.iter().map(|h| loaded.input_key(h.label)).collect();
         assert_eq!(
             keys.len(),
             hits.len(),
             "segments merge without duplicate inputs"
         );
-        assert!(keys.iter().all(|key| **key >= format!("{:064x}", 80)));
+        assert!(
+            keys.iter()
+                .all(|key| *key >= format!("{:064x}", 80).as_str())
+        );
         assert_eq!(
             resident.search(&query, DENSE_WINDOW).unwrap().len(),
             DENSE_WINDOW,
@@ -568,7 +660,7 @@ mod tests {
         current[0].units[0].path = "renamed.rs".into();
         let duplicate = current[0].units[0].clone();
         current[0].units.push(duplicate);
-        let plan = Plan::new(mapping(&current, 3), Some(generation.manifest));
+        let plan = Plan::new(mapping(&current, 3), Some(generation));
         assert!(
             plan.needed().is_empty(),
             "location publication decodes zero vectors"
@@ -582,7 +674,7 @@ mod tests {
         stage.publish(&Control::unbounded()).unwrap();
         assert_eq!(std::fs::metadata(&base).unwrap().ino(), inode);
         assert_eq!(std::fs::metadata(&delta_path).unwrap().ino(), delta_inode);
-        assert_eq!(validate(&store).labels.labels[0].units.len(), 2);
+        assert_eq!(validate(&store).labels.values().next().unwrap().len(), 2);
         // A reverted base key reactivates its existing ordinal, with no delta work.
         let reverted = entries(1).pop().unwrap();
         current.push(reverted);
@@ -610,7 +702,7 @@ mod tests {
         let prior = validate(&store);
         let mut changed = entries(170);
         changed.drain(..70);
-        let plan = Plan::new(mapping(&changed, 2), Some(prior.manifest.clone()));
+        let plan = Plan::new(mapping(&changed, 2), Some(prior.clone()));
         assert_eq!(
             plan.needed().len(),
             changed.len(),
@@ -627,7 +719,7 @@ mod tests {
         );
         assert!(stage.publish(&Control::unbounded()).is_err());
         fault::disarm_all();
-        assert_eq!(validate(&store).manifest.entries, prior.manifest.entries);
+        assert_eq!(validate(&store).labels, prior.labels);
         assert_eq!(load(&store).search(&initial[0].vector, 5).unwrap().len(), 5);
         assert_eq!(publish(&store, &changed, 2), Publication::Rebuilt(100));
         // Deleting the last sources publishes a valid empty generation.
@@ -640,9 +732,184 @@ mod tests {
         );
         let directory = generation_dir(tmp.path(), &identity().digest);
         assert!(
-            std::fs::read_dir(directory).unwrap().count() <= 6,
+            std::fs::read_dir(directory).unwrap().count() <= 7,
             "scratch is bounded across failures and compactions"
         );
+    }
+
+    #[test]
+    fn location_overlay_rebases_at_its_bound_without_rebuilding_either_ann_segment() {
+        use crate::fault::{self, Action};
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Dir::open_path(tmp.path()).unwrap();
+        let mut current = entries(locations::MAX_CHANGES + 2);
+        full(
+            &store,
+            &identity(),
+            &current,
+            mapping(&current, 1).scope,
+            &Control::unbounded(),
+            &|| {},
+        )
+        .unwrap()
+        .publish(&Control::unbounded())
+        .unwrap();
+        let initial = validate(&store);
+        let directory = generation_dir(tmp.path(), &identity().digest);
+        let base = directory.join(initial.manifest.index_file());
+        let members = directory.join(initial.manifest.members_file());
+        let inodes = (
+            std::fs::metadata(&base).unwrap().ino(),
+            std::fs::metadata(&members).unwrap().ino(),
+        );
+        current.push(entries(current.len() + 1).pop().unwrap());
+        assert!(matches!(
+            publish(&store, &current, 2),
+            Publication::Delta(_)
+        ));
+        let delta = validate(&store).manifest.delta_file().unwrap();
+        let delta_inode = std::fs::metadata(directory.join(&delta)).unwrap().ino();
+        // One addition plus 4,095 shifted inputs fits; the next shift rebases
+        // locations while retaining the independent ANN delta and membership.
+        for entry in current.iter_mut().take(locations::MAX_CHANGES - 1) {
+            entry.units[0].start += 1;
+        }
+        assert!(matches!(
+            publish(&store, &current, 3),
+            Publication::Mapped(_)
+        ));
+        let bounded = validate(&store);
+        assert_eq!(bounded.location_overlay.len(), locations::MAX_CHANGES);
+        assert_eq!(
+            bounded.manifest.labels_sha256,
+            initial.manifest.labels_sha256
+        );
+        let bytes = std::fs::read(directory.join(MANIFEST_FILE)).unwrap();
+        let header: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(header.get("base_entries").is_none() && header.get("entries").is_none());
+        assert!(
+            bytes.len() < 2048,
+            "manifest size does not track the base corpus"
+        );
+        current[locations::MAX_CHANGES - 1].units[0].start += 1;
+        let plan = Plan::new(mapping(&current, 4), Some(bounded.clone()));
+        assert!(plan.needed().is_empty());
+        let (stage, _, _) = plan
+            .stage(&store, &identity(), &[], &Control::unbounded(), &|| {
+                panic!("location rebase must not build ANN")
+            })
+            .unwrap();
+        fault::arm(
+            crate::neural::fault_names::PUBLISH_BEFORE_MANIFEST,
+            0,
+            Action::Fail("rebase failed".into()),
+        );
+        assert!(stage.publish(&Control::unbounded()).is_err());
+        fault::disarm_all();
+        assert_eq!(validate(&store).labels, bounded.labels);
+        assert!(matches!(
+            publish(&store, &current, 4),
+            Publication::Mapped(_)
+        ));
+        let compacted = validate(&store);
+        assert!(compacted.manifest.locations_delta.is_none());
+        assert_ne!(
+            compacted.manifest.labels_sha256,
+            bounded.manifest.labels_sha256
+        );
+        assert_eq!(compacted.labels, mapping(&current, 4).units);
+        assert_eq!(compacted.manifest.delta_file(), Some(delta.clone()));
+        assert_eq!(
+            (
+                std::fs::metadata(base).unwrap().ino(),
+                std::fs::metadata(members).unwrap().ino()
+            ),
+            inodes
+        );
+        assert_eq!(
+            std::fs::metadata(directory.join(delta)).unwrap().ino(),
+            delta_inode
+        );
+        // A fresh edit is relative to the new location base, then reverts cleanly.
+        current[0].units[0].start += 1;
+        publish(&store, &current, 5);
+        assert_eq!(validate(&store).location_overlay.len(), 1);
+        current[0].units[0].start -= 1;
+        publish(&store, &current, 6);
+        assert!(validate(&store).manifest.locations_delta.is_none());
+        assert!(std::fs::read_dir(directory).unwrap().count() <= 7);
+    }
+
+    #[test]
+    fn metadata_validation_checks_bound_content_even_when_manifest_hashes_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Dir::open_path(tmp.path()).unwrap();
+        let current = entries(3);
+        full(
+            &store,
+            &identity(),
+            &current,
+            mapping(&current, 1).scope,
+            &Control::unbounded(),
+            &|| {},
+        )
+        .unwrap()
+        .publish(&Control::unbounded())
+        .unwrap();
+        let prior = validate(&store).manifest;
+        let directory = generation_dir(tmp.path(), &identity().digest);
+        for mutation in 0..7 {
+            let mut manifest = prior.clone();
+            let (bytes, is_members) = match mutation {
+                0 => (
+                    serde_json::to_vec(&vec![current[0].input_key.clone(); 3]).unwrap(),
+                    true,
+                ),
+                1 => (
+                    serde_json::to_vec(&vec![format!("{:064x}", 900); 1]).unwrap(),
+                    true,
+                ),
+                _ => {
+                    let change = serde_json::json!({"key": current[0].input_key, "units": null});
+                    let value = match mutation {
+                        2 => serde_json::json!([change, change]),
+                        3 => {
+                            serde_json::json!([{ "key": format!("{:064x}", 900), "units": current[0].units }])
+                        }
+                        4 => {
+                            serde_json::json!([{ "key": current[0].input_key, "units": current[0].units }])
+                        }
+                        5 => serde_json::json!([{ "key": current[0].input_key, "units": [] }]),
+                        _ => serde_json::Value::Array(vec![change; locations::MAX_CHANGES + 1]),
+                    };
+                    (serde_json::to_vec(&value).unwrap(), false)
+                }
+            };
+            let hash = crate::digest(&bytes);
+            let name = if is_members {
+                manifest.members_sha256 = hash;
+                manifest.members_file()
+            } else {
+                manifest.locations_delta = Some(hash);
+                manifest.location_delta_file().unwrap()
+            };
+            std::fs::write(directory.join(name), bytes).unwrap();
+            std::fs::write(
+                directory.join(MANIFEST_FILE),
+                serde_json::to_vec(&manifest).unwrap(),
+            )
+            .unwrap();
+            assert!(
+                validate_generation(&store, &identity().digest, &identity().recipe, 128).is_err(),
+                "mutation {mutation}"
+            );
+        }
+        std::fs::write(
+            directory.join(MANIFEST_FILE),
+            serde_json::to_vec(&prior).unwrap(),
+        )
+        .unwrap();
+        validate(&store);
     }
 
     #[test]
@@ -665,25 +932,24 @@ mod tests {
         for mutation in 0..6 {
             let mut bad = prior.clone();
             match mutation {
-                0 => bad.base_entries.push(bad.base_entries[0].clone()),
+                0 => bad.members_sha256 = "../outside".into(),
                 1 => {
                     bad.delta = Some(DeltaManifest {
                         sha256: "ab".repeat(32),
                         entries: vec![bad.base_entries[0].clone()],
                     })
                 }
-                2 => bad.entries.push("ff".repeat(32)),
+                2 => bad.locations_delta = Some("invalid".into()),
                 3 => bad.index_sha256 = "../outside".into(),
                 4 => {
                     let entries: Vec<_> = (100..165).map(|i| format!("{i:064x}")).collect();
-                    bad.entries.extend(entries.clone());
                     bad.delta = Some(DeltaManifest {
                         sha256: "ab".repeat(32),
                         entries,
                     });
                 }
                 _ => {
-                    bad.entries.drain(..65);
+                    bad.base_count = usize::MAX;
                 }
             }
             assert!(validate_membership(&bad).is_err());

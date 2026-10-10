@@ -1329,8 +1329,8 @@ evidence; no real-device throughput or task-quality gain is claimed.
 ### T008 — Maintain and publish only changed semantic work
 
 Selected; E2/E3 maintenance, ANN deltas, affected-location reconciliation and verified/
-resident segment reuse are implemented experimentally. Full location serialization and
-generation metadata bookkeeping remain corpus-sized T008 work. Depends on
+resident segment reuse are implemented experimentally. Generation v5 adds bounded
+location overlays, shared mapping snapshots and clean-restart publication reuse. Depends on
 001 T011's source acceptance seam and T006/T007's bounded preparation. Current input-key cache reuse is retained. Replace
 normal edit-time full walks and generation rebuilds with work proportional to the
 changed inputs and their locations. Full reconciliation is still valid for initial
@@ -1423,7 +1423,7 @@ Implemented E3 ANN publication in [publication.rs](../../src/neural/index/public
 and [query.rs](../../src/neural/query.rs), shared by CLI preparation and the existing
 MCP driver:
 
-- Generation **v4** separates sorted active input/location labels from immutable base
+- Generation **v5** separates current input locations from immutable base
   membership. There is one USearch F16/cosine base and at most one F16/cosine delta.
   Missing active base keys are tombstones; a reverted base key reactivates its existing
   vector. Duplicate source locations share one input vector. Location-only publication
@@ -1450,7 +1450,8 @@ MCP driver:
   Exhaustion pauses by name with pending work intact; finalization does not retry again.
   CLI publication retains its existing bounded-command, named-failure behavior.
 - Query fan-out is at most two USearch filtered searches and 128 candidates before
-  merging the final 64. Segment ordinals translate to active location ordinals.
+  merging the final 64. Segment ordinals select immutable input keys; a persistent
+  ordered map checks active membership and supplies locations in O(log n).
   Tombstones are excluded inside ANN selection, before the candidate window is limited;
   final source-hash/range eligibility remains unchanged. Segment memberships are
   disjoint and validated, so shared inputs cannot appear twice. Approximate ANN search
@@ -1459,8 +1460,8 @@ MCP driver:
 - In-place USearch edits were rejected for this slice because a restart-safe checkpoint
   would still serialize the entire base or require a separate mutation journal. The
   bounded overlay reuses the maintained library's serialization, redb's authoritative
-  cache and the existing preparation owner. No new table, broker, dependency or thread.
-  Format v1–v3 generations are refused by name and republished from cache by preparation
+  cache and the existing preparation owner. No new table, broker or thread.
+  Format v1–v4 generations are refused by name and republished from cache by preparation
   or repair; schema 9, partition identities and vector cache format do not change.
 
 Implemented warm publication reuse in [mapping.rs](../../src/neural/index/mapping.rs)
@@ -1478,9 +1479,9 @@ and [verification.rs](../../src/neural/index/verification.rs), shared by the CLI
   conservative 256 MiB logical-payload bound (not allocator overhead or total RSS).
   Refresh is paged through the existing owner steps. Restart, cancellation of a taken
   view, identity change, purge and explicit mapping audit/repair can rebuild it from
-  redb. No new durable journal, schema, table, thread or dependency is added: the
-  schema-9 queues already preserve obligations, and one restart baseline is simpler
-  than another durable materialized view with its own migration/recovery contract.
+  redb when authoritative inputs changed. No new durable journal, schema, table or
+  thread is added: the schema-9 queues preserve obligations. Clean restart publication
+  can reuse its revision fence, as described below.
 - Publication and serving share at most two verified ANN-file receipts per Engine.
   A receipt retains the verified file descriptor and checks device/inode, length,
   mtime and ctime (including nanoseconds), against both the held inode and the current
@@ -1494,20 +1495,65 @@ and [verification.rs](../../src/neural/index/verification.rs), shared by the CLI
   A new delta restores only that segment; location-only publication or base reversion
   restores no ANN data. Header/geometry validation remains mandatory for new buffers;
   reused segments still check dimensions, count, scalar and metric against the new
-  manifest. Each generation rebuilds its own active-ordinal translations and locations.
+  manifest. Generations share immutable membership and location snapshots; no full
+  active-ordinal translation array is rebuilt.
   In-flight windows retain their original immutable generation. Every warm request
   checks Engine lifetime, prepared identity and the held manifest version; manifest
   replacement or profile changes refresh/refuse even without an invalidation hint.
   Once loaded, an unchanged generation serves its verified in-memory copy; segment
   file versions are rechecked on generation refresh, not on every warm query.
 
-**Remaining T008 work:** mapping snapshots, membership comparison, full location JSON
-serialization/read/hash and active-label translation still scale with corpus size;
-restart still performs one paged database baseline, and compaction still rebuilds the
-base. These changes remove repeated database mapping/cache-layout scans, unchanged ANN
-hashing and unchanged ANN restoration from normal warm publication, not all O(n) work.
-E4 remains separate. No 80,000-file throughput, real model cost or task-quality result
-is claimed.
+Implemented compact metadata in [locations.rs](../../src/neural/index/locations.rs),
+[publication.rs](../../src/neural/index/publication.rs), and [cache.rs](../../src/neural/cache.rs):
+
+- Generation v5 moves base membership into one immutable `members-<sha>.json` artifact.
+  The manifest retains counts, artifact hashes, coverage/revision and bounded ANN-delta
+  keys. A location base has one replacement/tombstone overlay, at most 4,096 changed
+  keys and 32 MiB serialized. Crossing either limit compacts locations independently;
+  unchanged ANN base, ANN delta and membership remain untouched. ANN compaction also
+  compacts locations. The existing atomic manifest switch and closed-set cleanup own
+  all artifacts. No additional publication journal or database checkpoint is introduced.
+- The disposable mapping view, published snapshot and serving generations share
+  `imbl::OrdMap<String, Arc<Vec<UnitLocation>>>`. Clone shares tree nodes; updates copy
+  affected tree paths and changed location values. Structural diff skips unchanged
+  shared nodes. The owner remembers a published root only after successful publication;
+  failures leave differences discoverable on retry without another acknowledgment log.
+  Full reconciliation can create an independently allocated tree and thus needs a full
+  comparison. Cold load and location compaction also retain corpus-sized work.
+- Held-file receipts cache decoded membership, location base and the single overlay.
+  New or changed bytes are bounded, hashed and checked for sorted unique keys, valid
+  units, disjoint segment membership and active counts. Only new overlays are read on
+  ordinary refresh; the base membership join is reused for the same immutable pair.
+  Retention is one artifact per metadata role, one active snapshot, and a bounded set
+  of non-base keys; old request windows retain their own snapshots. As with ANN receipts,
+  audits always verify independently and receipts do not survive restart.
+- Every source/partition/cache mapping commit advances `semantic_mapping_revision` in
+  the same redb transaction, including lexical-only builds. This is an additive key in
+  existing META, with absent value zero and checked overflow; schema remains 9. A stable
+  mapping walk records that revision plus coverage counters in the manifest. Publication
+  first verifies the generation and compares its durable revision and source revision;
+  an unchanged reopened owner can return Current without partition/cache-layout scans.
+  Partition/cache changes invalidate reuse even without a source revision change.
+  Changed input after restart still requires one paged baseline; explicit repair/audit
+  deliberately reconciles. Preparation's source/partition discovery remains separate.
+  This is publication reuse, not zero-I/O restart or automatically resumed inference.
+
+**Remaining costs:** initial bootstrap, cold artifact verification, changed-input restart
+reconciliation, explicit repair, location rebasing and ANN compaction still scale with
+corpus size. Overlay comparison/serialization and ANN delta rebuilds are bounded, not
+strictly proportional to the latest edit. Candidate eligibility now uses ordered-map
+lookup rather than an ordinal boolean array. E4 model-aware inputs remain separate.
+No 80,000-file throughput, real-model cost or task-quality result is claimed.
+
+Reference inspected, not executed upstream: imbl **7.0.2**, Cargo.lock archive SHA-256
+`46bad832b9b463ed9398b8506488cc2e3b897a9d44f13af115f382aac71f4fec`,
+[`src/ord/map.rs`](https://docs.rs/imbl/7.0.2/src/imbl/ord/map.rs.html),
+`OrdMap::{clone,diff}`, `PartialEq`, and tests `diff_clone_derived_shared_structure` /
+`diff_clone_derived_narrow_keys`. The published archive records source commit
+`834c67f1e08c63a4d662a4132425026a4cea7b25` with a dirty flag; the archive pin is the
+inspected authority. T008 uses its ordinary persistent tree for disposable in-memory
+snapshots only. Foundry owns durable JSON, integrity, bounded overlays and atomic
+publication. This dependency avoids a custom persistent map or a second dirty-key log.
 
 Reference inspected, not executed: USearch **2.26.2** (the Cargo.lock version),
 [`rust/lib.rs`](https://github.com/unum-cloud/usearch/blob/v2.26.2/rust/lib.rs)

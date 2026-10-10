@@ -68,7 +68,7 @@ struct View {
     recipe: String,
     rows: BTreeMap<String, cache::PartitionRecord>,
     reverse: BTreeMap<String, BTreeSet<String>>,
-    units: BTreeMap<String, Vec<UnitLocation>>,
+    units: Locations,
     eligible: u64,
     cached: u64,
     bytes: u64,
@@ -88,6 +88,7 @@ impl View {
                 }
             }
             if let Some(units) = self.units.get_mut(&unit.input_key) {
+                let units = std::sync::Arc::make_mut(units);
                 let before = units.len();
                 units.retain(|unit| unit.path != path);
                 self.cached -= (before - units.len()) as u64;
@@ -135,6 +136,7 @@ impl View {
             if cached {
                 self.cached += 1;
                 let units = self.units.entry(unit.input_key.clone()).or_default();
+                let units = std::sync::Arc::make_mut(units);
                 let location = UnitLocation {
                     path: path.to_owned(),
                     start: unit.start as u64,
@@ -176,6 +178,7 @@ pub(crate) struct MappingWalk {
     ticket: u64,
     epoch: u64,
     source_revision: u64,
+    mapping_revision: u64,
     sources: u64,
     full: bool,
     after: Option<String>,
@@ -233,6 +236,7 @@ impl MappingWalk {
             ticket: state.serial,
             epoch: state.epoch,
             source_revision: engine.source_revision()?,
+            mapping_revision: engine.semantic_mapping_revision()?,
             sources: cache::source_count(&engine.db)?,
             full,
             after: None,
@@ -312,6 +316,7 @@ impl MappingWalk {
         Ok(CurrentMapping {
             coverage,
             units,
+            mapping_revision: stable.then_some(self.mapping_revision),
             scope: GenerationScope {
                 source_revision: self.source_revision,
                 complete,
@@ -474,12 +479,14 @@ mod tests {
             reads,
             "unchanged scan leaves mapping clean"
         );
+        let revision = engine.semantic_mapping_revision().unwrap();
         fault::arm(
             crate::fault::names::SOURCE_BEFORE_COMMIT,
             0,
             crate::fault::Action::Fail("commit failed".into()),
         );
         assert!(engine.replace_source("f0000.md", "uncommitted").is_err());
+        assert_eq!(engine.semantic_mapping_revision().unwrap(), revision);
         fault::disarm_all();
         let reads = fault::reached(PARTITION_READ);
         walk(&engine);
