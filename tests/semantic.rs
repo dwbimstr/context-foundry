@@ -6719,3 +6719,151 @@ fn the_references_refusal_floor_covers_a_maximum_length_path() {
         response::references_refusal_floor()
     );
 }
+
+#[test]
+fn task_evidence_delivers_compiler_references_only_with_both_current_spans() {
+    use context_foundry::{Strategy, store::ContextOptions, task_context};
+    let mut world = toy();
+    world
+        .engine
+        .as_mut()
+        .unwrap()
+        .refresh(&Control::unbounded())
+        .unwrap();
+    world.import_ok(RA, "task-coverage", &toy_artifact());
+    let wid = world.engine().workspace_id().unwrap();
+    let task = |command| {
+        world
+            .engine()
+            .task_context(
+                &task_context::parse(
+                    json!({"workspace_id":wid,"task_id":"alpha-task","command":command}),
+                )
+                .unwrap(),
+                &Control::unbounded(),
+            )
+            .unwrap()
+    };
+    task(json!({"op":"create","title":"Preserve alpha consumers"}));
+    task(
+        json!({"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"goal","kind":"requirement","text":"Preserve alpha behavior","author":"operator","provenance":"fixture","source_links":[]}}]}),
+    );
+    let compose = || {
+        world
+            .engine()
+            .context_candidates_with(
+                "alpha",
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    task: Some(task_context::Scope {
+                        workspace_id: &wid,
+                        task_id: "alpha-task",
+                        expected_revision: 2,
+                    }),
+                    compose_evidence: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let context = compose();
+    let packed = response::pack_enriched_context(
+        &context,
+        None,
+        response::Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    let references: Vec<Value> = packed
+        .text
+        .lines()
+        .filter_map(|l| l.strip_prefix("task-reference: "))
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert!(!references.is_empty(), "{}", packed.text);
+    for r in &references {
+        assert_eq!(r["kind"], "references");
+        assert_eq!(r["producer"], RA);
+        assert_eq!(r["target"], "unique");
+        for key in ["definition", "reference"] {
+            let handle =
+                context_foundry::store::HandleRef::parse(r[key].as_str().unwrap()).unwrap();
+            assert!(
+                context
+                    .batch
+                    .items
+                    .iter()
+                    .any(
+                        |item| item.handle.as_ref().is_some_and(|h| h.path == handle.path
+                            && h.sha256.starts_with(&handle.sha32)
+                            && h.start <= handle.start
+                            && h.end >= handle.end)
+                    ),
+                "{r}"
+            );
+        }
+    }
+    for tokens in [1000, 1800, 2500, 4000, 12000] {
+        let Ok(packed) = response::pack_enriched_context(
+            &context,
+            None,
+            response::Budget::request(tokens),
+            &response::stdout_bytes,
+        ) else {
+            continue;
+        };
+        let report: Value = serde_json::from_str(
+            packed
+                .text
+                .lines()
+                .find_map(|l| l.strip_prefix("task-evidence: "))
+                .unwrap(),
+        )
+        .unwrap();
+        let references: Vec<Value> = packed
+            .text
+            .lines()
+            .filter_map(|l| l.strip_prefix("task-reference: "))
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(
+            report["compiler_relationships"]["delivered"],
+            references.len()
+        );
+        for reference in references {
+            for key in ["definition", "reference"] {
+                let wanted =
+                    context_foundry::store::HandleRef::parse(reference[key].as_str().unwrap())
+                        .unwrap();
+                assert!(
+                    report["sources"].as_array().unwrap().iter().any(|s| {
+                        let h =
+                            context_foundry::store::HandleRef::parse(s["handle"].as_str().unwrap())
+                                .unwrap();
+                        s["representation"] == "body"
+                            && h.ws16 == wanted.ws16
+                            && h.path == wanted.path
+                            && h.sha32 == wanted.sha32
+                            && h.start <= wanted.start
+                            && h.end >= wanted.end
+                    }),
+                    "a compiler line requires both delivered bodies: {}",
+                    packed.text
+                );
+            }
+        }
+        assert!(packed.tokens <= tokens);
+    }
+    world.set_source("src/other.rs", "pub fn gamma() {}\n");
+    let stale = compose();
+    let packed = response::pack_enriched_context(
+        &stale,
+        None,
+        response::Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(!packed.text.contains("task-reference:"));
+    assert!(packed.text.contains("\"coverage\":\"stale\""));
+}

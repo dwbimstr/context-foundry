@@ -2158,6 +2158,15 @@ impl Engine {
     /// overshoots them. A handle seed's split identities are read as one
     /// set: their definitions and references deduplicated by site.
     pub fn references(&self, request: &ReferencesRequest) -> FResult<ReferencesOutcome> {
+        self.references_in(&self.db.begin_read()?, request)
+    }
+
+    /// Compose compiler evidence in the caller's final source/task snapshot.
+    pub(crate) fn references_in(
+        &self,
+        tx: &redb::ReadTransaction,
+        request: &ReferencesRequest,
+    ) -> FResult<ReferencesOutcome> {
         if !(1..=REFERENCES_MAX_LIMIT).contains(&request.limit) {
             return Err(invalid("references limit must be 1..256"));
         }
@@ -2176,18 +2185,17 @@ impl Engine {
         {
             return Err(FoundryError::WrongWorkspace);
         }
-        let tx = self.db.begin_read()?;
-        let freshness = self.freshness_in(&tx)?;
-        let producers = read_producers(&tx)?;
+        let freshness = self.freshness_in(tx)?;
+        let producers = read_producers(tx)?;
         // One cache and one visited-file budget serve the seed read, the
         // definition verification and the reference labeling alike.
         let mut files: HashMap<String, Option<FileView>> = HashMap::new();
         let mut visited: BTreeSet<String> = BTreeSet::new();
         let mut examined = 0usize;
         let seeded = match &seed {
-            Seed::Symbol(prefix) => resolve_prefix(&tx, prefix, &producers)?,
+            Seed::Symbol(prefix) => resolve_prefix(tx, prefix, &producers)?,
             Seed::Position(handle, offset) => resolve_position(
-                &tx,
+                tx,
                 handle,
                 *offset,
                 &producers,
@@ -2197,7 +2205,7 @@ impl Engine {
                 &mut visited,
             )?,
             Seed::Handle(handle) => resolve_handle(
-                &tx,
+                tx,
                 handle,
                 &producers,
                 freshness.source_revision,
@@ -2288,7 +2296,7 @@ impl Engine {
             window,
             stale,
         } = target_window(
-            &tx,
+            tx,
             &producers,
             &targets,
             after.as_ref(),

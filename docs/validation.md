@@ -1,5 +1,90 @@
 # Validation
 
+## Evidence coverage, host application and real CPU maintenance — 2026-10-10
+
+Experimental branch continuation; no release/default promotion, real-provider cost
+claim or production model selection. The revised
+[pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
+separates implemented behavior from remaining acceptance.
+
+**Evidence.** Task composition reuses selected compiler reference publications in the
+final source/task read, retaining original definition-unit seeds before body coalescing.
+Non-definition/changed seeds are visible skips; unavailable/stale/ambiguous/capped
+windows cannot imply absence or unique calls. Compiler lines require a unique target
+and both delivered endpoint bodies. A constructed SCIP fixture checks publication,
+source invalidation and delivery budgets. Real SDK MCP composition across two admitted
+roots preserves separate identities for identical paths/bytes, includes one primary task
+view, excludes foreign task state and refuses reference-only task selection. These are
+source/reference candidates; tests are not executed automatically and constraint
+conflicts are not inferred.
+
+**Host boundary.** Installed npm `@oh-my-pi/pi-coding-agent@18.6.0` with Bun 1.3.14
+(`@oven/bun-linux-x64`) ran through the actual Rust gateway in
+`tests/gateway.rs::real_omp_applies_exported_view_on_resumed_tool_history`. Packages,
+configuration and sessions were isolated outside Git; no global host configuration was
+changed. The actual dist runtime, not the older inspected source tree, supplied the
+consumer evidence. Three scripted loopback completions exercised a real read tool,
+saved history and a fresh process resuming that history. The bound result's original
+text remained in the host session; the outbound result contained the complete exported
+view. Final request SHA-256 matched `observation.applied_view`. The resumed request was
+**12,757 incoming bytes → 3,787 forwarded bytes**. This single fixture's byte reduction
+is not provider-token savings, task-quality evidence or an automatic fold-quality result.
+The real-host test completed in 20.76 s.
+
+Gateway fixtures additionally verify exact preservation of all other request values,
+wrong-content/duplicate/unpaired/out-of-order refusals before upstream, original recovery,
+stale export revision refusal and idempotent replay across restart. Packet tests check
+final serialized byte limits, unchanged absent-carrier bytes, altered digests and
+protected-entry representations. Ordinary meter requests remain byte-exact. The gateway
+loads an explicitly selected frozen packet once; source freshness at send, live revision
+synchronization and provider consumption remain unknown. Applied receipts describe the
+body serialized for an attempted send, including failures. See the
+[application contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#experimental-exported-task-view-application--2026-10-10)
+and [operator workflow](experimental-context.md#exported-task-views-in-omp-requests).
+
+**Real model and available hardware.** The expanded ignored test
+`tests/knowledge.rs::local_real_cpu_generation_accepts_a_cited_brief_and_reuses_it`
+used explicitly supplied Qwen2.5-Coder-0.5B-Instruct Q4_K_M, GGUF SHA-256
+`1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32`, and the existing
+native worker SHA-256 `25c6978579780973f0563742d87d2d30cf9fe2e5e34f680a98c4cd8892319740`
+linked to llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`. Parameters: CPU,
+2 threads, ChatML, 4,096 context tokens, batch 128, output allowance 512, 2 GiB hard
+address-space ceiling, 180 worker CPU seconds, 90 s load/call deadlines. Observed
+isolation was `linux-seccomp-fd-v1`. Linux x86_64 exposes five CPUs/affinity slots,
+a four-CPU cgroup quota (`400000 100000`), a 32 GiB memory limit, and no GPU device.
+
+| Synthetic source state | Generated | Calls | Observed prompt/output tokens | Worker peak bytes |
+| --- | ---: | ---: | ---: | ---: |
+| `q.remove(0)` | 1 | 1 | 376 / 124 | 726,601,728 |
+| Changed to `q.remove(1)` | 1 | 1 | 380 / 128 | 726,933,504 |
+| Reopen store, revert source, GGUF absent | 0; cached reuse 1 | 0 | 0 / 0 | 0; no launch |
+
+Both model calls had complete usage observations and accepted source-bound brief
+publication. A current replay also made no calls/launches with its model absent.
+Restart/revert verified zero artifact bytes and made no HTTP requests. Total test time
+was 77.01 s. This verifies generation/maintenance/cache lifecycle, not the semantic
+correctness or coding-task benefit of the generated prose. It does not compare thread
+counts or long-context model quality. Real embedding/combined-model pressure,
+macOS CPU/Metal, GPU allocation/thermal/battery and signed-package acceptance remain
+unexecuted on this hardware. The existing resource/worker lifecycle fixtures remain
+separate from this real-model run.
+
+Verification: **537 affected automated tests** passed across library, compiler evidence,
+root dispatch, task state/retrieval, gateway, knowledge, MCP and economics suites, plus
+**21 subprocess crash/recovery cases**. The two real-consumer/model tests above were
+run explicitly despite their default ignored status. Default all-target Clippy and
+actual no-default-feature library/binary Clippy passed with warnings denied. A real
+`--no-default-features --features test-faults --bin foundry` build then passed **73**
+task-evidence/task-state/gateway harness checks, and the real OMP test passed again
+(15.98 s; same request sizes). Harness libraries and auxiliary fault binaries retain
+default features; this is consumer verification of the actual lexical-only `foundry`,
+not a claim that Cargo's self-dev-dependency disables semantic in every test library.
+Formatting, diff whitespace and Markdown links passed (47 files, 770 links, 202 anchors).
+The default-feature binary was restored after the lexical-only checks.
+
+The setup draft now records isolated pinned OMP/Bun installation and test commands;
+its save was confirmed. Publication and fresh-environment restoration remain pending.
+
 ## Cold verification and changed-input publication — 2026-10-10
 
 Experimental schema 12 adds a redb publication lookup and bounded transactional

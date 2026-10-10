@@ -37,15 +37,15 @@ schema-9 durable changed-work queues, explicit continuous maintenance and cheap 
 T008 E3 now adds bounded ANN deltas, location-only publication, atomic manifest recovery
 and visible publication backoff. Warm publication now refreshes affected locations and
 reuses verified/resident segments. Generation v5 adds bounded location overlays, shared
-metadata snapshots and clean-restart publication reuse. Cold verification, changed-input
-restart and compaction remain corpus-sized. T009 now implements opt-in body windows
+metadata snapshots and clean-restart publication reuse. Cold verification, unmatched/overflow restart reconciliation and compaction remain
+corpus-sized; matching changed-input checkpoints use bounded transactional lookups. T009 now implements opt-in body windows
 with bounded parent context, versioned input/call geometry and actual-token batching.
 Address profiles/caches remain usable; real-device parity/quality and independent
 file/area representations remain open. 010 T002 now adds explicit selective HTTP
 generation, atomic completion reuse and source-bound area summaries in schema 10.
 Opt-in continuous MCP scheduling, shared client admission and source-first derived
 context now work on both transports. Owned local generation adds pinned snapshot reuse,
-idle unload and per-worker CPU/RAM/Metal controls. Shared memory admission is implemented; CPU/global GPU pressure policies, Metal
+idle unload and per-worker CPU/RAM/Metal controls. Shared memory admission is implemented; native CPU/global GPU pressure policies, Metal
 hardware acceptance and real-model task acceptance remain open. See the
 [revised build order](../docs/context-ecosystem-plan.md#revised-build-order).
 005 T005 and 003 T009 now implement a scoped static Python HTTP boundary producer and
@@ -53,8 +53,11 @@ explicit primary-task evidence composition introduced in schema 11. Schema 12 ad
 a transactional publication lookup for changed-input restart. Changed-source/config freshness,
 ambiguous/unsupported/incomplete joins, atomic incremental publication, CLI/opt-in MCP,
 source-bound brief discovery and delivered-facet accounting are verified in sandbox
-fixtures. Broader framework/multi-root coverage and paired real-host quality/economics
-remain. See the [updated pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
+fixtures. The next continuation adds admitted-root/selected-compiler evidence,
+explicit exported task-view application in the Rust gateway, and installed OMP 18.6.0
+continuation/history checks against a scripted upstream. Real Qwen CPU generation now
+covers changed input and restart/revert cache reuse. Broader frameworks, live host-view
+synchronization, real-device embedding/Metal and paired task quality/economics remain. See the [updated pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.
 
@@ -101,7 +104,7 @@ work. A release delivers the whole intended product, not basic search alone.
 | [007](007-multi-workspace-context/spec.md) | Ask one question across explicitly admitted repositories and receive one cited, budgeted response | 001 T004–T006; 003 T001–T002 | Admission at owner launch only; no cross-root edges, global snapshot or registry |
 | [008](008-scoped-durable-memory/spec.md) | Remember, correct and forget explicit project knowledge | 001 | Independent extension; no transcript harvesting |
 | [009](009-optional-semantic-retrieval/spec.md) | Prepare neural context progressively and retain expensive work | 001; 003 for foreground coexistence | Optional; from 2026-10-07 address cards on a llama.cpp worker, used only for queries that name nothing, enabled only after G2 shows a gain |
-| [010](010-source-bound-derived-knowledge/spec.md) | Find behavior through source-bound LLM briefs and area knowledge | 001 source identity; 003 delivery; 009 resource admission | Experimental T001 and explicit T002 HTTP/CLI generation, completion reuse and area lineage implemented locally; continuous MCP scheduling/shared client admission implemented; owned local generation/per-worker controls implemented; CPU/global GPU pressure policies, Metal acceptance and real-model task utility remain |
+| [010](010-source-bound-derived-knowledge/spec.md) | Find behavior through source-bound LLM briefs and area knowledge | 001 source identity; 003 delivery; 009 resource admission | Experimental T001 and explicit T002 HTTP/CLI generation, completion reuse and area lineage implemented locally; continuous MCP scheduling/shared client admission implemented; owned local generation/per-worker controls implemented; native CPU/global GPU pressure policies, Metal acceptance and real-model task utility remain |
 | [013](013-owned-learning/spec.md) | Improve decisions through repeated owned Rust fine-tuning of ModernBERT with a decision head | 001/003 for data; 005 for useful graph selection; separate from 009 retrieval vectors | **Frozen off 2026-10-07**: implemented tasks stand; no further work; signed-package items are not release conditions |
 
 A release waits for all of them (owner policy 2026-10-04): every task of 001, 003, 005,
@@ -135,7 +138,7 @@ the first search/graph family is not a claim of full Laya parity.
 | 007 | T001 admit, query and cite several roots in one budgeted response | T001 implemented and accepted 2026-10-04, committed in `cc402e0`; unreleased |
 | 008 | T001 record lifecycle; T002 export/forget | Spec-pass decisions recorded 2026-10-03 (one `memory` tool). T001 and T002 implemented 2026-10-04 with store schema 3, after cross-lab review; acceptance and validation are recorded in validation. Unreleased |
 | 009 | D001 runtime/index disposition; T001 durable preparation; T002 retrieval; T003 progressive preparation; T004 address cards on a llama.cpp worker | D001 chosen values recorded 2026-10-03; pinned artifact/runtime stand until T004. The semantic-item line form was decided 2026-10-04 (context-v2 § Evidence items). D001 serving-limit, isolation, admission and reference-comparison evidence was executed 2026-10-04 (4-bit against BF16 cosine median 0.981; YaRN intended). T001, T002 and T003 implemented and accepted 2026-10-05 under development isolation. The T003 real lifecycle passed its bounds on 2026-10-06: 2,099 units cold in about 845 s, steady queries 184–215 ms, edit catch-up 1 unit, restart 0. The 2026-10-07 model comparison kept Nemotron and showed dense fusion below lexical retrieval on identifier tasks. T004 merged 2026-10-08 (`fd01489`, cross-lab SHIP, gates green). G2 on 2026-10-08 selected EmbeddingGemma 2 (139 of 388 gained, 0 lost); G1 with the profile and vector parity also pass. Nemotron was INVALID and closed by the owner. Semantic retrieval stays off and unadvertised until the installed-artifact checks pass on the signed package ([measurement handoff](../docs/measurement-handoff.md)). The cache cap became an operator setting (2026-10-08). Package acceptance (signing) remains. See validation |
-| 010 | T001 source-bound derived briefs; T002 governed generation and area knowledge | Experimental T001 implemented/tested locally on 2026-10-09: schema 8, strict CLI/library import, lexical conceptual discovery, exact citations, source-hash invalidation, replay/CAS/forget/recovery and source-first bounded context. T002 adds selective HTTP/CLI generation, transactional completion reuse and bounded area lineage in schema 10. HTTP fixtures use synthetic outputs; continuous MCP scheduling/shared client admission implemented; owned local generation/per-worker controls and shared memory admission implemented; CPU/global GPU pressure policies, Metal acceptance and real-model task utility remain. See validation |
+| 010 | T001 source-bound derived briefs; T002 governed generation and area knowledge | Experimental T001 implemented/tested locally on 2026-10-09: schema 8, strict CLI/library import, lexical conceptual discovery, exact citations, source-hash invalidation, replay/CAS/forget/recovery and source-first bounded context. T002 adds selective HTTP/CLI generation, transactional completion reuse and bounded area lineage in schema 10. HTTP fixtures use synthetic outputs; continuous MCP scheduling/shared client admission implemented; owned local generation/per-worker controls and shared memory admission implemented; native CPU/global GPU pressure policies, Metal acceptance and real-model task utility remain. See validation |
 | 013 | D001 actual recipe/package acceptance; T001 joint-input data; T002 real fitting; T003 inference/rollback; T004 repeat/deploy | **Frozen off 2026-10-07 (owner).** T001, T002 and T003 accepted 2026-10-05 under development isolation; `src/laya.rs` retired. Measurement phase 2026-10-06: real two-round training on the 1,088 labeled rust-lang/rust rows (round 1 eligible on 71 held-out rows, round 2 a rejected candidate); T004's repeat-lifecycle checks passed; resident serving adds about 200–300 ms per routed request; exhaustive numerical comparison passes. The router changed one route of 71 with identical evidence and stays off; T004's signed profile and D001's package acceptance are no longer release conditions |
 
 001 D001 is resolved. 009 D001's chosen values are recorded; its limit checks and

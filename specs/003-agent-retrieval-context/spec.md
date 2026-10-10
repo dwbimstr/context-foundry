@@ -2,8 +2,8 @@
 
 Planning addition, 2026-10-09: [T006](#t006--validate-retrieval-repairs-in-real-coding-tasks)
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
-Later task-state and working-view milestones require amendments to this spec; the
-current MCP and meter-only gateway do not claim conversation-editing authority.
+The 2026-10-10 continuation now permits explicit frozen task-view application at the
+gateway boundary under the [adapter contract](contracts/adapter-economics.md#experimental-exported-task-view-application--2026-10-10). Ordinary MCP delivery still reports host application as unknown.
 
 Status: T001–T003 and the optional shared owner implemented and verified locally,
 2026-10-01, including concurrent OMP 18.4.9 and Codex 0.159.2 service on one store
@@ -697,8 +697,9 @@ exercise opt-in behavior and diagnostic flags, byte-identical untraced/traced te
 request IDs and error-result recording. Codex CLI `0.159.0-alpha.3` accepts the
 Foundry startup configuration with the experimental flag via command-local `-c`
 overrides; no global configuration changed. This is configuration parsing, not an
-agent-task run or evidence that the provider consumed a response. OMP and Bun are
-not installed in this cloud workspace; live paired task/usage acceptance is pending.
+agent-task run or evidence that the provider consumed a response. OMP/Bun were absent
+at that inspection. The 2026-10-10 continuation installs and checks OMP 18.6.0/Bun 1.3.14
+at the application boundary; live paired task/usage acceptance remains pending.
 
 **Host capability inspection (source only):** the corpus pin
 [`can1357/oh-my-pi@5b8d5b8a15ab1711597584aadbdc112c55befed1`](https://github.com/can1357/oh-my-pi/tree/5b8d5b8a15ab1711597584aadbdc112c55befed1)
@@ -712,15 +713,15 @@ replacements across handlers in load order”, “keeps chaining after handler e
 and “rejects instead of returning untransformed context when its caller aborts a
 pending handler”. These upstream tests were inspected, not executed here.
 
-The proposed Foundry integration must differ deliberately: final-byte budget and
+The Foundry integration differs deliberately: final-byte budget and
 view-revision acknowledgment are checked after all transformations at the actual
 supported transport. An early hook acknowledgment can be invalidated by later hooks;
 an error may leave the prior payload in use. Upstream `docs/extensions.md` says
 `before_provider_request` depends on the provider transport calling `onPayload`
 (`devin-agent` does not), and an ephemeral turn's `maxContextBytes` check precedes
 payload replacement. Consequently this inspection proves neither end-to-end budget
-enforcement nor applied-view acknowledgment. Recheck the selected installed host
-version and provider in the next live run. No third-party code is vendored.
+enforcement nor applied-view acknowledgment. The later installed-host check below
+verifies the gateway boundary against a scripted upstream. No third-party code is vendored.
 
 **Run procedure when measurement inputs are available:**
 
@@ -858,8 +859,8 @@ not success. This acceptance evidence does not block experimental implementation
 `context --task ID --task-revision REV --compose-evidence` and MCP
 `context {task_id,task_revision,compose_evidence:true}` under
 `--experimental-task-context`. Optional `boundary_config` names 005's indexed config;
-`include_briefs` retains 010's explicit opt-in. The initial slice serves one primary
-store; a multi-root owner refuses composition explicitly. Ordinary and exact-name
+`include_briefs` retains 010's explicit opt-in. The initial primary-store slice is now
+extended to admitted roots by the continuation below. Ordinary and exact-name
 context remains byte-compatible without the new option.
 
 The planner starts with eight main-query candidates, at most four selected active
@@ -898,7 +899,34 @@ catalog fixture exposes a provider returning `items` while consumer/test require
 the route unchanged. A deterministic in-process Python transport executes the selected
 provider, consumer and test before/after the repair. This verifies the sandbox contract,
 not a deployed HTTP service or autonomous model patch quality. Real-host paired tasks,
-provider economics, broader language/framework coverage and multi-root composition
-remain follow-ups. [Usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
+provider economics and broader language/framework coverage remain follow-ups. [Usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
 and [validation](../../docs/validation.md#boundary-relationships-and-task-evidence--2026-10-10)
 retain the practical limits.
+
+
+#### T009 evidence coverage continuation — 2026-10-10
+
+The selected continuation reuses compiler `references` in the composition's final
+read transaction: at most four seed windows and eight references per window, retaining
+005's producer, selected-snapshot, source, range and ambiguity checks. Compiler facts
+remain references, not inferred call edges or proof that a test verifies a requirement.
+Only unique targets with delivered definition and reference spans may emit a compiler
+relationship line. Missing, stale, partial, ambiguous and capped windows stay visible.
+Exact query units are retained before source-span coalescing; non-definition and
+changed/missing seeds are counted explicitly instead of refusing the whole request.
+No new graph table, model call or background producer is needed.
+
+Composition may also search explicitly admitted reference roots using the primary task's
+selected requirements/questions. Only the primary owns task state, memory, briefs and
+boundary configuration. Root-local compiler relationships never become cross-root edges.
+Per-root final snapshots and ordinary root coverage headers remain; one task view and
+at most 32 merged source units share the final delivery allowance. Bounded discovery
+work can grow with the existing maximum of nine admitted roots. Reference-only selection
+with a task refuses, and unavailable roots remain named rather than silently admitted.
+
+The continuation is implemented in `task_evidence`, `graph`, `response` and the existing
+MCP root dispatcher. Tests cover compiler publication/staleness, budgets and primary
+state isolation with identical reference-root paths/bytes. The gateway continuation
+is verified with installed OMP 18.6.0/Bun 1.3.14 and a scripted upstream, including
+resumed original tool history and captured final-body receipt matching. See
+[validation](../../docs/validation.md#evidence-coverage-host-application-and-real-cpu-maintenance--2026-10-10).

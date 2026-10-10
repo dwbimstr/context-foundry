@@ -58,6 +58,7 @@ pub mod store;
 pub mod syntax;
 pub mod task_context;
 pub mod task_evidence;
+pub mod task_host;
 #[cfg(feature = "test-faults")]
 pub mod testkit;
 pub mod usage;

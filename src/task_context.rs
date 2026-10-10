@@ -74,6 +74,12 @@ pub enum Command {
     Render {
         max_bytes: usize,
     },
+    ExportHost {
+        expected_revision: u64,
+        entry_id: String,
+        tool_call_id: String,
+        max_request_bytes: usize,
+    },
     Export {},
     Forget {
         expected_revision: u64,
@@ -700,6 +706,31 @@ impl Engine {
                                 "selected view exceeds byte budget; explicitly fold or deselect unprotected entries",
                             ));
                         }
+                    }
+                    Command::ExportHost {
+                        expected_revision,
+                        entry_id,
+                        tool_call_id,
+                        max_request_bytes,
+                    } => {
+                        if task.revision != *expected_revision {
+                            return Err(FoundryError::Conflict(
+                                "task revision changed before host export".into(),
+                            ));
+                        }
+                        let entry = task
+                            .entries
+                            .iter()
+                            .find(|e| &e.entry.id == entry_id)
+                            .ok_or(FoundryError::NotFound)?;
+                        let packet = crate::task_host::Packet::new(
+                            render_view(&tx, &task)?,
+                            entry_id.clone(),
+                            tool_call_id.clone(),
+                            entry.sha256.clone(),
+                            *max_request_bytes,
+                        )?;
+                        result = serde_json::to_value(packet)?;
                     }
                     Command::Export {} => {
                         result["record"] = serde_json::to_value(&task)?;

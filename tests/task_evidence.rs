@@ -635,3 +635,62 @@ async fn watched_boundary_maintenance_refreshes_one_changed_file_and_pauses_expl
     assert_eq!(decode(client.call_tool(once()).await.unwrap())["parsed"], 1);
     client.cancel().await.unwrap();
 }
+
+#[tokio::test]
+async fn admitted_root_composition_uses_one_primary_task_and_preserves_root_identity() {
+    use rmcp::{ServiceExt, model::CallToolRequestParams, transport::TokioChildProcess};
+    let e = fixture();
+    let reference = tempfile::tempdir().unwrap();
+    let root = reference.path().join("root");
+    let store = reference.path().join("store");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("client.py"), CLIENT).unwrap();
+    let mut engine = Engine::initialize(&store, &root).unwrap();
+    engine.index(&root, &Control::unbounded()).unwrap();
+    let reference_id = engine.workspace_id().unwrap();
+    task(
+        &engine,
+        json!({"op":"create","title":"FOREIGN_TASK_MUST_NOT_APPEAR"}),
+    )
+    .unwrap();
+    drop(engine);
+    drop(e.engine);
+    let mut cmd = tokio::process::Command::new(BIN);
+    cmd.arg("--store")
+        .arg(e.dir.path().join("store"))
+        .arg("mcp")
+        .arg("--root")
+        .arg(e.dir.path().join("root"))
+        .arg("--reference")
+        .arg(format!("{}={}", root.display(), store.display()))
+        .arg("--experimental-task-context");
+    let client = ().serve(TokioChildProcess::new(cmd).unwrap()).await.unwrap();
+    for roots in [json!(["primary", "ref1"]), json!(["ref1"])] {
+        let result=client.call_tool(CallToolRequestParams::new("context").with_arguments(json!({"query":"fetch_items","task_id":"contract","task_revision":e.revision,"compose_evidence":true,"roots":roots,"tokens":12000}).as_object().unwrap().clone())).await.unwrap();
+        if roots.as_array().unwrap().len() == 1 {
+            assert_eq!(result.is_error, Some(true));
+            continue;
+        }
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let rmcp::model::ContentBlock::Text(t) = &result.content[0] else {
+            panic!()
+        };
+        let r = report(&t.text);
+        assert_eq!(r["scope"], "admitted_roots_primary_task");
+        assert_eq!(r["roots"], json!([e.wid, reference_id]));
+        assert_eq!(t.text.matches("task-view: ").count(), 1);
+        assert!(!t.text.contains("FOREIGN_TASK_MUST_NOT_APPEAR"));
+        let sources = r["sources"].as_array().unwrap();
+        for wid in [&e.wid, &reference_id] {
+            assert!(
+                sources.iter().any(|s| s["handle"]
+                    .as_str()
+                    .is_some_and(|h| h.contains(&wid[..16]) && h.contains("client.py"))),
+                "{r}"
+            );
+        }
+        assert!(response::count_tokens(&t.text) <= 12000);
+        assert!(serde_json::to_vec(&result).unwrap().len() <= response::BYTE_CAP);
+    }
+    client.cancel().await.unwrap();
+}

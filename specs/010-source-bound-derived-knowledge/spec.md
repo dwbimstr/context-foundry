@@ -8,7 +8,7 @@ Global GPU pressure policies, native CPU sampling, hardware and real-model task 
 remain selected work. The owner's
 large-repository direction supersedes the earlier blanket deferral.
 Import and lifecycle fixtures use synthetic outputs through real storage, retrieval,
-HTTP/CLI and native-worker boundaries. A separate real CPU smoke is recorded in validation;
+HTTP/CLI and native-worker boundaries. Real CPU initial/changed-input generation and restart/revert reuse are recorded in validation;
 it is not a selected production model or task-quality result. 013 remains frozen off.
 
 ## Outcome and ownership
@@ -444,3 +444,12 @@ and structured tier motivate this scope; its sidecar queue, C ABI and custom HTT
 client are not dependencies. See the pinned links and small-fixture result limits
 in the ecosystem plan. Existing L3/L4 research continues to inform task state and
 recoverability; it does not replace this repository-knowledge work.
+
+
+T002 real-model continuation (2026-10-10): the explicitly supplied Qwen2.5-Coder-0.5B
+Q4_K_M fixture now runs initial and changed-input generation, then reopens/reverts and
+reuses the original cached brief with the GGUF absent. Two calls have complete worker
+usage; revert has zero calls/launches/verified bytes. Linux CPU execution and reuse are
+verified. Model/recipe task utility, long-context embedding comparisons, combined model
+pressure and macOS/Metal acceptance remain open. See
+[validation](../../docs/validation.md#evidence-coverage-host-application-and-real-cpu-maintenance--2026-10-10).

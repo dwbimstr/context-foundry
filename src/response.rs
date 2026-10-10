@@ -2051,10 +2051,46 @@ fn pack_task_evidence(
         }
     }
     let relationship_count = tail.len();
+    for window in &plan.compiler {
+        if window.target != Some(crate::graph::TargetResolution::Unique) {
+            continue;
+        }
+        let Some(d) = window.definitions.first() else {
+            continue;
+        };
+        let definition = SourceHandle {
+            workspace_id: window.freshness.workspace_id.clone(),
+            path: d.path.clone(),
+            sha256: d.sha256.clone(),
+            start: d.start,
+            end: d.end,
+        };
+        for r in &window.items {
+            let Some(edge) = &r.edge_id else {
+                continue;
+            };
+            let occurrence = SourceHandle {
+                start: r.start,
+                end: r.end,
+                ..r.unit.clone()
+            };
+            let line = format!(
+                "task-reference: {}\n",
+                serde_json::json!({"evidence":"compiler","kind":"references",
+                "producer":window.producer,"snapshot":window.snapshot,"edge_id":edge,"occurrence_id":r.occurrence_id,
+                "definition":definition.to_v2(),"reference":occurrence.to_v2(),"target":"unique"})
+            );
+            if !tail.iter().any(|(existing, _, _)| existing == &line) {
+                tail.push((line, vec![definition.clone(), occurrence], false));
+            }
+        }
+    }
+    let compiler_end = tail.len();
     for b in &context.briefs {
         let p = HandleRef::parse(&b.brief.cited_spans[0])?;
         let Some(h) = items.iter().filter_map(|i| i.handle.as_ref()).find(|h| {
-            h.path == p.path
+            h.workspace_id.starts_with(&p.ws16)
+                && h.path == p.path
                 && h.sha256.starts_with(&p.sha32)
                 && h.start <= p.start
                 && h.end >= p.end
@@ -2085,7 +2121,10 @@ fn pack_task_evidence(
                 items,
                 selected,
                 kept.iter().filter(|&&i| tail[i].2).count(),
-                kept.iter().filter(|&&i| i < relationship_count).count()
+                kept.iter().filter(|&&i| i < relationship_count).count(),
+                kept.iter()
+                    .filter(|&&i| i >= relationship_count && i < compiler_end)
+                    .count()
             )
         ));
         for &(i, f) in selected {

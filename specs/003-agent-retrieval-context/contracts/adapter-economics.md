@@ -432,7 +432,8 @@ or role-specific text-part arrays, and nullable assistant `content` alongside
 derived in T004 from the effective loopback-configured OMP model's request builder.
 Extensions or extra-body overrides that change that payload are unsupported unless
 included in the pin. After validation the original request bytes are forwarded
-unchanged, preserving message order, text, tool catalog and reasoning content. Each
+unchanged, preserving message order, text, tool catalog and reasoning content, except
+for the explicitly configured frozen-view continuation below. Each
 request replays the whole conversation; there is no server-side state to reference.
 Refuse another model, `stream` absent or false, image/file/URL content parts and
 top-level fields outside the pinned set with `gateway_feature_unsupported`, so hidden
@@ -634,3 +635,34 @@ group, so it is not forwarded a second time. After OMP exits, the launcher stops
 gateway and removes only the generated `models.yml`, then exits with OMP's status.
 
 `session_full` is verified at unit level; the process cannot lower the 10,000 cap.
+
+### Experimental exported task view application — 2026-10-10
+
+Explicit `task_view` in gateway config opts into a frozen, operator-exported task
+snapshot. Ordinary meter requests remain byte-exact. The Rust gateway may replace
+only the string content of one named tool result, with one preceding matching
+assistant tool call and an exact original-content digest. A duplicate, mismatched
+or unpaired carrier refuses before upstream admission. System/user/assistant
+content, other results, tool definitions, call IDs/arguments and model settings
+remain semantically identical. The final serialized body must fit the packet's
+explicit byte ceiling (at most 4 MiB); this is not a provider-token ceiling.
+
+`task-context` command `export_host` requires an expected revision, a selected,
+folded observation entry, tool_call_id and max_request_bytes. It exports the full
+selected view, including protected requirements/constraints, and an original-content
+binding. Originals remain recoverable in the task store and host transcript.
+The gateway never opens that store. The immutable packet is loaded at startup;
+changing the task or source does not update it. Its scope and source statuses are
+explicitly at export; live source freshness and provider consumption are unknown.
+Exporting again and restarting selects a new revision. No transcript is captured.
+
+The optional receipt observation `applied_view` records workspace/task/revision,
+entry/tool-call IDs, view digest, incoming/final body digests and byte counts, with
+boundary `gateway_upstream_body`. It records serialization for the attempted send,
+including failed attempts, not proof of provider consumption. Older strict receipt-v1
+readers may refuse this optional extension; ordinary receipts omit it. Missing carriers
+are forwarded unchanged without an application receipt. Exact replay of an already
+applied carrier is idempotent. Receipts contain identifiers/counts/digests only.
+This narrow supported OMP 18.6.0 continuation boundary extends the earlier meter-only
+contract; it does not claim generic history rewriting, automatic packet refresh,
+provider-enforced counting or correctness of caller summaries.

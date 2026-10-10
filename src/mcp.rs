@@ -1556,7 +1556,7 @@ impl FoundryMcp {
                 .and_then(serde_json::Value::as_object_mut)
                 .expect("context properties");
             properties.insert("task_id".into(), serde_json::json!({"type":"string","minLength":1,"maxLength":128,"description":"Primary task ID; requires task_revision."}));
-            properties.insert("compose_evidence".into(), serde_json::json!({"type":"boolean","description":"Compose bounded task evidence in the primary store; requires task_id and task_revision."}));
+            properties.insert("compose_evidence".into(), serde_json::json!({"type":"boolean","description":"Compose bounded evidence across selected admitted roots using the primary task; requires task_id and task_revision."}));
             properties.insert("boundary_config".into(), serde_json::json!({"type":"string","description":"Indexed boundary configuration path; requires compose_evidence."}));
             properties.insert("task_revision".into(), serde_json::json!({"type":"integer","minimum":1,"description":"Expected task revision; requires task_id."}));
         }
@@ -1786,13 +1786,6 @@ impl FoundryMcp {
                 false,
             ));
         }
-        if compose_evidence && self.state.meta.len() > 1 {
-            return Ok(error_result(
-                "unsupported_mode",
-                "task evidence composition currently requires a primary-only owner",
-                false,
-            ));
-        }
         if task.is_some() && !self.state.experimental_task_context {
             return Ok(error_result(
                 "unsupported_mode",
@@ -1893,6 +1886,8 @@ impl FoundryMcp {
                     include_memory,
                     task,
                     include_briefs,
+                    compose_evidence,
+                    boundary_config,
                 )
                 .await);
         }
@@ -2755,7 +2750,11 @@ impl FoundryMcp {
                 "project memory is disabled on this owner".into(),
             )));
         }
-        if matches!(request.command, crate::task_context::Command::Export {}) {
+        if matches!(
+            request.command,
+            crate::task_context::Command::Export {}
+                | crate::task_context::Command::ExportHost { .. }
+        ) {
             return Ok(foundry_error_result(&FoundryError::UnsupportedMode(
                 "task export uses CLI".into(),
             )));
@@ -3313,6 +3312,8 @@ impl FoundryMcp {
         include_memory: bool,
         task: Option<(String, u64)>,
         include_briefs: bool,
+        compose_evidence: bool,
+        boundary_config: Option<String>,
     ) -> CallToolResult {
         let selection = match self.state.resolve_roots(selected.as_deref()) {
             Ok(selection) => selection,
@@ -3369,6 +3370,22 @@ impl FoundryMcp {
                 let hits_ref = &mut hits;
                 let mut task_view = None;
                 let mut briefs = Vec::new();
+                let mut evidence_plans = Vec::new();
+                let task_entries = if compose_evidence {
+                    use redb::ReadableDatabase;
+                    let primary = engines[0].as_ref().expect("primary store");
+                    let (id, revision) = task.as_ref().expect("validated composition task");
+                    primary.task_entries_in(
+                        &primary.db.begin_read()?,
+                        crate::task_context::Scope {
+                            workspace_id: &run_meta[0].workspace_id,
+                            task_id: id,
+                            expected_revision: *revision,
+                        },
+                    )?
+                } else {
+                    Vec::new()
+                };
                 let engines = &*engines;
                 // 005 T004: the first serving root's resolved doors request
                 // (a policy may have made it) governs every later root, so
@@ -3401,52 +3418,44 @@ impl FoundryMcp {
                         // does 013 T003 routing, whose state the primary
                         // store composes.
                         let routed = policy.routes().then_some(&*policy);
-                        let batch = if is_primary && (semantic_on(&semantic) || routed.is_some()) {
-                            let combined = context_primary_with_options(
-                                &semantic,
-                                engine,
+                        let options = crate::store::ContextOptions {
+                            task: task_scope,
+                            compose_evidence,
+                            boundary_config: boundary_config.as_deref().filter(|_| is_primary),
+                            memory: primary_memory && is_primary,
+                            briefs: include_briefs && is_primary,
+                            policy: routed.filter(|_| is_primary),
+                            anchors: Some(anchors),
+                            experimental_behavior,
+                            #[cfg(feature = "semantic")]
+                            dense: None,
+                        };
+                        let mut combined = if is_primary
+                            && (semantic_on(&semantic) || routed.is_some())
+                        {
+                            context_primary_with_options(
+                                &semantic, engine, &query, strategy, control, options,
+                            )?
+                        } else if compose_evidence && !is_primary {
+                            engine.compose_evidence_for_entries(
                                 &query,
                                 strategy,
                                 control,
-                                crate::store::ContextOptions {
-                                    task: task_scope,
-                                    memory: primary_memory,
-                                    briefs: include_briefs,
-                                    policy: routed,
-                                    anchors: Some(anchors),
-                                    experimental_behavior,
-                                    ..crate::store::ContextOptions::default()
-                                },
-                            )?;
+                                &options,
+                                &task_entries,
+                            )?
+                        } else {
+                            engine.context_candidates_with(&query, strategy, control, &options)?
+                        };
+                        if is_primary {
                             *hits_ref = combined.hits;
                             task_view = combined.task_view;
                             briefs = combined.briefs;
-                            combined.batch
-                        } else {
-                            // No catch-all for the primary's memory:
-                            // corruption fails the request (context-v2 §
-                            // Failure scope); an unavailable primary is
-                            // excluded by `serving` above and its coverage
-                            // stays in the header.
-                            let options = crate::store::ContextOptions {
-                                task: task_scope,
-                                memory: primary_memory && is_primary,
-                                briefs: include_briefs && is_primary,
-                                experimental_behavior,
-                                anchors: Some(anchors),
-                                ..crate::store::ContextOptions::default()
-                            };
-                            let combined = engine
-                                .context_candidates_with(&query, strategy, control, &options)?;
-                            if is_primary {
-                                task_view = combined.task_view;
-                                briefs = combined.briefs;
-                            }
-                            if options.memory {
-                                *hits_ref = combined.hits;
-                            }
-                            combined.batch
-                        };
+                        }
+                        if let Some(plan) = combined.evidence.take() {
+                            evidence_plans.push(plan);
+                        }
+                        let batch = combined.batch;
                         decided.get_or_insert(if batch.doors.is_some() {
                             Strategy::Graph
                         } else {
@@ -3455,10 +3464,13 @@ impl FoundryMcp {
                         Ok(batch)
                     },
                 )?;
+                let batch = roots::merge_context(&batches);
+                let evidence = compose_evidence
+                    .then(|| crate::task_evidence::Plan::merge(evidence_plans, &batches, &batch));
                 Ok(MultiOutcome {
                     served: memory::MemoryContext {
-                        evidence: None,
-                        batch: roots::merge_context(&batches),
+                        evidence,
+                        batch,
                         hits,
                         task_view,
                         briefs,

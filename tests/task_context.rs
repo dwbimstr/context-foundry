@@ -1006,3 +1006,47 @@ fn deleted_promotions_keep_their_lineage_and_cannot_be_reassigned() {
         Err(FoundryError::NotFound)
     ));
 }
+
+#[test]
+fn exported_host_packet_binds_a_folded_observation_and_recovers_original_after_restart() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let r = create(&engine);
+    let original = "long tool output\n".repeat(400);
+    let r=apply(&engine,r,json!([add("keep","constraint","Keep all existing user requirements."),add("output","observation",&original),{"op":"fold","entry_id":"output","summary":"The tool observed the expected file."}])).unwrap()["revision"].as_u64().unwrap();
+    let export = |revision, entry| json!({"op":"export_host","expected_revision":revision,"entry_id":entry,"tool_call_id":"call_9","max_request_bytes":1048576});
+    assert!(matches!(
+        call(&engine, export(r - 1, "output")),
+        Err(FoundryError::Conflict(_))
+    ));
+    assert!(call(&engine, export(r, "keep")).is_err());
+    drop(engine);
+    let packet = cli(&e, export(r, "output"));
+    let parsed: context_foundry::task_host::Packet =
+        serde_json::from_value(packet.clone()).unwrap();
+    parsed.validate().unwrap();
+    assert_eq!(
+        packet["original_sha256"],
+        context_foundry::digest(original.as_bytes())
+    );
+    assert_eq!(
+        packet["view"]["entries"][0]["text"],
+        "Keep all existing user requirements."
+    );
+    assert_eq!(packet["view"]["entries"][0]["representation"], "original");
+    assert_eq!(packet["view"]["host_application"], "unknown");
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let peek = call(
+        &engine,
+        json!({"op":"peek","entry_id":"output","offset":0,"bytes":65536}),
+    )
+    .unwrap();
+    assert_eq!(peek["text"], original);
+    let r = apply(&engine, r, json!([{"op":"expand","entry_id":"output"}])).unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    assert!(
+        call(&engine, export(r, "output")).is_err(),
+        "an unfolded entry is not an admitted replacement"
+    );
+}

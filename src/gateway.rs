@@ -1,6 +1,7 @@
 //! Owned model gateway (003 T004): a loopback-only SSE forwarder for the
 //! pinned OMP 18.6.0 / Z.ai `glm-5.3-flash` chat-completions profile, with
-//! usage receipts. It never opens the source store: source and gateway
+//! usage receipts and opt-in frozen task-view application. It never opens the
+//! source store: source and gateway
 //! processes have different side effects and credentials.
 //!
 //! Intentional difference from the usual SSE crates (`sse-stream`): events
@@ -165,9 +166,10 @@ pub(crate) struct GatewayConfig {
     pub(crate) credential_env: String,
     pub(crate) run_dir: PathBuf,
     pub(crate) log_bytes: Option<u64>,
+    pub(crate) task_view: Option<crate::task_host::Packet>,
 }
 
-const CONFIG_KEYS: [&str; 8] = [
+const CONFIG_KEYS: [&str; 9] = [
     "v",
     "port",
     "upstream",
@@ -176,6 +178,7 @@ const CONFIG_KEYS: [&str; 8] = [
     "credential_env",
     "run_dir",
     "log_bytes",
+    "task_view",
 ];
 
 fn valid_env_name(name: &str) -> bool {
@@ -269,11 +272,49 @@ pub(crate) fn parse_config(bytes: &[u8]) -> AResult<GatewayConfig> {
             Some(cap)
         }
     };
+    let task_view = fields
+        .get("task_view")
+        .map(|path| -> AResult<_> {
+            let path = path
+                .as_str()
+                .filter(|p| p.len() <= 4096 && Path::new(p).is_absolute())
+                .ok_or_else(|| invalid("task_view must be an absolute packet path"))?;
+            use std::os::unix::fs::OpenOptionsExt;
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+                .open(path)
+                .map_err(|_| invalid("cannot open regular task_view packet"))?;
+            if !file
+                .metadata()
+                .map_err(|_| invalid("cannot inspect task_view packet"))?
+                .is_file()
+            {
+                return Err(invalid("task_view must be a regular file"));
+            }
+            let mut bytes = Vec::new();
+            file.take(crate::task_host::MAX_PACKET_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| invalid("cannot read task_view packet"))?;
+            if bytes.len() > crate::task_host::MAX_PACKET_BYTES {
+                return Err(invalid("task_view exceeds 1 MiB"));
+            }
+            let value =
+                strict_parse(&bytes).map_err(|_| invalid("task_view must be strict JSON"))?;
+            let packet: crate::task_host::Packet =
+                serde_json::from_value(value).map_err(|_| invalid("invalid task_view packet"))?;
+            packet
+                .validate()
+                .map_err(|_| invalid("invalid task_view packet"))?;
+            Ok(packet)
+        })
+        .transpose()?;
     Ok(GatewayConfig {
         port,
         credential_env: credential_env.to_owned(),
         run_dir: PathBuf::from(run_dir),
         log_bytes,
+        task_view,
     })
 }
 
@@ -858,6 +899,7 @@ struct Shared {
     slot: Arc<AsyncMutex<()>>,
     shutdown: CancellationToken,
     limits: Limits,
+    task_view: Option<crate::task_host::Packet>,
 }
 
 /// One admitted generation: the identity recorded before the upstream send
@@ -866,6 +908,7 @@ struct Attempt {
     id: String,
     started: Instant,
     context_ids: Vec<String>,
+    applied_view: Option<crate::task_host::AppliedView>,
     _slot: OwnedMutexGuard<()>,
 }
 
@@ -918,6 +961,7 @@ fn finalize(shared: &Shared, attempt: Attempt, finish: Finish) {
             provider_request_id: finish.provider_request_id,
             provider_response_id: finish.provider_response_id,
             delivery: Some(finish.delivery),
+            applied_view: attempt.applied_view.clone(),
         }),
     };
     book_lock(&shared.book).finalize(&receipt);
@@ -1172,6 +1216,7 @@ async fn start(
         slot: Arc::new(AsyncMutex::new(())),
         shutdown: CancellationToken::new(),
         limits: Limits::load(),
+        task_view: config.task_view.clone(),
     });
     let shutdown = shared.shutdown.clone();
     tokio::spawn(async move {
@@ -1603,7 +1648,19 @@ async fn chat(
             &format!("the request is outside the pinned OMP 18.6.0 profile: {reason}"),
         );
     }
-    drop(parsed);
+    let (body, applied_view) = match &shared.task_view {
+        None => (body, None),
+        Some(packet) => match packet.apply(&body, parsed) {
+            Ok(applied) => applied,
+            Err(_) => {
+                return shared.refuse(
+                    StatusCode::BAD_REQUEST,
+                    "task_view_mismatch",
+                    "task view binding, tool linkage or final byte allowance did not match",
+                );
+            }
+        },
+    };
     // Re-check: shutdown may have closed admission while the body was read.
     if shared.shutdown.is_cancelled() {
         return shared.refuse(
@@ -1617,6 +1674,7 @@ async fn chat(
         id: uuid::Uuid::new_v4().to_string(),
         started,
         context_ids,
+        applied_view,
         _slot: slot,
     };
     let job = Job {
@@ -2678,6 +2736,7 @@ mod tests {
             slot: Arc::new(AsyncMutex::new(())),
             shutdown: CancellationToken::new(),
             limits: Limits::load(),
+            task_view: None,
         }
     }
 

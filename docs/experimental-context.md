@@ -402,9 +402,9 @@ uses the existing o200k token budget for the complete delivered text; provider t
 usage remains unknown. Views exceeding the budget require an explicit fold or selection
 change; protected evidence is never silently dropped.
 
-Foundry delivers a view; it does not replace a host conversation. Results say
-`host_application:"unknown"`. Real-host application, task-success improvements and
-provider economics remain unmeasured. The sandbox lifecycle suite exercises actual
+Ordinary Foundry delivery reports `host_application:"unknown"`. The explicit gateway
+application below can replace one bound tool result at the final request boundary.
+Task-success improvements and provider economics remain unmeasured. The sandbox lifecycle suite exercises actual
 CLI restarts, real SDK MCP calls, concurrent revisions, source staleness, exact
 recovery and abrupt exits around commits. See [validation](validation.md),
 [008](../specs/008-scoped-durable-memory/spec.md) and
@@ -876,9 +876,19 @@ allowance. `task-evidence` reports bodies, addresses only, omitted-by-budget and
 facets; `complete:false` is intentional. Tests are discovered candidates, not executed
 verification. Constraints are caller assertions. Derived briefs retain their distinct
 provenance and require source evidence; nothing claims host conversation application.
-The default context path is unchanged. Composition is currently primary-store only.
+The default context path is unchanged. On a multi-root MCP owner, composition searches
+selected admitted roots using the primary task's goals. Select roots with
+`roots:["primary","ref1"]`; reference-only task selection refuses. Task state, memory,
+briefs and the boundary config remain primary-owned. Same-path source spans from
+different roots keep their identities. No cross-root relationship is inferred.
 
-For an existing primary-only MCP owner launched with `--experimental-task-context`,
+Compiler evidence reuses the selected SCIP publication: up to four exact query-unit
+seeds and eight reference occurrences per seed, within each root's final read.
+`task-reference` lines require a unique definition and both delivered endpoint bodies.
+They mean references, not call edges or verified test coverage. The report names
+unavailable/stale/ambiguous/limited windows and skipped non-definition or changed seeds.
+
+For an existing MCP owner launched with `--experimental-task-context`,
 use `index {"boundary":{"config":"boundary.json","paths":["clients/catalog.py"]}}`
 after accepting source edits, then `context` with `task_id`, `task_revision`,
 `compose_evidence:true` and `boundary_config:"boundary.json"`. Omit `paths` to refresh
@@ -890,7 +900,8 @@ the catalog advertises neither composition nor boundary publication.
 The first recipe admits at most 16 services/64 Python paths and 128 facts per file;
 traversal takes at most eight seeds, examines 512 key postings and emits at most 64
 relations. Composition uses at most four additional lexical task queries, eight links,
-eight relationships, four briefs and 32 source units. These are explicit discovery
+eight boundary relationships and four briefs on the primary, plus at most four compiler
+windows per selected root; all roots share 32 final source units. These are explicit discovery
 limits, not whole-repository coverage guarantees. See the [owning boundary spec](../specs/005-graph-evidence-lifecycle/spec.md#t005--connect-repository-behavior-across-process-boundaries)
 and [composition spec](../specs/003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task).
 
@@ -902,3 +913,40 @@ configuration once and enables one-file maintenance turns. `maintain:false` paus
 watching by itself and owner restart do not enable it. `status.watch.boundary` reports
 progress, reuse and errors. Source/config changes still invalidate old relationships
 immediately, even before maintenance catches up.
+
+
+## Exported task views in OMP requests
+
+The experimental gateway accepts optional `"task_view":"/absolute/task-view.json"`
+in its existing config. Create that packet explicitly from a selected folded observation
+whose original text is **exactly the host's serialized tool-result content**, including
+host-added line numbers. Bind its actual tool call ID:
+
+```sh
+umask 077
+foundry --store STORE task-context > /absolute/task-view.json <<'JSON'
+{"workspace_id":"WORKSPACE_ID","task_id":"TASK_ID","command":{"op":"export_host","expected_revision":2,"entry_id":"OBSERVATION_ID","tool_call_id":"call_9","max_request_bytes":1048576}}
+JSON
+```
+
+Use the existing gateway/OMP launch workflow with that config. The packet includes the
+complete selected task view, keeping protected requirements/constraints in original
+form. It is a caller-owned frozen snapshot, not a signed source attestation. A missing
+carrier passes unchanged; duplicate results/calls, changed content or broken linkage
+refuse before upstream. One result's content may change; other messages, calls, tools
+and model settings retain their values. The final complete request must fit the explicit
+byte ceiling. This does not enforce the provider's token window.
+
+`observation.applied_view` receipts bind the task revision/view digest to incoming and
+final request hashes/byte counts at `gateway_upstream_body`. Failed attempts also keep
+that serialization evidence; provider consumption remains unknown. Enable existing
+`log_bytes` for retained private receipts. Neither receipts nor ordinary MCP output
+claim live host-history mutation. Installed OMP 18.6.0 was verified with saved original
+history and a resumed request against a scripted loopback upstream.
+
+Packets are read once at gateway startup from regular files. Re-export and restart to
+select a changed revision. Source-link statuses describe export time; delivered text
+labels current source freshness unchecked. Expand/peek recover original observations
+from the task store. Forget does not erase exported packets, receipts, host history or
+provider caches; manage those caller-owned copies separately. There is no automatic
+transcript ingestion, live view synchronization or model-generated folding.

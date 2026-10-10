@@ -131,6 +131,7 @@ pub struct Observation {
     /// Gateway-only: whether the response reached the host, recorded
     /// separately from `outcome` (a closed client never erases known counts).
     pub delivery: Option<Delivery>,
+    pub applied_view: Option<crate::task_host::AppliedView>,
 }
 
 /// How a gateway response was delivered to the host (gateway-only field).
@@ -219,13 +220,14 @@ const RECEIPT_FIELDS: [&str; 15] = [
     "observation",
 ];
 
-const OBSERVATION_FIELDS: [&str; 6] = [
+const OBSERVATION_FIELDS: [&str; 7] = [
     "mode",
     "elapsed_ms",
     "count_elapsed_ms",
     "provider_request_id",
     "provider_response_id",
     "delivery",
+    "applied_view",
 ];
 
 impl Receipt {
@@ -356,6 +358,15 @@ impl Receipt {
                     .and_then(Value::as_u64)
                     .ok_or_else(|| invalid("observation `elapsed_ms` is required"))?;
                 Some(Observation {
+                    applied_view: optional(fields, "applied_view")?
+                        .map(|value| {
+                            let applied: crate::task_host::AppliedView =
+                                serde_json::from_value(value.clone())
+                                    .map_err(|_| invalid("invalid applied_view"))?;
+                            applied.validate()?;
+                            Ok::<_, FoundryError>(applied)
+                        })
+                        .transpose()?,
                     mode,
                     elapsed_ms,
                     count_elapsed_ms: count_field(fields, "count_elapsed_ms")?,
@@ -451,6 +462,12 @@ impl Receipt {
             }
             if let Some(value) = observation.delivery {
                 fields.insert("delivery".into(), Value::from(value.as_str()));
+            }
+            if let Some(value) = &observation.applied_view {
+                fields.insert(
+                    "applied_view".into(),
+                    serde_json::to_value(value).expect("serializable application receipt"),
+                );
             }
             map.insert("observation".into(), Value::Object(fields));
         }

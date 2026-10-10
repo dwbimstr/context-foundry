@@ -222,7 +222,8 @@ limits are input contracts, not memory throughput or outcome-improvement measure
 ### T003 — Experimental task state and recoverable working context
 
 Status: implemented locally on the experimental branch; sandbox validation recorded
-in [validation](../../docs/validation.md). Real-host application remains unexecuted.
+in [validation](../../docs/validation.md). The later T003 continuation verifies one explicit OMP application boundary; broader
+real-host interventions remain unexecuted.
 
 Authorized 2026-10-09: build and test on an experimental branch without waiting for
 external measurements. This amendment allows **explicit caller-written task records**;
@@ -353,3 +354,14 @@ replay and deletion machinery for at most 128 entries / 2 MiB per task.
   restart; pagination/conflicts/forget; final-read task change and source staleness;
   protected entries and exact token/serialized-byte caps under anchored, unanchored
   and multi-root retrieval. Keep default source-context responses byte-identical.
+
+#### T003 exported host application continuation — 2026-10-10
+
+Implement an explicit frozen `export_host` packet from one revision's complete
+selected view, binding one selected folded observation to its original hash and
+host tool_call_id. Protected entries retain the existing mandatory-original rules.
+The existing Rust gateway applies it under the [adapter contract](../003-agent-retrieval-context/contracts/adapter-economics.md#experimental-exported-task-view-application--2026-10-10).
+This avoids a new host extension runtime or store-owning service. Retained originals
+support expand/re-export/restart; packets and host history remain caller-owned and
+must be deleted separately after forgetting a task. Ordinary MCP application remains
+unknown. Live synchronization and broader host-region selection remain pending.

@@ -426,6 +426,7 @@ struct Spawn {
     run_name: Option<&'static str>,
     /// The global `--store` flag, which the gateway must never open.
     store: Option<PathBuf>,
+    task_view: Option<PathBuf>,
 }
 
 struct Gateway {
@@ -477,6 +478,12 @@ impl Gateway {
     fn start(dir: &Path, spawn: Spawn) -> Self {
         let run_dir = dir.join(spawn.run_name.unwrap_or("run"));
         let config = write_config(dir, &run_dir, spawn.log_bytes);
+        if let Some(packet) = &spawn.task_view {
+            let mut value: Value =
+                serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+            value["task_view"] = json!(packet);
+            std::fs::write(&config, serde_json::to_vec(&value).unwrap()).unwrap();
+        }
         let mut command = Command::new(BIN);
         if let Some(store) = &spawn.store {
             command.arg("--store").arg(store);
@@ -3750,4 +3757,324 @@ async fn local_refusals_are_counted_by_code_in_health_and_the_summary() {
     assert_eq!(summary["refused"]["gateway_feature_unsupported"], 1);
     assert_eq!(summary["attempts"], 0);
     finished.assert_no_secrets();
+}
+
+fn export_view(dir: &Path, original: &str, call_id: &str) -> PathBuf {
+    use context_foundry::{Control, Engine, task_context};
+    let root = dir.join("task-root");
+    std::fs::create_dir(&root).unwrap();
+    let engine = Engine::initialize(&dir.join("task-store"), &root).unwrap();
+    let task = |command| {
+        engine.task_context(&task_context::parse(json!({"workspace_id":engine.workspace_id().unwrap(),"task_id":"host-task","command":command})).unwrap(),&Control::unbounded()).unwrap()
+    };
+    task(json!({"op":"create","title":"Host application fixture"}));
+    task(
+        json!({"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"keep","kind":"constraint","text":"Preserve the user's requested behavior.","author":"operator","provenance":"fixture","source_links":[]}},{"op":"add","entry":{"id":"output","kind":"observation","text":original,"author":"operator","provenance":"explicitly supplied tool result","source_links":[]}},{"op":"fold","entry_id":"output","summary":"The read tool returned the fixture file."}]}),
+    );
+    let packet = task(
+        json!({"op":"export_host","expected_revision":2,"entry_id":"output","tool_call_id":call_id,"max_request_bytes":1048576}),
+    );
+    let path = dir.join("task-view.json");
+    std::fs::write(&path, serde_json::to_vec(&packet).unwrap()).unwrap();
+    path
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exported_view_applies_at_final_bytes_refuses_broken_bindings_and_replays_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let upstream = FakeUpstream::start().await;
+    let original = fixture("omp-18.6.0-tool-continuation.json");
+    let request: Value = serde_json::from_slice(&original).unwrap();
+    let index = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|m| m["role"] == "tool")
+        .unwrap();
+    let packet = export_view(
+        dir.path(),
+        request["messages"][index]["content"].as_str().unwrap(),
+        "call_9",
+    );
+    let mut gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            log_bytes: Some(1_048_576),
+            task_view: Some(packet.clone()),
+            ..Default::default()
+        },
+    );
+    upstream.queue(Reply::sse("", simple_stream()));
+    assert_eq!(gateway.post(original.clone()).await.status(), 200);
+    let receipts = gateway.wait_receipts(1).await;
+    let application = receipts[0]
+        .observation
+        .as_ref()
+        .unwrap()
+        .applied_view
+        .as_ref()
+        .unwrap();
+    let sent = upstream.received()[0].body.clone();
+    assert_eq!(application.request_sha256, context_foundry::digest(&sent));
+    assert_eq!(
+        application.incoming_sha256,
+        context_foundry::digest(&original)
+    );
+    assert_eq!(application.revision, 2);
+    let mut changed: Value = serde_json::from_slice(&sent).unwrap();
+    let view: Value =
+        serde_json::from_str(changed["messages"][index]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(view["scope"], "exported_task_snapshot");
+    assert_eq!(view["source_freshness"], "unchecked_at_send");
+    changed["messages"][index]["content"] = request["messages"][index]["content"].clone();
+    assert_eq!(changed, request, "every other request field is preserved");
+    for bad in [0, 1, 2, 3] {
+        let mut malformed = request.clone();
+        match bad {
+            0 => malformed["messages"][index]["content"] = json!("a different tool result"),
+            1 => {
+                let duplicate = malformed["messages"][index].clone();
+                malformed["messages"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(duplicate);
+            }
+            2 => {
+                malformed["messages"][index - 1]["tool_calls"][0]["id"] = json!("other_call");
+            }
+            _ => {
+                malformed["messages"]
+                    .as_array_mut()
+                    .unwrap()
+                    .swap(index, index - 1);
+            }
+        }
+        assert_eq!(
+            gateway
+                .post(serde_json::to_vec(&malformed).unwrap())
+                .await
+                .status(),
+            400
+        );
+    }
+    assert_eq!(upstream.count(), 1);
+    gateway.terminate().assert_no_secrets();
+    // The packet remains unchanged; startup selects the same snapshot. An
+    // already applied carrier produces exactly the same final serialized body.
+    let mut restarted = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            log_bytes: Some(1_048_576),
+            task_view: Some(packet),
+            run_name: Some("restart"),
+            ..Default::default()
+        },
+    );
+    upstream.queue(Reply::sse("", simple_stream()));
+    assert_eq!(restarted.post(sent.clone()).await.status(), 200);
+    restarted.wait_receipts(1).await;
+    assert_eq!(upstream.received()[1].body, sent);
+    restarted.terminate().assert_no_secrets();
+}
+
+/// Real consumer acceptance is opt-in; ordinary tests never download or launch
+/// an installed host. The upstream is scripted, so this proves request/history
+/// behavior, not coding quality or provider economics.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires FOUNDRY_OMP_BUN and FOUNDRY_OMP_CLI pinned to OMP 18.6.0"]
+async fn real_omp_applies_exported_view_on_resumed_tool_history() {
+    let bun = std::env::var_os("FOUNDRY_OMP_BUN").expect("Bun executable");
+    let cli = std::env::var_os("FOUNDRY_OMP_CLI").expect("OMP dist/cli.js");
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("workspace");
+    let agent = dir.path().join("omp/agent");
+    let sessions = dir.path().join("sessions");
+    for path in [&cwd, &agent, &sessions] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    std::fs::write(
+        cwd.join("hello.txt"),
+        "Sandbox observation: keep the required behavior.\n".repeat(200),
+    )
+    .unwrap();
+    let upstream = FakeUpstream::start().await;
+    upstream.queue(Reply::sse("",vec![data_event(&json!({"id":"fixture-call","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_9","type":"function","function":{"name":"read","arguments":"{\"path\":\"hello.txt\"}"}}]}}]})),data_event(&json!({"id":"fixture-call","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":usage_object(20,10,None)})),done_event()]));
+    upstream.queue(Reply::sse("", simple_stream()));
+    let mut gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            log_bytes: Some(1_048_576),
+            ..Default::default()
+        },
+    );
+    let run = |gateway: &Gateway, resume: Option<&Path>| {
+        std::fs::write(
+            agent.join("models.yml"),
+            gateway.ready["omp_models_yml"].as_str().unwrap(),
+        )
+        .unwrap();
+        let mut cmd = tokio::process::Command::new(&bun);
+        // PI_CONFIG_DIR is joined to os.homedir by the pinned host. Resolve it
+        // into the fixture directory without changing HOME or host defaults.
+        let config_dir = format!(
+            "{}{}",
+            "../".repeat(32),
+            dir.path().join("omp").strip_prefix("/").unwrap().display()
+        );
+        cmd.arg(&cli)
+            .args([
+                "--print",
+                "--mode",
+                "json",
+                "--model",
+                "zai/glm-5.3-flash",
+                "--thinking",
+                "off",
+                "--tools",
+                "read",
+                "--no-lsp",
+                "--no-pty",
+                "--no-extensions",
+                "--no-skills",
+                "--no-rules",
+                "--no-title",
+                "--system-prompt",
+                "Read the requested fixture and preserve user constraints.",
+                "--max-time",
+                "45s",
+                "--approval-mode",
+                "yolo",
+            ])
+            .arg("--session-dir")
+            .arg(&sessions)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("PI_CONFIG_DIR", config_dir)
+            .env("PI_CODING_AGENT_DIR", &agent)
+            .env("FOUNDRY_GATEWAY_TOKEN", &gateway.token)
+            .current_dir(&cwd)
+            .stdin(Stdio::null())
+            .kill_on_drop(true);
+        if let Some(path) = resume {
+            cmd.arg("--resume")
+                .arg(path)
+                .arg("Continue preserving the requested behavior.");
+        } else {
+            cmd.arg("Read hello.txt, then stop.");
+        }
+        cmd
+    };
+    let output = tokio::time::timeout(Duration::from_secs(60), run(&gateway, None).output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "OMP: {}\n{}\ngateway: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        gateway.stderr.lock().unwrap()
+    );
+    assert_eq!(
+        upstream.count(),
+        2,
+        "OMP stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    gateway.wait_receipts(2).await;
+    let continuation: Value = serde_json::from_slice(&upstream.received()[1].body).unwrap();
+    let tool = continuation["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap();
+    let original = tool["content"].as_str().unwrap();
+    let packet = export_view(dir.path(), original, tool["tool_call_id"].as_str().unwrap());
+    fn session_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                session_files(&path, out)
+            } else if path.extension().is_some_and(|e| e == "jsonl") {
+                out.push(path)
+            }
+        }
+    }
+    let mut files = Vec::new();
+    session_files(&sessions, &mut files);
+    assert_eq!(files.len(), 1, "{files:?}");
+    let history_before = std::fs::read_to_string(&files[0]).unwrap();
+    assert!(history_before.contains("Sandbox observation"));
+    gateway.terminate().assert_no_secrets();
+    upstream.queue(Reply::sse("", simple_stream()));
+    let mut gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            log_bytes: Some(1_048_576),
+            task_view: Some(packet),
+            run_name: Some("resumed"),
+            ..Default::default()
+        },
+    );
+    let output = tokio::time::timeout(
+        Duration::from_secs(60),
+        run(&gateway, Some(&files[0])).output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "OMP: {}\n{}\ngateway: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        gateway.stderr.lock().unwrap()
+    );
+    assert_eq!(upstream.count(), 3);
+    let receipts = gateway.wait_receipts(1).await;
+    let application = receipts[0]
+        .observation
+        .as_ref()
+        .unwrap()
+        .applied_view
+        .as_ref()
+        .unwrap();
+    let sent = upstream.received()[2].body.clone();
+    assert_eq!(application.request_sha256, context_foundry::digest(&sent));
+    let applied: Value = serde_json::from_slice(&sent).unwrap();
+    let tool = applied["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap();
+    assert!(
+        tool["content"]
+            .as_str()
+            .unwrap()
+            .contains("exported_task_snapshot")
+    );
+    assert!(
+        !tool["content"]
+            .as_str()
+            .unwrap()
+            .contains("Sandbox observation")
+    );
+    let history_after = std::fs::read_to_string(&files[0]).unwrap();
+    assert!(
+        history_after.starts_with(&history_before),
+        "host history must retain original bytes"
+    );
+    assert!(!history_after.contains("exported_task_snapshot"));
+    eprintln!(
+        "OMP 18.6.0 application: {}",
+        serde_json::to_string(application).unwrap()
+    );
+    gateway.terminate().assert_no_secrets();
 }

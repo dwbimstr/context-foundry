@@ -2011,11 +2011,51 @@ async fn local_real_cpu_generation_accepts_a_cited_brief_and_reuses_it() {
         env.engine().knowledge_status().unwrap()["cache"]["entries"],
         1
     );
+    let model_path = env.profile.local.as_ref().unwrap().gguf.clone();
     // A fully current replay must not need model files or worker acquisition.
     env.profile.local.as_mut().unwrap().gguf = env.dir.path().join("absent-model.gguf");
     let replay = env.run(1).await;
     assert!(replay.complete, "{replay:?}");
     assert_eq!(replay.calls, 0);
     assert_eq!(replay.local_worker.as_ref().unwrap().launches, 0);
+    env.profile.local.as_mut().unwrap().gguf = model_path;
+    env.engine()
+        .replace_source("src/a.rs", &A.replace("remove(0)", "remove(1)"))
+        .unwrap();
+    let changed = knowledge::prepare(
+        env.engine.as_mut().unwrap(),
+        &env.profile,
+        RunLimits {
+            calls: 1,
+            request_tokens: 100_000,
+            output_tokens: 10_000,
+        },
+        &Control::with_deadline(Instant::now() + Duration::from_secs(180)),
+    )
+    .await
+    .unwrap();
+    eprintln!(
+        "real CPU changed generation: {}",
+        serde_json::to_string(&changed).unwrap()
+    );
+    assert!(changed.complete, "{changed:?}");
+    assert_eq!(changed.generated, 1);
+    assert_eq!(changed.usage_unknown_calls, 0);
+    assert!(changed.observed_prompt_tokens > 0 && changed.observed_completion_tokens > 0);
+    assert_eq!(
+        env.engine().knowledge_status().unwrap()["cache"]["entries"],
+        2
+    );
+    env.engine().replace_source("src/a.rs", A).unwrap();
+    env.reopen();
+    env.profile.local.as_mut().unwrap().gguf = env.dir.path().join("absent-model.gguf");
+    let restored = env.run(1).await;
+    eprintln!(
+        "real CPU restart/revert: {}",
+        serde_json::to_string(&restored).unwrap()
+    );
+    assert!(restored.complete, "{restored:?}");
+    assert_eq!((restored.calls, restored.reused_cached), (0, 1));
+    assert_eq!(restored.local_worker.as_ref().unwrap().launches, 0);
     assert_eq!(server.calls(), 0);
 }

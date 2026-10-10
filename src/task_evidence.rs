@@ -1,7 +1,7 @@
 //! 003 T009: bounded task-guided retrieval, with coverage computed from the
 //! evidence that survives final delivery. No model calls or task-state edits.
 use crate::store::{ContextOptions, HandleRef, RankedItem, RenderedForm, SOURCES, SourceMeta};
-use crate::task_context::Kind;
+use crate::task_context::{Entry, Kind};
 use crate::{Control, Engine, FResult, FoundryError, SourceHandle, Strategy};
 use redb::ReadableDatabase;
 use serde_json::{Value, json};
@@ -23,8 +23,52 @@ pub struct Plan {
     pub stale_links: usize,
     pub discovery_limited: bool,
     pub constraints: usize,
+    pub compiler: Vec<crate::graph::ReferencesOutcome>,
+    pub compiler_skipped_seeds: usize,
+    pub roots: Vec<String>,
 }
 impl Plan {
+    /// Preserve primary task ownership and align attribution after ordinary
+    /// root ranking and its single 32-unit cap. Workspace identity is part of
+    /// the key even when paths, byte ranges and source bytes are identical.
+    pub(crate) fn merge(
+        mut plans: Vec<Self>,
+        batches: &[crate::roots::RootBatch],
+        merged: &crate::store::CandidateBatch,
+    ) -> Self {
+        let mut support = BTreeMap::new();
+        for (plan, batch) in plans.iter_mut().zip(batches) {
+            for (item, attribution) in batch
+                .batch
+                .items
+                .iter()
+                .zip(std::mem::take(&mut plan.support))
+            {
+                if let Some(handle) = &item.handle {
+                    support.insert(handle.to_v2(), attribution);
+                }
+            }
+        }
+        let mut primary = plans.remove(0);
+        primary.discovery_limited |= support.len() > merged.items.len();
+        for other in plans {
+            primary.roots.extend(other.roots);
+            primary.compiler.extend(other.compiler);
+            primary.compiler_skipped_seeds += other.compiler_skipped_seeds;
+            primary.discovery_limited |= other.discovery_limited;
+        }
+        primary.support = merged
+            .items
+            .iter()
+            .map(|item| {
+                support
+                    .remove(&item.handle.as_ref().expect("evidence has a source").to_v2())
+                    .expect("every merged source has attribution")
+            })
+            .collect();
+        primary
+    }
+
     /// Availability is not delivery and lexical matching is not task completion.
     pub(crate) fn report(
         &self,
@@ -32,6 +76,7 @@ impl Plan {
         included: &[(usize, usize)],
         brief_count: usize,
         relationship_count: usize,
+        compiler_count: usize,
     ) -> Value {
         let facets: BTreeMap<_,_> = ["implementation","consumers","configuration","verification","constraints"].into_iter().map(|facet| {
             let candidates = self.support.iter().filter(|s|s.facets.contains(facet)).count();
@@ -45,13 +90,13 @@ impl Plan {
                 *resolution.entry(r.resolution).or_default() += 1;
             }
         }
-        json!({"v":1,"scope":"primary_task","complete":false,"host_application":"unknown",
+        json!({"v":1,"scope":if self.roots.len()>1 {"admitted_roots_primary_task"} else {"primary_task"},"roots":self.roots,"complete":false,"host_application":"unknown",
             "orientation":{"task_view":"delivered","derived_briefs":brief_count},
             "constraints":{"caller_assertions":self.constraints,"verified":false,"conflicts":"not_evaluated"},"facets":facets,
             "discovery":{"queried_entries":self.queried_entries,"unqueried_entries":self.unqueried_entries,"stale_links":self.stale_links,"limited":self.discovery_limited},
             "boundary":{"available_relationships":self.boundaries.as_ref().map_or(0,|b|b.relations.len()),"delivered_relationships":relationship_count,"state":if self.boundaries.is_some(){"configured"}else if self.boundary_requested{"no_fresh_seeds"}else{"not_requested"},"resolution":resolution,"incomplete_paths":self.boundaries.as_ref().map(|b|&b.incomplete_paths),"truncated":self.boundaries.as_ref().is_some_and(|b|b.truncated)},
             "verification":"test_candidates_only_not_executed",
-            "compiler_relationships":"not_composed",
+            "compiler_relationships":{"kind":"references","skipped_seeds":self.compiler_skipped_seeds,"delivered":compiler_count,"windows":self.compiler.iter().map(|c|json!({"workspace_id":c.freshness.workspace_id,"producer":c.producer,"coverage":c.coverage,"target":c.target,"references":c.items.len(),"examined":c.examined,"stale":c.stale,"limited":c.candidates_full||c.more||c.definitions_truncated})).collect::<Vec<_>>()},
             "sources":included.iter().map(|&(i,f)|json!({"handle":items[i].handle.as_ref().map(SourceHandle::to_v2),"representation":if f==0{"body"}else{"address"},"facets":self.support[i].facets,"via":self.support[i].via})).collect::<Vec<_>>()})
     }
 }
@@ -91,7 +136,8 @@ fn add(
     // discoveries. Merge their attribution as well as their source bytes.
     loop {
         let Some(i) = items.iter().position(|old| {
-            old.handle.path == handle.path
+            old.handle.workspace_id == handle.workspace_id
+                && old.handle.path == handle.path
                 && old.handle.sha256 == handle.sha256
                 && old.handle.start <= handle.end
                 && handle.start <= old.handle.end
@@ -125,18 +171,28 @@ impl Engine {
         let scope = options.task.ok_or_else(|| {
             FoundryError::InvalidArgument("compose_evidence requires task and revision".into())
         })?;
-        if options.anchors.is_some() {
-            return Err(FoundryError::UnsupportedMode(
-                "task evidence composition currently supports the primary store only".into(),
-            ));
-        }
         let entries = self.task_entries_in(&self.db.begin_read()?, scope)?;
+        self.compose_evidence_for_entries(query, strategy, control, options, &entries)
+    }
+
+    /// Reference roots consume primary task goals, never foreign task state.
+    pub(crate) fn compose_evidence_for_entries(
+        &self,
+        query: &str,
+        strategy: Strategy,
+        control: &Control,
+        options: &ContextOptions,
+        entries: &[Entry],
+    ) -> FResult<crate::memory::MemoryContext> {
         let goals: Vec<_> = entries
             .iter()
             .filter(|e| matches!(e.kind, Kind::Requirement | Kind::Question))
             .collect();
         let mut plan = Plan {
             support: vec![],
+            compiler: vec![],
+            compiler_skipped_seeds: 0,
+            roots: vec![self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?],
             boundaries: None,
             boundary_requested: options.boundary_config.is_some(),
             queried_entries: vec![],
@@ -156,10 +212,27 @@ impl Engine {
         let mut candidates = Vec::new();
         plan.discovery_limited |=
             context.batch.items.len() > 8 || context.batch.counters.candidates_full;
+        // Compiler handle resolution needs exact definition units, so retain
+        // original query spans before evidence-body union merges adjacent units.
+        let mut compiler_seeds = Vec::new();
+        let mut seed_seen = BTreeSet::new();
+        let mut compiler_seed = |h: &SourceHandle| {
+            if seed_seen.insert(h.to_v2()) {
+                if compiler_seeds.len() < 4 {
+                    compiler_seeds.push(h.clone());
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            }
+        };
         // Keep a bounded primary-query seed window before task-specific
         // discovery so one broad query cannot consume every evidence slot.
         for i in context.batch.items.iter().take(8) {
             if let Some(h) = &i.handle {
+                plan.discovery_limited |= compiler_seed(h);
                 plan.discovery_limited |= !add(&mut candidates, h.clone(), facet(&h.path), "query");
             }
         }
@@ -179,6 +252,7 @@ impl Engine {
             plan.discovery_limited |= batch.counters.candidates_full;
             for i in batch.items {
                 if let Some(h) = i.handle {
+                    plan.discovery_limited |= compiler_seed(&h);
                     let f = facet(&h.path);
                     plan.discovery_limited |=
                         !add(&mut candidates, h, f, &format!("task:{}", e.id));
@@ -193,11 +267,14 @@ impl Engine {
         let tx = self.db.begin_read()?;
         // All task state, graph dependencies, briefs, source bytes and memory
         // below belong to this final snapshot, after optional external routing.
-        context.task_view = Some(self.task_view_in(&tx, scope)?);
+        context.task_view = options
+            .task
+            .map(|scope| self.task_view_in(&tx, scope))
+            .transpose()?;
         let sources = tx.open_table(SOURCES)?;
         let wid = self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?;
         let mut linked = 0;
-        for e in &entries {
+        for e in entries {
             for link in &e.source_links {
                 if linked == 8 {
                     plan.discovery_limited = true;
@@ -205,6 +282,10 @@ impl Engine {
                 }
                 linked += 1;
                 let h = HandleRef::parse(link)?;
+                if h.ws16 != wid[..16] && options.task.is_none() {
+                    // Primary source links cannot admit or identify a reference root.
+                    continue;
+                }
                 let meta: Option<SourceMeta> = sources
                     .get(h.path.as_str())?
                     .map(|r| crate::store::decode(r.value(), "source"))
@@ -334,6 +415,61 @@ impl Engine {
             } else {
                 plan.discovery_limited = true;
             }
+        }
+        for seed in compiler_seeds {
+            control.check()?;
+            let found = match self.references_in(
+                &tx,
+                &crate::graph::ReferencesRequest {
+                    seed: crate::graph::ReferencesSeed::Handle(seed.to_v2()),
+                    limit: 8,
+                    after: None,
+                },
+            ) {
+                Ok(found) => found,
+                Err(FoundryError::InvalidArgument(reason))
+                    if reason.starts_with("no_compiler_definition:") =>
+                {
+                    plan.compiler_skipped_seeds += 1;
+                    continue;
+                }
+                Err(FoundryError::StaleHandle | FoundryError::NotFound) => {
+                    plan.compiler_skipped_seeds += 1;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            plan.discovery_limited |=
+                found.candidates_full || found.more || found.definitions_truncated;
+            for reference in &found.items {
+                let f = if test_path(&reference.path) {
+                    "verification"
+                } else {
+                    "consumers"
+                };
+                let mut handle = reference.unit.clone();
+                if handle.end - handle.start > MAX_SPAN_BYTES {
+                    handle.start = reference.start;
+                    handle.end = reference.end;
+                    plan.discovery_limited = true;
+                }
+                plan.discovery_limited |= !add(&mut candidates, handle, f, "compiler_reference");
+            }
+            for definition in &found.definitions {
+                plan.discovery_limited |= !add(
+                    &mut candidates,
+                    SourceHandle {
+                        workspace_id: wid.clone(),
+                        path: definition.path.clone(),
+                        sha256: definition.sha256.clone(),
+                        start: definition.start,
+                        end: definition.end,
+                    },
+                    "implementation",
+                    "compiler_definition",
+                );
+            }
+            plan.compiler.push(found);
         }
         let memory = tx.open_table(crate::memory::MEMORY)?;
         let mut hits = Vec::new();
