@@ -308,7 +308,9 @@ manifest and frozen-copy importer), `memory` (008), `neural` (009: partition, ca
 USearch generations, bounded preparation, status, the provider/frame/profile contract
 and the supervised embedding worker), `cli` (core commands), and the 003 adapter:
 `mcp`, `bootstrap`, `config`, `receipts`, `adapter_cli`, `adapter_error`, `gateway`.
-The `foundry-embed` worker binary builds only with the `embed-worker` feature; the
+The `foundry-embed` worker binary builds only with `embed-worker`; the owned decoder
+`foundry-generate` builds only with `generate-worker`. Both share the pinned llama.cpp
+build without linking it into the core. The
 `semantic` feature (default) gates the core's tokenizer and USearch dependencies.
 `fault`/`testkit` compile only under the test feature;
 fault arming lives in a separate test binary. CLI and MCP call the same library API;
@@ -371,7 +373,12 @@ child-text identities govern area freshness; no corpus scan or new dependency da
 is required for preparation. MCP now runs the same pipeline with foreground-prioritized store steps, request
 rendering/tokenization and HTTP outside the engine slot, shared embedding/generation
 client admission and notification-driven idle waits. Derived context stays source-first
-and budgeted. Hardware headroom enforcement and owned local generation remain open. See [usage](experimental-context.md#selective-knowledge-generation).
+and budgeted. `knowledge::local` now owns a pinned native decoder, bounded private pipes,
+verified file-backed artifact reuse and idle unload. Linux has descriptor-only seccomp
+isolation and hard CPU/address-space bounds; the macOS App Sandbox/Metal path has supervised
+footprint/allocation limits and still needs hardware acceptance. No second table or source
+owner is added. Aggregate host/device pressure scheduling remains open. See
+[usage](experimental-context.md#owned-local-generation).
 Exact source/graph evidence, derived repository knowledge and explicit task memory
 have distinct provenance and invalidation rules. The
 [revised ecosystem design](context-ecosystem-plan.md#architecture-correction-useful-context-across-6000080000-files)
@@ -711,4 +718,5 @@ owner, profile and manifest version. A transactional mapping revision lets an un
 restart reuse its verified publication without a database mapping scan. Changed-input
 restart, overflow, identity change and repair reconcile; cold reads and compaction remain
 corpus-sized. Selective LLM generation now uses the explicit 010 T002 CLI described
-above and opt-in continuous MCP maintenance; owned local generation remains open.
+above and opt-in continuous MCP maintenance, now with owned local generation and
+per-worker resource controls. Aggregate hardware pressure and model task utility remain open.

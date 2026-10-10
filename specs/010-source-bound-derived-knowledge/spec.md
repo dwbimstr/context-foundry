@@ -2,11 +2,13 @@
 
 Status: Experimental T001 implemented locally; T002 now implements explicit selective
 HTTP generation, completion reuse, area lineage and opt-in continuous MCP maintenance.
-Shared client admission and derived MCP context are implemented; owned local generation,
-hardware headroom enforcement and real-model acceptance remain selected work. The owner's
+Shared client admission, derived MCP context and an experimental owned local generator
+with per-worker CPU/RAM/Metal controls are implemented. Aggregate hardware headroom and
+real-model task acceptance remain selected work. The owner's
 large-repository direction supersedes the earlier blanket deferral.
-The import and generation fixtures use synthetic outputs through real storage, retrieval
-and HTTP/CLI boundaries; no real generation model has been selected or run. 013 remains frozen off.
+Import and lifecycle fixtures use synthetic outputs through real storage, retrieval,
+HTTP/CLI and native-worker boundaries. A separate real CPU smoke is recorded in validation;
+it is not a selected production model or task-quality result. 013 remains frozen off.
 
 ## Outcome and ownership
 
@@ -117,7 +119,7 @@ See [validation](../../docs/validation.md) for executed checks and limits.
 ### T002 — Generate useful briefs and area knowledge within idle resources
 
 Status: explicit CLI and continuous MCP generation implemented experimentally. Shared
-client admission is implemented; actual hardware headroom and real-model acceptance
+client admission and owned local per-worker limits are implemented; aggregate hardware headroom and real-model task acceptance
 remain open. The efficiency amendment places this after
 changed-work ownership (009 T008) and input/resource identity (009 T009); see the
 [build order](../../docs/context-ecosystem-plan.md#revised-build-order).
@@ -174,7 +176,8 @@ nodes, a source-path allowlist, a model/deployment digest, instructions and one
 OpenAI-compatible Chat Completions endpoint. Sources are exact byte spans, with the
 first span anchoring each brief in original source. Node order prioritizes ready work;
 a stable topological walk handles at most eight children per node and four area levels.
-No all-file description pass, model download or executable launch is added. MCP
+No all-file description pass or model download is added. The HTTP profile launches no
+executable; the explicit local profile below owns its worker. MCP
 startup generation requires the explicit maintenance option described below. Schema **10**
 requires an explicit upgrade.
 
@@ -245,9 +248,9 @@ pending nodes, incomplete publication, observed usage and unknown calls.
 
 The standalone CLI retains the store's exclusive-owner rule. The MCP continuation
 below reuses the same acceptance, cache and generation pipeline inside the existing
-owner; there is no second database writer or model process. Hardware headroom enforcement,
-an owned isolated local generator and real-model task/throughput evidence remain T002
-follow-ups. Dense brief vectors remain optional. [tests/knowledge.rs](../../tests/knowledge.rs)
+owner; there is no second database writer. The local continuation below adds an owned
+model process. Aggregate hardware headroom and real-model task/throughput evidence remain
+T002 follow-ups. Dense brief vectors remain optional. [tests/knowledge.rs](../../tests/knowledge.rs)
 exercises the real HTTP/CLI/store/retrieval boundaries with a local synthetic server;
 see [validation](../../docs/validation.md#selective-knowledge-generation).
 
@@ -282,7 +285,7 @@ An already admitted generation request can delay a dense query up to the query's
 ceiling; lexical fallback and exact evidence remain available. These are client admission
 and bounded CPU/payload guarantees, **not** measurements or enforcement of external server
 CPU/GPU headroom, residency or cancellation. An HTTP disconnect may leave external compute
-running. Owned worker isolation/resource telemetry remain required for stronger claims.
+running. The local profile below supplies owned worker isolation and resource telemetry.
 
 Each owner window admits at most eight generation calls, 32,768 serialized-request
 o200k tokens and 16,384 requested completion tokens over 60 seconds. Limits persist
@@ -309,6 +312,75 @@ active `generating` phase has no claimed terminal provider usage. Observed provi
 unknown calls and local admission units remain separate. These counters are owner-local;
 completed outputs and provider backoff remain durable. The configured endpoint fixture
 exercises real stdio and shared HTTP consumers, not a real generation model.
+
+### Owned local generation and resource controls
+
+[local](../../src/knowledge/local/mod.rs) and the optional
+[foundry-generate](../../src/bin/foundry_generate.rs) implement one explicit local provider
+within the existing pipeline. This worker is necessary to own compute termination and
+native resource limits; an HTTP disconnect cannot provide them. It adds a bounded private
+pipe protocol, native isolation and a supervisor, with no listener, job table, schema
+migration or new dependency. The core never links the decoder backend. HTTP profiles and
+their existing cache identities remain compatible; remote and local selection are exclusive.
+
+The local profile pins executable bytes, a single-file GGUF, the existing llama.cpp commit,
+explicit built-in chat template, CPU/Metal choice, layer count, context/batch geometry and
+threads. These computation inputs participate in generation identity. Paths, resource
+ceilings and load/idle timeouts do not invalidate accepted completions. Resource bounds
+and `development:true` are mandatory. Unsupported profiles refuse before artifact work.
+
+Current/cache checks precede local acquisition. Streaming hashes create private, unlinked,
+read-only executable/model snapshots in bounded buffers; no weight-sized Rust copy is
+retained. Snapshots survive idle unload within a continuous run. Preflight failure is
+memoized for that run to prevent repeated scans across selected nodes. Linux executes the
+snapshot descriptor; macOS must retain and reverify the signed bundle path. Disk/page-cache
+usage is additional to worker RAM. Snapshot paths never grant ambient source/store rights.
+
+The worker loads through `llama_model_load_from_file_ptr`, formats the complete prompt
+with the pinned template, tokenizes with the GGUF vocabulary and refuses prompt+output
+overflow. Greedy grammar-constrained decoding produces the brief structure, while the
+source owner still performs semantic-shape/citation/identifier/freshness acceptance.
+No generic JSON-to-claim coercion or partial-output publication is allowed. Observed
+prompt/completion counts use actual model tokens; o200k request admission remains separate.
+
+Linux CPU uses inherited affinity, lowered scheduling priority, hard address-space and
+all-thread lifetime CPU limits, and `no_new_privs` plus an architecture-checked syscall
+allowlist before model loading. It permits descriptor I/O and in-process threads, while
+denying path opens, network, exec, child processes and changes to resource/affinity limits.
+No cgroup or Landlock availability is assumed. macOS requires a non-root App Sandbox
+development bundle, hard CPU/process limits and supervised physical footprint. Metal
+additionally monitors process-local allocations/reserve against its recommended working
+set at 20 ms intervals, including model load. This is not a hard GPU or global-memory quota.
+See the precise [enforcement table](../../docs/deployment.md#experimental-owned-generation-controls).
+
+Frames are length-prefixed strict JSON, at most 512 KiB, with full config readiness and
+monotonic request/reply identity. Only one request is active. Load/call wall deadlines,
+cancellation, malformed replies, usage overruns or resource failures terminate/reap the
+process before background admission is released. Normal pause accepts the current call
+then unloads; shutdown cancels it. Owner liveness and native owner-death containment stop
+orphan computation. Idle and budget waits release model/device residency while retaining
+verified snapshots. Local PID/call/verification/peak/stop observations are available outside
+the engine mutex. RAM is sampled; GPU peaks are reported at completed calls, not global
+live telemetry. A worker CPU-lifetime kill reports exit without inventing terminal usage.
+
+This controls one generation worker. Shared active-call admission with embeddings does
+not cap combined resident models, global GPU use, thermal pressure or battery draw.
+Those adaptive policies and macOS hardware/package acceptance remain open, alongside
+verified task utility and large-repository economics. Linux synthetic native-denial and
+lifecycle tests plus the real-model smoke are separate evidence in
+[validation](../../docs/validation.md#owned-local-generation-and-resource-controls).
+
+Pinned backend reference: llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`,
+`include/llama.h` / `llama_model_load_from_file_ptr`, `llama_chat_apply_template`,
+`llama_decode`, `llama_sampler_init_grammar`; `src/llama-model-loader.cpp` and
+`src/llama-mmap.cpp` / borrowed `FILE*` lifetime;
+`ggml/src/ggml-metal/ggml-metal-device.m` / `ggml_metal_device_get_memory` and
+`ggml/src/ggml-metal/ggml-metal.cpp` / backend device memory observation. Foundry intentionally
+uses its own bounded Rust supervisor, descriptor-only CPU profile and fixed brief grammar,
+not the upstream server or tool loop. Relevant Foundry executions are
+`local_worker_enforces_os_denials_and_reuses_source_bound_outputs` and
+`local_real_cpu_generation_accepts_a_cited_brief_and_reuses_it`; upstream Metal behavior
+is inspected reference, not executed hardware acceptance in this Linux session.
 
 ## Pinned reference and differences
 

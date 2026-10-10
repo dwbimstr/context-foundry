@@ -595,7 +595,7 @@ Use the same bounded knowledge profile with the MCP owner:
 foundry --store STORE mcp --root REPO --knowledge-profile knowledge.json --knowledge-maintain --watch
 ```
 
-The profile admits one endpoint and source scope for the primary workspace. It is loaded
+The profile admits one provider and source scope for the primary workspace. It is loaded
 once; restart to change it. Omitting `--knowledge-maintain` leaves generation paused.
 Watching alone does not generate. An admitted owner accepts these separate index actions:
 
@@ -646,5 +646,109 @@ Foundry cannot enforce CPU/GPU headroom or terminate computation inside an exter
 Shutdown closes HTTP and discards uncommitted output before releasing the store.
 
 This uses schema 10 with no further migration. Selected brief publication does not drain
-unrelated source work. Real-model task quality and an owned isolated generation worker
-with hardware resource enforcement remain open.
+unrelated source work. Owned local generation is available below; real-model task quality
+and aggregate host/device pressure scheduling remain open.
+
+## Owned local generation
+
+The experimental `foundry-generate` worker runs a pinned single-file decoder GGUF through
+llama.cpp. The CLI and continuous MCP owner use the same completion cache, source checks
+and budgets as HTTP generation. No service, listener, model download or second store is
+required. Local selection is explicit; an unsupported device or isolation profile refuses.
+
+Build with Rust 1.90, C/C++, CMake, libclang and a llama.cpp Git object store containing
+`b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`:
+
+```sh
+LLAMA_CPP_DIR=/absolute/path/to/llama.cpp cargo build --locked --release --features generate-worker --bin foundry-generate
+```
+
+The build exports the pinned objects, ignoring checkout changes, and statically links
+llama.cpp only into the optional worker. Linux builds CPU kernels; macOS builds Metal
+and Accelerate. CUDA is not supported by this profile. `foundry-generate --notices DIR`
+exports the backend license and reports its commit. Model rights remain separate.
+
+Start with the [knowledge profile](#selective-knowledge-generation), remove `endpoint`,
+keep `allow_remote:false` and `token_env:null`, and add this `local` object. Replace
+paths and SHA-256 placeholders with the actual worker and model digests; top-level
+`artifact_sha256` now pins the GGUF bytes. Keep the existing explicit workspace, nodes,
+source scope, instructions and request/output limits.
+
+```json
+{
+  "development": true,
+  "executable": "/absolute/path/to/foundry-generate",
+  "executable_sha256": "<64 lowercase SHA-256 hex digits>",
+  "gguf": "/absolute/path/to/model.gguf",
+  "llama_cpp": "b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea",
+  "chat_template": "chatml",
+  "device": {"kind":"cpu"},
+  "context_tokens": 4096,
+  "batch_tokens": 128,
+  "threads": 2,
+  "memory_bytes": 2147483648,
+  "memory_enforcement": "hard_address_space",
+  "cpu_seconds": 180,
+  "load_seconds": 90,
+  "idle_seconds": 15
+}
+```
+
+The example template fits Qwen2.5; select an explicit llama.cpp built-in template
+appropriate to the model. Context must fit the model's trained capacity. The complete
+formatted prompt is tokenized by the GGUF tokenizer; prompt plus requested completion
+must fit without prefix truncation. Greedy decoding uses the exact brief JSON grammar,
+then the owner independently validates every citation, identifier and source version.
+Grammar compliance does not prove prose correctness. Successful replies report actual
+GGUF prompt and sampled completion tokens, separately from o200k request admission.
+An interrupted call retains unknown terminal usage; it is not reported as zero cost.
+
+On Linux, `threads` sets backend thread counts and restricts all worker threads to at
+most that many available CPUs. `memory_bytes` is a **hard virtual address-space ceiling**,
+including mapped weights; it must leave room for KV, scratch, libraries and threads.
+`cpu_seconds` is a hard worker-lifetime, all-thread CPU allowance, not a per-call duration.
+The separate `call_seconds` and `load_seconds` bound wall time. The descriptor-only
+seccomp profile denies path opens, networking, process creation and execution after
+initialization; the loader reads only the verified model descriptor. Missing enforcement
+refuses generation. See [deployment controls](deployment.md#experimental-owned-generation-controls).
+
+For macOS development, first bundle and ad-hoc sign the worker:
+
+```sh
+scripts/generate-worker-bundle.sh target/release/foundry-generate /absolute/path/FoundryGenerate.app
+```
+
+Use the printed hash and `Contents/MacOS/foundry-generate` path, set
+`memory_enforcement:"supervised_footprint"`, and optionally select:
+
+```json
+{"kind":"metal","layers":16,"allocation_bytes":2147483648,"reserve_bytes":536870912}
+```
+
+Metal monitors this process's allocation and the remaining allowance under the device's
+recommended working-set size; this is **not global free VRAM or a hard GPU quota**.
+The worker stops if the allocation/reserve bounds fail, with 20 ms sampling during
+load and inference. macOS RAM is also supervised rather than a hard allocation quota.
+This branch's Linux checks do not establish Metal execution or signed-package acceptance.
+
+Artifacts are verified lazily only when a selected node needs generation. Streaming
+SHA-256 creates private unlinked read-only snapshots once per active run; idle unload
+retains these snapshots, so later source edits can reload without copying or hashing
+again. Snapshot disk space and kernel page cache are additional to the worker cap.
+Current/cache hits need neither model files nor a worker. A failed artifact acquisition
+is memoized within the run rather than repeated for every selected node. Explicit resume
+starts a fresh acquisition after the operator repairs it. macOS rechecks its signed
+executable path on each launch; Linux executes its retained executable descriptor.
+
+Continuous maintenance unloads the worker after `idle_seconds`, during budget waits,
+and when its run ends. Normal pause finishes the admitted call, then stops and reaps
+the worker. Shutdown/cancellation kills and reaps it before releasing the store; owner
+death also ends computation. A failed call keeps source work pending and completed
+briefs reusable. These are per-worker controls: embedding and generation share active
+background admission, but retained embedding residency is not included in a combined
+host/device quota. Adaptive pressure/battery scheduling remains follow-up work.
+
+`status.knowledge.maintenance.local_worker` exposes PID, launches, calls, verified bytes,
+sampled peak RAM, reported peak GPU allocation, isolation and last stop reason without
+holding the engine slot. GPU observations update on completed replies and are not live
+machine telemetry. CLI reports include `local_worker`; counters are local to the owner/run.

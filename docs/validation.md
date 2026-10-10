@@ -2044,3 +2044,84 @@ availability. They do not establish real-model quality, server CPU/GPU headroom,
 provider billing or large-repository throughput. Usage is reported at completed-pass
 boundaries and is owner-local; a process restart is not a durable account-wide quota.
 Actual isolated local generation and hardware resource enforcement remain open.
+
+## Owned local generation and resource controls
+
+010 T002 adds an explicit owned decoder to the existing CLI/MCP pipeline, with lazy
+pinned artifacts, per-worker CPU/RAM/device limits and model unload/reuse. Schema 10
+and existing HTTP cache identities are unchanged. This is experimental Linux CPU work
+plus an unexecuted macOS App Sandbox/Metal path; it is not installed-package acceptance.
+
+The native lifecycle fixtures use synthetic completions behind the **actual Rust worker
+entry, supervisor, seccomp and OS resource limits**. They exercise:
+
+- Denied access to an existing private file, socket creation, subprocess execution and
+  `fcntl` ownership that could request asynchronous signals to another process,
+  while model-descriptor reads and in-process threads remain available. The child sees
+  only the explicit environment. CPU affinity, hard address-space/lifetime CPU limits
+  and `no_new_privs` are inspected on the live process through MCP status.
+- Actual address-space allocation refusal and CPU-time termination preserve pending
+  source work and publish no output. Unsupported GPU/memory combinations refuse before
+  reading an absent model, rather than falling back to unrestricted execution.
+- MCP startup/profile admission alone launches nothing. A four-node pass uses one
+  worker, idle unload removes its PID, and a changed child plus two ancestors reload
+  from retained verified snapshots even after the original artifact paths are removed.
+  A fresh owner with current briefs performs zero calls/launches without those paths.
+- A blocked native call leaves foreground exact-source context available. Shutdown
+  terminates/reaps the child before store release and leaves no uncommitted brief.
+  Abrupt owner death stops computation; reopening recovers the retained obligation.
+  The container may retain an orphan zombie under PID 1, so the death check distinguishes
+  a stopped zombie from a live process; normal shutdown separately requires reaping.
+- Oversized frames, wrong reply identity and token-usage overflow kill the worker and
+  refuse publication. Bad artifact pins fail before a call and acquisition failure is
+  memoized across selected nodes; a fresh explicit session can retry repaired artifacts.
+
+The cloud instance is Linux x86_64, kernel 6.18.44, five available CPUs and no GPU.
+Landlock reports unavailable and cgroup v2 is not delegated. The implemented CPU profile
+therefore needs neither: a seccomp allowlist denies all new path opens, and the pinned
+loader consumes a read-only `FILE*` model descriptor. This profile was exercised here;
+aarch64, macOS filesystem/process denials, Metal load/inference, GPU pressure and signed
+distribution remain unexecuted. Sampled footprint/Metal allocation is not a hard quota.
+
+The opt-in real CPU smoke uses upstream
+`Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf`, SHA-256
+`1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32`, kept outside Git.
+The worker is built from llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`, using the
+explicit `chatml` template, 4,096 context tokens, batch 128, two CPU threads, 2 GiB hard
+address space and 180 lifetime CPU seconds. The ignored integration test requires explicit
+worker/GGUF paths and never downloads weights. Its input is a tiny synthetic Rust function;
+it does not establish coding-task quality, corpus throughput or economic improvement.
+
+Early smoke attempts revealed two separate model-output problems: generic JSON decoding
+allowed incorrect brief field types, and the small model emitted unsupported identifiers
+and misleading prose. The worker now constrains the brief structure with a grammar; source
+acceptance continues to reject unsupported identifiers. The bounded smoke profile asks for
+two short claims and empty optional arrays. Such integration evidence does not select this
+model for production, make citations proof of truth or solve model quality. Terminal usage
+from successful calls is actual GGUF token usage; interrupted calls remain unknown.
+
+The final real CPU run passed: one accepted/cached brief, **377 prompt / 124 completion tokens**,
+one launch, zero unknown-usage calls, and 725,540,864 bytes sampled peak worker RSS under
+the 2 GiB virtual-address ceiling. The test's 40.90 seconds include hash/copy/setup work;
+there is no throughput comparison. Replaying with an absent model path used zero calls
+and zero launches. All nine new native fixture tests also passed. The first abrupt-death
+fixture assumed the optional procfs child-list file; matching ordinary process PPid
+instead made it portable to this kernel without weakening the stopped-process assertion.
+
+The full regression executed **975 passes and one timeout**, with three intentional ignores
+(two existing measurements and the separately executed real-model smoke), plus **all 20
+child-process recovery cases**. The existing
+`continuous_semantics_progresses_during_filesystem_traffic_and_converges` case exceeded its
+12-second progress deadline. It passed unchanged in isolation in 2.99 seconds, then the
+entire affected neural-retrieval suite passed **70/70** in 45.19 seconds with its measurement
+case still ignored. Thus all **976 regular tests** have passing evidence across the full
+run and affected-suite rerun; the one transient timeout remains recorded rather than
+reported as an uninterrupted green run. No test deadlines or production scheduling were
+changed to obtain the rerun. The 6,000-file watcher suite passed in 109.53 seconds.
+
+The build and all 30 knowledge tests also passed with embeddings disabled. Native worker
+build and Clippy, all-target Clippy with warnings denied, formatting, bundle-script syntax
+and Markdown link checks passed (47 files, 729 links, 172 heading anchors). No dependencies,
+schema changes or weights were added. The cloud setup draft records the additional pinned
+CMake/libclang prerequisites and optional native-worker activation; publication/fresh-task
+restoration is not claimed by these current-instance checks.

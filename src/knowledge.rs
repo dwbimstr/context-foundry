@@ -1,5 +1,5 @@
 //! Explicit, selective generation (010 T002). One bounded plan, one configured
-//! HTTP provider, the existing source/brief owner and a memoized completion table.
+//! provider, the existing source/brief owner and a memoized completion table.
 //! Provider work never runs in a source transaction or foreground retrieval.
 use crate::neural::work::Lane;
 use crate::store::{self, CHUNKS, HandleRef, SOURCES, SourceMeta};
@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub(crate) mod cache;
+pub mod local;
 pub mod maintenance;
 pub mod provider;
 pub use provider::Usage;
@@ -79,7 +80,10 @@ pub struct Profile {
     pub model: String,
     /// Operator-pinned provider/model deployment identity; HTTP cannot attest weights.
     pub artifact_sha256: String,
+    #[serde(default)]
     pub endpoint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local: Option<local::Config>,
     #[serde(default)]
     pub allow_remote: bool,
     pub token_env: Option<String>,
@@ -182,7 +186,21 @@ impl Profile {
         if serde_json::to_vec(self)?.len() > MAX_PROFILE_BYTES {
             return Err(fail("knowledge_profile_invalid", "profile exceeds 64 KiB"));
         }
-        self.endpoint()?;
+        if let Some(local) = &self.local {
+            local.validate()?;
+            if !self.endpoint.is_empty()
+                || self.allow_remote
+                || self.token_env.is_some()
+                || self.output_tokens >= local.context_tokens
+            {
+                return Err(fail(
+                    "knowledge_profile_invalid",
+                    "local generation excludes HTTP credentials/endpoints and needs room for the full prompt",
+                ));
+            }
+        } else {
+            self.endpoint()?;
+        }
         let mut ids = BTreeSet::new();
         for node in &self.nodes {
             if node.id.is_empty()
@@ -259,7 +277,7 @@ impl Profile {
         hash(&("knowledge-v1", &self.recipe, &node.id))
     }
     fn config_id(&self, node: &Node) -> FResult<String> {
-        hash(&(
+        let original = hash(&(
             SYSTEM,
             &self.instructions,
             &self.model,
@@ -267,10 +285,22 @@ impl Profile {
             &self.endpoint,
             self.output_tokens,
             node,
-        ))
+        ))?;
+        match &self.local {
+            None => Ok(original),
+            Some(local) => hash(&(original, local.function_id()?)),
+        }
     }
     fn provider_id(&self) -> FResult<String> {
-        hash(&(&self.endpoint, &self.model, &self.artifact_sha256))
+        match &self.local {
+            None => hash(&(&self.endpoint, &self.model, &self.artifact_sha256)),
+            Some(local) => hash(&(
+                "local",
+                &self.model,
+                &self.artifact_sha256,
+                local.function_id()?,
+            )),
+        }
     }
 }
 
@@ -532,6 +562,8 @@ pub struct RunLimits {
 }
 #[derive(Debug, Default, Serialize)]
 pub struct Report {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_worker: Option<local::Observation>,
     pub publication_error: Option<String>,
     pub complete: bool,
     pub planned: usize,
@@ -560,7 +592,22 @@ pub async fn prepare(
     limits: RunLimits,
     control: &Control,
 ) -> FResult<Report> {
-    prepare_access(&mut Direct(engine), profile, limits, control, None).await
+    let mut provider = provider::Generation::default();
+    let mut report = prepare_access(
+        &mut Direct(engine),
+        profile,
+        limits,
+        control,
+        None,
+        &mut provider,
+    )
+    .await?;
+    provider.local.unload("stopped");
+    report.local_worker = profile
+        .local
+        .as_ref()
+        .map(|_| provider.local.telemetry.snapshot());
+    Ok(report)
 }
 
 pub(crate) trait Access {
@@ -597,6 +644,7 @@ pub(crate) async fn prepare_access<A: Access>(
     limits: RunLimits,
     control: &Control,
     frontier: Option<crate::neural::work::Batch>,
+    provider: &mut provider::Generation,
 ) -> FResult<Report> {
     let order = profile.validate()?;
     if access
@@ -627,7 +675,6 @@ pub(crate) async fn prepare_access<A: Access>(
         })?,
     };
     let provider_id = profile.provider_id()?;
-    let mut provider = None;
     let mut ready: BTreeMap<String, brief::Record> = BTreeMap::new();
     let mut report = Report {
         planned: order.len(),
@@ -693,9 +740,7 @@ pub(crate) async fn prepare_access<A: Access>(
                         "provider retry is deferred for up to 30 seconds",
                     ));
                 }
-                if provider.is_none() {
-                    provider = Some(provider::HttpProvider::new(profile)?);
-                }
+                provider.prepare(profile, control)?;
                 access.step(control, |_engine| {
                     fault!(
                         KNOWLEDGE_BEFORE_CALL,
@@ -710,11 +755,7 @@ pub(crate) async fn prepare_access<A: Access>(
                 report.request_tokens_o200k += prepared.tokens;
                 report.requested_output_tokens += profile.output_tokens as u64;
                 report.usage_unknown_calls += 1;
-                let reply = provider
-                    .as_ref()
-                    .expect("provider admitted")
-                    .generate(prepared.body, &profile.model, control)
-                    .await;
+                let reply = provider.generate(profile, prepared.body, control).await;
                 drop(permit);
                 let reply = match reply {
                     Ok(reply) => reply,

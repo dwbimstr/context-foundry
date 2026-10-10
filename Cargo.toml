@@ -117,6 +117,8 @@ semantic = ["dep:tokenizers", "dep:usearch"]
 # bindgen and links the static archives into that binary alone; `foundry`
 # and the default build never touch llama.cpp.
 embed-worker = ["dep:bindgen"]
+# Owned generation links the same pinned llama.cpp into foundry-generate only.
+generate-worker = ["dep:bindgen"]
 learning-worker = ["dep:tch"]
 # Named deterministic fault points for recovery tests. Never enabled by
 # default; release builds contain no hook code or fault-name strings.
@@ -161,6 +163,16 @@ required-features = ["embed-worker"]
 [[bin]]
 name = "foundry-embed-fake"
 path = "src/bin/foundry_embed_fake.rs"
+required-features = ["test-faults"]
+
+[[bin]]
+name = "foundry-generate"
+path = "src/bin/foundry_generate.rs"
+required-features = ["generate-worker"]
+
+[[bin]]
+name = "foundry-generate-fake"
+path = "src/bin/foundry_generate_fake.rs"
 required-features = ["test-faults"]
 
 [[bin]]

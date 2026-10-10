@@ -48,8 +48,9 @@ F now adds explicit selective HTTP generation, exact completion reuse, source-bo
 area summaries and independent knowledge acknowledgment in schema 10. Unchanged nodes
 skip source-body reads and model calls; changed children invalidate their ancestors.
 Opt-in continuous MCP maintenance, shared client admission and bounded derived context
-are now implemented. Owned local generation, hardware headroom enforcement and real-model
-acceptance remain open. See [usage](experimental-context.md#selective-knowledge-generation).
+are now implemented. Owned local generation adds pinned artifact reuse, idle unload and
+per-worker CPU/RAM/Metal controls. Aggregate host/device pressure scheduling, Metal hardware
+acceptance and real-model task utility remain open. See [usage](experimental-context.md#owned-local-generation).
 
 ## Architecture correction: useful context across 60,000–80,000 files
 
@@ -72,7 +73,7 @@ omits a caller, configuration dependency or test can make the complete task cost
 | Exact source/structural graph | Versioned source, lexical search, 23-language extraction, compiler imports, approximate doors | Preserve it as the evidence base; add evidence about behavior and process boundaries. |
 | CPU parallelism | Bounded source reads/hash overlap ordered commits and periodic lexical publication on one reusable pool of at most eight workers. Semantic workers and bounded verified cards survive across waves. | Remove remaining artifact verification/accounting and per-card fitting repetition; source transactions remain individual. |
 | Embedding bootstrap | Latest recorded Gemma runs: 112,549 cards in 1,256 s; 332,732 cards in 4,437 s. MCP prefetches one batch; model work has one slot. | Make useful partial coverage available early, overlap independent stages, remove whole-corpus barriers, and tune device batches separately from CPU worker counts. |
-| Repository knowledge | Address cards/body windows complement 010 source briefs and bounded area summaries. Explicit CLI/MCP generation reuses exact completions and checks transitive source/child identity. Explicit task/project memory is caller-authored. | Add owned local generation and hardware headroom enforcement; verify real-model task utility. |
+| Repository knowledge | Address cards/body windows complement 010 source briefs and bounded area summaries. Explicit CLI/MCP generation reuses exact completions and checks transitive source/child identity. Explicit task/project memory is caller-authored. | Owned local generation and per-worker controls implemented; add aggregate pressure scheduling, accept Metal on hardware and verify real-model task utility. |
 | Continuous maintenance | Opt-in primary-root watching now supports native events, bounded coalescing, scoped updates and restart/overflow reconciliation (001 T011) | Extend resource policy and validate other platforms/large real repositories; quiet ticks do not reread source bodies. |
 | Task-quality economics | Exact delivery accounting and older host trials exist; recent features have fixture evidence | Compare verified multi-file tasks and complete cost, including bootstrap amortization, maintenance, retries and auxiliary generation. |
 
@@ -177,7 +178,7 @@ the E3 opportunity; the baseline rows are not a description of the updated imple
 | Vector publication | [index.rs](../src/neural/index.rs) rebuilds a complete USearch generation from current cached vectors/locations; geometric thresholds amortize cold publication. A mapping-only change can also rebuild ANN data. | Separate mapping changes from vector changes; bounded delta publication and compaction, with restart-safe generations. 009 T008. |
 | Foreground/resource policy | Every MCP tool call, including status, extends the two-input batch window for 60 seconds. Any pending watcher work denies semantic store steps. Worker context is fixed at 2,048 tokens, flash attention disabled, f32 KV, Metal offload. | Protect real foreground demand while preventing observation-induced throttling and starvation during sustained source work. Admit by CPU/bytes/tokens/device headroom; validate backend-specific kernel/precision changes. 001 T011 / 009 T007/T009. |
 | Status | [status.rs](../src/neural/status.rs) validates/hashes a generation, walks source partitions and performs a cache census; live bootstrap counters overlay that result. | Cheap versioned progress/coverage snapshots, with explicit audit/reconciliation and unknown/stale markers. Frequent progress polling must not scan all source/cache/index data. 009 T008. |
-| Enrichment | [knowledge.rs](../src/knowledge.rs) now generates a bounded selected plan through an explicit HTTP provider, reuses exact completions and publishes through [brief.rs](../src/brief.rs). Source/child changes suppress stale area ancestors immediately. | A bounded selected-set scan avoids a new reverse-dependency index. MCP continuous maintenance and shared client admission are implemented; owned local workers, hardware headroom, real-model acceptance and optional dense brief vectors remain 010 T002 work. |
+| Enrichment | [knowledge.rs](../src/knowledge.rs) now generates a bounded selected plan through an explicit HTTP provider, reuses exact completions and publishes through [brief.rs](../src/brief.rs). Source/child changes suppress stale area ancestors immediately. | A bounded selected-set scan avoids a new reverse-dependency index. MCP continuous maintenance, shared client admission and owned local workers with per-worker limits are implemented; aggregate hardware pressure, Metal acceptance, real-model task utility and optional dense brief vectors remain 010 T002 work. |
 
 The watcher updates source and lexical state incrementally; immediate invalidation
 keeps stale semantic/brief evidence out. Invalidation alone does not schedule or
@@ -253,7 +254,8 @@ puts E1–E4 ahead of broad generated knowledge. E1 and E2 are implemented exper
 below; E3 ANN deltas are implemented, with remaining publication costs named below.
 E4 body/parent inputs and model geometry are implemented experimentally; real-device
 acceptance remains. F implements CLI/MCP generation, continuous scheduling and shared
-client admission; owned local workers and hardware resource enforcement remain. G is
+client admission plus owned local generation with per-worker resource controls. Aggregate
+hardware pressure scheduling, Metal acceptance and real-model task utility remain. G is
 pending. Sandbox build/test authorization continues.
 
 | Order | Concrete increment | Owner/status |
@@ -266,7 +268,7 @@ pending. Sandbox build/test authorization continues.
 | E2 | Durable changed-work frontier, explicit continuous semantic maintenance, independent acknowledgments and cheap status | 009 T008 with 001 T011; implemented experimentally in schema 9; ordinary changed-input selection is bounded; ANN deltas follow in E3 |
 | E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; ANN deltas, mapping-only publication, bounded compaction and crash recovery implemented. Warm affected-location, bounded location overlays, shared metadata and clean-restart publication reuse are implemented. Cold verification, changed-input restart and compaction remain corpus-sized; total affected-path cost is not claimed. |
 | E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; opt-in body windows, bounded parent prefixes, versioned limits and actual-token batches implemented. Address profiles/caches preserved; independent area vectors and real-model comparison remain |
-| F | Selective memoized LLM generation, dependency tracking, affected area rollups and indexed derived knowledge | 010 T002: explicit HTTP/CLI generation, transactional completion reuse, bounded transitive lineage and area freshness implemented in schema 10. Continuous MCP scheduling and shared client admission are implemented; owned local workers, hardware headroom and real-model acceptance remain. A bounded selected-set scan replaces a persistent reverse index for now. |
+| F | Selective memoized LLM generation, dependency tracking, affected area rollups and indexed derived knowledge | 010 T002: explicit HTTP/CLI generation, transactional completion reuse, bounded transitive lineage and area freshness implemented in schema 10. Continuous MCP scheduling, shared client admission and owned local generation with per-worker CPU/RAM/Metal controls are implemented; aggregate pressure scheduling, Metal acceptance and real-model task utility remain. A bounded selected-set scan replaces a persistent reverse index for now. |
 | G | Evidence-bearing boundary joins and task-oriented implementation/caller/test composition | 005 T005 / 003 T009; pending |
 
 Use work-count assertions in sandbox tests: unchanged replay sends zero embeddings;

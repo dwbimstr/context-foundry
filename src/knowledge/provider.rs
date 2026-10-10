@@ -5,6 +5,40 @@ use super::*;
 use futures_util::StreamExt;
 use std::future::Future;
 
+#[derive(Default)]
+pub(crate) struct Generation {
+    http: Option<HttpProvider>,
+    pub local: super::local::Session,
+}
+impl Generation {
+    pub fn prepare(&mut self, profile: &Profile, control: &Control) -> FResult<()> {
+        if profile.local.is_some() {
+            self.local.prepare(profile, control)
+        } else {
+            if self.http.is_none() {
+                self.http = Some(HttpProvider::new(profile)?);
+            }
+            Ok(())
+        }
+    }
+    pub async fn generate(
+        &mut self,
+        profile: &Profile,
+        body: Vec<u8>,
+        control: &Control,
+    ) -> FResult<Reply> {
+        if profile.local.is_some() {
+            self.local.generate(profile, body, control).await
+        } else {
+            self.http
+                .as_ref()
+                .expect("prepared HTTP provider")
+                .generate(body, &profile.model, control)
+                .await
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Usage {

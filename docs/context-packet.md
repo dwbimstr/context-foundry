@@ -46,8 +46,10 @@ transitive child/source freshness. Unchanged runs avoid body reads and provider 
 partial runs resume completed nodes. The standalone CLI requires exclusive ownership
 and a configured provider/scope. MCP now supports explicit continuous knowledge maintenance, shared client
 admission and source-first derived context on both transports. Store locks exclude request
-rendering/tokenization and HTTP; quiet operation waits on source notifications. Owned local
-generation, hardware headroom enforcement and real-model acceptance remain open.
+rendering/tokenization and inference; quiet operation waits on source notifications. Owned local
+generation now adds pinned lazy model snapshots, idle unload and native per-worker CPU/RAM
+controls, with a Metal control path awaiting hardware acceptance. Aggregate host/device
+pressure scheduling and real-model task acceptance remain open.
 Boundary joins and task-evidence composition also remain pending. See [configuration](experimental-context.md#selective-knowledge-generation).
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
 [validation](validation.md). 013 remains frozen. No release or quality gain is claimed.

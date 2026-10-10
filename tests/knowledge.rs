@@ -155,6 +155,7 @@ impl Env {
             model: "fixture-model".into(),
             artifact_sha256: "a".repeat(64),
             endpoint: server.url.clone(),
+            local: None,
             allow_remote: false,
             token_env: None,
             source_scope: vec![
@@ -1355,4 +1356,481 @@ async fn mcp_provider_failure_pauses_even_when_later_nodes_exhaust_the_window() 
     assert_eq!(server.calls(), 8);
     assert_eq!(paused["knowledge"]["cache"]["entries"], 7);
     stop_mcp(client, &mut env).await;
+}
+
+#[cfg(target_os = "linux")]
+fn use_local(env: &mut Env) {
+    use knowledge::local::{Config, Device, LLAMA_CPP, MemoryEnforcement};
+    let executable = env.dir.path().join("generator");
+    std::fs::copy(env!("CARGO_BIN_EXE_foundry-generate-fake"), &executable).unwrap();
+    let executable_sha256 = context_foundry::digest(&std::fs::read(&executable).unwrap());
+    let gguf = env.dir.path().join("fixture.gguf");
+    std::fs::write(&gguf, b"synthetic model fixture").unwrap();
+    env.profile.artifact_sha256 = context_foundry::digest(b"synthetic model fixture");
+    env.profile.endpoint.clear();
+    env.profile.local = Some(Config {
+        development: true,
+        executable,
+        executable_sha256,
+        gguf,
+        llama_cpp: LLAMA_CPP.into(),
+        chat_template: "chatml".into(),
+        device: Device::Cpu,
+        context_tokens: 4096,
+        batch_tokens: 128,
+        threads: 1,
+        memory_bytes: 512 * 1024 * 1024,
+        memory_enforcement: MemoryEnforcement::HardAddressSpace,
+        cpu_seconds: 30,
+        load_seconds: 10,
+        idle_seconds: 1,
+    });
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "current_thread")]
+async fn local_worker_enforces_os_denials_and_reuses_source_bound_outputs() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    let outside = env.dir.path().join("private-sentinel");
+    std::fs::write(&outside, "private fixture must never enter the worker").unwrap();
+    env.profile.instructions = format!("fixture:probe:{}", outside.display());
+    let prepared = env.run(8).await;
+    assert!(prepared.complete, "{prepared:?}");
+    assert_eq!(prepared.generated, 4);
+    assert_eq!(server.calls(), 0);
+    for record in env.records() {
+        assert_eq!(
+            record.brief.unknowns,
+            vec![
+                "probe outside=true network=true exec=true model=true thread=true env=true async_owner=true"
+            ]
+        );
+    }
+    let local = env.profile.local.as_ref().unwrap();
+    std::fs::remove_file(&local.gguf).unwrap();
+    std::fs::remove_file(&local.executable).unwrap();
+    let reused = env.run(8).await;
+    assert!(reused.complete, "{reused:?}");
+    assert_eq!((reused.calls, reused.reused_current), (0, 4));
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "current_thread")]
+async fn local_worker_memory_limit_and_invalid_artifacts_preserve_pending_work() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    env.profile.instructions = "fixture:allocate".into();
+    let limited = env.run(8).await;
+    assert_eq!(limited.calls, 1, "{limited:?}");
+    assert_eq!(
+        limited.nodes[0].reason.as_deref(),
+        Some("knowledge_resource_limit")
+    );
+    assert!(env.records().is_empty());
+    env.engine().knowledge_purge_cache().unwrap();
+    env.profile.instructions = "Use supplied evidence.".into();
+    std::fs::write(&env.profile.local.as_ref().unwrap().gguf, b"changed").unwrap();
+    let invalid = env.run(8).await;
+    assert_eq!(invalid.calls, 0);
+    assert_eq!(
+        invalid.nodes[0].reason.as_deref(),
+        Some("knowledge_artifact_invalid")
+    );
+    assert!(env.records().is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_mcp_unloads_idle_models_and_reuses_verified_snapshots_after_edits() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    let client = launch_mcp(&mut env, false, true).await;
+    let before = mcp_call(&client, "status", json!({})).await;
+    let before: Value = serde_json::from_str(&before).unwrap();
+    assert_eq!(
+        before["knowledge"]["maintenance"]["local_worker"]["launches"],
+        0
+    );
+    mcp_call(&client, "index", json!({"knowledge":"maintain"})).await;
+    let prepared = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["last_run"]["complete"] == true
+            && s["knowledge"]["maintenance"]["local_worker"]["pid"].is_null()
+    })
+    .await;
+    let observed = &prepared["knowledge"]["maintenance"]["local_worker"];
+    assert_eq!(observed["launches"], 1);
+    assert_eq!(observed["calls"], 4);
+    assert_eq!(observed["last_stop"], "idle");
+    assert_eq!(observed["isolation"], "linux-seccomp-fd-v1");
+    let verified = observed["verified_bytes"].clone();
+    // Path removal cannot invalidate the owned snapshots or force another hash.
+    let local = env.profile.local.as_ref().unwrap();
+    std::fs::remove_file(&local.gguf).unwrap();
+    std::fs::remove_file(&local.executable).unwrap();
+    std::fs::write(
+        env.dir.path().join("root/src/a.rs"),
+        A.replace("remove(0)", "remove(1)"),
+    )
+    .unwrap();
+    let edited = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["completed_pass_usage"]["calls"] == 7
+            && s["knowledge"]["maintenance"]["state"] == "waiting"
+            && s["knowledge"]["maintenance"]["last_run"]["complete"] == true
+    })
+    .await;
+    assert_eq!(
+        edited["knowledge"]["maintenance"]["local_worker"]["launches"],
+        2
+    );
+    assert_eq!(
+        edited["knowledge"]["maintenance"]["local_worker"]["verified_bytes"],
+        verified
+    );
+    assert_eq!(server.calls(), 0);
+    stop_mcp(client, &mut env).await;
+    assert_eq!(env.records().len(), 4);
+    let client = launch_mcp(&mut env, true, false).await;
+    let restarted = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["last_run"]["complete"] == true
+    })
+    .await;
+    assert_eq!(
+        restarted["knowledge"]["maintenance"]["local_worker"]["launches"],
+        0
+    );
+    stop_mcp(client, &mut env).await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_mcp_reports_live_limits_and_reaps_an_inflight_worker_on_shutdown() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    env.profile.instructions = "fixture:hang".into();
+    env.profile.call_seconds = 30;
+    let client = launch_mcp(&mut env, true, false).await;
+    let status = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["local_worker"]["calls"] == 1
+    })
+    .await;
+    let pid = status["knowledge"]["maintenance"]["local_worker"]["pid"]
+        .as_u64()
+        .unwrap() as u32;
+    let limits = std::fs::read_to_string(format!("/proc/{pid}/limits")).unwrap();
+    assert!(
+        limits
+            .lines()
+            .any(|line| line.starts_with("Max cpu time") && line.contains("30")),
+        "{limits}"
+    );
+    assert!(
+        limits
+            .lines()
+            .any(|line| line.starts_with("Max address space") && line.contains("536870912")),
+        "{limits}"
+    );
+    let state = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+    let cpu: usize = state
+        .lines()
+        .find(|line| line.starts_with("Cpus_allowed_list:"))
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .expect("one allowed CPU, not a range/list");
+    let mut allowed = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
+    assert_eq!(
+        unsafe { libc::sched_getaffinity(0, std::mem::size_of_val(&allowed), &mut allowed) },
+        0
+    );
+    assert!(unsafe { libc::CPU_ISSET(cpu, &allowed) });
+    assert!(
+        state
+            .lines()
+            .any(|line| line.starts_with("NoNewPrivs:") && line.ends_with('1')),
+        "{state}"
+    );
+    let context = mcp_call(&client, "context", json!({"query":"opaque","tokens":2048})).await;
+    assert!(context.contains("remove(0)"), "{context}");
+    let start = Instant::now();
+    stop_mcp(client, &mut env).await;
+    assert!(start.elapsed() < Duration::from_secs(2));
+    assert!(
+        !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "owner must reap the worker before releasing its store"
+    );
+    assert!(env.records().is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "current_thread")]
+async fn local_cpu_time_limit_terminates_compute_and_keeps_generation_pending() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    env.profile.local.as_mut().unwrap().cpu_seconds = 1;
+    env.profile.instructions = "fixture:spin".into();
+    env.profile.call_seconds = 10;
+    let start = Instant::now();
+    let stopped = env.run(8).await;
+    assert_eq!(stopped.calls, 1, "{stopped:?}");
+    assert_eq!(
+        stopped.nodes[0].reason.as_deref(),
+        Some("knowledge_worker_exited")
+    );
+    assert!(start.elapsed() < Duration::from_secs(8));
+    assert!(env.records().is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "current_thread")]
+async fn local_worker_rejects_bad_frames_identities_and_usage_before_publication() {
+    for mode in ["oversize", "wrong_id", "usage"] {
+        let server = Server::good();
+        let mut env = Env::new(&server);
+        use_local(&mut env);
+        env.profile.instructions = format!("fixture:{mode}");
+        let report = env.run(8).await;
+        assert_eq!(report.calls, 1, "{mode}: {report:?}");
+        assert_eq!(
+            report.nodes[0].reason.as_deref(),
+            Some("knowledge_provider_malformed"),
+            "{mode}: {report:?}"
+        );
+        assert!(report.local_worker.as_ref().unwrap().pid.is_none());
+        assert!(env.records().is_empty());
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn local_artifact_failure_is_not_repeated_for_every_selected_node() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    let path = &env.profile.local.as_ref().unwrap().gguf;
+    std::fs::write(path, "bad").unwrap();
+    let mut session = knowledge::local::Session::default();
+    assert_eq!(
+        session
+            .prepare(&env.profile, &Control::unbounded())
+            .unwrap_err()
+            .code(),
+        "knowledge_artifact_invalid"
+    );
+    std::fs::write(path, b"synthetic model fixture").unwrap();
+    assert_eq!(
+        session
+            .prepare(&env.profile, &Control::unbounded())
+            .unwrap_err()
+            .code(),
+        "knowledge_artifact_invalid",
+        "a refused acquisition is not retried in the same run"
+    );
+    let mut resumed = knowledge::local::Session::default();
+    resumed
+        .prepare(&env.profile, &Control::unbounded())
+        .unwrap();
+    assert!(resumed.observation.verified_bytes > 0);
+    assert_eq!(
+        resumed.observation.launches, 0,
+        "verification alone never starts computation"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn local_unsupported_gpu_and_memory_profiles_refuse_without_loading_artifacts() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    let local = env.profile.local.as_mut().unwrap();
+    local.gguf = env.dir.path().join("absent.gguf");
+    local.device = knowledge::local::Device::Metal {
+        layers: 8,
+        allocation_bytes: 128 * 1024 * 1024,
+        reserve_bytes: 64 * 1024 * 1024,
+    };
+    let mut session = knowledge::local::Session::default();
+    assert_eq!(
+        session
+            .prepare(&env.profile, &Control::unbounded())
+            .unwrap_err()
+            .code(),
+        "knowledge_isolation_unavailable"
+    );
+    let local = env.profile.local.as_mut().unwrap();
+    local.device = knowledge::local::Device::Cpu;
+    local.memory_enforcement = knowledge::local::MemoryEnforcement::SupervisedFootprint;
+    assert_eq!(
+        session
+            .prepare(&env.profile, &Control::unbounded())
+            .unwrap_err()
+            .code(),
+        "knowledge_isolation_unavailable"
+    );
+    assert_eq!(session.observation.launches, 0);
+    assert_eq!(session.observation.verified_bytes, 0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn local_owner_death_stops_the_worker_and_leaves_generation_recoverable() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    env.profile.instructions = "fixture:hang".into();
+    env.profile.call_seconds = 30;
+    let path = env.dir.path().join("local.json");
+    std::fs::write(&path, serde_json::to_vec(&env.profile).unwrap()).unwrap();
+    env.engine = None;
+    struct Owner(std::process::Child);
+    impl Drop for Owner {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut owner = Owner(
+        std::process::Command::new(env!("CARGO_BIN_EXE_foundry"))
+            .arg("--store")
+            .arg(&env.store)
+            .args(["knowledge", "prepare", "--profile"])
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    );
+    let pid = owner.0.id();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let worker = loop {
+        assert!(
+            owner.0.try_wait().unwrap().is_none(),
+            "owner exited before worker readiness"
+        );
+        // Some kernels omit /proc/PID/task/TID/children. Match PPid from
+        // ordinary process status instead; inspect no command/input contents.
+        let child = std::fs::read_dir("/proc")
+            .unwrap()
+            .filter_map(Result::ok)
+            .find_map(|entry| {
+                let child = entry.file_name().to_str()?.parse::<u32>().ok()?;
+                let state = std::fs::read_to_string(entry.path().join("status")).ok()?;
+                (state.lines().any(|line| {
+                    line.strip_prefix("PPid:")
+                        .is_some_and(|s| s.trim() == pid.to_string())
+                }) && state
+                    .lines()
+                    .any(|l| l.starts_with("NoNewPrivs:") && l.ends_with('1')))
+                .then_some(child)
+            });
+        if let Some(child) = child {
+            break child;
+        }
+        assert!(Instant::now() < deadline, "worker did not become isolated");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    owner.0.kill().unwrap();
+    owner.0.wait().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        // This container's PID 1 may retain an orphan zombie; no live process
+        // or compute may survive. Normal shutdown separately proves reaping.
+        let running = std::fs::read_to_string(format!("/proc/{worker}/stat"))
+            .is_ok_and(|s| !s.rsplit_once(')').unwrap().1.trim_start().starts_with('Z'));
+        if !running {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "orphan generator is still running"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    env.reopen();
+    assert!(env.records().is_empty());
+    assert!(
+        env.engine().knowledge_status().unwrap()["pending"]["paths"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    env.profile.instructions = "Use supplied evidence.".into();
+    let report = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(env.run(8));
+    assert!(report.complete, "{report:?}");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires an explicitly supplied real generation worker and GGUF; no model download in tests"]
+async fn local_real_cpu_generation_accepts_a_cited_brief_and_reuses_it() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    env.profile.nodes.truncate(1);
+    env.profile.nodes[0].sources.truncate(1);
+    env.profile.instructions = "Summarize only what the function does. Write one short claim for purpose and one for behavior, each with citations [0] and identifiers []. Leave provides, consumes, constraints, tests and unknowns empty.".into();
+    env.profile.model = "Qwen2.5-Coder-0.5B-Instruct-Q4_K_M-smoke".into();
+    env.profile.call_seconds = 90;
+    let local = env.profile.local.as_mut().unwrap();
+    local.executable = std::env::var_os("FOUNDRY_GENERATION_SMOKE_WORKER")
+        .expect("worker path")
+        .into();
+    local.gguf = std::env::var_os("FOUNDRY_GENERATION_SMOKE_GGUF")
+        .expect("GGUF path")
+        .into();
+    local.executable_sha256 =
+        context_foundry::neural::profile::hash_regular_file(&local.executable)
+            .unwrap()
+            .0;
+    env.profile.artifact_sha256 = context_foundry::neural::profile::hash_regular_file(&local.gguf)
+        .unwrap()
+        .0;
+    local.memory_bytes = 2 * 1024 * 1024 * 1024;
+    local.threads = 2;
+    local.cpu_seconds = 180;
+    local.load_seconds = 90;
+    let report = knowledge::prepare(
+        env.engine.as_mut().unwrap(),
+        &env.profile,
+        RunLimits {
+            calls: 1,
+            request_tokens: 100_000,
+            output_tokens: 10_000,
+        },
+        &Control::with_deadline(Instant::now() + Duration::from_secs(180)),
+    )
+    .await
+    .unwrap();
+    eprintln!(
+        "real CPU generation: {}",
+        serde_json::to_string(&report).unwrap()
+    );
+    assert!(report.complete, "{report:?}");
+    assert_eq!(report.generated, 1);
+    assert!(report.observed_prompt_tokens > 0 && report.observed_completion_tokens > 0);
+    assert_eq!(report.usage_unknown_calls, 0);
+    assert_eq!(report.local_worker.as_ref().unwrap().launches, 1);
+    assert_eq!(
+        env.engine().knowledge_status().unwrap()["cache"]["entries"],
+        1
+    );
+    // A fully current replay must not need model files or worker acquisition.
+    env.profile.local.as_mut().unwrap().gguf = env.dir.path().join("absent-model.gguf");
+    let replay = env.run(1).await;
+    assert!(replay.complete, "{replay:?}");
+    assert_eq!(replay.calls, 0);
+    assert_eq!(replay.local_worker.as_ref().unwrap().launches, 0);
+    assert_eq!(server.calls(), 0);
 }

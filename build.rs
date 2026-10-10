@@ -1,4 +1,4 @@
-//! Build-time linking for the two optional workers. The default build emits
+//! Build-time linking for optional native workers. The default build emits
 //! nothing.
 //!
 //! 013 T002: with the `learning-worker` feature, make every linked target
@@ -15,12 +15,12 @@
 //!   loaded under its install name when `libtorch_cpu` asks for it. The
 //!   vendor tree is never modified.
 //!
-//! 009 T004: with the `embed-worker` feature, `foundry-embed` links a static
-//! llama.cpp (Metal, embedded shader library) that this script builds from
-//! the pinned commit's tree with fixed flags; see [`llama`].
+//! 009 T004 / 010 T002: `embed-worker` and `generate-worker` link static
+//! llama.cpp into their respective binaries (Metal on macOS, CPU on Linux),
+//! built from the pinned commit's tree with fixed flags; see [`llama`].
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    #[cfg(feature = "embed-worker")]
+    #[cfg(any(feature = "embed-worker", feature = "generate-worker"))]
     llama::link();
     learning_worker();
 }
@@ -54,7 +54,7 @@ fn learning_worker() {
     }
 }
 
-/// 009 T004: the `foundry-embed` link against a static llama.cpp built here.
+/// 009 T004 / 010 T002: native worker links against a static llama.cpp built here.
 ///
 /// `LLAMA_CPP_DIR` names a llama.cpp git repository that contains
 /// [`llama::COMMIT`]. Nothing of its working tree, its index or any earlier
@@ -63,17 +63,17 @@ fn learning_worker() {
 /// refs off, so no checkout state, attribute or filter applies) into
 /// `OUT_DIR`, and CMake builds them there into static archives with the
 /// fixed configuration [`llama::CMAKE_FLAGS`] (static, Metal with the
-/// embedded shader library, Accelerate BLAS, no OpenMP, no host-specific CPU
+/// embedded shader library and Accelerate BLAS on macOS, CPU on Linux; no OpenMP or host-specific CPU
 /// tuning), the system compilers and a cleared environment. Each run of this
 /// script starts from an empty source and build directory. Bindings are
 /// generated from that tree's `llama.h`; the archives, the system C++ library
 /// and the Metal, Foundation and Accelerate frameworks are linked into the
-/// `foundry-embed` binary only (never the library, `foundry` or the tests),
+/// selected worker binaries only (never the library, `foundry` or the tests),
 /// so it needs no llama.cpp or ggml dylib at run time. The tree's `LICENSE`
 /// (which covers the vendored ggml; there is no `ggml/LICENSE` at this
 /// commit) is copied into `OUT_DIR` and embedded in the worker, which writes
 /// it on `--notices DIR`: packaging needs no checkout.
-#[cfg(feature = "embed-worker")]
+#[cfg(any(feature = "embed-worker", feature = "generate-worker"))]
 mod llama {
     use std::ffi::OsString;
     use std::io::{BufRead, BufReader, Read, Write};
@@ -84,7 +84,6 @@ mod llama {
     /// Must equal `neural::provider::LLAMA_CPP_COMMIT`; the worker
     /// binary asserts it at compile time from `FOUNDRY_LLAMA_CPP_COMMIT`.
     const COMMIT: &str = "b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea";
-    const BIN: &str = "foundry-embed";
 
     /// The parts of the commit's tree the library build reads.
     const TREE: [&str; 7] = [
@@ -149,7 +148,7 @@ mod llama {
         }
         let Some(repository) = std::env::var_os("LLAMA_CPP_DIR").map(PathBuf::from) else {
             panic!(
-                "the embed-worker feature needs LLAMA_CPP_DIR (a llama.cpp git repository \
+                "the model worker feature needs LLAMA_CPP_DIR (a llama.cpp git repository \
                  containing {COMMIT})"
             );
         };
@@ -169,19 +168,36 @@ mod llama {
         std::fs::copy(&license, out.join("llama.cpp-LICENSE"))
             .unwrap_or_else(|e| panic!("copy {}: {e}", license.display()));
 
-        for (dir, name) in ARCHIVES {
-            let archive = build.join(dir).join(format!("lib{name}.a"));
-            assert!(
-                archive.is_file(),
-                "the llama.cpp build produced no {}",
-                archive.display()
-            );
-            println!("cargo:rustc-link-arg-bin={BIN}={}", archive.display());
+        let metal = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
+        for (feature, bin) in [
+            ("CARGO_FEATURE_EMBED_WORKER", "foundry-embed"),
+            ("CARGO_FEATURE_GENERATE_WORKER", "foundry-generate"),
+        ] {
+            if std::env::var_os(feature).is_none() {
+                continue;
+            }
+            if !metal {
+                println!("cargo:rustc-link-arg-bin={bin}=-Wl,--start-group");
+            }
+            for (dir, name) in ARCHIVES {
+                if !metal && matches!(name, "ggml-metal" | "ggml-blas") {
+                    continue;
+                }
+                let archive = build.join(dir).join(format!("lib{name}.a"));
+                assert!(archive.is_file(), "missing archive {}", archive.display());
+                println!("cargo:rustc-link-arg-bin={bin}={}", archive.display());
+            }
+            if metal {
+                for framework in ["Metal", "MetalKit", "Foundation", "Accelerate"] {
+                    println!("cargo:rustc-link-arg-bin={bin}=-Wl,-framework,{framework}");
+                }
+                println!("cargo:rustc-link-arg-bin={bin}=-lc++");
+            } else {
+                for arg in ["-Wl,--end-group", "-lstdc++", "-lm", "-lpthread", "-ldl"] {
+                    println!("cargo:rustc-link-arg-bin={bin}={arg}");
+                }
+            }
         }
-        for framework in ["Metal", "MetalKit", "Foundation", "Accelerate"] {
-            println!("cargo:rustc-link-arg-bin={BIN}=-Wl,-framework,{framework}");
-        }
-        println!("cargo:rustc-link-arg-bin={BIN}=-lc++");
 
         let mut clang_args = vec![
             format!("-I{}", source.join("include").display()),
@@ -196,6 +212,8 @@ mod llama {
             .header_contents("foundry_llama.h", "#include \"llama.h\"\n")
             .clang_args(&clang_args)
             .allowlist_function("llama_.*")
+            .allowlist_function("ggml_backend_dev_.*")
+            .allowlist_type("ggml_backend_dev_type")
             .allowlist_type("llama_.*")
             .allowlist_type("ggml_log_level")
             .allowlist_type("ggml_type")
@@ -311,11 +329,11 @@ mod llama {
                     .map(|dir| dir.join("cmake"))
                     .find(|candidate| candidate.is_file())
             })
-            .expect("the embed-worker feature builds llama.cpp with CMake; no cmake on PATH");
+            .expect("native model workers build llama.cpp with CMake; no cmake on PATH");
         let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
             Ok("aarch64") => "arm64",
             Ok("x86_64") => "x86_64",
-            other => panic!("foundry-embed has no llama.cpp build for target arch {other:?}"),
+            other => panic!("no llama.cpp build for target arch {other:?}"),
         };
         // The deployment target rustc links the worker for.
         let deployment =
@@ -346,11 +364,24 @@ mod llama {
             build.into(),
             "-G".into(),
             "Unix Makefiles".into(),
-            format!("-DCMAKE_OSX_ARCHITECTURES={arch}").into(),
-            format!("-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment}").into(),
             format!("-DLLAMA_BUILD_COMMIT={}", &COMMIT[..8]).into(),
         ];
         configure.extend(CMAKE_FLAGS.iter().map(OsString::from));
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+            configure.extend([
+                format!("-DCMAKE_OSX_ARCHITECTURES={arch}").into(),
+                format!("-DCMAKE_OSX_DEPLOYMENT_TARGET={deployment}").into(),
+            ]);
+        } else {
+            configure.extend(
+                [
+                    "-DGGML_METAL=OFF",
+                    "-DGGML_BLAS=OFF",
+                    "-DGGML_ACCELERATE=OFF",
+                ]
+                .map(OsString::from),
+            );
+        }
         run(configure, "configuration");
         run(
             vec![

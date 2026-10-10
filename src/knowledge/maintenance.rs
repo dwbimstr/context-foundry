@@ -84,12 +84,14 @@ struct State {
 }
 pub(crate) struct Maintenance {
     profile: Arc<Profile>,
+    local: local::Telemetry,
     state: Mutex<State>,
 }
 impl Maintenance {
     pub(crate) fn new(profile: Profile) -> Self {
         Self {
             profile: Arc::new(profile),
+            local: local::Telemetry::default(),
             state: Mutex::new(State {
                 revision: 0,
                 running: false,
@@ -200,6 +202,7 @@ impl Maintenance {
         });
         json!({"state":state.phase,"continuous":state.continuous && state.enabled,
             "reason":state.reason,"last_run":last,"completed_pass_usage":state.totals,
+            "local_worker":self.profile.local.as_ref().map(|_| self.local.snapshot()),
             "window_seconds":WINDOW.as_secs(),"window_calls":state.spent.calls,
             "window_request_tokens_o200k":state.spent.request_tokens,
             "window_requested_output_tokens":state.spent.output_tokens,
@@ -270,6 +273,9 @@ fn drive(owner: &dyn Owner, maintenance: &Maintenance, control: &Control) -> FRe
     let wake = access.step(control, |engine| Ok(engine.semantic_wake.clone()))?;
     let identity = hash(profile)?;
     let mut initial = true;
+    let mut provider = provider::Generation::default();
+    provider.local.observation = maintenance.local.snapshot();
+    provider.local.telemetry = maintenance.local.clone();
     loop {
         if owner.closing() {
             control.cancel();
@@ -297,7 +303,7 @@ fn drive(owner: &dyn Owner, maintenance: &Maintenance, control: &Control) -> FRe
                 maintenance.lock().phase = "stopped";
                 return Ok(());
             }
-            wait_changes(maintenance, owner, control, &wake, stamp)?;
+            wait_changes(maintenance, owner, control, &wake, stamp, &mut provider)?;
             continue;
         }
         let limits = {
@@ -312,7 +318,7 @@ fn drive(owner: &dyn Owner, maintenance: &Maintenance, control: &Control) -> FRe
             || limits.request_tokens == 0
             || limits.output_tokens < profile.output_tokens.into()
         {
-            wait_budget(maintenance, owner, control)?;
+            wait_budget(maintenance, owner, control, &mut provider)?;
             continue;
         }
         initial = false;
@@ -329,6 +335,7 @@ fn drive(owner: &dyn Owner, maintenance: &Maintenance, control: &Control) -> FRe
             limits,
             &pass,
             Some(frontier),
+            &mut provider,
         ))?;
         let budget = report
             .nodes
@@ -393,11 +400,11 @@ fn drive(owner: &dyn Owner, maintenance: &Maintenance, control: &Control) -> FRe
             return Ok(());
         }
         if budget {
-            wait_budget(maintenance, owner, control)?;
+            wait_budget(maintenance, owner, control, &mut provider)?;
         } else if !complete {
             match reason.as_deref() {
                 Some("stale_handle" | "not_found" | "conflict") => {
-                    wait_changes(maintenance, owner, control, &wake, stamp)?
+                    wait_changes(maintenance, owner, control, &wake, stamp, &mut provider)?
                 }
                 _ => {
                     maintenance.lock().phase = "paused";
@@ -413,6 +420,7 @@ fn wait_changes(
     control: &Control,
     wake: &crate::neural::work::Wake,
     stamp: u64,
+    provider: &mut provider::Generation,
 ) -> FResult<()> {
     maintenance.lock().phase = "waiting";
     loop {
@@ -420,6 +428,7 @@ fn wait_changes(
             control.cancel();
         }
         control.check()?;
+        provider.local.idle();
         let mut state = maintenance.lock();
         if !state.enabled || !state.continuous {
             return Ok(());
@@ -431,7 +440,13 @@ fn wait_changes(
         }
     }
 }
-fn wait_budget(maintenance: &Maintenance, owner: &dyn Owner, control: &Control) -> FResult<()> {
+fn wait_budget(
+    maintenance: &Maintenance,
+    owner: &dyn Owner,
+    control: &Control,
+    provider: &mut provider::Generation,
+) -> FResult<()> {
+    provider.local.unload("budget_wait");
     maintenance.lock().phase = "budget_wait";
     loop {
         if owner.closing() {
