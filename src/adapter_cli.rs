@@ -82,6 +82,12 @@ pub enum AdapterCommand {
         /// Continuously prepare accepted source changes; pair with --watch for filesystem edits.
         #[arg(long, requires = "semantic_profile")]
         semantic_maintain: bool,
+        /// Admit selective source/area generation through this explicit HTTP profile.
+        #[arg(long, value_name = "FILE")]
+        knowledge_profile: Option<PathBuf>,
+        /// Maintain generated knowledge for accepted changes (pair with --watch).
+        #[arg(long, requires = "knowledge_profile")]
+        knowledge_maintain: bool,
     },
     /// Inspect repository bootstrap; `--apply` creates/opens the store and indexes baseline source.
     Bootstrap {
@@ -227,6 +233,7 @@ fn serve_mcp(
     references: Vec<String>,
     no_memory: bool,
     semantic: Option<crate::mcp::SemanticServing>,
+    knowledge: Option<crate::knowledge::maintenance::Serving>,
     policy: Option<crate::policy::PolicyServing>,
     retrieval_trace_dir: Option<PathBuf>,
     experimental_behavior_context: bool,
@@ -246,6 +253,7 @@ fn serve_mcp(
         budget,
         no_memory,
         semantic,
+        knowledge,
         policy,
         retrieval_trace_dir,
         experimental_behavior_context,
@@ -351,6 +359,8 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             development_isolation,
             semantic_cache_cap,
             semantic_maintain,
+            knowledge_profile,
+            knowledge_maintain,
         } => serve_mcp(
             store,
             root,
@@ -364,6 +374,10 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                 cache_cap_bytes: semantic_cache_cap,
                 maintain: semantic_maintain,
                 ..crate::mcp::SemanticServing::new(profile, development_isolation)
+            }),
+            knowledge_profile.map(|profile| crate::knowledge::maintenance::Serving {
+                profile,
+                maintain: knowledge_maintain,
             }),
             policy_config
                 .map(|config| crate::policy::PolicyServing::new(config, development_isolation)),

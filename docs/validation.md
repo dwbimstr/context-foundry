@@ -1988,3 +1988,59 @@ computation after cancellation. This CLI requires exclusive store ownership; con
 MCP knowledge scheduling, shared foreground/device admission and an owned isolated local
 generator remain open. Preparation scans a bounded selected plan, not a corpus-wide
 reverse-dependency index. Knowledge acknowledgments describe that selected profile only.
+
+## Continuous MCP knowledge maintenance
+
+010 T002 now composes the existing generation pipeline inside the MCP owner. An
+explicit profile enables generation controls and derived context; `maintain` or the
+launch flag enables ongoing work. Source snapshot/acceptance steps use the shared
+foreground-prioritized engine slot. JSON construction, tokenization and HTTP hold no
+engine slot or source transaction. Schema 10 remains unchanged.
+
+Executed checks use synthetic HTTP completions and embedding vectors, with real Rust
+providers/transports, source storage, generation cache, native watching, lexical/dense
+indexes, context packing and MCP SDK consumers:
+
+- Real stdio watching/profile admission alone sends zero requests. Explicit maintenance
+  generates four source/area nodes, an edit generates the changed child and two ancestors,
+  and revert/restart reuse sends zero further requests. Context delivers labeled derived
+  orientation together with the original implementation under the same token allowance.
+- A gated HTTP call leaves foreground context and watcher source acceptance available.
+  Editing a cited source during that call rejects its completion, then regenerates only
+  the missing child and ancestors. Accepted transitive dependencies use the new full hash.
+- Pause during a call accepts that one current result and admits no next call. Resume
+  preserves it. An eight-call window stops a nine-node plan; rapid pause/resume cannot
+  reset the allowance, and a fresh owner generates only the ninth missing result.
+  Invalid output on the eighth call pauses explicitly even when a later node exhausts
+  the window, preventing an unintended provider retry when a new window opens.
+- A quiet driver waiting for a missing source performs no store steps across repeated
+  notification timeouts. A prepare action wakes the waiting driver without a source edit.
+  Publication preserves unrelated pending source indexing rather than draining the corpus.
+- Shared admission excludes generation and embedding requests. A selected embedding batch
+  waits for generation to release admission and then completes all 12 fixture inputs.
+  Dispatched/waiting dense queries get priority; a late embedding call still blocks new
+  generation. These exercise the actual runtime slot, not a mock scheduling counter.
+- Shutdown releases the owner store in under two seconds while a synthetic external service
+  still takes four seconds to answer; the uncommitted result is absent and work stays pending.
+  This proves client cancellation and store lifecycle, not termination of external compute.
+- A shared HTTP owner returns primary-root derived context alongside reference-root headers;
+  excluding the primary refuses derived delivery. Both transports preserve exact source
+  recovery. The HTTP teardown fixture waits for final SDK ownership to release the store
+  after its completion notification, rather than assuming those two events are atomic.
+
+The full regression plus final affected-suite reruns passed **967 regular tests**
+(two intentional measurement ignores) and **all 20 child-process recovery cases**.
+The full run passed 966 tests; the final library/knowledge rerun passed all 192 library
+and 21 knowledge tests, including the added mixed provider-failure/window-exhaustion case.
+The 6,000-file watcher suite passed in 127.20 seconds; this is a fixture result, not a
+throughput claim. A build without default features exposed a watcher admission method
+that was unnecessarily gated on embeddings; after removing that gate, the build and all
+21 knowledge integration tests also passed with embeddings disabled. Final all-target
+Clippy with warnings denied, formatting and Markdown link checks passed (47 files,
+721 links, 166 heading anchors). No schema migration or dependency changes were added.
+
+The fixtures establish lifecycle, bounded admission, reuse, provenance and foreground
+availability. They do not establish real-model quality, server CPU/GPU headroom, weights,
+provider billing or large-repository throughput. Usage is reported at completed-pass
+boundaries and is owner-local; a process restart is not a durable account-wide quota.
+Actual isolated local generation and hardware resource enforcement remain open.

@@ -270,6 +270,17 @@ async fn exact_inputs_resume_across_restart_and_only_changed_transitive_dependen
             .paths
             > 0
     );
+    env.engine()
+        .replace_source("unselected.rs", "fn unrelated_pending() {}\n")
+        .unwrap();
+    let pending = env.engine().pending().unwrap();
+    assert!(pending > 0);
+    assert!(env.run(8).await.complete);
+    assert_eq!(
+        env.engine().pending().unwrap(),
+        pending,
+        "knowledge must not drain unrelated source indexing"
+    );
     let records = env.records();
     assert_eq!(records.len(), 4);
     let root = records
@@ -857,4 +868,491 @@ async fn recipe_and_child_source_selection_changes_preserve_exact_plan_identity(
     let restored = env.run(8).await;
     assert!(restored.complete, "{restored:?}");
     assert_eq!((restored.calls, restored.reused_cached), (0, 2));
+}
+
+// Real MCP child-process consumer, using the same HTTP completion fixture above.
+type McpClient = rmcp::service::RunningService<rmcp::RoleClient, ()>;
+async fn launch_mcp(env: &mut Env, maintain: bool, watch: bool) -> McpClient {
+    use rmcp::ServiceExt;
+    let root = env.dir.path().join("root");
+    for (path, body) in [
+        ("src/a.rs", A),
+        ("src/b.rs", "fn other() {}\n"),
+        ("tests/a.rs", "#[test] fn removal() {}\n"),
+        ("area.md", "# Queue contract\n"),
+        ("system.md", "# System map\n"),
+    ] {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Preserve edits across owner restarts.
+        if !path.exists() {
+            std::fs::write(path, body).unwrap();
+        }
+    }
+    let profile = env.dir.path().join("knowledge.json");
+    std::fs::write(&profile, serde_json::to_vec(&env.profile).unwrap()).unwrap();
+    env.engine = None;
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_foundry"));
+    command
+        .arg("--store")
+        .arg(&env.store)
+        .arg("mcp")
+        .arg("--root")
+        .arg(&root)
+        .arg("--knowledge-profile")
+        .arg(profile);
+    if maintain {
+        command.arg("--knowledge-maintain");
+    }
+    if watch {
+        command.arg("--watch");
+    }
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    ().serve(rmcp::transport::TokioChildProcess::new(command).unwrap())
+        .await
+        .unwrap()
+}
+async fn mcp_call(client: &McpClient, name: &'static str, args: Value) -> String {
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        client.call_tool(
+            rmcp::model::CallToolRequestParams::new(name)
+                .with_arguments(args.as_object().unwrap().clone()),
+        ),
+    )
+    .await
+    .expect("foreground remained responsive")
+    .unwrap();
+    let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
+        panic!("text result required")
+    };
+    assert_ne!(result.is_error, Some(true), "{}", text.text);
+    text.text.clone()
+}
+async fn mcp_until(client: &McpClient, predicate: impl Fn(&Value) -> bool) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let value: Value =
+            serde_json::from_str(&mcp_call(client, "status", json!({})).await).unwrap();
+        if predicate(&value) {
+            return value;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "maintenance did not converge: {value}"
+        );
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+}
+async fn stop_mcp(client: McpClient, env: &mut Env) {
+    client.cancel().await.unwrap();
+    reopen_when_idle(env).await;
+}
+async fn reopen_when_idle(env: &mut Env) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match Engine::open_existing(&env.store) {
+            Ok(engine) => {
+                env.engine = Some(engine);
+                return;
+            }
+            Err(FoundryError::StoreBusy) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(20)).await
+            }
+            Err(error) => panic!("owner did not release its store: {error:?}"),
+        }
+    }
+}
+fn caught_up(value: &Value) -> bool {
+    value["knowledge"]["maintenance"]["state"] == "waiting"
+        && value["knowledge"]["pending"]["paths"] == 0
+        && value["knowledge"]["pending"]["reconcile_required"] == false
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_opt_in_watching_generates_changed_areas_and_delivers_exact_derived_context() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    let client = launch_mcp(&mut env, false, true).await;
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(
+        server.calls(),
+        0,
+        "watching and a profile alone never generate"
+    );
+    let catalog = client.list_all_tools().await.unwrap();
+    let context = catalog.iter().find(|tool| tool.name == "context").unwrap();
+    assert!(
+        context.input_schema["properties"]
+            .get("include_briefs")
+            .is_some()
+    );
+    mcp_call(&client, "index", json!({"knowledge":"maintain"})).await;
+    let ready = mcp_until(&client, caught_up).await;
+    assert_eq!(
+        ready["knowledge"]["maintenance"]["completed_pass_usage"]["calls"],
+        4
+    );
+    let text = mcp_call(
+        &client,
+        "context",
+        json!({"query":"capacity eviction","include_briefs":true,"tokens":8192}),
+    )
+    .await;
+    assert!(text.contains("brief:"), "{text}");
+    assert!(text.contains("q.remove(0)"), "{text}");
+    assert!(text.contains("derived"), "{text}");
+    std::fs::write(
+        env.dir.path().join("root/src/a.rs"),
+        A.replace("remove(0)", "remove(1)"),
+    )
+    .unwrap();
+    let changed = mcp_until(&client, |s| {
+        caught_up(s) && s["knowledge"]["maintenance"]["completed_pass_usage"]["calls"] == 7
+    })
+    .await;
+    assert_eq!(
+        changed["knowledge"]["maintenance"]["last_run"]["generated"],
+        3
+    );
+    std::fs::write(env.dir.path().join("root/src/a.rs"), A).unwrap();
+    mcp_until(&client, |s| {
+        caught_up(s) && s["knowledge"]["maintenance"]["last_run"]["reused_cached"] == 3
+    })
+    .await;
+    for _ in 0..5 {
+        mcp_call(&client, "status", json!({})).await;
+    }
+    assert_eq!(
+        server.calls(),
+        7,
+        "revert and idle observation make no model calls"
+    );
+    stop_mcp(client, &mut env).await;
+    let restarted = launch_mcp(&mut env, true, false).await;
+    let ready = mcp_until(&restarted, caught_up).await;
+    assert_eq!(
+        ready["knowledge"]["maintenance"]["completed_pass_usage"]["calls"],
+        0
+    );
+    assert_eq!(server.calls(), 7);
+    stop_mcp(restarted, &mut env).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_pause_finishes_one_inflight_call_and_resume_keeps_completed_results() {
+    let release = Arc::new(AtomicBool::new(false));
+    let gate = release.clone();
+    let server = Server::new(move |_, call| {
+        if call == 1 {
+            let until = Instant::now() + Duration::from_secs(10);
+            while !gate.load(Ordering::SeqCst) && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        (
+            200,
+            response("fixture-model", output()).to_string(),
+            Duration::ZERO,
+        )
+    });
+    let mut env = Env::new(&server);
+    let client = launch_mcp(&mut env, true, false).await;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.calls() == 0 {
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // A blocked HTTP provider must not hold the store or MCP request slot.
+    let text = mcp_call(&client, "context", json!({"query":"opaque","tokens":2048})).await;
+    assert!(text.contains("opaque"));
+    mcp_call(&client, "index", json!({"knowledge":"pause"})).await;
+    release.store(true, Ordering::SeqCst);
+    let paused = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["state"] == "paused"
+    })
+    .await;
+    assert_eq!(server.calls(), 1);
+    assert_eq!(paused["knowledge"]["cache"]["entries"], 1);
+    assert!(
+        paused["knowledge"]["pending"]["reconcile_required"]
+            .as_bool()
+            .unwrap()
+    );
+    mcp_call(&client, "index", json!({"knowledge":"maintain"})).await;
+    mcp_until(&client, caught_up).await;
+    assert_eq!(server.calls(), 4);
+    stop_mcp(client, &mut env).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_admission_window_survives_pause_resume_and_restart_reuses_eight_completed_nodes() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    env.profile.nodes = (0..9)
+        .map(|i| Node {
+            id: format!("leaf{i}"),
+            sources: vec![env.profile.nodes[0].sources[0].clone()],
+            children: vec![],
+        })
+        .collect();
+    let client = launch_mcp(&mut env, true, false).await;
+    mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["state"] == "budget_wait"
+    })
+    .await;
+    assert_eq!(server.calls(), 8);
+    mcp_call(&client, "index", json!({"knowledge":"pause"})).await;
+    mcp_call(&client, "index", json!({"knowledge":"maintain"})).await;
+    mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["state"] == "budget_wait"
+    })
+    .await;
+    assert_eq!(
+        server.calls(),
+        8,
+        "resuming does not reset the owner's window"
+    );
+    stop_mcp(client, &mut env).await;
+    let restarted = launch_mcp(&mut env, true, false).await;
+    let ready = mcp_until(&restarted, caught_up).await;
+    assert_eq!(server.calls(), 9);
+    assert_eq!(
+        ready["knowledge"]["maintenance"]["last_run"]["reused_current"],
+        8
+    );
+    stop_mcp(restarted, &mut env).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_watcher_accepts_edits_during_http_and_rejects_the_stale_completion() {
+    let release = Arc::new(AtomicBool::new(false));
+    let gate = release.clone();
+    let server = Server::new(move |_, call| {
+        if call == 1 {
+            let until = Instant::now() + Duration::from_secs(10);
+            while !gate.load(Ordering::SeqCst) && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        (
+            200,
+            response("fixture-model", output()).to_string(),
+            Duration::ZERO,
+        )
+    });
+    let mut env = Env::new(&server);
+    let client = launch_mcp(&mut env, true, true).await;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.calls() == 0 {
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let before: Value =
+        serde_json::from_str(&mcp_call(&client, "status", json!({})).await).unwrap();
+    std::fs::write(
+        env.dir.path().join("root/src/a.rs"),
+        A.replace("remove(0)", "remove(1)"),
+    )
+    .unwrap();
+    mcp_until(&client, |s| {
+        s["source_revision"].as_u64() > before["source_revision"].as_u64()
+    })
+    .await;
+    let context = mcp_call(&client, "context", json!({"query":"opaque","tokens":2048})).await;
+    assert!(
+        context.contains("remove(1)"),
+        "source acceptance proceeds during HTTP: {context}"
+    );
+    release.store(true, Ordering::SeqCst);
+    mcp_until(&client, caught_up).await;
+    assert_eq!(server.calls(), 5, "only the stale child call is repeated");
+    stop_mcp(client, &mut env).await;
+    assert_eq!(env.records().len(), 4);
+    let current_hash = context_foundry::digest(A.replace("remove(0)", "remove(1)").as_bytes());
+    for record in env.records() {
+        if let Some(hash) = record.dependencies.get("src/a.rs") {
+            assert_eq!(hash, &current_hash);
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_shutdown_closes_generation_without_waiting_for_external_compute() {
+    let server = Server::new(|_, _| {
+        (
+            200,
+            response("fixture-model", output()).to_string(),
+            Duration::from_secs(4),
+        )
+    });
+    let mut env = Env::new(&server);
+    let client = launch_mcp(&mut env, true, false).await;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.calls() == 0 {
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let started = Instant::now();
+    stop_mcp(client, &mut env).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "owner waited on external compute"
+    );
+    assert_eq!(
+        env.engine().knowledge_status().unwrap()["cache"]["entries"],
+        0
+    );
+    assert!(
+        env.engine()
+            .derivation_pending(Lane::Knowledge)
+            .unwrap()
+            .reconcile_required
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_http_delivers_primary_derived_context_across_roots_and_stops_cleanly() {
+    use context_foundry::mcp::{HttpOptions, ServerOptions, serve_http};
+    use rmcp::{
+        ServiceExt,
+        transport::{
+            StreamableHttpClientTransport,
+            streamable_http_client::StreamableHttpClientTransportConfig,
+        },
+    };
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    let reference = env.dir.path().join("reference");
+    let reference_store = env.dir.path().join("reference-store");
+    std::fs::create_dir(&reference).unwrap();
+    let mut engine = Engine::initialize(&reference_store, &reference).unwrap();
+    engine
+        .replace_source("extra.rs", "fn reference_only() {}\n")
+        .unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    drop(engine);
+    let profile = env.dir.path().join("http-knowledge.json");
+    std::fs::write(&profile, serde_json::to_vec(&env.profile).unwrap()).unwrap();
+    env.engine = None;
+    const ENV: &str = "FOUNDRY_KNOWLEDGE_HTTP_FIXTURE_TOKEN";
+    unsafe {
+        std::env::set_var(ENV, "knowledge-fixture-token");
+    }
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let mut serving = serve_http(
+        ServerOptions {
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
+            store: env.store.clone(),
+            root: env.dir.path().join("root"),
+            references: vec![context_foundry::roots::ReferenceSpec {
+                root: reference,
+                store: reference_store,
+            }],
+            budget: Default::default(),
+            no_memory: false,
+            experimental_task_context: false,
+            watch: false,
+            semantic: None,
+            policy: None,
+            knowledge: Some(knowledge::maintenance::Serving {
+                profile,
+                maintain: true,
+            }),
+        },
+        HttpOptions {
+            port: 0,
+            token_env: ENV.into(),
+            keep_alive: Duration::from_secs(30),
+            shutdown: shutdown.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let config =
+        StreamableHttpClientTransportConfig::with_uri(format!("http://{}/mcp", serving.address))
+            .auth_header("knowledge-fixture-token");
+    let client = ()
+        .serve(StreamableHttpClientTransport::with_client(
+            reqwest::Client::new(),
+            config,
+        ))
+        .await
+        .unwrap();
+    mcp_until(&client, caught_up).await;
+    let text = mcp_call(
+        &client,
+        "context",
+        json!({"query":"capacity eviction","include_briefs":true,"tokens":8192}),
+    )
+    .await;
+    assert!(
+        text.contains("brief:") && text.contains("q.remove(0)") && text.contains("ref1"),
+        "{text}"
+    );
+    let rejected = client
+        .call_tool(
+            rmcp::model::CallToolRequestParams::new("context").with_arguments(
+                json!({"query":"capacity eviction","include_briefs":true,"roots":["ref1"]})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected.is_error, Some(true));
+    client.cancel().await.unwrap();
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(5), serving.done.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    reopen_when_idle(&mut env).await;
+    assert_eq!(env.records().len(), 4);
+    assert_eq!(server.calls(), 4);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_provider_failure_pauses_even_when_later_nodes_exhaust_the_window() {
+    let server = Server::new(|_, call| {
+        (
+            200,
+            response(
+                "fixture-model",
+                if call == 8 {
+                    json!({"invalid":true})
+                } else {
+                    output()
+                },
+            )
+            .to_string(),
+            Duration::ZERO,
+        )
+    });
+    let mut env = Env::new(&server);
+    env.profile.nodes = (0..9)
+        .map(|i| Node {
+            id: format!("leaf{i}"),
+            sources: vec![env.profile.nodes[0].sources[0].clone()],
+            children: vec![],
+        })
+        .collect();
+    let client = launch_mcp(&mut env, true, false).await;
+    let paused = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["state"] == "paused"
+    })
+    .await;
+    assert_eq!(
+        paused["knowledge"]["maintenance"]["reason"],
+        "knowledge_output_invalid"
+    );
+    assert_eq!(paused["knowledge"]["maintenance"]["continuous"], false);
+    assert_eq!(server.calls(), 8);
+    assert_eq!(paused["knowledge"]["cache"]["entries"], 7);
+    stop_mcp(client, &mut env).await;
 }

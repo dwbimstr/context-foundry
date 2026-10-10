@@ -21,8 +21,8 @@ exclude parser, index, thread-stack and allocator overhead. Explicit MCP indexin
 still occupies its engine slot; this change adds early durable publication, while
 foreground admission continues to follow the existing watcher/owner rules. Source
 transactions remain individual. Continuous embedding is separately enabled below;
-continuous brief regeneration remains pending. Explicit knowledge preparation is
-described below. Sandbox tests do not establish 80,000-file throughput.
+continuous brief regeneration is separately enabled with an explicit knowledge profile
+and maintenance option below. Sandbox tests do not establish 80,000-file throughput.
 
 ## Continuous semantic maintenance
 
@@ -475,7 +475,7 @@ fit the same budget. Test/dependency handles can be recovered with `retrieve`.
 Exact-name context keeps its original path. A matching summary is not proof that an
 answer is true or that the evidence is complete. A selected `--task` and
 `--include-memory` may share this same allowance. Explicit generation and area rollups
-are described below; MCP brief delivery and continuous generation remain future work.
+are described below, including opt-in continuous MCP maintenance and brief delivery.
 
 Requests are capped at 256 KiB, claims/identifiers/unknowns at 16 KiB of text, and
 citations at 32 spans. Stored records are capped at 512 KiB including full dependency
@@ -489,7 +489,8 @@ silently cut inside a claim.
 `knowledge prepare` generates only an explicitly selected set of source briefs and
 area summaries through a configured OpenAI-compatible Chat Completions endpoint.
 Source indexing alone never launches generation. This experimental CLI owns the store
-exclusively: stop the MCP owner before preparing, then restart it afterward. Schema 10
+exclusively: stop the MCP owner before using this standalone command. To generate inside
+a running MCP owner, use the continuous workflow below. Schema 10
 is required; upgrade an existing store explicitly as described above.
 
 Create a profile with the actual workspace ID from `status`, the provider's exact
@@ -581,6 +582,69 @@ the forgotten brief, in one transaction; explicit project memory is unaffected. 
 backups and previously delivered text remain outside live-store deletion guarantees.
 
 The local HTTP fixture verifies transport, provenance, reuse and recovery, using synthetic
-responses. Real-model quality, long-repository throughput, continuous MCP scheduling and
-shared foreground/resource admission remain 010 T002 work. See
+responses. Real-model quality, long-repository throughput and hardware headroom
+enforcement remain 010 T002 work. The MCP continuation below now
+implements continuous scheduling and shared client admission. See
 [the implemented contract](../specs/010-source-bound-derived-knowledge/spec.md#t002-implementation-decisions-and-boundaries).
+
+## Continuous knowledge maintenance
+
+Use the same bounded knowledge profile with the MCP owner:
+
+```sh
+foundry --store STORE mcp --root REPO --knowledge-profile knowledge.json --knowledge-maintain --watch
+```
+
+The profile admits one endpoint and source scope for the primary workspace. It is loaded
+once; restart to change it. Omitting `--knowledge-maintain` leaves generation paused.
+Watching alone does not generate. An admitted owner accepts these separate index actions:
+
+```json
+{"knowledge":"maintain"}
+{"knowledge":"pause"}
+{"knowledge":"prepare"}
+```
+
+`maintain` continues accepted changes and waits when caught up. `prepare` runs one bounded
+pass. A pause lets the current call finish and publish if its sources remain current,
+then admits no next call. Repeated resume does not reset the owner's generation budget.
+A provider or invalid-input failure pauses with a named reason; explicitly resume after
+resolving it. Missing sources and edits during generation retain pending work and recover
+from source notifications. Without `--watch`, explicit source indexing supplies changes.
+
+Use generated vocabulary through the same context allowance:
+
+```json
+{"query":"capacity eviction","include_briefs":true,"tokens":4096}
+```
+
+Briefs stay labeled derived and are delivered only with their exact source evidence.
+This works on stdio and shared HTTP owners; multi-root requests must include the primary,
+and only the primary contributes generated briefs. Without a knowledge profile the flag
+is unadvertised and true is refused. No source is enrolled from a query.
+
+`status.knowledge` reports cache/work metadata, maintenance state and `last_run` coverage.
+`completed_pass_usage` contains owner-local totals for finished passes, separately showing
+observed provider tokens, unknown-usage calls and o200k request admission tokens. A currently
+`generating` call has no claimed terminal usage yet. Current/cache hits make no model calls;
+unchanged idle operation waits on notifications without reading source rows.
+
+Each 60-second owner window allows eight calls, 32,768 request admission tokens and 16,384
+requested completion tokens. Each pass, including admission waits, has a 300-second cooperative deadline;
+expiry pauses with work retained until explicit resume. Continuous work exceeding a
+window waits in `budget_wait` and resumes afterward. Budgets survive
+pause/resume but reset with a new owner; they are not durable account-wide billing limits.
+Modes also require explicit re-enabling on a new owner; completed outputs remain reusable.
+Closing one shared HTTP session does not stop the owner's maintenance.
+
+Request construction/tokenization and HTTP run with the store slot free. Foreground work
+wins store admission, and generation waits for 500 ms of foreground quiet (status excluded)
+and outstanding watcher source work. Generation and embeddings share background admission;
+dense queries retain the existing bounded wait/fallback rules. Already admitted HTTP may
+still be running when a query arrives. Payloads and local preparation are bounded, but
+Foundry cannot enforce CPU/GPU headroom or terminate computation inside an external service.
+Shutdown closes HTTP and discards uncommitted output before releasing the store.
+
+This uses schema 10 with no further migration. Selected brief publication does not drain
+unrelated source work. Real-model task quality and an owned isolated generation worker
+with hardware resource enforcement remain open.

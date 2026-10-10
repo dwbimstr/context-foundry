@@ -1977,6 +1977,7 @@ async fn serve(
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = mcp::serve_http(
         ServerOptions {
+            knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
             store: corpus.store.clone(),
@@ -2767,6 +2768,7 @@ impl Corpus {
         let (input, output) = tokio::io::split(server_io);
         let server = tokio::spawn(mcp::serve_streams(
             ServerOptions {
+                knowledge: None,
                 retrieval_trace_dir: None,
                 experimental_behavior_context: false,
                 store: self.store.clone(),
@@ -4365,6 +4367,7 @@ async fn owner_with(
     let (input, output) = tokio::io::split(server_io);
     let server = tokio::spawn(mcp::serve_streams(
         ServerOptions {
+            knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
             store: store.to_path_buf(),

@@ -7,7 +7,6 @@ use redb::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Condvar, Mutex};
-#[cfg(feature = "semantic")]
 use std::time::Duration;
 
 const SEMANTIC: TableDefinition<&str, &str> = TableDefinition::new("semantic_work");
@@ -324,6 +323,31 @@ impl Engine {
     }
 }
 
+/// One owner-wide background model request, shared by semantic and knowledge
+/// maintenance. Foreground query priority is additionally enforced by QueryRuntime.
+/// This controls client admission, not external server resource limits.
+pub struct ModelPermit(Option<std::sync::Arc<std::sync::atomic::AtomicBool>>);
+impl ModelPermit {
+    pub fn unshared() -> Self {
+        Self(None)
+    }
+    pub(crate) fn try_acquire(
+        flag: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        flag.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| Self(Some(flag.clone())))
+    }
+}
+impl Drop for ModelPermit {
+    fn drop(&mut self) {
+        if let Some(flag) = &self.0 {
+            flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
 /// In-process notification only; redb remains the durable authority. No idle
 /// source/cache polling. The timeout bounds pause/shutdown latency, not retries.
 #[derive(Debug, Default)]
@@ -332,7 +356,6 @@ pub(crate) struct Wake {
     changed: Condvar,
 }
 impl Wake {
-    #[cfg(feature = "semantic")]
     pub(crate) fn stamp(&self) -> u64 {
         *self
             .epoch
@@ -347,7 +370,6 @@ impl Wake {
         *epoch = epoch.wrapping_add(1);
         self.changed.notify_all();
     }
-    #[cfg(feature = "semantic")]
     pub(crate) fn wait(&self, stamp: u64) -> bool {
         let guard = self
             .epoch

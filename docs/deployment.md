@@ -679,10 +679,13 @@ corpus-sized. Generation v5 remains unchanged by the knowledge feature; the latt
 requires the explicit schema-10 upgrade.
 
 Selective knowledge preparation uses an explicitly configured HTTP provider and source
-scope under exclusive CLI ownership. Current inputs skip body reads and provider calls;
-exact historical completions can be reused after a revert. Its bounded transactional
+scope under exclusive CLI ownership or the existing MCP owner. Current inputs skip
+body reads and provider calls; exact historical completions can be reused after a revert. Its bounded transactional
 cache is separate from the embedding cache and explicit project memory. See
 [configuration, accounting and limits](experimental-context.md#selective-knowledge-generation).
 No model is downloaded or started. The external service owns its own runtime resources;
-continuous MCP knowledge scheduling, shared resource admission and an owned isolated
-local generator remain future work.
+MCP continuous scheduling and shared client admission are explicit:
+`mcp --knowledge-profile FILE --knowledge-maintain [--watch]`. Profiles alone do not
+generate. See [maintenance controls and limits](experimental-context.md#continuous-knowledge-maintenance).
+No further schema migration is needed. External CPU/GPU headroom enforcement and an owned
+isolated local generator remain future work.

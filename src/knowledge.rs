@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub(crate) mod cache;
+pub mod maintenance;
 pub mod provider;
 pub use provider::Usage;
 
@@ -353,6 +354,11 @@ fn lineage(profile: &Profile, node: &Node, children: &[brief::Record]) -> FResul
     Ok(result)
 }
 
+struct Snapshot {
+    evidence: Vec<Value>,
+    cited_spans: Vec<String>,
+    derivation: Derivation,
+}
 struct Prepared {
     body: Vec<u8>,
     tokens: u64,
@@ -372,13 +378,13 @@ impl Engine {
             })
             .transpose()
     }
-    fn knowledge_input(
+    fn knowledge_snapshot(
         &self,
         profile: &Profile,
         node: &Node,
         children: &[brief::Record],
         control: &Control,
-    ) -> FResult<Prepared> {
+    ) -> FResult<Snapshot> {
         fault!(KNOWLEDGE_INPUT, Some(self), Some(control), &node.id)?;
         let mut selections = node.sources.clone();
         let derivation = lineage(profile, node, children)?;
@@ -405,20 +411,19 @@ impl Engine {
         let mut cited_spans = Vec::new();
         let mut seen = BTreeSet::new();
         let mut selected_bytes = 0usize;
+        let mut bodies = BTreeMap::new();
         for selection in selections {
             control.check()?;
             let raw = sources
                 .get(selection.path.as_str())?
                 .ok_or(FoundryError::NotFound)?;
             let meta: SourceMeta = store::decode(raw.value(), "source")?;
-            let body = store::reconstruct_verified(&chunks, &selection.path, &meta)?.body;
-            let end = selection.end.unwrap_or(body.len() as u64);
+            if !digest(&meta.hash) {
+                return Err(corrupt("invalid source digest"));
+            }
+            let end = selection.end.unwrap_or(meta.bytes as u64);
             let start = usize::try_from(selection.start).map_err(|_| FoundryError::InvalidRange)?;
             let end_usize = usize::try_from(end).map_err(|_| FoundryError::InvalidRange)?;
-            let text = body
-                .get(start..end_usize)
-                .filter(|s| !s.is_empty())
-                .ok_or(FoundryError::InvalidRange)?;
             let handle = format!(
                 "{}#{}-{}@{}.{}",
                 selection.path,
@@ -430,16 +435,48 @@ impl Engine {
             if !seen.insert(handle.clone()) {
                 continue;
             }
-            selected_bytes = selected_bytes.saturating_add(text.len());
+            let length = end_usize
+                .checked_sub(start)
+                .filter(|n| *n > 0)
+                .ok_or(FoundryError::InvalidRange)?;
+            selected_bytes = selected_bytes.saturating_add(length);
             if cited_spans.len() == 32 || selected_bytes > profile.max_request_bytes as usize {
                 return Err(fail(
                     "knowledge_input_limit",
                     "select smaller exact source spans; generation input exceeds its bound",
                 ));
             }
+            if !bodies.contains_key(&selection.path) {
+                bodies.insert(
+                    selection.path.clone(),
+                    store::reconstruct_verified(&chunks, &selection.path, &meta)?.body,
+                );
+            }
+            let text = bodies[&selection.path]
+                .get(start..end_usize)
+                .ok_or(FoundryError::InvalidRange)?;
             evidence.push(json!({"citation":cited_spans.len(),"handle":handle,"source_sha256":meta.hash,"text":text}));
             cited_spans.push(handle);
         }
+        Ok(Snapshot {
+            evidence,
+            cited_spans,
+            derivation,
+        })
+    }
+}
+impl Snapshot {
+    fn render(
+        self,
+        profile: &Profile,
+        node: &Node,
+        children: &[brief::Record],
+    ) -> FResult<Prepared> {
+        let Self {
+            evidence,
+            cited_spans,
+            derivation,
+        } = self;
         let children: Vec<_> = children.iter().map(|record| json!({"id":record.id,"input_sha256":record.input_sha256,"cited_spans":record.brief.cited_spans,"derived":Output::from(&record.brief)})).collect();
         let content = serde_json::to_string(
             &json!({"node":node.id,"evidence":evidence,"children":children}),
@@ -523,8 +560,50 @@ pub async fn prepare(
     limits: RunLimits,
     control: &Control,
 ) -> FResult<Report> {
+    prepare_access(&mut Direct(engine), profile, limits, control, None).await
+}
+
+pub(crate) trait Access {
+    type Permit;
+    fn step<T>(
+        &mut self,
+        control: &Control,
+        f: impl FnOnce(&mut Engine) -> FResult<T>,
+    ) -> FResult<T>;
+    fn check(&self) -> FResult<()> {
+        Ok(())
+    }
+    fn admit(&mut self, control: &Control) -> FResult<Self::Permit>;
+}
+struct Direct<'a>(&'a mut Engine);
+impl Access for Direct<'_> {
+    type Permit = ();
+    fn step<T>(
+        &mut self,
+        control: &Control,
+        f: impl FnOnce(&mut Engine) -> FResult<T>,
+    ) -> FResult<T> {
+        control.check()?;
+        f(self.0)
+    }
+    fn admit(&mut self, control: &Control) -> FResult<()> {
+        control.check()
+    }
+}
+
+pub(crate) async fn prepare_access<A: Access>(
+    access: &mut A,
+    profile: &Profile,
+    limits: RunLimits,
+    control: &Control,
+    frontier: Option<crate::neural::work::Batch>,
+) -> FResult<Report> {
     let order = profile.validate()?;
-    if engine.workspace_id().as_deref() != Some(&profile.workspace_id) {
+    if access
+        .step(control, |engine| Ok(engine.workspace_id()))?
+        .as_deref()
+        != Some(&profile.workspace_id)
+    {
         return Err(FoundryError::WrongWorkspace);
     }
     if limits.calls == 0
@@ -540,8 +619,13 @@ pub async fn prepare(
     control.check()?;
     // A one-shot run reconciles this bounded selected plan, never the source corpus.
     // A new plan identity cannot acknowledge work under the old selection.
-    cache::trim(engine, profile.cache_bytes)?;
-    let frontier = engine.derivation_reconcile(Lane::Knowledge, &hash(profile)?)?;
+    access.step(control, |engine| cache::trim(engine, profile.cache_bytes))?;
+    let frontier = match frontier {
+        Some(frontier) => frontier,
+        None => access.step(control, |engine| {
+            engine.derivation_reconcile(Lane::Knowledge, &hash(profile)?)
+        })?,
+    };
     let provider_id = profile.provider_id()?;
     let mut provider = None;
     let mut ready: BTreeMap<String, brief::Record> = BTreeMap::new();
@@ -553,6 +637,7 @@ pub async fn prepare(
         let node = &profile.nodes[i];
         let result: FResult<&'static str> = async {
             control.check()?;
+            access.check()?;
             let children =
                 node.children
                     .iter()
@@ -567,7 +652,7 @@ pub async fn prepare(
                 &node.sources[0].path,
                 &profile.recipe_id(node)?,
             )?;
-            let current = engine.knowledge_record(&id)?;
+            let current = access.step(control, |engine| engine.knowledge_record(&id))?;
             let expected_lineage = lineage(profile, node, &children)?;
             if let Some((record, true)) = &current
                 && record.derivation.as_ref() == Some(&expected_lineage)
@@ -576,8 +661,13 @@ pub async fn prepare(
                 report.reused_current += 1;
                 return Ok("current");
             }
-            let mut prepared = engine.knowledge_input(profile, node, &children, control)?;
-            let cached = cache::get(engine, &prepared.input.prompt_sha256)?;
+            let snapshot = access.step(control, |engine| {
+                engine.knowledge_snapshot(profile, node, &children, control)
+            })?;
+            let mut prepared = snapshot.render(profile, node, &children)?;
+            let cached = access.step(control, |engine| {
+                cache::get(engine, &prepared.input.prompt_sha256)
+            })?;
             let (input, usage, state) = if let Some(record) = cached {
                 if record.id != id || record.derivation.as_ref() != Some(&prepared.derivation) {
                     return Err(corrupt("cached completion belongs to another plan"));
@@ -597,7 +687,7 @@ pub async fn prepare(
                         "generation admission budget exhausted; completed nodes remain reusable",
                     ));
                 }
-                if cache::backoff(engine, &provider_id)? {
+                if access.step(control, |engine| cache::backoff(engine, &provider_id))? {
                     return Err(fail(
                         "knowledge_provider_backoff",
                         "provider retry is deferred for up to 30 seconds",
@@ -606,20 +696,32 @@ pub async fn prepare(
                 if provider.is_none() {
                     provider = Some(provider::HttpProvider::new(profile)?);
                 }
-                fault!(KNOWLEDGE_BEFORE_CALL, Some(engine), Some(control), &node.id)?;
+                access.step(control, |_engine| {
+                    fault!(
+                        KNOWLEDGE_BEFORE_CALL,
+                        Some(_engine),
+                        Some(control),
+                        &node.id
+                    )?;
+                    Ok(())
+                })?;
+                let permit = access.admit(control)?;
                 report.calls += 1;
                 report.request_tokens_o200k += prepared.tokens;
                 report.requested_output_tokens += profile.output_tokens as u64;
                 report.usage_unknown_calls += 1;
-                let reply = match provider
+                let reply = provider
                     .as_ref()
                     .expect("provider admitted")
                     .generate(prepared.body, &profile.model, control)
-                    .await
-                {
+                    .await;
+                drop(permit);
+                let reply = match reply {
                     Ok(reply) => reply,
                     Err(error) => {
-                        cache::record_failure(engine, &provider_id, Some(error.code()))?;
+                        access.step(control, |engine| {
+                            cache::record_failure(engine, &provider_id, Some(error.code()))
+                        })?;
                         return Err(error);
                     }
                 };
@@ -632,7 +734,9 @@ pub async fn prepare(
                             .checked_add(reply.usage.completion_tokens.unwrap_or(0)),
                     );
                 let Some((prompt, completion)) = observed else {
-                    cache::record_failure(engine, &provider_id, Some("knowledge_usage_invalid"))?;
+                    access.step(control, |engine| {
+                        cache::record_failure(engine, &provider_id, Some("knowledge_usage_invalid"))
+                    })?;
                     return Err(fail(
                         "knowledge_usage_invalid",
                         "provider usage totals overflow",
@@ -648,7 +752,9 @@ pub async fn prepare(
                     .completion_tokens
                     .is_some_and(|n| n > u64::from(profile.output_tokens))
                 {
-                    cache::record_failure(engine, &provider_id, Some("knowledge_output_limit"))?;
+                    access.step(control, |engine| {
+                        cache::record_failure(engine, &provider_id, Some("knowledge_output_limit"))
+                    })?;
                     return Err(fail(
                         "knowledge_output_limit",
                         "provider reported completion tokens beyond the requested ceiling",
@@ -657,11 +763,13 @@ pub async fn prepare(
                 let output: Output = match serde_json::from_str(&reply.content) {
                     Ok(output) => output,
                     Err(_) => {
-                        cache::record_failure(
-                            engine,
-                            &provider_id,
-                            Some("knowledge_output_invalid"),
-                        )?;
+                        access.step(control, |engine| {
+                            cache::record_failure(
+                                engine,
+                                &provider_id,
+                                Some("knowledge_output_invalid"),
+                            )
+                        })?;
                         return Err(fail(
                             "knowledge_output_invalid",
                             "expected strict cited brief JSON",
@@ -679,17 +787,19 @@ pub async fn prepare(
                 (prepared.input, reply.usage, "generated")
             };
             let expected = current.as_ref().map(|(r, _)| r.revision);
-            let accepted = engine.put_brief(
-                &profile.workspace_id,
-                &input,
-                expected,
-                Some(brief::Generation {
-                    derivation: &prepared.derivation,
-                    usage: &usage,
-                    cache_bytes: profile.cache_bytes,
-                }),
-                control,
-            );
+            let accepted = access.step(control, |engine| {
+                engine.put_brief(
+                    &profile.workspace_id,
+                    &input,
+                    expected,
+                    Some(brief::Generation {
+                        derivation: &prepared.derivation,
+                        usage: &usage,
+                        cache_bytes: profile.cache_bytes,
+                    }),
+                    control,
+                )
+            });
             if let Err(error) = accepted {
                 if state == "generated"
                     && matches!(
@@ -697,7 +807,13 @@ pub async fn prepare(
                         FoundryError::InvalidArgument(_) | FoundryError::InvalidRange
                     )
                 {
-                    cache::record_failure(engine, &provider_id, Some("knowledge_output_invalid"))?;
+                    access.step(control, |engine| {
+                        cache::record_failure(
+                            engine,
+                            &provider_id,
+                            Some("knowledge_output_invalid"),
+                        )
+                    })?;
                     return Err(fail(
                         "knowledge_output_invalid",
                         "generated claims failed source/citation validation",
@@ -706,9 +822,11 @@ pub async fn prepare(
                 return Err(error);
             }
             control.check()?;
-            engine.drain_brief_key(&id);
-            let (record, eligible) = engine
-                .knowledge_record(&id)?
+            let (record, eligible) = access
+                .step(control, |engine| {
+                    engine.drain_brief_key(&id);
+                    engine.knowledge_record(&id)
+                })?
                 .ok_or_else(|| corrupt("accepted brief disappeared"))?;
             if !eligible {
                 return Err(FoundryError::StaleHandle);
@@ -716,7 +834,9 @@ pub async fn prepare(
             ready.insert(node.id.clone(), record);
             if state == "generated" {
                 report.generated += 1;
-                cache::record_failure(engine, &provider_id, None)?;
+                access.step(control, |engine| {
+                    cache::record_failure(engine, &provider_id, None)
+                })?;
             } else {
                 report.reused_cached += 1;
             }
@@ -739,17 +859,36 @@ pub async fn prepare(
     report.complete = ready.len() == profile.nodes.len();
     if report.complete {
         let publication = (|| -> FResult<()> {
-            // Includes pending lexical publication left by interruption after commit.
-            engine.refresh(control)?;
+            // Only this bounded plan's derived records need publication. Leave
+            // unrelated source/semantic work to its own owner and acknowledgment.
             for record in ready.values() {
-                let Some((now, true)) = engine.knowledge_record(&record.id)? else {
-                    return Err(FoundryError::StaleHandle);
-                };
-                if fingerprint(&now)? != fingerprint(record)? {
-                    return Err(FoundryError::StaleHandle);
-                }
+                access.step(control, |engine| {
+                    engine.drain_brief_key(&record.id);
+                    let tx = engine.db.begin_read()?;
+                    if tx
+                        .open_table(store::PENDING)?
+                        .get(brief::pending_key(&record.id).as_str())?
+                        .is_some()
+                    {
+                        return Err(fail(
+                            "knowledge_publication_pending",
+                            "selected brief publication remains pending",
+                        ));
+                    }
+                    Ok(())
+                })?;
             }
-            engine.derivation_ack(Lane::Knowledge, &frontier)
+            access.step(control, |engine| {
+                for record in ready.values() {
+                    let Some((now, true)) = engine.knowledge_record(&record.id)? else {
+                        return Err(FoundryError::StaleHandle);
+                    };
+                    if fingerprint(&now)? != fingerprint(record)? {
+                        return Err(FoundryError::StaleHandle);
+                    }
+                }
+                engine.derivation_ack(Lane::Knowledge, &frontier)
+            })
         })();
         if let Err(error) = publication {
             report.complete = false;

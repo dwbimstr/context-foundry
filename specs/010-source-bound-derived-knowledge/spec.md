@@ -1,8 +1,9 @@
 # 010 — Source-bound derived repository knowledge
 
 Status: Experimental T001 implemented locally; T002 now implements explicit selective
-HTTP generation, completion reuse and area lineage. Continuous MCP scheduling, owned
-local generation workers and real-model acceptance remain selected work. The owner's
+HTTP generation, completion reuse, area lineage and opt-in continuous MCP maintenance.
+Shared client admission and derived MCP context are implemented; owned local generation,
+hardware headroom enforcement and real-model acceptance remain selected work. The owner's
 large-repository direction supersedes the earlier blanket deferral.
 The import and generation fixtures use synthetic outputs through real storage, retrieval
 and HTTP/CLI boundaries; no real generation model has been selected or run. 013 remains frozen off.
@@ -115,8 +116,9 @@ See [validation](../../docs/validation.md) for executed checks and limits.
 
 ### T002 — Generate useful briefs and area knowledge within idle resources
 
-Status: explicit CLI generation implemented experimentally; continuous shared-owner
-scheduling and real-model acceptance remain open. The efficiency amendment places this after
+Status: explicit CLI and continuous MCP generation implemented experimentally. Shared
+client admission is implemented; actual hardware headroom and real-model acceptance
+remain open. The efficiency amendment places this after
 changed-work ownership (009 T008) and input/resource identity (009 T009); see the
 [build order](../../docs/context-ecosystem-plan.md#revised-build-order).
 
@@ -172,8 +174,9 @@ nodes, a source-path allowlist, a model/deployment digest, instructions and one
 OpenAI-compatible Chat Completions endpoint. Sources are exact byte spans, with the
 first span anchoring each brief in original source. Node order prioritizes ready work;
 a stable topological walk handles at most eight children per node and four area levels.
-No all-file description pass, model download, executable launch or automatic generation
-on indexing/query/startup is added. Schema **10** requires an explicit upgrade.
+No all-file description pass, model download or executable launch is added. MCP
+startup generation requires the explicit maintenance option described below. Schema **10**
+requires an explicit upgrade.
 
 The first provider is a configured HTTP service through the existing reqwest transport.
 Literal loopback HTTP(S) is allowed; remote HTTPS also requires `allow_remote:true` and
@@ -240,14 +243,72 @@ of strictly affected-node-only metadata work. Failed nodes/ancestors preserve su
 children and pending work. JSON reports distinguish current, cached, generated and
 pending nodes, incomplete publication, observed usage and unknown calls.
 
-The CLI uses the store's existing exclusive-owner rule, so it refuses alongside a live
-MCP owner. It does **not** yet run opportunistically in MCP's shared resource scheduler.
-Continuous knowledge maintenance, foreground/device-headroom hysteresis, an owned isolated
-local generation worker and real-provider task/throughput evidence remain T002 follow-ups.
-Dense brief vectors remain optional. This slice adds no new worker, generic queue,
-dependency framework or model runtime. [tests/knowledge.rs](../../tests/knowledge.rs)
+The standalone CLI retains the store's exclusive-owner rule. The MCP continuation
+below reuses the same acceptance, cache and generation pipeline inside the existing
+owner; there is no second database writer or model process. Hardware headroom enforcement,
+an owned isolated local generator and real-model task/throughput evidence remain T002
+follow-ups. Dense brief vectors remain optional. [tests/knowledge.rs](../../tests/knowledge.rs)
 exercises the real HTTP/CLI/store/retrieval boundaries with a local synthetic server;
 see [validation](../../docs/validation.md#selective-knowledge-generation).
+
+### Continuous MCP maintenance and shared admission
+
+`mcp --knowledge-profile FILE` validates and binds a profile to the admitted primary
+workspace once at startup. It enables `index {knowledge:"prepare"|"maintain"|"pause"}`
+and `context {include_briefs:true}`; neither the profile nor watching alone starts a
+model call. `--knowledge-maintain` explicitly starts continuous work. Modes are owner
+local and do not persist across restart. Reference roots are never generated implicitly.
+Derived context uses the primary's exact citations and the same delivery allowance;
+multi-root requests must include the primary. Owners without a knowledge profile keep
+their existing catalog and response shapes. The configured index tool advertises its
+external effects and cannot mix knowledge control with source/semantic indexing arguments.
+
+[maintenance.rs](../../src/knowledge/maintenance.rs) owns one bounded driver thread,
+composing the CLI pipeline through foreground-prioritized store steps. Snapshotting
+reconstructs each distinct source once per node (at most 32 sources / 64 MiB), then
+releases the engine and read transaction before JSON construction, tokenization and HTTP.
+At most one prepared request (128 KiB), bounded child briefs and one HTTP response
+(256 KiB) are retained. Acceptance rechecks current sources, transitive child identities
+and expected revision. Publication drains only selected brief keys; it cannot force
+unrelated source indexing or acknowledge embedding work. No corpus-wide source walk or
+additional job/dependency table is introduced; the schema remains **10**.
+
+Generation waits for a 500 ms foreground quiet interval and outstanding watcher source
+work before admitting HTTP. Status observations do not extend this interval. A shared
+owner permit serializes background generation and embedding calls; the existing semantic
+runtime slot also gives dispatched/waiting queries priority. Embedding preparation retains
+its selected batch while generation occupies admission, instead of pausing on contention.
+An already admitted generation request can delay a dense query up to the query's existing
+ceiling; lexical fallback and exact evidence remain available. These are client admission
+and bounded CPU/payload guarantees, **not** measurements or enforcement of external server
+CPU/GPU headroom, residency or cancellation. An HTTP disconnect may leave external compute
+running. Owned worker isolation/resource telemetry remain required for stronger claims.
+
+Each owner window admits at most eight generation calls, 32,768 serialized-request
+o200k tokens and 16,384 requested completion tokens over 60 seconds. Limits persist
+through pause/resume within that owner; restarting begins a new owner window, so this is
+not a durable account-wide quota or billing ceiling. Each pass, including admission waits,
+is additionally bounded by 300 seconds; a deadline pauses with work retained until explicit
+resume. Successful/current/cached nodes survive partial passes. Exhaustion enters
+`budget_wait`; continuous mode resumes when the window expires, while `prepare` stops
+after one bounded pass. No provider call is made for current or cached nodes in a pass.
+
+The driver checks the durable knowledge obligation and waits on the existing source
+notification when caught up or waiting for a missing source. Quiet waits read no store
+rows. Notifications are hints; redb work/version fences remain authoritative, including
+edits during generation and restart. Each dirty pass scans the bounded selected plan,
+not strictly only affected metadata. Provider/input/publication failures pause with work
+retained and require explicit resume; source staleness/missing-input waits can recover
+on a subsequent notification. A pause admits no new call and accepts the one already
+running if still current. Shutdown cancels HTTP, rejects uncommitted output and waits for
+the driver before releasing the store. Rapid pause/resume must not lose a resume request.
+
+`status.knowledge` combines cheap cache/work metadata with live state, named reason,
+last-pass coverage and `completed_pass_usage`. Usage updates at pass boundaries; an
+active `generating` phase has no claimed terminal provider usage. Observed provider usage,
+unknown calls and local admission units remain separate. These counters are owner-local;
+completed outputs and provider backoff remain durable. The configured endpoint fixture
+exercises real stdio and shared HTTP consumers, not a real generation model.
 
 ## Pinned reference and differences
 

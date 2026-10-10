@@ -43,10 +43,12 @@ profiles and old cache rows remain usable; real-device long-context parity/quali
 independent parent/file/area vectors remain open. Schema 10 now adds explicit selective
 HTTP generation (010 T002), atomic completion reuse, source-bound area summaries and
 transitive child/source freshness. Unchanged runs avoid body reads and provider calls;
-partial runs resume completed nodes. The CLI requires exclusive ownership and a configured
-provider/scope. Continuous MCP knowledge scheduling, shared resource admission, owned local
-generation and real-model acceptance remain next; boundary joins and task-evidence
-composition also remain pending. See [configuration](experimental-context.md#selective-knowledge-generation).
+partial runs resume completed nodes. The standalone CLI requires exclusive ownership
+and a configured provider/scope. MCP now supports explicit continuous knowledge maintenance, shared client
+admission and source-first derived context on both transports. Store locks exclude request
+rendering/tokenization and HTTP; quiet operation waits on source notifications. Owned local
+generation, hardware headroom enforcement and real-model acceptance remain open.
+Boundary joins and task-evidence composition also remain pending. See [configuration](experimental-context.md#selective-knowledge-generation).
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
 [validation](validation.md). 013 remains frozen. No release or quality gain is claimed.
 

@@ -104,6 +104,11 @@ pub trait Owner: Send + Sync {
     /// but only while no foreground operation is in flight. `Ok(false)` when
     /// the slot cannot be taken right now; `Err` when it never can again.
     fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool>;
+    /// Shared background-call admission. A busy knowledge request defers the
+    /// selected embedding batch intact instead of pausing semantic maintenance.
+    fn try_model(&self) -> Option<crate::neural::work::ModelPermit> {
+        Some(crate::neural::work::ModelPermit::unshared())
+    }
     /// True once the owner is shutting down (EOF or owner shutdown).
     fn closing(&self) -> bool;
     /// Test seam: the driver selected a batch and is about to decide its
@@ -257,7 +262,10 @@ impl Preparation {
                 .into(),
         };
         let mut state = self.lock();
-        if state.phase != Phase::Running && runtime.occupied() && !state.in_call {
+        if state.phase != Phase::Running
+            && (runtime.occupied() && !runtime.knowledge_occupied())
+            && !state.in_call
+        {
             return Err(busy());
         }
         if let Some(paths) = paths {
@@ -271,14 +279,14 @@ impl Preparation {
         match state.phase {
             Phase::Running => Ok(()),
             Phase::Pausing | Phase::Stopping => {
-                if runtime.occupied() && !state.in_call {
+                if (runtime.occupied() && !runtime.knowledge_occupied()) && !state.in_call {
                     return Err(busy());
                 }
                 state.phase = Phase::Running;
                 Ok(())
             }
             Phase::Idle => {
-                if runtime.occupied() {
+                if runtime.occupied() && !runtime.knowledge_occupied() {
                     return Err(busy());
                 }
                 let preparation = Arc::clone(self);
@@ -845,6 +853,15 @@ impl<'a> Run<'a> {
     ) -> FResult<Option<Stop>> {
         #[cfg(feature = "test-faults")]
         self.owner.admitting();
+        let model_permit = loop {
+            if let Some(stop) = self.requested_stop() {
+                return Ok(Some(stop));
+            }
+            if let Some(permit) = self.owner.try_model() {
+                break permit;
+            }
+            std::thread::sleep(POLL);
+        };
         let preparation = self.preparation;
         let started = Instant::now();
         let (keys, tokens, call) = {
@@ -904,6 +921,7 @@ impl<'a> Run<'a> {
             }
         };
         self.preparation.set_in_call(false);
+        drop(model_permit);
         self.report.bootstrap.provider_ms += prepare::elapsed_ms(started);
         let vectors = match result {
             Ok(vectors) => vectors,

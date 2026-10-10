@@ -162,9 +162,8 @@ impl Watch {
     pub(crate) fn idle(&self) -> bool {
         !self.running.load(Ordering::SeqCst)
     }
-    /// Source work is pending: the owner gives it eight steps before admitting
-    /// a bounded semantic step, with foreground operations always first.
-    #[cfg(feature = "semantic")]
+    /// Source work is pending: semantic steps yield eight source steps and
+    /// knowledge calls wait for source work, with foreground operations first.
     pub(crate) fn source_pending(&self) -> bool {
         if self.idle() || self.stop.is_cancelled() {
             return false;

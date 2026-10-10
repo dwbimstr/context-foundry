@@ -368,8 +368,10 @@ one budget. T002 now adds explicit HTTP/CLI generation over at most 128 selected
 and four area levels. Schema 10 adds bounded atomic completion reuse and optional
 transitive child lineage to the same source/brief owner. Source hashes and accepted
 child-text identities govern area freshness; no corpus scan or new dependency database
-is required for preparation. Continuous MCP knowledge scheduling and shared foreground/
-resource admission remain open. See [usage](experimental-context.md#selective-knowledge-generation).
+is required for preparation. MCP now runs the same pipeline with foreground-prioritized store steps, request
+rendering/tokenization and HTTP outside the engine slot, shared embedding/generation
+client admission and notification-driven idle waits. Derived context stays source-first
+and budgeted. Hardware headroom enforcement and owned local generation remain open. See [usage](experimental-context.md#selective-knowledge-generation).
 Exact source/graph evidence, derived repository knowledge and explicit task memory
 have distinct provenance and invalidation rules. The
 [revised ecosystem design](context-ecosystem-plan.md#architecture-correction-useful-context-across-6000080000-files)
@@ -709,4 +711,4 @@ owner, profile and manifest version. A transactional mapping revision lets an un
 restart reuse its verified publication without a database mapping scan. Changed-input
 restart, overflow, identity change and repair reconcile; cold reads and compaction remain
 corpus-sized. Selective LLM generation now uses the explicit 010 T002 CLI described
-above; continuous knowledge maintenance remains open.
+above and opt-in continuous MCP maintenance; owned local generation remains open.

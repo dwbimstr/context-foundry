@@ -192,6 +192,8 @@ pub(crate) struct Shared {
     /// word every request reports when it could not start. 009 T003: the
     /// same runtime embeds the preparation driver's document batches.
     semantic: SemanticSlot,
+    knowledge: Option<Arc<crate::knowledge::maintenance::Maintenance>>,
+    background_model: Arc<std::sync::atomic::AtomicBool>,
     /// 009 T003: the owner's one background preparation driver (primary
     /// root only), started by `index {semantic: "prepare"}`, never at startup.
     #[cfg(feature = "semantic")]
@@ -574,6 +576,9 @@ impl Shared {
 
     fn cancel_active(&self) {
         self.shutdown.cancel();
+        if let Some(knowledge) = &self.knowledge {
+            knowledge.cancel();
+        }
         if let Some(watch) = &self.watch {
             watch.cancel();
         }
@@ -609,6 +614,8 @@ impl Shared {
             #[cfg(feature = "semantic")]
             source_steps: AtomicUsize::new(0),
             semantic: SemanticSlot::default(),
+            knowledge: None,
+            background_model: Arc::default(),
             #[cfg(feature = "semantic")]
             preparation: Arc::default(),
             policy: Arc::new(crate::policy::Policy::off()),
@@ -654,6 +661,12 @@ impl Shared {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }
+        if let Some(knowledge) = &self.knowledge {
+            let start = Instant::now();
+            while !knowledge.idle() && start.elapsed() <= SHUTDOWN_ENGINE_WAIT {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
         self.wait_preparation_idle(SHUTDOWN_ENGINE_WAIT).await;
         #[cfg(feature = "semantic")]
         if let Some(Ok(runtime)) = &self.semantic {
@@ -676,6 +689,9 @@ impl Shared {
 /// waits for it ([`take_engine_slot`]).
 #[cfg(feature = "semantic")]
 impl crate::neural::driver::Owner for Shared {
+    fn try_model(&self) -> Option<crate::neural::work::ModelPermit> {
+        crate::neural::work::ModelPermit::try_acquire(&self.background_model)
+    }
     fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
         if self
             .watch
@@ -721,6 +737,65 @@ impl crate::neural::driver::Owner for Shared {
         Ok(true)
     }
 
+    fn closing(&self) -> bool {
+        self.shutdown.is_cancelled()
+    }
+}
+
+impl crate::knowledge::maintenance::Owner for Shared {
+    fn try_step(&self, step: &mut dyn FnMut(&mut Engine)) -> FResult<bool> {
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        let mut engines = match self.engines.try_lock() {
+            Ok(engines) => SlotGuard::mark(engines, &self.slot_holder, SLOT_DRIVER),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(FoundryError::Internal(anyhow::anyhow!(
+                    "engine state was poisoned"
+                )));
+            }
+        };
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        step(engines[0].as_mut().expect("primary engine is open"));
+        Ok(true)
+    }
+    fn try_model(&self) -> FResult<Option<crate::knowledge::maintenance::Permit>> {
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0
+            || self
+                .watch
+                .as_ref()
+                .is_some_and(|watch| watch.source_pending())
+        {
+            return Ok(None);
+        }
+        let Some(model) = crate::neural::work::ModelPermit::try_acquire(&self.background_model)
+        else {
+            return Ok(None);
+        };
+        #[cfg(feature = "semantic")]
+        let runtime = if let Some(Ok(runtime)) = &self.semantic {
+            match runtime.admit_knowledge() {
+                Ok(permit) => Some(permit),
+                Err(crate::neural::provider::ProviderError::Busy) => return Ok(None),
+                Err(error) => {
+                    return Err(crate::knowledge::fail(
+                        "knowledge_admission",
+                        &error.to_string(),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        Ok(Some(crate::knowledge::maintenance::Permit {
+            _model: model,
+            #[cfg(feature = "semantic")]
+            _runtime: runtime,
+        }))
+    }
     fn closing(&self) -> bool {
         self.shutdown.is_cancelled()
     }
@@ -1472,6 +1547,35 @@ impl FoundryMcp {
             properties.insert("task_id".into(), serde_json::json!({"type":"string","minLength":1,"maxLength":128,"description":"Primary task ID; requires task_revision."}));
             properties.insert("task_revision".into(), serde_json::json!({"type":"integer","minimum":1,"description":"Expected task revision; requires task_id."}));
         }
+        if state.knowledge.is_some() {
+            for (tool, key, field) in [
+                (
+                    "index",
+                    "knowledge",
+                    serde_json::json!({"enum":["prepare","maintain","pause"]}),
+                ),
+                (
+                    "context",
+                    "include_briefs",
+                    serde_json::json!({"type":"boolean","description":"Include derived primary-root knowledge with exact source evidence."}),
+                ),
+            ] {
+                let route = tool_router.map.get_mut(tool).expect("tool exists");
+                if tool == "index" {
+                    route.attr.description = Some("Index an admitted root or control configured semantic/knowledge maintenance.".into());
+                    if let Some(annotations) = &mut route.attr.annotations {
+                        annotations.open_world_hint = Some(true);
+                        annotations.idempotent_hint = Some(false);
+                    }
+                }
+                let schema = Arc::make_mut(&mut route.attr.input_schema);
+                schema
+                    .get_mut("properties")
+                    .and_then(serde_json::Value::as_object_mut)
+                    .expect("properties")
+                    .insert(key.into(), field);
+            }
+        }
         if state.no_memory {
             tool_router.remove_route("memory");
         }
@@ -1594,6 +1698,7 @@ impl FoundryMcp {
                 "strategy",
                 "roots",
                 "include_memory",
+                "include_briefs",
                 "task_id",
                 "task_revision",
             ],
@@ -1662,6 +1767,24 @@ impl FoundryMcp {
                 ));
             }
         };
+        let include_briefs = match arguments.get("include_briefs") {
+            None => false,
+            Some(serde_json::Value::Bool(value)) => *value,
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "include_briefs must be boolean",
+                    false,
+                ));
+            }
+        };
+        if include_briefs && self.state.knowledge.is_none() {
+            return Ok(error_result(
+                "unsupported_mode",
+                "derived context requires --knowledge-profile",
+                false,
+            ));
+        }
         let include_memory = match arguments.get("include_memory") {
             None => false,
             Some(serde_json::Value::Bool(include)) => *include,
@@ -1693,7 +1816,16 @@ impl FoundryMcp {
         let query = query.to_owned();
         if self.state.meta.len() > 1 {
             return Ok(self
-                .context_roots(&ctx, tokens, query, strategy, roots, include_memory, task)
+                .context_roots(
+                    &ctx,
+                    tokens,
+                    query,
+                    strategy,
+                    roots,
+                    include_memory,
+                    task,
+                    include_briefs,
+                )
                 .await);
         }
         let task_requested = task.is_some();
@@ -1736,6 +1868,7 @@ impl FoundryMcp {
                         crate::store::ContextOptions {
                             task: task_scope,
                             memory: include_memory,
+                            briefs: include_briefs,
                             policy: routed,
                             experimental_behavior,
                             ..crate::store::ContextOptions::default()
@@ -1746,14 +1879,7 @@ impl FoundryMcp {
                 |outcome: &memory::MemoryContext,
                  budget: response::Budget,
                  boundary: response::ByteMeasure| {
-                    response::pack_task_context(
-                        &outcome.batch,
-                        None,
-                        &outcome.hits,
-                        outcome.task_view.as_ref(),
-                        budget,
-                        boundary,
-                    )
+                    response::pack_enriched_context(outcome, None, budget, boundary)
                 },
             )
             .await)
@@ -1896,9 +2022,48 @@ impl FoundryMcp {
     ) -> Result<CallToolResult, ErrorData> {
         if let Err(e) = unknown_fields(
             &arguments,
-            &["timeout_ms", "root", "scip", "semantic", "priority_paths"],
+            &[
+                "timeout_ms",
+                "root",
+                "scip",
+                "semantic",
+                "priority_paths",
+                "knowledge",
+            ],
         ) {
             return Ok(foundry_error_result(&e));
+        }
+        if let Some(action) = arguments.get("knowledge") {
+            if arguments.len() != 1 {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "knowledge control cannot be combined with indexing or semantic arguments",
+                    false,
+                ));
+            }
+            let Some(knowledge) = &self.state.knowledge else {
+                return Ok(error_result(
+                    "unsupported_mode",
+                    "knowledge requires --knowledge-profile",
+                    false,
+                ));
+            };
+            match action.as_str() {
+                Some("prepare" | "maintain") => {
+                    if let Err(error) = knowledge.start(self.state.clone(), action == "maintain") {
+                        return Ok(foundry_error_result(&error));
+                    }
+                }
+                Some("pause") => knowledge.pause(),
+                _ => {
+                    return Ok(error_result(
+                        "invalid_argument",
+                        "knowledge must be prepare, maintain or pause",
+                        false,
+                    ));
+                }
+            }
+            return Ok(text_result(response::compact_json(&knowledge.status())));
         }
         // 009 T003: `semantic` starts/resumes or pauses the owner's
         // progressive preparation, and `index` then does ONLY that.
@@ -2317,6 +2482,7 @@ impl FoundryMcp {
         // profile the status is unchanged.
         let semantic = self.state.semantic.clone();
         let watch = self.state.watch.clone();
+        let knowledge = self.state.knowledge.clone();
         #[cfg(feature = "semantic")]
         let preparation = Arc::clone(&self.state.preparation);
         let mut outcome = match run_engine_op(
@@ -2348,6 +2514,11 @@ impl FoundryMcp {
                 }
                 #[cfg(not(feature = "semantic"))]
                 let _ = (&semantic, control, semantic_audit);
+                if let Some(knowledge) = &knowledge {
+                    let mut observed = primary.knowledge_status()?;
+                    observed["maintenance"] = knowledge.status();
+                    value["knowledge"] = observed;
+                }
                 if let Some(watch) = &watch {
                     value["watch"] = watch.status(primary.pending()?);
                 }
@@ -2975,6 +3146,7 @@ impl FoundryMcp {
         selected: Option<Vec<String>>,
         include_memory: bool,
         task: Option<(String, u64)>,
+        include_briefs: bool,
     ) -> CallToolResult {
         let selection = match self.state.resolve_roots(selected.as_deref()) {
             Ok(selection) => selection,
@@ -2985,10 +3157,10 @@ impl FoundryMcp {
             .copied()
             .filter(|&index| self.state.meta[index].coverage.serves_search())
             .collect();
-        if task.is_some() && !serving.contains(&0) {
+        if (task.is_some() || include_briefs) && !serving.contains(&0) {
             return error_result(
                 "unsupported_mode",
-                "task-aware context requires the primary root to be selected and serving",
+                "task/derived context requires the primary root to be selected and serving",
                 false,
             );
         }
@@ -3030,6 +3202,7 @@ impl FoundryMcp {
                 let mut hits: Vec<memory::MemoryHit> = Vec::new();
                 let hits_ref = &mut hits;
                 let mut task_view = None;
+                let mut briefs = Vec::new();
                 let engines = &*engines;
                 // 005 T004: the first serving root's resolved doors request
                 // (a policy may have made it) governs every later root, so
@@ -3072,6 +3245,7 @@ impl FoundryMcp {
                                 crate::store::ContextOptions {
                                     task: task_scope,
                                     memory: primary_memory,
+                                    briefs: include_briefs,
                                     policy: routed,
                                     anchors: Some(anchors),
                                     experimental_behavior,
@@ -3080,6 +3254,7 @@ impl FoundryMcp {
                             )?;
                             *hits_ref = combined.hits;
                             task_view = combined.task_view;
+                            briefs = combined.briefs;
                             combined.batch
                         } else {
                             // No catch-all for the primary's memory:
@@ -3090,6 +3265,7 @@ impl FoundryMcp {
                             let options = crate::store::ContextOptions {
                                 task: task_scope,
                                 memory: primary_memory && is_primary,
+                                briefs: include_briefs && is_primary,
                                 experimental_behavior,
                                 anchors: Some(anchors),
                                 ..crate::store::ContextOptions::default()
@@ -3098,6 +3274,7 @@ impl FoundryMcp {
                                 .context_candidates_with(&query, strategy, control, &options)?;
                             if is_primary {
                                 task_view = combined.task_view;
+                                briefs = combined.briefs;
                             }
                             if options.memory {
                                 *hits_ref = combined.hits;
@@ -3113,27 +3290,20 @@ impl FoundryMcp {
                     },
                 )?;
                 Ok(MultiOutcome {
-                    served: (roots::merge_context(&batches), hits, task_view),
+                    served: memory::MemoryContext {
+                        batch: roots::merge_context(&batches),
+                        hits,
+                        task_view,
+                        briefs,
+                    },
                     root_facts: facts,
                 })
             },
-            move |outcome: &MultiOutcome<(
-                crate::store::CandidateBatch,
-                Vec<memory::MemoryHit>,
-                Option<crate::task_context::ContextView>,
-            )>,
+            move |outcome: &MultiOutcome<memory::MemoryContext>,
                   budget: response::Budget,
                   boundary: response::ByteMeasure| {
                 let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
-                let (batch, hits, task_view) = &outcome.served;
-                response::pack_task_context(
-                    batch,
-                    Some(&headers),
-                    hits,
-                    task_view.as_ref(),
-                    budget,
-                    boundary,
-                )
+                response::pack_enriched_context(&outcome.served, Some(&headers), budget, boundary)
             },
         )
         .await
@@ -3274,6 +3444,11 @@ impl ServerHandler for FoundryMcp {
         #[cfg(feature = "semantic")]
         if request.name != "status" {
             self.state.preparation.foreground();
+        }
+        if request.name != "status"
+            && let Some(knowledge) = &self.state.knowledge
+        {
+            knowledge.foreground();
         }
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         self.tool_router.call(tcc).await
@@ -3520,6 +3695,7 @@ pub struct ServerOptions {
     /// 009 T002: the semantic profile this owner serves, if any. `None`
     /// keeps every response byte-identical to a build without semantics.
     pub semantic: Option<SemanticServing>,
+    pub knowledge: Option<crate::knowledge::maintenance::Serving>,
     /// 013 T003: the policy config this owner serves, if any. `None` (or a
     /// disabled config) keeps every response byte-identical.
     pub policy: Option<crate::policy::PolicyServing>,
@@ -3636,6 +3812,19 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         .semantic
         .as_ref()
         .is_some_and(|launch| launch.maintain);
+    let knowledge_launch = options.knowledge.take();
+    let knowledge_maintain = knowledge_launch
+        .as_ref()
+        .is_some_and(|launch| launch.maintain);
+    let knowledge = knowledge_launch
+        .map(|launch| crate::knowledge::Profile::load(&launch.profile))
+        .transpose()?;
+    if knowledge
+        .as_ref()
+        .is_some_and(|profile| profile.workspace_id != primary.workspace_id)
+    {
+        return Err(FoundryError::WrongWorkspace.into());
+    }
     let semantic_launch = options.semantic.take();
     let policy_launch = options.policy.take();
     #[cfg(not(feature = "semantic"))]
@@ -3716,6 +3905,10 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         #[cfg(feature = "semantic")]
         source_steps: AtomicUsize::new(0),
         semantic,
+        knowledge: knowledge
+            .map(crate::knowledge::maintenance::Maintenance::new)
+            .map(Arc::new),
+        background_model: Arc::default(),
         #[cfg(feature = "semantic")]
         preparation: Arc::default(),
         policy,
@@ -3736,6 +3929,16 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
     }
     if let (Some(watch), Some(reader)) = (watch, watch_reader) {
         watch.start(state.clone(), reader)?;
+    }
+    if knowledge_maintain
+        && let Err(error) = state
+            .knowledge
+            .as_ref()
+            .expect("configured profile")
+            .start(state.clone(), true)
+    {
+        state.cancel_active();
+        return Err(error.into());
     }
     Ok(state)
 }
@@ -4591,6 +4794,46 @@ mod tests {
         );
         assert_eq!(cache_rows, 8, "{state:?}");
         assert_eq!(state.cache_cap_bytes, Some(8 * row), "{state:?}");
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn knowledge_and_semantic_maintenance_share_admission_without_losing_embedding_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        gate.open();
+        let shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let permit = crate::knowledge::maintenance::Owner::try_model(&*shared)
+            .unwrap()
+            .unwrap();
+        start_preparation(&shared).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            gate.entered(),
+            0,
+            "embedding must wait for generation admission"
+        );
+        assert!(
+            !shared.preparation.idle(),
+            "contention must retain the active embedding run"
+        );
+        drop(permit);
+        wait_idle(&shared);
+        let (state, rows) = stopped_state(&shared);
+        assert!(state.last_error.is_none(), "{state:?}");
+        assert_eq!(rows, 12);
+        shared.in_flight_engine.store(1, Ordering::SeqCst);
+        assert!(
+            crate::knowledge::maintenance::Owner::try_model(&*shared)
+                .unwrap()
+                .is_none()
+        );
+        shared.in_flight_engine.store(0, Ordering::SeqCst);
+        drop(
+            crate::knowledge::maintenance::Owner::try_model(&*shared)
+                .unwrap()
+                .unwrap(),
+        );
     }
 
     /// `index {semantic: "prepare"}` on the in-crate owner.
@@ -5512,6 +5755,7 @@ mod tests {
             let (input, output) = tokio::io::split(server_io);
             let server = tokio::spawn(serve_streams(
                 ServerOptions {
+                    knowledge: None,
                     retrieval_trace_dir: None,
                     experimental_behavior_context: false,
                     store,

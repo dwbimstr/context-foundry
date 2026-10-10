@@ -418,6 +418,7 @@ enum Holder {
     Query,
     /// One document batch of this owner's preparation driver.
     Documents,
+    Knowledge,
 }
 
 /// The ONE model slot, shared with the provider thread.
@@ -490,6 +491,17 @@ impl DocumentCall {
                 "the provider thread ended during the document call".into(),
             ))),
         }
+    }
+}
+
+/// A configured HTTP generation request shares the existing model admission
+/// slot. Dropping it releases client admission; external compute may outlive HTTP.
+pub(crate) struct KnowledgeCall {
+    slot: Arc<Slot>,
+}
+impl Drop for KnowledgeCall {
+    fn drop(&mut self) {
+        self.slot.free();
     }
 }
 
@@ -802,6 +814,24 @@ impl QueryRuntime {
         Ok(DocumentCall { answer })
     }
 
+    pub(crate) fn admit_knowledge(&self) -> Result<KnowledgeCall, ProviderError> {
+        let _admission = self.admission();
+        if self.dispatching.load(Ordering::SeqCst) > 0 {
+            return Err(ProviderError::Busy);
+        }
+        {
+            let mut slot = self.slot.lock();
+            if slot.holder.is_some() || slot.waiter {
+                return Err(ProviderError::Busy);
+            }
+            slot.holder = Some(Holder::Knowledge);
+        }
+        self.probe_late_call("knowledge")?;
+        Ok(KnowledgeCall {
+            slot: self.slot.clone(),
+        })
+    }
+
     /// Claim a free slot for a document batch, never waiting: the slot
     /// FIRST, then the provider's late call ([`Self::probe_late_call`]). A
     /// slot that is held, or promised to a waiting query, is `Busy`.
@@ -832,7 +862,7 @@ impl QueryRuntime {
             let mut slot = self.slot.lock();
             match (slot.holder, slot.waiter) {
                 (None, false) => {}
-                (Some(Holder::Documents), false) => {
+                (Some(Holder::Documents | Holder::Knowledge), false) => {
                     slot.waiter = true;
                     // The ceiling is read again after every reacquisition and
                     // right before the claim: a batch that ended after the
@@ -878,6 +908,12 @@ impl QueryRuntime {
             return Err(ProviderError::Busy);
         }
         Ok(())
+    }
+
+    /// An external generation request owns the client admission slot. The
+    /// semantic driver can start and wait on shared background admission.
+    pub(crate) fn knowledge_occupied(&self) -> bool {
+        self.slot.lock().holder == Some(Holder::Knowledge)
     }
 
     /// True while the one model slot is held by a call that has not actually
@@ -1147,6 +1183,41 @@ mod tests {
                 None => panic!("the document call never ended"),
             }
         }
+    }
+
+    #[test]
+    fn knowledge_admission_defers_to_queries_and_keeps_document_calls_exclusive() {
+        let fixture = Fixture::new(false);
+        let knowledge = fixture.runtime.admit_knowledge().unwrap();
+        assert!(matches!(
+            fixture
+                .runtime
+                .dispatch_documents(one_input(), Control::unbounded()),
+            Err(ProviderError::Busy)
+        ));
+        let query = fixture.query();
+        fixture.until_waiting();
+        assert!(matches!(
+            fixture.runtime.admit_knowledge(),
+            Err(ProviderError::Busy)
+        ));
+        drop(knowledge);
+        assert_eq!(query.join().unwrap(), Ok(unit_vector()));
+        let documents = fixture.batch_in_flight();
+        assert!(matches!(
+            fixture.runtime.admit_knowledge(),
+            Err(ProviderError::Busy)
+        ));
+        fixture.release.send(()).unwrap();
+        Fixture::documents_done(&documents);
+        fixture.late.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            fixture.runtime.admit_knowledge(),
+            Err(ProviderError::Busy)
+        ));
+        fixture.late.store(false, Ordering::SeqCst);
+        drop(fixture.runtime.admit_knowledge().unwrap());
+        assert!(!fixture.runtime.occupied());
     }
 
     #[test]
