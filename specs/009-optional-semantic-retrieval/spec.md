@@ -1725,15 +1725,17 @@ audit above retains publisher revisions. Foundry's ignored real-consumer
 profile's input limit and heterogeneous batches; it remains unexecuted for explicit
 geometry on this Linux sandbox. See [executed fixture evidence](../../docs/validation.md#model-aware-bodyparent-inputs--2026-10-10).
 
-The next validation continuation checks finite, unit-normalized vectors as well as
+The macOS consumer harness checks finite, unit-normalized vectors as well as
 cosine agreement, prints actual descriptor/document geometry, and repeats a query at
 the full input limit. The eight-sequence workload explicitly requires a profile that
 admits eight sequences instead of silently skipping that coverage. A short card window
 does not certify long-document batching. This macOS-only harness is neither target-typechecked
 nor executed here: the selected worker requires a macOS App Sandbox bundle,
 the selected embedding artifacts and Metal hardware. This Linux CPU sandbox has no GPU
-device or embedding weights. Generation's real Qwen CPU results are separate evidence;
-fake embedding transport/lifecycle tests cannot establish embedding numerical quality.
+device. Selected embedding weights were subsequently supplied for the test-only CPU
+diagnostic below; that result does not accept the production macOS worker. Generation's
+real Qwen CPU results are separate evidence; fake embedding transport/lifecycle tests
+cannot establish embedding numerical quality.
 
 
 T006/T008 ingestion overlap repair (2026-10-10): four-file transaction gathering must

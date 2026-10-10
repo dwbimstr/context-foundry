@@ -10,64 +10,37 @@ what to clone, how to prove the setup reproduces the recorded results), follow
 
 ## Where things stand
 
-**Continuation, 2026-10-10:** `experimental/context-ecosystem` now incorporates main's
-coordinated tch 0.26/LibTorch 2.13 migration. The expanded work adds compact evidence
-accounting, typed/mounted HTTP dependencies, explicit grounded task review,
-affinity/cgroup CPU admission and completed-object generation termination. See the
-[current validation](validation.md#expanded-ecosystem-continuation--2026-10-10) and
-[remaining inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
-macOS/Metal acceptance is deferred by the owner; 013 learning remains frozen off.
+**Closeout, 2026-10-10:** the implementation through `1cbb6bd` is on
+`experimental/context-ecosystem`, including main's coordinated tch 0.26/LibTorch 2.13
+migration. The [audited capability map](context-ecosystem-plan.md#what-exists-and-what-is-missing)
+links each capability to its code/tests; the [pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
+retains the unfinished work. Use those instead of reopening an implemented subsystem.
 
+The branch contains progressive/incremental semantic preparation, native watching,
+ANN delta publication and reuse, model-aware body/parent windows, source-bound LLM
+briefs/area knowledge and continuous maintenance. It also contains static Python HTTP
+relationships with nested/direct cross-file router dependencies, compiler-grounded
+caller/test syntax, composed task evidence, durable task state, grounded review and
+explicit promotion/forgetting. Frozen and live OMP task-view application, exact request
+receipts, shared memory admission and Linux affinity/cgroup CPU policy are implemented.
+All model lanes and experimental context behavior retain explicit opt-ins.
 
-**Experimental update, 2026-10-09:** the owner authorized local work on
-`experimental/context-ecosystem` without waiting on external measurements. Retrieval
-tracing, opt-in behavioral packing, task state/recovery/promotion and task-aware
-retrieval are committed. Semantic partition CPU work now runs in bounded parallel
-waves outside writer/serving locks. Schema 8 adds 010 T001: explicit structured-brief
-import, exact citations, source-hash invalidation and opt-in anchorless lexical
-context. Opt-in `mcp --watch` now maintains the admitted primary root through native
-events, bounded reconciliation and the existing source/index owner (001 T011).
-Progressive semantic bootstrap (009 T007) is committed at `62c6c97`: priority scopes,
-bounded waves and geometric publication make partial coverage searchable early.
-The subsequent efficiency audit selects CPU/startup reuse, durable changed-work
-maintenance and vector deltas (009 T008), then model-aware body/parent inputs
-(009 T009). The first CPU/startup increment reuses bounded semantic workers and
-verified cards, defers CLI acquisition on cache-only runs and skips unchanged-source
-chunk allocation. The next increment adds bounded read/hash overlap, ordered source
-acceptance, early lexical publication and reusable ingestion/lexical workers. Verified
-artifact handoff, transactional cache totals and exact per-card fitting reuse are now
-implemented. Schema 9 adds independent semantic/knowledge work queues; explicit
-`--semantic-maintain` (or MCP `index {semantic:"maintain"}`) consumes changed-source
-work and waits on notifications when caught up. Add `--watch` for automatic filesystem
-acceptance. Default status reads a versioned observation; audit remains explicit.
-E3 now reuses an immutable base ANN with one bounded delta and independent locations,
-atomically switching a manifest and compacting at bounded thresholds. Small edits and
-location-only changes avoid full ANN builds. Warm publication now refreshes affected
-locations and reuses verified/resident ANN segments. Generation v5 adds bounded location
-overlays, shared mapping/metadata snapshots and clean-restart publication reuse. Changed
-restart/overflow/repair still reconcile; cold verification and compaction remain. E4 now
-adds opt-in body windows with bounded parent/header context, exact child citations,
-versioned model geometry and actual-token batching in both preparation paths. Address
-profiles and old cache rows remain usable; real-device long-context parity/quality and
-independent parent/file/area vectors remain open. Schema 10 now adds explicit selective
-HTTP generation (010 T002), atomic completion reuse, source-bound area summaries and
-transitive child/source freshness. Unchanged runs avoid body reads and provider calls;
-partial runs resume completed nodes. The standalone CLI requires exclusive ownership
-and a configured provider/scope. MCP now supports explicit continuous knowledge maintenance, shared client
-admission and source-first derived context on both transports. Store locks exclude request
-rendering/tokenization and inference; quiet operation waits on source notifications. Owned local
-generation now adds pinned lazy model snapshots, idle unload and native per-worker CPU/RAM
-controls, with a Metal control path awaiting hardware acceptance. Opt-in shared memory
-admission reserves both worker ceilings, checks host/container headroom, and unloads idle
-generation under pressure. CPU/global GPU policies and real-model task acceptance remain open.
-Schema 11 now adds source/config-bound static Python HTTP boundary joins and explicit
-primary-task evidence composition (005 T005 / 003 T009). Both have sandbox CLI/MCP,
-freshness, budget and lifecycle verification; broader producers and real-host outcomes
-remain open. See [boundary/task usage](experimental-context.md#boundary-relationships-and-task-evidence)
-and [generation configuration](experimental-context.md#selective-knowledge-generation).
-Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
-[validation](validation.md), plus the [pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
-013 remains frozen. No release or quality gain is claimed.
+**The product outcome is still open:** development retrieval delivered 1/8 in each
+lexical arm; real Qwen/OMP free-form tasks completed 0/2. Neither establishes quality
+or cost improvement. The 8,192-file semantic lifecycle uses fixture vectors/tokenization,
+not real-model throughput at 60,000–80,000 files. Gemma CPU numerics pass at 2,048
+tokens; 8,192 tokens fails under the tested 8 GiB ceiling. Missing coverage, runtime
+allocation work, useful model/recipe selection, held-out task economics and native
+macOS/GPU/package acceptance are named in the inventory. Independent parent/file/area
+vectors remain unimplemented; true late chunking is only a backend candidate.
+
+The [closeout validation](validation.md#ecosystem-closeout-audit--2026-10-10) records
+170 fresh Linux checks, including the installed OMP live-view test with scripted replies.
+Earlier model/scale results remain historical: their `/tmp` raw artifacts did not
+survive the environment restart. Keep new diagnostic directories outside Git on a
+retained workspace path when later analysis is needed. The setup draft's clean-install
+reproduction is not established by restoring this checkout/tool cache. macOS validation
+is deferred by the owner; 013 learning stays frozen off. Nothing is released.
 
 The table below is the **2026-10-08 main-branch baseline**; later experimental
 amendments supersede its completion and next-work descriptions. Nothing is released.

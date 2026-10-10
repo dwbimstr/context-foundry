@@ -789,8 +789,9 @@ verifies the gateway boundary against a scripted upstream. No third-party code i
 
 ### T007 — Experimental task-context delivery
 
-Status: implemented locally through CLI and the real SDK MCP client; applied-host
-view replacement and measured task outcomes remain pending.
+Status: implemented locally through CLI and the real SDK MCP client. The later
+explicit gateway integration applies frozen/live views and is checked with installed
+OMP; broader host outcomes and measured task economics remain pending.
 
 Authorized 2026-10-09 on the experimental branch; measurements do not block sandbox
 implementation. 008 T003/T004 own durable state and mutations. This task exposes the
@@ -804,9 +805,11 @@ and 256 KiB result envelope limits; large observation ingestion and exact task e
 use CLI (1 MiB request, 2 MiB stored record). A rendered view's `max_bytes` limits the
 compact JSON payload plus newline; MCP additionally checks its final result envelope.
 No operation here replaces a host conversation, restructures tool calls/results or
-controls provider input. `host_application:"unknown"` remains explicit. A future host
-hook must acknowledge an actual final serialized revision/digest and prove protected
-instruction/tool linkage separately. Until then, the rendered view is a tool result.
+controls provider input. `host_application:"unknown"` remains explicit for ordinary
+MCP delivery. The later [gateway integration](../../docs/experimental-context.md#exported-task-views-in-omp-requests)
+separately acknowledges the final serialized revision/digest and checks protected
+instruction/tool linkage. That explicit integration does not turn every rendered
+MCP view into an applied host view.
 
 Verify with the real SDK client and separate CLI processes: discoverable opt-in
 schema, unknown-field refusal, scoped create/apply/peek/render/advise/promote/forget,
@@ -955,7 +958,8 @@ execution or requirement coverage; existing test-path classification remains heu
 relationship is emitted. Dynamic dispatch and semantic constraint conflicts remain open.
 
 An opt-in free-form OMP parser calibration now complements the scripted host integration
-and earlier fixed-choice model tests: two initial-context arms, one attempt each, actual
-file edits, an external immutable checker and gateway receipts including failures. The
-public T003 fixture is not held out. See the current Linux continuation in
+and earlier fixed-choice model tests: two initial-context arms, one attempt each,
+permission to edit files, an external immutable checker and gateway receipts including
+failures. Both observed arms made no edits and failed the task. The public T003 fixture
+is not held out. See the current Linux continuation in
 [validation](../../docs/validation.md) for executed outcomes and limits.

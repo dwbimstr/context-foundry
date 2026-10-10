@@ -113,7 +113,8 @@ source bodies per wave. The first committed batch can become searchable while la
 sources remain unpartitioned. Publication uses the existing USearch generation:
 first batch, approximately doubled new-vector coverage, and completion/pause. Its
 mapping visits prepared rows, so cold publication avoids a whole-source census.
-No new segment format, job store or worker process is introduced. MCP overlaps one
+The progressive scheduler adds no job store or worker process; later delta publication
+uses the generation-v5 format described above. MCP overlaps one
 bounded prefetch with one provider call; overlapping priority inputs are deduplicated
 before another call. Foreground admission retains one model slot; the opt-in geometry
 and body recipe below extend input sizing and actual-token batch packing.
@@ -151,9 +152,11 @@ unit/reuse counters can revisit priority sources; coverage counts remain unique.
 Publication refuses oversized logical mapping metadata (256 MiB), assembled f32
 vectors (2 GiB), or serialized ANN data (4 GiB), preserving the accepted cache and
 previous generation. These are payload bounds, not total-process RAM guarantees.
-A generation still rebuilds in memory. Real-device throughput, larger model batches,
-80,000-file performance and task-quality improvements remain unmeasured in this
-Linux sandbox; integration tests use synthetic embedding providers.
+Cold ANN construction and threshold compaction still build in memory; ordinary small
+edits use the bounded delta described above. Real-model semantic throughput at
+60,000–80,000 files and task-quality improvements remain unaccepted. The mixed-size
+8,192-file semantic fixture and historical 80,000-file lexical/watcher check cover
+different boundaries; neither is model-scale acceptance. See [validation](validation.md).
 
 ## Model-aware body/parent chunking
 
@@ -669,7 +672,7 @@ Shutdown closes HTTP and discards uncommitted output before releasing the store.
 
 Knowledge tables were introduced in schema 10; the current branch uses schema 11. Selected brief publication does not drain
 unrelated source work. Owned local generation is available below; real-model task quality
-and native CPU/global GPU pressure policies remain open; shared memory and optional
+and native macOS CPU/global GPU pressure policies remain open; shared memory and optional
 Linux CPU admission are described below.
 
 ## Owned local generation

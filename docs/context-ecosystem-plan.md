@@ -38,18 +38,20 @@ E1 implementation. E2 adds durable changed-source queues, opt-in continuous main
 and cheap progress observations. E3 now publishes bounded ANN deltas and independent
 location maps through an atomic manifest, refreshes affected locations, and reuses
 verified/resident segments. Generation v5 adds bounded location overlays, shared mapping
-and metadata snapshots, and clean-restart publication reuse. Cold verification, changed
-restart baselines and compaction remain. E4 now adds explicit model geometry, exact
+and metadata snapshots, and clean-restart publication reuse. Schema 12 also makes
+matching changed-input restarts incremental; cold verification, unmatched/overflow
+reconciliation and compaction remain corpus-sized. E4 now adds explicit model geometry, exact
 body windows with bounded parent context, and actual-token batching. Existing address
 profiles/caches remain usable. Real-model long-context parity, quality and throughput
-remain unexecuted; independent parent/file/area vectors are not implemented.
+remain unaccepted; Linux CPU numerics pass at 2,048 tokens and fail at 8,192 tokens
+under the tested 8 GiB ceiling. Independent parent/file/area vectors are not implemented.
 See [validation](validation.md#model-aware-bodyparent-inputs--2026-10-10).
 F now adds explicit selective HTTP generation, exact completion reuse, source-bound
 area summaries and independent knowledge acknowledgment in schema 10. Unchanged nodes
 skip source-body reads and model calls; changed children invalidate their ancestors.
 Opt-in continuous MCP maintenance, shared client admission and bounded derived context
 are now implemented. Owned local generation adds pinned artifact reuse, idle unload and
-per-worker CPU/RAM/Metal controls. Shared memory and Linux host CPU admission are implemented; native CPU/global GPU pressure policies, Metal hardware
+per-worker CPU/RAM/Metal controls. Shared memory and Linux affinity/cgroup CPU admission are implemented; native macOS CPU/global GPU pressure policies, Metal hardware
 acceptance and real-model task utility remain open. See [usage](experimental-context.md#owned-local-generation).
 
 ## Architecture correction: useful context across 60,000–80,000 files
@@ -68,20 +70,33 @@ omits a caller, configuration dependency or test can make the complete task cost
 
 ### What exists and what is missing
 
-| Capability | Current evidence | Required change |
-| --- | --- | --- |
-| Exact source/structural graph | Versioned source, lexical search, 23-language extraction, compiler imports, approximate doors | Preserve it as the evidence base; add evidence about behavior and process boundaries. |
-| CPU parallelism | Bounded source reads/hash overlap ordered commits and periodic lexical publication on one reusable pool of at most eight workers. Semantic workers and bounded verified cards survive across waves. | Artifact reuse/accounting and per-card fitting are implemented; bounded hashing and atomic commits containing at most four ready sources reduce repeated cold work. Ready prefixes do not wait for later reads. Initial verification and full reconciliation remain scale work. |
-| Embedding bootstrap | Latest recorded Gemma runs: 112,549 cards in 1,256 s; 332,732 cards in 4,437 s. MCP prefetches one batch; model work has one slot. | Make useful partial coverage available early, overlap independent stages, remove whole-corpus barriers, and tune device batches separately from CPU worker counts. |
-| Repository knowledge | Address cards/body windows complement 010 source briefs and bounded area summaries. Explicit CLI/MCP generation reuses exact completions and checks transitive source/child identity. Explicit task/project memory is caller-authored. | Owned local generation and per-worker controls implemented; shared memory and Linux host CPU admission implemented; add native CPU/global GPU policies, accept Metal on hardware and verify real-model task utility. |
-| Continuous maintenance | Opt-in primary-root watching now supports native events, bounded coalescing, scoped updates and restart/overflow reconciliation (001 T011) | Extend resource policy and validate other platforms/large real repositories; quiet ticks do not reread source bodies. |
-| Task-quality economics | Exact delivery accounting and older host trials exist; recent features have fixture evidence | Compare verified multi-file tasks and complete cost, including bootstrap amortization, maintenance, retries and auxiliary generation. |
+Audited against `1cbb6bd` on `experimental/context-ecosystem`, 2026-10-10. The
+experimental pipeline exists end to end, but useful retrieval, representative task
+quality and total token economics are **not solved**. Implemented does not mean
+enabled by default, accepted on every platform or ready for release. The
+[closeout checks](validation.md#ecosystem-closeout-audit--2026-10-10) distinguish fresh
+verification from the earlier model/scale results.
 
-The recorded preparation times are complete historical runs, not profiles of where
-time was spent. The source inspection proves serialization, not the percentage of
-the 4,437 seconds attributable to it. The old Nemotron 845-second/2,099-unit run is
-not the current embedding baseline. Memory figures in the record name the process
-measured and must not be treated as whole-host RAM.
+| Capability | Implemented and checked | Still missing or unaccepted |
+| --- | --- | --- |
+| Exact source and compiler graph | Versioned source, lexical search, 23-language extraction, exact citations, admitted roots and compiler references/doors: [store](../src/store.rs), [SCIP](../src/scip.rs), [graph tests](../tests/semantic.rs). | Compiler reference identity does not establish runtime call behavior or test execution. Cross-root queries do not create cross-root edges. |
+| Boundary relationships | `python-http-v4`: static FastAPI routes, typed paths, nested routers, direct configured same-service imports and literal requests/httpx consumers. Dependency invalidation, atomic publication and whole-proof delivery: [producer](../src/boundary.rs), [tests](../tests/boundary.rs). | Re-exports/packages, other import/mount forms, other frameworks and brokers. Dynamic/ambiguous/incomplete cases remain explicit. |
+| Task evidence | Requirements/questions, source links, briefs, boundary neighbors, compiler-resolved Rust/Python callee syntax and Rust test attributes under one allowance; compact accounting and missing facets: [composition](../src/task_evidence.rs), [tests](../tests/task_evidence.rs). | Dynamic/cross-language caller coverage, observed test-to-requirement coverage and representative task acceptance. A test attribute is not an executed test. |
+| Bootstrap and reuse | Bounded reusable CPU pools, progressive searchable waves, artifact/fitting/cache reuse, changed-input restart lookup, ANN deltas and resident segment reuse: [ingestion](../src/ingest.rs), [preparation](../src/neural/prepare.rs), [publication](../src/neural/index/publication.rs), [scale harness](../tests/semantic_scale.rs). | Real-model mixed-size 60,000–80,000-file throughput, utilization and cold/overflow/compaction costs. The 8,192-file semantic result uses fixture vectors/tokenization; the 80,000-file result covers lexical indexing/watching. |
+| Continuous maintenance | Native primary-root watching, independent durable semantic/knowledge queues, explicit continuous scheduling and boundary refresh: [watcher](../src/watch.rs), [semantic driver](../src/neural/driver.rs), [knowledge maintenance](../src/knowledge/maintenance.rs), [watch tests](../tests/watch.rs). | Target-scale semantic/knowledge churn and platform robustness. Source watching alone starts no model; model lanes require explicit admission. |
+| Model-aware chunking | Actual-token batching, versioned geometry and exact body windows with bounded parent prefixes: [body recipe](../src/neural/partition/body.rs), [worker](../src/bin/foundry_embed.rs), [consumer tests](../tests/embed_worker.rs). | 8,192-token runtime allocation repair/resource envelope, profile-tokenizer parity and long-context quality; independent parent/file/area vectors. True late chunking is an unimplemented backend candidate. |
+| LLM repository knowledge | Source-cited briefs and area summaries, HTTP/owned local generation, transactional completion reuse, changed-input/revert reuse and lineage invalidation: [knowledge](../src/knowledge.rs), [tests](../tests/knowledge.rs). | A useful model/recipe and demonstrated task benefit, generation throughput and amortized maintenance economics. Existing Qwen runs establish lifecycle behavior, not useful repository understanding. |
+| Task/project memory | Explicit task state, reversible folds, original recovery, grounded review, promotion/correction/forgetting: [task context](../src/task_context.rs), [tests](../tests/task_context.rs). | Measured reduction in repeated failures/missed constraints and unnecessary interventions. Semantic conflict/loop reasoning remains a conditional extension. |
+| Host integration and accounting | Frozen and live task-view application through the existing MCP owner and Rust gateway, revision checks, final-request receipts, restart/revocation refusal; installed OMP checks: [live resolution](../src/task_host/live.rs), [gateway tests](../tests/gateway.rs). | Broader matched free-form tasks with a capable tool-using model and complete usage. Ordinary MCP delivery does not prove host application. Broader view regions remain a conditional extension. |
+| Local resource controls | Per-worker CPU/RAM controls, opt-in shared memory reservations, Linux affinity/cgroup CPU hysteresis and idle generation eviction: [resource owner](../src/model_resources.rs), [local worker](../src/knowledge/local/runtime.rs). | Native macOS CPU policy, global GPU headroom, thermal/battery adaptation, optional embedding eviction and combined-model device acceptance. Production Linux embedding remains unsupported; its CPU diagnostic is test-only. |
+| Retrieval quality and economics | Opt-in mixed-intent behavior, identity-correlated loss traces and executable paired host apparatus: [attribution](../tests/retrieval_attribution.rs), [host task](../tests/gateway/host_task.rs). | An effective anchorless repair and held-out acceptance. Development retrieval delivered 1/8 in both arms; free-form Qwen/OMP completed 0/2 tasks. Neither shows quality or cost improvement. |
+
+The next implementation priority is a repair tied to observed retrieval losses, with
+model/runtime efficiency and broader evidence coverage following under their existing
+owners. The [pending inventory](#pending-work-inventory--2026-10-10) retains all open
+work, including hardware acceptance and conditional extensions. Existing historical
+Gemma preparation times (112,549 cards in 1,256 s; 332,732 in 4,437 s) do not profile
+today's pipeline or establish its speedup. Process memory measurements are not whole-host RAM.
 
 ### Repository knowledge and task evidence
 
@@ -178,7 +193,7 @@ the E3 opportunity; the baseline rows are not a description of the updated imple
 | Vector publication | [index.rs](../src/neural/index.rs) rebuilds a complete USearch generation from current cached vectors/locations; geometric thresholds amortize cold publication. A mapping-only change can also rebuild ANN data. | Separate mapping changes from vector changes; bounded delta publication and compaction, with restart-safe generations. 009 T008. |
 | Foreground/resource policy | Every MCP tool call, including status, extends the two-input batch window for 60 seconds. Any pending watcher work denies semantic store steps. Worker context is fixed at 2,048 tokens, flash attention disabled, f32 KV, Metal offload. | Protect real foreground demand while preventing observation-induced throttling and starvation during sustained source work. Admit by CPU/bytes/tokens/device headroom; validate backend-specific kernel/precision changes. 001 T011 / 009 T007/T009. |
 | Status | [status.rs](../src/neural/status.rs) validates/hashes a generation, walks source partitions and performs a cache census; live bootstrap counters overlay that result. | Cheap versioned progress/coverage snapshots, with explicit audit/reconciliation and unknown/stale markers. Frequent progress polling must not scan all source/cache/index data. 009 T008. |
-| Enrichment | [knowledge.rs](../src/knowledge.rs) now generates a bounded selected plan through an explicit HTTP provider, reuses exact completions and publishes through [brief.rs](../src/brief.rs). Source/child changes suppress stale area ancestors immediately. | A bounded selected-set scan avoids a new reverse-dependency index. MCP continuous maintenance, shared client admission and owned local workers with per-worker limits are implemented; native CPU/global GPU pressure policies, Metal acceptance, real-model task utility and optional dense brief vectors remain 010 T002 work. |
+| Enrichment | [knowledge.rs](../src/knowledge.rs) now generates a bounded selected plan through an explicit HTTP provider, reuses exact completions and publishes through [brief.rs](../src/brief.rs). Source/child changes suppress stale area ancestors immediately. | A bounded selected-set scan avoids a new reverse-dependency index. MCP continuous maintenance, shared client admission and owned local workers with per-worker limits are implemented; native macOS CPU/global GPU pressure policies, Metal acceptance, real-model task utility and optional dense brief vectors remain 010 T002 work. |
 
 The watcher updates source and lexical state incrementally; immediate invalidation
 keeps stale semantic/brief evidence out. Invalidation alone does not schedule or
@@ -270,7 +285,7 @@ experimental slice with broader evidence coverage still pending. Sandbox build/t
 | E2 | Durable changed-work frontier, explicit continuous semantic maintenance, independent acknowledgments and cheap status | 009 T008 with 001 T011; implemented experimentally in schema 9; ordinary changed-input selection is bounded; ANN deltas follow in E3 |
 | E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; ANN deltas, mapping-only publication, bounded compaction and crash recovery implemented. Warm affected-location, bounded location overlays, shared metadata and clean-restart publication reuse are implemented. Schema-12 changed-input restart now resumes a durable lookup and touches affected paths/keys. Required cold byte verification, full reconciliation and compaction remain corpus-sized; total affected-path cost is not claimed. |
 | E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; opt-in body windows, bounded parent prefixes, versioned limits and actual-token batches implemented. Address profiles/caches preserved; independent area vectors and real-model comparison remain |
-| F | Selective memoized LLM generation, dependency tracking, affected area rollups and indexed derived knowledge | 010 T002: explicit HTTP/CLI generation, transactional completion reuse, bounded transitive lineage and area freshness implemented in schema 10. Continuous MCP scheduling, shared client admission, owned local generation and opt-in shared memory admission are implemented. Linux host CPU admission is also implemented; native CPU/global GPU pressure, Metal acceptance and real-model task utility remain. A bounded selected-set scan replaces a persistent reverse index for now. |
+| F | Selective memoized LLM generation, dependency tracking, affected area rollups and indexed derived knowledge | 010 T002: explicit HTTP/CLI generation, transactional completion reuse, bounded transitive lineage and area freshness implemented in schema 10. Continuous MCP scheduling, shared client admission, owned local generation and opt-in shared memory admission are implemented. Linux host CPU admission is also implemented; native macOS CPU/global GPU pressure, Metal acceptance and real-model task utility remain. A bounded selected-set scan replaces a persistent reverse index for now. |
 | G | Evidence-bearing boundary joins and task-oriented implementation/caller/test composition | 005 T005 / 003 T009: implemented experimentally. Static FastAPI/literal HTTP joins, changed-file publication, source/config freshness, ambiguity and primary-task composition under one allowance. Sandbox contract repair verified; broader producer/host acceptance remains. |
 
 Use work-count assertions in sandbox tests: unchanged replay sends zero embeddings;
@@ -285,11 +300,12 @@ first-result and full-build time when the target machine is available; historica
 wall times cannot identify which stage caused them.
 
 Previously selected work also remains open: 009 T005 anchorless miss repair beyond
-tracing; 001 T010 behavioral retrieval acceptance; 003 T006 real-host outcomes and
-live working-view synchronization beyond explicit frozen exports; 010 T002 model/resource acceptance; broader 005 T005
+tracing; 001 T010 behavioral retrieval acceptance; 003 T006 broader real-host
+quality/economics acceptance of the implemented live working-view synchronization; 010 T002 model/resource acceptance; broader 005 T005
 producer coverage and 003 T009 real-host task acceptance. Experimental task state,
-recovery and reminders are implemented, but automatic host application and measured
-quality/economics are not. Package signing/installed-artifact acceptance remain
+recovery and reminders are implemented. Explicitly configured OMP gateway application
+is verified; ordinary MCP application and measured quality/economics remain unknown.
+Package signing/installed-artifact acceptance remain
 release follow-up, not a sandbox prerequisite. 013 stays frozen off.
 
 Experimental follow-ups need not wait for full throughput or held-out quality measurements.
@@ -304,6 +320,11 @@ Reviewed after cross-file/nested boundary evidence, compiler-reference call/test
 repository retrieval attribution, mixed-size semantic reuse and real CPU embedding diagnostics. Experimental implementation is committed
 separately from release acceptance.
 This collects the current unfinished work; the linked owning specs retain its contracts.
+The [audited implementation map](#what-exists-and-what-is-missing) is the closeout
+summary. Read the rows below as three different kinds of unfinished work: missing
+capability, implemented behavior awaiting scale/quality/platform evidence, and
+conditional extensions requiring a concrete failure before more machinery. They are
+not a list of wholly unimplemented subsystems.
 Hardware/host evidence is pending acceptance, not a prerequisite for sandbox implementation.
 005 T005 and 003 T009 now have implemented sandbox slices; they are no longer first-build
 TODOs. Cold/changed-input publication work under 009 T006–T008 now has another implemented
@@ -328,7 +349,7 @@ explicit and can proceed when their platform or workload is available.
 | Task quality and token economics | Under 003 T006/T009 and 008/010 acceptance, compare real paired tasks, verified patches, wrong/incomplete changes, complete provider usage, failed attempts, auxiliary generation and amortized bootstrap/maintenance. Two tiny fixed-patch selection cases now compare full-file input and Foundry task context with real Qwen CPU calls and independent behavioral oracles. The original recipe failed at the output ceiling. The final neutral-example six-call recipe completes, but every mode gives an ambiguous FIFO choice and one correct contract patch. Compact accounting cuts prompt tokens 27.5% versus verbose context, yet remains 3.50 times full-file prompt cost on these tiny inputs. Both calibration rounds and their costs are retained. Next: a useful model/recipe and held-out free-form host tasks at realistic scale. Opt-in compact evidence accounting is now implemented with unchanged cited source/task bodies; the revised recipe comparison is recorded in [validation](validation.md#expanded-ecosystem-continuation--2026-10-10). No representative cost per verified completion or monetary gain is established. |
 | Native/package acceptance | Validate macOS CPU/Metal generation, isolation/owner-death/resource behavior and the new memory probe. Complete 009 signed installed-artifact checks before semantic release advertising. See [measurement handoff](measurement-handoff.md). |
 | Record-only timing and release | Still owed: no-swap library preparation timing and pre-T009 rust-lang/rust indexing timing. Complete active specs and the [release checklist](release.md); release destination/publication are separate. |
-| Cloud environment | Setup draft now includes pinned isolated OMP 18.6.0/Bun 1.3.14 installation and real-host test instructions. Review/publication and a fresh-environment restoration check remain. This does not block current sandbox work. |
+| Cloud environment | The restored checkout retains the experimental commit, Rust 1.90 and installed OMP/Bun; focused tests run offline. Prior `/tmp` diagnostic artifacts are absent, so their committed aggregates remain historical evidence, not reanalysed raw records. The setup draft includes pinned installation and host-test instructions; review/publication and installation from that published draft on a clean environment remain unverified. This does not block current sandbox work. |
 
 Frozen/deferred scope is **not** an active implementation queue: 013 learning stays off;
 014 migration awaits a concrete task; 002/004/006/011/012/015 are superseded. Cross-repository
@@ -462,7 +483,8 @@ The cloud workspace can implement trace plumbing, public mixed-intent fixtures a
 contract tests. Real-model acceptance uses the existing Metal-capable measurement
 host, with one job at a time and adequate memory; do not copy large private stores or
 download another model as an implicit prerequisite. Missing inputs block the relevant
-measurement, not unrelated fixture work. No new benchmark has run as part of this plan.
+measurement, not unrelated fixture work. The original planning pass ran no benchmark;
+later executed diagnostics and their limits are recorded in [validation](validation.md).
 
 ## Task state before context compression
 

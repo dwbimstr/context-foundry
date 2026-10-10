@@ -1,5 +1,56 @@
 # Validation
 
+## Ecosystem closeout audit — 2026-10-10
+
+Reviewed the implementation through `1cbb6bd` on `experimental/context-ecosystem`
+against the active specs, source modules, CLI/MCP wiring and tests. This is an
+in-session audit, not independent review or release acceptance. The
+[capability map](context-ecosystem-plan.md#what-exists-and-what-is-missing) now links
+implemented behavior to code/tests and distinguishes missing capabilities, pending
+quality/scale/platform acceptance and conditional extensions. Corrected stale claims
+that progressive publication, matching changed-input restart reuse, live host-view
+application and Linux CPU admission were still wholly missing. Production code,
+defaults, model pins and numerical tolerances are unchanged by this closeout.
+
+**Fresh verification:** restored Linux checkout, Rust/Cargo 1.90, offline locked
+dependencies, two test threads. **170 checks passed, none failed:**
+
+| Executed checks | Passed | Boundary established |
+| --- | ---: | --- |
+| `boundary`, `task_evidence`, `semantic`, `retrieval_attribution` integration targets | 135 | Source/graph freshness, dependency publication, bounded whole-proof delivery and diagnostic identity checks |
+| `model_resources::tests` and `task_evidence::reference::tests` ordinary library tests | 9 | Resource admission/hysteresis and callee/test syntax classification |
+| `task_context` integration target | 21 | Task recovery, protection, promotion/forgetting, grounded review and restart/fault behavior |
+| Gateway `live_` ordinary checks and `exported_view_applies` | 3 | Owner synchronization, revocation/restart refusal, deadlines and exported-view replay |
+| Opt-in live Linux CPU observation | 1 | Five affinity CPUs and a visible 400,000/100,000 quota (four CPUs); stable sampled identity |
+| Opt-in installed OMP 18.6.0/Bun 1.3.14 live-view check | 1 | Resumed tool history, post-export owner edit, applied revision and final-request receipt with a scripted upstream |
+
+The real-host check launches only its fixture workspace and loopback services; it uses
+scripted replies, no model inference or paid provider. It does not re-establish task
+quality or savings. Formatting and documentation links also pass. The prior full
+1,050-test/default-and-native-Clippy results below remain the implementation baseline;
+they were not rerun for this documentation-only closeout. Expensive model, scale and
+free-form task diagnostics were not repeated because their inputs/code did not change.
+Their earlier positive and negative outcomes remain historical, with their stated limits.
+
+**Evidence availability after restart:** the checkout, toolchain and installed OMP/Bun
+survived; the earlier `/tmp/foundry-repository-attribution-v1`,
+`/tmp/foundry-semantic-scale-8192-v1`, `/tmp/foundry-freeform-host-v1` reports and CPU
+embedding logs did not. Raw paths in earlier entries describe the prior runtime, not
+currently available files. Their aggregate results, artifact identities and executable
+harnesses are committed; this audit did not reanalyse unavailable raw records. For a
+future rerun, choose a new outside-Git directory on a retained workspace path (for
+example `/workspace/.context-foundry-tools/validation-runs/RUN`), retain the declared
+identities and stop rules, and treat it as a new run. Checkpoint restoration does not
+verify installation from the saved setup draft on a clean machine.
+
+**Still open:** no effective anchorless repair or representative task-quality/cost
+gain; no selected-model semantic acceptance at 60,000–80,000 files; the tested
+8,192-token/8 GiB embedding allocation failure; independent parent/file/area vectors,
+broader relationships and observed test coverage; native macOS/GPU/resource/package
+acceptance. The [pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
+keeps these obligations and the conditional extensions explicit. macOS remains deferred
+by the owner, and 013 remains frozen off. Closing this audit does not close those tasks.
+
 ## Linux relationships, attribution and semantic diagnostics — 2026-10-10
 
 Work continues on `experimental/context-ecosystem` with Rust 1.90. macOS validation
