@@ -521,3 +521,117 @@ fn derived_vocabulary_discovers_source_and_boundary_neighbors_without_promoting_
         .unwrap();
     assert!(c.briefs.is_empty());
 }
+
+#[tokio::test]
+async fn watched_boundary_maintenance_refreshes_one_changed_file_and_pauses_explicitly() {
+    use rmcp::{ServiceExt, model::CallToolRequestParams, transport::TokioChildProcess};
+    use std::time::{Duration, Instant};
+    let e = fixture();
+    let store = e.dir.path().join("store");
+    let root = e.dir.path().join("root");
+    drop(e.engine);
+    let mut cmd = tokio::process::Command::new(BIN);
+    cmd.arg("--store")
+        .arg(&store)
+        .arg("mcp")
+        .arg("--root")
+        .arg(&root)
+        .args(["--experimental-task-context", "--watch"]);
+    let client = ().serve(TokioChildProcess::new(cmd).unwrap()).await.unwrap();
+    let decode = |result: rmcp::model::CallToolResult| -> serde_json::Value {
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        let rmcp::model::ContentBlock::Text(t) = &result.content[0] else {
+            panic!()
+        };
+        serde_json::from_str(&t.text).unwrap()
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let status = decode(
+            client
+                .call_tool(CallToolRequestParams::new("status"))
+                .await
+                .unwrap(),
+        );
+        assert!(
+            status["watch"].get("boundary").is_none(),
+            "watching alone never enables extraction"
+        );
+        if status["watch"]["phase"] == "idle" {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{status}");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let request = |maintain| {
+        CallToolRequestParams::new("index").with_arguments(
+            json!({"boundary":{"config":"boundary.json","maintain":maintain}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+    };
+    decode(client.call_tool(request(true)).await.unwrap());
+    std::fs::write(
+        root.join("client.py"),
+        CLIENT.replace("/v1/items", "/v1/missing"),
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let status = decode(
+            client
+                .call_tool(CallToolRequestParams::new("status"))
+                .await
+                .unwrap(),
+        );
+        let b = &status["watch"]["boundary"];
+        if b["phase"] == "waiting"
+            && b["parsed"].as_u64().unwrap_or(0) == 1
+            && b["completed_source_revision"] == status["source_revision"]
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{status}");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let once = || {
+        CallToolRequestParams::new("index").with_arguments(
+            json!({"boundary":{"config":"boundary.json"}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+    };
+    assert_eq!(
+        decode(client.call_tool(once()).await.unwrap())["parsed"],
+        0,
+        "watcher already published the edit"
+    );
+    decode(client.call_tool(request(false)).await.unwrap());
+    let before = decode(
+        client
+            .call_tool(CallToolRequestParams::new("status"))
+            .await
+            .unwrap(),
+    )["source_revision"]
+        .clone();
+    std::fs::write(root.join("client.py"), CLIENT).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let status = decode(
+            client
+                .call_tool(CallToolRequestParams::new("status"))
+                .await
+                .unwrap(),
+        );
+        assert_eq!(status["watch"]["boundary"]["phase"], "paused");
+        if status["source_revision"] != before && status["watch"]["phase"] == "idle" {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{status}");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(decode(client.call_tool(once()).await.unwrap())["parsed"], 1);
+    client.cancel().await.unwrap();
+}

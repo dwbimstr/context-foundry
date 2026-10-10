@@ -4,7 +4,7 @@ Status: Experimental T001 implemented locally; T002 now implements explicit sele
 HTTP generation, completion reuse, area lineage and opt-in continuous MCP maintenance.
 Shared client admission, derived MCP context and an experimental owned local generator
 with per-worker CPU/RAM/Metal controls and shared memory admission are implemented.
-CPU/global GPU pressure policies, hardware acceptance and real-model task acceptance
+Global GPU pressure policies, native CPU sampling, hardware and real-model task acceptance
 remain selected work. The owner's
 large-repository direction supersedes the earlier blanket deferral.
 Import and lifecycle fixtures use synthetic outputs through real storage, retrieval,
@@ -367,7 +367,7 @@ live telemetry. A worker CPU-lifetime kill reports exit without inventing termin
 
 This controls one generation worker. Opt-in shared memory admission now accounts for
 combined configured embedding/generation ceilings, as described below. Global GPU use,
-CPU utilization, thermal pressure, battery draw and macOS hardware/package acceptance remain open, alongside
+native CPU utilization, thermal pressure, battery draw and macOS hardware/package acceptance remain open, alongside
 verified task utility and large-repository economics. Linux synthetic native-denial and
 lifecycle tests plus the real-model smoke are separate evidence in
 [validation](../../docs/validation.md#owned-local-generation-and-resource-controls).
@@ -399,11 +399,26 @@ foreground embedding stays available, while new background embedding/generation 
 This is admission using configured worker bounds, not a global/hard quota. It excludes
 owner/index memory, artifact storage/page cache, hidden cgroup ancestors and other processes
 from the reservation sum. Native per-worker enforcement is unchanged. In-flight work is not
-preempted by this policy; embedding residency is retained for foreground use. CPU pressure,
-global GPU pressure, thermal/battery adaptation and embedding eviction are still follow-ups.
+preempted by this policy; embedding residency is retained for foreground use. Linux host
+CPU admission is implemented below; native CPU/global GPU pressure, thermal/battery
+adaptation and embedding eviction are still follow-ups.
 Tests cover startup refusal, combined reservations, pressure hysteresis, provider lifetime,
 idle eviction/reaping, cache reuse, pending work, pause/shutdown and foreground service.
 See [configuration and limits](../../docs/experimental-context.md#shared-model-memory-admission).
+
+**Optional CPU admission follow-up (2026-10-10):** `background_cpu` adds pause/resume
+percent thresholds to the same resource policy. No new worker, table or scheduler.
+Linux reads the first bounded `/proc/stat` aggregate, compares monotonic samples at
+one-second intervals and excludes already-counted guest time. The first/failed/reset
+observation defers by name. A pressure latch clears only at/below the resume threshold.
+Both background embedding and generation use the gate, including initial local generation
+admission. Foreground embedding and cached/current results remain available. CPU pressure
+does not evict idle generation; memory pressure still can. Status reads cached observations.
+This is **host aggregate** contention admission, not a cgroup CPU quota, affinity-aware
+utilization bound or a hard CPU limit. macOS CPU sampling is unavailable in this slice;
+explicitly enabling this optional field there defers by name. Existing native worker
+thread/CPU-time controls remain. Global GPU, thermal/battery, embedding eviction and
+real-device throughput/combined-model acceptance remain open.
 
 Pinned backend reference: llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`,
 `include/llama.h` / `llama_model_load_from_file_ptr`, `llama_chat_apply_template`,

@@ -1088,10 +1088,16 @@ impl<'a> Run<'a> {
         {
             return Ok(Publication::Current(generation.manifest.count));
         }
-        let mut walk =
-            self.step(|engine| MappingWalk::start(engine, &identity.digest, &identity.recipe))?;
+        let mut walk = self.step(|engine| {
+            MappingWalk::resume(
+                engine,
+                &identity.digest,
+                &identity.recipe,
+                previous.as_ref(),
+            )
+        })?;
         while !self.step(|engine| walk.step(engine, control, Some(Instant::now() + STEP_TIME)))? {}
-        let mapping = self.step(|engine| walk.finish(engine))?;
+        let mapping = self.step(|engine| walk.finish(engine, control))?;
         if let Some(generation) = &previous
             && mapping.published_by(generation)
         {

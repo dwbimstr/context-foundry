@@ -5381,6 +5381,14 @@ async fn continuous_semantics_progresses_during_filesystem_traffic_and_converges
         .await;
     let calls = corpus.probe.document_calls();
     let stop = Arc::new(AtomicBool::new(false));
+    // Keep one genuinely pending version stable while other paths churn.
+    // Continuously replacing every candidate can legitimately reject every
+    // stale partition before inference; that is not a scheduler starvation test.
+    std::fs::write(
+        corpus.root.join("src/settled.rs"),
+        "pub fn settled_during_traffic() {}\n",
+    )
+    .unwrap();
     let writer = std::thread::spawn({
         let stop = Arc::clone(&stop);
         let root = corpus.root.clone();
@@ -5434,7 +5442,7 @@ async fn continuous_semantics_progresses_during_filesystem_traffic_and_converges
     }
     served.close().await;
     corpus.reopen().await;
-    for path in ["src/stream0.rs", "src/stream1.rs"] {
+    for path in ["src/stream0.rs", "src/stream1.rs", "src/settled.rs"] {
         let hash = context_foundry::digest(&std::fs::read(corpus.root.join(path)).unwrap());
         assert_eq!(corpus.engine().source(path).unwrap().unwrap().hash, hash);
         assert_eq!(
@@ -5555,7 +5563,7 @@ fn a_v4_generation_republishes_immutable_metadata_from_cache_without_inference()
 }
 
 #[test]
-fn clean_restart_reuses_published_mapping_but_partition_and_offline_changes_reconcile() {
+fn clean_restart_and_changed_inputs_reuse_the_durable_mapping_lookup() {
     use context_foundry::neural::fault_names::{
         MAPPING_CACHE_PROBE, MAPPING_FULL_PAGE, METADATA_READ, PARTITION_READ,
     };
@@ -5597,10 +5605,12 @@ fn clean_restart_reuses_published_mapping_but_partition_and_offline_changes_reco
     assert_eq!(engine.source_revision().unwrap(), revision);
     let changed = engine.semantic_publish_pending(&control).unwrap();
     assert!(!matches!(changed, index::Publication::Current(_)));
-    assert!(
-        fault::reached(MAPPING_FULL_PAGE) > 0,
-        "changed cold owner builds its baseline"
+    assert_eq!(
+        fault::reached(MAPPING_FULL_PAGE),
+        0,
+        "one partition change resumes the lookup"
     );
+    assert_eq!(fault::reached(PARTITION_READ), 1);
     // A durable source change made before closing cannot borrow an older fence.
     engine
         .replace_source(DUSK_PATH, "# Offline change\n")
@@ -5612,7 +5622,8 @@ fn clean_restart_reuses_published_mapping_but_partition_and_offline_changes_reco
         corpus.engine().semantic_publish_pending(&control).unwrap(),
         index::Publication::Current(_)
     ));
-    assert!(fault::reached(MAPPING_FULL_PAGE) > 0);
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), 0);
+    assert_eq!(fault::reached(PARTITION_READ), 1);
     assert_eq!(corpus.probe.document_calls.load(Ordering::SeqCst), calls);
 }
 
@@ -6167,4 +6178,372 @@ async fn body_recipe_mcp_maintenance_keeps_token_caps_and_reuses_unchanged_conte
     );
     assert!(batches.iter().flatten().any(|&n| n > 512));
     served.close().await;
+}
+
+#[test]
+fn changed_restart_refreshes_only_affected_paths_and_matches_an_independent_audit() {
+    use context_foundry::neural::fault_names::{
+        MAPPING_FULL_PAGE, MAPPING_READ_SNAPSHOT, PARTITION_READ,
+    };
+    let extra: Vec<_> = (0..260)
+        .map(|n| {
+            (
+                format!("notes/{n:04}.md"),
+                "# Shared note\nbody\n".to_owned(),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::new(&extra);
+    let body = corpus.source(CODE_PATH);
+    accept_fixture_edit(&corpus, CODE_PATH, &format!("\n{body}"));
+    accept_fixture_edit(&corpus, "new.rs", "pub fn new_only() {}\n");
+    accept_fixture_edit(&corpus, "empty.rs", "\n");
+    corpus.engine().delete_source(DUSK_PATH).unwrap();
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    corpus
+        .engine()
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), 0);
+    assert_eq!(
+        fault::reached(PARTITION_READ),
+        3,
+        "only extant dirty sources"
+    );
+    assert_eq!(fault::reached(MAPPING_READ_SNAPSHOT), 1);
+    let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+    let state = corpus.engine().semantic_state().unwrap().unwrap();
+    let actual = index::validate_generation_with(
+        &store,
+        &corpus.digest(),
+        state.recipe_id.as_deref().unwrap(),
+        DIMENSIONS,
+        &Control::unbounded(),
+    )
+    .unwrap();
+    let expected = corpus
+        .engine()
+        .semantic_current_mapping(
+            &Control::unbounded(),
+            &corpus.digest(),
+            state.recipe_id.as_deref().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(actual.labels, expected.units);
+    assert_eq!(
+        actual.manifest.source_revision,
+        expected.scope.source_revision
+    );
+    assert_eq!(
+        actual
+            .manifest
+            .coverage_stats
+            .as_ref()
+            .unwrap()
+            .cached_current_units,
+        expected.units.values().map(|u| u.len() as u64).sum::<u64>()
+    );
+    assert!(
+        fault::reached(MAPPING_FULL_PAGE) > 0,
+        "audit remains independent"
+    );
+}
+
+#[test]
+fn publication_checkpoint_crash_child() {
+    let Ok(store) = std::env::var("FOUNDRY_MAPPING_CRASH_STORE") else {
+        return;
+    };
+    let point = std::env::var("FOUNDRY_MAPPING_CRASH_POINT").unwrap();
+    let engine = Engine::open_existing(std::path::Path::new(&store)).unwrap();
+    fault::arm(&point, 0, Action::Abort);
+    engine
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    panic!("crash point was not reached");
+}
+
+#[test]
+fn publication_checkpoint_and_manifest_crashes_replay_without_losing_changed_work() {
+    use context_foundry::neural::fault_names::{
+        MAPPING_CHECKPOINT_BEFORE_COMMIT, PUBLISH_AFTER_MANIFEST, PUBLISH_BEFORE_MANIFEST,
+    };
+    for point in [
+        MAPPING_CHECKPOINT_BEFORE_COMMIT,
+        PUBLISH_BEFORE_MANIFEST,
+        PUBLISH_AFTER_MANIFEST,
+    ] {
+        let mut corpus = Corpus::new(&[]);
+        let body = corpus.source(CODE_PATH);
+        accept_fixture_edit(&corpus, CODE_PATH, &format!("\n{body}"));
+        let calls = corpus.probe.document_calls();
+        corpus.engine = None;
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "publication_checkpoint_crash_child",
+                "--nocapture",
+            ])
+            .env("FOUNDRY_MAPPING_CRASH_STORE", &corpus.store)
+            .env("FOUNDRY_MAPPING_CRASH_POINT", point)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(!status.success(), "child must crash at {point}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(status.signal(), Some(libc::SIGABRT));
+        }
+        corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+        corpus
+            .engine()
+            .semantic_publish_pending(&Control::unbounded())
+            .unwrap();
+        let state = corpus.engine().semantic_state().unwrap().unwrap();
+        let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+        let actual = index::validate_generation_with(
+            &store,
+            &corpus.digest(),
+            state.recipe_id.as_deref().unwrap(),
+            DIMENSIONS,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        let expected = corpus
+            .engine()
+            .semantic_current_mapping(
+                &Control::unbounded(),
+                &corpus.digest(),
+                state.recipe_id.as_deref().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(actual.labels, expected.units, "replay at {point}");
+        assert_eq!(corpus.probe.document_calls(), calls);
+    }
+}
+
+#[test]
+fn restarted_partial_mapping_refreshes_shared_cache_keys_without_a_partition_census() {
+    use context_foundry::neural::fault_names::{MAPPING_FULL_PAGE, PARTITION_READ};
+    let mut corpus = Corpus::new(&[]);
+    let state = corpus.engine().semantic_state().unwrap().unwrap();
+    let key = "ef".repeat(32);
+    for path in ["late-a.md", "late-b.md"] {
+        let e = corpus.engine();
+        e.replace_source(path, "late shared body\n").unwrap();
+        e.semantic_record_partition(
+            path,
+            &e.source(path).unwrap().unwrap().hash,
+            state.recipe_id.as_deref().unwrap(),
+            &corpus.digest(),
+            None,
+            &|body| {
+                Ok(vec![context_foundry::neural::cache::PartitionUnit {
+                    start: 0,
+                    end: body.len(),
+                    input_key: key.clone(),
+                }])
+            },
+        )
+        .unwrap();
+    }
+    corpus
+        .engine()
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    let mut vector = vec![0.0; DIMENSIONS];
+    vector[0] = 1.0;
+    corpus
+        .engine()
+        .semantic_cache_commit(
+            &[(key.clone(), vector)],
+            &corpus.digest(),
+            DIMENSIONS,
+            DEFAULT_CACHE_CAP_BYTES,
+        )
+        .unwrap();
+    // Restart again after a cache-only commit; no source revision changed.
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    corpus
+        .engine()
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), 0);
+    assert_eq!(fault::reached(PARTITION_READ), 2);
+    let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+    let actual = index::validate_generation_with(
+        &store,
+        &corpus.digest(),
+        state.recipe_id.as_deref().unwrap(),
+        DIMENSIONS,
+        &Control::unbounded(),
+    )
+    .unwrap();
+    assert_eq!(actual.labels[&key].len(), 2);
+    assert_eq!(actual.manifest.coverage, "complete");
+    let expected = corpus
+        .engine()
+        .semantic_current_mapping(
+            &Control::unbounded(),
+            &corpus.digest(),
+            state.recipe_id.as_deref().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(actual.labels, expected.units);
+}
+
+#[test]
+fn schema_eleven_upgrade_preserves_cached_publication_and_is_atomic() {
+    use redb::{MultimapTableDefinition, TableDefinition};
+    let mut corpus = Corpus::new(&[]);
+    let original = corpus.engine().source(CODE_PATH).unwrap().unwrap();
+    corpus.engine = None;
+    let db = redb::Database::open(corpus.store.join("knowledge.redb")).unwrap();
+    let tx = db.begin_write().unwrap();
+    tx.delete_table(TableDefinition::<&str, &str>::new("semantic_mapping_rows"))
+        .unwrap();
+    tx.delete_table(TableDefinition::<&str, u64>::new("semantic_mapping_work"))
+        .unwrap();
+    tx.delete_multimap_table(MultimapTableDefinition::<&str, &str>::new(
+        "semantic_mapping_keys",
+    ))
+    .unwrap();
+    let mut meta = tx
+        .open_table(TableDefinition::<&str, &str>::new("meta"))
+        .unwrap();
+    meta.insert("schema", "11").unwrap();
+    meta.remove("semantic_mapping_checkpoint").unwrap();
+    drop(meta);
+    tx.commit().unwrap();
+    drop(db);
+    assert!(matches!(
+        Engine::open_existing(&corpus.store),
+        Err(context_foundry::FoundryError::UpgradeRequired { .. })
+    ));
+    fault::arm(
+        context_foundry::fault::names::UPGRADE_BEFORE_COMMIT,
+        0,
+        Action::Fail("upgrade interrupted".into()),
+    );
+    assert!(
+        Engine::upgrade_store(
+            &corpus.store,
+            context_foundry::SCHEMA_VERSION,
+            &Control::unbounded()
+        )
+        .is_err()
+    );
+    fault::disarm_all();
+    assert!(matches!(
+        Engine::open_existing(&corpus.store),
+        Err(context_foundry::FoundryError::UpgradeRequired { .. })
+    ));
+    Engine::upgrade_store(
+        &corpus.store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    assert_eq!(
+        corpus.engine().source(CODE_PATH).unwrap().unwrap().hash,
+        original.hash
+    );
+    assert!(matches!(
+        corpus
+            .engine()
+            .semantic_publish_pending(&Control::unbounded())
+            .unwrap(),
+        index::Publication::Current(_)
+    ));
+    accept_fixture_edit(&corpus, "after-upgrade.rs", "pub fn upgraded() {}\n");
+    corpus
+        .engine()
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    let calls = corpus.probe.document_calls();
+    assert_eq!(corpus.prepare().document_calls, 0);
+    assert_eq!(corpus.probe.document_calls(), calls);
+}
+
+#[test]
+fn explicit_repair_reconstructs_missing_disposable_mapping_tables_from_cached_authority() {
+    let mut corpus = Corpus::new(&[]);
+    let source = corpus.engine().source(CODE_PATH).unwrap().unwrap().hash;
+    let calls = corpus.probe.document_calls();
+    corpus.engine = None;
+    let db = redb::Database::open(corpus.store.join("knowledge.redb")).unwrap();
+    let tx = db.begin_write().unwrap();
+    tx.delete_table(redb::TableDefinition::<&str, &str>::new(
+        "semantic_mapping_rows",
+    ))
+    .unwrap();
+    tx.commit().unwrap();
+    drop(db);
+    assert!(
+        Engine::open_existing(&corpus.store).is_err(),
+        "ordinary open does not invent a missing lookup"
+    );
+    Engine::repair_index(&corpus.store, &Control::unbounded()).unwrap();
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    assert_eq!(
+        corpus.engine().source(CODE_PATH).unwrap().unwrap().hash,
+        source
+    );
+    assert!(matches!(
+        corpus
+            .engine()
+            .semantic_publish_pending(&Control::unbounded())
+            .unwrap(),
+        index::Publication::Current(_)
+    ));
+    assert_eq!(corpus.probe.document_calls(), calls);
+}
+
+#[test]
+fn offline_cli_source_commit_preserves_incremental_publication_obligations() {
+    use context_foundry::neural::fault_names::{MAPPING_FULL_PAGE, PARTITION_READ};
+    let mut corpus = Corpus::new(&[]);
+    std::fs::write(
+        corpus.root.join(CODE_PATH),
+        "pub fn offline_lexical_change() {}\n",
+    )
+    .unwrap();
+    corpus.engine = None;
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_foundry"))
+        .arg("--store")
+        .arg(&corpus.store)
+        .arg("index")
+        .arg(&corpus.root)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    corpus
+        .engine()
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), 0);
+    assert_eq!(fault::reached(PARTITION_READ), 1);
+    let status = corpus
+        .engine()
+        .semantic_status(&Control::unbounded())
+        .unwrap();
+    assert!(
+        status.unpartitioned_sources > 0,
+        "offline source requires new partition work"
+    );
 }

@@ -196,7 +196,7 @@ pub struct SemanticState {
 
 /// Last successful publication observation. Freshness is checked against source
 /// revision and profile at read time; it is never proof of on-disk integrity.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoverageSnapshot {
     pub version: u32,
     pub source_revision: u64,
@@ -573,6 +573,51 @@ fn encode_row(function_digest: &str, vector: &[f32]) -> Vec<u8> {
     value
 }
 
+/// A page shares one redb snapshot across source, partition and cache metadata.
+#[cfg(feature = "semantic")]
+pub(crate) struct MappingPage {
+    sources: redb::ReadOnlyTable<&'static str, &'static str>,
+    partitions: redb::ReadOnlyTable<&'static str, &'static str>,
+    cache: redb::ReadOnlyTable<&'static str, &'static [u8]>,
+}
+#[cfg(feature = "semantic")]
+impl MappingPage {
+    pub(crate) fn new(engine: &Engine, _control: &Control) -> FResult<Self> {
+        neural_fault!(MAPPING_READ_SNAPSHOT, Some(_control), "page")?;
+        let tx = engine.db.begin_read()?;
+        Ok(Self {
+            sources: tx.open_table(SOURCES)?,
+            partitions: tx.open_table(PARTITIONS)?,
+            cache: tx.open_table(CACHE)?,
+        })
+    }
+    pub(crate) fn partition(
+        &self,
+        path: &str,
+        digest: &str,
+        recipe: &str,
+        _control: &Control,
+    ) -> FResult<Option<PartitionRecord>> {
+        let Some(raw) = self.sources.get(path)? else {
+            return Ok(None);
+        };
+        let meta: SourceMeta = decode(raw.value(), "source")?;
+        neural_fault!(PARTITION_READ, Some(_control), path)?;
+        let record: Option<PartitionRecord> = self
+            .partitions
+            .get(path)?
+            .map(|v| decode(v.value(), "semantic partition"))
+            .transpose()?;
+        Ok(record.filter(|r| partition_is_current(r, &meta, recipe, digest)))
+    }
+    pub(crate) fn cached(&self, key: &str, digest: &str) -> FResult<bool> {
+        Ok(self
+            .cache
+            .get(key)?
+            .is_some_and(|raw| probe_row(raw.value(), digest) == CacheProbe::Current))
+    }
+}
+
 fn mapping_revision(table: &impl ReadableTable<&'static str, &'static str>) -> FResult<u64> {
     table
         .get("semantic_mapping_revision")?
@@ -604,19 +649,52 @@ impl Engine {
         keys: impl IntoIterator<Item = &'a str>,
         reset: bool,
     ) -> FResult<()> {
-        {
+        let mut path_set = std::collections::BTreeSet::new();
+        let mut key_set = std::collections::BTreeSet::new();
+        let mut bytes = 0usize;
+        let mut reset = reset;
+        if !reset {
+            for (path, value) in paths
+                .into_iter()
+                .map(|p| (true, p))
+                .chain(keys.into_iter().map(|k| (false, k)))
+            {
+                let set = if path { &mut path_set } else { &mut key_set };
+                if set.insert(value.to_owned()) {
+                    bytes = bytes.saturating_add(value.len() + 2);
+                }
+                if path_set.len() + key_set.len() > super::mapping_store::MAX_DIRTY
+                    || bytes > super::mapping_store::MAX_BYTES
+                {
+                    path_set.clear();
+                    key_set.clear();
+                    reset = true;
+                    break;
+                }
+            }
+        }
+        let paths: Vec<_> = path_set.into_iter().collect();
+        let keys: Vec<_> = key_set.into_iter().collect();
+        let revision = {
             let mut meta = tx.open_table(crate::store::META)?;
             let revision = mapping_revision(&meta)?
                 .checked_add(1)
                 .ok_or(FoundryError::RevisionExhausted)?;
             meta.insert("semantic_mapping_revision", revision.to_string().as_str())?;
-        }
+            revision
+        };
+        super::mapping_store::changed(&tx, revision, &paths, &keys, reset)?;
         #[cfg(feature = "semantic")]
         {
             self.semantic_mapping
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .commit(tx, paths, keys, reset)
+                .commit(
+                    tx,
+                    paths.iter().map(String::as_str),
+                    keys.iter().map(String::as_str),
+                    reset,
+                )
         }
         #[cfg(not(feature = "semantic"))]
         {
@@ -1148,6 +1226,7 @@ impl Engine {
                 )?;
             }
             crate::neural::work::invalidate(&tx, crate::neural::work::Lane::Semantic)?;
+            super::mapping_store::purge(&tx)?;
             self.semantic_commit(tx, std::iter::empty(), std::iter::empty(), true)?;
             self.semantic_wake.notify();
             (partitions, rows, bytes)

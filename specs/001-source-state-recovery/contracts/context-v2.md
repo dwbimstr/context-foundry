@@ -1296,13 +1296,20 @@ definition gets an address:
 Explicit ingestion keeps at most eight reads/results in flight, each bounded by
 the 2 MiB source limit plus one sentinel byte. Completed, unaccepted results keep
 their slots. Workers open no-follow relative to the held root, read, validate and
-hash; the owner accepts in walker order through the existing per-source transaction.
+hash; the owner accepts in walker order, grouping at most four supported files in
+one redb transaction (at most 8 MiB of bodies, inside the same eight read/result slots).
+Each changed source still advances the source revision and its independent derivation
+obligations. Counts advance only after the whole group commits; a pre-commit failure or
+cancellation preserves every previous version in that group. Earlier committed groups
+remain reusable. Exclusion deletions flush any preceding group and retain their single-file
+transaction. Read/identity failures preserve that file and prevent the unseen sweep.
 It rechecks the held root, held file and newly opened name before publication,
 including exclusion-driven deletion. Changed or unsafe reads preserve accepted
 versions and defer the unseen sweep. These are freshness checks, not an atomic
 filesystem snapshot; an edit after the final check needs later reconciliation.
 
-After 128 accepted candidates, ingestion drains one pending lexical page; the final
+At each group boundary after 128 accepted candidates (at most 131), ingestion drains
+one pending lexical page; the final
 drain still finishes remaining work. Early pages retain the same commit/reload/ack
 order. Cancellation and process exit retain committed sources and search pages;
 unaccepted read-ahead is discarded and an incomplete scan cannot prove absence.

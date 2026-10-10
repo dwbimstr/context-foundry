@@ -114,6 +114,24 @@ fn child_fault(stage: &str) -> ! {
     match stage {
         #[cfg(feature = "semantic")]
         stage if stage.starts_with("semantic_") => semantic_crash_child(&work, stage),
+        "source_batch_before" | "source_batch_after" => {
+            let ws = work.join("ws");
+            std::fs::create_dir(&ws).unwrap();
+            let mut engine = Engine::initialize(&store, &ws).unwrap();
+            for n in 0..4 {
+                let path = format!("batch{n}.rs");
+                engine.replace_source(&path, V1).unwrap();
+                std::fs::write(ws.join(path), V2).unwrap();
+            }
+            engine.refresh(&Control::unbounded()).unwrap();
+            let point = if stage == "source_batch_before" {
+                names::SOURCE_BATCH_BEFORE_COMMIT
+            } else {
+                names::SOURCE_AFTER_COMMIT
+            };
+            fault::arm(point, 0, Action::Abort);
+            let _ = engine.index(&ws, &Control::unbounded());
+        }
         "ingest_after_early_publication" => {
             let ws = work.join("ws");
             std::fs::create_dir(&ws).unwrap();
@@ -638,7 +656,7 @@ fn exit_during_upgrade_transaction_leaves_wholly_v1() {
         &Control::unbounded(),
     )
     .unwrap();
-    assert_eq!(schema_marker(&store), "11");
+    assert_eq!(schema_marker(&store), "12");
     let engine = Engine::open_existing(&store).unwrap();
     assert_eq!(engine.status().unwrap().source_count, 1);
     assert_eq!(
@@ -656,7 +674,7 @@ fn exit_during_upgrade_transaction_leaves_wholly_v1() {
 fn exit_after_upgrade_commit_is_wholly_v2() {
     let work = crash_at("upgrade_after_commit");
     let store = work.path().join("store");
-    assert_eq!(schema_marker(&store), "11");
+    assert_eq!(schema_marker(&store), "12");
     let engine = Engine::open_existing(&store).unwrap();
     let status = engine.status().unwrap();
     assert_eq!(
@@ -727,6 +745,42 @@ fn global_arming_fires_on_worker_threads_for_spawned_processes() {
     assert!(started.elapsed() >= Duration::from_millis(150));
     assert!(fault::reached(names::RETRIEVE_BEFORE_FINAL_READ) >= 1);
     fault::disarm_all();
+}
+
+fn source_batch_crashes_preserve_whole_commit_and_replay() {
+    for (stage, committed) in [("source_batch_before", false), ("source_batch_after", true)] {
+        let work = crash_at(stage);
+        let mut engine = Engine::open_existing(&work.path().join("store")).unwrap();
+        assert_eq!(
+            engine.source_revision().unwrap(),
+            if committed { 8 } else { 4 }
+        );
+        assert_eq!(engine.pending().unwrap(), if committed { 4 } else { 0 });
+        for n in 0..4 {
+            assert_eq!(
+                engine
+                    .source(&format!("batch{n}.rs"))
+                    .unwrap()
+                    .unwrap()
+                    .hash,
+                digest(if committed { V2 } else { V1 }.as_bytes())
+            );
+        }
+        let report = engine
+            .index(&work.path().join("ws"), &Control::unbounded())
+            .unwrap();
+        assert_eq!(
+            (report.changed, report.unchanged),
+            if committed { (0, 4) } else { (4, 0) }
+        );
+        assert!(!report.partial);
+        assert_eq!(engine.source_revision().unwrap(), 8);
+        assert_eq!(engine.pending().unwrap(), 0);
+        assert_eq!(
+            engine.search("child_version_two", 10).unwrap().hits.len(),
+            4
+        );
+    }
 }
 
 fn exit_after_early_ingestion_publication_replays_only_committed_sources() {
@@ -943,6 +997,10 @@ fn main() {
         child_fault(&stage);
     }
     let tests: Vec<(&str, fn())> = vec![
+        (
+            "source_batch_crashes",
+            source_batch_crashes_preserve_whole_commit_and_replay,
+        ),
         #[cfg(feature = "semantic")]
         (
             "exits_during_delta_and_compaction",

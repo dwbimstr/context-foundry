@@ -795,8 +795,12 @@ followed by the existing final drain. One Engine-owned Rayon 1.12.0 pool serves
 reads and lexical builds, retained across pages/calls. Rayon was already pinned for
 semantic preparation; it is now available in lexical-only builds too. This removes
 per-page thread creation without adding another worker protocol or durable owner.
-Source commits remain individual, pending acknowledgments remain conditional, and
-the watcher retains its existing step/foreground-admission policy. Explicit MCP
+The 2026-10-10 cold-scale follow-up groups at most four supported files per source
+transaction within the existing eight read/result slots. The contract above specifies
+atomic rollback, count publication, ordered exclusions and cancellation; single-source
+watcher steps and conditional pending acknowledgments remain unchanged. This removes
+three of four durable source commits on an all-changed scan without another queue or
+worker. Actual large-file/mixed-workload throughput remains separate evidence. Explicit MCP
 indexing still occupies its engine slot. Sandbox concurrency, interruption and
 restart evidence is recorded in [validation](../../docs/validation.md#pipelined-source-ingestion--2026-10-09);
 no large-repository throughput improvement is inferred.

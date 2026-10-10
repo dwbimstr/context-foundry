@@ -188,8 +188,8 @@ impl Cache {
                 .map_err(GenerationError::Interrupted)?;
         }
         let bytes = if keep {
-            let bytes = read_index(file, control, limit)?;
-            if !valid && crate::digest(&bytes) != hash {
+            let (bytes, digest) = read_index(file, control, limit, !valid)?;
+            if digest.as_deref().is_some_and(|digest| digest != hash) {
                 return Err(unavailable("index file does not match the manifest hash"));
             }
             Some(Segment::Bytes(bytes))

@@ -846,8 +846,8 @@ fn inner(
     }
     // Budget counts from argument parsing: artifact verification included,
     // and it obeys the run control (budget deadline, caller cancellation).
-    let artifacts = match profile.verified_artifacts_until(control) {
-        Ok(artifacts) => std::sync::Arc::new(artifacts),
+    let artifacts = match profile.verified_tokenizer_until(control) {
+        Ok(artifacts) => artifacts,
         Err(e) => {
             return match halt(control, budget) {
                 Some(stop) => Ok(stop),
@@ -858,9 +858,10 @@ fn inner(
     if let Some(stop) = halt(control, budget) {
         return Ok(stop);
     }
-    let tokenizer = DocumentTokenizer::load_verified(profile, &artifacts)?;
-    // Cached-only preparation needs no model worker. Artifact verification
-    // still precedes tokenization; acquisition retains its own trust checks.
+    let tokenizer = DocumentTokenizer::load_tokenizer_verified(profile, &artifacts, control)?;
+    let mut artifacts = Some(artifacts);
+    // Cache-only preparation verifies no unused weights. Missing inputs promote
+    // the private tokenizer receipt to a fully verified acquisition capability.
     let mut provider: Option<Box<dyn EmbeddingProvider>> = None;
     let workers = PartitionWorkers::default();
 
@@ -952,9 +953,18 @@ fn inner(
                     break 'waves;
                 }
                 if provider.is_none() {
-                    artifacts.check(profile, control)?;
-                    let acquired = match acquire(profile, &artifacts, options.development, control)
-                    {
+                    let acquired = match artifacts
+                        .take()
+                        .expect("first acquisition")
+                        .complete(profile, control)
+                        .and_then(|artifacts| {
+                            acquire(
+                                profile,
+                                &std::sync::Arc::new(artifacts),
+                                options.development,
+                                control,
+                            )
+                        }) {
                         Ok(provider) => provider,
                         Err(error) => {
                             if let Some(halted) = halt(control, budget) {

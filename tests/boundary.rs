@@ -355,13 +355,25 @@ fn schema_ten_requires_atomic_explicit_upgrade() {
         0,
         Action::Fail("injected".into()),
     );
-    assert!(Engine::upgrade_store(&store, 11, &Control::unbounded()).is_err());
+    assert!(
+        Engine::upgrade_store(
+            &store,
+            context_foundry::SCHEMA_VERSION,
+            &Control::unbounded()
+        )
+        .is_err()
+    );
     fault::disarm_all();
     assert!(matches!(
         Engine::open_existing(&store),
         Err(context_foundry::FoundryError::UpgradeRequired { .. })
     ));
-    Engine::upgrade_store(&store, 11, &Control::unbounded()).unwrap();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
     let e = Engine::open_existing(&store).unwrap();
     assert_eq!(e.source("service.py").unwrap().unwrap().hash, hash);
     assert_eq!(publish(&e).parsed, 4);

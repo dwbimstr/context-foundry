@@ -1,6 +1,8 @@
 //! 005 T005: explicitly scoped, syntactic HTTP relationships. No workspace code
 //! runs. Scope replacement and key postings share one redb transaction; joins
 //! are resolved at read time against current source/configuration identities.
+pub(crate) mod maintenance;
+
 use crate::store::{CHUNKS, SOURCES, reconstruct_verified, validate_path};
 use crate::{Control, Engine, FResult, FoundryError, SourceHandle, SourceMeta};
 use redb::{MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition};
@@ -892,6 +894,7 @@ fn extract(
 #[serde(deny_unknown_fields)]
 pub(crate) struct IndexRequest {
     pub config: String,
+    pub maintain: Option<bool>,
     #[serde(default)]
     pub paths: Vec<String>,
 }

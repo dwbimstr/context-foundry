@@ -186,6 +186,7 @@ impl Session {
         let Some(resources) = &self.resources else {
             return Ok(());
         };
+        resources.background()?;
         if let Some(config) = &profile.local
             && self.reservation.is_none()
         {
@@ -193,8 +194,6 @@ impl Session {
                 crate::model_resources::Lane::Generation,
                 config.memory_bytes,
             )?);
-        } else {
-            resources.background()?;
         }
         Ok(())
     }
@@ -258,7 +257,7 @@ impl Session {
         if let Some(Err(reason)) = self
             .resources
             .as_ref()
-            .map(|resources| resources.background())
+            .map(|resources| resources.memory_background())
         {
             self.unload(reason.code());
             return;

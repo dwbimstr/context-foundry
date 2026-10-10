@@ -1,6 +1,9 @@
 //! A disposable, owner-local view of current partition locations. redb remains
-//! authoritative; restart, overflow, profile change and explicit repair reconcile.
+//! authoritative; restart can resume a matching redb lookup. Overflow, profile
+//! change and explicit repair reconcile.
 use super::*;
+use crate::neural::mapping_store::{self as durable, Checkpoint};
+use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 const MAX_DIRTY: usize = 1024;
@@ -64,6 +67,9 @@ impl Journal {
 #[derive(Default)]
 struct View {
     ticket: u64,
+    baseline: Option<redb::ReadTransaction>,
+    durable_revision: Option<u64>,
+    partitioned: u64,
     digest: String,
     recipe: String,
     rows: BTreeMap<String, cache::PartitionRecord>,
@@ -74,12 +80,27 @@ struct View {
     bytes: u64,
 }
 impl View {
-    fn remove(&mut self, path: &str) {
+    fn remove(&mut self, path: &str) -> FResult<()> {
+        if let Some(tx) = &self.baseline {
+            let table = tx.open_table(durable::ROWS)?;
+            if let Some(raw) = table.get(path)? {
+                self.rows
+                    .insert(path.to_owned(), serde_json::from_str(raw.value())?);
+            }
+        }
         let Some(record) = self.rows.remove(path) else {
-            return;
+            return Ok(());
         };
-        self.eligible -= record.units.len() as u64;
-        self.bytes -= row_bytes(path, &record);
+        let corrupt = || FoundryError::CorruptStore("invalid publication lookup counters".into());
+        self.partitioned = self.partitioned.checked_sub(1).ok_or_else(corrupt)?;
+        self.eligible = self
+            .eligible
+            .checked_sub(record.units.len() as u64)
+            .ok_or_else(corrupt)?;
+        self.bytes = self
+            .bytes
+            .checked_sub(row_bytes(path, &record))
+            .ok_or_else(corrupt)?;
         for unit in &record.units {
             if let Some(paths) = self.reverse.get_mut(&unit.input_key) {
                 paths.remove(path);
@@ -91,28 +112,27 @@ impl View {
                 let units = std::sync::Arc::make_mut(units);
                 let before = units.len();
                 units.retain(|unit| unit.path != path);
-                self.cached -= (before - units.len()) as u64;
+                self.cached = self
+                    .cached
+                    .checked_sub((before - units.len()) as u64)
+                    .ok_or_else(corrupt)?;
                 if units.is_empty() {
                     self.units.remove(&unit.input_key);
                 }
             }
         }
+        Ok(())
     }
     fn refresh(
         &mut self,
-        engine: &Engine,
+        page: &cache::MappingPage,
         path: &str,
         probed: &mut HashMap<String, bool>,
         control: &Control,
     ) -> FResult<()> {
         control.check()?;
-        self.remove(path);
-        let Some(meta) = engine.source(path)? else {
-            return Ok(());
-        };
-        let Some(record) = engine.semantic_partition(path)?.filter(|record| {
-            cache::partition_is_current(record, &meta, &self.recipe, &self.digest)
-        }) else {
+        self.remove(path)?;
+        let Some(record) = page.partition(path, &self.digest, &self.recipe, control)? else {
             return Ok(());
         };
         self.bytes = self.bytes.saturating_add(row_bytes(path, &record));
@@ -127,8 +147,10 @@ impl View {
                 Some(&cached) => cached,
                 None => {
                     neural_fault!(MAPPING_CACHE_PROBE, Some(control), &unit.input_key)?;
-                    let cached = engine.semantic_cache_probe(&unit.input_key, &self.digest)?
-                        == CacheProbe::Current;
+                    let cached = page.cached(&unit.input_key, &self.digest)?;
+                    if probed.len() >= MAX_DIRTY {
+                        probed.clear();
+                    }
                     probed.insert(unit.input_key.clone(), cached);
                     cached
                 }
@@ -154,6 +176,7 @@ impl View {
                 units.insert(position, location);
             }
         }
+        self.partitioned += 1;
         self.rows.insert(path.to_owned(), record);
         Ok(())
     }
@@ -184,20 +207,36 @@ pub(crate) struct MappingWalk {
     after: Option<String>,
     dirty: VecDeque<String>,
     probed: HashMap<String, bool>,
+    touched: BTreeSet<String>,
 }
 impl MappingWalk {
+    #[cfg(test)]
     pub(crate) fn start(engine: &Engine, digest: &str, recipe: &str) -> FResult<Self> {
-        Self::begin(engine, digest, recipe, false)
+        Self::begin(engine, digest, recipe, false, None)
     }
     pub(crate) fn audit(engine: &Engine, digest: &str, recipe: &str) -> FResult<Self> {
-        Self::begin(engine, digest, recipe, true)
+        Self::begin(engine, digest, recipe, true, None)
     }
-    fn begin(engine: &Engine, digest: &str, recipe: &str, audit: bool) -> FResult<Self> {
+    pub(crate) fn resume(
+        engine: &Engine,
+        digest: &str,
+        recipe: &str,
+        generation: Option<&Generation>,
+    ) -> FResult<Self> {
+        Self::begin(engine, digest, recipe, false, generation)
+    }
+    fn begin(
+        engine: &Engine,
+        digest: &str,
+        recipe: &str,
+        audit: bool,
+        generation: Option<&Generation>,
+    ) -> FResult<Self> {
         let mut state = engine
             .semantic_mapping
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let view = if audit {
+        let mut view = if audit {
             None
         } else {
             state
@@ -206,8 +245,27 @@ impl MappingWalk {
                 .filter(|v| v.digest == digest && v.recipe == recipe)
         };
         let mut dirty: BTreeSet<_> = state.paths.keys().cloned().collect();
+        let mut keys: BTreeSet<_> = state.keys.keys().cloned().collect();
+        if view.is_none()
+            && !audit
+            && let Some(generation) = generation
+            && let Some(restored) = restore(engine, generation)?
+        {
+            view = Some(restored.view);
+            dirty.extend(restored.paths);
+            keys.extend(restored.keys);
+        }
         if let Some(view) = &view {
-            for key in state.keys.keys() {
+            for key in &keys {
+                if let Some(tx) = &view.baseline {
+                    let reverse = tx.open_multimap_table(durable::KEYS)?;
+                    for path in reverse.get(key.as_str())? {
+                        dirty.insert(path?.value().to_owned());
+                        if dirty.len() > MAX_DIRTY {
+                            break;
+                        }
+                    }
+                }
                 if let Some(paths) = view.reverse.get(key) {
                     for path in paths {
                         dirty.insert(path.clone());
@@ -242,6 +300,7 @@ impl MappingWalk {
             after: None,
             dirty: dirty.into_iter().collect(),
             probed: HashMap::new(),
+            touched: BTreeSet::new(),
         })
     }
     pub(crate) fn step(
@@ -263,8 +322,11 @@ impl MappingWalk {
             if page.is_empty() {
                 return Ok(true);
             }
+            let reader = cache::MappingPage::new(engine, control)?;
             for path in &page {
-                self.view.refresh(engine, path, &mut self.probed, control)?;
+                self.view
+                    .refresh(&reader, path, &mut self.probed, control)?;
+                self.touched.insert(path.clone());
             }
             self.after = page.last().cloned();
             if until.is_some_and(|until| Instant::now() >= until) {
@@ -272,7 +334,10 @@ impl MappingWalk {
             }
         }
     }
-    pub(crate) fn finish(mut self, engine: &Engine) -> FResult<CurrentMapping> {
+    pub(crate) fn finish(mut self, engine: &Engine, control: &Control) -> FResult<CurrentMapping> {
+        control.check()?;
+        // Match the source writer's lock order: redb writer, then mapping mutex.
+        let tx = engine.db.begin_write()?;
         let mut state = engine
             .semantic_mapping
             .lock()
@@ -286,15 +351,39 @@ impl MappingWalk {
             function_digest: self.view.digest.clone(),
             recipe_id: self.view.recipe.clone(),
             sources: self.sources,
-            unpartitioned_sources: self.sources.saturating_sub(self.view.rows.len() as u64),
+            unpartitioned_sources: self.sources.saturating_sub(self.view.partitioned),
             eligible_units: self.view.eligible,
             cached_current_units: self.view.cached,
             searchable_current_units: self.view.cached,
             index_entries: self.view.units.len() as u64,
         };
         let complete = stable
-            && self.view.rows.len() as u64 == self.sources
+            && self.view.partitioned == self.sources
             && self.view.eligible == self.view.cached;
+        if stable {
+            checkpoint(
+                &tx,
+                &self.view,
+                &self.touched,
+                self.mapping_revision,
+                &coverage,
+                control,
+            )?;
+            neural_fault!(
+                MAPPING_CHECKPOINT_BEFORE_COMMIT,
+                Some(control),
+                "checkpoint"
+            )?;
+            control.check()?;
+            tx.commit()?;
+            self.view.durable_revision = Some(self.mapping_revision);
+        }
+        if !stable && self.view.baseline.is_none() {
+            // The retained full view includes these touched rows, but they were
+            // not checkpointed. A later stable turn must write the whole view;
+            // its own dirty set alone would omit this turn's accepted changes.
+            self.view.durable_revision = None;
+        }
         let units = self.view.units.clone();
         if self.epoch == state.epoch
             && state
@@ -303,7 +392,9 @@ impl MappingWalk {
                 .is_none_or(|view| view.ticket <= self.ticket)
         {
             self.view.ticket = self.ticket;
-            state.view = Some(self.view);
+            // A resumed lookup retains only touched rows. Its redb checkpoint is
+            // the next baseline, paired with the independently verified generation.
+            state.view = self.view.baseline.is_none().then_some(self.view);
             state.paths.retain(|_, serial| *serial > self.ticket);
             state.keys.retain(|_, serial| *serial > self.ticket);
             state.bytes = state
@@ -323,6 +414,122 @@ impl MappingWalk {
             },
         })
     }
+}
+
+struct Restored {
+    view: View,
+    paths: Vec<String>,
+    keys: Vec<String>,
+}
+/// Reuse only a checkpoint paired with this independently verified publication.
+fn restore(engine: &Engine, generation: &Generation) -> FResult<Option<Restored>> {
+    let tx = engine.db.begin_read()?;
+    let checkpoint: Option<Checkpoint> = tx
+        .open_table(crate::store::META)?
+        .get(durable::CHECKPOINT)?
+        .map(|v| serde_json::from_str(v.value()))
+        .transpose()?;
+    let Some(cp) = checkpoint else {
+        return Ok(None);
+    };
+    let Some(partitioned) = cp
+        .coverage
+        .sources
+        .checked_sub(cp.coverage.unpartitioned_sources)
+    else {
+        return Ok(None);
+    };
+    if generation.manifest.mapping_revision != Some(cp.revision)
+        || generation.manifest.coverage_stats.as_ref() != Some(&cp.coverage)
+        || cp.bytes > MAX_META_BYTES
+        || tx.open_table(durable::ROWS)?.len()? != partitioned
+    {
+        return Ok(None);
+    }
+    let Some((paths, keys)) = durable::pending(&tx, cp.revision)? else {
+        return Ok(None);
+    };
+    Ok(Some(Restored {
+        view: View {
+            digest: cp.coverage.function_digest,
+            recipe: cp.coverage.recipe_id,
+            durable_revision: Some(cp.revision),
+            partitioned,
+            eligible: cp.coverage.eligible_units,
+            cached: cp.coverage.cached_current_units,
+            bytes: cp.bytes,
+            units: generation.labels.clone(),
+            baseline: Some(tx),
+            ..Default::default()
+        },
+        paths,
+        keys,
+    }))
+}
+fn checkpoint(
+    tx: &redb::WriteTransaction,
+    view: &View,
+    touched: &BTreeSet<String>,
+    revision: u64,
+    coverage: &cache::CoverageSnapshot,
+    control: &Control,
+) -> FResult<()> {
+    let previous: Option<Checkpoint> = tx
+        .open_table(crate::store::META)?
+        .get(durable::CHECKPOINT)?
+        .map(|v| serde_json::from_str(v.value()))
+        .transpose()?;
+    let incremental = previous
+        .as_ref()
+        .is_some_and(|cp| Some(cp.revision) == view.durable_revision);
+    if !incremental {
+        // A resumed view is partial; a concurrently replaced checkpoint cannot
+        // be reconstructed from it. Refuse instead of blessing incomplete rows.
+        if view.baseline.is_some() {
+            return Err(FoundryError::Semantic {
+                code: "index_unavailable",
+                message: "mapping checkpoint changed during reconciliation".into(),
+            });
+        }
+        tx.delete_table(durable::ROWS)?;
+        tx.delete_multimap_table(durable::KEYS)?;
+    }
+    let mut rows = tx.open_table(durable::ROWS)?;
+    let mut reverse = tx.open_multimap_table(durable::KEYS)?;
+    let paths: Box<dyn Iterator<Item = &String>> = if incremental {
+        Box::new(touched.iter())
+    } else {
+        Box::new(view.rows.keys())
+    };
+    for path in paths {
+        control.check()?;
+        let old: Option<cache::PartitionRecord> = rows
+            .remove(path.as_str())?
+            .map(|v| serde_json::from_str(v.value()))
+            .transpose()?;
+        if let Some(old) = old {
+            for unit in old.units {
+                reverse.remove(unit.input_key.as_str(), path.as_str())?;
+            }
+        }
+        if let Some(record) = view.rows.get(path) {
+            rows.insert(path.as_str(), serde_json::to_string(record)?.as_str())?;
+            for unit in &record.units {
+                reverse.insert(unit.input_key.as_str(), path.as_str())?;
+            }
+        }
+    }
+    tx.open_table(crate::store::META)?.insert(
+        durable::CHECKPOINT,
+        serde_json::to_string(&Checkpoint {
+            revision,
+            coverage: coverage.clone(),
+            bytes: view.bytes,
+        })?
+        .as_str(),
+    )?;
+    durable::acknowledge(tx, revision)?;
+    Ok(())
 }
 
 #[cfg(all(test, feature = "test-faults"))]
@@ -361,7 +568,7 @@ mod tests {
     fn walk(engine: &Engine) -> CurrentMapping {
         let mut walk = MappingWalk::start(engine, &digest(), "recipe").unwrap();
         assert!(walk.step(engine, &Control::unbounded(), None).unwrap());
-        walk.finish(engine).unwrap()
+        walk.finish(engine, &Control::unbounded()).unwrap()
     }
     fn fixture(count: usize) -> (tempfile::TempDir, Engine) {
         let dir = tempfile::tempdir().unwrap();
@@ -374,6 +581,44 @@ mod tests {
             record(&engine, &path, i);
         }
         (dir, engine)
+    }
+
+    #[test]
+    fn an_unstable_retained_view_cannot_omit_uncheckpointed_rows_on_retry() {
+        let (_dir, engine) = fixture(3);
+        walk(&engine);
+        record(&engine, "f0001.md", 1001);
+        let mut interrupted = MappingWalk::start(&engine, &digest(), "recipe").unwrap();
+        interrupted
+            .step(&engine, &Control::unbounded(), None)
+            .unwrap();
+        record(&engine, "f0002.md", 1002);
+        assert!(
+            interrupted
+                .finish(&engine, &Control::unbounded())
+                .unwrap()
+                .mapping_revision
+                .is_none()
+        );
+        assert!(walk(&engine).mapping_revision.is_some());
+        let tx = engine.db.begin_read().unwrap();
+        let rows = tx.open_table(durable::ROWS).unwrap();
+        for (path, key) in [("f0001.md", 1001), ("f0002.md", 1002)] {
+            let row: cache::PartitionRecord =
+                serde_json::from_str(rows.get(path).unwrap().unwrap().value()).unwrap();
+            assert_eq!(row.units[0].input_key, format!("{key:064x}"));
+            let reverse = tx.open_multimap_table(durable::KEYS).unwrap();
+            assert_eq!(
+                reverse
+                    .get(format!("{key:064x}").as_str())
+                    .unwrap()
+                    .next()
+                    .unwrap()
+                    .unwrap()
+                    .value(),
+                path
+            );
+        }
     }
 
     #[test]
@@ -445,7 +690,13 @@ mod tests {
         record(&engine, "f0000.md", 900);
         cache(&engine, 900);
         assert!(pending.step(&engine, &Control::unbounded(), None).unwrap());
-        assert!(!pending.finish(&engine).unwrap().scope.complete);
+        assert!(
+            !pending
+                .finish(&engine, &Control::unbounded())
+                .unwrap()
+                .scope
+                .complete
+        );
         let reads = fault::reached(PARTITION_READ);
         let refreshed = walk(&engine);
         assert_eq!(fault::reached(PARTITION_READ) - reads, 1);
@@ -519,7 +770,13 @@ mod tests {
         assert!(fault::reached(MAPPING_FULL_PAGE) > pages);
         let mut other = MappingWalk::start(&engine, &"cd".repeat(32), "recipe").unwrap();
         other.step(&engine, &Control::unbounded(), None).unwrap();
-        assert!(other.finish(&engine).unwrap().units.is_empty());
+        assert!(
+            other
+                .finish(&engine, &Control::unbounded())
+                .unwrap()
+                .units
+                .is_empty()
+        );
         assert_eq!(walk(&engine).units, original.units);
         drop(engine);
         let engine = Engine::open_existing(&dir.path().join("store")).unwrap();

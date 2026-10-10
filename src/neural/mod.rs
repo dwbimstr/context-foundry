@@ -38,6 +38,11 @@ pub mod fault_names {
     // the detail is the worker's scratch root.
     point!(FOOTPRINT_MEASURE, "supervisor.footprint_measure");
     // Every read of one stored partition row (tests count them).
+    point!(
+        MAPPING_CHECKPOINT_BEFORE_COMMIT,
+        "semantic.mapping_checkpoint_before_commit"
+    );
+    point!(MAPPING_READ_SNAPSHOT, "semantic.mapping_read_snapshot");
     point!(MAPPING_FULL_PAGE, "semantic.mapping_full_page");
     point!(MAPPING_CACHE_PROBE, "semantic.mapping_cache_probe");
     point!(METADATA_READ, "semantic.metadata_read");
@@ -96,6 +101,7 @@ pub mod driver;
 #[cfg(all(feature = "test-faults", feature = "semantic"))]
 pub mod fake;
 pub mod index;
+pub(crate) mod mapping_store;
 pub mod partition;
 #[cfg(feature = "semantic")]
 pub mod prepare;

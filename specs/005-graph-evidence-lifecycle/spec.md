@@ -539,8 +539,16 @@ config, 1 MiB parse input, 128 facts/file, 8 traversal seeds, 512 postings and 6
 relations with at most 16 provider candidates each. Caps/incomplete scopes are visible.
 
 CLI `boundary index/relations` and opt-in MCP `index {boundary:{config,paths}}` publish
-or consume this index. T009 consumes it inside the final evidence snapshot. Refresh is
-explicit after source watching/indexing; no new watcher or background parser is added.
+or consume this index. T009 consumes it inside the final evidence snapshot. An owner
+started with `--watch --experimental-task-context` can explicitly enable one config
+through `index {boundary:{config,maintain:true}}`; `maintain:false` pauses it. Watching
+alone does not enable extraction. The existing source-watcher thread advances one
+configured file per turn, yields source work, skips unchanged hashes and reconciles the
+bounded selected set on a newer source revision. No extra worker, table or durable
+schedule is needed: restart requires explicit re-enablement and checks the whole admitted
+set. Status reports pending paths, parse/reuse counts and errors. Invalid configuration
+never blocks source acceptance; a newer revision or explicit re-enable retries it.
+This closes the manual-only maintenance gap while retaining immediate stale suppression.
 Dynamic/cross-repository joins, other frameworks, parameterized routes and broker
 contracts remain outside this producer. No generated claim becomes a compiler fact.
 

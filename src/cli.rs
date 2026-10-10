@@ -209,7 +209,7 @@ enum Command {
         #[arg(long = "policy-config", value_name = "FILE")]
         policy_config: Option<PathBuf>,
     },
-    /// Explicit schema upgrade under exclusive ownership; target is schema 11.
+    /// Explicit schema upgrade under exclusive ownership; target is schema 12.
     UpgradeStore {
         #[arg(long)]
         to: u32,

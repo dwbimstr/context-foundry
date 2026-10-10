@@ -3,7 +3,8 @@
 ## Pipelined source ingestion
 
 Ordinary CLI/MCP `index` now overlaps source reads and hashing with ordered source
-commits and publishes a lexical page after every 128 accepted candidates. A single
+commits in groups of at most four. Lexical publication follows 128 accepted candidates
+at the next group boundary (at most 131). A single
 Engine-owned pool serves reads and lexical builds and survives later refresh calls;
 its size is fixed at creation to the smaller of available CPU parallelism and eight.
 The source scan and final pending-work drain still report exact committed counts.
@@ -20,9 +21,12 @@ The read payload limit and existing 64 MiB lexical hand-out limit are separate a
 exclude parser, index, thread-stack and allocator overhead. Explicit MCP indexing
 still occupies its engine slot; this change adds early durable publication, while
 foreground admission continues to follow the existing watcher/owner rules. Source
-transactions remain individual. Continuous embedding is separately enabled below;
+batches commit atomically; single-path watcher updates keep their own transactions.
+Continuous embedding is separately enabled below;
 continuous brief regeneration is separately enabled with an explicit knowledge profile
-and maintenance option below. Sandbox tests do not establish 80,000-file throughput.
+and maintenance option below. A synthetic 80,000-file lexical/watcher check passes;
+see [scope and timings](validation.md#cold-verification-and-changed-input-publication--2026-10-10).
+Mixed-size repositories and semantic/knowledge throughput still need their own evidence.
 
 ## Continuous semantic maintenance
 
@@ -46,7 +50,8 @@ runs walk the corpus. Normal changes select eight exact paths at a time, with fa
 rotation and conditional acknowledgments after successful publication. Edits during
 inference stay pending. Unchanged exact inputs, including reverts, reuse cached vectors.
 Renames change rendered addresses and can require new embeddings. The generated-knowledge
-lane records obligations but runs no LLM generator yet.
+lane consumes its independent obligations only with explicitly enabled generation,
+as described below.
 
 When caught up, semantic status says `waiting`: the same preparation thread waits for
 committed-source notifications without repeated index/source/cache scans. Errors or
@@ -64,8 +69,9 @@ Exhaustion pauses with pending work intact. No embedding is repeated by these re
 `generation_builds`, `delta_publications` and `mapping_publications` distinguish work.
 
 Within an open owner, publication now refreshes only paths affected by source,
-partition or cache commits. Bounded dirty-state overflow, changed-input restart, identity
-changes and repair reconcile from redb. Publication and serving share verified-file receipts
+partition or cache commits. A changed-input restart resumes a matching schema-12 lookup.
+Bounded dirty-state overflow, unmatched checkpoints, identity changes and repair reconcile
+from redb. Publication and serving share verified-file receipts
 and at most two immutable resident ANN segments: unchanged segments are neither
 rehashed nor restored when locations or the other segment change. Explicit audits
 still hash; changed file versions are reverified on refresh. Warm queries detect a
@@ -75,9 +81,10 @@ Membership and location bases are immutable; one location overlay holds at most 
 changed keys / 32 MiB. A larger change compacts locations without rebuilding ANN.
 Decoded metadata and persistent mapping trees are shared across publications and
 requests. Unchanged restart publication verifies files and checks a transactional
-revision instead of scanning partitions/cache layouts. The first changed-input restart
-still reconciles; cold verification and compaction remain corpus-sized. These fixtures
-do not establish total edit cost at 80,000-file scale.
+revision instead of scanning partitions/cache layouts. Changed-input restart reads affected
+lookup rows, reverse postings and current partition/cache metadata. Initial/overflow or
+unmatched-checkpoint reconciliation, required cold verification and compaction remain
+corpus-sized. These fixtures do not establish total semantic edit cost at 80,000-file scale.
 
 ## Progressive semantic bootstrapping
 
@@ -647,7 +654,8 @@ Shutdown closes HTTP and discards uncommitted output before releasing the store.
 
 Knowledge tables were introduced in schema 10; the current branch uses schema 11. Selected brief publication does not drain
 unrelated source work. Owned local generation is available below; real-model task quality
-and CPU/global GPU pressure policies remain open; shared memory admission is described below.
+and native CPU/global GPU pressure policies remain open; shared memory and optional
+Linux CPU admission are described below.
 
 ## Owned local generation
 
@@ -806,10 +814,19 @@ bytes, observation age, pressure latch and last admission reason. Reading status
 probe the host. Current/cache hits need no worker admission and remain usable under pressure.
 This is owner-local admission, **not an aggregate OS memory quota**: owner/index memory,
 artifact disk/page cache, other processes and other Foundry owners are outside its reservation
-sum. External HTTP servers have no local worker reservation. Global GPU usage, CPU utilization,
-thermal/battery policy and simultaneous real-model hardware acceptance remain open. Without
+sum. External HTTP servers have no local worker reservation. Global GPU usage,
+native/cgroup CPU utilization, thermal/battery policy and simultaneous real-model hardware acceptance remain open. Without
 this option, previous admission and cache behavior is preserved.
 
+
+The optional model resource policy also accepts
+`"background_cpu":{"pause_percent":85,"resume_percent":65}` alongside its memory fields.
+It defers new background model calls under Linux host aggregate CPU contention, with
+one-second samples and hysteresis. Initial or unavailable observations defer by name;
+status reads do not sample. It preserves idle generation residency under CPU contention.
+This measures the host aggregate, not cgroup CPU capacity or hard CPU enforcement.
+Leave the field absent on macOS until its sampler is implemented and verified. Global
+GPU pressure, thermal/battery policy and task-quality/economics acceptance remain pending.
 
 ## Boundary relationships and task evidence
 
@@ -876,3 +893,12 @@ relations. Composition uses at most four additional lexical task queries, eight 
 eight relationships, four briefs and 32 source units. These are explicit discovery
 limits, not whole-repository coverage guarantees. See the [owning boundary spec](../specs/005-graph-evidence-lifecycle/spec.md#t005--connect-repository-behavior-across-process-boundaries)
 and [composition spec](../specs/003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task).
+
+
+Boundary maintenance can share the existing watcher. Start with `--watch
+--experimental-task-context`, then call MCP `index` with
+`{"boundary":{"config":"boundary.json","maintain":true}}`. This publishes the bounded
+configuration once and enables one-file maintenance turns. `maintain:false` pauses it;
+watching by itself and owner restart do not enable it. `status.watch.boundary` reports
+progress, reuse and errors. Source/config changes still invalidate old relationships
+immediately, even before maintenance catches up.

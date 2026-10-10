@@ -22,12 +22,12 @@ pub struct DocumentTokenizer {
 }
 
 impl DocumentTokenizer {
-    /// Load `model_dir/tokenizer.json`. The caller runs
-    /// [`SemanticProfile::verify_artifacts`] first; this constructor still
-    /// refuses a profile whose descriptor does not pin the tokenizer file.
+    /// Verify and load only `model_dir/tokenizer.json`. Model acquisition
+    /// separately verifies every pinned artifact before any inference.
     pub fn load(profile: &SemanticProfile) -> Result<Self, ProviderError> {
-        let artifacts = profile.verified_artifacts_until(&crate::Control::unbounded())?;
-        Self::load_verified(profile, &artifacts)
+        let control = crate::Control::unbounded();
+        let tokenizer = profile.verified_tokenizer_until(&control)?;
+        Self::load_tokenizer_verified(profile, &tokenizer, &control)
     }
 
     pub fn load_verified(
@@ -35,6 +35,16 @@ impl DocumentTokenizer {
         artifacts: &crate::neural::profile::VerifiedArtifacts,
     ) -> Result<Self, ProviderError> {
         artifacts.check(profile, &crate::Control::unbounded())?;
+        Self::from_verified_bytes(profile, artifacts.tokenizer_bytes()?)
+    }
+    pub(crate) fn load_tokenizer_verified(
+        profile: &SemanticProfile,
+        receipt: &crate::neural::profile::VerifiedTokenizer,
+        control: &crate::Control,
+    ) -> Result<Self, ProviderError> {
+        Self::from_verified_bytes(profile, receipt.bytes(profile, control)?)
+    }
+    fn from_verified_bytes(profile: &SemanticProfile, bytes: &[u8]) -> Result<Self, ProviderError> {
         if !profile
             .descriptor
             .artifact_files
@@ -45,7 +55,7 @@ impl DocumentTokenizer {
                 "the descriptor does not pin {TOKENIZER_ARTIFACT}"
             )));
         }
-        let mut tokenizer = tokenizers::Tokenizer::from_bytes(artifacts.tokenizer_bytes()?)
+        let mut tokenizer = tokenizers::Tokenizer::from_bytes(bytes)
             .map_err(|e| ProviderError::ProfileInvalid(format!("verified tokenizer.json: {e}")))?;
         // Never inherit the artifact's truncation or padding: Foundry counts
         // the exact model input and refuses over-limit inputs.

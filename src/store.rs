@@ -33,7 +33,7 @@ pub(crate) const META: TableDefinition<&str, &str> = TableDefinition::new("meta"
 pub(crate) const SEEN: TableDefinition<&str, &str> = TableDefinition::new("scan_seen");
 pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("feedback");
 
-pub const SCHEMA_VERSION: u32 = 11;
+pub const SCHEMA_VERSION: u32 = 12;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
 /// Refresh builds a page's search documents on at most this many threads,
@@ -3263,6 +3263,7 @@ fn initialize_tables(tx: &WriteTransaction) -> FResult<()> {
     crate::graph::init_compiler(tx)?;
     crate::neural::cache::init_tables(tx)?;
     crate::neural::work::init(tx)?;
+    crate::neural::mapping_store::init(tx)?;
     crate::knowledge::cache::init(tx)?;
     crate::learning::init_tables(tx)?;
     Ok(())
@@ -3378,15 +3379,15 @@ impl Engine {
     /// never upgrades schema. Derived-index trouble degrades search to
     /// `repair_required`; authoritative reads stay available.
     pub fn open_existing(store_dir: &Path) -> FResult<Self> {
-        Self::open_with(store_dir, true)
+        Self::open_with(store_dir, true, false)
     }
 
     /// Authoritative-only open used by repair: no Tantivy construction first.
     pub(crate) fn open_authoritative(store_dir: &Path) -> FResult<Self> {
-        Self::open_with(store_dir, false)
+        Self::open_with(store_dir, false, false)
     }
 
-    fn open_with(store_dir: &Path, construct_search: bool) -> FResult<Self> {
+    fn open_with(store_dir: &Path, construct_search: bool, repair_mapping: bool) -> FResult<Self> {
         let db_path = store_dir.join("knowledge.redb");
         if !db_path.is_file() {
             return Err(FoundryError::StoreNotFound);
@@ -3403,12 +3404,12 @@ impl Engine {
                 ));
             };
             match version.value() {
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" => {
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" => {
                     return Err(FoundryError::UpgradeRequired {
                         found: version.value().to_owned(),
                     });
                 }
-                "11" => 11u32,
+                "12" => 12u32,
                 other => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: other.to_owned(),
@@ -3416,8 +3417,8 @@ impl Engine {
                 }
             }
         };
-        // Confirm the schema-11 tables exist; missing authoritative tables in
-        // a schema-11 store are corruption, not something an open recreates.
+        // Confirm the schema-12 tables exist; missing authoritative tables in
+        // a schema-12 store are corruption, not something an open recreates.
         {
             let tx = db.begin_read()?;
             tx.open_table(SEEN).map_err(|e| {
@@ -3441,8 +3442,18 @@ impl Engine {
             crate::boundary::check(&tx)?;
             crate::neural::cache::check_tables(&db)?;
             crate::neural::work::check(&db)?;
+            if !repair_mapping {
+                crate::neural::mapping_store::check(&tx)?;
+            }
             crate::knowledge::cache::check(&db)?;
             crate::learning::check_tables(&db)?;
+        }
+        if repair_mapping {
+            // Only explicit repair replaces this disposable lookup. Ordinary
+            // authoritative reads and migrations never silently repair it.
+            let tx = db.begin_write()?;
+            crate::neural::mapping_store::purge(&tx)?;
+            tx.commit()?;
         }
         let (workspace, workspace_id) = Self::read_binding(&db)?;
         let marker = Self::read_marker(&db)?;
@@ -3506,7 +3517,7 @@ impl Engine {
         }
     }
 
-    /// Explicit v1..=v10 -> v11 transaction under exclusive ownership. The
+    /// Explicit v1..=v11 -> v12 transaction under exclusive ownership. The
     /// cumulative steps preserve source, memory, graph, semantic and learning
     /// data. Version 8 adds source_briefs and its never-reset brief_revision.
     /// Version 10 adds atomic knowledge completion caching and brief lineage.
@@ -3533,7 +3544,7 @@ impl Engine {
                         "store has no schema marker".into(),
                     ));
                 }
-                Some(v) if v.value() == "11" => return Ok(()), // already upgraded
+                Some(v) if v.value() == "12" => return Ok(()), // already upgraded
                 Some(v) if v.value() == "1" => 1u32,
                 Some(v) if v.value() == "2" => 2u32,
                 Some(v) if v.value() == "3" => 3u32,
@@ -3544,6 +3555,7 @@ impl Engine {
                 Some(v) if v.value() == "8" => 8u32,
                 Some(v) if v.value() == "9" => 9u32,
                 Some(v) if v.value() == "10" => 10u32,
+                Some(v) if v.value() == "11" => 11u32,
                 Some(v) => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: v.value().to_owned(),
@@ -3623,6 +3635,7 @@ impl Engine {
                 meta.insert("brief_revision", "0")?;
             }
             crate::neural::work::init(&tx)?;
+            crate::neural::mapping_store::init(&tx)?;
             crate::knowledge::cache::init(&tx)?;
             crate::boundary::init(&tx)?;
             // Publish the schema last inside the same transaction.
@@ -3978,12 +3991,52 @@ impl Engine {
         self.replace_source_with_hash(path, content, &hash)
     }
 
-    pub(crate) fn replace_prepared_source(&self, source: PreparedSource) -> FResult<bool> {
-        self.replace_source_with_hash(&source.path, &source.body, &source.hash)
+    /// Ordered, atomic ingestion batch. No partial success within a batch; source
+    /// revisions still advance once per changed path. The watcher uses singles.
+    pub(crate) fn replace_prepared_sources(
+        &self,
+        sources: &[PreparedSource],
+        control: &crate::Control,
+    ) -> FResult<usize> {
+        if sources.len() > 4 {
+            return Err(FoundryError::InvalidArgument(
+                "source commit batch exceeds four files".into(),
+            ));
+        }
+        control.check()?;
+        let tx = self.db.begin_write()?;
+        let mut changed = Vec::new();
+        for source in sources {
+            control.check()?;
+            if Self::stage_source(&tx, &source.path, &source.body, &source.hash)? {
+                changed.push(source.path.as_str());
+            }
+        }
+        if changed.is_empty() {
+            return Ok(0);
+        }
+        #[cfg(feature = "test-faults")]
+        for path in &changed {
+            fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
+        }
+        fault!(
+            SOURCE_BATCH_BEFORE_COMMIT,
+            Some(self),
+            Some(control),
+            &changed.len().to_string()
+        )?;
+        control.check()?;
+        let count = changed.len();
+        self.semantic_commit(tx, changed.iter().copied(), std::iter::empty(), false)?;
+        self.semantic_wake.notify();
+        #[cfg(feature = "test-faults")]
+        for path in &changed {
+            fault!(SOURCE_AFTER_COMMIT, Some(self), None, path)?;
+        }
+        Ok(count)
     }
 
-    fn replace_source_with_hash(&self, path: &str, content: &str, hash: &str) -> FResult<bool> {
-        let tx = self.db.begin_write()?;
+    fn stage_source(tx: &WriteTransaction, path: &str, content: &str, hash: &str) -> FResult<bool> {
         {
             let mut sources = tx.open_table(SOURCES)?;
             let old = match sources.get(path)? {
@@ -4018,8 +4071,16 @@ impl Engine {
             )?;
             tx.open_table(PENDING)?
                 .insert(source_pending_key(path).as_str(), hash)?;
-            bump_revision(&tx, 1)?;
-            crate::neural::work::changed(&tx, path, Some(hash), revision_in(&tx)?)?;
+            bump_revision(tx, 1)?;
+            crate::neural::work::changed(tx, path, Some(hash), revision_in(tx)?)?;
+        }
+        Ok(true)
+    }
+
+    fn replace_source_with_hash(&self, path: &str, content: &str, hash: &str) -> FResult<bool> {
+        let tx = self.db.begin_write()?;
+        if !Self::stage_source(&tx, path, content, hash)? {
+            return Ok(false);
         }
         // A failure here drops the transaction: prior source bytes stay intact.
         fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
@@ -6133,7 +6194,7 @@ impl Engine {
     /// marker, one retained quarantine, paged enqueue, drained replacement.
     pub fn repair_index(store_dir: &Path, control: &crate::Control) -> FResult<RepairReport> {
         control.check()?;
-        let mut engine = Self::open_authoritative(store_dir)?;
+        let mut engine = Self::open_with(store_dir, false, true)?;
         if engine.schema != SCHEMA_VERSION {
             return Err(FoundryError::UpgradeRequired {
                 found: engine.schema.to_string(),

@@ -49,7 +49,8 @@ idle unload and per-worker CPU/RAM/Metal controls. Shared memory admission is im
 hardware acceptance and real-model task acceptance remain open. See the
 [revised build order](../docs/context-ecosystem-plan.md#revised-build-order).
 005 T005 and 003 T009 now implement a scoped static Python HTTP boundary producer and
-explicit primary-task evidence composition in schema 11. Changed-source/config freshness,
+explicit primary-task evidence composition introduced in schema 11. Schema 12 adds
+a transactional publication lookup for changed-input restart. Changed-source/config freshness,
 ambiguous/unsupported/incomplete joins, atomic incremental publication, CLI/opt-in MCP,
 source-bound brief discovery and delivered-facet accounting are verified in sandbox
 fixtures. Broader framework/multi-root coverage and paired real-host quality/economics

@@ -33,7 +33,7 @@ use crate::error::FResult;
 use crate::error::FoundryError;
 use crate::neural::anchor::{Dir, conflict_or_io};
 #[cfg(feature = "semantic")]
-use crate::neural::cache::{self, CacheLookup, CacheProbe};
+use crate::neural::cache::{self, CacheLookup};
 use crate::neural::provider::SUPPORTED_DIMENSIONS;
 #[cfg(feature = "semantic")]
 use crate::store::Engine;
@@ -411,7 +411,8 @@ fn read_index(
     file: std::fs::File,
     control: &Control,
     limit: u64,
-) -> Result<Vec<u8>, GenerationError> {
+    hash: bool,
+) -> Result<(Vec<u8>, Option<String>), GenerationError> {
     let len = file
         .metadata()
         .map_err(|e| unavailable(format!("index file unreadable: {e}")))?
@@ -421,6 +422,7 @@ fn read_index(
             "index file is {len} bytes, over the {limit}-byte load bound"
         )));
     }
+    let mut hasher = hash.then(Sha256::new);
     let mut bytes = Vec::with_capacity(len as usize);
     let mut bounded = file.take(limit + 1);
     let mut chunk = vec![0u8; 1 << 20];
@@ -432,6 +434,12 @@ fn read_index(
         if read == 0 {
             break;
         }
+        if bytes.len() as u64 + read as u64 > limit {
+            return Err(unavailable("index file exceeds its byte bound"));
+        }
+        if let Some(hasher) = &mut hasher {
+            hasher.update(&chunk[..read]);
+        }
         bytes.extend_from_slice(&chunk[..read]);
     }
     if bytes.len() as u64 > limit {
@@ -439,7 +447,8 @@ fn read_index(
             "index file exceeds the {limit}-byte load bound"
         )));
     }
-    Ok(bytes)
+    control.check().map_err(GenerationError::Interrupted)?;
+    Ok((bytes, hasher.map(|h| format!("{:x}", h.finalize()))))
 }
 
 /// The format version alone, read before the full manifest is decoded so an
@@ -799,7 +808,7 @@ impl Engine {
     ) -> FResult<CurrentMapping> {
         let mut walk = MappingWalk::audit(self, function_digest, recipe_id)?;
         while !walk.step(self, control, None)? {}
-        walk.finish(self)
+        walk.finish(self, control)
     }
 
     /// The recorded profile identity, if a profile this build serves was
@@ -929,9 +938,10 @@ impl Engine {
         {
             return Ok(Publication::Current(generation.manifest.count));
         }
-        let mut walk = MappingWalk::start(self, &identity.digest, &identity.recipe)?;
+        let mut walk =
+            MappingWalk::resume(self, &identity.digest, &identity.recipe, previous.as_ref())?;
         while !walk.step(self, control, None)? {}
-        let wanted = walk.finish(self)?;
+        let wanted = walk.finish(self, control)?;
         if let Some(generation) = &previous
             && wanted.published_by(generation)
         {

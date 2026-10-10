@@ -486,15 +486,19 @@ async fn transport_failures_are_bounded_redacted_and_back_off_across_restart() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn deadline_closes_the_call_and_missing_usage_stays_unknown() {
+async fn provider_deadline_closes_an_admitted_call_and_missing_usage_stays_unknown() {
     let server = Server::new(|_, _| {
         (
             200,
             response("fixture-model", output()).to_string(),
-            Duration::from_millis(250),
+            Duration::from_secs(2),
         )
     });
     let mut env = Env::new(&server);
+    // Start the tested timeout at provider admission, not before source/hash/
+    // token preparation. The old 80 ms whole-run deadline could correctly admit
+    // zero calls on a loaded host, contradicting its usage assertion.
+    env.profile.call_seconds = 1;
     let started = Instant::now();
     let report = knowledge::prepare(
         env.engine.as_mut().unwrap(),
@@ -504,12 +508,14 @@ async fn deadline_closes_the_call_and_missing_usage_stays_unknown() {
             request_tokens: 100_000,
             output_tokens: 10_000,
         },
-        &Control::with_deadline(started + Duration::from_millis(80)),
+        &Control::with_deadline(started + Duration::from_secs(10)),
     )
     .await
     .unwrap();
     assert!(!report.complete);
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(report.calls, 1);
+    assert_eq!(server.calls(), 1);
     assert_eq!(report.usage_unknown_calls, 1);
     let server = Server::new(|_, _| {
         let mut r = response("fixture-model", output());
@@ -1425,6 +1431,7 @@ async fn local_mcp_memory_policy_tracks_residency_and_cached_replay_bypasses_pre
         resident_bytes: 512 * 1024 * 1024,
         reserve_bytes: 1024 * 1024,
         resume_margin_bytes: 1024 * 1024,
+        background_cpu: None,
     };
     let client = launch_mcp_resources(&mut env, true, false, Some(policy())).await;
     let complete = mcp_until(&client, |s| {
@@ -1484,6 +1491,7 @@ async fn local_mcp_memory_policy_defers_without_calls_and_pause_keeps_work() {
             resident_bytes: 512 * 1024 * 1024,
             reserve_bytes: 1 << 60,
             resume_margin_bytes: 1024,
+            background_cpu: None,
         }),
     )
     .await;
@@ -1534,6 +1542,7 @@ async fn local_mcp_memory_budget_refuses_before_worker_or_usage_and_restart_reco
             resident_bytes: 1,
             reserve_bytes: 1,
             resume_margin_bytes: 1,
+            background_cpu: None,
         }),
     )
     .await;

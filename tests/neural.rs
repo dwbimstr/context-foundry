@@ -1374,6 +1374,7 @@ fn missing_artifacts_fail_by_name_without_downloads() {
     env.close();
     let model_dir = SemanticProfile::load(&env.profile).unwrap().model_dir;
     std::fs::remove_file(model_dir.join("model.gguf")).unwrap();
+    env.open().replace_source("a.md", &body(200)).unwrap();
     let error = env.prepare_err(60);
     assert_eq!(error.code(), "profile_invalid", "{error}");
     // The committed cache survives the refused run untouched.
@@ -2339,11 +2340,21 @@ fn grow_weights(env: &Env) {
 }
 
 #[test]
-fn artifact_verification_obeys_the_run_budget() {
+fn model_verification_is_not_started_below_the_publication_reserve() {
     let mut env = Env::new(&[("a.md", &body(100))]);
     grow_weights(&env);
+    use context_foundry::fault::{self, Action};
+    fault::arm(
+        context_foundry::neural::fault_names::ARTIFACT_HASH,
+        0,
+        Action::FailWhen {
+            detail_contains: "model.gguf".into(),
+            message: "unneeded weight hash".into(),
+        },
+    );
     let started = Instant::now();
     let report = env.prepare(1);
+    fault::disarm_all();
     assert!(
         started.elapsed() < Duration::from_secs(6),
         "verification was not bounded: {:?}",
@@ -2351,7 +2362,10 @@ fn artifact_verification_obeys_the_run_budget() {
     );
     assert!(report.partial, "{report:?}");
     assert_eq!(report.reason_code, Some("budget_exhausted"), "{report:?}");
-    assert_eq!(report.partitioned_sources, 0);
+    assert!(
+        report.partitioned_sources <= 1,
+        "accepted partition metadata remains reusable"
+    );
     assert_eq!(env.calls(), 0);
     assert_eq!(env.open().semantic_cache_totals().unwrap().0, 0);
     assert!(env.open().source("a.md").unwrap().is_some());
@@ -2390,7 +2404,10 @@ fn artifact_verification_obeys_caller_cancellation() {
         "cancellation did not reach verification"
     );
     assert_eq!(report.reason_code, Some("cancelled"), "{report:?}");
-    assert_eq!(report.partitioned_sources, 0);
+    assert!(
+        report.partitioned_sources <= 1,
+        "accepted partition metadata remains reusable"
+    );
     assert_eq!(env.calls(), 0);
 }
 
@@ -2869,4 +2886,61 @@ fn warm_cache_runs_and_finalizers_use_transactional_counters_without_censuses() 
     fault::disarm_all();
     env.close();
     assert_eq!(env.open().semantic_cache_totals().unwrap(), (2, 2 * ROW));
+}
+
+#[test]
+fn cache_only_preparation_never_opens_weights_but_missing_inputs_require_them() {
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
+    let profile = SemanticProfile::load(&env.profile).unwrap();
+    std::fs::remove_file(profile.model_dir.join(&profile.descriptor.gguf)).unwrap();
+    let calls = env.calls();
+    let replay = env.prepare(60);
+    assert!(!replay.partial, "{replay:?}");
+    assert_eq!(replay.document_calls, 0);
+    assert_eq!(env.calls(), calls);
+    env.open().replace_source("a.md", &body(200)).unwrap();
+    let error = env.prepare_err(60);
+    assert_eq!(error.code(), "profile_invalid", "{error:?}");
+    assert_eq!(env.calls(), calls, "no call can use unverified weights");
+    assert!(
+        env.open().semantic_cache_totals().unwrap().0 > 0,
+        "accepted cache survives"
+    );
+}
+
+#[test]
+fn tokenizer_receipt_cannot_promote_after_a_substitution() {
+    use context_foundry::fault::{self, Action};
+    let mut env = Env::new(&[("a.md", &body(100))]);
+    let path = SemanticProfile::load(&env.profile)
+        .unwrap()
+        .model_dir
+        .join("tokenizer.json");
+    fault::arm(
+        prepare::fault_names::PARTITION_AFTER_COMMIT,
+        0,
+        Action::Call(Box::new(move |_| {
+            std::fs::write(&path, "substitution after tokenization").unwrap();
+        })),
+    );
+    let error = env.prepare_err(60);
+    fault::disarm_all();
+    assert_eq!(error.code(), "profile_invalid");
+    assert_eq!(env.calls(), 0);
+    assert_eq!(env.open().semantic_cache_totals().unwrap().0, 0);
+}
+
+#[test]
+fn cold_full_artifact_verification_still_obeys_its_own_deadline() {
+    let env = Env::new(&[]);
+    grow_weights(&env);
+    let profile = SemanticProfile::load(&env.profile).unwrap();
+    let started = Instant::now();
+    let result = profile
+        .verified_artifacts_until(&Control::with_deadline(started + Duration::from_millis(40)));
+    assert!(
+        matches!(result, Err(ProviderError::Timeout)),
+        "bounded hash must stop"
+    );
+    assert!(started.elapsed() < Duration::from_secs(6));
 }

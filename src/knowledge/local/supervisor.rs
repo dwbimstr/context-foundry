@@ -534,6 +534,7 @@ mod pressure_tests {
                 resident_bytes: 1000,
                 reserve_bytes: 100,
                 resume_margin_bytes: 50,
+                background_cpu: None,
             },
             memory.clone(),
         );

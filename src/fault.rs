@@ -39,6 +39,7 @@ pub mod names {
     point!(TASK_EVIDENCE_BEFORE_FINAL, "task_evidence.before_final");
     point!(TASK_BEFORE_COMMIT, "task.before_commit");
     point!(TASK_AFTER_COMMIT, "task.after_commit");
+    point!(SOURCE_BATCH_BEFORE_COMMIT, "source.batch_before_commit");
     point!(SOURCE_BEFORE_COMMIT, "source.before_commit");
     point!(SOURCE_AFTER_COMMIT, "source.after_commit");
     point!(INDEX_AFTER_SEARCH_COMMIT, "index.after_search_commit");

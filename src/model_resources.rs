@@ -13,6 +13,14 @@ pub struct Config {
     pub resident_bytes: u64,
     pub reserve_bytes: u64,
     pub resume_margin_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_cpu: Option<CpuConfig>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpuConfig {
+    pub pause_percent: u8,
+    pub resume_percent: u8,
 }
 impl Config {
     pub fn load(path: &Path) -> FResult<Self> {
@@ -28,7 +36,11 @@ impl Config {
         Ok(config)
     }
     fn validate(&self) -> FResult<()> {
-        if self.resident_bytes == 0
+        if self.background_cpu.as_ref().is_some_and(|cpu| {
+            cpu.pause_percent == 0
+                || cpu.pause_percent > 100
+                || cpu.resume_percent >= cpu.pause_percent
+        }) || self.resident_bytes == 0
             || self.reserve_bytes == 0
             || self.resume_margin_bytes == 0
             || self
@@ -44,7 +56,7 @@ impl Config {
 }
 fn invalid() -> FoundryError {
     FoundryError::InvalidArgument(
-        "invalid model resource policy: positive, nonoverflowing byte limits required".into(),
+        "invalid model resource policy: positive byte limits and 0 <= CPU resume < pause <= 100 required".into(),
     )
 }
 
@@ -68,6 +80,8 @@ pub(crate) enum Deferred {
     Pressure,
     Headroom,
     Unavailable,
+    CpuPressure,
+    CpuUnavailable,
 }
 impl Deferred {
     pub fn code(self) -> &'static str {
@@ -76,6 +90,8 @@ impl Deferred {
             Self::Pressure => "model_memory_pressure",
             Self::Headroom => "model_memory_headroom",
             Self::Unavailable => "model_memory_observation_unavailable",
+            Self::CpuPressure => "model_cpu_pressure",
+            Self::CpuUnavailable => "model_cpu_observation_unavailable",
         }
     }
 }
@@ -87,11 +103,16 @@ struct State {
     available: Option<u64>,
     pressure: bool,
     reason: Option<Deferred>,
+    cpu_sampled: Option<Instant>,
+    cpu_previous: Option<CpuTicks>,
+    cpu_percent: Option<u8>,
+    cpu_pressure: bool,
 }
 pub(crate) struct Resources {
     config: Config,
     state: Mutex<State>,
     sample: Box<dyn Fn() -> Option<u64> + Send + Sync>,
+    cpu_sample: Box<dyn Fn() -> Option<CpuTicks> + Send + Sync>,
 }
 impl Resources {
     pub(crate) fn new(config: Config) -> FResult<Arc<Self>> {
@@ -106,6 +127,7 @@ impl Resources {
             config,
             state: Mutex::new(State::default()),
             sample,
+            cpu_sample: Box::new(cpu_ticks),
         }))
     }
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -142,9 +164,44 @@ impl Resources {
     }
     pub(crate) fn background(&self) -> Result<(), Deferred> {
         let mut state = self.lock();
-        let result = self.check(&mut state, 0);
+        let result = self
+            .check(&mut state, 0)
+            .and_then(|()| self.check_cpu(&mut state));
         state.reason = result.err();
         result
+    }
+    /// Idle residency reacts to memory pressure; CPU contention defers new calls
+    /// without throwing away a loaded generator and forcing another bootstrap.
+    pub(crate) fn memory_background(&self) -> Result<(), Deferred> {
+        let mut state = self.lock();
+        let result = self.check(&mut state, 0);
+        if result.is_err() {
+            state.reason = result.err();
+        }
+        result
+    }
+    fn check_cpu(&self, state: &mut State) -> Result<(), Deferred> {
+        let Some(config) = &self.config.background_cpu else {
+            return Ok(());
+        };
+        if state
+            .cpu_sampled
+            .is_none_or(|at| at.elapsed() >= Duration::from_secs(1))
+        {
+            let now = (self.cpu_sample)();
+            state.cpu_percent = now
+                .zip(state.cpu_previous)
+                .and_then(|(now, before)| now.percent_since(before));
+            state.cpu_previous = now;
+            state.cpu_sampled = Some(Instant::now());
+        }
+        let busy = state.cpu_percent.ok_or(Deferred::CpuUnavailable)?;
+        if busy >= config.pause_percent || state.cpu_pressure && busy > config.resume_percent {
+            state.cpu_pressure = true;
+            return Err(Deferred::CpuPressure);
+        }
+        state.cpu_pressure = false;
+        Ok(())
     }
     pub(crate) fn reserve(
         self: &Arc<Self>,
@@ -177,7 +234,10 @@ impl Resources {
             "reserved_generation_bytes":state.reserved[1],"available_bytes":state.available,
             "observation_age_ms":state.sampled.map(|at| at.elapsed().as_millis().min(u64::MAX as u128) as u64),
             "reason":state.reason.map(Deferred::code),"pressure":state.pressure,
-            "scope":"embedding_and_generation_worker_ceilings", "sample_interval_ms":1000})
+            "scope":"embedding_and_generation_worker_ceilings", "sample_interval_ms":1000,
+            "background_cpu":{"enabled":self.config.background_cpu.is_some(),"busy_percent":state.cpu_percent,
+                "pressure":state.cpu_pressure,"scope":"host_aggregate_linux_proc_stat",
+                "observation_age_ms":state.cpu_sampled.map(|at| at.elapsed().as_millis().min(u64::MAX as u128) as u64)}})
     }
     #[cfg(test)]
     pub(crate) fn fixture(
@@ -205,6 +265,59 @@ impl Drop for Reservation {
         state.reserved[self.lane.index()] = 0;
         state.refresh = true;
     }
+}
+
+#[derive(Clone, Copy)]
+struct CpuTicks {
+    busy: u64,
+    total: u64,
+}
+impl CpuTicks {
+    fn percent_since(self, before: Self) -> Option<u8> {
+        let total = self.total.checked_sub(before.total)?;
+        let busy = self.busy.checked_sub(before.busy)?;
+        if total == 0 || busy > total {
+            return None;
+        }
+        // Round upward so a fractional excess is never admitted as below a limit.
+        Some(((busy as u128 * 100).div_ceil(total as u128)) as u8)
+    }
+}
+#[cfg(target_os = "linux")]
+fn cpu_ticks() -> Option<CpuTicks> {
+    let mut text = String::new();
+    std::fs::File::open("/proc/stat")
+        .ok()?
+        .take(4097)
+        .read_to_string(&mut text)
+        .ok()?;
+    parse_cpu_ticks(text.lines().next()?)
+}
+#[cfg(not(target_os = "linux"))]
+fn cpu_ticks() -> Option<CpuTicks> {
+    None
+}
+#[cfg(any(target_os = "linux", test))]
+fn parse_cpu_ticks(line: &str) -> Option<CpuTicks> {
+    let mut fields = line.split_whitespace();
+    if fields.next()? != "cpu" {
+        return None;
+    }
+    // user/nice include guest time already; never add guest/guest_nice twice.
+    let ticks = fields
+        .take(8)
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    if ticks.len() != 8 {
+        return None;
+    }
+    let total = ticks.iter().try_fold(0u64, |sum, n| sum.checked_add(*n))?;
+    let idle = ticks[3].checked_add(ticks[4])?;
+    Some(CpuTicks {
+        busy: total.checked_sub(idle)?,
+        total,
+    })
 }
 
 // Missing/malformed observations fail closed. No subprocess, model/store scans or
@@ -410,6 +523,89 @@ mod tests {
             resident_bytes: 1000,
             reserve_bytes: 100,
             resume_margin_bytes: 50,
+            background_cpu: None,
+        }
+    }
+    #[test]
+    fn cpu_pressure_defers_background_with_hysteresis_without_evicting_memory() {
+        let ticks = Arc::new(Mutex::new(Some(CpuTicks {
+            busy: 0,
+            total: 100,
+        })));
+        let reads = Arc::new(AtomicU64::new(0));
+        let mut config = config();
+        config.background_cpu = Some(CpuConfig {
+            pause_percent: 80,
+            resume_percent: 60,
+        });
+        let mut resources = Resources::with_sampler(config, Box::new(|| Some(2000))).unwrap();
+        let (observed, count) = (ticks.clone(), reads.clone());
+        Arc::get_mut(&mut resources).unwrap().cpu_sample = Box::new(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            *observed.lock().unwrap()
+        });
+        assert_eq!(resources.background(), Err(Deferred::CpuUnavailable));
+        let sample = |busy, total| {
+            *ticks.lock().unwrap() = Some(CpuTicks { busy, total });
+            resources.lock().cpu_sampled = Some(Instant::now() - Duration::from_secs(2));
+            resources.background()
+        };
+        assert_eq!(sample(90, 200), Err(Deferred::CpuPressure));
+        let resident = resources.reserve(Lane::Generation, 500).unwrap();
+        assert!(
+            resources.memory_background().is_ok(),
+            "CPU contention keeps idle residency"
+        );
+        assert_eq!(resources.status()["reserved_generation_bytes"], 500);
+        assert_eq!(
+            sample(160, 300),
+            Err(Deferred::CpuPressure),
+            "hysteresis at 70%"
+        );
+        assert_eq!(sample(220, 400), Ok(()), "resume at 60%");
+        let before = reads.load(Ordering::SeqCst);
+        for _ in 0..8 {
+            resources.status();
+            resources.background().unwrap();
+        }
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            before,
+            "status never samples; admission reuses its interval"
+        );
+        assert_eq!(
+            sample(1, 10),
+            Err(Deferred::CpuUnavailable),
+            "counter reset is unknown"
+        );
+        assert_eq!(
+            sample(2, 10),
+            Err(Deferred::CpuUnavailable),
+            "no elapsed ticks is unknown"
+        );
+        assert_eq!(sample(92, 110), Err(Deferred::CpuPressure));
+        drop(resident);
+        assert_eq!(resources.status()["reserved_generation_bytes"], 0);
+    }
+    #[test]
+    fn cpu_observation_validates_counters_and_policy_without_double_counting_guests() {
+        let ticks = parse_cpu_ticks("cpu 10 20 30 40 50 60 70 80 9 10").unwrap();
+        assert_eq!((ticks.busy, ticks.total), (270, 360));
+        for line in [
+            "cpu0 1 2 3 4 5 6 7 8",
+            "cpu 1 2 3",
+            "cpu 1 2 bad 4 5 6 7 8",
+            "cpu 18446744073709551615 1 1 1 1 1 1 1",
+        ] {
+            assert!(parse_cpu_ticks(line).is_none());
+        }
+        for (pause, resume) in [(0, 0), (101, 60), (80, 80), (50, 60)] {
+            let mut config = config();
+            config.background_cpu = Some(CpuConfig {
+                pause_percent: pause,
+                resume_percent: resume,
+            });
+            assert!(config.validate().is_err());
         }
     }
     #[test]

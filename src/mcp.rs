@@ -1566,7 +1566,7 @@ impl FoundryMcp {
                 .get_mut("index")
                 .expect("index route exists");
             let schema = Arc::make_mut(&mut route.attr.input_schema);
-            schema.get_mut("properties").and_then(serde_json::Value::as_object_mut).expect("index properties").insert("boundary".into(), serde_json::json!({"type":"object","additionalProperties":false,"required":["config"],"properties":{"config":{"type":"string","maxLength":4096},"paths":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":4096}}}}));
+            schema.get_mut("properties").and_then(serde_json::Value::as_object_mut).expect("index properties").insert("boundary".into(), serde_json::json!({"type":"object","additionalProperties":false,"required":["config"],"properties":{"maintain":{"type":"boolean","description":"Enable or pause one boundary configuration on the existing --watch owner."},"config":{"type":"string","maxLength":4096},"paths":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":4096}}}}));
         }
         if state.knowledge.is_some() {
             for (tool, key, field) in [
@@ -2133,6 +2133,24 @@ impl FoundryMcp {
                         ));
                     }
                 };
+            let watch = self.state.watch.clone();
+            if request.maintain.is_some() && watch.is_none() {
+                return Ok(error_result(
+                    "unsupported_mode",
+                    "boundary maintenance requires --watch",
+                    false,
+                ));
+            }
+            if request.config.is_empty()
+                || request.config.len() > 4096
+                || request.maintain == Some(false) && !request.paths.is_empty()
+            {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "boundary config must be bounded; pause accepts no paths",
+                    false,
+                ));
+            }
             let timeout_ms = match optional_u64(
                 &arguments,
                 "timeout_ms",
@@ -2150,10 +2168,24 @@ impl FoundryMcp {
                 Self::admission_guard(&ctx),
                 false,
                 move |engines, control| {
-                    engines[0]
+                    if request.maintain == Some(false) {
+                        watch
+                            .as_ref()
+                            .expect("validated watcher")
+                            .boundary_maintenance(request.config, false)?;
+                        return Ok(serde_json::json!({"boundary_maintenance":"paused"}));
+                    }
+                    let report = engines[0]
                         .as_ref()
                         .expect("primary store")
-                        .index_boundaries(&request.config, &request.paths, control)
+                        .index_boundaries(&request.config, &request.paths, control)?;
+                    if request.maintain == Some(true) {
+                        watch
+                            .as_ref()
+                            .expect("validated watcher")
+                            .boundary_maintenance(request.config, true)?;
+                    }
+                    Ok(serde_json::to_value(report).expect("publication serializes"))
                 },
             )
             .await;
@@ -5016,6 +5048,7 @@ mod tests {
             resident_bytes: ceiling,
             reserve_bytes: 1,
             resume_margin_bytes: 1,
+            background_cpu: None,
         };
         let resources = Resources::fixture(config, memory);
         let held = resources.reserve(Lane::Generation, 1).unwrap();
@@ -5063,6 +5096,7 @@ mod tests {
                 resident_bytes: 1000,
                 reserve_bytes: 100,
                 resume_margin_bytes: 50,
+                background_cpu: None,
             },
             memory.clone(),
         );

@@ -633,15 +633,16 @@ VM compatibility and the library choices remain unexecuted proof obligations. Ex
 publication authorization and destination are still required to upload any artifact.
 
 
-## Experimental schema 11
+## Experimental schema 12
 
-The experimental context branch uses schema 11 for source/config-bound relationship
-scopes and key postings. It preserves schema 10 generated-knowledge completion caching
+The experimental context branch uses schema 12 for a disposable publication lookup
+and bounded changed-input frontier. It preserves schema 11 source/config-bound
+relationship scopes and key postings, schema 10 generated-knowledge completion caching
 and lineage, schema 9 independent semantic/knowledge obligations, schema 8 briefs
-and schema 7 task state. Existing schemas 1–10 require explicit
-`foundry --store STORE upgrade-store --to 11`; initialization and ordinary open do not
+and schema 7 task state. Existing schemas 1–11 require explicit
+`foundry --store STORE upgrade-store --to 12`; initialization and ordinary open do not
 upgrade. Preserve a closed-store backup before upgrading an existing store. Older
-binaries refuse schema 11; rollback requires the backup or a compatible binary.
+binaries refuse schema 12; rollback requires the backup or a compatible binary.
 Upgrade preserves source, graph, memory, task, semantic and learning tables. No
 source scanning, provider call or automatic generation is part of the upgrade.
 See the [experimental workflow](experimental-context.md#source-bound-derived-briefs)
@@ -657,7 +658,7 @@ from prior state on restart; watching alone loads no model. Pause through
 require explicit resume. Ordinary status reads a publication observation; use
 `semantic status --audit` or MCP `status {"semantic_audit":true}` for integrity/census.
 
-Semantic generation format v5 remains derived data under schema 11: existing vector-cache
+Semantic generation format v5 remains derived data under schema 12: existing vector-cache
 rows and partitions remain reusable. Older generation formats are refused by name;
 explicit preparation or `repair-index` republishes them from cache. Small edits publish
 one bounded ANN delta and a separate bounded location overlay. Location compaction
@@ -672,12 +673,14 @@ unchanged segments skip hashing and restoration during publication/serving refre
 Metadata receipts also reuse decoded membership and location bases. An additive META
 revision advances transactionally with source/partition/cache changes, including in
 lexical-only builds. A clean restart verifies the generation and reuses matching
-publication coverage without a mapping scan. Changed-input restart, overflow, identity
-changes and explicit repair rebuild the mapping view; receipts never survive restart.
+publication coverage without a mapping scan. Changed-input restart resumes a matching
+transactional lookup and reads affected partitions/cache keys, including cache-only changes and partial coverage. Overflow,
+identity changes, unmatched/interrupted checkpoints and explicit repair rebuild the
+lookup. File-verification receipts never survive restart.
 Warm queries check owner/profile/manifest identity; refresh rechecks file versions.
 Explicit audits always validate independently. Cold verification and compaction remain
 corpus-sized. Generation v5 remains unchanged by the knowledge feature; the latter
-was introduced by schema 10 and is preserved by the schema-11 upgrade.
+was introduced by schema 10 and is preserved by the schema-12 upgrade.
 
 Selective knowledge preparation uses an explicitly configured HTTP or owned local provider and source
 scope under exclusive CLI ownership or the existing MCP owner. Current inputs skip

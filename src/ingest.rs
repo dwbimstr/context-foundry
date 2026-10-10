@@ -17,6 +17,9 @@ const SEEN_PAGE: usize = 128;
 /// At most eight reads/results, each containing at most 2 MiB plus one sentinel
 /// byte. Completed but uncommitted results occupy the same slots as active reads.
 const READ_AHEAD: usize = 8;
+/// Four ready files share one durable source commit; the remaining slots keep
+/// read-ahead bounded and able to overlap the one writer.
+const COMMIT_BATCH: usize = 4;
 /// Publish lexical progress before the whole enumeration has finished.
 const PUBLISH_EVERY: usize = 128;
 
@@ -94,54 +97,57 @@ impl ScanProgress {
         if !self.check(control) {
             return Ok(false);
         }
-        let pending = self.pending.pop_front().expect("a queued read");
-        let read = pending.result.recv().unwrap_or_else(|_| {
-            Err(OpenFailure::Io(
-                "an ingestion worker exited without its result".into(),
-            ))
-        });
-        if !self.check(control) {
+        let mut accepted = Vec::new();
+        for _ in 0..self.pending.len().min(COMMIT_BATCH) {
+            let pending = self.pending.pop_front().expect("a queued read");
+            let read = pending.result.recv().unwrap_or_else(|_| {
+                Err(OpenFailure::Io(
+                    "an ingestion worker exited without its result".into(),
+                ))
+            });
+            if !self.check(control) {
+                return Ok(false);
+            }
+            match read {
+                Ok(read) => {
+                    fault!(
+                        SCAN_AFTER_READ,
+                        Some(&*engine),
+                        Some(control),
+                        &pending.path
+                    )?;
+                    if !self.check(control) {
+                        return Ok(false);
+                    }
+                    if read.content.is_err() {
+                        // Keep exclusion-driven deletions in walker order. They
+                        // retain their single-file transaction and final check.
+                        if !self.commit_ready(engine, root_fd, canonical, control, &mut accepted)? {
+                            return Ok(false);
+                        }
+                        if let Err(failure) = verify_read(&read, root_fd, canonical, &pending.path)
+                        {
+                            self.failed_read(&pending.path, failure);
+                            continue;
+                        }
+                        let reason = read.content.err().expect("excluded file");
+                        self.report.deleted += u64::from(engine.delete_source(&pending.path)?);
+                        self.report.excluded += 1;
+                        push_sample(
+                            &mut self.report.exclusion_samples,
+                            format!("{}: {reason}", pending.path),
+                        );
+                        self.since_publish += 1;
+                    } else {
+                        accepted.push((pending.path, read));
+                    }
+                }
+                Err(failure) => self.failed_read(&pending.path, failure),
+            }
+        }
+        if !self.commit_ready(engine, root_fd, canonical, control, &mut accepted)? {
             return Ok(false);
         }
-        let path = &pending.path;
-        let (content, _held_file) = match read {
-            Ok(read) => {
-                fault!(SCAN_AFTER_READ, Some(&*engine), Some(control), path)?;
-                if !self.check(control) {
-                    return Ok(false);
-                }
-                if let Err(failure) = verify_read(&read, root_fd, canonical, path) {
-                    self.failed_read(path, failure);
-                    return Ok(true);
-                }
-                (read.content, read.file)
-            }
-            Err(failure) => {
-                self.failed_read(path, failure);
-                return Ok(true);
-            }
-        };
-        if !self.check(control) {
-            return Ok(false);
-        }
-        match content {
-            Ok(source) => {
-                if engine.replace_prepared_source(source)? {
-                    self.report.changed += 1;
-                } else {
-                    self.report.unchanged += 1;
-                }
-            }
-            Err(reason) => {
-                self.report.deleted += u64::from(engine.delete_source(path)?);
-                self.report.excluded += 1;
-                push_sample(
-                    &mut self.report.exclusion_samples,
-                    format!("{path}: {reason}"),
-                );
-            }
-        }
-        self.since_publish += 1;
         if self.since_publish >= PUBLISH_EVERY && self.drain_reason.is_none() {
             self.since_publish = 0;
             let result = engine.refresh_index(control);
@@ -156,6 +162,44 @@ impl ScanProgress {
                 Err(error) => return Err(error),
             }
         }
+        Ok(true)
+    }
+    fn commit_ready(
+        &mut self,
+        engine: &Engine,
+        root_fd: &std::fs::File,
+        canonical: &Path,
+        control: &Control,
+        ready: &mut Vec<(String, ReadFile)>,
+    ) -> FResult<bool> {
+        let mut sources = Vec::new();
+        let mut held = Vec::new();
+        for (path, read) in ready.drain(..) {
+            if !self.check(control) {
+                return Ok(false);
+            }
+            if let Err(failure) = verify_read(&read, root_fd, canonical, &path) {
+                self.failed_read(&path, failure);
+                continue;
+            }
+            sources.push(read.content.expect("only supported sources are batched"));
+            held.push(read.file);
+        }
+        if sources.is_empty() {
+            return Ok(true);
+        }
+        let changed = match engine.replace_prepared_sources(&sources, control) {
+            Ok(changed) => changed,
+            Err(FoundryError::Cancelled(_) | FoundryError::DeadlineExceeded(_)) => {
+                self.check(control);
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
+        self.report.changed += changed as u64;
+        self.report.unchanged += (sources.len() - changed) as u64;
+        self.since_publish += sources.len();
+        drop(held);
         Ok(true)
     }
 }

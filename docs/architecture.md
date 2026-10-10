@@ -582,10 +582,11 @@ processes are not a supported serving topology; the optional shared HTTP owner (
 serves several MCP clients through that one owner. Do not add process retries and
 lock stealing as a substitute for one serving owner.
 
-The experimental store schema is version 11 (005 T005, 2026-10-10). `upgrade-store --to 11`
-is the one explicit transaction from v1–v10. Later steps preserve task state (v7),
+The experimental store schema is version 12 (009 T008, 2026-10-10). `upgrade-store --to 12`
+is the one explicit transaction from v1–v11. Later steps preserve task state (v7),
 briefs (v8), changed-work queues (v9), generated-knowledge caching/lineage (v10) and
-add source/config-bound relationship scopes with key postings (v11). It applies the v1→v2 revision/scan/repair
+add source/config-bound relationship scopes with key postings (v11) and disposable
+publication lookup/frontier tables (v12). It applies the v1→v2 revision/scan/repair
 metadata (001 T001); for v1 and v2 stores, the v3 steps (the memory table, its revision
 counter, and typed pending-index keys `source:`/`memory:`); for v1–v3, the v4 steps (the
 empty 005 compiler-fact tables). Every store then gains the empty 009 semantic tables
@@ -720,12 +721,27 @@ Held-file receipts retain decoded metadata and two immutable USearch segments; r
 reads only new artifacts, with full independent validation on audit. Warm requests check
 owner, profile and manifest version. A transactional mapping revision lets an unchanged
 restart reuse its verified publication without a database mapping scan. Changed-input
-restart, overflow, identity change and repair reconcile; cold reads and compaction remain
-corpus-sized. Selective LLM generation now uses the explicit 010 T002 CLI described
+restart uses the matching durable lookup below; overflow, identity change and repair
+reconcile. Required cold reads and compaction remain corpus-sized. Selective LLM generation now uses the explicit 010 T002 CLI described
 above and opt-in continuous MCP maintenance, now with owned local generation and
-per-worker resource controls plus shared memory admission. CPU/global GPU pressure policies,
-hardware acceptance and model task utility remain open.
+per-worker resource controls, shared memory admission and optional Linux host CPU
+pause/resume thresholds. Native/cgroup CPU policy, global GPU pressure, hardware
+acceptance and model task utility remain open.
 
+009 publication restart uses `neural/mapping_store.rs`: a disposable redb partition
+lookup, input-key reverse multimap and bounded changed-input frontier. Source, partition
+and cache publication update the frontier in the same transaction, including lexical-only
+builds. A checkpoint is reusable only with its independently verified generation revision
+and coverage. Small offline changes refresh affected rows; incomplete/interrupted or
+overflowed baselines reconcile from authoritative rows. No filesystem verification
+receipt is persisted. Full walks share one read snapshot per page; artifact verification
+joins at most four scoped hash workers, and ANN load hashes while reading its retained
+buffer in cancellation-aware MiB chunks.
+
+Cold source ingestion uses the existing read/parse pool and at most eight reads/results.
+The owner commits up to four supported files atomically, preserving per-source revisions
+and derivation obligations. Source counts advance after commit; failed groups roll back.
+Watcher updates remain single-path transactions. No new queue or thread pool is added.
 
 ### Experimental boundary relationships and task composition
 
@@ -736,8 +752,9 @@ compiler-fact misclassification and materialized endpoint pairs. The first produ
 parses explicitly admitted static FastAPI routes and literal HTTP clients. It reuses
 unchanged scopes, revalidates before atomic publication, and suppresses stale facts
 on every read. A bounded configured-set metadata check accounts for missing providers
-before any unique join. Extraction is explicit; source watching does not imply a
-second background maintenance lane.
+before any unique join. Extraction is explicit; source watching alone starts no boundary
+work. One explicitly enabled configuration can reuse the existing watcher for bounded
+file turns, unchanged-scope reuse, status and pause, without another thread or durable queue.
 
 [003 T009](../specs/003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task)
 uses [`task_evidence.rs`](../src/task_evidence.rs) to add bounded lexical task queries,

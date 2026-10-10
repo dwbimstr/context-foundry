@@ -89,6 +89,7 @@ pub(crate) struct Watch {
     root: PathBuf,
     store: PathBuf,
     queue: Mutex<Queue>,
+    boundary: Mutex<Option<crate::boundary::maintenance::Maintenance>>,
     wake: Condvar,
     stop: Control,
     running: AtomicBool,
@@ -98,6 +99,7 @@ impl Watch {
         Arc::new(Self {
             root,
             store,
+            boundary: Mutex::new(None),
             queue: Mutex::new(Queue {
                 paths: BTreeSet::new(),
                 bytes: 0,
@@ -190,7 +192,36 @@ impl Watch {
         value["dirty_root"] = q.dirty.into();
         value["pending_index"] = pending_index.into();
         value["running"] = (!self.idle()).into();
+        drop(q);
+        if let Some(boundary) = self
+            .boundary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            value["boundary"] = boundary.status();
+        }
         value
+    }
+    pub(crate) fn boundary_maintenance(&self, config: String, enabled: bool) -> FResult<()> {
+        let mut state = self
+            .boundary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if enabled {
+            *state = Some(crate::boundary::maintenance::Maintenance::new(config));
+        } else if let Some(state) = state.as_mut() {
+            state.pause(&config)?;
+        }
+        self.wake.notify_all();
+        Ok(())
+    }
+    fn boundary_step(&self, engine: &Engine) -> bool {
+        self.boundary
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_mut()
+            .is_some_and(|state| state.step(engine, &self.stop))
     }
     fn event(&self, result: notify::Result<Event>) {
         if self.stop.is_cancelled() {
@@ -296,6 +327,7 @@ impl Watch {
         let mut retry_at = Instant::now();
         let mut failures = 0u32;
         let mut source_steps = 0usize;
+        let mut boundary_turn = 0usize;
         while !self.stop.is_cancelled() && !owner.closing() {
             if Instant::now() < retry_at {
                 self.pause(Duration::from_millis(100));
@@ -306,6 +338,13 @@ impl Watch {
             let admitted = owner.try_watch_step(&mut |engine| {
                 result = (|| -> FResult<()> {
                     self.stop.check()?;
+                    boundary_turn += 1;
+                    if boundary_turn >= 8 || !self.source_pending() {
+                        boundary_turn = 0;
+                        if self.boundary_step(engine) {
+                            return Ok(());
+                        }
+                    }
                     // A policy change/overflow supersedes cached walk rules. Never
                     // sweep with an old admission view. Foreground explicit scans
                     // are detected by ChangeScan's scan-ID check.

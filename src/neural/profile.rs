@@ -336,17 +336,40 @@ impl SemanticProfile {
         &self,
         control: &Control,
     ) -> Result<VerifiedArtifacts, ProviderError> {
+        self.verify_selected(control, None, false)
+    }
+    #[cfg(feature = "semantic")]
+    pub(crate) fn verified_tokenizer_until(
+        &self,
+        control: &Control,
+    ) -> Result<VerifiedTokenizer, ProviderError> {
+        self.verify_selected(control, None, true)
+            .map(VerifiedTokenizer)
+    }
+    fn verify_selected(
+        &self,
+        control: &Control,
+        prior: Option<VerifiedTokenizer>,
+        tokenizer_only: bool,
+    ) -> Result<VerifiedArtifacts, ProviderError> {
         if self.descriptor.artifact_files.len() > 64 {
             return Err(invalid("artifact inventory exceeds 64 open files"));
         }
-        let mut verified = VerifiedArtifacts {
+        let mut verified = prior.map(|t| t.0).unwrap_or_else(|| VerifiedArtifacts {
             function_digest: self.descriptor.digest(),
             model_dir: self.model_dir.clone(),
             files: Vec::new(),
             tokenizer: Vec::new(),
             total_bytes: 0,
-        };
+        });
+        verified.check(self, control)?;
+        let first = verified.files.len();
         for file in &self.descriptor.artifact_files {
+            if tokenizer_only && file.name != "tokenizer.json"
+                || verified.files.iter().any(|f| f.name == file.name)
+            {
+                continue;
+            }
             let path = self.model_dir.join(&file.name);
             let opened = open_regular(&path)?;
             let version = opened.metadata().map_err(|e| invalid(e.to_string()))?;
@@ -354,29 +377,114 @@ impl SemanticProfile {
             if tokenizer && version.len() > 64 * 1024 * 1024 {
                 return Err(invalid("tokenizer.json exceeds the 64 MiB artifact limit"));
             }
-            let (sha, bytes, retained) = hash_open_file(&opened, &path, control, tokenizer)?;
-            if sha != file.sha256 {
-                return Err(invalid(format!(
-                    "{} does not match its expected SHA-256",
-                    file.name
-                )));
+            if let Some(stop) = control_stop(control) {
+                return Err(stop);
             }
-            check_version(&opened, &version, &path)?;
-            verified.total_bytes = verified
-                .total_bytes
-                .checked_add(bytes)
-                .ok_or_else(|| invalid("artifact byte total overflow"))?;
-            if tokenizer {
-                verified.tokenizer = retained;
-            }
+            neural_fault!(ARTIFACT_HASH, Some(control), &path.to_string_lossy())
+                .map_err(|e| invalid(e.to_string()))?;
             verified.files.push(VerifiedFile {
                 name: file.name.clone(),
                 file: opened,
                 version,
             });
         }
+        // Hash independent files with a bounded number of scoped workers. Every
+        // worker joins before any receipt can escape; the descriptors stay pinned.
+        // A single GGUF still requires its complete sequential SHA-256 pass.
+        let added = &verified.files[first..];
+        let count = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1)
+            .min(4)
+            .min(added.len())
+            .max(1);
+        let verify = |file: &VerifiedFile| -> Result<_, ProviderError> {
+            let path = self.model_dir.join(&file.name);
+            let result = hash_contents(&file.file, &path, control, file.name == "tokenizer.json")?;
+            check_version(&file.file, &file.version, &path)?;
+            Ok((file.name.clone(), result))
+        };
+        let results = if count == 1 {
+            added.iter().map(verify).collect::<Result<Vec<_>, _>>()?
+        } else {
+            std::thread::scope(|scope| -> Result<Vec<_>, ProviderError> {
+                let mut workers = Vec::new();
+                for group in added.chunks(added.len().div_ceil(count)) {
+                    let verify = &verify;
+                    workers.push(
+                        std::thread::Builder::new()
+                            .name("foundry-artifact".into())
+                            .spawn_scoped(scope, move || {
+                                group
+                                    .iter()
+                                    .map(verify)
+                                    .collect::<Result<Vec<_>, ProviderError>>()
+                            })
+                            .map_err(|e| invalid(format!("cannot start artifact verifier: {e}")))?,
+                    );
+                }
+                let mut results = Vec::new();
+                let mut error = None;
+                for worker in workers {
+                    match worker.join() {
+                        Ok(Ok(values)) => results.extend(values),
+                        Ok(Err(e)) => {
+                            error.get_or_insert(e);
+                        }
+                        Err(_) => {
+                            error.get_or_insert_with(|| invalid("artifact verifier panicked"));
+                        }
+                    }
+                }
+                if let Some(error) = error {
+                    return Err(error);
+                }
+                Ok(results)
+            })?
+        };
+        for (name, (sha, bytes, retained)) in results {
+            let expected = self
+                .descriptor
+                .artifact_files
+                .iter()
+                .find(|f| f.name == name)
+                .expect("opened descriptor member");
+            if sha != expected.sha256 {
+                return Err(invalid(format!(
+                    "{name} does not match its expected SHA-256"
+                )));
+            }
+            verified.total_bytes = verified
+                .total_bytes
+                .checked_add(bytes)
+                .ok_or_else(|| invalid("artifact byte total overflow"))?;
+            if name == "tokenizer.json" {
+                verified.tokenizer = retained;
+            }
+        }
         verified.check(self, control)?;
         Ok(verified)
+    }
+}
+
+/// A tokenizer-only receipt cannot cross the model acquisition boundary.
+pub(crate) struct VerifiedTokenizer(VerifiedArtifacts);
+#[cfg(feature = "semantic")]
+impl VerifiedTokenizer {
+    pub(crate) fn bytes(
+        &self,
+        profile: &SemanticProfile,
+        control: &Control,
+    ) -> Result<&[u8], ProviderError> {
+        self.0.check(profile, control)?;
+        self.0.tokenizer_bytes()
+    }
+    pub(crate) fn complete(
+        self,
+        profile: &SemanticProfile,
+        control: &Control,
+    ) -> Result<VerifiedArtifacts, ProviderError> {
+        profile.verify_selected(control, Some(self), false)
     }
 }
 
@@ -529,12 +637,23 @@ fn hash_open_file(
     control: &Control,
     retain: bool,
 ) -> Result<(String, u64, Vec<u8>), ProviderError> {
-    use sha2::{Digest, Sha256};
     if let Some(stop) = control_stop(control) {
         return Err(stop);
     }
     neural_fault!(ARTIFACT_HASH, Some(control), &path.to_string_lossy())
         .map_err(|e| invalid(e.to_string()))?;
+    hash_contents(file, path, control, retain)
+}
+fn hash_contents(
+    file: &std::fs::File,
+    path: &Path,
+    control: &Control,
+    retain: bool,
+) -> Result<(String, u64, Vec<u8>), ProviderError> {
+    use sha2::{Digest, Sha256};
+    if let Some(stop) = control_stop(control) {
+        return Err(stop);
+    }
     let mut hasher = Sha256::new();
     use std::os::unix::fs::FileExt;
     let mut buf = vec![0u8; 1 << 20];

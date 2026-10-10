@@ -490,7 +490,7 @@ fn upgrade_preserves_records_and_is_atomic() {
     let err = Engine::upgrade_store(&v1, 3, &Control::unbounded()).unwrap_err();
     assert_eq!(code(&err), "unsupported_mode");
     Engine::upgrade_store(&v1, context_foundry::SCHEMA_VERSION, &Control::unbounded()).unwrap();
-    assert_eq!(schema_marker(&v1), "11");
+    assert_eq!(schema_marker(&v1), "12");
     let engine = Engine::open_existing(&v1).unwrap();
     let status = engine.status().unwrap();
     assert_eq!(status.schema, context_foundry::SCHEMA_VERSION);
@@ -1643,6 +1643,73 @@ fn failed_commit_preserves_prior_source_bytes_and_state() {
     drop(engine);
     // Not one row changed: bytes, revision, pending and derived bookkeeping.
     assert_eq!(testkit::snapshot(store.path()), before);
+}
+
+#[test]
+fn ingestion_batch_failure_and_cancellation_preserve_all_prior_versions() {
+    for cancel in [false, true] {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("ws");
+        let (store, mut engine) = setup(&root);
+        for n in 0..4 {
+            let path = format!("batch{n}.rs");
+            engine
+                .replace_source(&path, "fn old_version() {}\n")
+                .unwrap();
+            std::fs::write(root.join(path), "fn new_version() {}\n").unwrap();
+        }
+        drain(&mut engine);
+        let revision = engine.source_revision().unwrap();
+        drop(engine);
+        let before = testkit::snapshot(store.path());
+        let mut engine = Engine::open_existing(store.path()).unwrap();
+        fault::arm(
+            names::SOURCE_BATCH_BEFORE_COMMIT,
+            0,
+            if cancel {
+                Action::Cancel
+            } else {
+                Action::Fail("batch disk failure".into())
+            },
+        );
+        let result = engine.index(&root, &Control::unbounded());
+        if cancel {
+            let report = result.unwrap();
+            assert!(report.partial && !report.scan_complete);
+            assert_eq!(report.reason_code, Some("cancelled"));
+            assert_eq!((report.changed, report.unchanged), (0, 0));
+        } else {
+            assert_eq!(code(&result.unwrap_err()), "internal");
+        }
+        assert_eq!(fault::reached(names::SOURCE_BATCH_BEFORE_COMMIT), 1);
+        fault::disarm_all();
+        assert_eq!(engine.source_revision().unwrap(), revision);
+        drop(engine);
+        let after = testkit::snapshot(store.path());
+        // Scan bookkeeping may advance, but no source, revision or obligation
+        // from any of the four staged files can escape a rolled-back commit.
+        for table in [
+            "sources",
+            "chunks",
+            "pending_index",
+            "semantic_work",
+            "knowledge_work",
+        ] {
+            assert_eq!(before[table], after[table], "{table}, cancel={cancel}");
+        }
+        let mut engine = Engine::open_existing(store.path()).unwrap();
+        let report = engine.index(&root, &Control::unbounded()).unwrap();
+        assert_eq!((report.changed, report.unchanged), (4, 0));
+        assert_eq!(fault::reached(names::SOURCE_BATCH_BEFORE_COMMIT), 1);
+        assert_eq!(engine.source_revision().unwrap(), revision + 4);
+        assert!(!report.partial);
+        fault::disarm_all();
+        let replay = engine.index(&root, &Control::unbounded()).unwrap();
+        assert_eq!((replay.changed, replay.unchanged), (0, 4));
+        assert_eq!(fault::reached(names::SOURCE_BATCH_BEFORE_COMMIT), 0);
+        assert_eq!(engine.source_revision().unwrap(), revision + 4);
+        fault::disarm_all();
+    }
 }
 
 // ---------------------------------------------------------------------------

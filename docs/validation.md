@@ -1,5 +1,81 @@
 # Validation
 
+## Cold verification and changed-input publication — 2026-10-10
+
+Experimental schema 12 adds a redb publication lookup and bounded transactional
+invalidation frontier. Tests exercise ordinary and lexical-only writers, explicit derived
+repair, lazy model acquisition, source batching, background CPU admission and maintained
+boundary relationships. Real-model lifecycle measurements remain explicitly ignored.
+This uses synthetic vectors and real storage/parser/ANN/owner boundaries; it establishes work selection and recovery, not device throughput or task quality.
+
+A 260-file addition fixture makes an offline location edit, adds one prepared source and
+one zero-card source, and deletes another source. Restart publication reads exactly three
+extant dirty partition rows in one shared metadata snapshot, with **zero full mapping pages**;
+its locations match an independent authoritative audit. Cache-only completion after a
+partial publication refreshes both paths sharing that key without a census. Exact counters,
+ordinary replay, overflow, profile changes, cancellation and independent audits remain covered.
+Three real subprocess aborts around lookup commit and manifest publication recover without
+losing edits or re-embedding. An interrupted schema-11 upgrade remains old; explicit upgrade
+preserves sources, cache and the existing generation. File substitution and corruption still
+fail verification; receipts do not survive restart.
+
+Cache-only CLI replay succeeds with the unused GGUF absent. A missing input still
+refuses before acquisition, and tokenizer substitution cannot promote a partial receipt.
+Three older assertions expected all model verification before any partitioning; they
+were revised for lazy acquisition while preserving zero-call, cache and deadline checks.
+Independent profile files hash using at most four joined scoped workers; a single GGUF
+still needs a full sequential SHA-256. ANN loading hashes while filling the exact restore
+buffer, with cancellation checks per MiB. Initial/overflow/repair lookup construction,
+cold metadata decoding, required byte verification and compaction remain corpus-sized.
+No semantic throughput or task-quality improvement is inferred from these fixtures.
+
+Cold ingestion now commits up to four prepared sources atomically while retaining the
+eight-read/16 MiB admission limit. Each changed source keeps its own source revision and
+derivation obligation; reporting follows the group commit. Failure, cancellation and real
+process deaths prove whole-group rollback/replay. Unchanged replay makes no source commit.
+Before a reusable mapping checkpoint exists, source writes no longer populate an unusable
+publication frontier. A source edit during mapping construction cannot drop a previously
+processed row from the next durable checkpoint; an explicit race test covers that retry.
+
+A bounded scale fixture uses **80,000 tiny synthetic Rust files**, 200 directories of
+400 files: `d{n//400:03}/f{n:05}.rs`, containing `pub fn scale_{n:05}() -> usize { n }`.
+On this Linux x86_64 sandbox (five available CPUs, Rust 1.90, unoptimized dev build,
+debug information disabled), indexing exceeded the 360-second stop before the final
+ingestion changes. A fresh store after those changes completed in **164.893 seconds**,
+with 80,000 changed sources, no failures, a complete scan and zero pending source work.
+The same corpus was reused; neither run is a cold OS-cache or optimized-release claim.
+The earlier observation is censored, so no precise speedup ratio is inferred.
+
+A real stdio MCP watcher then reconciled its 80,000-file startup baseline in **32.907
+seconds**. Replacing `d199/f79999.rs` with `updated_scale_sentinel` became searchable at
+revision 80,001 in **0.176 seconds**, with **one source read and zero full reconciliations**
+after that baseline. Timing includes client polling. The complete fixture took 200.498
+seconds; maximum child RSS was 170,076 KiB (about 166 MiB). The tested default binary SHA-256
+was `1996c0609a00c72ea95d083829ea987d6aa845cb0c24e0dc9ec485f35a30ec94`.
+These are single-run lexical/watcher observations; mixed-size repositories, semantic
+80,000-file preparation, real models, task quality and other platforms remain unverified.
+
+The existing watcher can maintain one explicitly enabled boundary configuration, one file
+per turn, including replay, source/config changes and pause. A real MCP consumer checks the
+full enable/edit/pause cycle. Optional Linux host aggregate CPU admission samples with
+pause/resume hysteresis and defers on unknown observations without evicting an idle generator.
+This is not a cgroup/affinity CPU quota, GPU, thermal, battery or macOS CPU implementation.
+
+Across the affected suites, **648 tests pass**, with two explicitly ignored real-model
+measurements, plus all **21 scenarios** in the separate recovery runner. This covers
+library, core, neural storage/preparation/retrieval, boundary, brief, CLI, knowledge,
+MCP, memory, task-context and task-evidence tests. A real build without default features,
+followed by direct integration-harness execution, passes 22 boundary/task/publication
+checks, including MCP and a lexical-only CLI edit followed by semantic publication.
+Harness libraries retain their semantic test feature; the disabled-feature claim is for
+the spawned binary. All-target Clippy, Clippy for the binary without default features,
+formatting, Markdown links and diff checks pass.
+
+The continuous-semantic fixture now includes stable pending work alongside two constantly
+changing files; otherwise every candidate could correctly fail freshness checks. The HTTP
+timeout fixture now starts the tested deadline at provider admission, avoiding an assumption
+that preprocessing always finishes within 80 ms. Both pass with their original safety
+requirements intact.
 
 ## Boundary relationships and task evidence — 2026-10-10
 

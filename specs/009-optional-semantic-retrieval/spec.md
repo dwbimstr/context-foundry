@@ -1547,8 +1547,50 @@ Implemented compact metadata in [locations.rs](../../src/neural/index/locations.
   deliberately reconciles. Preparation's source/partition discovery remains separate.
   This is publication reuse, not zero-I/O restart or automatically resumed inference.
 
-**Remaining costs:** initial bootstrap, cold artifact verification, changed-input restart
-reconciliation, explicit repair, location rebasing and ANN compaction still scale with
+**Implemented cold/restart follow-up (2026-10-10):** schema 12 adds a disposable
+redb publication lookup (partition rows and input-key-to-path multimap) and a bounded
+changed-input frontier. The current failure is a corpus-wide partition/cache census
+after a small offline edit. An in-memory view alone cannot survive owner restart;
+reusing the derivation queue would lose cache/partition-only changes and would couple
+independent acknowledgments. These three tables reuse redb transactions, with no new
+worker, broker or log format. Maintenance is explicit schema upgrade, bounded
+invalidation, revision-matched checkpoint reuse and full reconciliation on mismatch.
+The lookup is an optimization, never source authority or a persisted file-verification
+receipt. Initial reconciliation still builds it; ordinary refresh changes only affected
+rows and reverse references. Cold generation bytes must still verify independently.
+
+The frontier holds at most 1,024 paths/keys and 1 MiB of key text. It records source,
+partition and cache-only changes under the mapping revision even without the semantic
+feature. Before the first reusable checkpoint, changes advance the reconciliation floor
+without recording unusable work. A stable mapping walk commits its lookup and counters
+before manifest publication;
+a restart between those commits refuses the mismatch and reconciles. A matching restart
+loads only affected lookup rows/reverse postings, then revalidates current source/partition/
+cache metadata. Partial coverage and zero-card sources retain exact counts. Explicit
+purge removes the lookup. If a concurrent edit makes a retained full view unstable, the
+next stable checkpoint includes all of that view's uncheckpointed rows. The initial/full checkpoint is a bounded redb transaction;
+its write cost still scales with the admitted mapping and is not a constant-time claim.
+
+Cache-only CLI preparation now verifies only the tokenizer. A private tokenizer receipt
+can be promoted to a full artifact receipt only by verifying every remaining pinned file;
+changed descriptors/tokenizer paths refuse promotion. Missing weights are therefore allowed
+for cached work and still fail before acquisition when inference is required. Completed
+partition metadata can survive refused/cancelled model verification. Worker executable and
+worker-boundary checks remain. A single-file check runs on the caller without extra threads.
+Explicit `repair-index` can reconstruct even missing disposable lookup tables; ordinary
+open never silently invents them. Source/cache/partition authority remains unchanged.
+
+Cold reconciliation shares one source/partition/cache read snapshot per 128-path page,
+with a bounded 1,024-key probe memo. Artifact acquisition hashes independent opened files
+with at most `min(available_parallelism, 4)` scoped workers and one MiB scratch each,
+retaining the existing 64-file/64-MiB-tokenizer limits. All workers join before receipts
+escape; descriptor/path versions are rechecked. A single large GGUF still needs its full
+sequential SHA-256. ANN loading hashes each MiB while filling the exact restore buffer,
+avoiding a second uninterruptible whole-buffer hash pass. No new backend or hash identity.
+
+**Remaining costs:** initial bootstrap/checkpoint construction, cold artifact verification,
+overflow or unmatched-checkpoint reconciliation, explicit repair, location rebasing and
+ANN compaction still scale with
 corpus size. Overlay comparison/serialization and ANN delta rebuilds are bounded, not
 strictly proportional to the latest edit. Candidate eligibility now uses ordered-map
 lookup rather than an ordinal boolean array. E4 model-aware inputs remain separate.
