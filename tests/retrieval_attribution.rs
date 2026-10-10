@@ -240,6 +240,11 @@ fn repository_development_attribution() {
     let deadline =
         || Control::with_deadline(std::time::Instant::now() + std::time::Duration::from_secs(300));
     let indexed = engine.index(root, &deadline()).unwrap();
+    // The diagnostic's literal questions/expected snippets are evaluator data.
+    // Indexing this file would rank those labels as repository evidence.
+    let excluded = "tests/retrieval_attribution.rs";
+    engine.delete_source(excluded).unwrap();
+    engine.refresh(&deadline()).unwrap();
     let wid = engine.workspace_id().unwrap();
     let frozen: Vec<_> = CASES
         .iter()
@@ -320,7 +325,7 @@ fn repository_development_attribution() {
             rows.push(json!({"id":id,"query":query,"expected":expected,"behavior":behavior,"tokens":packed.tokens,"traced_elapsed_ms":elapsed,"record":name,"attribution":attribute(&r,query,expected)}));
         }
     }
-    let report = json!({"scope":"repository_development_lexical_diagnostic","historical_g2":false,"indexed":indexed,"budget":2048,"rows":rows});
+    let report = json!({"scope":"repository_development_lexical_diagnostic","historical_g2":false,"excluded_evaluator_sources":[excluded],"indexed":indexed,"budget":2048,"rows":rows});
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report).unwrap(),

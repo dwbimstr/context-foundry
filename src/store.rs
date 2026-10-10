@@ -3074,6 +3074,26 @@ struct WindowSlice {
     range: std::ops::Range<usize>,
 }
 
+/// Context-only intent. Ordinary search retains exact-definition precedence.
+#[derive(Clone, Copy, Default)]
+struct SearchSelection<'a> {
+    anchors: Option<&'a [AnchorCandidate]>,
+    prose: bool,
+}
+
+/// Deliberately narrow: explicit code, paths and locator requests retain the
+/// baseline. Anchor admission is checked separately over the indexed roots.
+fn prose_query(query: &str) -> bool {
+    let words: Vec<_> = query.split_whitespace().collect();
+    words.len() >= 3
+        && !["where", "find", "locate", "show", "who"]
+            .contains(&words[0].to_ascii_lowercase().as_str())
+        && words.iter().all(|word| {
+            let word = word.trim_end_matches(['?', '.', ',', ':']);
+            !word.is_empty() && word.chars().all(char::is_alphabetic)
+        })
+}
+
 /// The two-tier collection of one query, before revalidation.
 struct TwoTier {
     first: Vec<Candidate>,
@@ -4490,6 +4510,26 @@ impl Engine {
         control: &crate::Control,
         anchors: Option<&[AnchorCandidate]>,
     ) -> FResult<CandidateBatch> {
+        self.search_candidates_selected(
+            query,
+            path,
+            limit,
+            control,
+            SearchSelection {
+                anchors,
+                prose: false,
+            },
+        )
+    }
+
+    fn search_candidates_selected(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+        control: &crate::Control,
+        selection: SearchSelection<'_>,
+    ) -> FResult<CandidateBatch> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
@@ -4507,7 +4547,7 @@ impl Engine {
             second,
             candidates_full,
             windows,
-        } = self.collect_two_tier(query, path, control, anchors)?;
+        } = self.collect_two_tier(query, path, control, selection)?;
 
         // Final read: revalidate, merge per delivery unit and cap per file over
         // the whole candidate window, then cut to `limit`; stale and capped
@@ -4627,7 +4667,7 @@ impl Engine {
         query: &str,
         path: Option<&str>,
         control: &crate::Control,
-        anchors: Option<&[AnchorCandidate]>,
+        selection: SearchSelection<'_>,
     ) -> FResult<TwoTier> {
         let filter = path.map(path_filter).transpose()?;
         let handles = self.require_search()?;
@@ -4647,13 +4687,17 @@ impl Engine {
         let mut tier1_full = false;
         let parsed = QueryAnchors::parse(query);
         let qualifiers: Vec<u64> = parsed.qualifiers.iter().map(|q| hash64(q)).collect();
-        let anchors = match anchors {
+        let anchors = match selection.anchors {
             Some(chosen) => chosen.to_vec(),
             None => parsed.select(|candidate| {
                 control.check()?;
                 exact_case_defined(&searcher, fields, filter.as_deref(), &candidate.text)
             })?,
         };
+        let prose = selection.prose && anchors.is_empty() && prose_query(query);
+        if prose && let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({"stage":"lexical_intent", "intent":"anchorless_prose", "exact_run_promotion":false}));
+        }
         for anchor in anchors {
             // The anchor's window (context-v2 § Resolver order): every
             // matching definition scored under tier 1's own restriction.
@@ -4692,7 +4736,7 @@ impl Engine {
                 documents,
             });
         }
-        if tier1.is_empty() {
+        if tier1.is_empty() && !prose {
             // Without anchors the 2026-10-06 rule stands: one exact count and
             // the 64 smallest-`key_hash` definitions per run, under the same
             // restriction as the documents it keeps.
@@ -4913,6 +4957,29 @@ impl Engine {
         dense: &crate::neural::query::DenseWindow,
         anchors: Option<&[AnchorCandidate]>,
     ) -> FResult<CandidateBatch> {
+        self.search_candidates_semantic_selected(
+            query,
+            path,
+            limit,
+            control,
+            dense,
+            SearchSelection {
+                anchors,
+                prose: false,
+            },
+        )
+    }
+
+    #[cfg(feature = "semantic")]
+    fn search_candidates_semantic_selected(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+        control: &crate::Control,
+        dense: &crate::neural::query::DenseWindow,
+        selection: SearchSelection<'_>,
+    ) -> FResult<CandidateBatch> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
@@ -4930,7 +4997,7 @@ impl Engine {
             second,
             candidates_full,
             windows,
-        } = self.collect_two_tier(query, path, control, anchors)?;
+        } = self.collect_two_tier(query, path, control, selection)?;
 
         // Final read: every candidate is validated here, before placement.
         let tx = self.db.begin_read()?;
@@ -5347,20 +5414,34 @@ impl Engine {
                 "query must contain 1..4096 nonblank bytes".into(),
             ));
         }
+        let selection = SearchSelection {
+            anchors,
+            prose: options.experimental_behavior
+                && match strategy {
+                    Strategy::Search => true,
+                    Strategy::Auto => {
+                        policy.is_none() && response::strategy_for_query(query) == Strategy::Search
+                    }
+                    Strategy::Graph => false,
+                },
+        };
         #[cfg(feature = "semantic")]
         let search = match options.dense {
-            Some(dense) => self.search_candidates_semantic(
+            Some(dense) => self.search_candidates_semantic_selected(
                 query,
                 None,
                 CONTEXT_UNITS,
                 control,
                 dense,
-                anchors,
+                selection,
             )?,
-            None => self.search_candidates_with(query, None, CONTEXT_UNITS, control, anchors)?,
+            None => {
+                self.search_candidates_selected(query, None, CONTEXT_UNITS, control, selection)?
+            }
         };
         #[cfg(not(feature = "semantic"))]
-        let search = self.search_candidates_with(query, None, CONTEXT_UNITS, control, anchors)?;
+        let search =
+            self.search_candidates_selected(query, None, CONTEXT_UNITS, control, selection)?;
         control.check()?;
         // 013 T003: routing happens HERE, after the 009 merge and before
         // doors are built. Only `auto` with a configured policy consults it;

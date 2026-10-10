@@ -55,6 +55,22 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         .parse()
         .unwrap();
     let rustc = PathBuf::from(std::env::var_os("FOUNDRY_HOST_RUSTC").expect("Rust 1.90 rustc"));
+    let backend =
+        std::env::var("FOUNDRY_HOST_TASK_MODEL").unwrap_or_else(|_| "qwen-coder-0.5b".into());
+    let (model, model_sha) = match backend.as_str() {
+        "qwen-coder-0.5b" => (
+            "Qwen2.5-Coder-0.5B-Instruct Q4_K_M CPU",
+            "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32",
+        ),
+        "qwen3-1.7b" => (
+            "Qwen3-1.7B Q8_0 CPU, thinking disabled",
+            "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a",
+        ),
+        _ => panic!("unsupported explicitly pinned task model"),
+    };
+    let scale =
+        std::env::var("FOUNDRY_HOST_TASK_SOURCE_SCALE").unwrap_or_else(|_| "original".into());
+    assert!(["original", "expanded"].contains(&scale.as_str()));
     let output =
         PathBuf::from(std::env::var_os("FOUNDRY_HOST_TASK_DIR").expect("new output directory"));
     assert!(output.is_absolute() && !output.starts_with(env!("CARGO_MANIFEST_DIR")));
@@ -85,6 +101,22 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         for file in files {
             std::fs::copy(fixture.join(file), workspace.join(file)).unwrap();
         }
+        if scale == "expanded" {
+            use std::io::Write as _;
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(workspace.join("src/main.rs"))
+                .unwrap();
+            // Explicit synthetic unrelated source, identical across arms. This
+            // tests the effect of evidence volume, not realistic task coverage.
+            for i in 0..64 {
+                writeln!(file, "\n#[allow(dead_code)]\nfn display_colour_{i:03}() -> (&'static str, u32) {{ (\"shade {i:03}\", {}) }}", i * 257).unwrap();
+            }
+        }
+        let protected: Vec<_> = ["Cargo.toml", "src/main.rs"]
+            .iter()
+            .map(|f| (*f, std::fs::read(workspace.join(f)).unwrap()))
+            .collect();
         assert!(
             !check(&workspace, &dir.join("before"), &rustc),
             "original must fail"
@@ -229,10 +261,9 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
             && observed_files
                 .iter()
                 .all(|p| files.iter().any(|f| p == Path::new(f)))
-            && ["Cargo.toml", "src/main.rs"].iter().all(|file| {
-                std::fs::read(fixture.join(file)).unwrap()
-                    == std::fs::read(workspace.join(file)).unwrap()
-            });
+            && protected
+                .iter()
+                .all(|(file, bytes)| *bytes == std::fs::read(workspace.join(file)).unwrap());
         let changed = std::fs::read(fixture.join("src/records.rs")).unwrap()
             != std::fs::read(workspace.join("src/records.rs")).unwrap();
         rows.push(json!({"arm":arm,"host_success":host_success,"timeout":timed_out,"oracle_pass":checked,"protected_files_unchanged":preserved,"source_changed":changed,"verified_task":checked&&preserved,
@@ -244,7 +275,7 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         )
         .unwrap();
     }
-    let report = json!({"scope":"public_single_task_free_form_host_calibration","held_out":false,"host":"OMP 18.6.0","actual_backend":"Qwen2.5-Coder-0.5B-Instruct Q4_K_M CPU","model_sha256":"1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32","transport_alias":"glm-5.3-flash","llama_cpp":"b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea","attempts_per_arm":1,"model_output_limit":512,"task_seconds":180,"rows":rows});
+    let report = json!({"scope":"public_single_task_free_form_host_calibration","held_out":false,"host":"OMP 18.6.0","actual_backend":model,"model_sha256":model_sha,"source_scale":scale,"backend_identity":"operator_launched_local_server_not_remote_attestation","transport_alias":"glm-5.3-flash","llama_cpp":"b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea","attempts_per_arm":1,"model_output_limit":512,"task_seconds":180,"rows":rows});
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report).unwrap(),

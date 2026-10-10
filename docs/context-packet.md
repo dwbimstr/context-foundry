@@ -26,14 +26,19 @@ receipts, shared memory admission and Linux affinity/cgroup CPU policy are imple
 All model lanes and experimental context behavior retain explicit opt-ins.
 
 **The product outcome is still open:** development retrieval delivered 1/8 in each
-lexical arm; real Qwen/OMP free-form tasks completed 0/2. Neither establishes quality
-or cost improvement. The 8,192-file semantic lifecycle uses fixture vectors/tokenization,
-not real-model throughput at 60,000–80,000 files. Gemma CPU numerics pass at 2,048
-tokens; 8,192 tokens fails under the tested 8 GiB ceiling. Missing coverage, runtime
-allocation work, useful model/recipe selection, held-out task economics and native
+lexical arm; both the earlier Qwen0.5B and subsequent Qwen3-1.7B/OMP comparisons
+failed both tasks. The stronger model made invalid edits. Neither establishes quality
+or total-cost improvement. The 8,192-file semantic lifecycle uses fixture vectors/tokenization,
+not real-model throughput at 60,000–80,000 files. The opt-in Linux pooled-output
+diagnostic now passes Gemma numerics at 8,192 tokens under 8 GiB (2.72 GiB peak RSS);
+ordinary native builds still need an admitted production fix. Missing coverage,
+runtime adoption, useful model/recipe selection, held-out task economics and native
 macOS/GPU/package acceptance are named in the inventory. Independent parent/file/area
 vectors remain unimplemented; true late chunking is only a backend candidate.
 
+The [latest Linux continuation](validation.md#feasible-linux-repairs-and-task-comparison--2026-10-10)
+records the allocation repair, conservative prose candidate and stronger-model task
+comparison; the prose candidate leaves development retrieval at 1/8 in each arm.
 The [closeout validation](validation.md#ecosystem-closeout-audit--2026-10-10) records
 170 fresh Linux checks, including the installed OMP live-view test with scripted replies.
 Earlier model/scale results remain historical: their `/tmp` raw artifacts did not

@@ -539,6 +539,19 @@ mod llama {
                 .unwrap();
             assert!([2048, 4096, 8192].contains(&limit));
             const SHA: &str = "68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216";
+            // Read before confinement. The external reference is a prior run's
+            // exact short-input vectors, never a model-selected tolerance.
+            let reference: Option<serde_json::Value> =
+                std::env::var_os("FOUNDRY_EMBED_CPU_REFERENCE").map(|p| {
+                    let mut bytes = Vec::new();
+                    std::fs::File::open(p)
+                        .unwrap()
+                        .take(256 * 1024 + 1)
+                        .read_to_end(&mut bytes)
+                        .unwrap();
+                    assert!(bytes.len() <= 256 * 1024);
+                    serde_json::from_slice(&bytes).unwrap()
+                });
             let mut file = std::fs::File::open(&path).unwrap();
             let mut hash = Sha256::new();
             let mut buffer = vec![0; 1024 * 1024];
@@ -593,7 +606,9 @@ mod llama {
                 threads: 2,
                 memory_bytes: 8 * 1024 * 1024 * 1024,
                 memory_enforcement: MemoryEnforcement::HardAddressSpace,
-                cpu_seconds: 600,
+                // Full-window parity does four long evaluations. Keep the
+                // memory envelope fixed; admit enough CPU for the 8K case.
+                cpu_seconds: if limit == 8192 { 900 } else { 600 },
                 load_seconds: 120,
                 idle_seconds: 1,
             };
@@ -668,20 +683,33 @@ mod llama {
                 .iter()
                 .map(|i| embedder.embed(std::slice::from_ref(i)).unwrap().remove(0))
                 .collect();
+            let input_hash = context_foundry::digest(
+                &serde_json::to_vec(&inputs.iter().map(|i| &i.ids).collect::<Vec<_>>()).unwrap(),
+            );
+            if let Some(reference) = reference {
+                assert_eq!(reference["model_sha256"], SHA);
+                assert_eq!(reference["input_sha256"], input_hash);
+                let vectors: Vec<Vec<f32>> =
+                    serde_json::from_value(reference["single_vectors"].clone()).unwrap();
+                compare(&single, &vectors);
+            }
             compare(&embedder.embed(&inputs).unwrap(), &single);
             let reversed: Vec<_> = inputs.iter().rev().cloned().collect();
             compare(
                 &embedder.embed(&reversed).unwrap(),
                 &single.iter().rev().cloned().collect::<Vec<_>>(),
             );
+            eprintln!("CPU_EMBED_PROGRESS short_and_reversed_passed");
             let mut full = inputs[0].clone();
             let repeated = full.ids[1];
             full.ids.resize(limit as usize, repeated);
             let first = embedder.embed(std::slice::from_ref(&full)).unwrap();
+            eprintln!("CPU_EMBED_PROGRESS full_window_evaluated");
             compare(
                 &first,
                 &embedder.embed(std::slice::from_ref(&full)).unwrap(),
             );
+            eprintln!("CPU_EMBED_PROGRESS full_window_repeat_passed");
             let mut long = full.clone();
             long.ids.truncate(limit as usize - inputs[1].ids.len());
             let heterogeneous = vec![inputs[1].clone(), long];
@@ -689,12 +717,15 @@ mod llama {
                 .iter()
                 .map(|i| embedder.embed(std::slice::from_ref(i)).unwrap().remove(0))
                 .collect();
+            eprintln!("CPU_EMBED_PROGRESS heterogeneous_reference_evaluated");
             compare(&embedder.embed(&heterogeneous).unwrap(), &reference);
             full.ids.push(repeated);
             assert!(embedder.embed(&[full]).is_err());
+            let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+            assert_eq!(unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) }, 0);
             eprintln!(
                 "CPU_EMBED_RESULT {}",
-                serde_json::json!({"model_sha256":SHA,"llama_cpp":LLAMA_CPP_COMMIT,"backend":"cpu","isolation":isolation,"threads":2,"memory_ceiling_bytes":config.memory_bytes,"input_tokens":limit,"sequences":8,"minimum_cosine":minimum,"elapsed_ms":started.elapsed().as_millis(),"product_worker_acceptance":false,"tokenizer_json_parity":false})
+                serde_json::json!({"model_sha256":SHA,"llama_cpp":LLAMA_CPP_COMMIT,"native_recipe":option_env!("FOUNDRY_LLAMA_CPP_RECIPE").unwrap_or("upstream"),"backend":"cpu","isolation":isolation,"threads":2,"cpu_seconds":config.cpu_seconds,"memory_ceiling_bytes":config.memory_bytes,"peak_rss_bytes":usage.ru_maxrss as u64 * 1024,"input_tokens":limit,"sequences":8,"minimum_cosine":minimum,"input_sha256":input_hash,"single_vectors":single,"elapsed_ms":started.elapsed().as_millis(),"product_worker_acceptance":false,"tokenizer_json_parity":false})
             );
         }
     }

@@ -66,8 +66,11 @@ Native generation stops at a completed JSON object, with a revised paired recipe
 separately. The next Linux continuation adds nested/direct cross-file router dependencies,
 compiler-reference callee/test-attribute evidence, an offline attribution diagnostic and
 8,192-file semantic lifecycle validation. The eight development retrieval labels show
-no gain (1/8 in each arm). Selected Gemma CPU numerics pass at 2,048 tokens; 8,192 tokens
-fail the tested 8 GiB ceiling in the pinned runtime's output allocation. Broader
+no gain (1/8 in each arm), including the subsequent opt-in common-word prose repair.
+Selected Gemma CPU numerics pass at 2,048 tokens; an explicit Linux-only pooled-output
+diagnostic now repairs the pinned runtime's unused-logit allocation and passes at
+8,192 tokens under 8 GiB, with 2.72 GiB peak RSS. Production worker/runtime identity
+and platform adoption remain open. Broader
 frameworks, a useful task model, held-out host outcomes/economics, model-scale throughput
 and production macOS embedding/Metal acceptance remain. See the [updated pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
 Other deferred specs remain deferred; 013 stays frozen off. The task

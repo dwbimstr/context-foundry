@@ -960,6 +960,10 @@ relationship is emitted. Dynamic dispatch and semantic constraint conflicts rema
 An opt-in free-form OMP parser calibration now complements the scripted host integration
 and earlier fixed-choice model tests: two initial-context arms, one attempt each,
 permission to edit files, an external immutable checker and gateway receipts including
-failures. Both observed arms made no edits and failed the task. The public T003 fixture
-is not held out. See the current Linux continuation in
+failures. Both original 0.5B arms made no edits and failed the task. The subsequent
+pinned Qwen3-1.7B comparison adds 64 identical unrelated functions to both workspaces:
+real writes occur, but both external checks fail (panic/noncompiling patch). This is
+synthetic volume, not task diversity. The composed arm has complete usage; one cancelled
+baseline request is unknown. Neither run establishes quality or total-cost savings.
+The public T003 fixture is not held out. See the current Linux continuation in
 [validation](../../docs/validation.md) for executed outcomes and limits.

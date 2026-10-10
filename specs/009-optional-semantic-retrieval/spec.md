@@ -1163,6 +1163,18 @@ they do not assign causes to the 249 historical G2 misses.
   outside Git. Validation records the executed diagnostic fixtures; the full G1/G2,
   held-out quality and installed-artifact checks are not claimed by those fixtures.
 
+T005 sandbox repair continuation (2026-10-10): the existing behavior-context opt-in
+now admits [anchorless prose selection](../001-source-state-recovery/contracts/context-v2.md#experimental-anchorless-prose-selection--009-t005-2026-10-10).
+Plain-language requests no longer promote coincidentally named definitions ahead of
+body matches. The regression fixture reproduces a 32-slot eviction by common-word
+names; ordinary search, explicit identifiers/paths, anchors, graph requests, dense
+precedence and final source/budget checks keep their existing contracts. No candidate
+cap is enlarged and no model is replaced. One candidate is selected for this experiment;
+repository development comparisons remain separate from held-out acceptance.
+The corrected diagnostic excludes its own evaluator source. This candidate still
+delivers 1/8 required bodies on those eight labels, matching the baseline; broader
+retrieval usefulness remains open. See the [executed Linux results](../../docs/validation.md#feasible-linux-repairs-and-task-comparison--2026-10-10).
+
 ### T006 — Bound and parallelize semantic partition computation
 
 Status: implemented experimentally in the shared CLI/MCP pipeline; sandbox evidence
@@ -1783,3 +1795,29 @@ Native reference: llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`,
 `cpu_pinned_gemma_batch_geometry` diagnostic. No upstream runtime patch or descriptor
 identity change is hidden in these measurements. Raw logs/artifacts remain outside Git;
 [validation](../../docs/validation.md) records reproduction and limitations.
+
+#### T009 Linux allocation repair experiment — 2026-10-10
+
+The owner selected feasible sandbox completion after the closeout audit. A separate
+`embed-worker-pooled-diagnostic` build applies one checked replacement to the exported
+pinned `llama-context.cpp`: when embeddings are requested for `GEMMA_EMBEDDING2`, do
+not allocate unused logits. The upstream `models/gemma-embedding2.cpp::graph` writes
+`t_embd` and never `t_logits`; pooling, token outputs and graph evaluation are unchanged.
+The exact-source precondition must match once or the build refuses. The recipe is
+reported as `gemma2-pooled-output-v1` beside the upstream commit, never presented as
+an unmodified upstream build. Ordinary native builds keep the original runtime.
+
+This narrow diagnostic avoids a general runtime fork or an unverified upstream
+upgrade. It is Linux-only, with the existing production Linux embedding refusal intact;
+it is not an admitted profile/cache namespace or a macOS package change. Before any
+production adoption, prefer a pinned upstream fix, bind its runtime identity and
+validate the actual worker/device. Compare against the original runtime's retained
+vectors, then exercise full-window/batched/reversed/heterogeneous inputs under the same
+8 GiB ceiling. Keep numerical tolerances fixed and report peak process RSS and failures.
+
+Executed: unmodified and patched 2,048-token runs pass, then the patched 8,192-token
+run passes with 2.72 GiB peak RSS and minimum cosine 0.99999528. Its first 600
+CPU-second attempt was killed; the final run used 900 CPU seconds with the same
+8 GiB ceiling. Cross-runtime comparison covers the retained short-input vectors;
+there is no stock full-window reference under this ceiling. This closes the sandbox
+allocation failure, not T009's production, tokenizer, representation or quality acceptance.

@@ -119,6 +119,9 @@ semantic = ["dep:tokenizers", "dep:usearch"]
 # bindgen and links the static archives into that binary alone; `foundry`
 # and the default build never touch llama.cpp.
 embed-worker = ["dep:bindgen"]
+# Linux-only numerical diagnostic of a checked Gemma 2 output-allocation fix.
+# No production embedding worker is admitted by this feature.
+embed-worker-pooled-diagnostic = ["embed-worker"]
 # Owned generation links the same pinned llama.cpp into foundry-generate only.
 generate-worker = ["dep:bindgen"]
 learning-worker = ["dep:tch"]

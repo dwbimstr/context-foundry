@@ -565,6 +565,25 @@ a window filled: tier 1's 64 slots with definitions left over, or tier 2 at 256.
 may legitimately change when index statistics change (refresh, repair); determinism
 holds per index state.
 
+#### Experimental anchorless prose selection — 009 T005, 2026-10-10
+
+With `experimental_behavior` enabled for search-context requests, an anchorless
+plain-language query uses tier 2 without promoting incidental exact-definition runs
+to tier 1. Eligibility requires at least three whitespace-separated words, each
+alphabetic after trimming trailing `?`, `.`, `,` or `:`. Queries starting with
+`where`, `find`, `locate`, `show` or `who` retain the baseline. Explicit code/path
+syntax, admitted anchors (including global multi-root anchors), graph strategy and
+policy-routed auto strategy retain their existing selection. Default context and the
+ordinary `search` operation are unchanged.
+
+Cause: many definitions named ordinary words such as `read` can occupy all 32 context
+slots ahead of a body matching the complete behavioral query. This exception keeps
+the existing lexical scoring, 256-document window, four-per-file cap, final-read
+freshness and response budget. Dense results retain their existing precedence when
+present. Tracing adds a bounded `lexical_intent` event; no expected-answer labels enter
+selection. It changes no source index, vector recipe or cache identity. Development
+regressions and public repository comparisons do not establish held-out G2 acceptance.
+
 ### Hit materialization
 
 Merge candidates sharing a delivery unit, keeping the best-ranked. At most 4 hits per

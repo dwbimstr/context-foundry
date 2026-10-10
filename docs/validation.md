@@ -1,5 +1,131 @@
 # Validation
 
+## Feasible Linux repairs and task comparison — 2026-10-10
+
+Continued on `experimental/context-ecosystem`, Rust 1.90, with four visible quota
+CPUs and no GPU. Raw results remain outside Git under
+`/workspace/.context-foundry-tools/validation-runs/`; weights stay in the sibling
+`embedding-fixture` and `generation-fixture` directories. These are sandbox results,
+not release, macOS or production Linux embedding acceptance. 013 remains frozen off.
+
+**8,192-token allocation repair.** The pinned llama.cpp
+`b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea` unconditionally reserves a vocabulary-sized
+logit output buffer. Its `src/models/gemma-embedding2.cpp::graph` produces embeddings
+and no logits. The new Linux-only `embed-worker-pooled-diagnostic` feature applies
+one exact-source-checked replacement in `build.rs`, suppressing that unused allocation
+only for Gemma embedding mode. It reports the separate recipe
+`gemma2-pooled-output-v1`. Ordinary native builds and production admission are unchanged;
+this is an experimental overlay, not an upstream fix or a silently reused cache identity.
+
+The real Gemma BF16 artifact is SHA-256
+`68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216`, from
+`ggml-org/embeddinggemma-2-GGUF@bfcd298762cc34d0357ece5ebdd31791a3a374d8`.
+The CPU diagnostic runs under `linux-seccomp-fd-v1`, two CPU threads, an 8 GiB
+address-space ceiling and fixed cosine ≥0.9999 / unit-norm tolerance 0.0001.
+All three completed runs pass eight short sequences singly, batched and reversed,
+Unicode/CRLF inputs, full-window repeatability, a near-full heterogeneous batch,
+finite/unit-norm outputs and limit-plus-one refusal.
+
+| Runtime recipe / token window | Diagnostic wall time | Peak process RSS | Minimum cosine |
+| --- | ---: | ---: | ---: |
+| Unmodified upstream / 2,048 | 30,950 ms | 3,073,216,512 B (2.86 GiB) | 0.99999528 |
+| Pooled-output experiment / 2,048 | 29,136 ms | 918,056,960 B (0.85 GiB) | 0.99999528 |
+| Pooled-output experiment / 8,192 | 330,477 ms | 2,916,052,992 B (2.72 GiB) | 0.99999528 |
+
+The two patched runs additionally compare all eight short-input vectors against the
+retained unmodified 2,048-token run, checking model and token-input hashes. There is
+no stock 8,192-token reference under this ceiling: full-window checks establish
+repeatability and single/batch agreement, not full-window cross-runtime parity.
+The first patched 8,192 attempt exhausted its 600 CPU-second allowance; the final
+predeclared attempt passed with 900 CPU seconds and a 480-second outer wall limit.
+The memory ceiling and numerical tolerances were unchanged. Logs retain both attempts.
+Model downloading overlapped part of the final run; timings are observations, not an
+isolated speed comparison. The 2,048-token peak-RSS reduction is approximately 70%.
+
+Artifacts: `pooled-output-v1/{baseline-2048,pooled-2048,pooled-8192-cpu900}.{log,json}`
+and the failed `pooled-8192.log`. To reproduce after the native build prerequisites
+in [CONTRIBUTING](../CONTRIBUTING.md), set `LLAMA_CPP_DIR` to the pinned object store,
+`FOUNDRY_EMBED_CPU_GGUF` to the verified model, and `FOUNDRY_EMBED_CPU_CONTEXT` to
+the desired window. Run the ignored `cpu_pinned_gemma_batch_geometry` binary test
+with `embed-worker` for the stock reference and `embed-worker-pooled-diagnostic`
+for the overlay. Extract the `CPU_EMBED_RESULT` JSON from the first log and supply
+it as `FOUNDRY_EMBED_CPU_REFERENCE` for the comparisons. Pipe output to a parent-owned
+log: the confined test process cannot write regular files. Keep the 480-second outer
+timeout for the 8,192 run. Profile `tokenizer.json` parity, independent parent/file/area
+vectors, long-context retrieval quality and worker/device/package adoption remain open.
+Prefer a pinned upstream repair for production and bind its runtime identity first.
+
+**Anchorless retrieval.** One conservative candidate was selected before evaluation:
+with the existing experimental behavior flag, anchorless alphabetic prose no longer
+promotes incidental exact-name runs ahead of lexical body matches. A regression with
+48 unrelated `read` definitions reproduces eviction of the relevant body from the
+32-slot context window; the repair delivers it under the existing budget and freshness
+rules. Locator/code/path/graph queries, admitted anchors and ordinary search retain
+their contracts. Dense evidence retains precedence. No cap, model or score formula
+was increased. This is a repair for that specific failure, not general acceptance.
+
+The repository attribution harness now excludes its own evaluator source before
+freezing identities, avoiding retrieval of literal labels as repository evidence.
+Both arms still deliver **1/8** expected bodies on the eight public development labels:
+three candidate-limit losses, two packing omissions and two unknowns per arm. Traced
+and untraced bytes match. Raw labels, exact source hashes, traces and outputs are in
+`anchorless-prose-v1/`. These labels are neither held out nor the unavailable historical
+G2 set. The candidate stays opt-in; broader anchorless usefulness is still unproven.
+
+**Stronger-model host comparison.** The existing free-form OMP harness now accepts
+the explicitly pinned Qwen3-1.7B Q8_0 model and an `expanded` fixture mode. The latter
+adds 64 unrelated Rust functions, identically in both arms. This is synthetic evidence
+volume, not realistic task diversity. Model artifact: `Qwen/Qwen3-1.7B-GGUF` revision
+`90862c4b9d2787eaed51d12237eafdfe7c5f6077`, SHA-256
+`061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a`
+(1,834,426,016 bytes); Apache-2.0 metadata/license retained outside Git. OMP 18.6.0 / Bun
+1.3.14 used the unmodified pinned llama.cpp server, launched with four CPU threads,
+16,384 context, one slot, temperature zero, thinking off, prompt cache disabled and 512 output tokens
+per request. The `glm-5.3-flash` name is only the transport alias. No paid API was used.
+
+One attempt per arm, each capped at 180 seconds, edited a fresh public parser fixture
+using real `write` calls. The separate Rust checker accepted a positive control and
+rejected the original before either task. Actual tool calls touched only the allowed
+parser path; protected files remained unchanged. These are ordinary local host
+processes, not a claim of execution isolation or remote backend attestation.
+
+| Arm | Verified task | Preparation | Host elapsed | Requests | Observed input / output tokens |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Full files | Failed: missing `=` panics via `unwrap()` | <1 ms | 180,821 ms | 4 | ≥12,821 / ≥896; one request unknown |
+| Foundry composed, 2,048-token allowance | Failed: Rust does not compile | 874 ms | 61,360 ms | 2 | 4,488 / 346; complete |
+
+The full-file run reached the host time limit after an output-truncated, unexecuted
+write and two executed writes. Three model receipts are complete; cancellation leaves
+the fourth request's usage unknown, so full-run totals remain null in the report.
+The composed arm completed its host process after one write, but its patch failed the
+compiler. Every complete receipt reported zero cached input tokens. Retain the lower
+observed token count as an observation, **not cost per verified completion**: both tasks
+failed, one total is incomplete, and model acquisition/loading, energy and amortized
+bootstrap/maintenance costs are not included. This comparison does not establish a
+memory benefit, a useful model/recipe, representative quality or total-cost savings.
+
+Artifacts: `qwen3-expanded-host/report.json`, per-arm prompts/sessions/receipts, patches
+and checker logs, plus `qwen3-task-server.log`. Reproduction uses the existing ignored
+`host_task::free_form_parser_repair_with_full_files_and_foundry_context` gateway test,
+the documented OMP/Bun/rustc paths, `FOUNDRY_HOST_TASK_MODEL=qwen3-1.7b` and
+`FOUNDRY_HOST_TASK_SOURCE_SCALE=expanded`; choose a new outside-Git output directory.
+The local server was stopped after the run. Earlier 0.5B negative results remain below.
+
+**Code checks.** All 413 focused default checks pass (`lib`, `core`, `multiroot`,
+`neural_retrieval`, `response`, `retrieval_attribution`, `task_evidence`), as do the
+two ordinary native embedding tests. Default and pooled-diagnostic all-target Clippy
+pass with `-D warnings`. The real-model diagnostics and repository attribution run
+above are additional opt-in checks, not included in the 413. The prior full-suite
+baseline remains below; no unavailable platform or zero-test target is counted.
+The added prose-plus-dense precedence assertion also passes, followed by final default
+all-target Clippy, the build without default features, formatting and documentation links.
+
+**Remaining from the requested list:** real-model 60,000–80,000-file semantic validation;
+independent parent/file/area vectors; broader framework/dynamic callers and observed
+test coverage; demonstrated representative task-quality and total-cost benefits; an
+effective general anchorless repair. The allocation failure is closed for the Linux
+diagnostic, while its production adoption and macOS/GPU acceptance remain open.
+
 ## Ecosystem closeout audit — 2026-10-10
 
 Reviewed the implementation through `1cbb6bd` on `experimental/context-ecosystem`
@@ -43,9 +169,10 @@ example `/workspace/.context-foundry-tools/validation-runs/RUN`), retain the dec
 identities and stop rules, and treat it as a new run. Checkpoint restoration does not
 verify installation from the saved setup draft on a clean machine.
 
-**Still open:** no effective anchorless repair or representative task-quality/cost
+**At this audit checkpoint:** no effective anchorless repair or representative task-quality/cost
 gain; no selected-model semantic acceptance at 60,000–80,000 files; the tested
-8,192-token/8 GiB embedding allocation failure; independent parent/file/area vectors,
+8,192-token/8 GiB embedding allocation failure (subsequently repaired in the opt-in
+Linux diagnostic above); independent parent/file/area vectors,
 broader relationships and observed test coverage; native macOS/GPU/resource/package
 acceptance. The [pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
 keeps these obligations and the conditional extensions explicit. macOS remains deferred

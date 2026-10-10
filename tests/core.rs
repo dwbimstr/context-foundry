@@ -91,6 +91,96 @@ fn retrieval_trace_distinguishes_selection_caps_from_anchored_packing_omissions(
 }
 
 #[test]
+fn anchorless_prose_does_not_promote_incidental_common_word_definitions() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    for i in 0..48 {
+        engine
+            .replace_source(
+                &format!("distractor{i:02}.rs"),
+                "pub fn read() { unrelated(); }\n",
+            )
+            .unwrap();
+    }
+    engine.replace_source("catalog.rs", "/// Read retained records safely after checking their checksum.\npub fn restore_catalog() { verify_checksum(); return_retained_records(); }\n").unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let context = |query, enabled, strategy, budget| {
+        let c = engine
+            .context_candidates_with(
+                query,
+                strategy,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: enabled,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        response::pack_enriched_context(&c, None, Budget::request(budget), &response::stdout_bytes)
+            .unwrap()
+    };
+    let query = "read retained records safely";
+    assert!(
+        !context(query, false, Strategy::Search, 2048)
+            .text
+            .contains("verify_checksum")
+    );
+    let corrected = context(query, true, Strategy::Search, 2048);
+    assert!(
+        corrected.text.contains("verify_checksum"),
+        "{}",
+        corrected.text
+    );
+    for budget in [128, 256, 512, 1024, 2048] {
+        let packed = context(query, true, Strategy::Search, budget);
+        assert!(packed.tokens <= budget);
+        assert!(parse_v2(&packed.text).is_ok());
+    }
+    for query in [
+        "read",
+        "`read`",
+        "find read",
+        "where is read",
+        "read retained_records safely",
+        "How does `read` work?",
+    ] {
+        assert_eq!(
+            context(query, false, Strategy::Auto, 2048).text,
+            context(query, true, Strategy::Auto, 2048).text,
+            "{query}"
+        );
+    }
+    assert_eq!(
+        context(query, false, Strategy::Graph, 2048).text,
+        context(query, true, Strategy::Graph, 2048).text
+    );
+    engine
+        .replace_source("catalog.rs", "pub fn restore_catalog() { unrelated(); }\n")
+        .unwrap();
+    let c = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let packed =
+        response::pack_enriched_context(&c, None, Budget::request(2048), &response::stdout_bytes)
+            .unwrap();
+    assert!(
+        !packed.text.contains("verify_checksum"),
+        "stale source must not survive intent selection"
+    );
+}
+
+#[test]
 fn behavioral_context_delivers_owned_methods_and_preserves_locator_and_unknown_queries() {
     let fixture = tempfile::tempdir().unwrap();
     let (_store, mut engine) = setup(&fixture.path().join("ws"));

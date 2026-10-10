@@ -87,7 +87,7 @@ enum Command {
         /// Write bounded private diagnostics in a NEW directory; never changes evidence.
         #[arg(long, value_name = "DIR")]
         retrieval_trace_dir: Option<PathBuf>,
-        /// Test behavioral support packing; default off pending retrieval/host gates.
+        /// Test behavior/prose selection; default off pending retrieval/host validation.
         #[arg(long)]
         experimental_behavior_context: bool,
         #[arg(long, default_value = "auto")]

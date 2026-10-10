@@ -883,6 +883,44 @@ fn dense_units_come_first_in_similarity_order_then_the_lexical_ones_in_todays_or
     assert_eq!(placed.counters.capped, capped);
     let unique: BTreeSet<_> = all.iter().cloned().collect();
     assert_eq!(all.len(), unique.len(), "no unit twice");
+
+    // The opt-in prose repair changes only lexical exact-run promotion. A
+    // supplied semantic window must retain its precedence and similarity order.
+    let prose = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &context_foundry::store::ContextOptions {
+                experimental_behavior: true,
+                anchors: Some(&[]),
+                dense: Some(&window),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let prose_dense: Vec<_> = prose
+        .batch
+        .items
+        .iter()
+        .take_while(|item| item.semantic.is_some())
+        .map(unit)
+        .collect();
+    assert!(!prose_dense.is_empty());
+    assert_eq!(
+        prose_dense,
+        dense
+            .iter()
+            .take(prose_dense.len())
+            .map(|i| unit(i))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        prose.batch.items[prose_dense.len()..]
+            .iter()
+            .all(|item| item.semantic.is_none())
+    );
 }
 
 /// One placed unit: `(path, start, end)`.

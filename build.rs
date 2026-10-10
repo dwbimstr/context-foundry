@@ -46,7 +46,10 @@ fn learning_worker() {
 /// fixed configuration [`llama::CMAKE_FLAGS`] (static, Metal with the
 /// embedded shader library and Accelerate BLAS on macOS, CPU on Linux; no OpenMP or host-specific CPU
 /// tuning), the system compilers and a cleared environment. Each run of this
-/// script starts from an empty source and build directory. Bindings are
+/// script starts from an empty source and build directory. The Linux-only
+/// `embed-worker-pooled-diagnostic` feature applies the separately reported,
+/// exact-source-checked allocation recipe below; ordinary builds use the tree
+/// unchanged. Bindings are
 /// generated from that tree's `llama.h`; the archives, the system C++ library
 /// and the Metal, Foundation and Accelerate frameworks are linked into the
 /// selected worker binaries only (never the library, `foundry` or the tests),
@@ -143,8 +146,34 @@ mod llama {
             }
         }
         export(&repository, &source);
+        let recipe = if std::env::var_os("CARGO_FEATURE_EMBED_WORKER_POOLED_DIAGNOSTIC").is_some() {
+            assert_eq!(
+                std::env::var("CARGO_CFG_TARGET_OS").as_deref(),
+                Ok("linux"),
+                "the pooled-output diagnostic has only been admitted on Linux"
+            );
+            // The pinned Gemma 2 graph assigns t_embd, never t_logits
+            // (src/models/gemma-embedding2.cpp). Its pooled embedding path
+            // nevertheless allocates vocabulary * tokens unused logits.
+            // Keep every graph/pooling operation and every other architecture
+            // unchanged. Fail closed if the upstream source no longer matches.
+            let path = source.join("src/llama-context.cpp");
+            let text = std::fs::read_to_string(&path).expect("pinned context source");
+            let before = "    bool has_logits     = true;";
+            assert_eq!(
+                text.matches(before).count(),
+                1,
+                "native recipe precondition changed"
+            );
+            let after = "    bool has_logits     = !(cparams.embeddings && model.arch == LLM_ARCH_GEMMA_EMBEDDING2);";
+            std::fs::write(path, text.replacen(before, after, 1)).expect("write diagnostic recipe");
+            "gemma2-pooled-output-v1"
+        } else {
+            "upstream"
+        };
         compile(&source, &build, &out);
         println!("cargo:rustc-env=FOUNDRY_LLAMA_CPP_COMMIT={COMMIT}");
+        println!("cargo:rustc-env=FOUNDRY_LLAMA_CPP_RECIPE={recipe}");
         let license = source.join("LICENSE");
         std::fs::copy(&license, out.join("llama.cpp-LICENSE"))
             .unwrap_or_else(|e| panic!("copy {}: {e}", license.display()));
