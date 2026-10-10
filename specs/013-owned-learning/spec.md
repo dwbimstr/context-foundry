@@ -14,6 +14,8 @@ reactivation. [PR #9 compatibility evidence](../../docs/review/tch-026.md) separ
 Linux numerical-operation checks from pending macOS arm64 worker/package and
 checkpoint parity acceptance. The earlier 0.24.0/2.11.0 results below remain
 historical evidence; their acceptance does not transfer to the new pairing.
+The owner subsequently authorized merging this coordinated migration with macOS
+validation deferred; the freeze and pending target acceptance remain unchanged.
 
 Status: Proposed implementation contract v4, revised 2026-09-29 after bounded Rust
 feasibility probes. T001 (schema 6, `feedback v4`, `learning prepare|check|compose-state`)

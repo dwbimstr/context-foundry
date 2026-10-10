@@ -10,6 +10,8 @@ tests execute LibTorch; the Linux worker binary itself is an unsupported-platfor
 stub. macOS arm64 loading, package/bundle behavior and full checkpoint parity
 remain unexecuted for the new pairing. Learning remains frozen off; historical
 0.24.0/2.11.0 results below are not relabeled as new-runtime acceptance.
+The owner authorized merging the coordinated changes on 2026-10-10 with macOS
+validation deferred. That deferral does not mark the pending checks as passed.
 
 ## v0.1.0 local release — 2026-10-04 (withdrawn)
 
