@@ -38,6 +38,10 @@ pub mod fault_names {
     // the detail is the worker's scratch root.
     point!(FOOTPRINT_MEASURE, "supervisor.footprint_measure");
     // Every read of one stored partition row (tests count them).
+    point!(MAPPING_FULL_PAGE, "semantic.mapping_full_page");
+    point!(MAPPING_CACHE_PROBE, "semantic.mapping_cache_probe");
+    point!(SEGMENT_HASH, "semantic.segment_hash");
+    point!(SEGMENT_RESTORE, "semantic.segment_restore");
     point!(PARTITION_READ, "semantic.partition_read");
     point!(CACHE_RECONCILE, "semantic.cache_reconcile");
     point!(ARTIFACT_HASH, "semantic.artifact_hash");

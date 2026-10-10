@@ -654,3 +654,11 @@ one bounded delta and independent locations; compaction publishes a new immutabl
 The manifest switches after referenced files are durable. MCP retries transient publication
 failures three times with visible bounded backoff, then pauses with pending work; provider
 failures retain the explicit-resume behavior above. No automatic download is added.
+
+An open owner retains a bounded affected-location view and at most two verified,
+resident ANN segments. Source/partition/cache commits refresh affected mappings;
+unchanged segments skip hashing and restoration during publication/serving refresh.
+Restart, overflow, identity changes and explicit repair rebuild the mapping view;
+verification receipts never survive restart. Warm queries check owner/profile/manifest
+identity, and refresh rechecks ANN file versions. Explicit audits always validate the
+files independently. Full location JSON and generation metadata remain corpus-sized.

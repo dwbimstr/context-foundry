@@ -36,9 +36,10 @@ lexical publication and reusable ingestion/lexical workers. Verified-artifact ha
 transactional cache accounting and exact per-card segment reuse now complete the selected
 E1 implementation. E2 adds durable changed-source queues, opt-in continuous maintenance
 and cheap progress observations. E3 now publishes bounded ANN deltas and independent
-location maps through an atomic manifest; affected-location reconciliation and verified/
-resident segment reuse remain T008 work. E4 model-aware inputs remain pending.
-See [validation](validation.md#ann-delta-publication--2026-10-09).
+location maps through an atomic manifest, refreshes affected locations, and reuses
+verified/resident segments. Full location serialization, metadata bookkeeping and restart
+baselines remain T008 costs. E4 model-aware inputs remain pending.
+See [validation](validation.md#warm-publication-reuse--2026-10-10).
 
 ## Architecture correction: useful context across 60,000–80,000 files
 
@@ -250,7 +251,7 @@ E4 onward remain pending. Sandbox build/test authorization continues.
 | D | First semantic result before full partitioning, priorities and geometric publication | 009 T007: implemented; total throughput/maintenance unresolved |
 | E1 | Remove repeated cold/warm CPU and startup work | Semantic worker reuse, bounded tokenized-card handoff, lazy CLI acquisition, no-op chunk allocation avoidance, bounded initial ingestion and lexical worker reuse implemented. Verified artifact handoff, transactional counters/reconciliation and exact per-card fitting reuse implemented under 009 T006/T007; macOS model handoff and real-device throughput remain unexecuted here. |
 | E2 | Durable changed-work frontier, explicit continuous semantic maintenance, independent acknowledgments and cheap status | 009 T008 with 001 T011; implemented experimentally in schema 9; ordinary changed-input selection is bounded; ANN deltas follow in E3 |
-| E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; ANN deltas, mapping-only publication, bounded compaction and crash recovery implemented. Full mapping walks/hash validation/resident reload remain follow-up work before total affected-path cost can be claimed. |
+| E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; ANN deltas, mapping-only publication, bounded compaction and crash recovery implemented. Warm affected-location and verified/resident segment reuse are implemented; full location serialization/metadata bookkeeping and restart baselines remain before total affected-path cost can be claimed. |
 | E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; pending; compare against current cards, keep old profiles/caches usable |
 | F | Selective memoized LLM generation, reverse dependencies, affected area rollups and indexed derived knowledge | 010 T002 on E2/E4 resource and identity contracts; pending |
 | G | Evidence-bearing boundary joins and task-oriented implementation/caller/test composition | 005 T005 / 003 T009; pending |

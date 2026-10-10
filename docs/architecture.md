@@ -684,5 +684,10 @@ See [009 T008](../specs/009-optional-semantic-retrieval/spec.md#t008--maintain-a
 Generation v4 adds an immutable base, at most one bounded delta and independent
 locations, committed through one atomic content-bound manifest. Compaction is bounded
 by churn and payload; queries filter retired keys inside ANN selection and merge at
-most two candidate windows. Full mapping walks, file-hash validation and resident reload
+most two candidate windows. A bounded, owner-local mapping view refreshes committed
+paths/cache keys; restart, overflow, identity changes and explicit repair reconcile.
+Two held-file verification receipts retain immutable USearch segments across location
+and delta publications. Warm requests check owner, profile and manifest version;
+refresh validates file versions and rebuilds generation-specific labels. Explicit audit
+still hashes. Full location serialization/metadata bookkeeping and restart baselines
 remain T008 costs. Automatic LLM generation remains 010 T002.

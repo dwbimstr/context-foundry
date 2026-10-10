@@ -574,6 +574,30 @@ fn encode_row(function_digest: &str, vector: &[f32]) -> Vec<u8> {
 }
 
 impl Engine {
+    /// Commit and notify the disposable mapping view without an observation gap.
+    /// The same short mutex orders cursor snapshots with redb publication.
+    pub(crate) fn semantic_commit<'a>(
+        &self,
+        tx: WriteTransaction,
+        paths: impl IntoIterator<Item = &'a str>,
+        keys: impl IntoIterator<Item = &'a str>,
+        reset: bool,
+    ) -> FResult<()> {
+        #[cfg(feature = "semantic")]
+        {
+            self.semantic_mapping
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .commit(tx, paths, keys, reset)
+        }
+        #[cfg(not(feature = "semantic"))]
+        {
+            let _ = (paths, keys, reset);
+            tx.commit()?;
+            Ok(())
+        }
+    }
+
     /// The recorded partition of one source, if any. Metadata-only.
     pub fn semantic_partition(&self, path: &str) -> FResult<Option<PartitionRecord>> {
         neural_fault!(PARTITION_READ, None, path)?;
@@ -659,7 +683,7 @@ impl Engine {
                     .as_str(),
             )?;
         }
-        tx.commit()?;
+        self.semantic_commit(tx, [path.as_str()], std::iter::empty(), false)?;
         Ok(())
     }
 
@@ -1030,7 +1054,12 @@ impl Engine {
                     .as_str(),
             )?;
         }
-        tx.commit()?;
+        self.semantic_commit(
+            tx,
+            std::iter::empty(),
+            entries.iter().map(|(key, _)| key.as_str()),
+            false,
+        )?;
         Ok(())
     }
 
@@ -1091,7 +1120,7 @@ impl Engine {
                 )?;
             }
             crate::neural::work::invalidate(&tx, crate::neural::work::Lane::Semantic)?;
-            tx.commit()?;
+            self.semantic_commit(tx, std::iter::empty(), std::iter::empty(), true)?;
             self.semantic_wake.notify();
             (partitions, rows, bytes)
         };

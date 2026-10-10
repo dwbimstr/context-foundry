@@ -5435,3 +5435,287 @@ async fn continuous_semantics_progresses_during_filesystem_traffic_and_converges
         );
     }
 }
+
+/// Advance one source through the genuine renderer/cache acceptance without
+/// reopening the owner. The vector function is the same deterministic fixture
+/// used by ConceptProvider; these checks establish work selection, not quality.
+fn accept_fixture_edit(corpus: &Corpus, path: &str, body: &str) {
+    use context_foundry::neural::{cache, partition, tokenize::DocumentTokenizer};
+    let engine = corpus.engine();
+    engine.replace_source(path, body).unwrap();
+    let profile = &corpus.profile;
+    let digest = corpus.digest();
+    let tokenizer = DocumentTokenizer::load(profile).unwrap();
+    let cards = partition::cards(
+        body,
+        path,
+        context_foundry::syntax::Lang::from_path(path),
+        &partition::CardRecipe {
+            template: &profile.descriptor.document_template,
+            function_digest: &digest,
+            card_tokens: profile.card_tokens as usize,
+        },
+        &tokenizer,
+    )
+    .unwrap();
+    let units: Vec<_> = cards
+        .iter()
+        .map(|card| cache::PartitionUnit {
+            start: card.start,
+            end: card.end,
+            input_key: card.input_key.clone(),
+        })
+        .collect();
+    engine
+        .semantic_record_partition(
+            path,
+            &engine.source(path).unwrap().unwrap().hash,
+            &partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens),
+            &digest,
+            Some(&units),
+            &|_| Ok(units.clone()),
+        )
+        .unwrap();
+    let entries: Vec<_> = cards
+        .iter()
+        .filter(|card| {
+            engine
+                .semantic_cache_probe(&card.input_key, &digest)
+                .unwrap()
+                != cache::CacheProbe::Current
+        })
+        .map(|card| {
+            (
+                card.input_key.clone(),
+                concept_vector(&model_input(&card.ids)),
+            )
+        })
+        .collect();
+    engine
+        .semantic_cache_commit(&entries, &digest, DIMENSIONS, DEFAULT_CACHE_CAP_BYTES)
+        .unwrap();
+}
+
+#[test]
+fn warm_publications_reuse_verification_and_resident_segments_with_fresh_locations() {
+    use context_foundry::neural::fault_names::{
+        MAPPING_FULL_PAGE, PARTITION_READ, SEGMENT_HASH, SEGMENT_RESTORE,
+    };
+    let corpus = Corpus::new(&[]);
+    let engine = corpus.engine();
+    let control = Control::unbounded();
+    // Begin with a compacted base: progressive preparation may leave a delta.
+    engine.semantic_rebuild_index(&control).unwrap();
+    // First publication warms the mapping and receipts without loading USearch.
+    engine.semantic_publish_pending(&control).unwrap();
+    let runtime = corpus.runtime();
+    let window = || {
+        runtime
+            .window(
+                engine,
+                DUSK_QUERY,
+                Instant::now() + Duration::from_secs(30),
+                &control,
+            )
+            .unwrap()
+    };
+    let hash = fault::reached(SEGMENT_HASH);
+    let initial = window();
+    let initial_revision = engine.source_revision().unwrap();
+    assert_eq!(
+        fault::reached(SEGMENT_HASH),
+        hash,
+        "publisher verification reused by serving"
+    );
+    let restores = fault::reached(SEGMENT_RESTORE);
+    let pages = fault::reached(MAPPING_FULL_PAGE);
+    let original = corpus.source(CODE_PATH);
+    accept_fixture_edit(&corpus, CODE_PATH, &format!("\n\n{original}"));
+    let reads = fault::reached(PARTITION_READ);
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Mapped(_)
+    ));
+    assert_eq!(fault::reached(PARTITION_READ) - reads, 1);
+    // Deliberately omit forget_index: the manifest receipt must notice publication.
+    let mapped = window();
+    assert_eq!(
+        mapped.complete_at(),
+        Some(engine.source_revision().unwrap())
+    );
+    assert_ne!(initial.complete_at(), mapped.complete_at());
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores,
+        "same immutable ANN"
+    );
+    assert_eq!(
+        fault::reached(SEGMENT_HASH),
+        hash,
+        "unchanged inode/version"
+    );
+    accept_fixture_edit(
+        &corpus,
+        CODE_PATH,
+        &format!("{original}\npub fn novel_delta_card() {{}}\n"),
+    );
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Delta(_)
+    ));
+    let delta = window();
+    assert_eq!(delta.complete_at(), Some(engine.source_revision().unwrap()));
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores + 1,
+        "only new delta restored"
+    );
+    assert_eq!(
+        fault::reached(SEGMENT_HASH),
+        hash + 1,
+        "only new delta verified"
+    );
+    runtime.forget_index();
+    window();
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores + 1,
+        "explicit refresh also keeps base and delta"
+    );
+    accept_fixture_edit(&corpus, CODE_PATH, &original);
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Delta(_)
+    ));
+    let reverted = window();
+    assert_eq!(
+        reverted.complete_at(),
+        Some(engine.source_revision().unwrap())
+    );
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores + 1,
+        "reversion reuses the base"
+    );
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), pages);
+    assert_eq!(
+        initial.complete_at(),
+        Some(initial_revision),
+        "old requests retain their own mapping"
+    );
+    // Exceed the bounded overlay: a compacted base must restore exactly once.
+    let mut compacted_body = original.clone();
+    for i in 0..65 {
+        compacted_body.push_str(&format!("\npub fn compaction_card_{i}() {{}}\n"));
+    }
+    accept_fixture_edit(&corpus, CODE_PATH, &compacted_body);
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Rebuilt(_)
+    ));
+    let compacted = window();
+    assert_eq!(
+        compacted.complete_at(),
+        Some(engine.source_revision().unwrap())
+    );
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores + 2,
+        "new compacted base restored once"
+    );
+    runtime.forget_index();
+    window();
+    assert_eq!(fault::reached(SEGMENT_RESTORE), restores + 2);
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), pages);
+    // Audits intentionally rehash even when warm serving already verified the file.
+    let audit_hash = fault::reached(SEGMENT_HASH);
+    engine.semantic_status(&control).unwrap();
+    assert!(fault::reached(SEGMENT_HASH) > audit_hash);
+}
+
+#[test]
+fn resident_generation_rechecks_owner_profile_and_manifest_without_invalidation_hints() {
+    use context_foundry::neural::fault_names::SEGMENT_RESTORE;
+    let mut corpus = Corpus::new(&[]);
+    let runtime = corpus.runtime();
+    let window = |corpus: &Corpus| {
+        runtime.window(
+            corpus.engine(),
+            DUSK_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &Control::unbounded(),
+        )
+    };
+    let before = fault::reached(SEGMENT_RESTORE);
+    window(&corpus).unwrap();
+    let restores = fault::reached(SEGMENT_RESTORE);
+    let segment_count = restores - before;
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    window(&corpus).unwrap();
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores + segment_count,
+        "new owner cannot reuse old owner's cache"
+    );
+    let path = index::generation_dir(&corpus.store, &corpus.digest()).join(index::MANIFEST_FILE);
+    let original = std::fs::read(&path).unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    manifest["v"] = 99.into();
+    std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert_eq!(window(&corpus).unwrap_err().code, "index_unavailable");
+    std::fs::write(&path, original).unwrap();
+    window(&corpus).unwrap();
+    let mut state = corpus.engine().semantic_state().unwrap().unwrap();
+    state.function_digest = Some("cd".repeat(32));
+    corpus.engine().semantic_set_state(&state).unwrap();
+    assert_eq!(window(&corpus).unwrap_err().code, "profile_mismatch");
+}
+
+#[test]
+fn segment_receipts_refuse_in_place_replacement_and_symlink_changes_on_refresh() {
+    use context_foundry::neural::fault_names::{SEGMENT_HASH, SEGMENT_RESTORE};
+    for mode in ["in-place", "replacement", "symlink"] {
+        let corpus = Corpus::new(&[]);
+        let runtime = corpus.runtime();
+        let window = || {
+            runtime.window(
+                corpus.engine(),
+                DUSK_QUERY,
+                Instant::now() + Duration::from_secs(30),
+                &Control::unbounded(),
+            )
+        };
+        window().unwrap();
+        let path = testkit::semantic_file(
+            &index::generation_dir(&corpus.store, &corpus.digest()),
+            index::INDEX_FILE,
+        );
+        let mut bytes = std::fs::read(&path).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        if mode == "replacement" {
+            std::fs::remove_file(&path).unwrap();
+        }
+        if mode == "symlink" {
+            let outside = corpus.dir.path().join("foreign-ann");
+            std::fs::write(&outside, bytes).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(outside, path).unwrap();
+        } else {
+            std::fs::write(path, bytes).unwrap();
+        }
+        let hashes = fault::reached(SEGMENT_HASH);
+        let restores = fault::reached(SEGMENT_RESTORE);
+        runtime.forget_index();
+        assert_eq!(window().unwrap_err().code, "index_unavailable", "{mode}");
+        assert_eq!(
+            fault::reached(SEGMENT_RESTORE),
+            restores,
+            "corrupt bytes never restored"
+        );
+        if mode != "symlink" {
+            assert_eq!(fault::reached(SEGMENT_HASH), hashes + 1);
+        }
+    }
+}

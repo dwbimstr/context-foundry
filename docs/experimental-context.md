@@ -62,10 +62,17 @@ Publication I/O/index failures in MCP retry after 250 ms, 1 s and 3 s; status ex
 Exhaustion pauses with pending work intact. No embedding is repeated by these retries.
 `generation_builds`, `delta_publications` and `mapping_publications` distinguish work.
 
-Publication still walks prepared mappings, validates all referenced file hashes and
-writes the complete location map. A changed publication also reloads the resident
-index. Incremental location reconciliation and verified/resident segment reuse remain
-T008 work; this slice does not establish total edit cost at 80,000-file scale.
+Within an open owner, publication now refreshes only paths affected by source,
+partition or cache commits. Bounded dirty-state overflow, restart, identity changes
+and repair reconcile from redb. Publication and serving share verified-file receipts
+and at most two immutable resident ANN segments: unchanged segments are neither
+rehashed nor restored when locations or the other segment change. Explicit audits
+still hash; changed file versions are reverified on refresh. Warm queries detect a
+changed manifest or prepared profile without needing an invalidation hint.
+
+Full location-map serialization and generation metadata/label bookkeeping remain
+corpus-sized. Restart performs one mapping baseline; compaction rebuilds the base.
+This slice does not establish total edit cost at 80,000-file scale.
 
 ## Progressive semantic bootstrapping
 

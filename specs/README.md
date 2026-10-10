@@ -35,8 +35,10 @@ reusable ingestion/lexical pool. Verified artifact handoff, transactional cache 
 and exact per-card fitting reuse now implement the remaining E1 work. T008 E2 adds
 schema-9 durable changed-work queues, explicit continuous maintenance and cheap status.
 T008 E3 now adds bounded ANN deltas, location-only publication, atomic manifest recovery
-and visible publication backoff. Full mapping walks and verified/resident segment reuse
-remain T008 work; T009 model-aware geometry remains pending before broad 010 generation. See the
+and visible publication backoff. Warm publication now refreshes affected locations and
+reuses verified/resident segments. Full location serialization/metadata bookkeeping and
+restart baselines remain T008 costs; T009 model-aware geometry remains pending before
+broad 010 generation. See the
 [revised build order](../docs/context-ecosystem-plan.md#revised-build-order).
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.

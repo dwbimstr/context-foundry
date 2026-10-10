@@ -905,7 +905,13 @@ pub struct Engine {
     parse_panics: ParseFailures,
     /// Shared ingestion/lexical CPU workers; lazy and retained across refreshes.
     index_pool: Option<std::sync::Arc<rayon::ThreadPool>>,
-    /// Source-commit notification for this Engine lifetime; redb owns durable work.
+    /// Disposable verification/residency and affected-location views for this owner.
+    #[cfg(feature = "semantic")]
+    pub(crate) semantic_segments:
+        std::sync::Arc<std::sync::Mutex<crate::neural::index::verification::Cache>>,
+    #[cfg(feature = "semantic")]
+    pub(crate) semantic_mapping: std::sync::Mutex<crate::neural::index::mapping::Journal>,
+    /// Source-commit notification; redb owns durable work.
     pub(crate) semantic_wake: std::sync::Arc<crate::neural::work::Wake>,
     /// The store directory, held as a descriptor opened (`O_DIRECTORY |
     /// O_NOFOLLOW`) exactly once at bind time and kept for the Engine's
@@ -3347,6 +3353,10 @@ impl Engine {
             parse_panics: ParseFailures::default(),
             index_pool: None,
             semantic_dir,
+            #[cfg(feature = "semantic")]
+            semantic_segments: Default::default(),
+            #[cfg(feature = "semantic")]
+            semantic_mapping: Default::default(),
             semantic_wake: Default::default(),
         })
     }
@@ -3471,6 +3481,10 @@ impl Engine {
             parse_panics: ParseFailures::default(),
             index_pool: None,
             semantic_dir,
+            #[cfg(feature = "semantic")]
+            semantic_segments: Default::default(),
+            #[cfg(feature = "semantic")]
+            semantic_mapping: Default::default(),
             semantic_wake: Default::default(),
         })
     }
@@ -3892,6 +3906,7 @@ impl Engine {
             &page.len().to_string()
         )?;
         let mut retired = 0u64;
+        let mut changed_paths = Vec::new();
         let tx = self.db.begin_write()?;
         {
             let mut sources = tx.open_table(SOURCES)?;
@@ -3913,6 +3928,7 @@ impl Engine {
                     pending.insert(source_pending_key(path).as_str(), "deleted")?;
                     seen.remove(path.as_str())?;
                     retired += 1;
+                    changed_paths.push(path.as_str());
                     let revision = read_counter(&meta, "source_revision")?
                         .checked_add(retired)
                         .ok_or(FoundryError::RevisionExhausted)?;
@@ -3927,7 +3943,11 @@ impl Engine {
                 meta.insert("source_revision", next.to_string().as_str())?;
             }
         }
-        tx.commit()?;
+        if changed_paths.is_empty() {
+            tx.commit()?;
+        } else {
+            self.semantic_commit(tx, changed_paths, std::iter::empty(), false)?;
+        }
         if retired > 0 {
             self.semantic_wake.notify();
         }
@@ -3992,7 +4012,7 @@ impl Engine {
         }
         // A failure here drops the transaction: prior source bytes stay intact.
         fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
-        tx.commit()?;
+        self.semantic_commit(tx, [path], std::iter::empty(), false)?;
         self.semantic_wake.notify();
         fault!(SOURCE_AFTER_COMMIT, Some(self), None, path)?;
         Ok(true)
@@ -4020,7 +4040,7 @@ impl Engine {
             crate::neural::work::changed(&tx, path, None, revision_in(&tx)?)?;
         }
         fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
-        tx.commit()?;
+        self.semantic_commit(tx, [path], std::iter::empty(), false)?;
         self.semantic_wake.notify();
         fault!(SOURCE_AFTER_COMMIT, Some(self), None, path)?;
         Ok(true)

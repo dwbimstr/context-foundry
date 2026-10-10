@@ -1798,6 +1798,45 @@ complete recovery runner passed **all 20 cases** separately. This was test orche
 not a product recovery failure. Final Clippy, formatting, build without default features
 and Markdown link checks passed (47 files, 694 links, 153 heading anchors).
 
-Full mapping scans, cache-layout probes, referenced-file hashing, complete location-map
-writes and resident-generation reload remain T008 costs. E4 model-aware inputs remain
+At this checkpoint, full mapping scans, cache-layout probes, referenced-file hashing,
+complete location-map writes and resident-generation reload remained T008 costs; the
+warm-reuse continuation below addresses three of these. E4 model-aware inputs remain
 pending. This is no real-device speed, provider-token-cost or task-quality claim.
+
+
+## Warm publication reuse — 2026-10-10
+
+Experimental 009 T008 now keeps a disposable mapping view per Engine, refreshes paths
+and input-key dependents recorded with committed source/partition/cache changes, and
+shares bounded file-verification receipts and immutable resident USearch segments
+between publication and serving. No durable format or schema changed.
+
+The mapping fixtures use 260 admitted sources and count actual partition reads,
+full-mapping pages and cache probes. Quiet replay does no such work; completing a
+shared cached input refreshes its two paths without a source revision change. Source
+edits/deletion/sweep remove stale locations, rejected commits leave the view clean,
+and changes between pages remain pending after an incomplete result. Cancellation,
+overflow, profile changes, purge and reopen rebuild safely; a subsequent warm pass
+stays incremental. Explicit audit still walks authoritative rows.
+
+The retrieval fixture uses the actual renderer, redb store, publisher, USearch loader
+and query runtime with deterministic concept vectors. A warmed location-only change
+reads one affected partition and performs zero ANN hashes/restores. A new delta
+hashes/restores only that segment; explicit generation refresh and base reversion reuse
+resident segments. Crossing the compaction threshold restores the new base once.
+Held old query windows preserve their generation revision. Reopen invalidates owner
+reuse, and profile/manifest changes are detected without an invalidation hint.
+Same-size in-place mutation, replacement and symlink substitution refuse on refresh;
+changed-during-read and cancellation cases cannot mint a receipt. Receipt-cache waiting
+obeys control, retention stays at two segments, and explicit audit rehashes independently.
+
+The full regression run passed **928 regular tests**, with two intentional ignores,
+and **all 20 child-process recovery cases**, including delta/compaction publication.
+The 6,000-file watcher fixture passed. Final Clippy (all targets, warnings denied),
+formatting, the build without default features and Markdown link checks passed
+(47 files, 696 links, 153 heading anchors).
+
+These fixtures establish work selection, identity checks and recovery, not model quality,
+provider-token savings or 80,000-file throughput. Full location serialization,
+membership/label metadata work and a restart baseline remain; compaction still rebuilds
+the base.

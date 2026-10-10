@@ -61,9 +61,7 @@
 use crate::control::Control;
 use crate::error::{FResult, FoundryError};
 use crate::neural::cache::{self, SemanticState};
-use crate::neural::index::{
-    self, GenerationError, MappingWalk, Publication, validate_generation_with,
-};
+use crate::neural::index::{self, GenerationError, MappingWalk, Publication, validate_cached};
 use crate::neural::partition;
 use crate::neural::prepare::{
     self, Batch, Cards, PrepareReport, Progress, Selected, Selection, Steps, Stop, StopOrError,
@@ -1018,12 +1016,18 @@ impl<'a> Run<'a> {
         if outcome.is_ok() {
             self.report.bootstrap.publication_error = None;
         }
+        let changed = matches!(
+            outcome,
+            Ok(Publication::Rebuilt(_) | Publication::Delta(_) | Publication::Mapped(_))
+        );
         let stop = prepare::record_publication(outcome, 0, &mut self.report);
         self.report.bootstrap.publication_ms += prepare::elapsed_ms(started);
         self.sync_progress();
         if stop.is_none() {
             if self.report.index_published {
-                self.runtime.forget_index();
+                if changed {
+                    self.runtime.forget_index();
+                }
                 self.published = self.report.index_entries;
             }
             self.unpublished = 0;
@@ -1041,12 +1045,17 @@ impl<'a> Run<'a> {
     /// the mapping incomplete, never wrong: locations revalidate per request.
     fn generation(&self) -> Result<Publication, Failed> {
         let control = self.control;
-        let Some((identity, store, mut walk)) = self.step(|engine| {
+        let Some((identity, store, segments, mut walk)) = self.step(|engine| {
             let Some(identity) = engine.semantic_identity()? else {
                 return Ok(None);
             };
             let walk = MappingWalk::start(engine, &identity.digest, &identity.recipe)?;
-            Ok(Some((identity, engine.semantic_anchor()?, walk)))
+            Ok(Some((
+                identity,
+                engine.semantic_anchor()?,
+                engine.semantic_segments.clone(),
+                walk,
+            )))
         })?
         else {
             return Ok(Publication::Nothing);
@@ -1054,13 +1063,9 @@ impl<'a> Run<'a> {
         while !self.step(|engine| walk.step(engine, control, Some(Instant::now() + STEP_TIME)))? {}
         let mapping = self.step(|engine| walk.finish(engine))?;
         let previous = {
-            match validate_generation_with(
-                &store,
-                &identity.digest,
-                &identity.recipe,
-                identity.dimensions,
-                control,
-            ) {
+            match validate_cached(&store, &identity, control, false, &segments)
+                .map(|(generation, _)| generation)
+            {
                 Ok(generation) if mapping.published_by(&generation) => {
                     self.step(|engine| engine.semantic_record_coverage(mapping.coverage))?;
                     return Ok(Publication::Current(generation.manifest.count));

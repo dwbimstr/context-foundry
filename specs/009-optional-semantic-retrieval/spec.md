@@ -1328,8 +1328,9 @@ evidence; no real-device throughput or task-quality gain is claimed.
 
 ### T008 — Maintain and publish only changed semantic work
 
-Selected; E2 and E3 ANN delta publication implemented experimentally. Incremental
-location reconciliation and publication-validation reuse remain open under T008. Depends on
+Selected; E2/E3 maintenance, ANN deltas, affected-location reconciliation and verified/
+resident segment reuse are implemented experimentally. Full location serialization and
+generation metadata bookkeeping remain corpus-sized T008 work. Depends on
 001 T011's source acceptance seam and T006/T007's bounded preparation. Current input-key cache reuse is retained. Replace
 normal edit-time full walks and generation rebuilds with work proportional to the
 changed inputs and their locations. Full reconciliation is still valid for initial
@@ -1462,17 +1463,55 @@ MCP driver:
   Format v1–v3 generations are refused by name and republished from cache by preparation
   or repair; schema 9, partition identities and vector cache format do not change.
 
-**Remaining T008 work:** publication still pages all prepared mappings, probes their
-cache layouts, hashes the referenced base/delta files, serializes a full location map,
-and reloads the resident generation after a changed publication. E3 removes full ANN
-reconstruction/checkpoint writes below compaction thresholds; it does not yet make total
-edit publication proportional to changed paths. Persisted affected-location reconciliation,
-verified-segment reuse and resident segment reuse retain that goal. E4 remains separate.
-No 80,000-file throughput, real model cost or task-quality result is claimed.
+Implemented warm publication reuse in [mapping.rs](../../src/neural/index/mapping.rs)
+and [verification.rs](../../src/neural/index/verification.rs), shared by the CLI/owner:
+
+- An owner-local mapping view retains current partitions, input-key-to-path reverse
+  references, cached locations and coverage counters. Source replace/delete/sweep,
+  partition acceptance and cache commits record affected paths/keys under the same
+  short mutex as the redb commit. A walk captures that commit serial; edits during
+  paged work remain dirty, and an old completion cannot clear newer work or claim
+  complete coverage. Cache completion refreshes all locations sharing that input key,
+  including when no source revision changed. Unchanged scans do not dirty the view.
+- The disposable frontier holds at most 1,024 combined paths/keys and 1 MiB of their
+  text. Overflow drops the view and requires reconciliation. The retained view has a
+  conservative 256 MiB logical-payload bound (not allocator overhead or total RSS).
+  Refresh is paged through the existing owner steps. Restart, cancellation of a taken
+  view, identity change, purge and explicit mapping audit/repair can rebuild it from
+  redb. No new durable journal, schema, table, thread or dependency is added: the
+  schema-9 queues already preserve obligations, and one restart baseline is simpler
+  than another durable materialized view with its own migration/recovery contract.
+- Publication and serving share at most two verified ANN-file receipts per Engine.
+  A receipt retains the verified file descriptor and checks device/inode, length,
+  mtime and ctime (including nanoseconds), against both the held inode and the current
+  descriptor-relative no-follow file open. New/changed files are bounded and hashed;
+  before/after metadata must agree before retaining the receipt. Unchanged files skip
+  SHA work. This is trusted-local-writer integrity reuse, not authentication or a
+  defense against an actor able to forge filesystem metadata. Explicit audits always
+  hash independently; restart receives no inherited receipt. Cache-lock waiting obeys
+  caller cancellation/deadlines.
+- Serving retains immutable `Arc<usearch::Index>` segments in those two receipts.
+  A new delta restores only that segment; location-only publication or base reversion
+  restores no ANN data. Header/geometry validation remains mandatory for new buffers;
+  reused segments still check dimensions, count, scalar and metric against the new
+  manifest. Each generation rebuilds its own active-ordinal translations and locations.
+  In-flight windows retain their original immutable generation. Every warm request
+  checks Engine lifetime, prepared identity and the held manifest version; manifest
+  replacement or profile changes refresh/refuse even without an invalidation hint.
+  Once loaded, an unchanged generation serves its verified in-memory copy; segment
+  file versions are rechecked on generation refresh, not on every warm query.
+
+**Remaining T008 work:** mapping snapshots, membership comparison, full location JSON
+serialization/read/hash and active-label translation still scale with corpus size;
+restart still performs one paged database baseline, and compaction still rebuilds the
+base. These changes remove repeated database mapping/cache-layout scans, unchanged ANN
+hashing and unchanged ANN restoration from normal warm publication, not all O(n) work.
+E4 remains separate. No 80,000-file throughput, real model cost or task-quality result
+is claimed.
 
 Reference inspected, not executed: USearch **2.26.2** (the Cargo.lock version),
 [`rust/lib.rs`](https://github.com/unum-cloud/usearch/blob/v2.26.2/rust/lib.rs)
-`Index::{add,remove,filtered_search,save_to_buffer,restore_from_buffer}`, tests
+`Index::{add,remove,filtered_search,save_to_buffer,restore_from_buffer,metric_kind,scalar_kind}`, tests
 `add_remove_vector`, `search_with_stateless_filter` and `search_with_stateful_filter`.
 Inspected at the pinned Cargo.lock release, not executed upstream. These operations
 inform T008: Foundry supplies source-bound locations, validated disjoint membership,

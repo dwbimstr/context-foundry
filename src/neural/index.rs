@@ -45,7 +45,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[cfg(feature = "semantic")]
+pub(crate) mod mapping;
+#[cfg(feature = "semantic")]
 pub(crate) mod publication;
+#[cfg(feature = "semantic")]
+pub(crate) use mapping::MappingWalk;
+
+pub(crate) mod verification;
 
 pub const SEMANTIC_DIR: &str = "semantic";
 pub const INDEX_FILE: &str = "index.usearch";
@@ -152,10 +158,17 @@ pub fn churn_limit(base: usize) -> usize {
     (base / 4).clamp(64, MAX_DELTA_ENTRIES)
 }
 
-/// The exact verified buffers to restore; no subsequent pathname resolution.
+/// Verified ANN segments to restore or reuse; no subsequent pathname resolution.
 pub struct IndexBuffers {
-    pub base: Vec<u8>,
-    pub delta: Option<Vec<u8>>,
+    pub base: Segment,
+    pub delta: Option<Segment>,
+}
+
+/// Verified bytes, or a previously verified and restored immutable segment.
+pub enum Segment {
+    Bytes(Vec<u8>),
+    #[cfg(feature = "semantic")]
+    Resident(std::sync::Arc<usearch::Index>),
 }
 
 /// Label ↔ document-input key. Labels are ordinals over the SORTED unique key
@@ -244,6 +257,8 @@ impl CurrentMapping {
 pub struct Generation {
     pub manifest: GenerationManifest,
     pub labels: LabelMap,
+    #[cfg(feature = "semantic")]
+    pub(crate) receipt: std::sync::Arc<verification::ManifestReceipt>,
 }
 
 /// Why a generation did not validate: unavailable (a named reason) or the
@@ -423,6 +438,7 @@ pub fn validate_generation_with(
         dimensions,
         control,
         false,
+        &mut verification::Cache::default(),
     )
     .map(|(generation, _)| generation)
 }
@@ -438,12 +454,40 @@ pub fn load_generation_with(
     dimensions: usize,
     control: &Control,
 ) -> Result<(Generation, IndexBuffers), GenerationError> {
-    let (generation, bytes) =
-        validate_inner(store, function_digest, recipe_id, dimensions, control, true)?;
+    let (generation, bytes) = validate_inner(
+        store,
+        function_digest,
+        recipe_id,
+        dimensions,
+        control,
+        true,
+        &mut verification::Cache::default(),
+    )?;
     Ok((
         generation,
         bytes.expect("a kept index read returns its bytes"),
     ))
+}
+
+/// Owner-local fast path. Explicit validation above deliberately has no receipts.
+#[cfg(feature = "semantic")]
+pub(crate) fn validate_cached(
+    store: &Dir,
+    identity: &Prepared,
+    control: &Control,
+    keep_index: bool,
+    cache: &std::sync::Mutex<verification::Cache>,
+) -> Result<(Generation, Option<IndexBuffers>), GenerationError> {
+    let mut cache = verification::lock(cache, control)?;
+    validate_inner(
+        store,
+        &identity.digest,
+        &identity.recipe,
+        identity.dimensions,
+        control,
+        keep_index,
+        &mut cache,
+    )
 }
 
 fn validate_inner(
@@ -453,6 +497,7 @@ fn validate_inner(
     dimensions: usize,
     control: &Control,
     keep_index: bool,
+    cache: &mut verification::Cache,
 ) -> Result<(Generation, Option<IndexBuffers>), GenerationError> {
     control.check().map_err(GenerationError::Interrupted)?;
     let missing = || {
@@ -480,7 +525,11 @@ fn validate_inner(
             unavailable(format!("{what}: {e}"))
         }
     };
+    let receipt = verification::ManifestReceipt::capture(&manifest_file, &generation)?;
     let manifest_bytes = read_bounded(manifest_file, "generation manifest")?;
+    if !receipt.unchanged() {
+        return Err(unavailable("generation manifest changed during read"));
+    }
     let version: FormatVersion = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| unavailable(format!("generation manifest cannot be decoded: {e}")))?;
     if version.v != GENERATION_VERSION {
@@ -535,32 +584,18 @@ fn validate_inner(
     if crate::digest(&labels_bytes) != manifest.labels_sha256 {
         return Err(unavailable("label map does not match the manifest hash"));
     }
-    let verify = |file: std::fs::File, hash: &str, limit: u64| {
-        if file
-            .metadata()
-            .map_err(|e| unavailable(e.to_string()))?
-            .len()
-            > limit
-        {
-            return Err(unavailable("index file exceeds its byte bound"));
-        }
-        if keep_index {
-            let bytes = read_index(file, control, limit)?;
-            if crate::digest(&bytes) != hash {
-                return Err(unavailable("index file does not match the manifest hash"));
-            }
-            Ok(Some(bytes))
-        } else {
-            let mut file = file;
-            if hash_reader(&mut file, control, limit)? != hash {
-                return Err(unavailable("index file does not match the manifest hash"));
-            }
-            Ok(None)
-        }
-    };
-    let base = verify(index_file, &manifest.index_sha256, MAX_INDEX_BYTES)?;
+    cache.prepare(&generation, &manifest)?;
+    let base = cache.verify(
+        index_file,
+        &manifest.index_sha256,
+        MAX_INDEX_BYTES,
+        keep_index,
+        control,
+    )?;
     let delta = match (delta_file, &manifest.delta) {
-        (Some(file), Some(delta)) => verify(file, &delta.sha256, MAX_DELTA_BYTES)?,
+        (Some(file), Some(delta)) => {
+            cache.verify(file, &delta.sha256, MAX_DELTA_BYTES, keep_index, control)?
+        }
         _ => None,
     };
     let index_bytes = base.map(|base| IndexBuffers { base, delta });
@@ -590,7 +625,15 @@ fn validate_inner(
     // digests. This is pair integrity for the trusted writer, not
     // authentication. The library's own dense header is checked where the
     // index is loaded for a query (009 T002), from the kept bytes.
-    Ok((Generation { manifest, labels }, index_bytes))
+    Ok((
+        Generation {
+            manifest,
+            labels,
+            #[cfg(feature = "semantic")]
+            receipt,
+        },
+        index_bytes,
+    ))
 }
 
 fn validate_membership(manifest: &GenerationManifest) -> Result<(), GenerationError> {
@@ -744,7 +787,7 @@ impl Engine {
         function_digest: &str,
         recipe_id: &str,
     ) -> FResult<CurrentMapping> {
-        let mut walk = MappingWalk::start(self, function_digest, recipe_id)?;
+        let mut walk = MappingWalk::audit(self, function_digest, recipe_id)?;
         while !walk.step(self, control, None)? {}
         walk.finish(self)
     }
@@ -819,14 +862,18 @@ impl Engine {
         let Some(identity) = self.semantic_identity()? else {
             return Ok(Publication::Nothing);
         };
-        let wanted = self.semantic_current_mapping(control, &identity.digest, &identity.recipe)?;
-        let previous = match validate_generation_with(
+        let mut walk = MappingWalk::start(self, &identity.digest, &identity.recipe)?;
+        while !walk.step(self, control, None)? {}
+        let wanted = walk.finish(self)?;
+        let previous = match validate_cached(
             &self.semantic_anchor()?,
-            &identity.digest,
-            &identity.recipe,
-            identity.dimensions,
+            &identity,
             control,
-        ) {
+            false,
+            &self.semantic_segments,
+        )
+        .map(|(generation, _)| generation)
+        {
             Ok(generation) if wanted.published_by(&generation) => {
                 self.semantic_record_coverage(wanted.coverage)?;
                 return Ok(Publication::Current(generation.manifest.count));
@@ -840,147 +887,6 @@ impl Engine {
             return Ok(Publication::Nothing);
         }
         self.publish_plan(publication::Plan::new(wanted, previous), &identity, control)
-    }
-}
-
-/// [`Engine::semantic_current_mapping`] reads prepared partition keys a page at a time, so
-/// the MCP owner's preparation driver reads it in short engine-slot steps
-/// (009 T003, captain decision 2026-10-06). A source change between the
-/// steps leaves the mapping incomplete, exactly as one during a single walk
-/// does.
-#[cfg(feature = "semantic")]
-pub(crate) struct MappingWalk {
-    digest: String,
-    recipe: String,
-    source_revision: u64,
-    sources: u64,
-    current_partitions: u64,
-    eligible_units: u64,
-    complete: bool,
-    units: std::collections::BTreeMap<String, Vec<UnitLocation>>,
-    /// One cache probe per distinct key: true when its vector is current.
-    probed: std::collections::HashMap<String, bool>,
-    after: Option<String>,
-    metadata_bytes: u64,
-}
-
-#[cfg(feature = "semantic")]
-impl MappingWalk {
-    pub(crate) fn start(engine: &Engine, function_digest: &str, recipe_id: &str) -> FResult<Self> {
-        Ok(Self {
-            digest: function_digest.to_owned(),
-            recipe: recipe_id.to_owned(),
-            source_revision: engine.source_revision()?,
-            sources: cache::source_count(&engine.db)?,
-            current_partitions: 0,
-            eligible_units: 0,
-            complete: true,
-            units: std::collections::BTreeMap::new(),
-            probed: std::collections::HashMap::new(),
-            after: None,
-            metadata_bytes: 64,
-        })
-    }
-
-    /// Walk pages of prepared rows until the walk ends (`true`), or until `until`
-    /// passed once a page was read (`false`: call again).
-    pub(crate) fn step(
-        &mut self,
-        engine: &Engine,
-        control: &Control,
-        until: Option<Instant>,
-    ) -> FResult<bool> {
-        loop {
-            control.check()?;
-            let page = cache::partition_paths(&engine.db, self.after.as_deref())?;
-            if page.is_empty() {
-                return Ok(true);
-            }
-            for path in &page {
-                let Some(meta) = engine.source(path)? else {
-                    continue;
-                };
-                let Some(record) = engine.semantic_partition(path)?.filter(|record| {
-                    cache::partition_is_current(record, &meta, &self.recipe, &self.digest)
-                }) else {
-                    self.complete = false;
-                    continue;
-                };
-                self.current_partitions += 1;
-                self.eligible_units += record.units.len() as u64;
-                for unit in &record.units {
-                    let cached = match self.probed.get(&unit.input_key) {
-                        Some(&cached) => cached,
-                        None => {
-                            self.metadata_bytes = self.metadata_bytes.saturating_add(
-                                (unit.input_key.len() as u64)
-                                    .saturating_mul(6)
-                                    .saturating_add(96),
-                            );
-                            within_publication_limit(
-                                self.metadata_bytes,
-                                MAX_META_BYTES,
-                                "mapping",
-                            )?;
-                            let cached = engine
-                                .semantic_cache_probe(&unit.input_key, &self.digest)?
-                                == CacheProbe::Current;
-                            self.probed.insert(unit.input_key.clone(), cached);
-                            cached
-                        }
-                    };
-                    if !cached {
-                        self.complete = false;
-                        continue;
-                    }
-                    self.metadata_bytes = self
-                        .metadata_bytes
-                        .saturating_add(location_bytes(path, &record.source_hash));
-                    within_publication_limit(self.metadata_bytes, MAX_META_BYTES, "mapping")?;
-                    self.units
-                        .entry(unit.input_key.clone())
-                        .or_default()
-                        .push(UnitLocation {
-                            path: path.clone(),
-                            start: unit.start as u64,
-                            end: unit.end as u64,
-                            source_sha256: record.source_hash.clone(),
-                        });
-                }
-            }
-            self.after = page.last().cloned();
-            if until.is_some_and(|until| Instant::now() >= until) {
-                return Ok(false);
-            }
-        }
-    }
-
-    /// The mapping and its scope. A source change during the paged walk
-    /// leaves a mixed mapping: its locations still revalidate per request,
-    /// but it is never complete.
-    pub(crate) fn finish(self, engine: &Engine) -> FResult<CurrentMapping> {
-        let complete = self.complete
-            && self.current_partitions == self.sources
-            && engine.source_revision()? == self.source_revision;
-        Ok(CurrentMapping {
-            coverage: cache::CoverageSnapshot {
-                version: 1,
-                source_revision: self.source_revision,
-                function_digest: self.digest,
-                recipe_id: self.recipe,
-                sources: self.sources,
-                unpartitioned_sources: self.sources.saturating_sub(self.current_partitions),
-                eligible_units: self.eligible_units,
-                cached_current_units: self.units.values().map(|units| units.len() as u64).sum(),
-                searchable_current_units: self.units.values().map(|units| units.len() as u64).sum(),
-                index_entries: self.units.len() as u64,
-            },
-            units: self.units,
-            scope: GenerationScope {
-                source_revision: self.source_revision,
-                complete,
-            },
-        })
     }
 }
 
@@ -1159,7 +1065,10 @@ mod tests {
         // Serving restores exactly the bytes that matched the manifest.
         let (_, bytes) =
             load_generation_with(&store, digest, "r1", 768, &Control::unbounded()).unwrap();
-        assert_eq!(crate::digest(&bytes.base), ok.manifest.index_sha256);
+        let Segment::Bytes(base) = bytes.base else {
+            panic!("audit returns bytes")
+        };
+        assert_eq!(crate::digest(&base), ok.manifest.index_sha256);
         // A foreign function digest never serves.
         let err = validate_generation(&store, &"d2".repeat(32), "r1", 768).unwrap_err();
         assert!(err.contains("no generation manifest"), "{err}");
@@ -1222,7 +1131,10 @@ mod tests {
             )
             .unwrap();
             assert_eq!(generation.manifest.dimensions, dimensions);
-            let header = usearch::Index::metadata_from_buffer(&bytes.base).unwrap();
+            let Segment::Bytes(base) = bytes.base else {
+                panic!("audit returns bytes")
+            };
+            let header = usearch::Index::metadata_from_buffer(&base).unwrap();
             assert_eq!(header.dimensions, dimensions as u64);
             let other = if dimensions == 768 { 512 } else { 768 };
             assert!(validate_generation(&store, &identity.digest, "r1", other).is_err());

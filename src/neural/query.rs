@@ -74,6 +74,15 @@ impl From<ProviderError> for Fallback {
     }
 }
 
+impl From<GenerationError> for Fallback {
+    fn from(error: GenerationError) -> Self {
+        match error {
+            GenerationError::Interrupted(error) => error.into(),
+            GenerationError::Unavailable(reason) => Self::new("index_unavailable", reason),
+        }
+    }
+}
+
 impl From<FoundryError> for Fallback {
     fn from(error: FoundryError) -> Self {
         Self::new(error.code(), error.to_string())
@@ -143,6 +152,9 @@ impl DenseWindow {
 /// store's bound descriptor: no later file substitution can reach it.
 pub struct DenseIndex {
     segments: Vec<DenseSegment>,
+    identity: index::Prepared,
+    owner: Option<Arc<crate::neural::work::Wake>>,
+    receipt: Arc<index::verification::ManifestReceipt>,
     dimensions: usize,
     /// `labels[label]` is that ordinal's input key and unit locations.
     labels: Vec<LabelEntry>,
@@ -153,7 +165,7 @@ pub struct DenseIndex {
 }
 
 struct DenseSegment {
-    index: usearch::Index,
+    index: Arc<usearch::Index>,
     /// Segment ordinal -> current location ordinal; None is a tombstone.
     active: Vec<Option<usize>>,
 }
@@ -197,16 +209,25 @@ impl DenseIndex {
             ));
         }
         let anchor = engine.semantic_anchor()?;
+        let identity = index::Prepared {
+            digest,
+            recipe,
+            dimensions,
+        };
         let (generation, bytes) =
-            match index::load_generation_with(&anchor, &digest, &recipe, dimensions, control) {
-                Ok(loaded) => loaded,
-                Err(GenerationError::Interrupted(error)) => return Err(error.into()),
-                Err(GenerationError::Unavailable(reason)) => {
-                    return Err(Fallback::new("index_unavailable", reason));
-                }
-            };
-        neural_fault!(LOAD_AFTER_VERIFY, Some(control), &digest)?;
-        Self::from_buffers(generation, bytes)
+            index::validate_cached(&anchor, &identity, control, true, &engine.semantic_segments)?;
+        neural_fault!(LOAD_AFTER_VERIFY, Some(control), &identity.digest)?;
+        let hashes: Vec<_> = std::iter::once(generation.manifest.index_sha256.clone())
+            .chain(generation.manifest.delta.as_ref().map(|d| d.sha256.clone()))
+            .collect();
+        let mut loaded = Self::from_buffers(generation, bytes.expect("kept segments"))?;
+        Arc::get_mut(&mut loaded).expect("new generation").owner =
+            Some(engine.semantic_wake.clone());
+        let mut cache = index::verification::lock(&engine.semantic_segments, control)?;
+        for (hash, segment) in hashes.iter().zip(&loaded.segments) {
+            cache.remember(hash, segment.index.clone());
+        }
+        Ok(loaded)
     }
 
     pub(crate) fn from_buffers(
@@ -215,24 +236,33 @@ impl DenseIndex {
     ) -> Result<Arc<Self>, Fallback> {
         let manifest = &generation.manifest;
         let mut segments = Vec::with_capacity(2);
-        let mut load = |bytes: &[u8], keys: &[String]| -> Result<(), Fallback> {
+        let mut load = |segment: index::Segment, keys: &[String]| -> Result<(), Fallback> {
             let geometry = |detail: String| Fallback::new("index_geometry", detail);
-            let header = usearch::Index::metadata_from_buffer(bytes)
-                .map_err(|e| Fallback::new("index_unavailable", format!("usearch header: {e}")))?;
-            if header.dimensions as usize != manifest.dimensions
-                || header.count_present as usize != keys.len()
-                || header.multi
-                || !format!("{:?}", header.metric).eq_ignore_ascii_case(METRIC)
-                || !format!("{:?}", header.quantization).eq_ignore_ascii_case(SCALAR_KIND)
+            let loaded = match segment {
+                index::Segment::Bytes(bytes) => {
+                    let header = usearch::Index::metadata_from_buffer(&bytes).map_err(|e| {
+                        Fallback::new("index_unavailable", format!("usearch header: {e}"))
+                    })?;
+                    if header.dimensions as usize != manifest.dimensions
+                        || header.count_present as usize != keys.len()
+                        || header.multi
+                        || !format!("{:?}", header.metric).eq_ignore_ascii_case(METRIC)
+                        || !format!("{:?}", header.quantization).eq_ignore_ascii_case(SCALAR_KIND)
+                    {
+                        return Err(geometry("usearch header disagrees with generation geometry or segment membership".into()));
+                    }
+                    neural_fault!(SEGMENT_RESTORE, None, "ANN segment")?;
+                    Arc::new(usearch::Index::restore_from_buffer(&bytes).map_err(|e| {
+                        Fallback::new("index_unavailable", format!("usearch load: {e}"))
+                    })?)
+                }
+                index::Segment::Resident(index) => index,
+            };
+            if loaded.dimensions() != manifest.dimensions
+                || loaded.size() != keys.len()
+                || !format!("{:?}", loaded.metric_kind()).eq_ignore_ascii_case(METRIC)
+                || !format!("{:?}", loaded.scalar_kind()).eq_ignore_ascii_case(SCALAR_KIND)
             {
-                return Err(geometry(
-                    "usearch header disagrees with generation geometry or segment membership"
-                        .into(),
-                ));
-            }
-            let loaded = usearch::Index::restore_from_buffer(bytes)
-                .map_err(|e| Fallback::new("index_unavailable", format!("usearch load: {e}")))?;
-            if loaded.dimensions() != manifest.dimensions || loaded.size() != keys.len() {
                 return Err(geometry(
                     "loaded index geometry disagrees with manifest".into(),
                 ));
@@ -247,12 +277,19 @@ impl DenseIndex {
             });
             Ok(())
         };
-        load(&bytes.base, &manifest.base_entries)?;
-        if let (Some(bytes), Some(delta)) = (&bytes.delta, &manifest.delta) {
+        load(bytes.base, &manifest.base_entries)?;
+        if let (Some(bytes), Some(delta)) = (bytes.delta, &manifest.delta) {
             load(bytes, &delta.entries)?;
         }
         Ok(Arc::new(Self {
             segments,
+            identity: index::Prepared {
+                digest: manifest.function_digest.clone(),
+                recipe: manifest.recipe_id.clone(),
+                dimensions: manifest.dimensions,
+            },
+            owner: None,
+            receipt: generation.receipt,
             dimensions: manifest.dimensions,
             labels: generation.labels.labels,
             source_revision: manifest.source_revision,
@@ -470,10 +507,9 @@ pub type MakeProvider =
 /// The resident runtime one owner (MCP) or one command (CLI) holds: the
 /// verified profile, its exact-input tokenizer, the embedding provider
 /// (confined to its own thread, ONE admission slot for queries and document
-/// batches alike) and the loaded dense index. The index is kept until the
-/// owner's preparation driver publishes a new generation and calls
-/// [`QueryRuntime::forget_index`]; source edits are caught by the final
-/// read, not by the index.
+/// batches alike) and the loaded dense generation. Owner/profile/manifest checks
+/// refresh generation metadata; the Engine retains verified immutable ANN segments
+/// across refreshes. Source edits are caught by the final source read.
 pub struct QueryRuntime {
     pub profile: Arc<SemanticProfile>,
     tokenizer: DocumentTokenizer,
@@ -852,25 +888,36 @@ impl QueryRuntime {
         &self.tokenizer
     }
 
-    /// Drop the loaded dense index after a new generation was published; the
-    /// next request validates and loads the new one.
+    /// Refresh generation metadata after publication. The Engine retains at
+    /// most two verified immutable segments for reuse by the next request.
     pub fn forget_index(&self) {
         if let Ok(mut slot) = self.index.lock() {
             *slot = None;
         }
     }
 
-    /// The validated dense index of `engine`, loaded once and kept until
-    /// [`Self::forget_index`]. A store prepared for another profile is refused
+    /// Reuse the generation while its owner, prepared identity and manifest
+    /// version remain current. A store prepared for another profile is refused
     /// by name HERE, before any query embedding is spent.
     fn dense_index(&self, engine: &Engine, control: &Control) -> Result<Arc<DenseIndex>, Fallback> {
         let mut slot = self
             .index
             .lock()
             .map_err(|_| Fallback::new("internal", "the dense index lock was poisoned"))?;
-        if let Some(index) = slot.as_ref() {
+        control.check()?;
+        if let Some(index) = slot.as_ref()
+            && index
+                .owner
+                .as_ref()
+                .is_some_and(|owner| Arc::ptr_eq(owner, &engine.semantic_wake))
+            && engine.semantic_identity()?.as_ref() == Some(&index.identity)
+            && index
+                .receipt
+                .current(&engine.semantic_anchor()?, &index.identity.digest)
+        {
             return Ok(Arc::clone(index));
         }
+        *slot = None;
         let profile = &self.profile;
         let loaded = DenseIndex::load(
             engine,
