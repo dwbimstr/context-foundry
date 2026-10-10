@@ -118,7 +118,7 @@ learning-worker = ["dep:tch"]
 test-faults = []
 
 [build-dependencies]
-bindgen = { version = "0.72", optional = true }
+bindgen = { version = "0.73", optional = true }
 
 [dev-dependencies]
 # Self dev-dependency: `cargo test` builds the crate with its fault points.
