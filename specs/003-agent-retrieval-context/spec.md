@@ -942,3 +942,20 @@ declaration and mount dependency bodies. Focused tests compare both forms, exerc
 MCP advertisement/budgets, and refuse relationships whose dependencies did not fit.
 This reduces accounting overhead; total task economics still require observed usage
 and verified outcomes. See the expanded continuation in [validation](../../docs/validation.md).
+
+
+T009 caller/test syntax continuation (2026-10-10): compiler-resolved Rust/Python
+references now carry optional exact callee-expression spans; references to a function
+as an argument or pointer do not become calls. Rust `test`, `tokio::test` and
+`async_std::test` attributes can supply a cited enclosing test span, including tests
+inside ordinary source files. Parsing is size/time bounded and cached per source within
+the final read snapshot. Relationships remain compiler **references**: `runtime_call`
+is `unverified` and `test_execution` is `not_observed`. Attributes do not establish
+execution or requirement coverage; existing test-path classification remains heuristic. Definition, reference and additional syntax bodies must all fit before the
+relationship is emitted. Dynamic dispatch and semantic constraint conflicts remain open.
+
+An opt-in free-form OMP parser calibration now complements the scripted host integration
+and earlier fixed-choice model tests: two initial-context arms, one attempt each, actual
+file edits, an external immutable checker and gateway receipts including failures. The
+public T003 fixture is not held out. See the current Linux continuation in
+[validation](../../docs/validation.md) for executed outcomes and limits.

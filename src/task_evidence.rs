@@ -6,6 +6,7 @@ use crate::{Control, Engine, FResult, FoundryError, SourceHandle, Strategy};
 use redb::ReadableDatabase;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+pub(crate) mod reference;
 
 const MAX_ITEMS: usize = 32;
 const MAX_SPAN_BYTES: u64 = 32 * 1024;
@@ -26,6 +27,7 @@ pub struct Plan {
     pub constraints: usize,
     pub compiler: Vec<crate::graph::ReferencesOutcome>,
     pub compiler_skipped_seeds: usize,
+    pub(crate) reference_uses: BTreeMap<String, reference::Use>,
     pub roots: Vec<String>,
 }
 impl Plan {
@@ -55,6 +57,7 @@ impl Plan {
         for other in plans {
             primary.roots.extend(other.roots);
             primary.compiler.extend(other.compiler);
+            primary.reference_uses.extend(other.reference_uses);
             primary.compiler_skipped_seeds += other.compiler_skipped_seeds;
             primary.discovery_limited |= other.discovery_limited;
         }
@@ -204,6 +207,7 @@ impl Engine {
             support: vec![],
             compiler: vec![],
             compiler_skipped_seeds: 0,
+            reference_uses: BTreeMap::new(),
             roots: vec![self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?],
             boundaries: None,
             boundary_requested: options.boundary_config.is_some(),
@@ -437,6 +441,7 @@ impl Engine {
                 plan.discovery_limited = true;
             }
         }
+        let mut reference_sources = BTreeMap::new();
         for seed in compiler_seeds {
             control.check()?;
             let found = match self.references_in(
@@ -463,7 +468,23 @@ impl Engine {
             plan.discovery_limited |=
                 found.candidates_full || found.more || found.definitions_truncated;
             for reference in &found.items {
-                let f = if test_path(&reference.path) {
+                if !reference_sources.contains_key(&reference.path) {
+                    control.check()?;
+                    let parsed = crate::boundary::source_in(&tx, &reference.path)?.and_then(
+                        |(meta, body)| {
+                            let tree =
+                                crate::syntax::parse_reference_source(&reference.path, &body)?;
+                            Some((meta.hash, body, tree))
+                        },
+                    );
+                    reference_sources.insert(reference.path.clone(), parsed);
+                }
+                let usage = reference_sources[&reference.path]
+                    .as_ref()
+                    .filter(|(hash, _, _)| hash == &reference.sha256)
+                    .map(|(_, body, tree)| reference::classify(tree, body, reference))
+                    .unwrap_or_default();
+                let f = if test_path(&reference.path) || usage.test.is_some() {
                     "verification"
                 } else {
                     "consumers"
@@ -475,6 +496,23 @@ impl Engine {
                     plan.discovery_limited = true;
                 }
                 plan.discovery_limited |= !add(&mut candidates, handle, f, "compiler_reference");
+                if let Some(call) = &usage.call {
+                    plan.discovery_limited |= !add(
+                        &mut candidates,
+                        call.clone(),
+                        f,
+                        "compiler_reference_call_syntax",
+                    );
+                }
+                if let Some(test) = &usage.test {
+                    plan.discovery_limited |= !add(
+                        &mut candidates,
+                        test.clone(),
+                        "verification",
+                        "compiler_reference_test_attribute",
+                    );
+                }
+                plan.reference_uses.insert(reference::key(reference), usage);
             }
             for definition in &found.definitions {
                 plan.discovery_limited |= !add(

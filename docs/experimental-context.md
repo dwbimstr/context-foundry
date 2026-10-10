@@ -1011,7 +1011,7 @@ results in subsequent host requests. The live mode does not automatically upgrad
 old transformed carrier, broaden the one-carrier binding, or establish provider usage.
 See the [exact contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#live-owner-synchronization--2026-10-10).
 
-Boundary recipe `python-http-v3` links literal consumers to whole-segment FastAPI
+Boundary recipe `python-http-v4` links literal consumers to whole-segment FastAPI
 parameters: default/explicit `str`, `int`, `float`, `uuid`, and terminal `path`.
 A terminal path converter can match empty or multiple segments. Mixed segments,
 custom converters, nonterminal path converters and percent-encoded URLs are unsupported.
@@ -1021,6 +1021,20 @@ A same-file `APIRouter(prefix='/v1')` may be registered once with a direct modul
 `app.include_router(router, prefix='/api')` after its route declarations. Both literal
 prefixes compose with the route path. Router declaration and registration are additional
 cited dependencies; task composition delivers their bodies before emitting the relation.
-Dynamic prefixes, nested/cross-file mounts, early/multiple registrations and other
-constructor/mount options leave provider coverage incomplete. Reindex the configured
-boundary scopes after upgrading: old hashes alone do not make v1/v2 extraction current.
+Up to eight same-file nested router links and direct configured cross-file imports
+(`from module import router [as alias]`) compose their prefixes and citations. Imports
+resolve only among provider `.py` files in the same configured service. Registration
+order must follow child registration. An importer change invalidates dependent scopes
+immediately; the next enabled publication refreshes that bounded service. All import,
+declaration and registration bodies must fit for a delivered task relationship.
+Dynamic prefixes, re-exports/packages, cyclic or escaped aliases, early/multiple
+registrations and other constructor/mount options leave coverage incomplete. Reindex
+the configured boundary scopes after upgrading: old hashes alone do not make earlier
+recipes current. Other frameworks and brokers remain unsupported.
+
+Compiler-reference composition also cites exact Rust/Python call syntax and Rust test
+attributes when available. These remain references with unverified runtime calls and
+unobserved test execution; an attributed test is not proof of requirement coverage.
+The extra source spans must fit alongside the definition/reference pair. See the
+[Linux diagnostic results](validation.md) for scope, negative retrieval/host findings,
+fixture scale and real CPU embedding limits.

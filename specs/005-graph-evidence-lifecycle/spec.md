@@ -598,3 +598,23 @@ row. They invalidate with that source and must be delivered for task relationshi
 No new table or workspace execution is introduced. Old recipe rows decode but cannot
 serve as current evidence until explicit or enabled watcher republication. Other
 frameworks/brokers and cross-file import resolution remain pending concrete producers.
+
+
+T005 imported/nested continuation (2026-10-10): `python-http-v4` composes up to
+eight same-file router links and direct `from module import router [as alias]`
+mounts onto a module-level app. Module paths resolve only among explicitly configured
+provider `.py` files of the same service; relative imports are supported. Each router
+declaration, import and registration is a hashed source dependency. Registration must
+follow child registration because FastAPI copies routes at inclusion. Cycles, ambiguous
+packages, re-exports, escaped/shadowed aliases, dynamic/early/multiple registrations and
+longer chains leave coverage incomplete. This is static configured-module evidence,
+not Python runtime import resolution or executed application behavior.
+
+Dependent scopes retain the bounded service input identities in their existing rows.
+An importer edit immediately suppresses stale dependent scopes. Publication expands to
+the affected configured service (at most 64 files), rechecks every dependency before
+commit, and reuses unchanged scopes. Query validation reads each configured source's
+metadata once in the same transaction. Task composition requires all dependency bodies
+to fit. No new store table or workspace execution is introduced. The opt-in synthetic
+FastAPI consumer test executes a real cross-file nested-router request; broader
+frameworks/brokers and imports through router re-exports remain pending.

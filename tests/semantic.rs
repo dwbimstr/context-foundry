@@ -6730,7 +6730,19 @@ fn task_evidence_delivers_compiler_references_only_with_both_current_spans() {
         .unwrap()
         .refresh(&Control::unbounded())
         .unwrap();
-    world.import_ok(RA, "task-coverage", &toy_artifact());
+    world.set_source("src/other.rs", &format!("#[test]\n{OTHER}"));
+    let scoped = artifact(vec![
+        doc(
+            "src/lib.rs",
+            vec![
+                occ(&[0, 7, 12], ALPHA, DEF),
+                occ(&[2, 4, 9], ALPHA, REF),
+                occ(&[3, 4, 9], ALPHA, REF),
+            ],
+        ),
+        doc("src/other.rs", vec![occ(&[2, 11, 16], ALPHA, REF)]),
+    ]);
+    world.import_ok(RA, "task-coverage", &scoped);
     let wid = world.engine().workspace_id().unwrap();
     let task = |command| {
         world
@@ -6786,6 +6798,8 @@ fn task_evidence_delivers_compiler_references_only_with_both_current_spans() {
         assert_eq!(r["kind"], "references");
         assert_eq!(r["producer"], RA);
         assert_eq!(r["target"], "unique");
+        assert!(r["syntax"]["call"].is_string());
+        assert_eq!(r["syntax"]["runtime_call"], "unverified");
         for key in ["definition", "reference"] {
             let handle =
                 context_foundry::store::HandleRef::parse(r[key].as_str().unwrap()).unwrap();
@@ -6804,6 +6818,12 @@ fn task_evidence_delivers_compiler_references_only_with_both_current_spans() {
             );
         }
     }
+    assert!(
+        references
+            .iter()
+            .any(|r| r["syntax"]["test_attribute"].is_string())
+    );
+    assert!(packed.text.contains("compiler_reference_test_attribute"));
     for tokens in [1000, 1800, 2500, 4000, 12000] {
         let Ok(packed) = response::pack_enriched_context(
             &context,
@@ -6832,10 +6852,16 @@ fn task_evidence_delivers_compiler_references_only_with_both_current_spans() {
             references.len()
         );
         for reference in references {
-            for key in ["definition", "reference"] {
-                let wanted =
-                    context_foundry::store::HandleRef::parse(reference[key].as_str().unwrap())
-                        .unwrap();
+            for cited in [
+                reference["definition"].as_str(),
+                reference["reference"].as_str(),
+                reference["syntax"]["call"].as_str(),
+                reference["syntax"]["test_attribute"].as_str(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let wanted = context_foundry::store::HandleRef::parse(cited).unwrap();
                 assert!(
                     report["sources"].as_array().unwrap().iter().any(|s| {
                         let h =

@@ -1,6 +1,7 @@
 //! 005 T005: explicitly scoped, syntactic HTTP relationships. No workspace code
 //! runs. Scope replacement and key postings share one redb transaction; joins
 //! are resolved at read time against current source/configuration identities.
+mod imports;
 pub(crate) mod maintenance;
 
 use crate::store::{CHUNKS, SOURCES, reconstruct_verified, validate_path};
@@ -12,7 +13,7 @@ use tree_sitter::Node;
 
 const SCOPES: TableDefinition<&str, &str> = TableDefinition::new("boundary_scopes");
 const KEYS: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("boundary_keys");
-pub const RECIPE: &str = "python-http-v3";
+pub const RECIPE: &str = "python-http-v4";
 const MAX_FILES: usize = 64;
 const MAX_FACTS: usize = 128;
 const MAX_RESULTS: usize = 64;
@@ -249,6 +250,30 @@ struct Scope {
     source_hash: String,
     complete: bool,
     facts: Vec<Fact>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    inputs: BTreeMap<String, Option<String>>,
+}
+
+fn inputs_current(
+    inputs: &BTreeMap<String, Option<String>>,
+    tx: &redb::ReadTransaction,
+) -> FResult<bool> {
+    if inputs.len() > MAX_FILES {
+        return Err(FoundryError::GraphInvalid(
+            "too many boundary dependencies".into(),
+        ));
+    }
+    let sources = tx.open_table(SOURCES)?;
+    for (path, expected) in inputs {
+        let meta: Option<SourceMeta> = sources
+            .get(path.as_str())?
+            .map(|r| crate::store::decode(r.value(), "source"))
+            .transpose()?;
+        if meta.map(|m| m.hash) != *expected {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 #[derive(Debug, Serialize)]
 pub struct Publication {
@@ -340,7 +365,7 @@ impl Engine {
         let read = self.db.begin_read()?;
         let (config, config_span) = config_in(&read, config_path)?;
         let admitted = config.paths();
-        let selected: BTreeSet<String> = if paths.is_empty() {
+        let mut selected: BTreeSet<String> = if paths.is_empty() {
             admitted.clone()
         } else {
             paths.iter().cloned().collect()
@@ -352,6 +377,51 @@ impl Engine {
         }
         let scopes = read.open_table(SCOPES)?;
         let sources = read.open_table(SOURCES)?;
+        let mut external = BTreeMap::new();
+        for service in &config.services {
+            if !service.providers.iter().any(|p| selected.contains(p)) {
+                continue;
+            }
+            let mut changed = false;
+            let mut dependent = false;
+            for path in &service.providers {
+                let old: Option<Scope> = scopes
+                    .get(scope_key(config_path, path).as_str())?
+                    .map(|r| decode(r.value()))
+                    .transpose()?;
+                let meta: Option<SourceMeta> = sources
+                    .get(path.as_str())?
+                    .map(|r| crate::store::decode(r.value(), "source"))
+                    .transpose()?;
+                dependent |= old.as_ref().is_some_and(|s| !s.inputs.is_empty());
+                changed |= match (old, meta) {
+                    (Some(old), Some(meta)) => {
+                        old.recipe != RECIPE
+                            || old.config_hash != config_span.sha256
+                            || old.source_hash != meta.hash
+                            || !inputs_current(&old.inputs, &read)?
+                    }
+                    (None, None) => false,
+                    _ => true,
+                };
+            }
+            if changed {
+                let mut bodies = BTreeMap::new();
+                for path in &service.providers {
+                    control.check()?;
+                    if let Some(source) = source_in(&read, path)? {
+                        bodies.insert(path.clone(), source);
+                    }
+                }
+                let hints = imports::collect(service, &bodies, control)?;
+                // Dependent routers publish with their changed importing module.
+                // Work is bounded by this configured service, never the corpus.
+                if dependent || hints.values().any(|e| !e.inputs.is_empty()) {
+                    selected.extend(service.providers.iter().cloned());
+                }
+                external.extend(hints);
+            }
+        }
         let mut report = Publication {
             recipe: RECIPE,
             parsed: 0,
@@ -375,13 +445,16 @@ impl Engine {
                 && old.recipe == RECIPE
                 && old.config_hash == config_span.sha256
                 && old.source_hash == meta.hash
+                && inputs_current(&old.inputs, &read)?
+                && external.get(&path).is_none_or(|e| e.inputs == old.inputs)
             {
                 report.reused += 1;
                 continue;
             }
             let next = if let Some(meta) = &meta {
                 let body = reconstruct_verified(&read.open_table(CHUNKS)?, &path, meta)?.body;
-                let (facts, complete) = extract(&config, &path, &meta.hash, &body, control)?;
+                let hints = external.get(&path);
+                let (facts, complete) = extract(&config, &path, &meta.hash, &body, hints, control)?;
                 report.parsed += 1;
                 report.facts += facts.len();
                 report.incomplete += usize::from(!complete);
@@ -391,6 +464,7 @@ impl Engine {
                     source_hash: meta.hash.clone(),
                     complete,
                     facts,
+                    inputs: hints.map(|h| h.inputs.clone()).unwrap_or_default(),
                 })
             } else {
                 report.removed += usize::from(previous.is_some());
@@ -460,6 +534,15 @@ impl Engine {
                     return Err(FoundryError::Conflict(
                         "boundary source changed during extraction".into(),
                     ));
+                }
+                if let Some(next) = &next {
+                    for (path, expected) in &next.inputs {
+                        if hash(path)? != *expected {
+                            return Err(FoundryError::Conflict(
+                                "boundary dependency changed during extraction".into(),
+                            ));
+                        }
+                    }
                 }
                 let sk = scope_key(config_path, &path);
                 // Concurrent publication cannot be overwritten using stale postings.
@@ -542,23 +625,37 @@ impl Engine {
         let keys = tx.open_multimap_table(KEYS)?;
         let mut current = BTreeMap::<String, Scope>::new();
         let mut incomplete = Vec::new();
-        // At most 64 point reads: every configured provider is accounted for,
-        // including missing scopes, before any unique join is asserted.
+        // Read each configured source once. Imported scopes share dependency
+        // identities; checking them must not multiply database reads by fanout.
+        let mut metadata = BTreeMap::<String, Option<SourceMeta>>::new();
+        for path in config.paths() {
+            control.check()?;
+            let meta = sources
+                .get(path.as_str())?
+                .map(|r| crate::store::decode(r.value(), "source"))
+                .transpose()?;
+            metadata.insert(path, meta);
+        }
+        // At most 64 scope reads, including missing providers, before a unique
+        // join is asserted. All source checks use the same read transaction.
         for path in config.paths() {
             control.check()?;
             let row: Option<Scope> = scopes
                 .get(scope_key(config_path, &path).as_str())?
                 .map(|r| decode(r.value()))
                 .transpose()?;
-            let meta: Option<SourceMeta> = sources
-                .get(path.as_str())?
-                .map(|r| crate::store::decode(r.value(), "source"))
-                .transpose()?;
+            let meta = metadata.get(&path).and_then(Option::as_ref);
             match (row, meta) {
                 (Some(row), Some(meta))
                     if row.recipe == RECIPE
                         && row.config_hash == span.sha256
-                        && row.source_hash == meta.hash =>
+                        && row.source_hash == meta.hash
+                        && row.inputs.len() <= MAX_FILES
+                        && row.inputs.iter().all(|(p, expected)| {
+                            metadata.get(p).is_some_and(|meta| {
+                                meta.as_ref().map(|m| &m.hash) == expected.as_ref()
+                            })
+                        }) =>
                 {
                     if row.facts.len() > MAX_FACTS
                         || row.facts.iter().any(|f| {
@@ -592,6 +689,28 @@ impl Engine {
                     }
                     if !row.complete {
                         incomplete.push(path.clone());
+                    }
+                    for fact in &row.facts {
+                        if fact.dependencies.len() > 32 {
+                            return Err(FoundryError::GraphInvalid(
+                                "too many boundary evidence dependencies".into(),
+                            ));
+                        }
+                        for dependency in &fact.dependencies {
+                            let source = metadata.get(&dependency.path).and_then(Option::as_ref);
+                            if !config.services.iter().any(|s| {
+                                s.providers.contains(&path)
+                                    && s.providers.contains(&dependency.path)
+                            }) || !source.is_some_and(|s| {
+                                s.hash == dependency.sha256
+                                    && dependency.start < dependency.end
+                                    && dependency.end <= s.bytes as u64
+                            }) {
+                                return Err(FoundryError::GraphInvalid(
+                                    "boundary evidence dependency is invalid".into(),
+                                ));
+                            }
+                        }
                     }
                     current.insert(path, row);
                 }
@@ -787,6 +906,7 @@ fn extract(
     path: &str,
     hash: &str,
     source: &str,
+    external: Option<&imports::External>,
     control: &Control,
 ) -> FResult<(Vec<Fact>, bool)> {
     if source.len() > 1024 * 1024 {
@@ -880,6 +1000,7 @@ fn extract(
         }
     }
     let mut apps = BTreeSet::new();
+    let mut app_declarations = BTreeMap::new();
     let mut routers = BTreeMap::new();
     let mut declared = BTreeSet::new();
     let mut duplicate_declarations = false;
@@ -920,12 +1041,12 @@ fn extract(
         {
             duplicate_declarations |= !declared.insert(text(left, source).to_owned());
             apps.insert(text(left, source).to_owned());
+            app_declarations.insert(text(left, source).to_owned(), n.start_byte());
             approved.insert((left.start_byte(), left.end_byte()));
         }
     }
-    // Only direct, same-module include_router calls after all route definitions.
-    // FastAPI copies router routes at inclusion; earlier/dynamic/nested/multiple
-    // mounts cannot certify a provider with this bounded recipe.
+    // FastAPI copies routes at inclusion. Every link must follow the child's
+    // declarations/registrations; nested chains are resolved below with a cap.
     let mut last_receiver_call = BTreeMap::new();
     for &n in &nodes {
         if n.kind() == "call"
@@ -953,9 +1074,21 @@ fn extract(
         {
             continue;
         }
+        if app_declarations
+            .get(&receiver)
+            .is_some_and(|&start| start > n.start_byte())
+        {
+            mounting_incomplete = true;
+            continue;
+        }
+        if apps.contains(&receiver)
+            && external.is_some_and(|e| e.accepted.contains(&n.start_byte()))
+        {
+            continue;
+        }
         let mount = (|| {
             if method != "include_router"
-                || !apps.contains(&receiver)
+                || !(apps.contains(&receiver) || routers.contains_key(&receiver))
                 || n.parent()
                     .and_then(|p| p.parent())
                     .is_none_or(|p| p.kind() != "module")
@@ -985,7 +1118,12 @@ fn extract(
             mounting_incomplete = true;
         }
     }
-    mounting_incomplete |= routers.keys().any(|name| !mounts.contains_key(name));
+    mounting_incomplete |= routers.keys().any(|name| {
+        !mounts.contains_key(name) && !external.is_some_and(|e| e.mounts.contains_key(name))
+    });
+    mounting_incomplete |= external.is_some_and(|e| e.incomplete);
+    mounting_incomplete |=
+        external.is_some_and(|e| e.mounts.keys().any(|name| !routers.contains_key(name)));
     let names: BTreeSet<_> = clients
         .iter()
         .chain(constructors.iter())
@@ -1024,14 +1162,70 @@ fn extract(
         }
     }
     let binding_incomplete = !unsafe_names.is_empty();
+    let mut resolved_mounts = BTreeMap::new();
+    for name in routers.keys() {
+        let mut current = name;
+        let mut prefix = String::new();
+        let mut dependencies = Vec::new();
+        let mut seen = BTreeSet::new();
+        loop {
+            if seen.len() == 8 || !seen.insert(current) || unsafe_names.contains(current) {
+                mounting_incomplete = true;
+                break;
+            }
+            let (own_prefix, declaration) = &routers[current];
+            if let Some((outer_prefix, spans)) = external.and_then(|e| e.mounts.get(current)) {
+                if mounts.contains_key(current) || !unsafe_names.is_disjoint(&router_constructors) {
+                    mounting_incomplete = true;
+                    break;
+                }
+                prefix = format!("{outer_prefix}{own_prefix}{prefix}");
+                if prefix.len() > 2048 {
+                    mounting_incomplete = true;
+                    break;
+                }
+                dependencies.push(span(path, hash, *declaration));
+                dependencies.extend(spans.iter().cloned());
+                resolved_mounts.insert(name.clone(), (prefix, dependencies));
+                break;
+            }
+            let Some((mount_prefix, mount, parent)) = mounts.get(current) else {
+                mounting_incomplete = true;
+                break;
+            };
+            if unsafe_names.contains(parent)
+                || !unsafe_names.is_disjoint(&router_constructors)
+                || mount.start_byte() < declaration.start_byte()
+                || routers
+                    .get(parent)
+                    .is_some_and(|(_, d)| d.start_byte() > mount.start_byte())
+            {
+                mounting_incomplete = true;
+                break;
+            }
+            prefix = format!("{mount_prefix}{own_prefix}{prefix}");
+            if prefix.len() > 2048 {
+                mounting_incomplete = true;
+                break;
+            }
+            dependencies.push(span(path, hash, *declaration));
+            dependencies.push(span(path, hash, *mount));
+            if apps.contains(parent) {
+                resolved_mounts.insert(name.clone(), (prefix, dependencies));
+                break;
+            }
+            current = parent;
+        }
+    }
     let service = config
         .services
         .iter()
         .find(|s| s.providers.iter().any(|p| p == path));
     let consumer_admitted = config.consumers.iter().any(|p| p == path);
     let mut facts = Vec::new();
-    let mut complete =
-        !binding_incomplete && !mounting_incomplete && (service.is_none() || !apps.is_empty());
+    let mut complete = !binding_incomplete
+        && !mounting_incomplete
+        && (service.is_none() || !apps.is_empty() || !resolved_mounts.is_empty());
     for n in nodes {
         if n.kind() != "call" {
             continue;
@@ -1084,23 +1278,16 @@ fn extract(
             reason = Some("shadowed_or_escaped_binding".into());
         } else if let Some(mut value) = value {
             if route {
-                if let Some((prefix, declaration)) = routers.get(&receiver) {
+                if let Some((_, declaration)) = routers.get(&receiver) {
                     if (!value.is_empty() && !value.starts_with('/'))
                         || n.start_byte() < declaration.start_byte()
                     {
                         complete = false;
                         continue;
                     }
-                    if let Some((mount_prefix, mount, app)) = mounts.get(&receiver) {
-                        if unsafe_names.contains(app)
-                            || !unsafe_names.is_disjoint(&router_constructors)
-                        {
-                            complete = false;
-                            continue;
-                        }
-                        value = format!("{mount_prefix}{prefix}{value}");
-                        dependencies.push(span(path, hash, *declaration));
-                        dependencies.push(span(path, hash, *mount));
+                    if let Some((prefix, spans)) = resolved_mounts.get(&receiver) {
+                        value = format!("{prefix}{value}");
+                        dependencies.extend(spans.iter().cloned());
                     } else {
                         complete = false;
                         continue;

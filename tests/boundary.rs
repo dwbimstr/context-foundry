@@ -673,3 +673,198 @@ fn real_fastapi_converter_and_mount_fixture_matches_published_evidence() {
         );
     }
 }
+
+#[test]
+fn nested_router_prefixes_require_ordered_complete_registration_chains() {
+    let (_dir, e) = fixture();
+    let source = "from fastapi import FastAPI, APIRouter\napp = FastAPI()\nouter = APIRouter(prefix='/v1')\ninner = APIRouter(prefix='/items')\n@inner.get('')\ndef items(): return {'items': []}\nouter.include_router(inner)\napp.include_router(outer)\n";
+    e.replace_source("service.py", source).unwrap();
+    assert_eq!(publish(&e).incomplete, 0);
+    for row in read(&e).relations {
+        assert_eq!(row.resolution, "exact_key");
+        assert_eq!(row.providers[0].dependencies.len(), 4);
+        for dependency in &row.providers[0].dependencies {
+            assert_eq!(
+                dependency.sha256,
+                context_foundry::digest(source.as_bytes())
+            );
+        }
+    }
+    for changed in [
+        source.replace(
+            "outer.include_router(inner)\napp.include_router(outer)",
+            "app.include_router(outer)\nouter.include_router(inner)",
+        ),
+        source.replace("app.include_router(outer)", "inner.include_router(outer)"),
+        format!("{source}app.include_router(inner)\n"),
+        source.replace(
+            "outer.include_router(inner)",
+            "outer.include_router(inner, prefix=prefix)",
+        ),
+    ] {
+        e.replace_source("service.py", &changed).unwrap();
+        assert_eq!(publish(&e).incomplete, 1, "{changed}");
+        assert!(
+            read(&e)
+                .relations
+                .iter()
+                .all(|r| r.resolution == "incomplete")
+        );
+    }
+}
+
+#[test]
+fn cross_file_router_imports_invalidate_and_publish_the_dependent_service() {
+    let (dir, e) = fixture();
+    let importing = "from fastapi import FastAPI\nfrom other import router as api\napp = FastAPI()\napp.include_router(api, prefix='/v1')\n";
+    let routes = "from fastapi import APIRouter\nrouter = APIRouter()\n@router.get('/items')\ndef items(): return {'items': []}\n";
+    e.replace_source("service.py", importing).unwrap();
+    e.replace_source("other.py", routes).unwrap();
+    assert_eq!(publish(&e).incomplete, 0);
+    for row in read(&e).relations {
+        assert_eq!(row.resolution, "exact_key");
+        assert_eq!(row.providers[0].evidence.path, "other.py");
+        assert_eq!(row.providers[0].dependencies.len(), 3);
+        assert!(
+            row.providers[0]
+                .dependencies
+                .iter()
+                .any(|s| s.path == "service.py"
+                    && importing[s.start as usize..s.end as usize]
+                        .starts_with("from other import"))
+        );
+    }
+    assert_eq!(publish(&e).parsed, 0);
+    e.replace_source("service.py", &importing.replace("'/v1'", "'/v2'"))
+        .unwrap();
+    assert!(
+        read(&e)
+            .relations
+            .iter()
+            .all(|r| r.resolution == "incomplete" && r.providers.is_empty())
+    );
+    let report = e
+        .index_boundaries(
+            "boundary.json",
+            &["service.py".into()],
+            &Control::unbounded(),
+        )
+        .unwrap();
+    assert_eq!(report.parsed, 2);
+    assert!(
+        read(&e)
+            .relations
+            .iter()
+            .all(|r| r.resolution == "unresolved")
+    );
+    e.replace_source("service.py", importing).unwrap();
+    e.index_boundaries(
+        "boundary.json",
+        &["service.py".into()],
+        &Control::unbounded(),
+    )
+    .unwrap();
+    drop(e);
+    let e = Engine::open_existing(&dir.path().join("store")).unwrap();
+    assert!(
+        read(&e)
+            .relations
+            .iter()
+            .all(|r| r.resolution == "exact_key")
+    );
+    for changed in [
+        format!("{importing}use(api)\n"),
+        format!("{importing}app.include_router(api)\n"),
+        importing.replace("router as api", "missing as api"),
+        importing.replace("prefix='/v1'", "prefix=PREFIX"),
+        importing.replace("app.include_router", "unknown.include_router"),
+        importing.replace("app = FastAPI()\n", "") + "app = FastAPI()\n",
+    ] {
+        e.replace_source("service.py", &changed).unwrap();
+        publish(&e);
+        assert!(
+            read(&e)
+                .relations
+                .iter()
+                .all(|r| r.resolution == "incomplete"),
+            "{changed}"
+        );
+    }
+    e.delete_source("service.py").unwrap();
+    assert!(
+        read(&e)
+            .relations
+            .iter()
+            .all(|r| r.resolution == "incomplete")
+    );
+}
+
+#[test]
+#[ignore = "requires installed FastAPI/Starlette/httpx; runs only a generated fixture"]
+fn real_fastapi_cross_file_nested_router_contract() {
+    let (dir, e) = fixture();
+    let app = "from fastapi import FastAPI\nfrom other import outer\napp = FastAPI()\napp.include_router(outer, prefix='/v1')\n";
+    let routes = "from fastapi import APIRouter\nouter = APIRouter()\ninner = APIRouter(prefix='/items')\n@inner.get('')\ndef items(): return {'items':['book']}\nouter.include_router(inner)\n";
+    for (path, body) in [("service.py", app), ("other.py", routes)] {
+        e.replace_source(path, body).unwrap();
+        std::fs::write(dir.path().join("root").join(path), body).unwrap();
+    }
+    assert_eq!(publish(&e).incomplete, 0);
+    for r in read(&e).relations {
+        assert_eq!(r.resolution, "exact_key");
+        assert_eq!(r.providers[0].dependencies.len(), 5);
+    }
+    let out=Command::new("python3").args(["-B","-c","from service import app\nfrom fastapi.testclient import TestClient\nimport importlib.metadata as m\nr=TestClient(app).get('/v1/items',follow_redirects=False)\nassert r.status_code==200 and r.json()=={'items':['book']}\nprint(m.version('fastapi'),m.version('starlette'))"]).current_dir(dir.path().join("root")).output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    eprintln!("runtime {}", String::from_utf8_lossy(&out.stdout));
+}
+
+#[test]
+fn relative_router_imports_require_a_configured_unambiguous_package_path() {
+    let (_dir, e) = fixture();
+    let config = |providers: &[&str]| {
+        json!({"v":1,"services":[{"id":"catalog","providers":providers,"origins":["http://catalog"]}],"consumers":["client.py"]}).to_string()
+    };
+    e.replace_source("boundary.json", &config(&["pkg/app.py", "pkg/routes.py"]))
+        .unwrap();
+    let app = "from fastapi import FastAPI\nfrom .routes import router\napp = FastAPI()\napp.include_router(router, prefix='/v1')\n";
+    let routes = "from fastapi import APIRouter\nrouter = APIRouter()\n@router.get('/items')\ndef items(): return {}\n";
+    e.replace_source("pkg/app.py", app).unwrap();
+    e.replace_source("pkg/routes.py", routes).unwrap();
+    publish(&e);
+    assert_eq!(read(&e).relations[0].resolution, "exact_key");
+    e.replace_source("pkg/app.py", &app.replace("from .routes", "from ..routes"))
+        .unwrap();
+    publish(&e);
+    assert_eq!(read(&e).relations[0].resolution, "incomplete");
+    e.replace_source("pkg/app.py", app).unwrap();
+    e.replace_source(
+        "pkg/routes.py",
+        &(String::from("from .app import app\n") + routes),
+    )
+    .unwrap();
+    publish(&e);
+    assert_eq!(
+        read(&e).relations[0].resolution,
+        "incomplete",
+        "cyclic imports cannot certify the join"
+    );
+    e.replace_source("pkg/routes.py", routes).unwrap();
+    e.replace_source("pkg/routes/__init__.py", PROVIDER)
+        .unwrap();
+    e.replace_source(
+        "boundary.json",
+        &config(&["pkg/app.py", "pkg/routes.py", "pkg/routes/__init__.py"]),
+    )
+    .unwrap();
+    publish(&e);
+    assert_eq!(
+        read(&e).relations[0].resolution,
+        "incomplete",
+        "competing module layouts cannot certify the join"
+    );
+}

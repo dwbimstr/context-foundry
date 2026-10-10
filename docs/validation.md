@@ -1,5 +1,182 @@
 # Validation
 
+## Linux relationships, attribution and semantic diagnostics — 2026-10-10
+
+Work continues on `experimental/context-ecosystem` with Rust 1.90. macOS validation
+remains deferred by the owner; 013 learning stays frozen off. No model weights, raw
+host sessions, stores or retrieval traces are added to Git.
+
+**Verification.** All **1,050** default Rust tests pass (11 opt-in tests ignored),
+including the 6,000-file watcher/foreground/idle-read check. Default and `embed-worker`
+all-target Clippy pass with
+`-D warnings`; formatting and documentation links pass. The native embedding binary's
+two ordinary tests pass. The first contended full-suite run hit the existing CPU-limit
+test's eight-second wall assertion while native compilation competed for CPU; its
+worker-exit and retained-work assertions passed. The isolated rerun passes that test
+without changing its assertions; the full rerun exits successfully. No macOS-only
+suite or zero-test target is counted as hardware acceptance.
+
+**Relationship/evidence implementation.** `python-http-v4` adds bounded same-file
+nested routers and direct imports from configured provider modules of the same service.
+Import/declaration/registration spans must all be current and delivered for a task
+relationship. Importer edits immediately suppress dependent evidence; publication
+rechecks the service inputs atomically. Query dependency checks share one source-metadata
+read per configured file. Unchanged scopes reuse their rows. Cycles, re-exports,
+ambiguous module layouts, escaping aliases and early/multiple mounts remain incomplete.
+Both opt-in real FastAPI 0.141.1 / Starlette 1.6.0 tests pass, including the cross-file
+nested-router request. Indexing executes no workspace Python.
+
+Compiler references additionally carry source-grounded Rust/Python callee-expression
+spans and Rust test attributes. Function pointers/arguments are not classified as calls;
+name-only tests and nested functions do not acquire an enclosing test's attribution.
+These are still compiler references with runtime calls **unverified** and execution
+**not observed**, not call-graph or test-coverage claims. The final delivery requires
+all cited spans. Focused tests cover stale sources, fitting and whole-proof omission.
+
+**Repository retrieval attribution.** Eight public Foundry development labels were
+frozen before running either lexical arm, with the same 2,048-token budget. The
+retained records bind query, exact source ranges/hashes, candidate events, final packing
+inputs and exact delivered bytes. Traced and untraced delivery was identical.
+
+| Mode | Required body delivered | Candidate-limit loss | Packing omission | Unknown |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline lexical | 1/8 | 3 | 2 | 2 |
+| Experimental behavior | 1/8 | 3 | 2 | 2 |
+
+No improvement is established. Missing expected spans in a bounded candidate window
+remain unknown. The diagnostic rejects mismatched hashes/queries, truncated traces and
+missing/conflicting packing snapshots; duplicate removal alone is not a loss. These
+labels are development observations, not held-out cases or the preserved Gemma G2 set.
+The historical 249 G2 misses remain unattributed. Next retrieval work should inspect
+ranking/packing at the observed losses, then evaluate a repair on fresh held-out inputs.
+Raw records: `/tmp/foundry-repository-attribution-v1`, outside Git.
+
+**Mixed-size semantic lifecycle.** 8,192 synthetic Rust files, 4,445,012 source bytes,
+128-dimensional fixture vectors, fixture byte tokenizer, body windows of 512 tokens
+and a 64-token parent prefix. This exercises production fitting, partition/cache reuse,
+ANN and transaction paths, not selected-model segmentation or inference throughput.
+Source indexing took 27,852 ms; the first semantic preparation finished in 216,950 ms,
+with 15,872 eligible units, 9,226 unique embedded units and 6,646 cache reuses. Its first
+semantic publication appeared at 417 ms after preparation started. The complete
+index/cold/restart/edit/delete/revert sequence took 253,552 ms.
+
+| Restart/maintenance step | Partitioned sources | New embedded units | Document calls | Elapsed |
+| --- | ---: | ---: | ---: | ---: |
+| Unchanged | 0 | 0 | 0 | 1,552 ms |
+| One edit plus one deletion | 1 | 1 | 1 | 2,872 ms |
+| Revert edited input | 1 | 0 | 0 | 2,932 ms |
+
+All generations published successfully. The mixed-size test has a bounded preparation
+budget and retains progress on failure; it does not claim 60,000–80,000-file semantic
+acceptance. Native/Rust compilation overlapped this run on a four-CPU quota, so timings
+are observations under contention, not an isolated performance comparison. Report:
+`/tmp/foundry-semantic-scale-8192-v1/report.json`. Real-model scale, overflow/compaction
+and continuous semantic/knowledge maintenance at the target corpus size remain open.
+
+**Real embedding CPU numerics.** The selected EmbeddingGemma 2 BF16 artifact was
+fetched at `ggml-org/embeddinggemma-2-GGUF@bfcd298762cc34d0357ece5ebdd31791a3a374d8`:
+557,950,176 bytes, SHA-256
+`68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216`.
+The native runtime remains pinned to llama.cpp
+`b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`. The embedding binary now exposes its shared
+numerical implementation in an ignored Linux-only test; the production Linux embedding
+entry point still refuses. The diagnostic uses inherited read-only model descriptors,
+`linux-seccomp-fd-v1`, two affinity CPUs and an 8 GiB hard address-space ceiling.
+
+At **2,048 tokens**, eight sequences, single-versus-batch/reversed-order agreement,
+heterogeneous lengths, full-window repeatability, finite/unit-normalized 768-vectors
+and over-limit refusal all pass. Minimum cosine is **0.9999952796** against a 0.9999
+threshold. Diagnostic inference elapsed 73,787 ms; this overlapped some repository
+indexing and is not isolated throughput. At **8,192 tokens**, the run fails: pinned
+`llama_context::output_reserve` tries to allocate **8,216 MiB** for all-token output
+buffers. `decode` requires all tokens for pooled embeddings; merely disabling logits
+flags does not fix this version. No runtime patch or larger resource limit was silently
+substituted. This allocation is now a concrete long-context efficiency TODO.
+
+An initial direct-to-file stdout/stderr invocation died with SIGXFSZ because the
+sandbox installs a zero file-write-size limit. Repeating with parent-owned pipe capture
+corrected the harness; the 2,048-token pass and 8,192-token failure above use that capture.
+GGUF tokenization does not certify profile tokenizer.json parity. Production worker IPC,
+macOS App Sandbox/signed bundles, Metal/GPU numerics, resource pressure and long-context
+retrieval quality remain unverified. No GPU device is visible in this sandbox.
+Logs: `/tmp/foundry-cpu-embedding-2048-piped.log` and
+`/tmp/foundry-cpu-embedding-8192.log`.
+
+**Free-form host calibration.** Installed OMP 18.6.0/Bun 1.3.14 used real local
+Qwen2.5-Coder-0.5B-Instruct Q4_K_M replies through the existing gateway. The upstream
+was the pinned llama.cpp server, CPU-only, two threads, 16,384-token context, temperature
+default 0, one slot; host model overrides capped each request at 512 output tokens.
+`glm-5.3-flash` is only the transport alias, **not the model tested**. GGUF SHA-256:
+`1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32`.
+
+One public T003 parser task, two fresh workspaces/sessions, matched goal and read/write
+tools, one attempt per arm, 180 seconds per task. No candidate patches were supplied.
+The immutable external checker compiles the resulting Rust and verifies whitespace,
+empty keys/values, embedded `=`, Unicode and borrowed slices; protected files must stay
+unchanged and no extra workspace files may appear. It rejects the original and accepts
+a separate correct control. Model failures are retained, not repaired by the evaluator.
+
+| Initial evidence | Verified tasks | Gateway input tokens | Of which cached | Output tokens | Host elapsed |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Full fixture files | 0/1 | 1,544 | 0 | 67 | 38,443 ms |
+| Foundry compact composition | 0/1 | 2,483 | 858 | 141 | 51,051 ms |
+
+Both returned inert JSON text naming an unavailable `parse_record` tool and made **no
+file edit**. Each host exited successfully and each gateway recorded one complete
+request, but each task failed its checker. Foundry context preparation added 1,525 ms.
+The server retained a prompt-cache prefix across arms; cached tokens above are included
+in total input, not additional tokens. Compiler work overlapped part of inference.
+These latencies are not isolated causal comparisons. Gateway summaries retain
+`whole_run_unverified`: the table accounts for observed requests, not a claim about
+unobserved auxiliary host traffic. Monetary cost, energy, model build/load and amortized
+bootstrap economics were not measured. There is no cost-per-verified-completion result
+with zero completions, no demonstrated benefit, and no held-out task acceptance. A
+capable tool-using model and broader matched tasks remain necessary. The server was
+stopped after this run; raw sessions and receipts remain at
+`/tmp/foundry-freeform-host-v1` outside Git.
+
+**Reproduction.** Ordinary tests need no model or Python framework. Explicit diagnostics
+refuse an existing output directory; keep it outside the checkout. The real FastAPI
+checks require installed FastAPI/Starlette/httpx. Activate the retained Rust toolchain
+and use fresh paths:
+
+```bash
+cargo test --locked --offline --test boundary real_fastapi -- --ignored --nocapture
+FOUNDRY_ATTRIBUTION_DIR=/tmp/new-attribution cargo test --locked --offline --test retrieval_attribution repository_development_attribution -- --ignored --nocapture
+FOUNDRY_SEMANTIC_SCALE_DIR=/tmp/new-scale FOUNDRY_SEMANTIC_SCALE_FILES=8192 timeout 720s cargo test --locked --offline --test semantic_scale -- --ignored --nocapture
+```
+
+For native tests supply CMake, libclang and the pinned `LLAMA_CPP_DIR` as documented in
+[deployment](deployment.md), plus `BINDGEN_EXTRA_CLANG_ARGS="-isystem $(cc -print-file-name=include)"`
+on this Linux compiler setup. Pipe both output streams to a parent-owned log:
+
+```bash
+set -o pipefail
+FOUNDRY_EMBED_CPU_GGUF=/path/to/embeddinggemma-2-BF16.gguf FOUNDRY_EMBED_CPU_CONTEXT=2048 timeout 480s cargo test --locked --offline --features embed-worker --bin foundry-embed cpu_pinned_gemma_batch_geometry -- --ignored --nocapture --test-threads=1 2>&1 | tee /tmp/new-cpu-embedding.log
+```
+
+
+For the free-form host diagnostic, build the same upstream server outside the checkout:
+export the pinned Git tree, configure CMake with `BUILD_SHARED_LIBS=OFF`,
+`GGML_NATIVE=OFF`, `GGML_OPENMP=OFF`, `GGML_METAL=OFF`, `GGML_CUDA=OFF`,
+`LLAMA_BUILD_COMMON=ON`, **both** `LLAMA_BUILD_TOOLS=ON` and `LLAMA_BUILD_SERVER=ON`,
+`LLAMA_BUILD_TESTS=OFF`, `LLAMA_BUILD_EXAMPLES=OFF`, `LLAMA_BUILD_UI=OFF`, and
+`LLAMA_OPENSSL=OFF`; build target `llama-server` with two jobs. TOOLS=OFF does not
+create the server target. Use the hash-verified Qwen artifact above, then start:
+
+```bash
+llama-server -m /path/to/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf --alias glm-5.3-flash --host 127.0.0.1 --port 18137 --api-prefix /api/coding/paas/v4 --ctx-size 16384 --parallel 1 --threads 2 --threads-batch 2 --n-gpu-layers 0 --batch-size 512 --ubatch-size 512 --predict 512 --temp 0 --jinja --no-webui --no-context-shift
+```
+
+Require `/api/coding/paas/v4/health` to return HTTP 200. Set `FOUNDRY_OMP_BUN` and
+`FOUNDRY_OMP_CLI` to the installed pinned executables, `FOUNDRY_HOST_RUSTC` to Rust
+1.90's rustc, `FOUNDRY_HOST_TASK_PORT=18137`, and `FOUNDRY_HOST_TASK_DIR` to a new
+absolute directory outside Git. Run `cargo test --locked --offline --test gateway
+host_task::free_form_parser_repair -- --ignored --nocapture --test-threads=1`. The
+harness declares this exact backend identity; pointing it at another model invalidates
+that identity and comparison. Stop this task-owned server afterward. No hosted key is
+required and no new production model endpoint is introduced.
+
 
 ## Expanded ecosystem continuation — 2026-10-10
 

@@ -1747,3 +1747,37 @@ The original synchronization test remains unchanged. Groups stop at the exact le
 publication boundary. A direct four-source transaction test preserves rollback coverage;
 the scan fixture permits readiness-dependent successful grouping. Prior cold-bootstrap
 timing is historical; mixed-size throughput still needs a workload comparison.
+
+
+Linux ecosystem diagnostics continuation (2026-10-10):
+
+- **T005:** `tests/retrieval_attribution.rs` validates query/source/delivery identity
+  and reports observed candidate/filter/freshness/packing losses. Truncated, conflicting
+  or missing evidence remains unknown. Eight frozen public Foundry development labels
+  were run with baseline and behavioral lexical retrieval at 2,048 tokens: each arm
+  delivered 1/8; three candidate-limit losses, two packing omissions and two unknowns.
+  Tracing preserved identical delivery. This neither improves acceptance nor attributes
+  the historical 249 G2 misses; preserved G2 inputs and fresh held-out repair checks remain.
+- **T006/T008:** an opt-in mixed-size 8,192-file fixture runs production body/parent
+  fitting, cache and ANN publication with a byte-tokenizer fixture and fake vectors.
+  Cold publication completed; unchanged restart did zero partitioning/model work, one
+  edit plus deletion embedded one new unit, and revert reused cached vectors. This is
+  storage/lifecycle scale evidence, not selected-model tokenization or inference throughput.
+- **T009:** the embedding binary's shared numerical implementation has an explicitly
+  test-only Linux CPU diagnostic using selected Gemma BF16 weights and the pinned native
+  runtime. Eight-sequence single/batch/reverse/mixed-length/full-window comparisons
+  passed at 2,048 tokens (minimum cosine 0.99999528). At 8,192 tokens the pinned
+  `llama_context::output_reserve` requests an 8,216 MiB logits/embedding buffer and
+  fails under the tested 8 GiB address-space ceiling. `decode` requires all tokens for
+  pooled embeddings, so clearing output flags is not a compatible repair. Runtime
+  output allocation needs a separately pinned, parity-validated fix or a justified
+  larger resource envelope; a larger model window alone does not establish usable
+  geometry. The diagnostic uses GGUF tokenization, not profile tokenizer.json parity.
+  It does not admit a Linux production embedding worker. macOS/Metal, signed bundle,
+  worker IPC/isolation acceptance and real long-context retrieval quality remain open.
+
+Native reference: llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`,
+`src/llama-context.cpp::{decode,output_reserve}`, and Foundry's ignored
+`cpu_pinned_gemma_batch_geometry` diagnostic. No upstream runtime patch or descriptor
+identity change is hidden in these measurements. Raw logs/artifacts remain outside Git;
+[validation](../../docs/validation.md) records reproduction and limitations.

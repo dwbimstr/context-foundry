@@ -1109,6 +1109,24 @@ pub(crate) fn parse_boundary_python(
     parse(source, &tree_sitter_python::LANGUAGE.into())
 }
 
+/// Bounded syntax corroboration of compiler occurrences, not name resolution.
+pub(crate) fn parse_reference_source(path: &str, source: &str) -> Option<tree_sitter::Tree> {
+    if source.len() > MAX_PARSE_BYTES {
+        return None;
+    }
+    let lang = Lang::from_path(path)?;
+    if over_scanner_limit(lang, source.as_bytes()).is_some() {
+        return None;
+    }
+    let grammar = match lang {
+        Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
+        Lang::Python => tree_sitter_python::LANGUAGE.into(),
+        _ => return None,
+    };
+    let tree = parse(source, &grammar).ok()??;
+    (!tree.root_node().has_error()).then_some(tree)
+}
+
 fn parse(
     source: &str,
     grammar: &tree_sitter::Language,

@@ -2081,14 +2081,23 @@ fn pack_task_evidence(
                 end: r.end,
                 ..r.unit.clone()
             };
+            let usage = plan
+                .reference_uses
+                .get(&crate::task_evidence::reference::key(r));
+            let call = usage.and_then(|u| u.call.as_ref());
+            let test = usage.and_then(|u| u.test.as_ref());
             let line = format!(
                 "task-reference: {}\n",
                 serde_json::json!({"evidence":"compiler","kind":"references",
                 "producer":window.producer,"snapshot":window.snapshot,"edge_id":edge,"occurrence_id":r.occurrence_id,
-                "definition":definition.to_v2(),"reference":occurrence.to_v2(),"target":"unique"})
+                "definition":definition.to_v2(),"reference":occurrence.to_v2(),"target":"unique",
+                "syntax":{"call":call.map(SourceHandle::to_v2),"test_attribute":test.map(SourceHandle::to_v2),"runtime_call":"unverified","test_execution":"not_observed"}})
             );
             if !tail.iter().any(|(existing, _, _)| existing == &line) {
-                tail.push((line, vec![definition.clone(), occurrence], false));
+                let mut required = vec![definition.clone(), occurrence];
+                required.extend(call.cloned());
+                required.extend(test.cloned());
+                tail.push((line, required, false));
             }
         }
     }

@@ -63,8 +63,13 @@ negative task results and exposed a repaired failed-generation accounting gap. T
 continuation implements opt-in compact evidence accounting, typed/terminal-path routes,
 same-file static router mounts, grounded task review and affinity/cgroup CPU admission.
 Native generation stops at a completed JSON object, with a revised paired recipe tested
-separately. Broader frameworks, a useful task model, free-form host outcomes/economics
-and real-device embedding/Metal remain. See the [updated pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
+separately. The next Linux continuation adds nested/direct cross-file router dependencies,
+compiler-reference callee/test-attribute evidence, an offline attribution diagnostic and
+8,192-file semantic lifecycle validation. The eight development retrieval labels show
+no gain (1/8 in each arm). Selected Gemma CPU numerics pass at 2,048 tokens; 8,192 tokens
+fail the tested 8 GiB ceiling in the pinned runtime's output allocation. Broader
+frameworks, a useful task model, held-out host outcomes/economics, model-scale throughput
+and production macOS embedding/Metal acceptance remain. See the [updated pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.
 

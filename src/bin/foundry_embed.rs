@@ -99,15 +99,22 @@ fn real_run(engine: &mut context_foundry::neural::worker_runtime::Engine) -> i32
     0
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
 mod llama {
     use context_foundry::neural::provider::{
         DocumentLimits, FunctionDescriptor, LLAMA_CPP_COMMIT, TokenizedInput,
     };
+    #[cfg(target_os = "macos")]
     use context_foundry::neural::worker_runtime::{mark_phase, refuse_split_gguf};
-    use std::ffi::{CStr, CString, c_char, c_void};
+    #[cfg(all(test, target_os = "linux"))]
+    fn mark_phase(_: &str) {}
+    #[cfg(target_os = "macos")]
+    use std::ffi::CString;
+    use std::ffi::{CStr, c_char, c_void};
     use std::io::Write as _;
+    #[cfg(target_os = "macos")]
     use std::os::unix::ffi::OsStrExt as _;
+    #[cfg(target_os = "macos")]
     use std::path::Path;
     use std::ptr::NonNull;
     use std::sync::Once;
@@ -120,6 +127,7 @@ mod llama {
         non_camel_case_types,
         non_snake_case,
         dead_code,
+        unnecessary_transmutes,
         unsafe_op_in_unsafe_fn,
         clippy::all
     )]
@@ -138,6 +146,7 @@ mod llama {
     /// build.rs copied into `OUT_DIR` from the tree it built; at this commit
     /// ggml has no license file of its own, so this one text covers
     /// llama.cpp and its ggml.
+    #[cfg(target_os = "macos")]
     pub const LICENSE: &str = include_str!(concat!(env!("OUT_DIR"), "/llama.cpp-LICENSE"));
 
     const fn same(a: &str, b: &str) -> bool {
@@ -192,6 +201,8 @@ mod llama {
     /// supervisor's frame channel). WARN and ERROR only, so the load chatter
     /// does not flood the supervisor's bounded stderr tail; CONT lines follow
     /// the level they continue.
+    // Bindgen's C enum signedness is target-dependent; the atomic uses u32.
+    #[allow(clippy::unnecessary_cast)]
     unsafe extern "C" fn log_to_stderr(
         level: ffi::ggml_log_level,
         text: *const c_char,
@@ -236,8 +247,8 @@ mod llama {
     }
 
     impl Embedder {
+        #[cfg(target_os = "macos")]
         pub fn load(path: &Path, descriptor: &FunctionDescriptor) -> Result<Self, String> {
-            let pooling = pooling_type(&descriptor.pooling)?;
             init_backend();
             if !unsafe { ffi::llama_supports_gpu_offload() } {
                 return Err("this llama.cpp build cannot offload to a GPU (Metal)".into());
@@ -257,6 +268,22 @@ mod llama {
                 ffi::llama_model_load_from_file(c_path.as_ptr(), model_params)
             })
             .ok_or_else(|| format!("llama.cpp could not load {}", path.display()))?;
+            Self::from_model(model, descriptor)
+        }
+
+        // Shared numerical implementation. Linux compiles this only in the
+        // explicit test binary; production embedding admission remains macOS.
+        fn from_model(
+            model: NonNull<ffi::llama_model>,
+            descriptor: &FunctionDescriptor,
+        ) -> Result<Self, String> {
+            let pooling = match pooling_type(&descriptor.pooling) {
+                Ok(pooling) => pooling,
+                Err(error) => {
+                    unsafe { ffi::llama_model_free(model.as_ptr()) };
+                    return Err(error);
+                }
+            };
             let has_encoder = unsafe { ffi::llama_model_has_encoder(model.as_ptr()) };
             let has_decoder = unsafe { ffi::llama_model_has_decoder(model.as_ptr()) };
             if has_encoder && has_decoder {
@@ -285,7 +312,13 @@ mod llama {
             ctx_params.flash_attn_type = ffi::LLAMA_FLASH_ATTN_TYPE_DISABLED;
             ctx_params.type_k = ffi::GGML_TYPE_F32;
             ctx_params.type_v = ffi::GGML_TYPE_F32;
-            ctx_params.offload_kqv = true;
+            ctx_params.offload_kqv = cfg!(target_os = "macos");
+            #[cfg(all(test, target_os = "linux"))]
+            {
+                ctx_params.n_threads = 2;
+                ctx_params.n_threads_batch = 2;
+                ctx_params.op_offload = false;
+            }
             ctx_params.no_perf = true;
             let Some(ctx) =
                 NonNull::new(unsafe { ffi::llama_init_from_model(model.as_ptr(), ctx_params) })
@@ -369,6 +402,7 @@ mod llama {
 
         /// One past the largest token ID the model accepts: the runtime
         /// refuses any request ID at or above it.
+        #[cfg(target_os = "macos")]
         pub fn vocab_bound(&self) -> u32 {
             self.n_vocab
         }
@@ -480,6 +514,188 @@ mod llama {
                 assert!(pooling_type(pooling).is_ok(), "{pooling}");
             }
             assert!(pooling_type("max").is_err());
+        }
+
+        /// Explicit CPU numerical diagnostic of the shared batch implementation.
+        /// This is not the macOS supervisor, tokenizer.json or Metal acceptance.
+        /// The only admitted model is the selected upstream single-file BF16 pin.
+        #[cfg(target_os = "linux")]
+        #[test]
+        #[ignore = "requires FOUNDRY_EMBED_CPU_GGUF; installs seccomp/CPU/RAM limits in this test process"]
+        fn cpu_pinned_gemma_batch_geometry() {
+            use context_foundry::knowledge::local::{Config, Device, MemoryEnforcement, resources};
+            use context_foundry::neural::provider::{
+                ArtifactFile, DESCRIPTOR_VERSION, GEOMETRY_ADAPTER_REVISION, InputGeometry,
+            };
+            use sha2::{Digest, Sha256};
+            use std::io::{Read, Seek};
+            use std::os::fd::AsRawFd;
+            let path = std::path::PathBuf::from(
+                std::env::var_os("FOUNDRY_EMBED_CPU_GGUF").expect("explicit GGUF"),
+            );
+            let limit: u32 = std::env::var("FOUNDRY_EMBED_CPU_CONTEXT")
+                .unwrap_or_else(|_| "2048".into())
+                .parse()
+                .unwrap();
+            assert!([2048, 4096, 8192].contains(&limit));
+            const SHA: &str = "68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216";
+            let mut file = std::fs::File::open(&path).unwrap();
+            let mut hash = Sha256::new();
+            let mut buffer = vec![0; 1024 * 1024];
+            loop {
+                let n = file.read(&mut buffer).unwrap();
+                if n == 0 {
+                    break;
+                }
+                hash.update(&buffer[..n]);
+            }
+            assert_eq!(
+                format!("{:x}", hash.finalize()),
+                SHA,
+                "only the pinned verified single-file artifact is admitted"
+            );
+            file.rewind().unwrap();
+            let descriptor = FunctionDescriptor {
+                v: DESCRIPTOR_VERSION,
+                model: "ggml-org/embeddinggemma-2-GGUF@bfcd298762cc34d0357ece5ebdd31791a3a374d8"
+                    .into(),
+                artifact_files: vec![ArtifactFile {
+                    name: "model.gguf".into(),
+                    sha256: SHA.into(),
+                }],
+                gguf: "model.gguf".into(),
+                llama_cpp: LLAMA_CPP_COMMIT.into(),
+                tokenizer: "GGUF vocabulary diagnostic only".into(),
+                add_special_tokens: true,
+                pooling: "mean".into(),
+                dimensions: 768,
+                output: "f32".into(),
+                adapter_revision: GEOMETRY_ADAPTER_REVISION,
+                document_template: "{text}".into(),
+                geometry: Some(InputGeometry {
+                    v: 1,
+                    input_tokens: limit,
+                    batch_tokens: limit,
+                    sequences: 8,
+                }),
+            };
+            descriptor.validate().unwrap();
+            let config = Config {
+                development: true,
+                executable: std::env::current_exe().unwrap(),
+                executable_sha256: "0".repeat(64),
+                gguf: path,
+                llama_cpp: LLAMA_CPP_COMMIT.into(),
+                chat_template: "diagnostic".into(),
+                device: Device::Cpu,
+                context_tokens: limit,
+                batch_tokens: 2048,
+                threads: 2,
+                memory_bytes: 8 * 1024 * 1024 * 1024,
+                memory_enforcement: MemoryEnforcement::HardAddressSpace,
+                cpu_seconds: 600,
+                load_seconds: 120,
+                idle_seconds: 1,
+            };
+            let started = std::time::Instant::now();
+            let isolation = resources::install(&config, file.as_raw_fd()).unwrap();
+            init_backend();
+            let fd = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+            assert!(fd >= 0);
+            let stream = unsafe { libc::fdopen(fd, c"rb".as_ptr()) };
+            assert!(!stream.is_null());
+            let mut params = unsafe { ffi::llama_model_default_params() };
+            params.n_gpu_layers = 0;
+            params.progress_callback = None;
+            let model = unsafe { ffi::llama_model_load_from_file_ptr(stream.cast(), params) };
+            unsafe { libc::fclose(stream) };
+            let mut embedder =
+                Embedder::from_model(NonNull::new(model).expect("CPU model load"), &descriptor)
+                    .unwrap();
+            let tokenize = |text: &str| {
+                let mut ids = vec![0; limit as usize];
+                let vocab = unsafe { ffi::llama_model_get_vocab(embedder.model.as_ptr()) };
+                let n = unsafe {
+                    ffi::llama_tokenize(
+                        vocab,
+                        text.as_ptr().cast(),
+                        text.len() as i32,
+                        ids.as_mut_ptr(),
+                        ids.len() as i32,
+                        true,
+                        true,
+                    )
+                };
+                assert!(n > 0 && n as usize <= ids.len());
+                TokenizedInput {
+                    ids: ids[..n as usize].iter().map(|&i| i as u32).collect(),
+                }
+            };
+            let inputs: Vec<_> = [
+                "Where are failed requests retried?",
+                "设置检索边界 — 🧩",
+                "first\r\nsecond",
+                "a",
+                "fn parse() {}",
+                "Store current hashes atomically.",
+                "module.path",
+                "Keep caller behavior unchanged.",
+            ]
+            .into_iter()
+            .map(tokenize)
+            .collect();
+            let mut minimum = 1f64;
+            let mut compare = |a: &[Vec<f32>], b: &[Vec<f32>]| {
+                assert_eq!(a.len(), b.len());
+                for (a, b) in a.iter().zip(b) {
+                    assert_eq!((a.len(), b.len()), (768, 768));
+                    let norm =
+                        |v: &[f32]| v.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>().sqrt();
+                    assert!(a.iter().chain(b).all(|v| v.is_finite()));
+                    let (na, nb) = (norm(a), norm(b));
+                    assert!((na - 1.).abs() < 0.0001 && (nb - 1.).abs() < 0.0001);
+                    let cosine = a
+                        .iter()
+                        .zip(b)
+                        .map(|(&x, &y)| f64::from(x) * f64::from(y))
+                        .sum::<f64>()
+                        / (na * nb);
+                    minimum = minimum.min(cosine);
+                    assert!(cosine >= 0.9999, "cosine {cosine}");
+                }
+            };
+            let single: Vec<_> = inputs
+                .iter()
+                .map(|i| embedder.embed(std::slice::from_ref(i)).unwrap().remove(0))
+                .collect();
+            compare(&embedder.embed(&inputs).unwrap(), &single);
+            let reversed: Vec<_> = inputs.iter().rev().cloned().collect();
+            compare(
+                &embedder.embed(&reversed).unwrap(),
+                &single.iter().rev().cloned().collect::<Vec<_>>(),
+            );
+            let mut full = inputs[0].clone();
+            let repeated = full.ids[1];
+            full.ids.resize(limit as usize, repeated);
+            let first = embedder.embed(std::slice::from_ref(&full)).unwrap();
+            compare(
+                &first,
+                &embedder.embed(std::slice::from_ref(&full)).unwrap(),
+            );
+            let mut long = full.clone();
+            long.ids.truncate(limit as usize - inputs[1].ids.len());
+            let heterogeneous = vec![inputs[1].clone(), long];
+            let reference: Vec<_> = heterogeneous
+                .iter()
+                .map(|i| embedder.embed(std::slice::from_ref(i)).unwrap().remove(0))
+                .collect();
+            compare(&embedder.embed(&heterogeneous).unwrap(), &reference);
+            full.ids.push(repeated);
+            assert!(embedder.embed(&[full]).is_err());
+            eprintln!(
+                "CPU_EMBED_RESULT {}",
+                serde_json::json!({"model_sha256":SHA,"llama_cpp":LLAMA_CPP_COMMIT,"backend":"cpu","isolation":isolation,"threads":2,"memory_ceiling_bytes":config.memory_bytes,"input_tokens":limit,"sequences":8,"minimum_cosine":minimum,"elapsed_ms":started.elapsed().as_millis(),"product_worker_acceptance":false,"tokenizer_json_parity":false})
+            );
         }
     }
 }

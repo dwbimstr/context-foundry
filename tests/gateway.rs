@@ -40,6 +40,9 @@ const PINNED: &str = "https://api.z.ai/api/coding/paas/v4";
 const WAIT: Duration = Duration::from_secs(20);
 const TURN: &str = "omp-18.6.0-turn.json";
 
+#[path = "gateway/host_task.rs"]
+mod host_task;
+
 // ---------------------------------------------------------------------------
 // Request fixtures and SSE builders
 // ---------------------------------------------------------------------------
