@@ -41,6 +41,7 @@ pub mod gateway;
 pub mod gateway_launch;
 pub mod graph;
 pub mod ingest;
+pub mod knowledge;
 pub mod learning;
 pub mod mcp;
 pub mod memory;

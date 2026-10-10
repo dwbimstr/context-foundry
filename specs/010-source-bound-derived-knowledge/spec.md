@@ -1,9 +1,11 @@
 # 010 — Source-bound derived repository knowledge
 
-Status: Experimental T001 implemented locally, 2026-10-09; T002 remains selected
-work. The owner's large-repository direction supersedes the earlier blanket deferral.
-The import, retrieval and lifecycle use synthetic generator outputs; no generation
-model has been selected or run. 013 remains frozen off.
+Status: Experimental T001 implemented locally; T002 now implements explicit selective
+HTTP generation, completion reuse and area lineage. Continuous MCP scheduling, owned
+local generation workers and real-model acceptance remain selected work. The owner's
+large-repository direction supersedes the earlier blanket deferral.
+The import and generation fixtures use synthetic outputs through real storage, retrieval
+and HTTP/CLI boundaries; no real generation model has been selected or run. 013 remains frozen off.
 
 ## Outcome and ownership
 
@@ -98,8 +100,8 @@ The search schema remains 5. Old binaries refuse schema 8 before reading its typ
   as source, explicit project memory and a selected task view. Records are explicitly
   `kind:derived`; test/dependency citations remain exactly recoverable. This does
   not assert that primary source plus orientation is a complete editing packet.
-  The MCP catalog has no brief tool/flag in this slice; automatic generation and
-  model-derived dense indexing are not implemented.
+  The MCP catalog has no brief tool/flag in this slice; generation follows in T002
+  below. Model-derived dense brief indexing remains unimplemented.
 
 [tests/brief.rs](../../tests/brief.rs) uses the real store, lexical index, packer and
 CLI. Its constructed baseline for `capacity eviction` is empty; the imported brief
@@ -113,7 +115,8 @@ See [validation](../../docs/validation.md) for executed checks and limits.
 
 ### T002 — Generate useful briefs and area knowledge within idle resources
 
-Status: selected, pending implementation. The efficiency amendment places this after
+Status: explicit CLI generation implemented experimentally; continuous shared-owner
+scheduling and real-model acceptance remain open. The efficiency amendment places this after
 changed-work ownership (009 T008) and input/resource identity (009 T009); see the
 [build order](../../docs/context-ecosystem-plan.md#revised-build-order).
 
@@ -159,6 +162,92 @@ Lexical brief discovery is implemented in T001; dense brief vectors are optional
 follow-up within the same representation/identity contract, not a prerequisite for
 useful generation. Generation tokens, embedding tokens and query delivery remain
 separately accounted. The task does not require describing every file on bootstrap.
+
+
+### T002 implementation decisions and boundaries
+
+[knowledge.rs](../../src/knowledge.rs) adds `knowledge prepare --profile FILE` under
+explicit exclusive CLI ownership. A strict profile selects at most 128 source/area
+nodes, a source-path allowlist, a model/deployment digest, instructions and one
+OpenAI-compatible Chat Completions endpoint. Sources are exact byte spans, with the
+first span anchoring each brief in original source. Node order prioritizes ready work;
+a stable topological walk handles at most eight children per node and four area levels.
+No all-file description pass, model download, executable launch or automatic generation
+on indexing/query/startup is added. Schema **10** requires an explicit upgrade.
+
+The first provider is a configured HTTP service through the existing reqwest transport.
+Literal loopback HTTP(S) is allowed; remote HTTPS also requires `allow_remote:true` and
+the explicit source scope. No ambient proxies, redirects, automatic retries or URL
+credentials. An optional named environment variable supplies bearer auth. Requests use
+non-streaming JSON completions, one active client request, a 1–300 second call timeout,
+and the whole-run cooperative deadline/cancel flag. A timeout closes the client request;
+Foundry cannot prove that an external service stopped model computation. No external
+process/device-isolation or weight-attestation guarantee is inferred from HTTP. The
+response must name the configured model, finish with `stop` and contain no tool call;
+the deployment digest is the operator's pin, not an attestation from the server.
+
+Inputs are bounded at 128 KiB of serialized request bytes and 32,768 **o200k request
+admission tokens**, using the existing pinned response tokenizer over the complete JSON
+request. These are explicitly separate from the provider's tokenizer/chat framing.
+Each call requests at most 8,192 completion tokens; per-run call, request-token and
+requested-output-token budgets admit work before sending. The existing 32-span/16-KiB
+claim-text limits apply to accepted outputs, and the HTTP response cap is 256 KiB.
+No implicit source-prefix truncation: an oversized node requires smaller explicit spans.
+Reported provider prompt/completion tokens are counted separately; absent usage stays
+unknown. Reported completion overrun refuses publication. No billing or total host-token
+savings claim follows from local admission counts. Failure details never echo provider
+response text or credentials. Failed providers/invalid outputs persist a 30-second
+backoff; cached/current results remain usable during it.
+
+Generation first checks each selected current brief using source and child metadata,
+without reading/tokenizing unchanged source bodies or contacting a provider. Missing
+inputs bind the workspace, exact source spans and full source hashes, instructions,
+wire request, model/deployment/endpoint identity and full child meaning. Changing call
+budgets or cache size does not re-generate current inputs. Changing model identity,
+source selection, instructions or completion capacity does. Prepared source is untrusted
+data, and model assertions stay derived even when all citation/identifier checks pass.
+
+Area input includes exact manifests/entry points/tests and current child briefs. The
+optional brief `derivation` records the complete transitive child closure (at most 128
+identities, depth at most four), with every transitive source retained in the ordinary
+cited-span/dependency set. Child fingerprints bind both generator inputs and accepted
+prose, excluding timestamps/revisions. This catches different prose after an evicted
+input is regenerated, and different source dependencies even when prose stays identical.
+Admission rechecks the closure and full source identities in the existing brief writer
+transaction. Search/get/context check the closure in their final source snapshot; a
+source or child change makes ancestors ineligible immediately, before regeneration or
+lexical cleanup. Original source remains exactly recoverable at each level.
+
+One new redb `knowledge_cache` table retains completed inputs/outputs and provider usage;
+cache insertion and accepted brief publication commit in **the same transaction**.
+Its cap is configured from 1–128 MiB of serialized cache payload and at most 4,096 rows.
+Key/database/allocator overhead is additional. Accounting updates transactionally;
+deterministic eviction avoids another LRU index. Lowering the cap trims history before
+new work. Current accepted briefs remain reusable after eviction or `knowledge purge-cache`.
+An interrupted call before commit may be billed again; no exactly-once provider guarantee
+is claimed. A committed result survives process death without another generation call.
+Forget removes the selected brief, generated ancestors and their memoized copies in one
+transaction; independent explicit user memory is untouched. Purge-cache removes only
+memoization/backoff, not current briefs; source deletion makes retained outputs stale.
+
+The schema-9 knowledge work lane remains independent of embeddings. One explicit run
+reconciles only the bounded selected plan and acknowledges its captured frontier after
+all selected nodes are current and lexical publication succeeds; edits after its fence
+remain pending. Unselected paths have no generation obligation under that profile.
+A different plan changes the frontier identity. This bounded metadata scan is the chosen
+alternative to a new durable reverse-dependency index; it is not a corpus scan or a claim
+of strictly affected-node-only metadata work. Failed nodes/ancestors preserve successful
+children and pending work. JSON reports distinguish current, cached, generated and
+pending nodes, incomplete publication, observed usage and unknown calls.
+
+The CLI uses the store's existing exclusive-owner rule, so it refuses alongside a live
+MCP owner. It does **not** yet run opportunistically in MCP's shared resource scheduler.
+Continuous knowledge maintenance, foreground/device-headroom hysteresis, an owned isolated
+local generation worker and real-provider task/throughput evidence remain T002 follow-ups.
+Dense brief vectors remain optional. This slice adds no new worker, generic queue,
+dependency framework or model runtime. [tests/knowledge.rs](../../tests/knowledge.rs)
+exercises the real HTTP/CLI/store/retrieval boundaries with a local synthetic server;
+see [validation](../../docs/validation.md#selective-knowledge-generation).
 
 ## Pinned reference and differences
 

@@ -33,6 +33,10 @@ pub const LEARNING_EXECUTION_CODES: [&str; 16] = [
 /// library/OS errors; everything else is a contract code.
 #[derive(Debug)]
 pub enum FoundryError {
+    Knowledge {
+        code: &'static str,
+        message: String,
+    },
     InvalidArgument(String),
     UnsupportedMode(String),
     WrongWorkspace,
@@ -187,6 +191,7 @@ impl FoundryError {
             Self::Scip { code, .. } => code,
             Self::ArtifactUnavailable(_) => "artifact_unavailable",
             Self::Semantic { code, .. } => code,
+            Self::Knowledge { code, .. } => code,
             Self::Learning { code, .. } => code,
             Self::Internal(_) => "internal",
         }
@@ -273,6 +278,9 @@ impl FoundryError {
             Self::Scip { message, .. } => message.clone(),
             Self::ArtifactUnavailable(m) => format!("import file is unavailable: {m}"),
             Self::Semantic { code, message } => format!("semantic retrieval ({code}): {message}"),
+            Self::Knowledge { code, message } => {
+                format!("knowledge generation ({code}): {message}")
+            }
             Self::Learning { code, message } => format!("learning ({code}): {message}"),
             Self::Internal(e) => format!("{e:#}"),
         }

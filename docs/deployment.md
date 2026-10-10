@@ -632,14 +632,15 @@ VM compatibility and the library choices remain unexecuted proof obligations. Ex
 publication authorization and destination are still required to upload any artifact.
 
 
-## Experimental schema 9
+## Experimental schema 10
 
-The experimental context branch uses schema 9 for independent durable semantic and
-generated-knowledge obligations, preserving schema 8 briefs and schema 7 task state.
-Existing schemas 1–8 require explicit
-`foundry --store STORE upgrade-store --to 9`; initialization and ordinary open do not
+The experimental context branch uses schema 10 for a bounded generated-knowledge
+completion cache and optional source/area lineage. It preserves schema 9 independent
+semantic/knowledge obligations, schema 8 briefs and schema 7 task state.
+Existing schemas 1–9 require explicit
+`foundry --store STORE upgrade-store --to 10`; initialization and ordinary open do not
 upgrade. Preserve a closed-store backup before upgrading an existing store. Older
-binaries refuse schema 9; rollback requires the backup or a compatible binary.
+binaries refuse schema 10; rollback requires the backup or a compatible binary.
 Upgrade preserves source, graph, memory, task, semantic and learning tables. No
 source scanning, provider call or automatic generation is part of the upgrade.
 See the [experimental workflow](experimental-context.md#source-bound-derived-briefs)
@@ -655,7 +656,7 @@ from prior state on restart; watching alone loads no model. Pause through
 require explicit resume. Ordinary status reads a publication observation; use
 `semantic status --audit` or MCP `status {"semantic_audit":true}` for integrity/census.
 
-Semantic generation format v5 is derived data under schema 9: existing vector-cache
+Semantic generation format v5 remains derived data under schema 10: existing vector-cache
 rows and partitions remain reusable. Older generation formats are refused by name;
 explicit preparation or `repair-index` republishes them from cache. Small edits publish
 one bounded ANN delta and a separate bounded location overlay. Location compaction
@@ -674,5 +675,14 @@ publication coverage without a mapping scan. Changed-input restart, overflow, id
 changes and explicit repair rebuild the mapping view; receipts never survive restart.
 Warm queries check owner/profile/manifest identity; refresh rechecks file versions.
 Explicit audits always validate independently. Cold verification and compaction remain
-corpus-sized. Generation v5 is replaceable derived data; no store upgrade is required
-for this continuation on schema 9.
+corpus-sized. Generation v5 remains unchanged by the knowledge feature; the latter
+requires the explicit schema-10 upgrade.
+
+Selective knowledge preparation uses an explicitly configured HTTP provider and source
+scope under exclusive CLI ownership. Current inputs skip body reads and provider calls;
+exact historical completions can be reused after a revert. Its bounded transactional
+cache is separate from the embedding cache and explicit project memory. See
+[configuration, accounting and limits](experimental-context.md#selective-knowledge-generation).
+No model is downloaded or started. The external service owns its own runtime resources;
+continuous MCP knowledge scheduling, shared resource admission and an owned isolated
+local generator remain future work.

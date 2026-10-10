@@ -1932,3 +1932,59 @@ real-model single/batched numerical parity for new geometries remains unexecuted
 existing ignored real-worker parity fixture now reads the selected descriptor's input
 limit. Parent/header text is a bounded child prefix; independent parent/file/area vectors,
 contextual token-state late chunking and 010 T002 generated knowledge remain future work.
+
+
+## Selective knowledge generation
+
+Experimental 010 T002 now has explicit `knowledge prepare`, `status` and `purge-cache`
+CLI operations with a strict configured HTTP provider/source scope. Schema 10 adds a
+bounded completion cache and optional transitive area lineage to the existing brief
+owner. Current inputs bypass body reconstruction, tokenization and provider calls;
+selected source/area results remain derived, with exact original evidence recoverable.
+
+`tests/knowledge.rs` uses a real local TCP/HTTP fixture and the actual CLI, tokenizer,
+redb transactions, lexical index and context packer. All completions and reported
+provider usage in these tests are **synthetic**. The executed boundaries cover:
+
+- Partial two-call preparation followed by restart generates only the two missing
+  ancestors. A complete unchanged replay sends zero requests, including when a fault
+  would refuse source-body preparation. Independent embedding obligations stay pending.
+- A source edit regenerates the changed child and two ancestors, reusing the other
+  child. An immediate stale read excludes affected ancestors. Reverting source inputs
+  reuses three cached results without a call, even when child prose remained identical
+  across the source edit. Unselected source changes require no generation.
+- Model/deployment changes rekey inputs; return to the prior configuration reuses cached
+  completions. Recipe changes and primary-source reassignment cannot reuse the wrong
+  node/area identity. If an evicted child input is regenerated with different prose,
+  parents regenerate even after its original source input identity returns.
+- Exact final source bytes accompany derived orientation. Oversized source/request
+  inputs and run budgets refuse before a provider call; smaller explicit spans fit.
+  Strict claim/citation/identifier checks refuse invalid model output before publication.
+- Malformed replies, a wrong response model, incomplete/oversized output, HTTP 429 and
+  redirects refuse without leaking response text. Persistent backoff suppresses retries
+  after restart. Deadline cancellation closes the client request; absent usage stays
+  unknown. Observed prompt/completion totals remain separate from o200k admission counts.
+- Seventy-two retained outputs exercise bounded cache storage and transactional counts.
+  Lowering the cap from 2 MiB to 1 MiB evicts history while all current briefs still replay
+  with zero calls. Cache purge preserves current briefs. Forget removes a selected child,
+  generated ancestors and cached copies in the same transaction, preserving user memory.
+- A source edit during generation refuses the stale result. Faults and actual child-process
+  aborts immediately before/after brief commit prove the cache and live brief publish
+  atomically; restart performs four or three calls respectively. Schema-9 upgrade is
+  explicit, preserves sources and remains wholly old after a pre-commit failure.
+
+The full regression run plus the final affected-suite rerun passed **957 regular tests**
+(two intentional measurement ignores) and **all 20 existing child-process recovery cases**.
+The first full run found one old schema-9 upgrade target assertion; after updating it,
+all 189 library tests, 18 brief tests and 14 knowledge tests passed. Other successful
+regression suites were retained. The 6,000-file watcher suite passed in 84.37 seconds.
+The new knowledge suite additionally runs two real process-abort boundaries internally.
+Final all-target Clippy with warnings denied, formatting, the build without default
+features and Markdown link checks passed (47 files, 719 links, 165 heading anchors).
+
+No actual generation model was selected or called, and no task-quality, billing or
+throughput improvement is inferred. HTTP cannot attest deployed weights or stop external
+computation after cancellation. This CLI requires exclusive store ownership; continuous
+MCP knowledge scheduling, shared foreground/device admission and an owned isolated local
+generator remain open. Preparation scans a bounded selected plan, not a corpus-wide
+reverse-dependency index. Knowledge acknowledgments describe that selected profile only.

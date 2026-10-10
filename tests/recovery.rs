@@ -638,7 +638,7 @@ fn exit_during_upgrade_transaction_leaves_wholly_v1() {
         &Control::unbounded(),
     )
     .unwrap();
-    assert_eq!(schema_marker(&store), "9");
+    assert_eq!(schema_marker(&store), "10");
     let engine = Engine::open_existing(&store).unwrap();
     assert_eq!(engine.status().unwrap().source_count, 1);
     assert_eq!(
@@ -656,7 +656,7 @@ fn exit_during_upgrade_transaction_leaves_wholly_v1() {
 fn exit_after_upgrade_commit_is_wholly_v2() {
     let work = crash_at("upgrade_after_commit");
     let store = work.path().join("store");
-    assert_eq!(schema_marker(&store), "9");
+    assert_eq!(schema_marker(&store), "10");
     let engine = Engine::open_existing(&store).unwrap();
     let status = engine.status().unwrap();
     assert_eq!(

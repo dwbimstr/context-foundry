@@ -521,7 +521,7 @@ mod tests {
             Engine::open_existing(&store),
             Err(FoundryError::UpgradeRequired { .. })
         ));
-        Engine::upgrade_store(&store, 9, &Control::unbounded()).unwrap();
+        Engine::upgrade_store(&store, crate::store::SCHEMA_VERSION, &Control::unbounded()).unwrap();
         let engine = Engine::open_existing(&store).unwrap();
         assert_eq!(engine.source_revision().unwrap(), revision);
         assert_eq!(engine.semantic_cache_totals().unwrap(), cache_totals);

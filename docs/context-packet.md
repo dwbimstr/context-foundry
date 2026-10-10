@@ -40,8 +40,13 @@ restart/overflow/repair still reconcile; cold verification and compaction remain
 adds opt-in body windows with bounded parent/header context, exact child citations,
 versioned model geometry and actual-token batching in both preparation paths. Address
 profiles and old cache rows remain usable; real-device long-context parity/quality and
-independent parent/file/area vectors remain open. Automatic generation (010 T002),
-boundary joins and task-evidence composition remain pending.
+independent parent/file/area vectors remain open. Schema 10 now adds explicit selective
+HTTP generation (010 T002), atomic completion reuse, source-bound area summaries and
+transitive child/source freshness. Unchanged runs avoid body reads and provider calls;
+partial runs resume completed nodes. The CLI requires exclusive ownership and a configured
+provider/scope. Continuous MCP knowledge scheduling, shared resource admission, owned local
+generation and real-model acceptance remain next; boundary joins and task-evidence
+composition also remain pending. See [configuration](experimental-context.md#selective-knowledge-generation).
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
 [validation](validation.md). 013 remains frozen. No release or quality gain is claimed.
 

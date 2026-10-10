@@ -364,7 +364,12 @@ briefs and area summaries. T001 now implements explicit structured-brief import,
 source-hash invalidation and anchorless lexical discovery in schema 8. One
 `source_briefs` table shares the existing source authority and derived search index;
 context delivers original source before optional labeled derived orientation under
-one budget. Automatic generation and area summaries remain T002 work.
+one budget. T002 now adds explicit HTTP/CLI generation over at most 128 selected nodes
+and four area levels. Schema 10 adds bounded atomic completion reuse and optional
+transitive child lineage to the same source/brief owner. Source hashes and accepted
+child-text identities govern area freshness; no corpus scan or new dependency database
+is required for preparation. Continuous MCP knowledge scheduling and shared foreground/
+resource admission remain open. See [usage](experimental-context.md#selective-knowledge-generation).
 Exact source/graph evidence, derived repository knowledge and explicit task memory
 have distinct provenance and invalidation rules. The
 [revised ecosystem design](context-ecosystem-plan.md#architecture-correction-useful-context-across-6000080000-files)
@@ -703,4 +708,5 @@ reads only new artifacts, with full independent validation on audit. Warm reques
 owner, profile and manifest version. A transactional mapping revision lets an unchanged
 restart reuse its verified publication without a database mapping scan. Changed-input
 restart, overflow, identity change and repair reconcile; cold reads and compaction remain
-corpus-sized. Automatic LLM generation remains 010 T002.
+corpus-sized. Selective LLM generation now uses the explicit 010 T002 CLI described
+above; continuous knowledge maintenance remains open.

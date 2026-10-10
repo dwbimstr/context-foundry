@@ -21,7 +21,8 @@ exclude parser, index, thread-stack and allocator overhead. Explicit MCP indexin
 still occupies its engine slot; this change adds early durable publication, while
 foreground admission continues to follow the existing watcher/owner rules. Source
 transactions remain individual. Continuous embedding is separately enabled below;
-brief regeneration remains pending. Sandbox tests do not establish 80,000-file throughput.
+continuous brief regeneration remains pending. Explicit knowledge preparation is
+described below. Sandbox tests do not establish 80,000-file throughput.
 
 ## Continuous semantic maintenance
 
@@ -252,9 +253,9 @@ macOS and network-filesystem event behavior remain unverified.
 ## Recoverable task context
 
 This branch adds recoverable task state beside retrieval. Start with a disposable
-store. New stores use schema 9; an existing store needs an explicit
-`foundry --store STORE upgrade-store --to 9`. Take a closed-store backup first if
-using an existing store: schema 8 and earlier binaries cannot open schema 9, and rollback means
+store. New stores use schema 10; an existing store needs an explicit
+`foundry --store STORE upgrade-store --to 10`. Take a closed-store backup first if
+using an existing store: schema 9 and earlier binaries cannot open schema 10, and rollback means
 restoring that backup. This work does not upgrade stores automatically.
 
 The core works through `foundry --store STORE task-context`, which accepts one JSON
@@ -473,11 +474,113 @@ This augments anchorless queries, delivers the cited primary source, and include
 fit the same budget. Test/dependency handles can be recovered with `retrieve`.
 Exact-name context keeps its original path. A matching summary is not proof that an
 answer is true or that the evidence is complete. A selected `--task` and
-`--include-memory` may share this same allowance. MCP brief import/discovery flags,
-automatic generation and area rollups remain future work.
+`--include-memory` may share this same allowance. Explicit generation and area rollups
+are described below; MCP brief delivery and continuous generation remain future work.
 
 Requests are capped at 256 KiB, claims/identifiers/unknowns at 16 KiB of text, and
 citations at 32 spans. Stored records are capped at 512 KiB including full dependency
 paths. Search refuses when its first matching record cannot fit the requested byte
 allowance; `get`/`export` by ID can recover a larger bounded record. No output is
 silently cut inside a claim.
+
+
+## Selective knowledge generation
+
+`knowledge prepare` generates only an explicitly selected set of source briefs and
+area summaries through a configured OpenAI-compatible Chat Completions endpoint.
+Source indexing alone never launches generation. This experimental CLI owns the store
+exclusively: stop the MCP owner before preparing, then restart it afterward. Schema 10
+is required; upgrade an existing store explicitly as described above.
+
+Create a profile with the actual workspace ID from `status`, the provider's exact
+response model name, and a lowercase 64-hex deployment/artifact digest. The digest is
+your deployment pin; the HTTP response cannot attest which weights the server ran.
+This illustrative profile requires replacing its placeholders and selecting paths
+present in your indexed repository:
+
+```json
+{
+  "v": 1,
+  "workspace_id": "<workspace-sha256>",
+  "recipe": "behavior-v1",
+  "model": "<configured-response-model>",
+  "artifact_sha256": "<deployment-sha256>",
+  "endpoint": "http://127.0.0.1:8000/v1/chat/completions",
+  "allow_remote": false,
+  "source_scope": ["src/queue.rs", "tests/queue.rs", "Cargo.toml"],
+  "instructions": "Describe capacity handling and its tests; preserve uncertainty.",
+  "max_request_tokens": 8192,
+  "max_request_bytes": 131072,
+  "output_tokens": 1024,
+  "call_seconds": 60,
+  "cache_bytes": 16777216,
+  "nodes": [
+    {
+      "id": "queue",
+      "sources": [{"path": "src/queue.rs"}, {"path": "tests/queue.rs"}]
+    },
+    {
+      "id": "queue-area",
+      "sources": [{"path": "Cargo.toml"}],
+      "children": ["queue"]
+    }
+  ]
+}
+```
+
+```sh
+foundry --store STORE knowledge prepare --profile knowledge.json --budget-seconds 300 --max-calls 8 --request-tokens 32768 --output-tokens 8192
+foundry --store STORE knowledge status
+foundry --store STORE context 'capacity eviction' --include-briefs --tokens 4096
+```
+
+Paths are relative to the admitted workspace and must match the explicit scope, as an
+exact path or directory prefix. Each source may include `start` and `end` byte offsets;
+otherwise the complete indexed body is selected. Endpoints must end in `/chat/completions`.
+Literal loopback HTTP(S) is permitted. Remote HTTPS additionally requires
+`allow_remote:true`; an optional `token_env` names an environment variable containing
+bearer auth. No redirects, ambient proxies, automatic retries, model download or model
+process launch are performed. No actual provider is configured by this example.
+
+A plan has at most 128 nodes, eight direct children per node and four area levels.
+The first span anchors the result; parent inputs include child briefs and their original
+source spans. All transitive evidence must fit 32 cited spans and 128 KiB of serialized
+request bytes. Oversized source requires explicit smaller spans; no source text is
+silently truncated. Accepted claims retain exact citations, full source hashes and
+model/recipe identity, and remain labeled derived rather than verified source facts.
+
+Request admission uses **o200k tokens over the serialized JSON request**, separately
+from the provider's tokenizer and chat framing. `--request-tokens` caps that per-run
+sum; `--output-tokens` caps the sum of requested completion ceilings. Reports separately
+show observed provider prompt/completion usage and calls with unknown usage. An absent
+usage report never becomes zero-cost evidence. These counters do not establish billing,
+full-task savings or output quality. A timeout closes the client request; an external
+service may continue computing. Shared device/CPU admission and an owned isolated local
+generator are not implemented in this CLI slice.
+
+Unchanged current nodes reuse source/child metadata without reading or tokenizing their
+bodies. Changed inputs regenerate only missing results in the selected plan and affected
+ancestors; reverting inputs can reuse exact completed results from the persistent cache.
+Parent freshness binds every transitive source hash and each child's accepted text, even
+when source changes leave the child's prose unchanged. Selection scans at most 128 nodes,
+not the full repository; no persistent reverse-dependency index is added.
+
+The bounded cache retains completed outputs atomically with accepted briefs. Its cap is
+1–128 MiB of serialized values, with at most 4,096 entries (database/key overhead is extra).
+Lowering the cap evicts cached values even on an otherwise unchanged run; current briefs
+remain reusable after eviction. Interrupted or budget-limited preparation prints a
+partial report and exits with `knowledge_incomplete`. Re-run the same command to resume;
+completed current/cached nodes consume no provider-call budget. Provider/invalid-output
+failures persist a 30-second backoff, while current and cached results remain available.
+The independent knowledge-work obligation is acknowledged only after all selected nodes
+are current and lexical publication succeeds. It is not corpus-wide generation coverage.
+
+`knowledge purge-cache` removes historical completions and backoff, preserving current
+briefs. `brief` forget also removes cached copies and generated ancestors that depend on
+the forgotten brief, in one transaction; explicit project memory is unaffected. Exports,
+backups and previously delivered text remain outside live-store deletion guarantees.
+
+The local HTTP fixture verifies transport, provenance, reuse and recovery, using synthetic
+responses. Real-model quality, long-repository throughput, continuous MCP scheduling and
+shared foreground/resource admission remain 010 T002 work. See
+[the implemented contract](../specs/010-source-bound-derived-knowledge/spec.md#t002-implementation-decisions-and-boundaries).

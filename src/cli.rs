@@ -180,8 +180,7 @@ enum Command {
         #[arg(long = "policy-config", value_name = "FILE")]
         policy_config: Option<PathBuf>,
     },
-    /// Explicit v1..v7 -> v8 schema upgrade under exclusive ownership; `--to`
-    /// must be 8, the only supported target.
+    /// Explicit schema upgrade under exclusive ownership; target is schema 10.
     UpgradeStore {
         #[arg(long)]
         to: u32,
@@ -192,6 +191,11 @@ enum Command {
     Semantic {
         #[command(subcommand)]
         action: SemanticAction,
+    },
+    /// Selectively generate source briefs and area knowledge under an explicit profile.
+    Knowledge {
+        #[command(subcommand)]
+        action: KnowledgeAction,
     },
     /// Experimental task state: one scoped JSON request on stdin.
     TaskContext,
@@ -204,6 +208,26 @@ enum Command {
     },
     #[command(flatten)]
     Adapter(crate::adapter_cli::AdapterCommand),
+}
+
+#[derive(Subcommand)]
+enum KnowledgeAction {
+    Prepare {
+        #[arg(long)]
+        profile: PathBuf,
+        #[arg(long, default_value_t = 300)]
+        budget_seconds: u64,
+        #[arg(long, default_value_t = 8)]
+        max_calls: u32,
+        /// o200k tokens of serialized requests, distinct from provider usage.
+        #[arg(long, default_value_t = 32768)]
+        request_tokens: u64,
+        /// Sum of requested provider completion ceilings.
+        #[arg(long, default_value_t = 16384)]
+        output_tokens: u64,
+    },
+    Status,
+    PurgeCache,
 }
 
 #[derive(Subcommand)]
@@ -671,6 +695,56 @@ fn run() -> AResult<()> {
         Command::Semantic { action } => semantic_run(&cli.store, action, semantic_started)?,
         Command::Adapter(command) => crate::adapter_cli::run(command, cli.store, store_explicit)?,
         Command::Memory { action } => memory_run(&cli.store, action)?,
+        Command::Knowledge { action } => match action {
+            KnowledgeAction::Prepare {
+                profile,
+                budget_seconds,
+                max_calls,
+                request_tokens,
+                output_tokens,
+            } => {
+                if !(1..=3600).contains(&budget_seconds) {
+                    return Err(crate::knowledge::fail(
+                        "knowledge_budget_invalid",
+                        "budget-seconds must be 1..3600",
+                    )
+                    .into());
+                }
+                let control = live_control()
+                    .bounded_by(semantic_started + std::time::Duration::from_secs(budget_seconds));
+                let profile = crate::knowledge::Profile::load(&profile)?;
+                let mut engine = Engine::open_existing(&cli.store)?;
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                let report = runtime.block_on(crate::knowledge::prepare(
+                    &mut engine,
+                    &profile,
+                    crate::knowledge::RunLimits {
+                        calls: max_calls,
+                        request_tokens,
+                        output_tokens,
+                    },
+                    &control,
+                ))?;
+                println!("{}", serde_json::to_string(&report)?);
+                if !report.complete {
+                    return Err(crate::knowledge::fail(
+                        "knowledge_incomplete",
+                        "generation is incomplete; see the report; committed results are retained",
+                    )
+                    .into());
+                }
+            }
+            KnowledgeAction::Status => println!(
+                "{}",
+                Engine::open_authoritative(&cli.store)?.knowledge_status()?
+            ),
+            KnowledgeAction::PurgeCache => println!(
+                "{}",
+                Engine::open_authoritative(&cli.store)?.knowledge_purge_cache()?
+            ),
+        },
         Command::Brief => {
             let mut bytes = Vec::new();
             io::stdin()

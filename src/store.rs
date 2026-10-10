@@ -33,7 +33,7 @@ pub(crate) const META: TableDefinition<&str, &str> = TableDefinition::new("meta"
 pub(crate) const SEEN: TableDefinition<&str, &str> = TableDefinition::new("scan_seen");
 pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("feedback");
 
-pub const SCHEMA_VERSION: u32 = 9;
+pub const SCHEMA_VERSION: u32 = 10;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
 /// Refresh builds a page's search documents on at most this many threads,
@@ -3260,6 +3260,7 @@ fn initialize_tables(tx: &WriteTransaction) -> FResult<()> {
     crate::graph::init_compiler(tx)?;
     crate::neural::cache::init_tables(tx)?;
     crate::neural::work::init(tx)?;
+    crate::knowledge::cache::init(tx)?;
     crate::learning::init_tables(tx)?;
     Ok(())
 }
@@ -3399,12 +3400,12 @@ impl Engine {
                 ));
             };
             match version.value() {
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" => {
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
                     return Err(FoundryError::UpgradeRequired {
                         found: version.value().to_owned(),
                     });
                 }
-                "9" => 9u32,
+                "10" => 10u32,
                 other => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: other.to_owned(),
@@ -3412,8 +3413,8 @@ impl Engine {
                 }
             }
         };
-        // Confirm the schema-9 tables exist; missing authoritative tables in
-        // a schema-9 store are corruption, not something an open recreates.
+        // Confirm the schema-10 tables exist; missing authoritative tables in
+        // a schema-10 store are corruption, not something an open recreates.
         {
             let tx = db.begin_read()?;
             tx.open_table(SEEN).map_err(|e| {
@@ -3436,6 +3437,7 @@ impl Engine {
             crate::graph::check_compiler_tables(&tx)?;
             crate::neural::cache::check_tables(&db)?;
             crate::neural::work::check(&db)?;
+            crate::knowledge::cache::check(&db)?;
             crate::learning::check_tables(&db)?;
         }
         let (workspace, workspace_id) = Self::read_binding(&db)?;
@@ -3500,9 +3502,10 @@ impl Engine {
         }
     }
 
-    /// Explicit v1..=v7 -> v8 transaction under exclusive ownership. The
+    /// Explicit v1..=v9 -> v10 transaction under exclusive ownership. The
     /// cumulative steps preserve source, memory, graph, semantic and learning
     /// data. Version 8 adds source_briefs and its never-reset brief_revision.
+    /// Version 10 adds atomic knowledge completion caching and brief lineage.
     /// Publish the schema last; interrupted upgrades remain wholly old or new.
     /// Only the current version is a target. Older readers must refuse it.
     pub fn upgrade_store(store_dir: &Path, to: u32, control: &crate::Control) -> FResult<()> {
@@ -3526,7 +3529,7 @@ impl Engine {
                         "store has no schema marker".into(),
                     ));
                 }
-                Some(v) if v.value() == "9" => return Ok(()), // already upgraded
+                Some(v) if v.value() == "10" => return Ok(()), // already upgraded
                 Some(v) if v.value() == "1" => 1u32,
                 Some(v) if v.value() == "2" => 2u32,
                 Some(v) if v.value() == "3" => 3u32,
@@ -3535,6 +3538,7 @@ impl Engine {
                 Some(v) if v.value() == "6" => 6u32,
                 Some(v) if v.value() == "7" => 7u32,
                 Some(v) if v.value() == "8" => 8u32,
+                Some(v) if v.value() == "9" => 9u32,
                 Some(v) => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: v.value().to_owned(),
@@ -3614,6 +3618,7 @@ impl Engine {
                 meta.insert("brief_revision", "0")?;
             }
             crate::neural::work::init(&tx)?;
+            crate::knowledge::cache::init(&tx)?;
             // Publish the schema last inside the same transaction.
             meta.insert("schema", SCHEMA_VERSION.to_string().as_str())?;
         }

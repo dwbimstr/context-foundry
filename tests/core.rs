@@ -490,7 +490,7 @@ fn upgrade_preserves_records_and_is_atomic() {
     let err = Engine::upgrade_store(&v1, 3, &Control::unbounded()).unwrap_err();
     assert_eq!(code(&err), "unsupported_mode");
     Engine::upgrade_store(&v1, context_foundry::SCHEMA_VERSION, &Control::unbounded()).unwrap();
-    assert_eq!(schema_marker(&v1), "9");
+    assert_eq!(schema_marker(&v1), "10");
     let engine = Engine::open_existing(&v1).unwrap();
     let status = engine.status().unwrap();
     assert_eq!(status.schema, context_foundry::SCHEMA_VERSION);

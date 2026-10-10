@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const BRIEFS: TableDefinition<&str, &str> = TableDefinition::new("source_briefs");
 pub const MAX_REQUEST_BYTES: usize = 256 * 1024;
-const MAX_RECORD_BYTES: usize = 2 * MAX_REQUEST_BYTES;
+pub(crate) const MAX_RECORD_BYTES: usize = 2 * MAX_REQUEST_BYTES;
 const MAX_TEXT: usize = 16 * 1024;
 const MAX_SPANS: usize = 32;
 pub(crate) const CONTEXT_HITS: usize = 8;
@@ -61,6 +61,8 @@ pub struct Record {
     /// Full authoritative digests, one per unique cited path.
     pub dependencies: BTreeMap<String, String>,
     pub brief: Input,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derivation: Option<crate::knowledge::Derivation>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -185,7 +187,7 @@ impl Input {
             .join("\n")
     }
 }
-fn identity(workspace: &str, path: &str, recipe: &str) -> FResult<String> {
+pub(crate) fn identity(workspace: &str, path: &str, recipe: &str) -> FResult<String> {
     Ok(crate::digest(&serde_json::to_vec(&(
         workspace, path, recipe,
     ))?))
@@ -194,8 +196,9 @@ fn input_identity(
     workspace: &str,
     brief: &Input,
     dependencies: &BTreeMap<String, String>,
+    derivation: Option<&crate::knowledge::Derivation>,
 ) -> FResult<String> {
-    Ok(crate::digest(&serde_json::to_vec(&(
+    let base = crate::digest(&serde_json::to_vec(&(
         workspace,
         &brief.cited_spans,
         &brief.recipe_sha256,
@@ -203,7 +206,11 @@ fn input_identity(
         &brief.artifact_sha256,
         &brief.prompt_sha256,
         dependencies,
-    ))?))
+    ))?);
+    match derivation {
+        None => Ok(base),
+        Some(derivation) => Ok(crate::digest(&serde_json::to_vec(&(base, derivation))?)),
+    }
 }
 pub(crate) fn pending_key(id: &str) -> String {
     format!("brief:{id}")
@@ -216,6 +223,12 @@ pub(crate) fn decode_row(id: &str, raw: &str) -> FResult<Record> {
         }
         let record: Record = serde_json::from_str(raw)?;
         let spans = record.brief.validate()?;
+        if let Some(derivation) = &record.derivation {
+            derivation.validate()?;
+            if derivation.children.contains_key(id) {
+                return Err(invalid("cyclic lineage"));
+            }
+        }
         if !is_digest(id)
             || !is_digest(&record.workspace_id)
             || record.revision == 0
@@ -225,8 +238,12 @@ pub(crate) fn decode_row(id: &str, raw: &str) -> FResult<Record> {
                 &spans[0].path,
                 &record.brief.recipe_sha256,
             )? != id
-            || input_identity(&record.workspace_id, &record.brief, &record.dependencies)?
-                != record.input_sha256
+            || input_identity(
+                &record.workspace_id,
+                &record.brief,
+                &record.dependencies,
+                record.derivation.as_ref(),
+            )? != record.input_sha256
             || record.dependencies.len()
                 != spans.iter().map(|h| &h.path).collect::<BTreeSet<_>>().len()
             || spans.iter().any(|h| {
@@ -243,9 +260,10 @@ pub(crate) fn decode_row(id: &str, raw: &str) -> FResult<Record> {
     };
     checked().map_err(|_| FoundryError::CorruptStore(format!("invalid source brief {id:?}")))
 }
-fn eligible(
+pub(crate) fn eligible(
     record: &Record,
     sources: &impl ReadableTable<&'static str, &'static str>,
+    briefs: &impl ReadableTable<&'static str, &'static str>,
 ) -> FResult<bool> {
     for (path, digest) in &record.dependencies {
         let Some(raw) = sources.get(path.as_str())? else {
@@ -255,7 +273,35 @@ fn eligible(
             return Ok(false);
         }
     }
+    if let Some(lineage) = &record.derivation {
+        for (id, expected) in &lineage.children {
+            let Some(raw) = briefs.get(id.as_str())? else {
+                return Ok(false);
+            };
+            let child = decode_row(id, raw.value())?;
+            if crate::knowledge::fingerprint(&child)? != *expected
+                || child
+                    .dependencies
+                    .iter()
+                    .any(|(path, hash)| record.dependencies.get(path) != Some(hash))
+                || !child.derivation.as_ref().is_some_and(|d| {
+                    d.depth < lineage.depth
+                        && d.children
+                            .iter()
+                            .all(|(id, hash)| lineage.children.get(id) == Some(hash))
+                })
+            {
+                return Ok(false);
+            }
+        }
+    }
     Ok(true)
+}
+
+pub(crate) struct Generation<'a> {
+    pub derivation: &'a crate::knowledge::Derivation,
+    pub usage: &'a crate::knowledge::Usage,
+    pub cache_bytes: u64,
 }
 
 impl Engine {
@@ -274,7 +320,7 @@ impl Engine {
             Command::Put {
                 brief,
                 expected_revision,
-            } => self.put_brief(workspace, brief, *expected_revision, control),
+            } => self.put_brief(workspace, brief, *expected_revision, None, control),
             Command::Get { id } | Command::Export { id } => {
                 if !is_digest(id) {
                     return Err(invalid("brief id must be a SHA-256 digest"));
@@ -288,7 +334,7 @@ impl Engine {
                         "brief workspace mismatch".into(),
                     ));
                 }
-                let current = eligible(&record, &tx.open_table(SOURCES)?)?;
+                let current = eligible(&record, &tx.open_table(SOURCES)?, &table)?;
                 if !current && matches!(request.command, Command::Get { .. }) {
                     return Ok(
                         json!({"id":id,"revision":record.revision,"eligible":false,"status":"stale"}),
@@ -320,10 +366,26 @@ impl Engine {
                     let next = store::read_counter(&meta, "brief_revision")?
                         .checked_add(1)
                         .ok_or(FoundryError::RevisionExhausted)?;
-                    table.remove(id.as_str())?;
+                    let mut forgotten = BTreeSet::from([id.clone()]);
+                    for row in table.iter()? {
+                        let (key, raw) = row?;
+                        let ancestor = decode_row(key.value(), raw.value())?;
+                        if ancestor
+                            .derivation
+                            .as_ref()
+                            .is_some_and(|d| d.children.contains_key(id))
+                        {
+                            forgotten.insert(key.value().to_owned());
+                        }
+                    }
+                    for removed in &forgotten {
+                        table.remove(removed.as_str())?;
+                        tx.open_table(PENDING)?
+                            .insert(pending_key(removed).as_str(), next.to_string().as_str())?;
+                    }
+                    crate::knowledge::cache::forget(&tx, &forgotten)?;
+                    crate::neural::work::invalidate(&tx, crate::neural::work::Lane::Knowledge)?;
                     meta.insert("brief_revision", next.to_string().as_str())?;
-                    tx.open_table(PENDING)?
-                        .insert(pending_key(id).as_str(), next.to_string().as_str())?;
                     json!({"id":id,"revision":next,"outcome":"deleted"})
                 };
                 fault!(BRIEF_BEFORE_COMMIT, Some(self), Some(control), "")?;
@@ -368,11 +430,12 @@ impl Engine {
             }
         }
     }
-    fn put_brief(
+    pub(crate) fn put_brief(
         &self,
         workspace: &str,
         brief: &Input,
         expected: Option<u64>,
+        generation: Option<Generation<'_>>,
         control: &Control,
     ) -> FResult<Value> {
         let spans = brief.validate()?;
@@ -423,7 +486,40 @@ impl Engine {
                 }
             }
         }
-        let input_sha256 = input_identity(workspace, brief, &dependencies)?;
+        let derivation = generation.as_ref().map(|g| g.derivation.clone());
+        if let Some(lineage) = &derivation {
+            lineage.validate()?;
+            let table = tx.open_table(BRIEFS)?;
+            let mut depth = 0;
+            for (child_id, expected) in &lineage.children {
+                if child_id == &id {
+                    return Err(invalid("cyclic area lineage"));
+                }
+                let raw = table
+                    .get(child_id.as_str())?
+                    .ok_or(FoundryError::StaleHandle)?;
+                let child = decode_row(child_id, raw.value())?;
+                let child_lineage = child.derivation.as_ref().ok_or(FoundryError::StaleHandle)?;
+                if crate::knowledge::fingerprint(&child)? != *expected
+                    || child
+                        .dependencies
+                        .iter()
+                        .any(|(path, sha)| dependencies.get(path) != Some(sha))
+                    || child_lineage
+                        .children
+                        .iter()
+                        .any(|(id, sha)| lineage.children.get(id) != Some(sha))
+                    || !eligible(&child, &tx.open_table(SOURCES)?, &table)?
+                {
+                    return Err(FoundryError::StaleHandle);
+                }
+                depth = depth.max(child_lineage.depth + 1);
+            }
+            if lineage.depth != depth {
+                return Err(invalid("area depth does not match its children"));
+            }
+        }
+        let input_sha256 = input_identity(workspace, brief, &dependencies, derivation.as_ref())?;
         let result = {
             let mut table = tx.open_table(BRIEFS)?;
             let previous = table
@@ -461,10 +557,19 @@ impl Engine {
                 input_sha256,
                 dependencies,
                 brief: brief.clone(),
+                derivation,
             };
             let encoded = serde_json::to_string(&record)?;
             if encoded.len() > MAX_RECORD_BYTES {
                 return Err(invalid("brief record exceeds 512 KiB"));
+            }
+            if let Some(generation) = &generation {
+                crate::knowledge::cache::put(
+                    &tx,
+                    &record,
+                    generation.usage,
+                    generation.cache_bytes,
+                )?;
             }
             table.insert(id.as_str(), encoded.as_str())?;
             meta.insert("brief_revision", next.to_string().as_str())?;
@@ -503,7 +608,7 @@ impl Engine {
                     "brief workspace mismatch".into(),
                 ));
             }
-            if candidate.revision != record.revision || !eligible(&record, &sources)? {
+            if candidate.revision != record.revision || !eligible(&record, &sources, &table)? {
                 stale += 1;
                 continue;
             }
