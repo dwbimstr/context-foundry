@@ -127,7 +127,7 @@ libc = "0.2"
 tempfile = "3"
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream"] }
 # Parses the printed Codex configuration for real.
-toml = "0.8"
+toml = "1.1"
 # Raw emitted-bytes capture for exact-accounting tests.
 serde_json = { version = "1", features = ["raw_value"] }
 # Real SDK client + child-process transport are test-only: production code
