@@ -231,6 +231,14 @@ the development profile, which works as follows:
   frameworks and runs no Python. It verifies the artifact inventory and adapter claims
   before loading the GGUF, then embeds each call's cards (or one query) as sequences
   of one llama.cpp evaluation, cut to the descriptor's dimension and renormalized.
+- **Explicit geometry (experimental T009).** Descriptor v2 optionally carries
+  `geometry: {v:1,input_tokens,batch_tokens,sequences}` with adapter revision 2.
+  Omission preserves adapter revision 1 and the old 2,048-token limits/digest.
+  The worker checks explicit per-input capacity against GGUF training context and
+  verifies actual context, per-sequence, batch, microbatch and sequence capacities
+  before Ready. IPC byte caps remain unchanged. Existing model profiles are not
+  enlarged automatically; see [body/parent profile settings](experimental-context.md#model-aware-bodyparent-chunking).
+  Long-context Metal execution/parity remains unverified in the Linux sandbox.
 - **Resources.** Process count is `hard`. Memory is `supervised`: the supervisor
   polls the physical footprint every 250 ms against the profile's ceiling (3 GiB by
   default), and a breach stops the worker with `resource_limit`.

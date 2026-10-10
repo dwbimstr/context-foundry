@@ -27,7 +27,7 @@ use context_foundry::neural::index;
 use context_foundry::neural::prepare::{self, Acquire, PrepareOptions, PrepareReport};
 use context_foundry::neural::profile::SemanticProfile;
 use context_foundry::neural::provider::{
-    self, DocumentLimits, EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput,
+    self, EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput,
 };
 use context_foundry::neural::query::{
     DENSE_WINDOW, DenseWindow, MakeProvider, QUERY_CEILING, QueryRuntime,
@@ -172,6 +172,7 @@ struct Probe {
     document_calls: Arc<AtomicU64>,
     document_inputs: Arc<AtomicU64>,
     document_tokens: Arc<AtomicU64>,
+    document_batches: Arc<Mutex<Vec<Vec<usize>>>>,
     query_calls: Arc<AtomicU64>,
     queries: Arc<Mutex<Vec<String>>>,
     mode: Arc<Mutex<QueryMode>>,
@@ -218,7 +219,12 @@ impl EmbeddingProvider for ConceptProvider {
         batch: &[TokenizedInput],
         _control: &Control,
     ) -> Result<Vec<Vec<f32>>, ProviderError> {
-        provider::check_document_batch(batch, DocumentLimits::PROTOCOL)?;
+        provider::check_document_batch(batch, self.descriptor.input_limits())?;
+        self.probe
+            .document_batches
+            .lock()
+            .unwrap()
+            .push(batch.iter().map(|input| input.ids.len()).collect());
         let pause = *self.probe.document_pause.lock().unwrap();
         std::thread::sleep(pause);
         self.probe.document_calls.fetch_add(1, Ordering::SeqCst);
@@ -240,7 +246,7 @@ impl EmbeddingProvider for ConceptProvider {
         input: &TokenizedInput,
         _deadline: Instant,
     ) -> Result<Vec<f32>, ProviderError> {
-        provider::check_query(input)?;
+        provider::check_query_with_limit(input, self.descriptor.input_limits().tokens)?;
         let rendered = model_input(&input.ids);
         self.probe.query_calls.fetch_add(1, Ordering::SeqCst);
         self.probe.queries.lock().unwrap().push(rendered.clone());
@@ -2430,6 +2436,7 @@ fn fake_worker_profile(dir: &Path) -> SemanticProfile {
         },
         descriptor,
         query_template: "query: {text}".into(),
+        representation: Default::default(),
         card_tokens: DEFAULT_CARD_TOKENS,
         batch: DEFAULT_BATCH,
         memory_ceiling_bytes: 3 << 30,
@@ -5912,4 +5919,246 @@ fn segment_receipts_refuse_in_place_replacement_and_symlink_changes_on_refresh()
             assert_eq!(fault::reached(SEGMENT_HASH), hashes + 1);
         }
     }
+}
+
+fn select_body_recipe(
+    corpus: &mut Corpus,
+    tokens: u32,
+    parent_tokens: u32,
+    geometry: Option<provider::InputGeometry>,
+) {
+    let profile = Arc::make_mut(&mut corpus.profile);
+    profile.representation =
+        context_foundry::neural::partition::Representation::Body { parent_tokens };
+    profile.card_tokens = tokens;
+    profile.descriptor.geometry = geometry;
+    if geometry.is_some() {
+        profile.descriptor.adapter_revision = provider::GEOMETRY_ADAPTER_REVISION;
+    }
+    profile.validate().unwrap();
+    std::fs::write(&corpus.profile_path, serde_json::to_vec(&*profile).unwrap()).unwrap();
+}
+
+#[test]
+fn body_recipe_migration_edits_rename_and_revert_reuse_exact_inputs_and_deliver_child_evidence() {
+    let path = "src/opaque.rs";
+    let body = "impl Billing {\n    fn xyz() {\n        // reimbursement repayment credit refund cancel\n        transfer(400);\n    }\n}\n";
+    let mut corpus = Corpus::new(&[(path.into(), body.into())]);
+    let old_profile = corpus.profile.clone();
+    let old_key = corpus
+        .engine()
+        .semantic_partition(path)
+        .unwrap()
+        .unwrap()
+        .units[0]
+        .input_key
+        .clone();
+    select_body_recipe(&mut corpus, 512, 64, None);
+    let report = corpus.prepare();
+    assert!(!report.partial && report.document_calls > 0, "{report:?}");
+    assert_eq!(
+        old_profile.descriptor.digest(),
+        corpus.digest(),
+        "same embedding function, distinct recipe/input text"
+    );
+    assert!(matches!(
+        corpus
+            .engine()
+            .semantic_cache_lookup(&old_key, &corpus.digest(), DIMENSIONS)
+            .unwrap(),
+        context_foundry::neural::cache::CacheLookup::Hit(_)
+    ));
+    let first = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    assert!(first.recipe_id.starts_with("body-v1"));
+    let slot = corpus.slot();
+    let answer = corpus.context(&slot, LEDGER_QUERY, 4096);
+    assert_eq!(answer.word(), Some("ready"));
+    assert!(
+        answer.item(path).is_some(),
+        "body-only behavior reaches final context: {}",
+        answer.packed.text
+    );
+    let runtime = corpus.runtime();
+    let window = runtime
+        .window(
+            corpus.engine(),
+            LEDGER_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &Control::unbounded(),
+        )
+        .unwrap();
+    let target = window
+        .hits
+        .iter()
+        .flat_map(|hit| window.units(hit))
+        .find(|unit| {
+            unit.path == path && body[unit.start as usize..unit.end as usize].starts_with("fn xyz")
+        })
+        .unwrap();
+    assert_eq!(
+        &body[target.start as usize..target.end as usize],
+        "fn xyz() {\n        // reimbursement repayment credit refund cancel\n        transfer(400);\n    }"
+    );
+    drop(runtime);
+    drop(slot);
+    assert_eq!(corpus.prepare().document_calls, 0, "unchanged restart");
+    let edited = body.replace("transfer(400)", "transfer(800)");
+    std::fs::write(corpus.root.join(path), &edited).unwrap();
+    corpus.engine().replace_source(path, &edited).unwrap();
+    assert_eq!(
+        corpus.prepare().embedded_units,
+        1,
+        "only the changed child input"
+    );
+    let renamed = "src/moved.rs";
+    std::fs::rename(corpus.root.join(path), corpus.root.join(renamed)).unwrap();
+    corpus.engine().delete_source(path).unwrap();
+    corpus.engine().replace_source(renamed, &edited).unwrap();
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "path is provenance, not body input"
+    );
+    let parent_edit = edited.replace("impl Billing", "impl Payment");
+    corpus
+        .engine()
+        .replace_source(renamed, &parent_edit)
+        .unwrap();
+    let changed = corpus.prepare();
+    assert!(
+        changed.embedded_units >= 2,
+        "included parent context invalidates its child: {changed:?}"
+    );
+    corpus.engine().delete_source(renamed).unwrap();
+    corpus.engine().replace_source(path, body).unwrap();
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "body/context revert reuses retained vectors"
+    );
+    corpus.profile = old_profile;
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "switching back preserves address caches"
+    );
+}
+
+#[test]
+fn body_recipe_uses_explicit_large_geometry_and_packs_short_and_long_inputs_by_actual_tokens() {
+    let source = format!(
+        "fn opaque() {{\n{}\n}}\n",
+        "    send_credit_with_backoff();\n".repeat(180)
+    );
+    let mut corpus = Corpus::unprepared(&[("src/long.rs".into(), source)]);
+    select_body_recipe(
+        &mut corpus,
+        4096,
+        64,
+        Some(provider::InputGeometry {
+            v: 1,
+            input_tokens: 8192,
+            batch_tokens: 8192,
+            sequences: 8,
+        }),
+    );
+    let report = corpus.prepare();
+    assert!(!report.partial, "{report:?}");
+    let batches = corpus.probe.document_batches.lock().unwrap().clone();
+    assert!(
+        batches.iter().flatten().any(|&n| n > 2048),
+        "large body reaches the provider intact"
+    );
+    assert!(
+        batches.iter().any(|b| b.len() > 2),
+        "short inputs are not capped by batch × worst-case size"
+    );
+    assert!(
+        batches.iter().all(|b| b.len() <= 8
+            && b.iter().sum::<usize>() <= 8192
+            && b.iter().all(|&n| n <= 4096))
+    );
+    assert_eq!(
+        batches
+            .iter()
+            .map(|b| b.iter().sum::<usize>() as u64)
+            .sum::<u64>(),
+        report.input_tokens
+    );
+    let runtime = corpus.runtime();
+    let query = "credit ".repeat(500);
+    runtime
+        .embed(&query, Instant::now() + Duration::from_secs(30))
+        .unwrap();
+    assert_eq!(
+        corpus.probe.queries().last(),
+        Some(&provider::render(&corpus.profile.query_template, &query)),
+        "the query also uses the explicit input limit without truncation"
+    );
+    let calls = corpus.probe.query_calls();
+    assert!(matches!(
+        runtime.embed(
+            &"credit ".repeat(1300),
+            Instant::now() + Duration::from_secs(30)
+        ),
+        Err(ProviderError::InputTooLarge(_))
+    ));
+    assert_eq!(corpus.probe.query_calls(), calls);
+    drop(runtime);
+    assert_eq!(corpus.prepare().document_calls, 0);
+}
+
+#[tokio::test]
+async fn body_recipe_mcp_maintenance_keeps_token_caps_and_reuses_unchanged_context() {
+    let extra: Vec<_> = (0..7)
+        .map(|i| {
+            (
+                format!("src/b{i}.rs"),
+                format!("fn b{i}() {{\n{}\n}}", "    send_credit();\n".repeat(48)),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&extra);
+    select_body_recipe(&mut corpus, 1536, 64, None);
+    let semantic = SemanticServing::with_provider(
+        corpus.profile_path.clone(),
+        maker(corpus.profile.descriptor.clone(), corpus.probe.clone()),
+    );
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    assert!(!served.semantic_action("maintain").await.0);
+    served
+        .until("body coverage", |s| {
+            s["state"] == "waiting" && s["pending"]["paths"] == 0
+        })
+        .await;
+    let calls = corpus.probe.document_calls();
+    let original = corpus.source("src/b0.rs");
+    std::fs::write(
+        corpus.root.join("src/b0.rs"),
+        original.replace("send_credit", "return_credit"),
+    )
+    .unwrap();
+    served.index().await;
+    served
+        .until("body edit", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && corpus.probe.document_calls() > calls
+        })
+        .await;
+    let answer = served.context(LEDGER_QUERY).await;
+    assert_eq!(header_word(&answer), Some("ready"));
+    let batches = corpus.probe.document_batches.lock().unwrap().clone();
+    assert!(
+        batches
+            .iter()
+            .all(|b| b.len() <= 8 && b.iter().sum::<usize>() <= 2048)
+    );
+    assert!(batches.iter().flatten().any(|&n| n > 512));
+    served.close().await;
 }

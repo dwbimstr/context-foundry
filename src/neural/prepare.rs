@@ -543,7 +543,7 @@ pub fn run(
     let profile = SemanticProfile::load(options.profile_path)?;
     let function_digest = profile.descriptor.digest();
     let engine = Engine::open_existing(store_dir)?;
-    let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+    let recipe = profile.recipe_id();
 
     let mut report = PrepareReport {
         profile: profile.name.clone(),
@@ -917,28 +917,33 @@ fn inner(
             report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
             let mut walk = Walk::wave(cursor.scope.clone(), before, cursor.after.clone())
                 .with_retained(retained);
+            let mut pending = Batch::default();
+            let mut end = false;
             loop {
-                let mut selection = Selection::default();
-                let end = match steps.select_batch(
-                    &mut walk,
-                    &mut selection,
-                    steps.cards.limits().inputs,
-                    usize::MAX,
-                    report,
-                    &mut || halt(control, budget),
-                )? {
-                    Selected::Full => false,
-                    Selected::End => true,
-                    Selected::Yield => continue,
-                    Selected::Halted(halted) => {
-                        stop = Some(halted);
-                        break 'waves;
-                    }
-                };
-                let rendered = Instant::now();
-                let batch = steps.cards.render(selection);
-                report.bootstrap.render_ms += elapsed_ms(rendered);
-                let batch = batch?;
+                if pending.is_empty() {
+                    let mut selection = Selection::default();
+                    end = match steps.select_batch(
+                        &mut walk,
+                        &mut selection,
+                        steps.cards.limits().inputs,
+                        usize::MAX,
+                        report,
+                        &mut || halt(control, budget),
+                    )? {
+                        Selected::Full => false,
+                        Selected::End => true,
+                        Selected::Yield => continue,
+                        Selected::Halted(halted) => {
+                            stop = Some(halted);
+                            break 'waves;
+                        }
+                    };
+                    let rendered = Instant::now();
+                    let batch = steps.cards.render(selection);
+                    report.bootstrap.render_ms += elapsed_ms(rendered);
+                    pending = batch?;
+                }
+                let batch = pending.take(steps.cards.limits(), steps.cards.limits().inputs)?;
                 if batch.is_empty() {
                     break;
                 }
@@ -1016,7 +1021,7 @@ fn inner(
                     unpublished = 0;
                     snapshot_progress(report, options.started);
                 }
-                if end {
+                if end && pending.is_empty() {
                     break;
                 }
             }
@@ -1293,9 +1298,14 @@ struct SourceVersion {
 enum SourceCards {
     Body {
         body: String,
-        units: OnceCell<Vec<Unit>>,
+        units: OnceCell<SourcePlan>,
     },
     Prepared(PreparedCards),
+}
+
+enum SourcePlan {
+    Address(Vec<Unit>),
+    Body(Vec<partition::body::Span>),
 }
 
 /// Cards a selection step found missing, not yet rendered: per source
@@ -1328,6 +1338,31 @@ pub(crate) struct Batch {
 }
 
 impl Batch {
+    pub(crate) fn take(&mut self, limits: DocumentLimits, inputs: usize) -> FResult<Self> {
+        let mut total = 0usize;
+        let mut count = 0;
+        for input in self.inputs.iter().take(inputs.min(limits.inputs)) {
+            if input.ids.is_empty()
+                || input.ids.len() > limits.tokens
+                || input.ids.len() > limits.total_tokens
+            {
+                return Err(ProviderError::InputTooLarge(
+                    "rendered input exceeds the profile geometry".into(),
+                )
+                .into());
+            }
+            if total + input.ids.len() > limits.total_tokens {
+                break;
+            }
+            total += input.ids.len();
+            count += 1;
+        }
+        Ok(Self {
+            keys: self.keys.drain(..count).collect(),
+            inputs: self.inputs.drain(..count).collect(),
+        })
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.keys.len()
     }
@@ -1380,27 +1415,27 @@ impl Cards<'_> {
         let hash = source.source_hash().to_owned();
         let mut retained = None;
         let partition = source.prepare(recipe, self.function_digest, None, |body| {
-            let units = partition::carded_units(body, Lang::from_path(&path));
-            let identity_bytes = std::mem::size_of::<PreparedCards>()
+            let units = if self.profile.representation.is_address() {
+                partition::carded_units(body, Lang::from_path(&path))
+            } else {
+                Vec::new()
+            };
+            let mut kept_bytes = std::mem::size_of::<PreparedCards>()
                 + path.capacity()
                 + hash.capacity()
                 + recipe.len()
-                + self.function_digest.len();
-            let mut kept_bytes = identity_bytes.saturating_add(
-                units
-                    .len()
-                    .saturating_mul(std::mem::size_of::<partition::Card>()),
-            );
+                + self.function_digest.len()
+                + units.len() * std::mem::size_of::<partition::Card>();
             let mut kept = (kept_bytes <= retain_limit).then(|| Vec::with_capacity(units.len()));
-            let mut tuples = Vec::with_capacity(units.len());
-            for unit in &units {
-                let card = partition::card(body, &path, unit, &self.recipe(), self.tokenizer)?;
+            let mut tuples = Vec::new();
+            let mut accept = |card: partition::Card| {
                 tuples.push(PartitionUnit {
                     start: card.start,
                     end: card.end,
                     input_key: card.input_key.clone(),
                 });
-                if kept.is_some() {
+                if let Some(cards) = &mut kept {
+                    let capacity = cards.capacity();
                     kept_bytes = kept_bytes
                         .saturating_add(card.input_key.capacity())
                         .saturating_add(
@@ -1409,10 +1444,37 @@ impl Cards<'_> {
                                 .saturating_mul(std::mem::size_of::<u32>()),
                         );
                     if kept_bytes <= retain_limit {
-                        kept.as_mut().expect("retaining cards").push(card);
-                    } else {
+                        cards.push(card);
+                        kept_bytes = kept_bytes.saturating_add(
+                            (cards.capacity() - capacity) * std::mem::size_of::<partition::Card>(),
+                        );
+                    }
+                    if kept_bytes > retain_limit {
                         kept = None;
                     }
+                }
+            };
+            match self.profile.representation {
+                partition::Representation::Address => {
+                    for unit in &units {
+                        accept(partition::card(
+                            body,
+                            &path,
+                            unit,
+                            &self.recipe(),
+                            self.tokenizer,
+                        )?);
+                    }
+                }
+                partition::Representation::Body { parent_tokens } => {
+                    partition::body::visit(
+                        body,
+                        Lang::from_path(&path),
+                        &self.recipe(),
+                        parent_tokens as usize,
+                        self.tokenizer,
+                        |_, card| accept(card),
+                    )?;
                 }
             }
             retained = kept;
@@ -1457,16 +1519,35 @@ impl Cards<'_> {
         for selected in selection.sources {
             let source = &selected.source;
             let count = match &source.content {
-                SourceCards::Body { body, units } => units
-                    .get_or_init(|| partition::carded_units(body, Lang::from_path(&source.path)))
-                    .len(),
+                SourceCards::Body { body, units } => {
+                    if units.get().is_none() {
+                        let plan = match self.profile.representation {
+                            partition::Representation::Address => SourcePlan::Address(
+                                partition::carded_units(body, Lang::from_path(&source.path)),
+                            ),
+                            partition::Representation::Body { parent_tokens } => {
+                                let mut spans = Vec::new();
+                                partition::body::visit(
+                                    body,
+                                    Lang::from_path(&source.path),
+                                    &recipe,
+                                    parent_tokens as usize,
+                                    self.tokenizer,
+                                    |span, _| spans.push(span),
+                                )?;
+                                SourcePlan::Body(spans)
+                            }
+                        };
+                        let _ = units.set(plan);
+                    }
+                    match units.get().expect("planned source") {
+                        SourcePlan::Address(units) => units.len(),
+                        SourcePlan::Body(spans) => spans.len(),
+                    }
+                }
                 SourceCards::Prepared(prepared) => {
                     if prepared.function_digest != self.function_digest
-                        || prepared.recipe
-                            != partition::recipe_id(
-                                &self.profile.descriptor.tokenizer,
-                                self.profile.card_tokens,
-                            )
+                        || prepared.recipe != self.profile.recipe_id()
                     {
                         return Err(partition_invalid("retained card identity changed".into()));
                     }
@@ -1482,13 +1563,19 @@ impl Cards<'_> {
             for (index, recorded) in selected.wanted {
                 let card = match &source.content {
                     SourceCards::Prepared(prepared) => prepared.cards[index].clone(),
-                    SourceCards::Body { body, units } => partition::card(
-                        body,
-                        &source.path,
-                        &units.get().expect("units initialized")[index],
-                        &recipe,
-                        self.tokenizer,
-                    )?,
+                    SourceCards::Body { body, units } => match units.get().expect("planned source")
+                    {
+                        SourcePlan::Address(units) => partition::card(
+                            body,
+                            &source.path,
+                            &units[index],
+                            &recipe,
+                            self.tokenizer,
+                        )?,
+                        SourcePlan::Body(spans) => {
+                            partition::body::card(body, &spans[index], &recipe, self.tokenizer)?
+                        }
+                    },
                 };
                 if (card.start, card.end, card.input_key.as_str())
                     != (recorded.start, recorded.end, recorded.input_key.as_str())
@@ -1783,6 +1870,44 @@ pub(crate) fn commit_partition(
 mod tests {
     use super::*;
 
+    #[test]
+    fn admission_packs_actual_tokens_keeps_leftovers_and_refuses_oversize_inputs() {
+        let limits = DocumentLimits {
+            inputs: 8,
+            tokens: 4096,
+            total_tokens: 8192,
+        };
+        let lengths = [4000, 3900, 4000, 800, 30];
+        let mut pending = Batch {
+            keys: (0..lengths.len()).map(|i| i.to_string()).collect(),
+            inputs: lengths
+                .into_iter()
+                .map(|n| TokenizedInput { ids: vec![1; n] })
+                .collect(),
+        };
+        let first = pending.take(limits, 8).unwrap();
+        assert_eq!(first.keys, ["0", "1"]);
+        let second = pending.take(limits, 2).unwrap();
+        assert_eq!(
+            second.keys,
+            ["2", "3"],
+            "foreground sequence cap is independent"
+        );
+        assert_eq!(pending.take(limits, 8).unwrap().keys, ["4"]);
+        assert!(pending.is_empty());
+        for batch in [first, second] {
+            provider::check_document_batch(&batch.inputs, limits).unwrap();
+        }
+        pending.keys.push("too-long".into());
+        pending.inputs.push(TokenizedInput { ids: vec![0; 4097] });
+        assert!(pending.take(limits, 8).is_err());
+        assert_eq!(
+            pending.len(),
+            1,
+            "a refused input is never silently consumed"
+        );
+    }
+
     fn partition_fixture() -> (tempfile::TempDir, Engine, SemanticProfile) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
@@ -1820,7 +1945,7 @@ mod tests {
         let (_dir, engine, profile) = partition_fixture();
         let tokenizer = DocumentTokenizer::load(&profile).unwrap();
         let digest = profile.descriptor.digest();
-        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+        let recipe = profile.recipe_id();
         let cards = Cards {
             tokenizer: &tokenizer,
             profile: &profile,
@@ -2005,7 +2130,7 @@ mod tests {
         let profile = SemanticProfile::load(&path).unwrap();
         let tokenizer = DocumentTokenizer::load(&profile).unwrap();
         let digest = profile.descriptor.digest();
-        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+        let recipe = profile.recipe_id();
         let steps = Steps {
             engine: &engine,
             cards: Cards {
@@ -2136,94 +2261,120 @@ mod tests {
     #[test]
     fn retained_cards_avoid_second_tokenization_across_batches_with_bounded_fallback() {
         use std::sync::atomic::Ordering;
-        let (_dir, engine, profile) = partition_fixture();
-        let body: String = (0..40)
-            .map(|n| format!("/// Item {n}.\npub fn item_{n:02}() -> u32 {{\n    {n}\n}}\n\n"))
-            .collect();
-        engine.replace_source("lib.rs", &body).unwrap();
-        let hash = engine.source("lib.rs").unwrap().unwrap().hash;
-        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
-        let counting = Counting::new(&tokenizer);
-        let digest = profile.descriptor.digest();
-        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
-        let cards = Cards {
-            tokenizer: &counting,
-            profile: &profile,
-            function_digest: &digest,
-        };
-        let expected = partition::cards(
-            &body,
-            "lib.rs",
-            Lang::from_path("lib.rs"),
-            &cards.recipe(),
-            &counting,
-        )
-        .unwrap();
-        let once = counting.encodes.load(Ordering::Relaxed);
-        let pool = PartitionWorkers::new(2);
-        // 512 admits the array poorly; 4096 allows some ids before overflowing.
-        // Both must fall back without changing any card or dropping later units.
-        for limit in [RETAINED_CARD_BYTES, 0, 512, 4096] {
-            counting.encodes.store(0, Ordering::Relaxed);
-            let source = engine.semantic_partition_source("lib.rs", &hash).unwrap();
-            let computed = if limit == RETAINED_CARD_BYTES {
-                pool.prepare(cards, vec![source], &recipe, &Control::unbounded())
-                    .unwrap()
-                    .pop()
-                    .unwrap()
-            } else {
-                cards.prepare_source(source, &recipe, limit).unwrap()
+        for representation in [
+            partition::Representation::Address,
+            partition::Representation::Body { parent_tokens: 16 },
+        ] {
+            let (_dir, engine, mut profile) = partition_fixture();
+            profile.representation = representation;
+            let body: String = (0..40)
+                .map(|n| format!("/// Item {n}.\npub fn item_{n:02}() -> u32 {{\n    {n}\n}}\n\n"))
+                .collect();
+            engine.replace_source("lib.rs", &body).unwrap();
+            let hash = engine.source("lib.rs").unwrap().unwrap().hash;
+            let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+            let counting = Counting::new(&tokenizer);
+            let digest = profile.descriptor.digest();
+            let recipe = profile.recipe_id();
+            let cards = Cards {
+                tokenizer: &counting,
+                profile: &profile,
+                function_digest: &digest,
             };
-            let kept = computed.retained.is_some();
-            assert_eq!(kept, limit == RETAINED_CARD_BYTES);
-            engine
-                .semantic_accept_partition(computed.partition)
-                .unwrap();
-            let mut walk = Walk::wave(Some("lib.rs".into()), None, Some("lib.rs".into()))
-                .with_retained(computed.retained.into_iter().collect());
-            let steps = Steps {
-                engine: &engine,
-                cards,
-                recipe: &recipe,
-            };
-            let mut actual = Vec::new();
-            loop {
-                let mut selection = Selection::default();
-                let end = matches!(
-                    steps
-                        .select_batch(
-                            &mut walk,
-                            &mut selection,
-                            8,
-                            usize::MAX,
-                            &mut PrepareReport::default(),
-                            &mut || None
-                        )
-                        .unwrap(),
-                    Selected::End
-                );
-                let batch = cards.render(selection).unwrap();
-                actual.extend(
-                    batch
-                        .keys
-                        .into_iter()
-                        .zip(batch.inputs.into_iter().map(|input| input.ids)),
-                );
-                if end {
-                    break;
+            let expected = match representation {
+                partition::Representation::Address => partition::cards(
+                    &body,
+                    "lib.rs",
+                    Lang::from_path("lib.rs"),
+                    &cards.recipe(),
+                    &counting,
+                )
+                .unwrap(),
+                partition::Representation::Body { parent_tokens } => {
+                    let mut expected = Vec::new();
+                    partition::body::visit(
+                        &body,
+                        Lang::from_path("lib.rs"),
+                        &cards.recipe(),
+                        parent_tokens as usize,
+                        &counting,
+                        |_, card| expected.push(card),
+                    )
+                    .unwrap();
+                    expected
                 }
+            };
+            let once = counting.encodes.load(Ordering::Relaxed);
+            let pool = PartitionWorkers::new(2);
+            // 512 admits the array poorly; 4096 allows some ids before overflowing.
+            // Both must fall back without changing any card or dropping later units.
+            for limit in [RETAINED_CARD_BYTES, 0, 512, 4096] {
+                counting.encodes.store(0, Ordering::Relaxed);
+                let source = engine.semantic_partition_source("lib.rs", &hash).unwrap();
+                let computed = if limit == RETAINED_CARD_BYTES {
+                    pool.prepare(cards, vec![source], &recipe, &Control::unbounded())
+                        .unwrap()
+                        .pop()
+                        .unwrap()
+                } else {
+                    cards.prepare_source(source, &recipe, limit).unwrap()
+                };
+                let kept = computed.retained.is_some();
+                assert_eq!(kept, limit == RETAINED_CARD_BYTES);
+                engine
+                    .semantic_accept_partition(computed.partition)
+                    .unwrap();
+                let mut walk = Walk::wave(Some("lib.rs".into()), None, Some("lib.rs".into()))
+                    .with_retained(computed.retained.into_iter().collect());
+                let steps = Steps {
+                    engine: &engine,
+                    cards,
+                    recipe: &recipe,
+                };
+                let mut actual = Vec::new();
+                loop {
+                    let mut selection = Selection::default();
+                    let end = matches!(
+                        steps
+                            .select_batch(
+                                &mut walk,
+                                &mut selection,
+                                8,
+                                usize::MAX,
+                                &mut PrepareReport::default(),
+                                &mut || None
+                            )
+                            .unwrap(),
+                        Selected::End
+                    );
+                    let batch = cards.render(selection).unwrap();
+                    actual.extend(
+                        batch
+                            .keys
+                            .into_iter()
+                            .zip(batch.inputs.into_iter().map(|input| input.ids)),
+                    );
+                    if end {
+                        break;
+                    }
+                }
+                assert_eq!(
+                    actual,
+                    expected
+                        .iter()
+                        .map(|card| (card.input_key.clone(), card.ids.clone()))
+                        .collect::<Vec<_>>()
+                );
+                assert_eq!(
+                    counting.encodes.load(Ordering::Relaxed),
+                    once * if kept { 1 } else { 2 }
+                        + if !kept && !representation.is_address() {
+                            expected.len()
+                        } else {
+                            0
+                        }
+                );
             }
-            assert_eq!(
-                actual,
-                expected
-                    .iter()
-                    .map(|card| (card.input_key.clone(), card.ids.clone()))
-                    .collect::<Vec<_>>()
-            );
-            assert_eq!(
-                counting.encodes.load(Ordering::Relaxed),
-                once * if kept { 1 } else { 2 }
-            );
         }
     }
 
@@ -2232,7 +2383,7 @@ mod tests {
         let (_dir, engine, profile) = partition_fixture();
         let tokenizer = DocumentTokenizer::load(&profile).unwrap();
         let digest = profile.descriptor.digest();
-        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+        let recipe = profile.recipe_id();
         let cards = Cards {
             tokenizer: &tokenizer,
             profile: &profile,
@@ -2338,7 +2489,7 @@ mod tests {
         let profile = SemanticProfile::load(&path).unwrap();
         let tokenizer = DocumentTokenizer::load(&profile).unwrap();
         let digest = profile.descriptor.digest();
-        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+        let recipe = profile.recipe_id();
         let control = Control::unbounded();
         let mut report = PrepareReport::default();
         let partitioning = Steps {

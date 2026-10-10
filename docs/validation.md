@@ -1885,3 +1885,50 @@ large-repository throughput, actual provider-token savings or task quality. Init
 bootstrap, cold artifact verification, changed-input restart baselines and compaction
 remain corpus-sized. The first changed mapping after a clean restart still needs its
 baseline; the revision shortcut applies to publication, not preparation's source walk.
+
+
+## Model-aware body/parent inputs — 2026-10-10
+
+Experimental 009 T009 adds strict versioned descriptor geometry and an explicit
+body-v1 representation. Address profiles serialize identically without the new fields.
+Both CLI and MCP preparation pack actual token lengths within independent per-input,
+call-total and sequence bounds. The macOS adapter checks configured geometry against
+the loaded GGUF and actual backend capacities; no default model window is raised.
+
+Executed fixtures use the real tokenizer, parser, redb store, cache, ANN publication,
+query runtime and MCP stdio consumer with deterministic provider vectors:
+
+- Complete short units, long windows, Unicode/CRLF and unsupported syntax retain exact,
+  non-overlapping source spans. Candidate re-encoding verifies total input limits;
+  an impossible template refuses instead of dropping body characters.
+- Body-only behavior reaches final packed context with the child's exact span. A body
+  edit embeds one changed input; included parent-header edits invalidate their child
+  context. Unchanged preparation, same-language rename, body/parent revert and return
+  to the address recipe issue zero document calls. Old cache rows remain available.
+- Explicit 8,192-token geometry passes documents longer than 2,048 tokens intact, while
+  short inputs share batches beyond the old worst-case-size cap. Observed call tokens
+  equal the preparation report. Continuous MCP maintenance catches a body edit and
+  preserves actual call bounds alongside foreground context retrieval.
+- Retained-card and forced-fallback paths produce identical keys and token IDs across
+  multiple selection batches for both recipes. Fresh handoff avoids a second encoding;
+  body fallback builds one lazy span plan, then re-encodes only selected windows.
+- IPC round-trips preserve each sequence at 2,048, 8,192 and 32,768 total-token
+  boundaries; excess input length, total tokens and sequence count refuse. Unknown
+  geometry versions and invalid limits refuse; explicit geometry changes vector identity.
+
+The full regression run passed **943 regular tests** (two intentional measurement
+ignores) and **all 20 child-process recovery cases**. The 6,000-file watcher suite
+passed in 87.46 s. After the final query-boundary assertion and test cleanup, all
+77 neural unit tests and 70 retrieval integration tests passed again (one intentional
+measurement ignore). Final all-target Clippy with warnings denied, formatting, the
+build without default features and Markdown link checks passed (47 files, 710 links,
+159 heading anchors). The explicit-geometry query fixture passes an input longer
+than the legacy limit intact and refuses an oversize query before a provider call.
+
+These establish representation, work selection, token admission and provenance, not
+embedding quality or device throughput. Linux cannot build/run the selected macOS
+Metal adapter. Pinned llama.cpp API/example/operator-test references were inspected;
+real-model single/batched numerical parity for new geometries remains unexecuted. The
+existing ignored real-worker parity fixture now reads the selected descriptor's input
+limit. Parent/header text is a bounded child prefix; independent parent/file/area vectors,
+contextual token-state late chunking and 010 T002 generated knowledge remain future work.

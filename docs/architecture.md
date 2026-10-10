@@ -378,6 +378,17 @@ using the recorded G2/G1 checks; signed installed-artifact checks remain open.
 Graph expansion enriches selected evidence rather than generating another long
 sequence of tool calls.
 
+Experimental T009 adds an explicit body-v1 recipe: complete short units or bounded
+source windows, with a nearest-parent/header prefix and exact child provenance.
+The prefix changes the input/cache identity but creates no extra parent candidate.
+Optional versioned descriptor geometry binds per-input tokens, total call tokens and
+sequence capacity; legacy descriptors retain their exact identity and 2,048-token
+geometry. Both preparation paths pack by actual token totals, preserving foreground
+admission and one model slot. Source and response allowances remain independent.
+See [profile usage and limits](experimental-context.md#model-aware-bodyparent-chunking).
+Real-device long-context parity/quality and independent file/area representations
+remain open; current address-model acceptance does not cover this new recipe.
+
 ### Embedding models and the policy head have different jobs
 
 An embedding model supplies similarity candidates. The frozen research head can choose

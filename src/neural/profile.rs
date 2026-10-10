@@ -9,10 +9,7 @@
 //! worker and its Python closure) is refused at load with
 //! `profile_unsupported`; its retained cache rows and generations stay until
 //! an explicit `semantic purge`.
-use super::provider::{
-    DocumentLimits, FunctionDescriptor, MAX_DOCUMENT_BATCH, ProviderError, SERVING_LIMIT_TOKENS,
-    check_template,
-};
+use super::provider::{DocumentLimits, FunctionDescriptor, ProviderError, check_template};
 use crate::control::Control;
 use crate::error::FoundryError;
 use serde::{Deserialize, Serialize};
@@ -73,6 +70,12 @@ pub struct SemanticProfile {
     /// get new keys.
     #[serde(default = "default_card_tokens")]
     pub card_tokens: u32,
+    /// Opt-in body windows with bounded source-local parent context.
+    #[serde(
+        default,
+        skip_serializing_if = "super::partition::Representation::is_address"
+    )]
+    pub representation: super::partition::Representation,
     /// Sequences per document call (one llama.cpp context).
     #[serde(default = "default_batch")]
     pub batch: u32,
@@ -184,25 +187,29 @@ impl SemanticProfile {
             )));
         }
         check_template("query_template", &self.query_template).map_err(invalid)?;
+        self.descriptor.validate().map_err(invalid)?;
+        let geometry = self.descriptor.input_limits();
         let (cards, batch) = (self.card_tokens as usize, self.batch as usize);
-        if self.card_tokens < MIN_CARD_TOKENS || cards > SERVING_LIMIT_TOKENS {
+        if self.card_tokens < MIN_CARD_TOKENS || cards > geometry.tokens {
             return Err(invalid(format!(
-                "card_tokens {cards} is outside {MIN_CARD_TOKENS}..={SERVING_LIMIT_TOKENS}"
+                "card_tokens {cards} is outside {MIN_CARD_TOKENS}..={}",
+                geometry.tokens
             )));
         }
-        if batch == 0 || batch > MAX_DOCUMENT_BATCH {
+        if batch == 0 || batch > geometry.inputs {
             return Err(invalid(format!(
-                "batch {batch} is outside 1..={MAX_DOCUMENT_BATCH}"
+                "batch {batch} is outside 1..={}",
+                geometry.inputs
             )));
         }
-        if batch * cards > SERVING_LIMIT_TOKENS {
-            return Err(invalid(format!(
-                "batch {batch} × card_tokens {cards} exceeds one {SERVING_LIMIT_TOKENS}-token \
-                 llama.cpp context"
-            )));
+        if let super::partition::Representation::Body { parent_tokens } = self.representation
+            && parent_tokens > self.card_tokens / 4
+        {
+            return Err(invalid(
+                "body-v1 parent_tokens must be at most one quarter of card_tokens",
+            ));
         }
-        self.check_scratch_disjoint()?;
-        self.descriptor.validate().map_err(invalid)
+        self.check_scratch_disjoint()
     }
 
     /// The limits of one document call under this profile.
@@ -210,7 +217,13 @@ impl SemanticProfile {
         DocumentLimits {
             inputs: self.batch as usize,
             tokens: self.card_tokens as usize,
+            total_tokens: self.descriptor.input_limits().total_tokens,
         }
+    }
+
+    pub fn recipe_id(&self) -> String {
+        self.representation
+            .recipe_id(&self.descriptor.tokenizer, self.card_tokens)
     }
 
     /// The scratch root is the worker's only WRITE grant. It must not

@@ -70,10 +70,15 @@ pub fn write_notices(dir: &Path, license: &str) -> i32 {
 /// and by the worker itself before the model loads.
 pub fn check_real_descriptor(descriptor: &FunctionDescriptor) -> Result<(), String> {
     descriptor.validate()?;
-    if descriptor.adapter_revision != REAL_ADAPTER_REVISION {
+    let revision = if descriptor.geometry.is_some() {
+        super::provider::GEOMETRY_ADAPTER_REVISION
+    } else {
+        REAL_ADAPTER_REVISION
+    };
+    if descriptor.adapter_revision != revision {
         return Err(format!(
             "descriptor claims adapter_revision {}, but the real adapter implements \
-             {REAL_ADAPTER_REVISION}",
+             {revision} for this geometry",
             descriptor.adapter_revision
         ));
     }
@@ -509,6 +514,7 @@ pub fn fake_descriptor_with(dimensions: u32) -> FunctionDescriptor {
         output: "f32".into(),
         adapter_revision: REAL_ADAPTER_REVISION,
         document_template: "doc: {text}".into(),
+        geometry: None,
     }
 }
 
@@ -842,6 +848,7 @@ pub fn serve(args: WorkerArgs, run: impl FnOnce(&mut Engine) -> i32) -> i32 {
     });
     let (tx, rx) = mpsc::channel::<Job>();
     let digest = args.expected.digest();
+    let input_limits = args.expected.input_limits();
 
     // Dedicated reader thread: stays responsive during inference, refuses a
     // second embed with `busy` and never queues.
@@ -922,7 +929,13 @@ pub fn serve(args: WorkerArgs, run: impl FnOnce(&mut Engine) -> i32) -> i32 {
                                     continue;
                                 }
                                 let vocab = shared.vocab.load(Ordering::SeqCst);
-                                match protocol::decode_ids(purpose, &lengths, &payload, vocab) {
+                                match protocol::decode_ids_with_limits(
+                                    purpose,
+                                    &lengths,
+                                    &payload,
+                                    vocab,
+                                    input_limits,
+                                ) {
                                     Ok(inputs) => {
                                         if tx
                                             .send(Job {

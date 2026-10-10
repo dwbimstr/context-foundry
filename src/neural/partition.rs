@@ -1,6 +1,9 @@
 //! 009 T004 card partition, recipe `cards-v1` (spec 009 § T004 "Cards, not
 //! bodies").
 //!
+//! T009's opt-in body/parent recipe lives in [`body`]. The address recipe
+//! described below remains the default, with its original identity.
+//!
 //! One card per definition (001 T007's definitions: a named
 //! programming-language unit, a Rust `impl` excluded) and per Markdown
 //! section. A card is, line by line:
@@ -31,6 +34,34 @@
 //! [`TokenCount`] seam so it stays pure and testable.
 use crate::neural::provider::{self, ProviderError};
 use crate::syntax::{self, Lang, Unit, UnitKind};
+
+pub mod body;
+
+/// Address cards remain the default and retain their historical identity.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum Representation {
+    #[default]
+    #[serde(rename = "cards-v1")]
+    Address,
+    #[serde(rename = "body-v1")]
+    Body { parent_tokens: u32 },
+}
+
+impl Representation {
+    pub fn is_address(&self) -> bool {
+        *self == Self::Address
+    }
+    pub fn recipe_id(self, tokenizer: &str, tokens: u32) -> String {
+        match self {
+            Self::Address => recipe_id(tokenizer, tokens),
+            Self::Body { parent_tokens } => format!(
+                "body-v1+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                crate::store::SEARCH_SCHEMA
+            ),
+        }
+    }
+}
 
 /// The pinned recipe grammar version.
 pub const RECIPE_GRAMMAR: &str = "cards-v1";

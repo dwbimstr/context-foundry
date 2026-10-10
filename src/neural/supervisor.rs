@@ -12,7 +12,7 @@ use super::profile::{SemanticProfile, control_stop, hash_regular_file_until};
 use super::protocol::{self, Header, Purpose};
 use super::provider::{
     DocumentLimits, EmbeddingProvider, FunctionDescriptor, LateCall, ProviderError, TokenizedInput,
-    check_document_batch, check_query,
+    check_document_batch, check_query_with_limit,
 };
 use super::worker_runtime;
 use crate::control::Control;
@@ -1568,7 +1568,7 @@ impl EmbeddingProvider for WorkerProvider {
         input: &TokenizedInput,
         deadline: Instant,
     ) -> Result<Vec<f32>, ProviderError> {
-        check_query(input)?;
+        check_query_with_limit(input, self.descriptor.input_limits().tokens)?;
         self.check_artifacts()?;
         let mut vectors = self.request(
             Purpose::Query,

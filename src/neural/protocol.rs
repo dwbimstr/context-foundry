@@ -9,9 +9,10 @@
 //! The frame format is shared: 013's learning worker frames its own header
 //! type through [`read_frame_as`] / [`write_frame_as`] with the same caps and
 //! the same refusals (see [`FrameHeader`]); there is no second framing.
+#[cfg(test)]
+use super::provider::SERVING_LIMIT_TOKENS;
 use super::provider::{
-    DocumentLimits, FunctionDescriptor, MAX_DIMENSIONS, MAX_DOCUMENT_BATCH, SERVING_LIMIT_TOKENS,
-    TokenizedInput,
+    DocumentLimits, FunctionDescriptor, MAX_DIMENSIONS, MAX_DOCUMENT_BATCH, TokenizedInput,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -231,12 +232,25 @@ pub fn decode_ids(
     payload: &[u8],
     vocab_size: u32,
 ) -> Result<Vec<TokenizedInput>, FrameError> {
+    decode_ids_with_limits(
+        purpose,
+        lengths,
+        payload,
+        vocab_size,
+        DocumentLimits::PROTOCOL,
+    )
+}
+
+pub fn decode_ids_with_limits(
+    purpose: Purpose,
+    lengths: &[u32],
+    payload: &[u8],
+    vocab_size: u32,
+    limits: DocumentLimits,
+) -> Result<Vec<TokenizedInput>, FrameError> {
     let (max_inputs, max_ids) = match purpose {
-        Purpose::Document => (
-            DocumentLimits::PROTOCOL.inputs,
-            DocumentLimits::PROTOCOL.tokens,
-        ),
-        Purpose::Query => (1, SERVING_LIMIT_TOKENS),
+        Purpose::Document => (limits.inputs, limits.tokens),
+        Purpose::Query => (1, limits.tokens),
     };
     if lengths.is_empty() || lengths.len() > max_inputs {
         return Err(FrameError::Malformed(format!(
@@ -257,9 +271,10 @@ pub fn decode_ids(
             .ok_or_else(|| FrameError::Malformed("ID count overflow".into()))?;
     }
     // One call is one llama.cpp context: its IDs in all fit the serving limit.
-    if total > SERVING_LIMIT_TOKENS {
+    if total > limits.total_tokens || total.saturating_mul(4) > MAX_PAYLOAD_BYTES {
         return Err(FrameError::Malformed(format!(
-            "{total} IDs in one call; at most {SERVING_LIMIT_TOKENS} allowed"
+            "{total} IDs in one call; at most {} allowed",
+            limits.total_tokens
         )));
     }
     let expected = total
@@ -405,6 +420,50 @@ mod tests {
         assert!(decode_ids(Purpose::Document, &many, &ids(many.len()), 100).is_err());
         let cap = vec![1u32; MAX_DOCUMENT_BATCH];
         assert!(decode_ids(Purpose::Document, &cap, &ids(cap.len()), 100).is_ok());
+    }
+
+    #[test]
+    fn explicit_geometry_round_trips_at_each_boundary_without_changing_sequence_ids() {
+        for cap in [2048, 8192, 32768] {
+            let limits = super::super::provider::InputGeometry {
+                v: 1,
+                input_tokens: cap,
+                batch_tokens: cap,
+                sequences: 2,
+            };
+            limits.validate().unwrap();
+            let limits = limits.limits();
+            let inputs: Vec<_> = [cap - 31, 31]
+                .into_iter()
+                .map(|n| TokenizedInput {
+                    ids: (0..n).map(|id| id % 100).collect(),
+                })
+                .collect();
+            let (lengths, payload) = encode_ids(&inputs);
+            let batched =
+                decode_ids_with_limits(Purpose::Document, &lengths, &payload, 100, limits).unwrap();
+            assert_eq!(batched, inputs);
+            for input in &inputs {
+                let (lengths, payload) = encode_ids(std::slice::from_ref(input));
+                assert_eq!(
+                    decode_ids_with_limits(Purpose::Document, &lengths, &payload, 100, limits)
+                        .unwrap(),
+                    std::slice::from_ref(input)
+                );
+            }
+            let at_cap = vec![0; cap as usize * 4];
+            assert!(decode_ids_with_limits(Purpose::Query, &[cap], &at_cap, 100, limits).is_ok());
+            for (lengths, payload) in [
+                (vec![cap + 1], vec![0; (cap as usize + 1) * 4]),
+                (vec![cap, 1], vec![0; (cap as usize + 1) * 4]),
+                (vec![1, 1, 1], vec![0; 12]),
+            ] {
+                assert!(
+                    decode_ids_with_limits(Purpose::Document, &lengths, &payload, 100, limits)
+                        .is_err()
+                );
+            }
+        }
     }
 
     #[test]

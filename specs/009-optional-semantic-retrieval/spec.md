@@ -8,8 +8,9 @@ Experimental update, 2026-10-09: T006/T007 implement bounded parallel partitions
 progressive bootstrap. The subsequent efficiency audit selects their CPU/startup
 follow-up, T008 incremental maintenance/publication and T009 model-aware input
 geometry before broad 010 generation. CPU/startup reuse (E1) and durable continuous
-maintenance/cheap status (E2) are implemented experimentally. Delta publication (E3)
-and model-aware inputs (E4) remain pending. See the
+maintenance/cheap status (E2), bounded delta publication/reuse (E3) and opt-in
+model-aware body/parent inputs (E4) are implemented experimentally. Real-device
+long-context parity, quality and throughput remain unexecuted. See the
 [revised build order](../../docs/context-ecosystem-plan.md#revised-build-order).
 
 Status: T001 (preparation, cache, index and the supervised development worker), T002
@@ -1565,9 +1566,9 @@ atomic publication and bounded compaction; USearch supplies ANN storage and sear
 
 ### T009 — Use model-owned geometry and contextual representations
 
-Selected, pending implementation. The exact publisher contracts and their limits
+Implemented experimentally, 2026-10-10; real-device acceptance remains open. The exact publisher contracts and their limits
 are in the [model-window audit](../../docs/context-ecosystem-plan.md#model-windows-and-chunk-representations).
-The selected EmbeddingGemma 2 advertises 8,192 tokens, while the current worker has
+The selected EmbeddingGemma 2 advertises 8,192 tokens, while the legacy worker geometry has
 a 2,048-token context/batch limit and the address recipe defaults to 128 tokens.
 Raising the card limit does not add multiline function bodies to that recipe.
 
@@ -1601,3 +1602,75 @@ Raising the card limit does not add multiline function bodies to that recipe.
   task economics need the real model/runtime. Publisher window size alone proves
   none of them. A hosted adapter requires explicit endpoint/data scope; this task
   does not select a paid endpoint, download weights or send repository source.
+
+
+#### T009 implementation — 2026-10-10
+
+[Provider geometry](../../src/neural/provider.rs) is an optional strict `geometry`
+object inside descriptor v2: `v:1`, `input_tokens`, `batch_tokens`, `sequences`.
+It requires `1 <= input_tokens <= batch_tokens <= 32768` and 1–32 sequences. The
+32,768-token value is a hard admission ceiling, not a model capability. Omission
+preserves the legacy serialized descriptor, digest, adapter revision 1 and 2,048-token
+input/call limits. Explicit geometry requires real-adapter revision 2 and participates
+in vector identity because a changed context configuration can affect computation.
+Dimensions, tokenizer, templates, pooling and normalization retain their existing
+identities. IPC remains v2 with independently versioned geometry and unchanged byte
+caps; older strict workers refuse the new field instead of silently ignoring it.
+
+The [real worker](../../src/bin/foundry_embed.rs) checks explicit per-input capacity
+against the loaded GGUF training context, sets unified `n_ctx = n_batch = n_ubatch`
+to the call total and checks actual context, per-sequence context, batch, microbatch
+and sequence capacity before Ready. No per-input context extrapolation is selected. F32 KV,
+flash-attention-off and length-grouped sequence construction remain unchanged.
+Profile `card_tokens` bounds individual documents; profile `batch` bounds sequences.
+[CLI preparation](../../src/neural/prepare.rs) and the [MCP driver](../../src/neural/driver.rs)
+pack ordered prefixes by actual token totals, retaining unadmitted inputs. Foreground
+sequence limits and one resident model slot remain. A batch need not satisfy the old
+`batch * card_tokens` worst-case restriction. Query limits come from the same descriptor;
+all oversize inputs refuse, with no token-ID truncation.
+
+The explicit profile setting `representation: {"kind":"body-v1","parent_tokens":64}`
+selects [body windows](../../src/neural/partition/body.rs). Omission preserves cards-v1.
+The recipe keeps complete short functions/methods/sections; containers contribute
+residual source ranges and child units. Oversized regions split into non-overlapping,
+UTF-8-safe windows, preferring line boundaries. File preamble, unparsed/unsupported
+syntax, configuration and tests use the same source-window fallback. Whitespace-only
+ranges produce no input. Each child window includes a bounded nearest-parent/own-header
+or file-preamble prefix; it is not a generated summary or an independent parent ANN
+candidate. Thus this increment introduces no duplicate parent evidence or competing
+parent candidate quota. Independent file/area representations remain selected future
+work with 010 T002; they still require deduplication and candidate-share limits.
+
+`parent_tokens` is at most one quarter of `card_tokens` (zero disables context).
+The complete rendered input, including template, context, body and special tokens,
+must fit `card_tokens`. Tokenizer offsets suggest cuts; exact candidate re-encoding
+verifies every window without assuming prefix-monotonic token counts. A template
+that leaves no space for one source character refuses. Bounds are 2 MiB source,
+16,384 windows per source and 16 MiB accumulated context text in a source plan;
+context construction is byte-bounded before tokenization. These are payload bounds,
+not peak RSS: parser/tokenizer scratch, span arrays and allocator overhead remain.
+Fresh cards share the existing 2 MiB-per-source retained handoff; overflow falls back
+to one lazy source plan and selected-card rendering, preserving exact input parity.
+
+Input keys bind the full rendered text and function digest. Paths/offsets stay in
+provenance, so a same-language rename reuses vectors; a body edit or included parent
+context edit changes affected keys. Context outside the bounded prefix is not encoded.
+Recipe identity binds syntax schema, body version, tokenizer and both token settings.
+Profile switches rebuild partitions/publication without purging old vector rows;
+reversion reuses them. Existing partial coverage and freshness checks remain authoritative.
+No new table, worker, dependency, endpoint or representation-specific index is added.
+Long embedding inputs do not increase MCP evidence allowances. Late chunking still
+requires a different backend exposing contextual token states and is not implemented.
+
+Upstream reference for this task: llama.cpp
+[`b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`](https://github.com/ggml-org/llama.cpp/tree/b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea),
+`include/llama.h` (`llama_model_n_ctx_train`, `llama_n_ctx_seq`, context parameters)
+and `examples/embedding/embedding.cpp` (unified context and noncausal microbatch
+capacity). Its `tests/test-backend-ops.cpp` contains `test_rope` and `test_mean` backend
+operator checks; these were inspected as references, not executed or treated as
+end-to-end vector parity evidence. Foundry intentionally keeps its own tokenizer,
+explicit geometry, strict limits and existing pooling/normalization. The model-window
+audit above retains publisher revisions. Foundry's ignored real-consumer
+`dev_real_worker_batched_and_single_sequence_vectors_agree` now exercises the selected
+profile's input limit and heterogeneous batches; it remains unexecuted for explicit
+geometry on this Linux sandbox. See [executed fixture evidence](../../docs/validation.md#model-aware-bodyparent-inputs--2026-10-10).

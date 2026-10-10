@@ -107,7 +107,8 @@ first batch, approximately doubled new-vector coverage, and completion/pause. It
 mapping visits prepared rows, so cold publication avoids a whole-source census.
 No new segment format, job store or worker process is introduced. MCP overlaps one
 bounded prefetch with one provider call; overlapping priority inputs are deduplicated
-before another call. Model batch geometry and foreground admission are unchanged.
+before another call. Foreground admission retains one model slot; the opt-in geometry
+and body recipe below extend input sizing and actual-token batch packing.
 
 The semantic CPU pool starts only when a new partition needs computation and is
 reused across waves (and MCP prepare runs), with at most eight workers. Fresh
@@ -145,6 +146,65 @@ previous generation. These are payload bounds, not total-process RAM guarantees.
 A generation still rebuilds in memory. Real-device throughput, larger model batches,
 80,000-file performance and task-quality improvements remain unmeasured in this
 Linux sandbox; integration tests use synthetic embedding providers.
+
+## Model-aware body/parent chunking
+
+Semantic profile v2 keeps address cards by default. To encode behavior inside source
+bodies, add these fields to a copy of an existing verified profile:
+
+```json
+{
+  "representation": {"kind": "body-v1", "parent_tokens": 64},
+  "card_tokens": 1024,
+  "batch": 8
+}
+```
+
+This is a profile fragment, not a complete model profile. Short units stay whole;
+large units split into exact source windows with bounded parent/header context.
+Unsupported syntax and configuration use source windows too. Parent text is fitted separately
+to at most one quarter of the configured card allowance; templates and special tokens
+also count in the complete input. Parent context is an input prefix, not a generated
+brief or a separate retrieval result. Returned citations identify child source spans,
+under the existing response allowance.
+
+With a legacy descriptor, preparation packs actual input lengths within 2,048 total
+tokens per call and the configured sequence count. It does not reserve 1,024 tokens
+for each short input. CLI preparation and continuous MCP maintenance share this rule.
+Body-only edits change affected inputs; included parent-header changes also invalidate
+their children. Same-language renames update provenance without re-embedding identical
+text. Repeated runs, reverts and switching back to cards-v1 reuse retained cache rows.
+Do not purge to switch recipes. Coverage stays partial while missing inputs populate.
+
+A model/backend that supports a larger window can explicitly pin new descriptor
+fields, for example:
+
+```json
+{
+  "adapter_revision": 2,
+  "geometry": {"v": 1, "input_tokens": 8192, "batch_tokens": 8192, "sequences": 8}
+}
+```
+
+This fragment belongs inside `descriptor`. It requires a worker built with geometry
+support; updating the worker executable also requires updating its verified hash.
+Keep the existing artifact/tokenizer/template/pooling/dimension claims accurate.
+`card_tokens` can then be raised within the input limit. Explicit geometry changes the
+function digest, so these vectors have a separate namespace. Without geometry, adapter
+revision 1 and the exact old digest remain. Worker startup checks the GGUF training
+window and actual context/batch/sequence capacities. Unsupported claims and oversize
+inputs refuse; nothing silently truncates. The hard ceiling is 32,768 input/call tokens
+and 32 sequences, not a promise that any selected model supports those values. Larger
+contexts also consume more device memory under the existing supervised memory limit.
+
+No default model profile is enlarged by this change. Sandbox evidence uses real
+partitioning/tokenization/storage/retrieval with deterministic provider vectors;
+long-context Metal parity, throughput and task quality are still unexecuted. Source
+plans are bounded by 2 MiB per source, 16,384 windows and 16 MiB accumulated context
+text, plus parser/tokenizer/array overhead. Fresh-card retention remains 2 MiB per source
+with bounded fallback. Separate parent/file/area vectors and late chunking are not
+implemented. See [009 T009](../specs/009-optional-semantic-retrieval/spec.md#t009--use-model-owned-geometry-and-contextual-representations)
+and [validation](validation.md#model-aware-bodyparent-inputs--2026-10-10).
 
 ## Incremental workspace watching
 

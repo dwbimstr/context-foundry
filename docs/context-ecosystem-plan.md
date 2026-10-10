@@ -39,8 +39,11 @@ and cheap progress observations. E3 now publishes bounded ANN deltas and indepen
 location maps through an atomic manifest, refreshes affected locations, and reuses
 verified/resident segments. Generation v5 adds bounded location overlays, shared mapping
 and metadata snapshots, and clean-restart publication reuse. Cold verification, changed
-restart baselines and compaction remain. E4 model-aware inputs remain pending.
-See [validation](validation.md#compact-publication-metadata--2026-10-10).
+restart baselines and compaction remain. E4 now adds explicit model geometry, exact
+body windows with bounded parent context, and actual-token batching. Existing address
+profiles/caches remain usable. Real-model long-context parity, quality and throughput
+remain unexecuted; independent parent/file/area vectors are not implemented.
+See [validation](validation.md#model-aware-bodyparent-inputs--2026-10-10).
 
 ## Architecture correction: useful context across 60,000–80,000 files
 
@@ -242,7 +245,8 @@ remain evidence about their historical recipe only.
 A–D remain completed experimental capabilities; the owner's efficiency correction
 puts E1–E4 ahead of broad generated knowledge. E1 and E2 are implemented experimentally as recorded
 below; E3 ANN deltas are implemented, with remaining publication costs named below.
-E4 onward remain pending. Sandbox build/test authorization continues.
+E4 body/parent inputs and model geometry are implemented experimentally; real-device
+acceptance remains. F onward remain pending. Sandbox build/test authorization continues.
 
 | Order | Concrete increment | Owner/status |
 | --- | --- | --- |
@@ -253,7 +257,7 @@ E4 onward remain pending. Sandbox build/test authorization continues.
 | E1 | Remove repeated cold/warm CPU and startup work | Semantic worker reuse, bounded tokenized-card handoff, lazy CLI acquisition, no-op chunk allocation avoidance, bounded initial ingestion and lexical worker reuse implemented. Verified artifact handoff, transactional counters/reconciliation and exact per-card fitting reuse implemented under 009 T006/T007; macOS model handoff and real-device throughput remain unexecuted here. |
 | E2 | Durable changed-work frontier, explicit continuous semantic maintenance, independent acknowledgments and cheap status | 009 T008 with 001 T011; implemented experimentally in schema 9; ordinary changed-input selection is bounded; ANN deltas follow in E3 |
 | E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; ANN deltas, mapping-only publication, bounded compaction and crash recovery implemented. Warm affected-location, bounded location overlays, shared metadata and clean-restart publication reuse are implemented. Cold verification, changed-input restart and compaction remain corpus-sized; total affected-path cost is not claimed. |
-| E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; pending; compare against current cards, keep old profiles/caches usable |
+| E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; opt-in body windows, bounded parent prefixes, versioned limits and actual-token batches implemented. Address profiles/caches preserved; independent area vectors and real-model comparison remain |
 | F | Selective memoized LLM generation, reverse dependencies, affected area rollups and indexed derived knowledge | 010 T002 on E2/E4 resource and identity contracts; pending |
 | G | Evidence-bearing boundary joins and task-oriented implementation/caller/test composition | 005 T005 / 003 T009; pending |
 

@@ -1128,6 +1128,7 @@ fn serving_limit_is_checked_before_any_model_work() {
     let limits = DocumentLimits {
         inputs: context_foundry::neural::profile::DEFAULT_BATCH as usize,
         tokens: context_foundry::neural::profile::DEFAULT_CARD_TOKENS as usize,
+        total_tokens: provider::SERVING_LIMIT_TOKENS,
     };
     let batch: Vec<TokenizedInput> = (0..limits.inputs)
         .map(|_| TokenizedInput {

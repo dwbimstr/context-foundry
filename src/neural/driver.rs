@@ -62,12 +62,13 @@ use crate::control::Control;
 use crate::error::{FResult, FoundryError};
 use crate::neural::cache::{self, SemanticState};
 use crate::neural::index::{self, GenerationError, MappingWalk, Publication, validate_cached};
-use crate::neural::partition;
 use crate::neural::prepare::{
     self, Batch, Cards, PrepareReport, Progress, Selected, Selection, Steps, Stop, StopOrError,
     Walk,
 };
-use crate::neural::provider::{ProviderError, TokenizedInput};
+use crate::neural::provider::ProviderError;
+#[cfg(test)]
+use crate::neural::provider::TokenizedInput;
 use crate::neural::query::QueryRuntime;
 use crate::store::Engine;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -434,7 +435,7 @@ impl<'a> Run<'a> {
     ) -> Self {
         let profile = &runtime.profile;
         let digest = profile.descriptor.digest();
-        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+        let recipe = profile.recipe_id();
         Self {
             owner,
             runtime,
@@ -858,8 +859,9 @@ impl<'a> Run<'a> {
             let size = batch
                 .len()
                 .min(preparation.batch_limit(Instant::now(), full));
-            let keys: Vec<String> = batch.keys.drain(..size).collect();
-            let inputs: Vec<TokenizedInput> = batch.inputs.drain(..size).collect();
+            let admitted = batch.take(self.runtime.profile.document_limits(), size)?;
+            let keys = admitted.keys;
+            let inputs = admitted.inputs;
             let tokens: u64 = inputs.iter().map(|input| input.ids.len() as u64).sum();
             let job = self
                 .control

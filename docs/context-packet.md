@@ -36,9 +36,12 @@ atomically switching a manifest and compacting at bounded thresholds. Small edit
 location-only changes avoid full ANN builds. Warm publication now refreshes affected
 locations and reuses verified/resident ANN segments. Generation v5 adds bounded location
 overlays, shared mapping/metadata snapshots and clean-restart publication reuse. Changed
-restart/overflow/repair still reconcile; cold verification and compaction remain. Model-aware
-inputs (E4), automatic generation (010 T002), boundary joins and task-evidence composition
-remain pending.
+restart/overflow/repair still reconcile; cold verification and compaction remain. E4 now
+adds opt-in body windows with bounded parent/header context, exact child citations,
+versioned model geometry and actual-token batching in both preparation paths. Address
+profiles and old cache rows remain usable; real-device long-context parity/quality and
+independent parent/file/area vectors remain open. Automatic generation (010 T002),
+boundary joins and task-evidence composition remain pending.
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
 [validation](validation.md). 013 remains frozen. No release or quality gain is claimed.
 

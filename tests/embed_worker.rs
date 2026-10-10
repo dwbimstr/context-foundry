@@ -101,6 +101,7 @@ fn fake_profile(
         },
         descriptor,
         query_template: "query: {text}".into(),
+        representation: Default::default(),
         card_tokens: context_foundry::neural::profile::DEFAULT_CARD_TOKENS,
         batch: context_foundry::neural::profile::DEFAULT_BATCH,
         memory_ceiling_bytes: ceiling,
@@ -3506,29 +3507,32 @@ fn dev_real_worker_batched_and_single_sequence_vectors_agree() {
         .embed_documents(&reordered, &context_foundry::Control::unbounded())
         .expect("reordered");
     assert_agree("reordered", &batched, &expected);
-    let card = text_with_tokens(profile.card_tokens as usize, &profile);
-    let hetero = vec![dev_ids(&profile, short), dev_ids(&profile, &card)];
-    assert_eq!(hetero[1].ids.len(), profile.card_tokens as usize);
+    let short_input = dev_ids(&profile, short);
+    let card_limit = (profile.card_tokens as usize)
+        .min(profile.document_limits().total_tokens - short_input.ids.len());
+    let card = text_with_tokens(card_limit, &profile);
+    let hetero = vec![short_input, dev_ids(&profile, &card)];
+    assert_eq!(hetero[1].ids.len(), card_limit);
     let reference = singly(provider.as_mut(), &hetero);
     let batched = provider
         .embed_documents(&hetero, &context_foundry::Control::unbounded())
         .expect("heterogeneous");
     assert_agree("heterogeneous", &batched, &reference);
 
-    // Serving boundary: exactly 2048 tokens as one query input; 2049 is
-    // refused before any model call.
-    let limit = context_foundry::neural::provider::SERVING_LIMIT_TOKENS;
+    // Test the selected descriptor boundary, including an explicitly configured
+    // long-context profile. This requires the real macOS worker and weights.
+    let limit = profile.descriptor.input_limits().tokens;
     let full = dev_ids(&profile, &text_with_tokens(limit, &profile));
     assert_eq!(full.ids.len(), limit);
     provider
         .embed_query(&full, Instant::now() + Duration::from_secs(120))
-        .expect("2048-token query");
+        .expect("query at the descriptor limit");
     let mut over = full.clone();
     over.ids.push(over.ids[0]);
     let refused = provider.embed_query(&over, Instant::now() + Duration::from_secs(5));
     assert!(
         matches!(refused, Err(ProviderError::InputTooLarge(_))),
-        "2049 must be refused before any model call, got {refused:?}"
+        "limit + 1 must be refused before any model call, got {refused:?}"
     );
     // The supervised worker is released (reaped) before the test ends.
     drop(provider);

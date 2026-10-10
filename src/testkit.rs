@@ -1296,6 +1296,7 @@ pub fn write_semantic_profile(
         output: "f32".into(),
         adapter_revision: crate::neural::provider::REAL_ADAPTER_REVISION,
         document_template: "doc: {text}".into(),
+        geometry: None,
     };
     mutate(&mut descriptor);
     descriptor.validate().expect("fixture descriptor validates");
@@ -1310,6 +1311,7 @@ pub fn write_semantic_profile(
         },
         descriptor,
         query_template: "query: {text}".into(),
+        representation: Default::default(),
         card_tokens: crate::neural::profile::DEFAULT_CARD_TOKENS,
         batch: crate::neural::profile::DEFAULT_BATCH,
         memory_ceiling_bytes: 1024,

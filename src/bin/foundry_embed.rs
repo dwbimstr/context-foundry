@@ -6,8 +6,8 @@
 //! The core renders every card or query with the profile's template and
 //! tokenizes it with the profile's `tokenizer.json`; this worker feeds those
 //! IDs to llama.cpp unchanged. One context serves every call: n_ctx =
-//! n_batch = n_ubatch = 2048 tokens (the protocol's per-call total) and at
-//! most 32 sequences, so one call is ONE llama.cpp evaluation. Each input is
+//! n_batch = n_ubatch = the descriptor's total token capacity (legacy 2048),
+//! with at most 32 sequences, so one call is ONE llama.cpp evaluation. Each input is
 //! its own sequence, placed in the batch grouped by length; the pooled
 //! vector of each sequence (the descriptor's pinned pooling) is cut to the
 //! descriptor's dimension and renormalized. A split GGUF is refused before
@@ -102,8 +102,7 @@ fn real_run(engine: &mut context_foundry::neural::worker_runtime::Engine) -> i32
 #[cfg(target_os = "macos")]
 mod llama {
     use context_foundry::neural::provider::{
-        FunctionDescriptor, LLAMA_CPP_COMMIT, MAX_DOCUMENT_BATCH, SERVING_LIMIT_TOKENS,
-        TokenizedInput,
+        DocumentLimits, FunctionDescriptor, LLAMA_CPP_COMMIT, TokenizedInput,
     };
     use context_foundry::neural::worker_runtime::{mark_phase, refuse_split_gguf};
     use std::ffi::{CStr, CString, c_char, c_void};
@@ -223,8 +222,8 @@ mod llama {
 
     /// A loaded GGUF embedding model and its one context: every layer on
     /// Metal, embeddings on, the descriptor's pooling pinned, one unified
-    /// context of [`SERVING_LIMIT_TOKENS`] for up to [`MAX_DOCUMENT_BATCH`]
-    /// sequences, F32 K/V, flash attention off.
+    /// context with descriptor-bound token/sequence limits, F32 K/V, flash
+    /// attention off. Legacy descriptors retain the 2,048-token context.
     pub struct Embedder {
         model: NonNull<ffi::llama_model>,
         ctx: NonNull<ffi::llama_context>,
@@ -233,6 +232,7 @@ mod llama {
         n_embd_out: usize,
         dims: usize,
         use_encode: bool,
+        limits: DocumentLimits,
     }
 
     impl Embedder {
@@ -263,12 +263,21 @@ mod llama {
                 unsafe { ffi::llama_model_free(model.as_ptr()) };
                 return Err("encoder-decoder models are not supported for embeddings".into());
             }
-            let n_ctx = SERVING_LIMIT_TOKENS as u32;
+            let limits = descriptor.input_limits();
+            let trained = unsafe { ffi::llama_model_n_ctx_train(model.as_ptr()) };
+            if descriptor.geometry.is_some() && (trained <= 0 || limits.tokens > trained as usize) {
+                unsafe { ffi::llama_model_free(model.as_ptr()) };
+                return Err(format!(
+                    "requested {} input tokens exceed GGUF training context {trained}",
+                    limits.tokens
+                ));
+            }
+            let n_ctx = limits.total_tokens as u32;
             let mut ctx_params = unsafe { ffi::llama_context_default_params() };
             ctx_params.n_ctx = n_ctx;
             ctx_params.n_batch = n_ctx;
             ctx_params.n_ubatch = n_ctx;
-            ctx_params.n_seq_max = MAX_DOCUMENT_BATCH as u32;
+            ctx_params.n_seq_max = limits.inputs as u32;
             // One context for every sequence of a call: each may use all of it.
             ctx_params.kv_unified = true;
             ctx_params.embeddings = true;
@@ -295,6 +304,7 @@ mod llama {
                 n_embd_out: 0,
                 dims: descriptor.dims(),
                 use_encode: has_encoder && !has_decoder,
+                limits,
             };
             embedder.check(pooling)?;
             Ok(embedder)
@@ -317,19 +327,24 @@ mod llama {
                     "the context pools with type {actual}, not the pinned {pooling}"
                 ));
             }
-            let (n_ctx, n_batch, n_ubatch, n_seq_max) = unsafe {
+            let (n_ctx, n_ctx_seq, n_batch, n_ubatch, n_seq_max) = unsafe {
                 (
                     ffi::llama_n_ctx(ctx),
+                    ffi::llama_n_ctx_seq(ctx),
                     ffi::llama_n_batch(ctx),
                     ffi::llama_n_ubatch(ctx),
                     ffi::llama_n_seq_max(ctx),
                 )
             };
-            let want = SERVING_LIMIT_TOKENS as u32;
-            if n_ctx.min(n_batch).min(n_ubatch) < want || n_seq_max < MAX_DOCUMENT_BATCH as u32 {
+            let want = self.limits.total_tokens as u32;
+            if n_ctx.min(n_batch).min(n_ubatch) < want
+                || n_ctx_seq < self.limits.tokens as u32
+                || n_seq_max < self.limits.inputs as u32
+            {
                 return Err(format!(
-                    "llama.cpp gave n_ctx {n_ctx}, n_batch {n_batch}, n_ubatch {n_ubatch}, \
-                     n_seq_max {n_seq_max}; {want} tokens and {MAX_DOCUMENT_BATCH} sequences needed"
+                    "llama.cpp gave n_ctx {n_ctx}, n_ctx_seq {n_ctx_seq}, n_batch {n_batch}, n_ubatch {n_ubatch}, \
+                     n_seq_max {n_seq_max}; {want} tokens and {} sequences needed",
+                    self.limits.inputs
                 ));
             }
             let vocab = unsafe { ffi::llama_model_get_vocab(self.model.as_ptr()) };
@@ -366,20 +381,11 @@ mod llama {
         pub fn embed(&mut self, inputs: &[TokenizedInput]) -> Result<Vec<Vec<f32>>, String> {
             mark_phase("call");
             let total: usize = inputs.iter().map(|input| input.ids.len()).sum();
-            if inputs.is_empty() || inputs.len() > MAX_DOCUMENT_BATCH {
-                return Err(format!(
-                    "{} inputs; 1..={MAX_DOCUMENT_BATCH} allowed",
-                    inputs.len()
-                ));
-            }
-            if total > SERVING_LIMIT_TOKENS || inputs.iter().any(|input| input.ids.is_empty()) {
-                return Err(format!(
-                    "{total} tokens (or an empty input); 1..={SERVING_LIMIT_TOKENS} allowed"
-                ));
-            }
+            context_foundry::neural::provider::check_document_batch(inputs, self.limits)
+                .map_err(|e| e.to_string())?;
             let mut order: Vec<usize> = (0..inputs.len()).collect();
             order.sort_by_key(|&index| inputs[index].ids.len());
-            // SAFETY: the batch was allocated for SERVING_LIMIT_TOKENS tokens
+            // SAFETY: the batch was allocated for the verified total token capacity
             // with one sequence-ID slot each (`check` verified every array),
             // and `total` is at most that.
             unsafe {

@@ -380,10 +380,19 @@ pub fn tokenize_query(
     template: &str,
     query: &str,
 ) -> Result<TokenizedInput, ProviderError> {
+    tokenize_query_with_limit(tokenizer, template, query, provider::SERVING_LIMIT_TOKENS)
+}
+
+fn tokenize_query_with_limit(
+    tokenizer: &DocumentTokenizer,
+    template: &str,
+    query: &str,
+    limit: usize,
+) -> Result<TokenizedInput, ProviderError> {
     let rendered = provider::render(template, query);
     let tokenized = tokenizer.encode(&rendered)?;
     let input = TokenizedInput { ids: tokenized.ids };
-    provider::check_query(&input)?;
+    provider::check_query_with_limit(&input, limit)?;
     Ok(input)
 }
 
@@ -719,7 +728,12 @@ impl QueryRuntime {
     pub fn embed(&self, query: &str, deadline: Instant) -> Result<Vec<f32>, ProviderError> {
         let _dispatching = Dispatching::enter(self);
         let _ = neural_fault!(QUERY_REGISTERED, None, query);
-        let input = tokenize_query(&self.tokenizer, &self.profile.query_template, query)?;
+        let input = tokenize_query_with_limit(
+            &self.tokenizer,
+            &self.profile.query_template,
+            query,
+            self.profile.descriptor.input_limits().tokens,
+        )?;
         let now = Instant::now();
         let ceiling = now + QUERY_CEILING.min(deadline.saturating_duration_since(now) / 2);
         if Instant::now() >= ceiling {
@@ -930,10 +944,7 @@ impl QueryRuntime {
         let loaded = DenseIndex::load(
             engine,
             &profile.descriptor.digest(),
-            &crate::neural::partition::recipe_id(
-                &profile.descriptor.tokenizer,
-                profile.card_tokens,
-            ),
+            &profile.recipe_id(),
             profile.descriptor.dims(),
             control,
         )?;

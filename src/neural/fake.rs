@@ -8,8 +8,7 @@ use crate::error::FoundryError;
 use crate::neural::prepare;
 use crate::neural::profile::{DEFAULT_BATCH, SemanticProfile};
 use crate::neural::provider::{
-    DocumentLimits, EmbeddingProvider, FunctionDescriptor, ProviderError, SERVING_LIMIT_TOKENS,
-    TokenizedInput, check_document_batch,
+    EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput, check_document_batch,
 };
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -131,7 +130,7 @@ impl EmbeddingProvider for FakeProvider {
         batch: &[TokenizedInput],
         control: &Control,
     ) -> Result<Vec<Vec<f32>>, ProviderError> {
-        check_document_batch(batch, DocumentLimits::PROTOCOL)?;
+        check_document_batch(batch, self.descriptor.input_limits())?;
         let call = self.handle.document_calls.fetch_add(1, Ordering::SeqCst) + 1;
         if let FakeBehavior::SlowMs(ms) = self.behavior {
             std::thread::sleep(Duration::from_millis(ms));
@@ -191,7 +190,7 @@ impl EmbeddingProvider for FakeProvider {
         input: &TokenizedInput,
         _deadline: Instant,
     ) -> Result<Vec<f32>, ProviderError> {
-        if input.ids.is_empty() || input.ids.len() > SERVING_LIMIT_TOKENS {
+        if input.ids.is_empty() || input.ids.len() > self.descriptor.input_limits().tokens {
             return Err(ProviderError::InputTooLarge(
                 "fake refuses an out-of-limit query".into(),
             ));
