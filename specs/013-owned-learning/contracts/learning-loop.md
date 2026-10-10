@@ -21,7 +21,9 @@ weights and upstream code are not distributed under Foundry's MIT license. This 
 specific weight mapping, not a generic Laya artifact import or runtime dependency.
 Base encoder weights alone are not an equivalent pretrained decision model.
 
-First implementation: Rust `tch` 0.24.0 with LibTorch 2.11.0, CPU float32, one example
+First accepted implementation: Rust `tch` 0.24.0 with LibTorch 2.11.0. The experimental
+0.26.0/2.13.0 migration is tracked in the [compatibility review](../../../docs/review/tch-026.md);
+it does not inherit that acceptance or alter the numerical tolerances. CPU float32, one example
 per batch. Do not introduce a tensor engine or additional ML backend. The probe used
 a separate Python reference for numerical comparison; production model/training code
 is Rust and does not import Laya or Transformers. Dependency/MSRV/package acceptance

@@ -97,8 +97,8 @@ bytes = "1"
 tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
 usearch = { version = "=2.26.2", optional = true }
 # 013 T002 learning worker only (`learning-worker`): LibTorch through tch,
-# the pin D001 accepted on Rust 1.90 (torch-sys 0.24.0 checks for LibTorch
-# 2.11.0). `foundry` and the default build never link it. `LIBTORCH` names
+# experimental 0.26.0/LibTorch 2.13.0 pairing (docs/review/tch-026.md).
+# Historical D001 acceptance was 0.24.0/2.11.0. The default build never links it. `LIBTORCH` names
 # the LibTorch tree at build time; build.rs records its lib directory as
 # the rpath of every linked target, so nothing depends on DYLD_LIBRARY_PATH.
 tch = { version = "=0.26.0", optional = true }
