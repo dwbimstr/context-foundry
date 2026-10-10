@@ -576,6 +576,7 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
                 json!({"op":"create","title":"MCP task"}),
                 json!({"op":"apply","expected_revision":1,"edits":[add("obs","observation","MCP recovery bytes")]}),
                 json!({"op":"peek","entry_id":"obs","offset":0,"bytes":100}),
+                json!({"op":"review","expected_revision":2,"paths":[],"finishing":true,"max_bytes":4096}),
             ] {
                 let result=client.call_tool(CallToolRequestParams::new("task_context").with_arguments(json!({"workspace_id":e.wid,"task_id":"investigation","command":command}).as_object().unwrap().clone())).await.unwrap();
                 assert_ne!(result.is_error, Some(true), "{result:?}");
@@ -587,6 +588,14 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
                         serde_json::from_str::<Value>(&text.text).unwrap()["text"],
                         "MCP recovery bytes"
                     );
+                }
+                if command["op"] == "review" {
+                    let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
+                        panic!()
+                    };
+                    let review: Value = serde_json::from_str(&text.text).unwrap();
+                    assert_eq!(review["silence"], true);
+                    assert_eq!(review["verified"], false);
                 }
             }
         }
@@ -676,6 +685,62 @@ fn advice_is_grounded_bounded_silent_and_dismissal_survives_restart() {
         .unwrap()["silence"],
         true
     );
+}
+#[test]
+fn review_checks_explicit_scope_and_open_obligations_without_claiming_conflicts() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let source = "def retry(): return 3\n";
+    engine.replace_source("retry.py", source).unwrap();
+    let handle = context_foundry::SourceHandle {
+        workspace_id: e.wid.clone(),
+        path: "retry.py".into(),
+        sha256: context_foundry::digest(source.as_bytes()),
+        start: 0,
+        end: source.len() as u64,
+    }
+    .to_v2();
+    let mut constraint = add("limit", "constraint", "Keep three retries.");
+    constraint["entry"]["source_links"] = json!([handle]);
+    let mut failed = add(
+        "failed",
+        "rejected_attempt",
+        "Unlimited retries exhausted the server.",
+    );
+    failed["entry"]["source_links"] = constraint["entry"]["source_links"].clone();
+    let revision = apply(&engine, create(&engine), json!([constraint, failed, add("test", "work", "Run the retry regression."), add("open", "question", "Does the server send Retry-After?"), {"op":"checkpoint","name":"before"}])).unwrap()["revision"].as_u64().unwrap();
+    let review = |paths: Value, finishing: bool, revision, max_bytes| json!({"op":"review","expected_revision":revision,"paths":paths,"finishing":finishing,"max_bytes":max_bytes});
+    let scoped = call(&engine, review(json!(["retry.py"]), false, revision, 4096)).unwrap();
+    assert_eq!(scoped["advice"].as_array().unwrap().len(), 2);
+    assert_eq!(scoped["advice"][0]["trigger"], "constraint_check");
+    assert_eq!(scoped["advice"][1]["trigger"], "related_failed_attempt");
+    assert_eq!(scoped["verified"], false);
+    assert_eq!(
+        call(
+            &engine,
+            review(json!(["unrelated.py"]), false, revision, 4096)
+        )
+        .unwrap()["silence"],
+        true
+    );
+    let finishing = call(&engine, review(json!([]), true, revision, 4096)).unwrap();
+    assert_eq!(finishing["advice"].as_array().unwrap().len(), 3);
+    assert!(call(&engine, review(json!([]), true, revision - 1, 4096)).is_err());
+    assert!(call(&engine, review(json!(["../escape"]), false, revision, 4096)).is_err());
+    let bounded = call(&engine, review(json!(["retry.py"]), true, revision, 512)).unwrap();
+    assert!(serde_json::to_vec(&bounded).unwrap().len() < 512);
+    assert!(bounded["omitted"].as_u64().unwrap() > 0);
+    engine
+        .replace_source("retry.py", "def retry(): return 4\n")
+        .unwrap();
+    let stale = call(&engine, review(json!(["retry.py"]), false, revision, 4096)).unwrap();
+    assert_eq!(stale["silence"], true);
+    assert_eq!(stale["stale"], 2);
+    let revision = apply(&engine, revision, json!([{"op":"dismiss","entry_id":"failed"},{"op":"restore","name":"before"},{"op":"select","entry_id":"test","selected":false},{"op":"select","entry_id":"open","selected":false}])).unwrap()["revision"].as_u64().unwrap();
+    drop(engine);
+    let reopened = cli(&e, review(json!([]), true, revision, 4096));
+    assert_eq!(reopened["silence"], true);
+    assert_eq!(reopened["stale"], 1);
 }
 fn promotion(revision: u64) -> Value {
     json!({"op":"promote","expected_revision":revision,"entry_id":"decision","memory_id":"backoff-policy","author":"operator","provenance":"explicit sandbox promotion"})

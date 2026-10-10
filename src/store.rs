@@ -1507,6 +1507,7 @@ pub(crate) struct RecordPlan {
 #[derive(Clone, Copy, Default)]
 pub struct ContextOptions<'a> {
     pub compose_evidence: bool,
+    pub compact_evidence: bool,
     pub boundary_config: Option<&'a str>,
     pub task: Option<crate::task_context::Scope<'a>>,
     pub memory: bool,
@@ -5314,6 +5315,11 @@ impl Engine {
         control: &crate::Control,
         options: &ContextOptions,
     ) -> FResult<crate::memory::MemoryContext> {
+        if options.compact_evidence && !options.compose_evidence {
+            return Err(FoundryError::InvalidArgument(
+                "compact_evidence requires compose_evidence".into(),
+            ));
+        }
         if options.compose_evidence {
             return self.compose_task_evidence(query, strategy, control, options);
         }

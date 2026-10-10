@@ -2040,13 +2040,20 @@ fn pack_task_evidence(
                 .iter()
                 .map(|p| p.evidence.handle(&b.workspace_id))
                 .collect();
+            let dependencies: Vec<_> = r
+                .providers
+                .iter()
+                .flat_map(|p| &p.dependencies)
+                .map(|s| s.handle(&b.workspace_id))
+                .collect();
             let config = b.config.handle(&b.workspace_id);
             let line = format!(
                 "task-relationship: {}\n",
-                serde_json::json!({"recipe":b.recipe,"evidence":"syntactic","kind":r.kind,"resolution":r.resolution,"key":r.consumer.key,"consumer":consumer.to_v2(),"providers":providers.iter().map(SourceHandle::to_v2).collect::<Vec<_>>(),"config":config.to_v2()})
+                serde_json::json!({"recipe":b.recipe,"evidence":"syntactic","kind":r.kind,"resolution":r.resolution,"key":r.consumer.key,"consumer":consumer.to_v2(),"providers":providers.iter().map(SourceHandle::to_v2).collect::<Vec<_>>(),"dependencies":dependencies.iter().map(SourceHandle::to_v2).collect::<Vec<_>>(),"config":config.to_v2()})
             );
             let mut required = vec![consumer, config];
             required.extend(providers);
+            required.extend(dependencies);
             tail.push((line, required, false));
         }
     }

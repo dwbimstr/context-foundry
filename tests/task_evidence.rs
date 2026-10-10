@@ -105,6 +105,105 @@ fn report(text: &str) -> Value {
     .unwrap()
 }
 #[test]
+fn compact_accounting_preserves_sources_relationships_and_protected_state() {
+    let e = fixture();
+    let verbose = compose(&e);
+    let compact = e
+        .engine
+        .context_candidates_with(
+            "items",
+            Strategy::Auto,
+            &Control::unbounded(),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &e.wid,
+                    task_id: "contract",
+                    expected_revision: e.revision,
+                }),
+                compose_evidence: true,
+                compact_evidence: true,
+                boundary_config: Some("boundary.json"),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let pack = |c: &_| {
+        response::pack_enriched_context(c, None, Budget::request(12000), &response::stdout_bytes)
+            .unwrap()
+    };
+    let (verbose, compact) = (pack(&verbose), pack(&compact));
+    let (v, c) = (report(&verbose.text), report(&compact.text));
+    assert_eq!(c["v"], 2);
+    assert_eq!(c["complete"], false);
+    assert_eq!(c["constraints"], v["constraints"]);
+    assert_eq!(c["verification"], v["verification"]);
+    assert!(compact.tokens < verbose.tokens);
+    // The report alone changes; original cited bodies, task view and both-end
+    // relationship evidence remain byte-identical at this nonbinding allowance.
+    let without_report = |text: &str| {
+        text.lines()
+            .filter(|l| !l.starts_with("task-evidence: "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert_eq!(without_report(&compact.text), without_report(&verbose.text));
+    for (facet, value) in v["facets"].as_object().unwrap() {
+        assert_eq!(c["facets"][facet], value["state"]);
+    }
+    for (i, source) in c["sources"].as_array().unwrap().iter().enumerate() {
+        assert_eq!(source["item"], i + 1);
+        assert!(source.get("handle").is_none());
+    }
+    assert!(
+        e.engine
+            .context_candidates_with(
+                "items",
+                Strategy::Auto,
+                &Control::unbounded(),
+                &ContextOptions {
+                    compact_evidence: true,
+                    ..Default::default()
+                }
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn composed_mounted_routes_require_declaration_and_mount_bodies() {
+    let e = fixture();
+    let router = "from fastapi import FastAPI, APIRouter\napp = FastAPI()\nrouter = APIRouter(prefix='/v1')\n@router.get('/items')\ndef items():\n    return {'items': ['book']}\napp.include_router(router)\n";
+    e.engine.replace_source("service.py", router).unwrap();
+    e.engine
+        .index_boundaries("boundary.json", &[], &Control::unbounded())
+        .unwrap();
+    let c = compose(&e);
+    let mut delivered = false;
+    for budget in [1500, 2500, 4000, 12000] {
+        let Ok(p) = response::pack_enriched_context(
+            &c,
+            None,
+            Budget::request(budget),
+            &response::stdout_bytes,
+        ) else {
+            continue;
+        };
+        assert!(p.tokens <= budget);
+        for line in p
+            .text
+            .lines()
+            .filter_map(|l| l.strip_prefix("task-relationship: "))
+        {
+            let relationship: Value = serde_json::from_str(line).unwrap();
+            assert_eq!(relationship["dependencies"].as_array().unwrap().len(), 2);
+            assert!(p.text.contains("router = APIRouter(prefix='/v1')"));
+            assert!(p.text.contains("app.include_router(router)"));
+            delivered = true;
+        }
+    }
+    assert!(delivered);
+}
+#[test]
 fn composes_task_and_multiservice_evidence_with_exact_citations_and_no_duplicate_spans() {
     let e = fixture();
     let c = compose(&e);
@@ -318,6 +417,7 @@ fn cli_composition_supports_a_sandbox_contract_patch_and_test() {
             "--task-revision",
             &revision.to_string(),
             "--compose-evidence",
+            "--compact-evidence",
             "--boundary-config",
             "boundary.json",
             "--tokens",
@@ -331,6 +431,7 @@ fn cli_composition_supports_a_sandbox_contract_patch_and_test() {
         String::from_utf8_lossy(&out.stderr)
     );
     let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(report(&text)["v"], 2);
     assert!(text.contains("['products']"));
     assert!(text.contains("'items': ['book']"));
     assert!(text.contains("test_contract.py#"));
@@ -412,7 +513,13 @@ async fn mcp_composition_is_advertised_only_when_enabled_and_uses_real_result_bu
             .await
             .unwrap();
         assert_eq!(indexed.is_error == Some(true), !enabled, "{indexed:?}");
-        let args = json!({"query":"items","task_id":"contract","task_revision":revision,"compose_evidence":true,"boundary_config":"boundary.json","tokens":4000});
+        assert_eq!(
+            tool.input_schema["properties"]
+                .get("compact_evidence")
+                .is_some(),
+            enabled
+        );
+        let args = json!({"query":"items","task_id":"contract","task_revision":revision,"compose_evidence":true,"compact_evidence":true,"boundary_config":"boundary.json","tokens":4000});
         let result = client
             .call_tool(
                 CallToolRequestParams::new("context")
@@ -428,6 +535,7 @@ async fn mcp_composition_is_advertised_only_when_enabled_and_uses_real_result_bu
             assert!(response::count_tokens(&t.text) <= 4000);
             assert!(serde_json::to_vec(&result).unwrap().len() <= response::BYTE_CAP);
             assert_eq!(report(&t.text)["complete"], false);
+            assert_eq!(report(&t.text)["v"], 2);
         }
         client.cancel().await.unwrap();
     }

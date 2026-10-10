@@ -10,6 +10,15 @@ what to clone, how to prove the setup reproduces the recorded results), follow
 
 ## Where things stand
 
+**Continuation, 2026-10-10:** `experimental/context-ecosystem` now incorporates main's
+coordinated tch 0.26/LibTorch 2.13 migration. The expanded work adds compact evidence
+accounting, typed/mounted HTTP dependencies, explicit grounded task review,
+affinity/cgroup CPU admission and completed-object generation termination. See the
+[current validation](validation.md#expanded-ecosystem-continuation--2026-10-10) and
+[remaining inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
+macOS/Metal acceptance is deferred by the owner; 013 learning remains frozen off.
+
+
 **Experimental update, 2026-10-09:** the owner authorized local work on
 `experimental/context-ecosystem` without waiting on external measurements. Retrieval
 tracing, opt-in behavioral packing, task state/recovery/promotion and task-aware

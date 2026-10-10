@@ -101,6 +101,9 @@ enum Command {
         /// Compose implementation, boundary consumers, configuration and tests for the selected task.
         #[arg(long, requires = "task")]
         compose_evidence: bool,
+        /// Deliver compact evidence accounting without repeating source handles.
+        #[arg(long, requires = "compose_evidence")]
+        compact_evidence: bool,
         /// Indexed boundary configuration used for task evidence traversal.
         #[arg(long, requires = "compose_evidence")]
         boundary_config: Option<String>,
@@ -887,6 +890,7 @@ fn run() -> AResult<()> {
             task,
             task_revision,
             compose_evidence,
+            compact_evidence,
             boundary_config,
             semantic_profile,
             policy_config,
@@ -955,6 +959,7 @@ fn run() -> AResult<()> {
                     crate::store::ContextOptions {
                         task: task_scope,
                         compose_evidence,
+                        compact_evidence,
                         boundary_config: boundary_config.as_deref(),
                         memory: include_memory,
                         briefs: include_briefs,

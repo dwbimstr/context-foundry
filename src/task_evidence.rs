@@ -15,6 +15,7 @@ pub struct Support {
     pub via: BTreeSet<String>,
 }
 pub struct Plan {
+    pub compact: bool,
     pub support: Vec<Support>,
     pub boundaries: Option<crate::boundary::Relations>,
     pub boundary_requested: bool,
@@ -89,6 +90,16 @@ impl Plan {
             for r in &b.relations {
                 *resolution.entry(r.resolution).or_default() += 1;
             }
+        }
+        if self.compact {
+            return json!({"v":2,"complete":false,"host_application":"unknown",
+                "facets":facets.iter().map(|(name,value)|(*name,value["state"].clone())).collect::<BTreeMap<_,_>>(),
+                "constraints":{"caller_assertions":self.constraints,"verified":false,"conflicts":"not_evaluated"},
+                "discovery":{"queried_entries":self.queried_entries,"unqueried_entries":self.unqueried_entries,"stale_links":self.stale_links,"limited":self.discovery_limited},
+                "boundary":{"requested":self.boundary_requested,"available":self.boundaries.as_ref().map_or(0,|b|b.relations.len()),"delivered":relationship_count,"resolution":resolution,"incomplete_paths":self.boundaries.as_ref().map(|b|&b.incomplete_paths),"truncated":self.boundaries.as_ref().is_some_and(|b|b.truncated)},
+                "compiler":{"kind":"references","delivered":compiler_count,"skipped_seeds":self.compiler_skipped_seeds,"windows":self.compiler.iter().map(|c|json!({"coverage":c.coverage,"references":c.items.len(),"stale":c.stale,"limited":c.candidates_full||c.more||c.definitions_truncated})).collect::<Vec<_>>()},
+                "derived_briefs":brief_count,"verification":"test_candidates_only_not_executed",
+                "sources":included.iter().enumerate().map(|(n,&(i,f))|json!({"item":n+1,"representation":if f==0{"body"}else{"address"},"facets":self.support[i].facets,"via":self.support[i].via})).collect::<Vec<_>>()});
         }
         json!({"v":1,"scope":if self.roots.len()>1 {"admitted_roots_primary_task"} else {"primary_task"},"roots":self.roots,"complete":false,"host_application":"unknown",
             "orientation":{"task_view":"delivered","derived_briefs":brief_count},
@@ -189,6 +200,7 @@ impl Engine {
             .filter(|e| matches!(e.kind, Kind::Requirement | Kind::Question))
             .collect();
         let mut plan = Plan {
+            compact: options.compact_evidence,
             support: vec![],
             compiler: vec![],
             compiler_skipped_seeds: 0,
@@ -206,6 +218,7 @@ impl Engine {
         };
         let mut plain = *options;
         plain.compose_evidence = false;
+        plain.compact_evidence = false;
         plain.boundary_config = None;
         plain.briefs = false;
         let mut context = self.context_candidates_with(query, strategy, control, &plain)?;
@@ -397,6 +410,14 @@ impl Engine {
                         "syntactic_http_consumer",
                     );
                     for p in &r.providers {
+                        for dependency in &p.dependencies {
+                            plan.discovery_limited |= !add(
+                                &mut candidates,
+                                dependency.handle(&wid),
+                                "configuration",
+                                "syntactic_router_mount",
+                            );
+                        }
                         let provider_span = if p.context.end - p.context.start > MAX_SPAN_BYTES {
                             plan.discovery_limited = true;
                             &p.evidence

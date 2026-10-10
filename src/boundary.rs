@@ -12,23 +12,30 @@ use tree_sitter::Node;
 
 const SCOPES: TableDefinition<&str, &str> = TableDefinition::new("boundary_scopes");
 const KEYS: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("boundary_keys");
-pub const RECIPE: &str = "python-http-v2";
+pub const RECIPE: &str = "python-http-v3";
 const MAX_FILES: usize = 64;
 const MAX_FACTS: usize = 128;
 const MAX_RESULTS: usize = 64;
 
-// Only whole-segment, default string parameters are supported. Converters,
-// repeated parameter names and mixed literal/parameter segments stay incomplete.
+// Static Starlette/FastAPI builtin converters. A terminal path converter may
+// consume multiple or empty segments. Custom/mixed/nonterminal path forms remain
+// incomplete; declaration order is not used to choose between overlapping routes.
+fn parameter(part: &str) -> Option<(&str, &str)> {
+    let body = part.strip_prefix('{')?.strip_suffix('}')?;
+    let (name, kind) = body.split_once(':').unwrap_or((body, "str"));
+    Some((name, kind))
+}
 fn route_path(path: &str) -> bool {
-    if !path.starts_with('/') || path.len() > 1024 || path.contains(['?', '#']) {
+    if !path.starts_with('/') || path.len() > 1024 || path.contains(['?', '#', '%']) {
         return false;
     }
     let mut names = BTreeSet::new();
-    path.split('/').all(|part| {
+    let parts: Vec<_> = path.split('/').collect();
+    parts.iter().enumerate().all(|(i, part)| {
         if !part.contains(['{', '}']) {
             return true;
         }
-        let Some(name) = part.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+        let Some((name, kind)) = parameter(part) else {
             return false;
         };
         let mut bytes = name.bytes();
@@ -37,22 +44,56 @@ fn route_path(path: &str) -> bool {
             .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
             && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
             && names.insert(name)
+            && ["str", "int", "float", "uuid", "path"].contains(&kind)
+            && (kind != "path" || i + 1 == parts.len())
     })
+}
+fn matches_value(kind: &str, value: &str) -> bool {
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    match kind {
+        "str" => !value.is_empty(),
+        "int" => digits(value),
+        "float" => value
+            .split_once('.')
+            .map_or_else(|| digits(value), |(a, b)| digits(a) && digits(b)),
+        "uuid" => {
+            // Starlette permits each separator independently to be omitted.
+            let mut rest = value.as_bytes();
+            for size in [8, 4, 4, 4, 12] {
+                if rest.len() < size || !rest[..size].iter().all(u8::is_ascii_hexdigit) {
+                    return false;
+                }
+                rest = &rest[size..];
+                if size != 12 && rest.first() == Some(&b'-') {
+                    rest = &rest[1..];
+                }
+            }
+            rest.is_empty()
+        }
+        _ => false,
+    }
 }
 fn matches_route(provider: &Key, consumer: &Key) -> bool {
     if provider.service != consumer.service || provider.method != consumer.method {
         return false;
     }
     let mut actual = consumer.path.split('/');
-    provider.path.split('/').all(|part| {
-        actual.next().is_some_and(|value| {
-            if part.starts_with('{') {
-                !value.is_empty()
-            } else {
-                part == value
+    for part in provider.path.split('/') {
+        let Some(value) = actual.next() else {
+            return false;
+        };
+        if let Some((_, kind)) = parameter(part) {
+            if kind == "path" {
+                return true;
+            } // validated terminal converter, including empty
+            if !matches_value(kind, value) {
+                return false;
             }
-        })
-    }) && actual.next().is_none()
+        } else if part != value {
+            return false;
+        }
+    }
+    actual.next().is_none()
 }
 fn method_key(key: &Key) -> Key {
     Key {
@@ -148,7 +189,7 @@ impl Config {
         for p in self.paths() {
             validate_path(&p)?;
             if !p.ends_with(".py") {
-                return Err(invalid("python-http-v2 accepts only .py sources"));
+                return Err(invalid("python-http-v3 accepts only .py sources"));
             }
         }
         Ok(())
@@ -196,6 +237,8 @@ pub struct Fact {
     pub role: String,
     pub key: Option<Key>,
     pub evidence: Span,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<Span>,
     pub context: Span,
     pub unsupported: Option<String>,
 }
@@ -695,6 +738,24 @@ fn literal(n: Node, s: &str) -> Option<String> {
 fn first_argument(n: Node) -> Option<Node> {
     n.child_by_field_name("arguments")?.named_child(0)
 }
+fn static_prefix(call: Node, source: &str, skip: usize) -> Option<String> {
+    let args = children(call.child_by_field_name("arguments")?);
+    if args.len() < skip || args.len() > skip + 1 {
+        return None;
+    }
+    let Some(arg) = args.get(skip) else {
+        return Some(String::new());
+    };
+    if arg.kind() != "keyword_argument"
+        || text(arg.child_by_field_name("name")?, source) != "prefix"
+    {
+        return None;
+    }
+    let prefix = literal(arg.child_by_field_name("value")?, source)?;
+    (prefix.is_empty()
+        || (route_path(&prefix) && !prefix.ends_with('/') && !prefix.contains(['{', '}'])))
+    .then_some(prefix)
+}
 fn attr(n: Node, s: &str) -> Option<(String, String)> {
     if n.kind() != "attribute" {
         return None;
@@ -755,6 +816,7 @@ fn extract(
     }
     let mut clients = BTreeSet::new();
     let mut constructors = BTreeSet::new();
+    let mut router_constructors = BTreeSet::new();
     let mut modules = BTreeSet::new();
     let mut approved = BTreeSet::new();
     // Only module-level imports. Conservative binding checks below refuse
@@ -762,6 +824,35 @@ fn extract(
     for n in children(root) {
         let t = text(n, source);
         let words: Vec<_> = t.split_whitespace().collect();
+        if let Some(imports) = t.strip_prefix("from fastapi import ") {
+            let mut parsed = Vec::new();
+            for item in imports.split(',') {
+                let words: Vec<_> = item.split_whitespace().collect();
+                match words.as_slice() {
+                    [name] if ["FastAPI", "APIRouter"].contains(name) => {
+                        parsed.push((*name, *name))
+                    }
+                    [name, "as", alias] if ["FastAPI", "APIRouter"].contains(name) => {
+                        parsed.push((*name, *alias))
+                    }
+                    _ => {
+                        parsed.clear();
+                        break;
+                    }
+                }
+            }
+            if !parsed.is_empty() {
+                for (kind, name) in parsed {
+                    if kind == "APIRouter" {
+                        router_constructors.insert(name.to_owned());
+                    } else {
+                        constructors.insert(name.to_owned());
+                    }
+                }
+                approved.insert((n.start_byte(), n.end_byte()));
+                continue;
+            }
+        }
         let binding = match words.as_slice() {
             ["import", name] if ["requests", "httpx", "fastapi"].contains(name) => {
                 Some((*name, *name))
@@ -789,6 +880,9 @@ fn extract(
         }
     }
     let mut apps = BTreeSet::new();
+    let mut routers = BTreeMap::new();
+    let mut declared = BTreeSet::new();
+    let mut duplicate_declarations = false;
     for n in &nodes {
         if n.kind() != "assignment"
             || n.parent()
@@ -811,19 +905,92 @@ fn extract(
         };
         let valid = constructors.contains(text(f, source))
             || attr(f, source).is_some_and(|(m, a)| modules.contains(&m) && a == "FastAPI");
+        let router = router_constructors.contains(text(f, source))
+            || attr(f, source).is_some_and(|(m, a)| modules.contains(&m) && a == "APIRouter");
+        if router && let Some(prefix) = static_prefix(right, source, 0) {
+            duplicate_declarations |= !declared.insert(text(left, source).to_owned());
+            routers.insert(text(left, source).to_owned(), (prefix, *n));
+            approved.insert((left.start_byte(), left.end_byte()));
+        }
         // FastAPI constructor options such as root_path are outside this recipe.
         if valid
             && right
                 .child_by_field_name("arguments")
                 .is_some_and(|a| a.named_child_count() == 0)
         {
+            duplicate_declarations |= !declared.insert(text(left, source).to_owned());
             apps.insert(text(left, source).to_owned());
             approved.insert((left.start_byte(), left.end_byte()));
         }
     }
+    // Only direct, same-module include_router calls after all route definitions.
+    // FastAPI copies router routes at inclusion; earlier/dynamic/nested/multiple
+    // mounts cannot certify a provider with this bounded recipe.
+    let mut last_receiver_call = BTreeMap::new();
+    for &n in &nodes {
+        if n.kind() == "call"
+            && let Some((receiver, _)) = n
+                .child_by_field_name("function")
+                .and_then(|f| attr(f, source))
+        {
+            last_receiver_call.insert(receiver, n.start_byte());
+        }
+    }
+    let mut mounts = BTreeMap::new();
+    let mut mounting_incomplete = duplicate_declarations;
+    for &n in &nodes {
+        if n.kind() != "call" {
+            continue;
+        }
+        let Some((receiver, method)) = n
+            .child_by_field_name("function")
+            .and_then(|f| attr(f, source))
+        else {
+            continue;
+        };
+        if !(apps.contains(&receiver) || routers.contains_key(&receiver))
+            || !["include_router", "mount"].contains(&method.as_str())
+        {
+            continue;
+        }
+        let mount = (|| {
+            if method != "include_router"
+                || !apps.contains(&receiver)
+                || n.parent()
+                    .and_then(|p| p.parent())
+                    .is_none_or(|p| p.kind() != "module")
+            {
+                return None;
+            }
+            let arg = first_argument(n)?;
+            if arg.kind() != "identifier" || !routers.contains_key(text(arg, source)) {
+                return None;
+            }
+            let prefix = static_prefix(n, source, 1)?;
+            let name = text(arg, source).to_owned();
+            if last_receiver_call
+                .get(&name)
+                .is_some_and(|&last| last > n.start_byte())
+            {
+                return None;
+            }
+            approved.insert((arg.start_byte(), arg.end_byte()));
+            Some((name, (prefix, n, receiver)))
+        })();
+        if let Some((name, mount)) = mount {
+            if mounts.insert(name, mount).is_some() {
+                mounting_incomplete = true;
+            }
+        } else {
+            mounting_incomplete = true;
+        }
+    }
+    mounting_incomplete |= routers.keys().any(|name| !mounts.contains_key(name));
     let names: BTreeSet<_> = clients
         .iter()
         .chain(constructors.iter())
+        .chain(router_constructors.iter())
+        .chain(routers.keys())
         .chain(modules.iter())
         .chain(apps.iter())
         .cloned()
@@ -847,7 +1014,8 @@ fn extract(
                     call.kind() == "call" && call.child_by_field_name("function") == Some(p)
                 })
         });
-        let constructor = constructors.contains(text(*n, source))
+        let constructor = (constructors.contains(text(*n, source))
+            || router_constructors.contains(text(*n, source)))
             && n.parent().is_some_and(|p| {
                 p.kind() == "call" && p.child_by_field_name("function") == Some(*n)
             });
@@ -862,7 +1030,8 @@ fn extract(
         .find(|s| s.providers.iter().any(|p| p == path));
     let consumer_admitted = config.consumers.iter().any(|p| p == path);
     let mut facts = Vec::new();
-    let mut complete = !binding_incomplete && (service.is_none() || !apps.is_empty());
+    let mut complete =
+        !binding_incomplete && !mounting_incomplete && (service.is_none() || !apps.is_empty());
     for n in nodes {
         if n.kind() != "call" {
             continue;
@@ -873,11 +1042,29 @@ fn extract(
         else {
             continue;
         };
-        let route = apps.contains(&receiver)
+        let route = (apps.contains(&receiver) || routers.contains_key(&receiver))
             && n.parent().is_some_and(|p| p.kind() == "decorator")
             && service.is_some();
         let consumer = clients.contains(&receiver) && consumer_admitted;
+        if route
+            && n.parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .is_none_or(|p| p.kind() != "module")
+        {
+            complete = false;
+            continue;
+        }
         if !route && !consumer {
+            // Other calls on admitted app/router bindings may register routes
+            // outside this recipe (for example add_api_route). Do not certify
+            // absence or uniqueness while ignoring those mutations.
+            if service.is_some()
+                && (apps.contains(&receiver) || routers.contains_key(&receiver))
+                && method != "include_router"
+            {
+                complete = false;
+            }
             continue;
         }
         if !["get", "post", "put", "patch", "delete", "head", "options"].contains(&method.as_str())
@@ -887,6 +1074,7 @@ fn extract(
         }
         let value = first_argument(n).and_then(|a| literal(a, source));
         let mut key = None;
+        let mut dependencies = Vec::new();
         let mut reason = Some("dynamic_or_unsupported_literal".to_string());
         if unsafe_names.contains(&receiver)
             || (route
@@ -894,8 +1082,30 @@ fn extract(
                     || !unsafe_names.is_disjoint(&modules)))
         {
             reason = Some("shadowed_or_escaped_binding".into());
-        } else if let Some(value) = value {
+        } else if let Some(mut value) = value {
             if route {
+                if let Some((prefix, declaration)) = routers.get(&receiver) {
+                    if (!value.is_empty() && !value.starts_with('/'))
+                        || n.start_byte() < declaration.start_byte()
+                    {
+                        complete = false;
+                        continue;
+                    }
+                    if let Some((mount_prefix, mount, app)) = mounts.get(&receiver) {
+                        if unsafe_names.contains(app)
+                            || !unsafe_names.is_disjoint(&router_constructors)
+                        {
+                            complete = false;
+                            continue;
+                        }
+                        value = format!("{mount_prefix}{prefix}{value}");
+                        dependencies.push(span(path, hash, *declaration));
+                        dependencies.push(span(path, hash, *mount));
+                    } else {
+                        complete = false;
+                        continue;
+                    }
+                }
                 if route_path(&value) {
                     key = Some(Key {
                         service: service.unwrap().id.clone(),
@@ -907,6 +1117,7 @@ fn extract(
                 && url.username().is_empty()
                 && url.password().is_none()
                 && url.path().len() <= 2048
+                && !url.path().contains('%')
                 && ["http", "https"].contains(&url.scheme())
             {
                 if let Some(s) = config
@@ -943,6 +1154,7 @@ fn extract(
             role: if route { "provide" } else { "consume" }.into(),
             key,
             evidence: span(path, hash, n),
+            dependencies,
             context: span(path, hash, context),
             unsupported: reason,
         });

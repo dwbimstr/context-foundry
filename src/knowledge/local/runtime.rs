@@ -3,6 +3,57 @@ use super::{Observation, protocol, resources};
 use crate::knowledge::provider::{Reply, Usage};
 use std::io;
 
+/// Incremental framing for one grammar-constrained JSON object. Recognize an
+/// object completed on the last allowed token without waiting for model EOS or
+/// sampling unbounded trailing whitespace. Semantic validation stays in the owner.
+#[derive(Default)]
+pub struct JsonCompletion {
+    depth: usize,
+    quoted: bool,
+    escaped: bool,
+    started: bool,
+    complete: bool,
+    invalid: bool,
+}
+impl JsonCompletion {
+    pub fn push(&mut self, bytes: &[u8]) -> bool {
+        for &byte in bytes {
+            if self.invalid {
+                break;
+            }
+            if self.complete {
+                self.invalid |= !byte.is_ascii_whitespace();
+            } else if self.quoted {
+                if self.escaped {
+                    self.escaped = false;
+                } else if byte == b'\\' {
+                    self.escaped = true;
+                } else if byte == b'"' {
+                    self.quoted = false;
+                }
+            } else if !self.started {
+                if byte == b'{' {
+                    self.started = true;
+                    self.depth = 1;
+                } else {
+                    self.invalid |= !byte.is_ascii_whitespace();
+                }
+            } else {
+                match byte {
+                    b'"' => self.quoted = true,
+                    b'{' | b'[' => self.depth += 1,
+                    b'}' | b']' => {
+                        self.depth -= 1;
+                        self.complete = self.depth == 0;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.complete && !self.invalid
+    }
+}
+
 pub trait Generator {
     fn generate(&mut self, body: &serde_json::Value) -> Result<(Reply, u64), &'static str>;
     /// Actual counters for a completed computation that failed to produce an
@@ -151,5 +202,32 @@ fn arm_owner(owner: u32, fd: i32) -> io::Result<()> {
     {
         let _ = (owner, fd);
         Err(io::Error::other("owner containment unavailable"))
+    }
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::JsonCompletion;
+
+    #[test]
+    fn framing_survives_token_boundaries_inside_strings_escapes_and_utf8() {
+        let bytes = br#"{"text":"a } [ \" \\ \u2603","nested":[{"v":"ok"}]}"#;
+        for split in 0..bytes.len() {
+            let mut frame = JsonCompletion::default();
+            assert!(!frame.push(&bytes[..split]));
+            assert!(frame.push(&bytes[split..]));
+            assert!(frame.push(b"\n "));
+            assert!(
+                !frame.push(b"{}"),
+                "multiple objects are not one completion"
+            );
+        }
+        let mut frame = JsonCompletion::default();
+        for &byte in "{\"text\":\"☃\"}".as_bytes().split_last().unwrap().1 {
+            assert!(!frame.push(&[byte]));
+        }
+        assert!(frame.push(b"}"));
+        assert!(!JsonCompletion::default().push(b"[]"));
+        assert!(!JsonCompletion::default().push(b"{}oops"));
     }
 }

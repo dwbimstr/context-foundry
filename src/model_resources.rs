@@ -1,4 +1,4 @@
-//! Opt-in owner-local memory admission. Reservations are configured worker ceilings,
+//! Opt-in owner-local model admission. Reservations are configured worker ceilings,
 //! not measured allocations or an OS quota. Status never probes the host.
 use crate::{FResult, FoundryError};
 use serde::{Deserialize, Serialize};
@@ -104,7 +104,7 @@ struct State {
     pressure: bool,
     reason: Option<Deferred>,
     cpu_sampled: Option<Instant>,
-    cpu_previous: Option<CpuTicks>,
+    cpu_previous: Option<CpuSample>,
     cpu_percent: Option<u8>,
     cpu_pressure: bool,
 }
@@ -112,7 +112,7 @@ pub(crate) struct Resources {
     config: Config,
     state: Mutex<State>,
     sample: Box<dyn Fn() -> Option<u64> + Send + Sync>,
-    cpu_sample: Box<dyn Fn() -> Option<CpuTicks> + Send + Sync>,
+    cpu_sample: Box<dyn Fn() -> Option<CpuSample> + Send + Sync>,
 }
 impl Resources {
     pub(crate) fn new(config: Config) -> FResult<Arc<Self>> {
@@ -127,7 +127,7 @@ impl Resources {
             config,
             state: Mutex::new(State::default()),
             sample,
-            cpu_sample: Box::new(cpu_ticks),
+            cpu_sample: Box::new(cpu_sample),
         }))
     }
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -190,8 +190,9 @@ impl Resources {
         {
             let now = (self.cpu_sample)();
             state.cpu_percent = now
-                .zip(state.cpu_previous)
-                .and_then(|(now, before)| now.percent_since(before));
+                .as_ref()
+                .zip(state.cpu_previous.take())
+                .and_then(|(now, before)| now.percent_since(&before));
             state.cpu_previous = now;
             state.cpu_sampled = Some(Instant::now());
         }
@@ -236,7 +237,7 @@ impl Resources {
             "reason":state.reason.map(Deferred::code),"pressure":state.pressure,
             "scope":"embedding_and_generation_worker_ceilings", "sample_interval_ms":1000,
             "background_cpu":{"enabled":self.config.background_cpu.is_some(),"busy_percent":state.cpu_percent,
-                "pressure":state.cpu_pressure,"scope":"host_aggregate_linux_proc_stat",
+                "pressure":state.cpu_pressure,"scope":"linux_affinity_and_visible_cgroup_v2",
                 "observation_age_ms":state.cpu_sampled.map(|at| at.elapsed().as_millis().min(u64::MAX as u128) as u64)}})
     }
     #[cfg(test)]
@@ -283,18 +284,158 @@ impl CpuTicks {
         Some(((busy as u128 * 100).div_ceil(total as u128)) as u8)
     }
 }
+/// Affinity and finite ancestor quotas are sampled together. A topology/quota
+/// change invalidates the interval; status never samples or changes OS policy.
+#[derive(Clone)]
+struct CpuSample {
+    cpus: Vec<usize>,
+    ticks: CpuTicks,
+    groups: Vec<CpuQuota>,
+    at: Instant,
+}
+#[derive(Clone)]
+struct CpuQuota {
+    path: std::path::PathBuf,
+    quota: u64,
+    period: u64,
+    usage: u64,
+}
+impl CpuSample {
+    fn percent_since(&self, before: &Self) -> Option<u8> {
+        if self.cpus != before.cpus || self.groups.len() != before.groups.len() {
+            return None;
+        }
+        let mut busy = self.ticks.percent_since(before.ticks)?;
+        let elapsed = self.at.checked_duration_since(before.at)?.as_micros();
+        for (now, old) in self.groups.iter().zip(&before.groups) {
+            if (now.path.as_path(), now.quota, now.period)
+                != (old.path.as_path(), old.quota, old.period)
+                || elapsed == 0
+                || now.quota == 0
+                || now.period == 0
+            {
+                return None;
+            }
+            let usage = u128::from(now.usage.checked_sub(old.usage)?);
+            // cpu.stat counts CPU-microseconds; cpu.max is quota/period.
+            // Include each visible ancestor's shared usage, including siblings.
+            let percent = usage
+                .checked_mul(u128::from(now.period))?
+                .checked_mul(100)?
+                .div_ceil(elapsed.checked_mul(u128::from(now.quota))?);
+            busy = busy.max(percent.min(100) as u8);
+        }
+        Some(busy)
+    }
+    #[cfg(test)]
+    fn fixture(busy: u64, total: u64) -> Self {
+        Self {
+            cpus: vec![0],
+            ticks: CpuTicks { busy, total },
+            groups: vec![],
+            at: Instant::now(),
+        }
+    }
+}
 #[cfg(target_os = "linux")]
-fn cpu_ticks() -> Option<CpuTicks> {
-    let mut text = String::new();
-    std::fs::File::open("/proc/stat")
-        .ok()?
-        .take(4097)
-        .read_to_string(&mut text)
-        .ok()?;
-    parse_cpu_ticks(text.lines().next()?)
+fn cpu_sample() -> Option<CpuSample> {
+    let mut mask: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+    if unsafe { libc::sched_getaffinity(0, std::mem::size_of_val(&mask), &mut mask) } != 0 {
+        return None;
+    }
+    let cpus: Vec<_> = (0..libc::CPU_SETSIZE as usize)
+        .filter(|&cpu| unsafe { libc::CPU_ISSET(cpu, &mask) })
+        .collect();
+    let ticks = affinity_ticks(&bounded_text(Path::new("/proc/stat"))?, &cpus)?;
+    let membership = bounded_text(Path::new("/proc/self/cgroup"))?;
+    let mounts = bounded_text(Path::new("/proc/self/mountinfo"))?;
+    let (mount, current) = cgroup_location(&membership, &mounts)?;
+    let groups = cpu_quotas(&mount, &current)?;
+    Some(CpuSample {
+        cpus,
+        ticks,
+        groups,
+        at: Instant::now(),
+    })
 }
 #[cfg(not(target_os = "linux"))]
-fn cpu_ticks() -> Option<CpuTicks> {
+fn cpu_sample() -> Option<CpuSample> {
+    None
+}
+#[cfg(target_os = "linux")]
+fn affinity_ticks(text: &str, cpus: &[usize]) -> Option<CpuTicks> {
+    if cpus.is_empty() {
+        return None;
+    }
+    let mut result = CpuTicks { busy: 0, total: 0 };
+    let mut seen = std::collections::BTreeSet::new();
+    for line in text.lines() {
+        let Some((label, fields)) = line.split_once(' ') else {
+            continue;
+        };
+        let Some(cpu) = label
+            .strip_prefix("cpu")
+            .and_then(|n| n.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        if cpus.binary_search(&cpu).is_err() {
+            continue;
+        }
+        if !seen.insert(cpu) {
+            return None;
+        }
+        let ticks = parse_cpu_ticks(&format!("cpu {fields}"))?;
+        result.busy = result.busy.checked_add(ticks.busy)?;
+        result.total = result.total.checked_add(ticks.total)?;
+    }
+    (seen.len() == cpus.len()).then_some(result)
+}
+#[cfg(target_os = "linux")]
+fn cpu_quotas(mount: &Path, current: &Path) -> Option<Vec<CpuQuota>> {
+    if !current.starts_with(mount) {
+        return None;
+    }
+    let mut groups = Vec::new();
+    for (depth, path) in current.ancestors().enumerate() {
+        if depth > 64 {
+            return None;
+        }
+        let max_path = path.join("cpu.max");
+        match bounded_text(&max_path) {
+            Some(max) => {
+                let fields: Vec<_> = max.split_whitespace().collect();
+                if fields.len() != 2 {
+                    return None;
+                }
+                let period = fields[1].parse::<u64>().ok().filter(|&n| n > 0)?;
+                if fields[0] != "max" {
+                    let quota = fields[0].parse::<u64>().ok().filter(|&n| n > 0)?;
+                    let stats = bounded_text(&path.join("cpu.stat"))?;
+                    let mut usages = stats
+                        .lines()
+                        .filter_map(|line| line.strip_prefix("usage_usec "));
+                    let usage = usages.next()?.trim().parse::<u64>().ok()?;
+                    if usages.next().is_some() {
+                        return None;
+                    }
+                    groups.push(CpuQuota {
+                        path: path.to_owned(),
+                        quota,
+                        period,
+                        usage,
+                    });
+                }
+            }
+            None if path == mount
+                && std::fs::symlink_metadata(&max_path)
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
+            None => return None,
+        }
+        if path == mount {
+            return Some(groups);
+        }
+    }
     None
 }
 #[cfg(any(target_os = "linux", test))]
@@ -528,10 +669,7 @@ mod tests {
     }
     #[test]
     fn cpu_pressure_defers_background_with_hysteresis_without_evicting_memory() {
-        let ticks = Arc::new(Mutex::new(Some(CpuTicks {
-            busy: 0,
-            total: 100,
-        })));
+        let ticks = Arc::new(Mutex::new(Some(CpuSample::fixture(0, 100))));
         let reads = Arc::new(AtomicU64::new(0));
         let mut config = config();
         config.background_cpu = Some(CpuConfig {
@@ -542,11 +680,11 @@ mod tests {
         let (observed, count) = (ticks.clone(), reads.clone());
         Arc::get_mut(&mut resources).unwrap().cpu_sample = Box::new(move || {
             count.fetch_add(1, Ordering::SeqCst);
-            *observed.lock().unwrap()
+            observed.lock().unwrap().clone()
         });
         assert_eq!(resources.background(), Err(Deferred::CpuUnavailable));
         let sample = |busy, total| {
-            *ticks.lock().unwrap() = Some(CpuTicks { busy, total });
+            *ticks.lock().unwrap() = Some(CpuSample::fixture(busy, total));
             resources.lock().cpu_sampled = Some(Instant::now() - Duration::from_secs(2));
             resources.background()
         };
@@ -607,6 +745,63 @@ mod tests {
             });
             assert!(config.validate().is_err());
         }
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cpu_affinity_and_ancestor_quotas_expose_container_contention() {
+        let ticks = affinity_ticks(
+            "cpu 1 0 0 999 0 0 0 0\ncpu0 90 0 0 10 0 0 0 0\ncpu1 0 0 0 100 0 0 0 0\n",
+            &[0],
+        )
+        .unwrap();
+        assert_eq!((ticks.busy, ticks.total), (90, 100));
+        assert!(affinity_ticks("cpu0 1 0 0 1 0 0 0 0", &[0, 1]).is_none());
+        let dir = tempfile::tempdir().unwrap();
+        let leaf = dir.path().join("leaf");
+        std::fs::create_dir(&leaf).unwrap();
+        std::fs::write(leaf.join("cpu.max"), "max 100000").unwrap();
+        std::fs::write(dir.path().join("cpu.max"), "50000 100000").unwrap();
+        std::fs::write(
+            dir.path().join("cpu.stat"),
+            "usage_usec 1000\nnr_periods 1\n",
+        )
+        .unwrap();
+        let mut before = CpuSample::fixture(0, 100);
+        before.groups = cpu_quotas(dir.path(), &leaf).unwrap();
+        assert_eq!(before.groups.len(), 1);
+        std::fs::write(dir.path().join("cpu.stat"), "usage_usec 451000\n").unwrap();
+        let mut now = CpuSample::fixture(10, 200); // physical CPU only 10% busy
+        now.at = before.at + Duration::from_secs(1);
+        now.groups = cpu_quotas(dir.path(), &leaf).unwrap();
+        assert_eq!(now.percent_since(&before), Some(90)); // half-CPU quota 90% busy
+        now.cpus.push(1);
+        assert_eq!(now.percent_since(&before), None);
+        now.cpus.pop();
+        now.groups[0].quota *= 2;
+        assert_eq!(now.percent_since(&before), None);
+        now.groups[0].quota /= 2;
+        now.groups[0].usage = 999;
+        assert_eq!(now.percent_since(&before), None);
+        std::fs::remove_file(leaf.join("cpu.max")).unwrap();
+        assert!(cpu_quotas(dir.path(), &leaf).is_none());
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires a readable Linux cgroup-v2 host and affinity observations"]
+    fn live_cpu_sample_observes_affinity_and_visible_quotas() {
+        let before = cpu_sample().expect("initial CPU observation");
+        std::thread::sleep(Duration::from_millis(1100));
+        let now = cpu_sample().expect("second CPU observation");
+        let percent = now.percent_since(&before).expect("stable sample identity");
+        eprintln!(
+            "affinity CPUs={}, finite visible quotas={:?}, busy_percent={percent}",
+            now.cpus.len(),
+            now.groups
+                .iter()
+                .map(|g| (g.quota, g.period))
+                .collect::<Vec<_>>()
+        );
+        assert!(!now.cpus.is_empty() && percent <= 100);
     }
     #[test]
     fn aggregate_ceiling_is_held_until_residency_ends() {

@@ -429,8 +429,9 @@ observation defers by name. A pressure latch clears only at/below the resume thr
 Both background embedding and generation use the gate, including initial local generation
 admission. Foreground embedding and cached/current results remain available. CPU pressure
 does not evict idle generation; memory pressure still can. Status reads cached observations.
-This is **host aggregate** contention admission, not a cgroup CPU quota, affinity-aware
-utilization bound or a hard CPU limit. macOS CPU sampling is unavailable in this slice;
+The first slice used host aggregate contention; the continuation below replaces that
+observation with affinity and visible cgroup-v2 capacity. It is still admission, not a
+hard CPU limit. macOS CPU sampling is unavailable in this slice;
 explicitly enabling this optional field there defers by name. Existing native worker
 thread/CPU-time controls remain. Global GPU, thermal/battery, embedding eviction and
 real-device throughput/combined-model acceptance remain open.
@@ -468,3 +469,24 @@ usage; revert has zero calls/launches/verified bytes. Linux CPU execution and re
 verified. Model/recipe task utility, long-context embedding comparisons, combined model
 pressure and macOS/Metal acceptance remain open. See
 [validation](../../docs/validation.md#evidence-coverage-host-application-and-real-cpu-maintenance--2026-10-10).
+
+
+T002 efficiency continuation (2026-10-10): Linux background CPU admission samples
+only CPUs in the current affinity mask and every finite visible cgroup-v2 ancestor's
+`cpu.stat` usage normalized by `cpu.max` quota/period. It takes the highest utilization;
+ancestor usage includes siblings sharing that quota. Affinity/quota changes and counter
+resets invalidate the interval. First/missing/malformed observations defer; status
+remains cached and CPU pressure preserves idle residency. Hidden ancestors, cgroup-v1,
+macOS-native observation and global GPU/thermal/battery policies remain outside this
+implemented observation. Fixture tests cover a mostly idle host with a saturated quota,
+ancestor limits, malformed/missing readings and hysteresis.
+
+Native generation adapter `foundry-generate-v2` recognizes the first complete JSON
+object incrementally, handles string escapes/token-byte boundaries, validates JSON once
+and returns at the object's end. A result completed on the last allowed token succeeds
+without waiting for EOS/trailing whitespace. Partial or non-JSON output never publishes;
+source/schema verification remains in the owner. Changed adapter identity invalidates
+old completion function keys. Actual sampled completion tokens are reported. This is
+an output-framing optimization, not evidence that framing caused every earlier failed
+call. The paired recipe calibration and cache lifecycle evidence are recorded in
+[validation](../../docs/validation.md).

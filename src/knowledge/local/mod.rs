@@ -11,7 +11,7 @@ pub mod runtime;
 mod supervisor;
 pub use supervisor::Provider;
 
-pub const ADAPTER: &str = "foundry-generate-v1";
+pub const ADAPTER: &str = "foundry-generate-v2";
 pub const LLAMA_CPP: &str = crate::neural::provider::LLAMA_CPP_COMMIT;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

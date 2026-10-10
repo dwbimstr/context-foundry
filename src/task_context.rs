@@ -48,6 +48,12 @@ pub enum Command {
         action_key: String,
         max_bytes: usize,
     },
+    Review {
+        expected_revision: u64,
+        paths: Vec<String>,
+        finishing: bool,
+        max_bytes: usize,
+    },
     Promote {
         expected_revision: u64,
         entry_id: String,
@@ -619,6 +625,75 @@ impl Engine {
                         }
                         if serde_json::to_vec(&result)?.len() + 1 > *max_bytes {
                             return Err(invalid("search envelope exceeds max_bytes"));
+                        }
+                    }
+                    Command::Review {
+                        expected_revision,
+                        paths,
+                        finishing,
+                        max_bytes,
+                    } => {
+                        if task.revision != *expected_revision {
+                            return Err(FoundryError::Conflict(
+                                "task revision changed; inspect before review".into(),
+                            ));
+                        }
+                        if paths.len() > 16 || !(512..=65536).contains(max_bytes) {
+                            return Err(invalid(
+                                "review requires at most 16 paths and 512..65536 max_bytes",
+                            ));
+                        }
+                        for path in paths {
+                            store::validate_path(path)?;
+                        }
+                        result["silence"] = json!(true);
+                        result["advice"] = json!([]);
+                        result["omitted"] = json!(0);
+                        result["stale"] = json!(0);
+                        result["verified"] = json!(false);
+                        result["host_application"] = json!("unknown");
+                        let mut omitted = 0;
+                        let mut stale = 0;
+                        for item in &task.entries {
+                            control.check()?;
+                            if !item.view.selected
+                                || task.superseded(&item.entry.id)
+                                || task.dismissed.contains(&item.entry.id)
+                            {
+                                continue;
+                            }
+                            let relevant = item.entry.source_links.iter().any(|h| {
+                                store::HandleRef::parse(h).is_ok_and(|h| paths.contains(&h.path))
+                            });
+                            let trigger = match item.entry.kind {
+                                Kind::Constraint if relevant || *finishing => "constraint_check",
+                                Kind::RejectedAttempt if relevant => "related_failed_attempt",
+                                Kind::Work if *finishing => "open_work",
+                                Kind::Question if *finishing => "open_question",
+                                Kind::Requirement if *finishing => "requirement_check",
+                                _ => continue,
+                            };
+                            let source_links = links(&item.entry)?;
+                            if source_links.iter().any(|link| link["status"] != "fresh") {
+                                stale += 1;
+                                continue;
+                            }
+                            let mut candidate = result.clone();
+                            candidate["silence"] = json!(false);
+                            candidate["advice"].as_array_mut().unwrap().push(json!({"trigger":trigger,"entry_id":item.entry.id,"sha256":item.sha256,"text":item.entry.text,"author":item.entry.author,"provenance":item.entry.provenance,"source_links":source_links}));
+                            // Reserve enough bytes for final counts; never truncate originals.
+                            if candidate["advice"].as_array().unwrap().len() > 8
+                                || serde_json::to_vec(&candidate)?.len() + 32 > *max_bytes
+                            {
+                                omitted += 1;
+                            } else {
+                                result = candidate;
+                            }
+                        }
+                        result["omitted"] = json!(omitted);
+                        result["stale"] = json!(stale);
+                        if serde_json::to_vec(&result)?.len() + 1 > *max_bytes {
+                            return Err(invalid("review envelope exceeds byte budget"));
                         }
                     }
                     Command::Advise {

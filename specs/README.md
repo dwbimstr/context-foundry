@@ -45,8 +45,9 @@ file/area representations remain open. 010 T002 now adds explicit selective HTTP
 generation, atomic completion reuse and source-bound area summaries in schema 10.
 Opt-in continuous MCP scheduling, shared client admission and source-first derived
 context now work on both transports. Owned local generation adds pinned snapshot reuse,
-idle unload and per-worker CPU/RAM/Metal controls. Shared memory admission is implemented; native CPU/global GPU pressure policies, Metal
-hardware acceptance and real-model task acceptance remain open. See the
+idle unload and per-worker CPU/RAM/Metal controls. Shared memory and Linux affinity/cgroup CPU admission are implemented; native macOS
+CPU/global GPU pressure policies, Metal hardware acceptance and real-model task
+acceptance remain open. See the
 [revised build order](../docs/context-ecosystem-plan.md#revised-build-order).
 005 T005 and 003 T009 now implement a scoped static Python HTTP boundary producer and
 explicit primary-task evidence composition introduced in schema 11. Schema 12 adds
@@ -58,9 +59,12 @@ explicit exported task-view application in the Rust gateway, and installed OMP 1
 continuation/history checks against a scripted upstream. Real Qwen CPU generation now
 covers changed input and restart/revert cache reuse. Live host views now resolve through the existing MCP owner, and parameterized FastAPI
 routes add bounded evidence coverage. A paired CPU repair-selection fixture retained
-negative task results and exposed a repaired failed-generation accounting gap. Broader
-frameworks, a useful task model/recipe, compact small-task context, free-form host
-outcomes/economics and real-device embedding/Metal remain. See the [updated pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
+negative task results and exposed a repaired failed-generation accounting gap. The next
+continuation implements opt-in compact evidence accounting, typed/terminal-path routes,
+same-file static router mounts, grounded task review and affinity/cgroup CPU admission.
+Native generation stops at a completed JSON object, with a revised paired recipe tested
+separately. Broader frameworks, a useful task model, free-form host outcomes/economics
+and real-device embedding/Metal remain. See the [updated pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.
 

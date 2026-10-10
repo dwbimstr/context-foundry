@@ -274,8 +274,8 @@ evidence, not blockers to this sandbox implementation. 003 owns the delivery bou
 
 ### T004 — Experimental grounded reminders and explicit promotion
 
-Status: implemented locally on the experimental branch; broader triggers and measured
-agent outcomes remain pending.
+Status: exact-action and grounded path/finishing reminders are implemented locally on
+the experimental branch; semantic triggers and measured agent outcomes remain pending.
 
 Build the next stages in the same task record, with no model or background loop.
 `advise {action_key,max_bytes}` returns only active rejected attempts whose optional
@@ -309,6 +309,24 @@ Tests must exercise silence, exact-match advice, persistent dismissal, promotion
 indexed retrieval, revision collision, stale source refusal, correction/forget
 conflicts, and abrupt exit before/after promotion commit. Broader contradiction or
 constraint-violation detection and real-host benefit remain pending experiments.
+
+
+T004 grounded review continuation (2026-10-10): read-only
+`review {expected_revision,paths,finishing,max_bytes}` checks up to sixteen explicit
+paths against fresh links on active selected constraints/rejected attempts. Finishing
+also selects requirements, constraints, work and questions. It delivers at most eight
+complete attributed originals, with explicit silence, omitted/stale counts and
+`verified:false`. It does not infer an actual conflict, repeated action equivalence,
+completion or host consumption. Exact-action `advise` remains available.
+
+This uses the existing task record and source snapshot, without a new field/table,
+background loop or model call. Revision mismatches refuse. Existing rejection dismissal
+persists through restart/restore; work/question selection controls their review presence,
+and view restoration may select them again. Protected task entries cannot be hidden.
+Focused tests cover relevance, silence, stale sources, bounds, revision/path refusal
+and CLI restart behavior. Measured unnecessary interventions and verified host outcomes
+remain pending; source-linked reminders are not semantic contradiction reasoning.
+
 
 ### T005 — Recover evidence by content and compose task-aware retrieval
 

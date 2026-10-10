@@ -351,6 +351,7 @@ impl Generator for Decoder {
             ffi::llama_sampler_chain_add(sampler.0.as_ptr(), greedy.as_ptr());
         }
         let mut content = Vec::new();
+        let mut framing = context_foundry::knowledge::local::runtime::JsonCompletion::default();
         for completion in 1..=max {
             let token =
                 unsafe { ffi::llama_sampler_sample(sampler.0.as_ptr(), self.ctx.as_ptr(), -1) };
@@ -385,6 +386,22 @@ impl Generator for Decoder {
                 return Err("knowledge_output_limit");
             }
             content.extend_from_slice(&piece[..n as usize]);
+            if framing.push(&piece[..n as usize]) {
+                // Framing is incremental; parse only once, at completion. Never
+                // turn a partial object or trailing non-whitespace into success.
+                serde_json::from_slice::<Value>(&content).map_err(|_| "knowledge_worker_failed")?;
+                return Ok((
+                    Reply {
+                        content: String::from_utf8(content)
+                            .map_err(|_| "knowledge_worker_failed")?,
+                        usage: Usage {
+                            prompt_tokens: Some(prompt_tokens),
+                            completion_tokens: Some(completion),
+                        },
+                    },
+                    self.peak_gpu,
+                ));
+            }
             self.decode(&mut [token])?;
         }
         self.failed_usage = Some(Usage {

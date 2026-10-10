@@ -365,6 +365,7 @@ pub fn context_primary_with_options(
     let options = crate::store::ContextOptions {
         task: requested.task,
         compose_evidence: requested.compose_evidence,
+        compact_evidence: requested.compact_evidence,
         boundary_config: requested.boundary_config,
         memory: requested.memory,
         briefs: requested.briefs,
@@ -1557,6 +1558,7 @@ impl FoundryMcp {
                 .expect("context properties");
             properties.insert("task_id".into(), serde_json::json!({"type":"string","minLength":1,"maxLength":128,"description":"Primary task ID; requires task_revision."}));
             properties.insert("compose_evidence".into(), serde_json::json!({"type":"boolean","description":"Compose bounded evidence across selected admitted roots using the primary task; requires task_id and task_revision."}));
+            properties.insert("compact_evidence".into(), serde_json::json!({"type":"boolean","description":"Compact evidence accounting; requires compose_evidence. Source citations and task constraints are retained."}));
             properties.insert("boundary_config".into(), serde_json::json!({"type":"string","description":"Indexed boundary configuration path; requires compose_evidence."}));
             properties.insert("task_revision".into(), serde_json::json!({"type":"integer","minimum":1,"description":"Expected task revision; requires task_id."}));
         }
@@ -1723,6 +1725,7 @@ impl FoundryMcp {
                 "task_id",
                 "task_revision",
                 "compose_evidence",
+                "compact_evidence",
                 "boundary_config",
             ],
         ) {
@@ -1735,6 +1738,17 @@ impl FoundryMcp {
                 return Ok(error_result(
                     "invalid_argument",
                     "compose_evidence must be boolean",
+                    false,
+                ));
+            }
+        };
+        let compact_evidence = match arguments.get("compact_evidence") {
+            None => false,
+            Some(serde_json::Value::Bool(v)) if !*v || compose_evidence => *v,
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "compact_evidence must be boolean and requires compose_evidence",
                     false,
                 ));
             }
@@ -1887,6 +1901,7 @@ impl FoundryMcp {
                     task,
                     include_briefs,
                     compose_evidence,
+                    compact_evidence,
                     boundary_config,
                 )
                 .await);
@@ -1931,6 +1946,7 @@ impl FoundryMcp {
                         crate::store::ContextOptions {
                             task: task_scope,
                             compose_evidence,
+                            compact_evidence,
                             boundary_config: boundary_config.as_deref(),
                             memory: include_memory,
                             briefs: include_briefs,
@@ -2728,7 +2744,7 @@ impl FoundryMcp {
     #[tool(
         name = "task_context",
         description = "Experimental task state and recoverable views. Explicit scoped JSON commands; export uses CLI.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["workspace_id","task_id","command"],"properties":{"workspace_id":{"type":"string"},"task_id":{"type":"string"},"command":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["create","apply","inspect","peek","render","forget","advise","promote","search"]},"title":{"type":"string"},"expected_revision":{"type":"integer","minimum":0},"edits":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["add","select","pin","fold","expand","checkpoint","restore","dismiss"]},"entry":{"type":"object","additionalProperties":false,"required":["id","kind","text","author","provenance","source_links"],"properties":{"id":{"type":"string"},"kind":{"enum":["requirement","constraint","observation","hypothesis","decision","rejected_attempt","question","work","artifact"]},"text":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"source_links":{"type":"array","items":{"type":"string"}},"supersedes":{"type":["string","null"]},"action_key":{"type":["string","null"]}}},"entry_id":{"type":"string"},"selected":{"type":"boolean"},"pinned":{"type":"boolean"},"summary":{"type":"string"},"name":{"type":"string"}}},"minItems":1,"maxItems":32},"entry_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"bytes":{"type":"integer","minimum":4,"maximum":65536},"max_bytes":{"type":"integer","minimum":256,"maximum":1048576},"action_key":{"type":"string"},"memory_id":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":32},"after_id":{"type":["string","null"]},"include_history":{"type":"boolean"}}}}}"#),
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["workspace_id","task_id","command"],"properties":{"workspace_id":{"type":"string"},"task_id":{"type":"string"},"command":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["create","apply","inspect","peek","render","forget","advise","review","promote","search"]},"title":{"type":"string"},"expected_revision":{"type":"integer","minimum":0},"edits":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["add","select","pin","fold","expand","checkpoint","restore","dismiss"]},"entry":{"type":"object","additionalProperties":false,"required":["id","kind","text","author","provenance","source_links"],"properties":{"id":{"type":"string"},"kind":{"enum":["requirement","constraint","observation","hypothesis","decision","rejected_attempt","question","work","artifact"]},"text":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"source_links":{"type":"array","items":{"type":"string"}},"supersedes":{"type":["string","null"]},"action_key":{"type":["string","null"]}}},"entry_id":{"type":"string"},"selected":{"type":"boolean"},"pinned":{"type":"boolean"},"summary":{"type":"string"},"name":{"type":"string"}}},"minItems":1,"maxItems":32},"entry_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"bytes":{"type":"integer","minimum":4,"maximum":65536},"max_bytes":{"type":"integer","minimum":256,"maximum":1048576},"action_key":{"type":"string"},"paths":{"type":"array","maxItems":16,"items":{"type":"string"}},"finishing":{"type":"boolean"},"memory_id":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":32},"after_id":{"type":["string","null"]},"include_history":{"type":"boolean"}}}}}"#),
         annotations(read_only_hint = false, open_world_hint = false)
     )]
     async fn task_context(
@@ -2763,6 +2779,7 @@ impl FoundryMcp {
             request.command,
             crate::task_context::Command::Search { .. }
                 | crate::task_context::Command::Advise { .. }
+                | crate::task_context::Command::Review { .. }
                 | crate::task_context::Command::Inspect {}
                 | crate::task_context::Command::Peek { .. }
                 | crate::task_context::Command::Render { .. }
@@ -3313,6 +3330,7 @@ impl FoundryMcp {
         task: Option<(String, u64)>,
         include_briefs: bool,
         compose_evidence: bool,
+        compact_evidence: bool,
         boundary_config: Option<String>,
     ) -> CallToolResult {
         let selection = match self.state.resolve_roots(selected.as_deref()) {
@@ -3421,6 +3439,7 @@ impl FoundryMcp {
                         let options = crate::store::ContextOptions {
                             task: task_scope,
                             compose_evidence,
+                            compact_evidence,
                             boundary_config: boundary_config.as_deref().filter(|_| is_primary),
                             memory: primary_memory && is_primary,
                             briefs: include_briefs && is_primary,

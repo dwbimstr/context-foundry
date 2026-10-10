@@ -153,7 +153,7 @@ fn syntax_distinguishes_calls_from_logs_dynamic_urls_shadowing_and_template_rout
     );
     e.replace_source(
         "service.py",
-        &PROVIDER.replace("/v1/items", "/v1/{item:path}"),
+        &PROVIDER.replace("/v1/items", "/v1/{item:custom}"),
     )
     .unwrap();
     publish(&e);
@@ -460,12 +460,216 @@ fn template_routes_discover_literal_consumers_from_either_end_without_hiding_ove
         "route_template"
     );
     // Unsupported converters and partial-segment syntax invalidate certainty.
-    for path in ["/v1/{item:int}", "/v1/prefix-{item}", "/{item}/{item}"] {
+    for path in ["/v1/{item:custom}", "/v1/prefix-{item}", "/{item}/{item}"] {
         e.replace_source("service.py", &PROVIDER.replace("/v1/items", path))
             .unwrap();
         publish(&e);
         let r = read(&e);
         assert!(r.incomplete_paths.contains(&"service.py".to_string()));
         assert!(r.relations.iter().all(|r| r.resolution == "incomplete"));
+    }
+}
+
+#[test]
+fn builtin_converters_match_only_their_declared_path_language() {
+    let (_dir, e) = fixture();
+    for (route, value, matched) in [
+        ("{id:int}", "42", true),
+        ("{id:int}", "-42", false),
+        ("{id:int}", "word", false),
+        ("{n:float}", "12.5", true),
+        ("{n:float}", "12", true),
+        ("{n:float}", "1e3", false),
+        ("{id:uuid}", "A0123456-7890-abcd-ef01-234567890abc", true),
+        ("{id:uuid}", "A01234567890abcdef01234567890abc", true),
+        ("{id:uuid}", "A01234567890-abcd-ef01234567890abc", true),
+        ("{id:uuid}", "A0123456-7890-abcd-ef01-234567890abz", false),
+        ("{tail:path}", "a/b/c", true),
+        ("{tail:path}", "", true),
+        ("{name:str}", "", false),
+        ("{name:str}", "a/b", false),
+    ] {
+        e.replace_source(
+            "service.py",
+            &PROVIDER.replace("/v1/items", &format!("/v1/{route}")),
+        )
+        .unwrap();
+        e.replace_source(
+            "client.py",
+            &CLIENT.replace("/v1/items?limit=3", &format!("/v1/{value}")),
+        )
+        .unwrap();
+        publish(&e);
+        let r = e
+            .boundary_relations(
+                "boundary.json",
+                &["client.py".into()],
+                &Control::unbounded(),
+            )
+            .unwrap();
+        let row = r
+            .relations
+            .iter()
+            .find(|r| r.consumer.evidence.path == "client.py")
+            .unwrap();
+        assert_eq!(
+            row.resolution,
+            if matched {
+                "route_template"
+            } else {
+                "unresolved"
+            },
+            "{route} / {value}"
+        );
+    }
+    for route in ["/{tail:path}/suffix", "/{id:custom}"] {
+        e.replace_source("service.py", &PROVIDER.replace("/v1/items", route))
+            .unwrap();
+        assert_eq!(publish(&e).incomplete, 1);
+    }
+    e.replace_source("service.py", PROVIDER).unwrap();
+    e.replace_source(
+        "client.py",
+        &CLIENT.replace("/v1/items?limit=3", "/v1/%69tems"),
+    )
+    .unwrap();
+    publish(&e);
+    assert!(
+        read(&e)
+            .relations
+            .iter()
+            .any(|r| r.consumer.evidence.path == "client.py" && r.resolution == "unsupported")
+    );
+}
+
+#[test]
+fn static_router_mounts_cite_prefixes_and_refuse_dynamic_or_early_registration() {
+    let (dir, e) = fixture();
+    let router = "from fastapi import FastAPI, APIRouter\napp = FastAPI()\nrouter = APIRouter(prefix='/v1')\n@router.get('/items')\ndef items():\n    return {'items': []}\napp.include_router(router)\n";
+    e.replace_source("service.py", router).unwrap();
+    assert_eq!(publish(&e).incomplete, 0);
+    let r = read(&e);
+    assert_eq!(r.relations.len(), 2);
+    for row in &r.relations {
+        assert_eq!(row.resolution, "exact_key");
+        let dependencies = &row.providers[0].dependencies;
+        assert_eq!(dependencies.len(), 2);
+        let text: Vec<_> = dependencies
+            .iter()
+            .map(|s| &router[s.start as usize..s.end as usize])
+            .collect();
+        assert!(text[0].contains("APIRouter(prefix='/v1')"));
+        assert_eq!(text[1], "app.include_router(router)");
+    }
+    let prefixed = router.replace("prefix='/v1'", "prefix=''").replace(
+        "include_router(router)",
+        "include_router(router, prefix='/v1')",
+    );
+    e.replace_source("service.py", &prefixed).unwrap();
+    assert!(
+        read(&e)
+            .relations
+            .iter()
+            .all(|r| r.resolution == "incomplete")
+    );
+    assert_eq!(publish(&e).parsed, 1);
+    assert!(
+        read(&e)
+            .relations
+            .iter()
+            .all(|r| r.resolution == "exact_key")
+    );
+    for changed in [
+        router.replace("prefix='/v1'", "prefix=PREFIX"),
+        router.replace("@router.get('/items')", "@router.get('items')"),
+        router.replace(
+            "include_router(router)",
+            "include_router(router, prefix=PREFIX)",
+        ),
+        router.replace("@router.get", "app.include_router(router)\n@router.get"),
+        router.replace("app.include_router(router)\n", ""),
+        router.replace("include_router(router)", "mount('/v1', router)"),
+        format!("{router}app = FastAPI()\n"),
+        format!("{router}app.add_api_route('/dynamic', items)\n"),
+        router.replace(
+            "@router.get",
+            "router = APIRouter(prefix='/other')\n@router.get",
+        ),
+    ] {
+        e.replace_source("service.py", &changed).unwrap();
+        assert_eq!(publish(&e).incomplete, 1, "{changed}");
+        assert!(
+            read(&e)
+                .relations
+                .iter()
+                .all(|r| r.resolution == "incomplete")
+        );
+    }
+    e.replace_source("service.py", router).unwrap();
+    publish(&e);
+    drop(e);
+    let e = Engine::open_existing(&dir.path().join("store")).unwrap();
+    assert_eq!(read(&e).relations[0].providers[0].dependencies.len(), 2);
+    assert_eq!(publish(&e).parsed, 0);
+}
+
+#[test]
+#[ignore = "requires explicitly installed FastAPI/Starlette/httpx; no dependency downloads"]
+fn real_fastapi_converter_and_mount_fixture_matches_published_evidence() {
+    let (_dir, e) = fixture();
+    for (route, path, matched) in [
+        ("{id:int}", "42", true),
+        ("{id:int}", "-42", false),
+        ("{n:float}", "1.25", true),
+        ("{n:float}", "1e3", false),
+        ("{id:uuid}", "0123456789abcdef0123456789abcdef", true),
+        ("{id:uuid}", "01234567-89abcdef-0123456789abcdef", true),
+        ("{id:uuid}", "bad", false),
+        ("{tail:path}", "a/b/c", true),
+        ("{tail:path}", "", true),
+    ] {
+        let source = format!(
+            "from fastapi import FastAPI, APIRouter\napp = FastAPI()\nrouter = APIRouter(prefix='/v1')\n@router.get('/{route}')\ndef endpoint(): return {{'ok': True}}\napp.include_router(router, prefix='/api')\n"
+        );
+        let url = format!("/api/v1/{path}");
+        e.replace_source("service.py", &source).unwrap();
+        e.replace_source(
+            "client.py",
+            &format!("import httpx\nhttpx.get('http://catalog{url}')\n"),
+        )
+        .unwrap();
+        assert_eq!(publish(&e).incomplete, 0);
+        let row = e
+            .boundary_relations(
+                "boundary.json",
+                &["client.py".into()],
+                &Control::unbounded(),
+            )
+            .unwrap();
+        assert_eq!(
+            row.relations[0].resolution,
+            if matched {
+                "route_template"
+            } else {
+                "unresolved"
+            }
+        );
+        let script = format!(
+            "{source}\nfrom fastapi.testclient import TestClient\nimport importlib.metadata as m\nresponse = TestClient(app).get({url:?}, follow_redirects=False)\nassert response.status_code == {}, response.status_code\nprint(m.version('fastapi'), m.version('starlette'))\n",
+            if matched { 200 } else { 404 }
+        );
+        let out = Command::new("python3")
+            .args(["-c", &script])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{route} / {path}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        eprintln!(
+            "FastAPI/Starlette runtime: {}",
+            String::from_utf8_lossy(&out.stdout).trim()
+        );
     }
 }

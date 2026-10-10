@@ -1,5 +1,138 @@
 # Validation
 
+
+## Expanded ecosystem continuation — 2026-10-10
+
+On `experimental/context-ecosystem`, main's coordinated tch/LibTorch migration is
+integrated. This continuation implements additional experimental behavior; it does
+not finish release acceptance or reactivate frozen 013 learning. macOS validation
+remains explicitly deferred by the owner.
+
+- **Compact evidence:** opt-in `--compact-evidence` / `compact_evidence:true` keeps
+  exact source bodies/handles, protected task state and relationship citations while
+  replacing repeated handles in the report with delivered-item ordinals. Facet states,
+  stale/limited discovery, compiler coverage and unverified constraints remain visible.
+  The verbose v1 report is still the default; compact accounting is v2.
+- **Boundary coverage:** `python-http-v3` adds built-in typed/terminal-path converters
+  and direct same-file static `APIRouter` registration after route declarations.
+  Declaration and registration dependencies must fit before a relationship is emitted.
+  Unknown/dynamic/nested/cross-file/multiple mounts remain incomplete. Recipe identity
+  forces republication of old scopes. Overlap stays ambiguous, with no runtime-priority
+  inference. No workspace Python runs during indexing.
+- **Grounded review:** explicit revision-bound `review` recalls source-linked
+  constraints/failures for changed paths and selected obligations/questions before
+  finishing. It returns complete original text with attribution, visible omission/stale
+  counts and no claim of semantic conflict detection or host consumption. Existing
+  task state, selection and rejection dismissal are reused without a schema change.
+- **CPU admission:** Linux sampling now combines affinity utilization with every
+  visible finite cgroup-v2 ancestor's quota-normalized usage. It includes competing
+  siblings, resets on changed sample identity, preserves hysteresis and idle residency,
+  and refuses unavailable observations. This does not enforce a CPU quota or observe
+  ancestors hidden outside the mount; macOS/GPU/thermal/battery controls remain open.
+- **Bootstrap overlap:** the full suite exposed that fixed four-file commit gathering
+  could withhold an available prefix while waiting on the next read. Ingestion now
+  groups up to four ready neighbors and commits the ready prefix immediately when the
+  next receiver is pending. Order, source revalidation and the eight-read bound remain.
+  The existing overlap barrier test is retained unchanged; this repairs the behavior
+  rather than relaxing its assertion. The earlier 80,000-file timing predates this
+  opportunistic batching change and is not a fresh throughput result.
+- **Generation framing:** adapter `foundry-generate-v2` returns a grammar-constrained
+  JSON object as soon as it is complete, including on the last permitted token. Escapes
+  and token-byte splits are handled incrementally, with one final JSON parse. Partial
+  outputs remain failures and the owner still validates source/schema claims. Function
+  identity changes invalidate old completion reuse; actual sampled tokens are reported.
+
+**Focused and live checks.** The 23 ingestion fault/overlap tests pass without changing
+their assertions, including exact early-publication counts after variable-size groups. A direct four-source
+transaction test verifies complete rollback on failure/cancellation; successful scan
+group counts now allow one to four commits according to readiness.
+The boundary, task-context and evidence suites pass (15, 21 and 12 tests respectively),
+including CLI/MCP opt-in delivery, source changes, budgets and restart. The framing
+and seven resource-policy unit checks pass. A separately invoked live CPU observation
+reports five affinity CPUs and one visible quota of 400,000/100,000 microseconds
+(four CPUs), with a 1% sampled busy interval. This verifies observation, not sustained
+pressure control. Nine independently executed ASGI requests pass against FastAPI
+0.141.1 / Starlette 1.6.0, including UUID separator variants and router prefixes.
+The runtime check is opt-in and installs/downloads nothing.
+
+**Real CPU repair-selection calibration.** Two fixed synthetic tasks, three input
+modes, six cold calls, same Qwen2.5-Coder-0.5B-Instruct Q4_K_M GGUF, greedy sampler,
+256-output-token ceiling, 90-second call deadline, two threads and 2 GiB address-space
+limit. Recipe v2 adds a short JSON example. Both recipe and adapter changed, so this
+is not an isolated causal test of output termination. Compiler/model builds were not
+run during the six calls. The earlier output-limit failures below remain evidence.
+
+| Input mode | FIFO correct | Contract correct | Actual prompt tokens (two calls) | Actual completion tokens | Generation time (two calls) |
+| --- | --- | --- | ---: | ---: | ---: |
+| All fixture files | No | Yes | 666 | 291 | 55.70 s |
+| Verbose Foundry context | No | Yes | 3,271 | 241 | 84.22 s |
+| Compact Foundry context | No | Yes | 2,412 | 238 | 76.14 s |
+
+All six calls completed JSON with known token usage. **All chose `repair_a`**, which is
+wrong for FIFO and correct for the contract. The example itself contains that label;
+this establishes a usable output shape, not a model that reliably reasons about repairs.
+The independent Python oracles reject the original and every wrong candidate patch.
+Compact input cuts actual prompt tokens by **26.3% versus verbose context**, with the
+same results on these two cases. It still costs **3.62×** the full-file prompt tokens
+on these tiny fixtures. There is no demonstrated quality improvement or large-repository
+economic gain. Total tokens including failed-task attempts are 957 / 3,512 / 2,650 for
+the three modes; no calls were dropped or retried. There were no auxiliary generation
+calls. The reuse horizon is one task; this experiment does not measure amortized semantic
+bootstrap, monetary cost, free-form patches or host-agent work.
+
+**Neutral-example follow-up (recipe v3).** One further predeclared six-call run replaces
+the example's repair label with `SELECTED_REPAIR`; model, worker, fixtures and limits
+are unchanged. All calls complete within 256 tokens with known usage. Every FIFO reply
+lists multiple repair identifiers and is rejected as ambiguous. Every contract reply
+selects the correct `repair_a`. No failed arm is retried within either run.
+
+| Input mode | Verified repairs | Actual prompt tokens | Actual completion tokens | Generation time |
+| --- | ---: | ---: | ---: | ---: |
+| All fixture files | 1/2 | 698 | 265 | 59.14 s |
+| Verbose Foundry context | 1/2 | 3,372 | 277 | 93.31 s |
+| Compact Foundry context | 1/2 | 2,446 | 273 | 81.07 s |
+
+Compact context uses **27.5% fewer prompt tokens** than verbose context, but still
+**3.50×** the full-file prompt cost on these tiny cases. There is **no task-quality
+improvement**. Including the rejected FIFO attempts gives 963 / 3,649 / 2,719 total
+tokens; all twelve calls across v2 and v3 cost 14,450 observed tokens. This is calibration,
+not held-out acceptance or a representative cost per completion. The useful task-model
+and recipe decision remains open. Detailed v3 observations are local in
+`/tmp/foundry-task-quality-v3.json`; the previous v2 run is retained separately.
+
+The harness now defaults to v3; `FOUNDRY_TASK_COMPARISON_RECIPE=v2` reproduces the seeded
+recipe. Future reports also retain the exact serialized-request value beside its hash,
+so ephemeral workspace identities do not prevent input reconstruction. These two
+recorded runs predate that reporting-only addition and retain hashes rather than full
+requests; their exact transient workspace inputs were not retained. No extra model
+run was spent merely to replace that historical limitation.
+
+**Real generation and reuse.** The revised native adapter also passes the independent
+source-bound knowledge smoke: initial generation reports 377 prompt / 123 completion
+tokens, changed input 381 / 127, then restart/revert reuses the original output with
+zero calls, launches or verified artifact bytes while the model file is absent. Peak
+resident observations are 726,237,184 and 725,336,064 bytes under the 2 GiB ceiling.
+These two lifecycle calls add 1,008 observed tokens separately from the repair comparison.
+This verifies acceptance/cache lifecycle, not the semantic quality of every brief.
+
+**Final checks.** Rust 1.90 default suite: **1,043 passed, 0 failed, 7 opt-in tests
+ignored**. Default all-target Clippy and optional `generate-worker` Clippy pass with
+warnings denied. The opt-in CPU, FastAPI, repair-selection and real generation/reuse
+checks above ran separately; a passing comparison harness does not make its model
+choices correct. Markdown link checks and whitespace checks pass. No macOS/Metal,
+real embedding weights or free-form hosted agent acceptance is claimed.
+
+GGUF SHA-256: `1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32`.
+Worker SHA-256: `4be2a7867b3984e0250c8f1904b220f25c2e22de984a7274891773369b2a6197`.
+llama.cpp: `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`.
+The executable fixture is [`tests/task_quality.rs`](../tests/task_quality.rs);
+local detailed output is `/tmp/foundry-task-quality-v2.json` with each input/request
+hash, actual usage, worker observation, response and behavioral result. Weights and
+host-local outputs are not committed. The [remaining inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
+retains model selection, broader evidence/host tasks, retrieval attribution, scale and
+hardware acceptance rather than marking the ecosystem complete.
+
+
 ## Live views, parameterized evidence and CPU task comparisons — 2026-10-10
 
 Experimental continuation on `experimental/context-ecosystem`. No release, default

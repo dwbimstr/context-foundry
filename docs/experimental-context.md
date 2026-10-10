@@ -328,6 +328,21 @@ failure or constraint detection. A CAS `dismiss` edit acknowledges a displayed e
 dismissal survives restart and view restore. There is no autonomous polling or extra
 model call, and no claim that a host read the reminder.
 
+For a bounded check before editing or finishing, use:
+
+```json
+{"op":"review","expected_revision":5,"paths":["src/retry.rs"],"finishing":false,"max_bytes":4096}
+```
+
+`review` matches fresh source-linked constraints and rejected attempts to up to 16 exact
+paths. `finishing:true` also checks selected active requirements, constraints, work and
+questions. At most eight complete originals fit the byte allowance; omitted and stale
+counts remain visible. These are attributed reminders, not proof of a conflict, an
+unfinished action or a passed test. It makes no model call or host mutation. Unknown
+paths cannot admit a repository. Revision conflicts refuse. Dismissal still applies only
+to rejected attempts; resolve work/questions using existing selection/supersession
+commands. Requirements and constraints remain protected in the task view.
+
 To find a retained observation when its ID has been forgotten, search the originals:
 
 ```json
@@ -815,16 +830,21 @@ probe the host. Current/cache hits need no worker admission and remain usable un
 This is owner-local admission, **not an aggregate OS memory quota**: owner/index memory,
 artifact disk/page cache, other processes and other Foundry owners are outside its reservation
 sum. External HTTP servers have no local worker reservation. Global GPU usage,
-native/cgroup CPU utilization, thermal/battery policy and simultaneous real-model hardware acceptance remain open. Without
+native macOS CPU observation, thermal/battery policy and simultaneous real-model hardware acceptance remain open. Without
 this option, previous admission and cache behavior is preserved.
 
 
 The optional model resource policy also accepts
 `"background_cpu":{"pause_percent":85,"resume_percent":65}` alongside its memory fields.
-It defers new background model calls under Linux host aggregate CPU contention, with
-one-second samples and hysteresis. Initial or unavailable observations defer by name;
-status reads do not sample. It preserves idle generation residency under CPU contention.
-This measures the host aggregate, not cgroup CPU capacity or hard CPU enforcement.
+It defers new background model calls using Linux affinity CPU ticks and every visible
+finite cgroup-v2 ancestor quota, with hysteresis and samples no more often than once
+per second. Utilization averages the interval since the previous admission sample.
+The reported percentage is the maximum of affinity utilization and quota-normalized ancestor usage;
+ancestor usage includes competing siblings. Changing affinity/quota identity resets the
+sampling interval. Initial or missing/malformed observations defer by name; status reads
+do not sample. It preserves idle generation residency under CPU contention.
+This is contention admission, not a hard CPU limit. Ancestors hidden outside the cgroup
+mount, cgroup v1 and affinity masks beyond the platform CPU-set capacity are not covered.
 Leave the field absent on macOS until its sampler is implemented and verified. Global
 GPU pressure, thermal/battery policy and task-quality/economics acceptance remain pending.
 
@@ -859,8 +879,8 @@ invalidate old scopes. Refresh all selected files after editing the configuratio
 Changed/missing provider scopes yield `incomplete`, not a false unique/absent match.
 `exact_key` means syntactic method/service/path agreement; it does not prove a runtime
 call or compatible payload. `ambiguous`, `unresolved`, `unsupported` and source spans
-remain visible. Dynamic URLs, parameterized routes, indirect clients and other
-frameworks are outside this first recipe. No workspace Python executes during indexing.
+remain visible. Dynamic URLs, indirect clients and other frameworks are unsupported;
+parameterized routes and direct same-file router mounts use the v3 recipe below. No workspace Python executes during indexing.
 
 Reuse a task created with the [task-context workflow](#recoverable-task-context),
 retaining its requirements, questions and constraints:
@@ -870,6 +890,12 @@ foundry --store STORE context 'catalog response contract' \
   --task contract --task-revision REV --compose-evidence \
   --boundary-config boundary.json --include-briefs --tokens 8192
 ```
+
+Add `--compact-evidence` (MCP `compact_evidence:true`) to use the v2 accounting report.
+It replaces repeated source handles with one-based delivered-item ordinals and compacts
+facet counts. Exact source handles, bodies, protected task state, relationship citations,
+stale/limited discovery and unverified-constraint warnings remain. The option requires
+`compose_evidence`; verbose v1 accounting stays the default.
 
 The selected task view and all source/relationship/brief/report text share the same
 allowance. `task-evidence` reports bodies, addresses only, omitted-by-budget and missing
@@ -985,9 +1011,16 @@ results in subsequent host requests. The live mode does not automatically upgrad
 old transformed carrier, broaden the one-carrier binding, or establish provider usage.
 See the [exact contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#live-owner-synchronization--2026-10-10).
 
-Boundary recipe `python-http-v2` additionally links literal consumers to whole-segment
-FastAPI string parameters. `/v2/items/{item_id}` and `/v2/items/42` produce a
-`route_template` relationship when unique; overlapping declarations remain ambiguous.
-Typed/path converters and mixed literal/parameter segments remain unsupported. Reindex
-the configured boundary scopes after upgrading the recipe; old source hashes alone do
-not make an old extraction current.
+Boundary recipe `python-http-v3` links literal consumers to whole-segment FastAPI
+parameters: default/explicit `str`, `int`, `float`, `uuid`, and terminal `path`.
+A terminal path converter can match empty or multiple segments. Mixed segments,
+custom converters, nonterminal path converters and percent-encoded URLs are unsupported.
+Overlapping declarations remain ambiguous; runtime declaration priority is not inferred.
+
+A same-file `APIRouter(prefix='/v1')` may be registered once with a direct module-level
+`app.include_router(router, prefix='/api')` after its route declarations. Both literal
+prefixes compose with the route path. Router declaration and registration are additional
+cited dependencies; task composition delivers their bodies before emitting the relation.
+Dynamic prefixes, nested/cross-file mounts, early/multiple registrations and other
+constructor/mount options leave provider coverage incomplete. Reindex the configured
+boundary scopes after upgrading: old hashes alone do not make v1/v2 extraction current.

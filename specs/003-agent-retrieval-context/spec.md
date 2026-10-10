@@ -930,3 +930,15 @@ state isolation with identical reference-root paths/bytes. The gateway continuat
 is verified with installed OMP 18.6.0/Bun 1.3.14 and a scripted upstream, including
 resumed original tool history and captured final-body receipt matching. See
 [validation](../../docs/validation.md#evidence-coverage-host-application-and-real-cpu-maintenance--2026-10-10).
+
+
+T009 compact accounting continuation (2026-10-10): optional `compact_evidence` on
+composed CLI/MCP context emits a version-2 report with delivered-item ordinals instead
+of repeated handles. Facet delivery states, discovery bounds/staleness, compiler
+coverage, boundary ambiguity and constraint caveats remain. Source forms, exact handles,
+protected task state and relationship bodies are retained under the same allowance;
+verbose v1 stays the default. Router relationships additionally require the v3 router
+declaration and mount dependency bodies. Focused tests compare both forms, exercise
+MCP advertisement/budgets, and refuse relationships whose dependencies did not fit.
+This reduces accounting overhead; total task economics still require observed usage
+and verified outcomes. See the expanded continuation in [validation](../../docs/validation.md).

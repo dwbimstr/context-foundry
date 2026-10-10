@@ -577,3 +577,24 @@ restart, explicit schema upgrade and bounded CLI output. The two-service contrac
 fixture in [`tests/task_evidence.rs`](../../tests/task_evidence.rs) supplies the
 implementation/consumer/configuration/test composition. See [usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
 and [validation](../../docs/validation.md#boundary-relationships-and-task-evidence--2026-10-10).
+
+
+T005 typed/mounted continuation (2026-10-10): `python-http-v3` admits built-in
+whole-segment `str`, `int`, `float`, `uuid` and terminal `path` converters, retaining
+overlap ambiguity. UUID separators may each be absent; the pinned runtime reference
+is installed Starlette 1.6.0 `starlette.convertors.CONVERTOR_TYPES` and
+`starlette.routing.compile_path`, consumed by FastAPI 0.141.1. The separately invoked
+`real_fastapi_converter_and_mount_fixture_matches_published_evidence` checks actual
+HTTP fixture matches; ordinary tests require no Python framework installation.
+Percent-encoded consumers, custom converters, mixed segments and nonterminal `path`
+remain unsupported instead of producing false absence/uniqueness.
+
+Same-file, module-level `APIRouter` construction and one direct `app.include_router`
+after route declarations compose literal constructor/registration prefixes. Additional
+constructor/mount options, dynamic/cross-file/nested/early/multiple mounts make coverage
+incomplete. Registration order is checked without quadratic node traversal. The router
+assignment and mount call are source-hashed dependency spans in the existing scope
+row. They invalidate with that source and must be delivered for task relationships.
+No new table or workspace execution is introduced. Old recipe rows decode but cannot
+serve as current evidence until explicit or enabled watcher republication. Other
+frameworks/brokers and cross-file import resolution remain pending concrete producers.
