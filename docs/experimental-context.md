@@ -949,4 +949,45 @@ select a changed revision. Source-link statuses describe export time; delivered 
 labels current source freshness unchecked. Expand/peek recover original observations
 from the task store. Forget does not erase exported packets, receipts, host history or
 provider caches; manage those caller-owned copies separately. There is no automatic
-transcript ingestion, live view synchronization or model-generated folding.
+transcript ingestion or model-generated folding. Frozen snapshots remain available;
+the optional live mode below follows owner edits.
+
+### Synchronize through the live owner
+
+Export the initial binding before starting the task store's HTTP MCP owner, then add
+this object alongside `task_view` in the gateway config:
+
+```json
+"task_view_owner": {
+  "url": "http://127.0.0.1:9633/mcp",
+  "token_env": "FOUNDRY_MCP_TOKEN"
+}
+```
+
+Start the existing owner with `--experimental-task-context --transport streamable-http
+--bind 127.0.0.1:9633 --auth-token-env FOUNDRY_MCP_TOKEN`. Supply that named credential
+to the gateway or its launcher. It must use a different environment variable name from
+the upstream and gateway credentials. The gateway fetches the current `render` view
+before each request, including updated folds, selections and protected entries.
+It never opens the owner's database or rewrites saved host history.
+
+The bound observation must remain selected and folded with the original digest.
+Expanding, deselecting, superseding or forgetting it stops subsequent upstream requests
+with `task_view_unavailable`; explicitly restore the valid binding or select a new
+exported anchor to continue. Owner failure/timeout also refuses, with no stale fallback.
+A restarted owner can reconnect on the next request. Reads have a five-second limit
+inside the request deadline and a 256 KiB rendered-view allowance; oversize views refuse.
+
+Receipts identify the resolved revision with `synchronization: "owner_snapshot"`.
+Delivered source statuses describe indexed state at resolution. An edit after that read
+can race the send; filesystem changes still require source acceptance. Use original tool
+results in subsequent host requests. The live mode does not automatically upgrade an
+old transformed carrier, broaden the one-carrier binding, or establish provider usage.
+See the [exact contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#live-owner-synchronization--2026-10-10).
+
+Boundary recipe `python-http-v2` additionally links literal consumers to whole-segment
+FastAPI string parameters. `/v2/items/{item_id}` and `/v2/items/42` produce a
+`route_template` relationship when unique; overlapping declarations remain ambiguous.
+Typed/path converters and mixed literal/parameter segments remain unsupported. Reindex
+the configured boundary scopes after upgrading the recipe; old source hashes alone do
+not make an old extraction current.

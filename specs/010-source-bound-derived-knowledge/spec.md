@@ -365,6 +365,21 @@ verified snapshots. Local PID/call/verification/peak/stop observations are avail
 the engine mutex. RAM is sampled; GPU peaks are reported at completed calls, not global
 live telemetry. A worker CPU-lifetime kill reports exit without inventing terminal usage.
 
+**Failed-computation accounting continuation (2026-10-10).** A bounded real CPU
+repair-selection comparison exposed that reaching the output allowance lost actual
+token counters. The native decoder now retains prompt/completion counts after fully
+processing the prompt and exhausting its sampled output allowance, even though no
+admissible result exists. Optional `usage` on the existing private `Failed` reply is
+checked against the admitted context/output bounds and retained as
+`local_worker.last_call_usage`. The supervisor clears that observation before each
+call. Run/pass totals include these failures before recording provider backoff; they
+never publish/cache partial prose. Old workers may omit usage, which remains unknown;
+older strict readers may refuse the extension. Executable pinning still identifies
+the exact worker. Cancellation, CPU kills, failed prefill and other incomplete work
+retain unknown usage rather than estimated zeroes. Fixtures reject invalid failure
+counters and verify failed work creates no brief. This fixes accounting, not model
+quality; the fixed repair-selection workloads and negative results live in validation.
+
 This controls one generation worker. Opt-in shared memory admission now accounts for
 combined configured embedding/generation ceilings, as described below. Global GPU use,
 native CPU utilization, thermal pressure, battery draw and macOS hardware/package acceptance remain open, alongside

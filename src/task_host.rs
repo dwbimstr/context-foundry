@@ -1,8 +1,10 @@
-//! Explicit frozen task snapshots at the gateway's final request boundary.
-//! No transcript acquisition, store access, automatic folding or live freshness.
+//! Explicit task snapshots at the gateway's final request boundary.
+//! Live resolution uses the existing MCP owner; the gateway never opens its store.
 use crate::{FResult, FoundryError, digest};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+pub(crate) mod live;
 
 pub const MAX_PACKET_BYTES: usize = 1024 * 1024;
 pub const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
@@ -89,17 +91,28 @@ impl Packet {
         }
         Ok(())
     }
-    fn content(&self) -> FResult<String> {
-        Ok(serde_json::to_string(
-            &json!({"scope":"exported_task_snapshot","source_freshness":"unchecked_at_send","view_sha256":self.view_sha256,"view_at_export":self.view}),
-        )?)
+    fn content(&self, live: bool) -> FResult<String> {
+        let content = if live {
+            json!({"scope":"live_task_snapshot","source_freshness":"indexed_at_resolution","view_sha256":self.view_sha256,"view_at_resolution":self.view})
+        } else {
+            json!({"scope":"exported_task_snapshot","source_freshness":"unchecked_at_send","view_sha256":self.view_sha256,"view_at_export":self.view})
+        };
+        Ok(serde_json::to_string(&content)?)
     }
     /// Caller has strictly parsed and validated the host profile. No mutation
     /// occurs until uniqueness, linkage and original content have been checked.
     pub(crate) fn apply(
         &self,
         incoming: &[u8],
+        request: Value,
+    ) -> FResult<(Vec<u8>, Option<AppliedView>)> {
+        self.apply_resolved(incoming, request, false)
+    }
+    pub(crate) fn apply_resolved(
+        &self,
+        incoming: &[u8],
         mut request: Value,
+        live: bool,
     ) -> FResult<(Vec<u8>, Option<AppliedView>)> {
         let messages = request["messages"].as_array_mut().ok_or_else(invalid)?;
         let results: Vec<usize> = messages
@@ -134,7 +147,7 @@ impl Packet {
             return Err(invalid());
         }
         let original = messages[index]["content"].as_str().ok_or_else(invalid)?;
-        let content = self.content()?;
+        let content = self.content(live)?;
         if digest(original.as_bytes()) != self.original_sha256 && original != content {
             return Err(invalid());
         }
@@ -155,6 +168,7 @@ impl Packet {
             request_sha256: digest(&body),
             incoming_bytes: incoming.len() as u64,
             request_bytes: body.len() as u64,
+            synchronization: live.then(|| "owner_snapshot".into()),
         };
         Ok((body, Some(receipt)))
     }
@@ -165,6 +179,8 @@ impl Packet {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppliedView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synchronization: Option<String>,
     pub boundary: String,
     pub workspace_id: String,
     pub task_id: String,
@@ -180,6 +196,10 @@ pub struct AppliedView {
 impl AppliedView {
     pub(crate) fn validate(&self) -> FResult<()> {
         if self.boundary != "gateway_upstream_body"
+            || self
+                .synchronization
+                .as_deref()
+                .is_some_and(|s| s != "owner_snapshot")
             || self.revision == 0
             || [
                 &self.workspace_id,

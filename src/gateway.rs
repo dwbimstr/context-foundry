@@ -167,9 +167,10 @@ pub(crate) struct GatewayConfig {
     pub(crate) run_dir: PathBuf,
     pub(crate) log_bytes: Option<u64>,
     pub(crate) task_view: Option<crate::task_host::Packet>,
+    pub(crate) task_view_owner: Option<crate::task_host::live::Config>,
 }
 
-const CONFIG_KEYS: [&str; 9] = [
+const CONFIG_KEYS: [&str; 10] = [
     "v",
     "port",
     "upstream",
@@ -179,6 +180,7 @@ const CONFIG_KEYS: [&str; 9] = [
     "run_dir",
     "log_bytes",
     "task_view",
+    "task_view_owner",
 ];
 
 fn valid_env_name(name: &str) -> bool {
@@ -309,12 +311,32 @@ pub(crate) fn parse_config(bytes: &[u8]) -> AResult<GatewayConfig> {
             Ok(packet)
         })
         .transpose()?;
+    let task_view_owner = fields
+        .get("task_view_owner")
+        .map(|value| -> AResult<_> {
+            let owner: crate::task_host::live::Config = serde_json::from_value(value.clone())
+                .map_err(|_| invalid("invalid task_view_owner"))?;
+            owner.validate().map_err(|_| {
+                invalid("task_view_owner requires a loopback MCP URL and token environment name")
+            })?;
+            if task_view.is_none()
+                || owner.token_env == credential_env
+                || owner.token_env == TOKEN_ENV
+            {
+                return Err(invalid(
+                    "task_view_owner requires a task_view anchor and a distinct credential name",
+                ));
+            }
+            Ok(owner)
+        })
+        .transpose()?;
     Ok(GatewayConfig {
         port,
         credential_env: credential_env.to_owned(),
         run_dir: PathBuf::from(run_dir),
         log_bytes,
         task_view,
+        task_view_owner,
     })
 }
 
@@ -900,6 +922,7 @@ struct Shared {
     shutdown: CancellationToken,
     limits: Limits,
     task_view: Option<crate::task_host::Packet>,
+    task_view_owner: Option<crate::task_host::live::Owner>,
 }
 
 /// One admitted generation: the identity recorded before the upstream send
@@ -1217,6 +1240,16 @@ async fn start(
         shutdown: CancellationToken::new(),
         limits: Limits::load(),
         task_view: config.task_view.clone(),
+        task_view_owner: config
+            .task_view_owner
+            .clone()
+            .map(|owner| {
+                crate::task_host::live::Owner::new(owner, config.task_view.as_ref().unwrap())
+                    .map_err(|_| {
+                        invalid("cannot initialize task_view_owner credentials or transport")
+                    })
+            })
+            .transpose()?,
     });
     let shutdown = shared.shutdown.clone();
     tokio::spawn(async move {
@@ -1648,9 +1681,26 @@ async fn chat(
             &format!("the request is outside the pinned OMP 18.6.0 profile: {reason}"),
         );
     }
-    let (body, applied_view) = match &shared.task_view {
+    let resolved = if let Some(owner) = &shared.task_view_owner {
+        let resolution = tokio::select! {
+            result = timeout_at(deadline, owner.resolve(shared.task_view.as_ref().unwrap())) => result.ok().and_then(Result::ok),
+            _ = shared.shutdown.cancelled() => None,
+        };
+        match resolution {
+            Some(packet) => Some(packet),
+            None => return shared.refuse(StatusCode::FORBIDDEN, "task_view_unavailable",
+                "current owner view is unavailable or its binding was revoked; no upstream request was sent"),
+        }
+    } else {
+        None
+    };
+    let (body, applied_view) = match resolved.as_ref().or(shared.task_view.as_ref()) {
         None => (body, None),
-        Some(packet) => match packet.apply(&body, parsed) {
+        Some(packet) => match if resolved.is_some() {
+            packet.apply_resolved(&body, parsed, true)
+        } else {
+            packet.apply(&body, parsed)
+        } {
             Ok(applied) => applied,
             Err(_) => {
                 return shared.refuse(
@@ -2737,6 +2787,7 @@ mod tests {
             shutdown: CancellationToken::new(),
             limits: Limits::load(),
             task_view: None,
+            task_view_owner: None,
         }
     }
 

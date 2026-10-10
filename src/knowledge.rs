@@ -761,22 +761,23 @@ pub(crate) async fn prepare_access<A: Access>(
                 report.usage_unknown_calls += 1;
                 let reply = provider.generate(profile, prepared.body, control).await;
                 drop(permit);
-                let reply = match reply {
-                    Ok(reply) => reply,
-                    Err(error) => {
-                        access.step(control, |engine| {
-                            cache::record_failure(engine, &provider_id, Some(error.code()))
-                        })?;
-                        return Err(error);
-                    }
+                let usage = match &reply {
+                    Ok(reply) => reply.usage.clone(),
+                    Err(_) if profile.local.is_some() => provider
+                        .local
+                        .observation
+                        .last_call_usage
+                        .clone()
+                        .unwrap_or_default(),
+                    Err(_) => Usage::default(),
                 };
                 let observed = report
                     .observed_prompt_tokens
-                    .checked_add(reply.usage.prompt_tokens.unwrap_or(0))
+                    .checked_add(usage.prompt_tokens.unwrap_or(0))
                     .zip(
                         report
                             .observed_completion_tokens
-                            .checked_add(reply.usage.completion_tokens.unwrap_or(0)),
+                            .checked_add(usage.completion_tokens.unwrap_or(0)),
                     );
                 let Some((prompt, completion)) = observed else {
                     access.step(control, |engine| {
@@ -789,9 +790,18 @@ pub(crate) async fn prepare_access<A: Access>(
                 };
                 report.observed_prompt_tokens = prompt;
                 report.observed_completion_tokens = completion;
-                if reply.usage.prompt_tokens.is_some() && reply.usage.completion_tokens.is_some() {
+                if usage.prompt_tokens.is_some() && usage.completion_tokens.is_some() {
                     report.usage_unknown_calls -= 1;
                 }
+                let reply = match reply {
+                    Ok(reply) => reply,
+                    Err(error) => {
+                        access.step(control, |engine| {
+                            cache::record_failure(engine, &provider_id, Some(error.code()))
+                        })?;
+                        return Err(error);
+                    }
+                };
                 if reply
                     .usage
                     .completion_tokens

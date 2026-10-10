@@ -1,5 +1,27 @@
 # Measurement handoff
 
+**2026-10-10 continuation:** historical results below do not cover the new explicit
+geometry/body representation or generation Metal controls. This cloud sandbox is
+Linux x86_64 with a four-CPU cgroup quota, five affinity-visible CPUs and 32 GiB memory;
+there is no exposed GPU, macOS execution target or selected embedding artifact.
+Real CPU generation comparisons are recorded in [validation](validation.md).
+For an admitted macOS development bundle and explicitly selected profile, run:
+
+```sh
+CF_EMBED_DEV_PROFILE=/absolute/profile.json cargo test --locked --test embed_worker \
+  -- --ignored --exact dev_real_worker_batched_and_single_sequence_vectors_agree --nocapture
+```
+
+This workload requires document batch >= 8, includes reordered/heterogeneous document
+batches, finite/unit-norm checks, repeated full-window queries and limit+1 refusal.
+Record the printed descriptor, dimensions, card/input/batch limits, device and bundle
+identity. Run separately for every proposed geometry/dimension; a small card limit only
+certifies small-card batching. Compare held-out retrieval/task outcomes before selecting
+a profile. macOS generation still needs native denial/owner-death, memory and Metal
+allocation/reserve checks on the real target. No result from Linux closes those rows or
+the signed installed-artifact requirement. GPU access and artifacts are prerequisites,
+not a reason to add an unvalidated backend or infer a hardware pass from a mock.
+
 On 2026-10-08 the owner first moved the remaining real-model and timing measurements
 to a cloud agent, then reversed that decision the same day: the baseline stores are too
 large to copy. Rows 1–3, 5, 6 and 7 below ran on the development host (Apple silicon,

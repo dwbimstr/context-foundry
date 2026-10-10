@@ -364,4 +364,15 @@ The existing Rust gateway applies it under the [adapter contract](../003-agent-r
 This avoids a new host extension runtime or store-owning service. Retained originals
 support expand/re-export/restart; packets and host history remain caller-owned and
 must be deleted separately after forgetting a task. Ordinary MCP application remains
-unknown. Live synchronization and broader host-region selection remain pending.
+unknown. The following continuation implements live synchronization; broader
+host-region selection remains pending.
+
+### Live host continuation — 2026-10-10
+
+003's [live synchronization contract](../003-agent-retrieval-context/contracts/adapter-economics.md#live-owner-synchronization--2026-10-10)
+now consumes this owner's existing atomic `render` read over authenticated loopback MCP.
+Task edits require no file projection or second store owner. The gateway pins an
+explicit exported binding, resolves the current selected view for each request and
+refuses a revoked/unavailable binding. Folding stays caller-authored, original history
+stays recoverable, and a concurrent edit after resolution is outside that snapshot.
+Multiple host regions, automatic selection and real-provider task outcomes remain open.

@@ -506,7 +506,7 @@ were inspected, not executed; the ecosystem plan retains the full pin and differ
 
 #### T005 implementation — 2026-10-10
 
-[`boundary.rs`](../../src/boundary.rs) implements `python-http-v1`: module-level
+[`boundary.rs`](../../src/boundary.rs) initially implemented `python-http-v1`: module-level
 FastAPI app declarations, static `@app.get/post/put/patch/delete/head/options` routes
 and direct imported `requests`/`httpx` calls. An **indexed** JSON configuration
 assigns provider files and canonical HTTP origins to service IDs and admits consumer
@@ -517,6 +517,24 @@ Template routes, dynamic URLs, unknown origins, escaped/shadowed bindings, parse
 failures and unsupported provider constructs prevent unsupported certainty. A logging
 string alone produces no call. The parser retains existing Python scanner limits and
 deterministic work limits; indexing never imports or executes workspace Python.
+
+**Parameterized-route continuation:** `python-http-v2` also accepts whole-segment
+default string parameters, such as `/v2/items/{item_id}`, joined against literal
+consumer URLs. A unique match is `route_template`, distinctly syntactic. Empty
+segments do not match parameters; trailing slashes, methods, service IDs and literal
+segments must agree. Converters (`{id:int}`, `{tail:path}`), mixed segments and
+duplicate parameter names remain unsupported/incomplete. Overlapping literal and
+parameter routes remain ambiguous: declaration order and runtime precedence are not
+inferred. No dynamic URL evaluation or arbitrary framework support is claimed.
+
+The same key-posting table adds service/method buckets to discover literal consumers
+from a template provider seed; point-read scope/fact, posting and result bounds remain.
+No pair materialization or corpus scan is added. Recipe identity invalidates old scopes
+until explicit or enabled watcher republication; source hashes alone cannot reuse v1
+extraction. Changed-scope publication removes both exact and method postings atomically.
+Fixtures verify discovery from either end, overlap, empty segments, unsupported
+converters, restart and delivery through task composition. The separate fixed-patch
+comparison uses a parameterized service/consumer contract with a behavioral oracle.
 
 Both occurrence and enclosing context spans retain full source hashes. Configuration
 is also cited and hashed. Results distinguish `exact_key`, `ambiguous`, `unresolved`,

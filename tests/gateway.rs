@@ -427,6 +427,7 @@ struct Spawn {
     /// The global `--store` flag, which the gateway must never open.
     store: Option<PathBuf>,
     task_view: Option<PathBuf>,
+    task_view_owner: Option<String>,
 }
 
 struct Gateway {
@@ -482,6 +483,9 @@ impl Gateway {
             let mut value: Value =
                 serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
             value["task_view"] = json!(packet);
+            if let Some(url) = &spawn.task_view_owner {
+                value["task_view_owner"] = json!({"url":url,"token_env":"FOUNDRY_TEST_TASK_OWNER"});
+            }
             std::fs::write(&config, serde_json::to_vec(&value).unwrap()).unwrap();
         }
         let mut command = Command::new(BIN);
@@ -495,6 +499,7 @@ impl Gateway {
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env(KEY_ENV, KEY_CANARY)
+            .env("FOUNDRY_TEST_TASK_OWNER", "task-owner-canary")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -3884,7 +3889,7 @@ async fn exported_view_applies_at_final_bytes_refuses_broken_bindings_and_replay
 /// behavior, not coding quality or provider economics.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires FOUNDRY_OMP_BUN and FOUNDRY_OMP_CLI pinned to OMP 18.6.0"]
-async fn real_omp_applies_exported_view_on_resumed_tool_history() {
+async fn real_omp_applies_live_view_on_resumed_tool_history() {
     let bun = std::env::var_os("FOUNDRY_OMP_BUN").expect("Bun executable");
     let cli = std::env::var_os("FOUNDRY_OMP_CLI").expect("OMP dist/cli.js");
     let dir = tempfile::tempdir().unwrap();
@@ -3995,6 +4000,9 @@ async fn real_omp_applies_exported_view_on_resumed_tool_history() {
         .unwrap();
     let original = tool["content"].as_str().unwrap();
     let packet = export_view(dir.path(), original, tool["tool_call_id"].as_str().unwrap());
+    let owner = TaskOwner::start(dir.path(), 0).await;
+    let anchor: Value = serde_json::from_slice(&std::fs::read(&packet).unwrap()).unwrap();
+    owner.edit(&anchor, json!({"op":"apply","expected_revision":2,"edits":[{"op":"fold","entry_id":"output","summary":"Updated live observation for the next model request."}]})).await;
     fn session_files(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
@@ -4018,6 +4026,7 @@ async fn real_omp_applies_exported_view_on_resumed_tool_history() {
             upstream: Some(upstream.port),
             log_bytes: Some(1_048_576),
             task_view: Some(packet),
+            task_view_owner: Some(owner.url.clone()),
             run_name: Some("resumed"),
             ..Default::default()
         },
@@ -4058,7 +4067,7 @@ async fn real_omp_applies_exported_view_on_resumed_tool_history() {
         tool["content"]
             .as_str()
             .unwrap()
-            .contains("exported_task_snapshot")
+            .contains("live_task_snapshot")
     );
     assert!(
         !tool["content"]
@@ -4072,9 +4081,230 @@ async fn real_omp_applies_exported_view_on_resumed_tool_history() {
         "host history must retain original bytes"
     );
     assert!(!history_after.contains("exported_task_snapshot"));
+    assert!(!history_after.contains("live_task_snapshot"));
+    assert_eq!(application.revision, 3);
+    assert_eq!(
+        application.synchronization.as_deref(),
+        Some("owner_snapshot")
+    );
+    assert!(
+        tool["content"]
+            .as_str()
+            .unwrap()
+            .contains("Updated live observation")
+    );
     eprintln!(
         "OMP 18.6.0 application: {}",
         serde_json::to_string(application).unwrap()
     );
+    gateway.terminate().assert_no_secrets();
+}
+
+struct TaskOwner {
+    child: tokio::process::Child,
+    url: String,
+}
+impl TaskOwner {
+    async fn start(dir: &Path, port: u16) -> Self {
+        use tokio::io::AsyncBufReadExt;
+        let mut child = tokio::process::Command::new(BIN)
+            .arg("--store")
+            .arg(dir.join("task-store"))
+            .args(["mcp", "--root"])
+            .arg(dir.join("task-root"))
+            .args([
+                "--transport",
+                "streamable-http",
+                "--bind",
+                &format!("127.0.0.1:{port}"),
+                "--auth-token-env",
+                "FOUNDRY_TEST_TASK_OWNER",
+                "--experimental-task-context",
+            ])
+            .env("FOUNDRY_TEST_TASK_OWNER", "task-owner-canary")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+        let line = tokio::time::timeout(WAIT, lines.next_line())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let ready: Value = serde_json::from_str(&line).unwrap();
+        Self {
+            child,
+            url: ready["listening"].as_str().unwrap().into(),
+        }
+    }
+    async fn edit(&self, anchor: &Value, command: Value) {
+        use rmcp::transport::{
+            StreamableHttpClientTransport,
+            streamable_http_client::StreamableHttpClientTransportConfig,
+        };
+        let config = StreamableHttpClientTransportConfig::with_uri(self.url.clone())
+            .auth_header("task-owner-canary");
+        let client = ()
+            .serve(StreamableHttpClientTransport::with_client(
+                reqwest::Client::new(),
+                config,
+            ))
+            .await
+            .unwrap();
+        let args = json!({"workspace_id":anchor["view"]["workspace_id"],"task_id":"host-task","command":command});
+        let reply = client
+            .call_tool(
+                CallToolRequestParams::new("task_context")
+                    .with_arguments(args.as_object().unwrap().clone()),
+            )
+            .await
+            .unwrap();
+        assert_ne!(reply.is_error, Some(true), "{reply:?}");
+        client.cancel().await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn live_view_tracks_owner_edits_refuses_revocation_and_recovers_after_owner_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let upstream = FakeUpstream::start().await;
+    let original = fixture("omp-18.6.0-tool-continuation.json");
+    let request: Value = serde_json::from_slice(&original).unwrap();
+    let index = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|m| m["role"] == "tool")
+        .unwrap();
+    let packet = export_view(
+        dir.path(),
+        request["messages"][index]["content"].as_str().unwrap(),
+        "call_9",
+    );
+    let anchor: Value = serde_json::from_slice(&std::fs::read(&packet).unwrap()).unwrap();
+    let mut owner = TaskOwner::start(dir.path(), 0).await;
+    let mut gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            log_bytes: Some(1_048_576),
+            task_view: Some(packet),
+            task_view_owner: Some(owner.url.clone()),
+            ..Default::default()
+        },
+    );
+    for revision in [2, 3] {
+        if revision == 3 {
+            owner.edit(&anchor, json!({"op":"apply","expected_revision":2,"edits":[{"op":"fold","entry_id":"output","summary":"The current owner changed this view."},{"op":"add","entry":{"id":"new-constraint","kind":"constraint","text":"Keep the new acceptance target.","author":"operator","provenance":"live fixture","source_links":[]}}]})).await;
+        }
+        upstream.queue(Reply::sse("", simple_stream()));
+        assert_eq!(gateway.post(original.clone()).await.status(), 200);
+        let receipts = gateway.wait_receipts(revision as usize - 1).await;
+        let app = receipts
+            .last()
+            .unwrap()
+            .observation
+            .as_ref()
+            .unwrap()
+            .applied_view
+            .as_ref()
+            .unwrap();
+        assert_eq!(app.revision, revision);
+        assert_eq!(app.synchronization.as_deref(), Some("owner_snapshot"));
+        let sent = upstream.received().last().unwrap().body.clone();
+        assert_eq!(app.request_sha256, context_foundry::digest(&sent));
+        let mut applied: Value = serde_json::from_slice(&sent).unwrap();
+        if revision == 3 {
+            assert!(
+                applied["messages"][index]["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains("current owner changed")
+            );
+            assert!(
+                applied["messages"][index]["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Keep the new acceptance target.")
+            );
+        }
+        applied["messages"][index]["content"] = request["messages"][index]["content"].clone();
+        assert_eq!(applied, request, "all other request fields survive");
+    }
+    owner.edit(&anchor, json!({"op":"apply","expected_revision":3,"edits":[{"op":"select","entry_id":"output","selected":false}]})).await;
+    assert_eq!(gateway.post(original.clone()).await.status(), 403);
+    owner.edit(&anchor, json!({"op":"apply","expected_revision":4,"edits":[{"op":"select","entry_id":"output","selected":true},{"op":"expand","entry_id":"output"}]})).await;
+    assert_eq!(gateway.post(original.clone()).await.status(), 403);
+    owner.edit(&anchor, json!({"op":"apply","expected_revision":5,"edits":[{"op":"fold","entry_id":"output","summary":"Restored current view."}]})).await;
+    let port = reqwest::Url::parse(&owner.url).unwrap().port().unwrap();
+    owner.child.kill().await.unwrap();
+    owner.child.wait().await.unwrap();
+    assert_eq!(gateway.post(original.clone()).await.status(), 403);
+    assert_eq!(upstream.count(), 2, "no frozen fallback");
+    owner = TaskOwner::start(dir.path(), port).await;
+    upstream.queue(Reply::sse("", simple_stream()));
+    assert_eq!(gateway.post(original.clone()).await.status(), 200);
+    assert_eq!(
+        gateway.wait_receipts(3).await[2]
+            .observation
+            .as_ref()
+            .unwrap()
+            .applied_view
+            .as_ref()
+            .unwrap()
+            .revision,
+        6
+    );
+    owner
+        .edit(&anchor, json!({"op":"forget","expected_revision":6}))
+        .await;
+    assert_eq!(gateway.post(original.clone()).await.status(), 403);
+    owner
+        .edit(
+            &anchor,
+            json!({"op":"create","title":"Recreated task is below the admitted revision"}),
+        )
+        .await;
+    assert_eq!(gateway.post(original).await.status(), 403);
+    assert_eq!(upstream.count(), 3);
+    let finished = gateway.terminate();
+    finished.assert_no_secrets();
+    assert!(!finished.receipts_text.contains("task-owner-canary"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn live_owner_resolution_obeys_the_shorter_gateway_deadline_without_an_attempt() {
+    let dir = tempfile::tempdir().unwrap();
+    let upstream = FakeUpstream::start().await;
+    let stalled_owner = FakeUpstream::start().await;
+    let original = fixture("omp-18.6.0-tool-continuation.json");
+    let request: Value = serde_json::from_slice(&original).unwrap();
+    let tool = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap();
+    let packet = export_view(dir.path(), tool["content"].as_str().unwrap(), "call_9");
+    let mut gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            task_view: Some(packet),
+            task_view_owner: Some(format!("http://127.0.0.1:{}/mcp", stalled_owner.port)),
+            deadline_ms: Some(300),
+            ..Default::default()
+        },
+    );
+    stalled_owner.queue(Reply::raw(vec![Step::Hold]));
+    let started = Instant::now();
+    assert_eq!(gateway.post(original).await.status(), 403);
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(stalled_owner.count(), 1, "the owner read actually began");
+    assert_eq!(upstream.count(), 0);
+    assert_eq!(gateway.health().await["attempts"], 0);
     gateway.terminate().assert_no_secrets();
 }

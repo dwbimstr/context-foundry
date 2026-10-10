@@ -666,3 +666,50 @@ applied carrier is idempotent. Receipts contain identifiers/counts/digests only.
 This narrow supported OMP 18.6.0 continuation boundary extends the earlier meter-only
 contract; it does not claim generic history rewriting, automatic packet refresh,
 provider-enforced counting or correctness of caller summaries.
+
+### Live owner synchronization — 2026-10-10
+
+Optional gateway `task_view_owner: {"url":"http://127.0.0.1:PORT/mcp",
+"token_env":"FOUNDRY_MCP_TOKEN"}` resolves the current view before **every** admitted
+model request. It requires the existing `task_view` packet as an immutable task,
+entry, original-content, tool-call and byte-allowance anchor. Only an explicit IPv4
+loopback `/mcp` endpoint is admitted; redirects/proxies are disabled. The credential
+name must differ from the gateway/upstream names. The launcher forwards that named
+credential only to the gateway. The endpoint is the trusted existing Foundry owner,
+with experimental task context enabled, not a generic remote MCP server.
+
+[`task_host/live.rs`](../../../src/task_host/live.rs) uses maintained rmcp 3.5.0
+client/Streamable HTTP transport and the existing read-only `task_context render`
+operation. This avoids a second store reader, file projection/publication protocol or
+host-language extension. A retained SDK session costs one owner session; failed or
+cancelled reads discard it and the next request may reconnect. Resolution has a five
+second ceiling within the request deadline, a 256 KiB rendered-view limit and a 2 MiB
+SSE event limit. The owner's existing response/admission bounds still apply. SDK JSON
+initialization responses are trusted owner metadata. Gateway shutdown or cancellation
+drops an in-flight service instead of retaining outstanding work for the next request.
+
+The current task revision must not fall below the anchor or the last resolved revision
+in this gateway run. The original digest, selected folded observation and protected
+entry representations are checked again. Deselection, expansion, supersession,
+forgetting, oversized output, owner failure or broken identity refuses before upstream
+with `task_view_unavailable`; there is no frozen fallback. Changed tool linkage/body
+still refuses with `task_view_mismatch`. An absent carrier remains byte-exact, but live
+resolution must succeed. An old transformed carrier is not silently upgraded: hosts
+must retain the original result (as the tested OMP runtime does).
+
+Delivered text labels `live_task_snapshot`, `indexed_at_resolution` and
+`view_at_resolution`; receipts add `synchronization:"owner_snapshot"`. This is a
+consistent owner read followed by request serialization, not a lock across the provider
+send: later owner/source edits can race the send. Freshness means indexed source state,
+not unaccepted filesystem changes. A revision watermark is local to the gateway run;
+there is no durable task-incarnation/revocation registry. Caller-managed exported
+copies remain outside forgetting. The existing exact attempted-body digest, full
+selected view, protected content, provider-consumption uncertainty and byte ceiling
+contracts remain.
+
+Source reference: rmcp **3.5.0**, `transport/streamable_http_client.rs` configuration
+and `service.rs::RunningService::drop`; its session-expiry/reinitialization behavior is
+used through the SDK. Foundry additionally pins the local endpoint, bounds resolution,
+checks task identity/revision and never retries a model request automatically. Actual
+owner restart/refusal tests are in `tests/gateway.rs`; the installed OMP 18.6.0 consumer
+test verifies a post-export owner edit, outgoing revision and preserved saved history.

@@ -1421,6 +1421,37 @@ fn use_local(env: &mut Env) {
 }
 
 #[cfg(target_os = "linux")]
+#[tokio::test]
+async fn failed_local_computation_keeps_bounded_usage_without_publishing_a_brief() {
+    for (command, expected, unknown) in [
+        ("failed_usage", "knowledge_output_limit", 0),
+        ("failed_usage_invalid", "knowledge_provider_malformed", 1),
+    ] {
+        let server = Server::good();
+        let mut env = Env::new(&server);
+        use_local(&mut env);
+        env.profile
+            .instructions
+            .push_str(&format!("\nfixture:{command}"));
+        let report = env.run(1).await;
+        assert_eq!(report.nodes[0].reason.as_deref(), Some(expected));
+        assert_eq!(report.calls, 1);
+        assert_eq!(report.generated, 0);
+        assert_eq!(report.usage_unknown_calls, unknown);
+        assert_eq!(
+            report.observed_prompt_tokens,
+            if unknown == 0 { 37 } else { 0 }
+        );
+        assert_eq!(
+            report.observed_completion_tokens,
+            if unknown == 0 { 128 } else { 0 }
+        );
+        assert!(env.records().is_empty());
+        assert_eq!(server.calls(), 0);
+    }
+}
+
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_mcp_memory_policy_tracks_residency_and_cached_replay_bypasses_pressure() {
     let server = Server::good();

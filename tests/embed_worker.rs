@@ -3446,10 +3446,20 @@ fn assert_agree(name: &str, batched: &[Vec<f32>], single: &[Vec<f32>]) {
         assert_eq!(a.len(), b.len(), "{name} row {i}: dimension");
         let (mut dot, mut na, mut nb) = (0.0f64, 0.0f64, 0.0f64);
         for (x, y) in a.iter().zip(b) {
+            assert!(
+                x.is_finite() && y.is_finite(),
+                "{name} row {i}: finite vectors"
+            );
             dot += *x as f64 * *y as f64;
             na += *x as f64 * *x as f64;
             nb += *y as f64 * *y as f64;
         }
+        assert!(
+            (na.sqrt() - 1.0).abs() < 0.0001 && (nb.sqrt() - 1.0).abs() < 0.0001,
+            "{name} row {i}: normalized vectors, norms {} and {}",
+            na.sqrt(),
+            nb.sqrt()
+        );
         let cosine = dot / (na.sqrt() * nb.sqrt());
         println!("agreement {name} row {i}: cosine={cosine:.7} (tolerance: >= 0.9999)");
         assert!(
@@ -3481,6 +3491,13 @@ fn singly(provider: &mut dyn EmbeddingProvider, inputs: &[TokenizedInput]) -> Ve
 #[ignore = "development run: real model and sandbox bundle required"]
 fn dev_real_worker_batched_and_single_sequence_vectors_agree() {
     let profile = dev_profile();
+    // This test certifies heterogeneous batching only for a profile that can
+    // actually admit its eight-sequence workload. Smaller profiles need their
+    // own workload; silently skipping these calls would overstate acceptance.
+    assert!(
+        profile.document_limits().inputs >= 8,
+        "parity workload requires batch >= 8"
+    );
     let mut provider =
         supervisor::acquire_until(&profile, true, &context_foundry::Control::unbounded())
             .expect("acquire the real worker");
@@ -3519,14 +3536,31 @@ fn dev_real_worker_batched_and_single_sequence_vectors_agree() {
         .expect("heterogeneous");
     assert_agree("heterogeneous", &batched, &reference);
 
+    // The card limit can be much smaller than the model window. Above only
+    // proves that document geometry; do not conflate it with long-input parity.
+    eprintln!(
+        "embedding validation: descriptor={} dimensions={} input_limit={} document_limit={} batch_tokens={} sequences={}",
+        profile.descriptor.digest(),
+        profile.descriptor.dims(),
+        profile.descriptor.input_limits().tokens,
+        profile.card_tokens,
+        profile.document_limits().total_tokens,
+        profile.document_limits().inputs
+    );
+
     // Test the selected descriptor boundary, including an explicitly configured
     // long-context profile. This requires the real macOS worker and weights.
     let limit = profile.descriptor.input_limits().tokens;
     let full = dev_ids(&profile, &text_with_tokens(limit, &profile));
     assert_eq!(full.ids.len(), limit);
-    provider
+    let full_vector = provider
         .embed_query(&full, Instant::now() + Duration::from_secs(120))
         .expect("query at the descriptor limit");
+    let repeated = provider
+        .embed_query(&full, Instant::now() + Duration::from_secs(120))
+        .expect("repeated query at the descriptor limit");
+    assert_eq!(full_vector.len(), profile.descriptor.dims());
+    assert_agree("full-window-repeat", &[full_vector], &[repeated]);
     let mut over = full.clone();
     over.ids.push(over.ids[0]);
     let refused = provider.embed_query(&over, Instant::now() + Duration::from_secs(5));

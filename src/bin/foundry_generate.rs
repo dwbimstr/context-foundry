@@ -42,6 +42,7 @@ struct Decoder {
     gpu: ffi::ggml_backend_dev_t,
     peak_gpu: u64,
     monitor: Option<GpuMonitor>,
+    failed_usage: Option<Usage>,
 }
 impl Drop for Decoder {
     fn drop(&mut self) {
@@ -189,6 +190,7 @@ impl Decoder {
             gpu,
             peak_gpu: 0,
             monitor,
+            failed_usage: None,
         };
         if unsafe { ffi::llama_n_ctx(result.ctx.as_ptr()) } < result.config.context_tokens
             || unsafe { ffi::llama_n_batch(result.ctx.as_ptr()) } < result.config.batch_tokens
@@ -300,7 +302,11 @@ fn gpu_usage(gpu: ffi::ggml_backend_dev_t, config: &Device) -> Result<u64, &'sta
     Ok(used)
 }
 impl Generator for Decoder {
+    fn failed_usage(&self) -> Option<Usage> {
+        self.failed_usage.clone()
+    }
     fn generate(&mut self, body: &Value) -> Result<(Reply, u64), &'static str> {
+        self.failed_usage = None;
         let max = body["max_tokens"]
             .as_u64()
             .filter(|n| (1..=8192).contains(n))
@@ -381,6 +387,10 @@ impl Generator for Decoder {
             content.extend_from_slice(&piece[..n as usize]);
             self.decode(&mut [token])?;
         }
+        self.failed_usage = Some(Usage {
+            prompt_tokens: Some(prompt_tokens),
+            completion_tokens: Some(max),
+        });
         Err("knowledge_output_limit")
     }
 }

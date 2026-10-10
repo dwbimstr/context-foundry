@@ -1,10 +1,15 @@
 //! Worker entry shared by the separately linked backend and the fixture binary.
 use super::{Observation, protocol, resources};
-use crate::knowledge::provider::Reply;
+use crate::knowledge::provider::{Reply, Usage};
 use std::io;
 
 pub trait Generator {
     fn generate(&mut self, body: &serde_json::Value) -> Result<(Reply, u64), &'static str>;
+    /// Actual counters for a completed computation that failed to produce an
+    /// admissible result. Abrupt exits and interrupted computation stay unknown.
+    fn failed_usage(&self) -> Option<Usage> {
+        None
+    }
 }
 pub fn serve(
     load: impl FnOnce(&protocol::Hello) -> Result<Box<dyn Generator>, &'static str>,
@@ -20,6 +25,7 @@ pub fn serve(
             &protocol::Answer::Failed {
                 id,
                 code: code.into(),
+                usage: None,
             },
         );
     };
@@ -94,6 +100,7 @@ pub fn serve(
             Err(code) => protocol::Answer::Failed {
                 id: request.id,
                 code: code.into(),
+                usage: generator.failed_usage(),
             },
         };
         if protocol::write(&mut output, &answer).is_err() {

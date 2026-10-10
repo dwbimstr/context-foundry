@@ -56,8 +56,11 @@ source-bound brief discovery and delivered-facet accounting are verified in sand
 fixtures. The next continuation adds admitted-root/selected-compiler evidence,
 explicit exported task-view application in the Rust gateway, and installed OMP 18.6.0
 continuation/history checks against a scripted upstream. Real Qwen CPU generation now
-covers changed input and restart/revert cache reuse. Broader frameworks, live host-view
-synchronization, real-device embedding/Metal and paired task quality/economics remain. See the [updated pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
+covers changed input and restart/revert cache reuse. Live host views now resolve through the existing MCP owner, and parameterized FastAPI
+routes add bounded evidence coverage. A paired CPU repair-selection fixture retained
+negative task results and exposed a repaired failed-generation accounting gap. Broader
+frameworks, a useful task model/recipe, compact small-task context, free-form host
+outcomes/economics and real-device embedding/Metal remain. See the [updated pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.
 

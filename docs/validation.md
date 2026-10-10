@@ -1,5 +1,123 @@
 # Validation
 
+## Live views, parameterized evidence and CPU task comparisons — 2026-10-10
+
+Experimental continuation on `experimental/context-ecosystem`. No release, default
+promotion, free-form agent-quality claim or GPU acceptance. The revised
+[pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
+retains all unfinished work.
+
+**Live host views.** The gateway now uses the existing authenticated loopback MCP
+owner's atomic `render` operation before each model request, anchored to an explicit
+exported task/entry/original digest. No extra store owner, file projection or host
+extension is introduced. Changed folds and new protected entries reach the next
+request. Deselection, expansion, forgetting, revision rollback, missing owner and
+resolution deadline refuse before upstream; no stale snapshot fallback occurs. A
+restarted owner reconnects. Receipts record the revision and exact serialized body,
+with `synchronization:"owner_snapshot"`. Source freshness is indexed state at the read;
+concurrent edits after that read can race the send. See the
+[contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#live-owner-synchronization--2026-10-10).
+
+Installed OMP **18.6.0**, Bun **1.3.14**, resumed a real read-tool session through the
+Rust gateway in `real_omp_applies_live_view_on_resumed_tool_history`. An owner edit after export changed revision 2 to 3; the resumed outgoing
+request used revision 3, its receipt digest matched the body, and the original saved
+history remained intact. **12,757 incoming bytes → 3,803 forwarded bytes**, 17.01 s.
+The upstream was scripted: this is host/request/history acceptance, not provider-token
+or task-quality evidence. Frozen export/replay remains covered separately.
+
+**Broader evidence.** `python-http-v2` joins whole-segment FastAPI string parameters
+with literal `requests`/`httpx` consumers. Both traversal directions, overlapping
+literal/template providers, empty segments, unsupported converters/mixed segments,
+source freshness and restart are checked. Unique matches are `route_template`, not
+runtime call proof. Existing scope, posting and delivery caps remain. A composed
+parameterized-contract fixture delivers provider and consumer evidence inside 4,000
+admission tokens; old recipe scopes require republication.
+
+**Paired task experiment.** `tests/task_quality.rs` fixes two tasks and three candidate
+patches per task before generation: FIFO removal preserving empty-queue behavior, and
+a parameterized catalog response repair preserving the published route and billing.
+Independent Python behavioral oracles reject the original and every wrong patch.
+The real model selects a patch identifier through the existing structured decoder;
+this is constrained repair selection, not autonomous patch writing or an OMP agent
+loop. Full-file input reads every file in each tiny fixture (two/five files); Foundry
+uses task evidence composition with a 4,000-token delivery allowance. Both receive the
+same task, options, model, greedy decoding and 256-token output ceiling. Arm order is
+counterbalanced. Each call gets a cold isolated worker without retries or output reuse.
+
+Explicit model: Qwen2.5-Coder-0.5B-Instruct Q4_K_M, GGUF SHA-256
+`1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32`.
+Accounted-run worker SHA-256
+`521f80cc240dbcd10083501a81c589efa72eb2dd6ba780f35ced0ccd1d16a804`, llama.cpp
+`b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`. CPU, 2 threads, ChatML, 8,192 context,
+batch 128, 2 GiB hard address-space ceiling, 180 lifetime CPU seconds, 90 s load/call
+bounds; observed `linux-seccomp-fd-v1`. No embedding model or remote provider was used.
+
+| Task / input | Context bytes | Request o200k admission | Actual prompt / output tokens | Cold generation seconds | Verified repair |
+| --- | ---: | ---: | ---: | ---: | --- |
+| FIFO / full files | 195 | 257 | 206 / 256 | 36.003 | No; output limit |
+| FIFO / Foundry | 2,979 | 1,209 | 1,273 / 256 | 58.579 | No; output limit |
+| Contract / Foundry | 4,402 | 1,776 | 1,905 / 256 | 68.964 | No; output limit |
+| Contract / full files | 576 | 393 | 320 / 256 | 42.311 | No; output limit |
+
+**Neither arm completed either task.** Foundry's full evidence envelope increased
+prompt tokens 6.18× and 5.95× on these tiny fixtures. This does not predict behavior
+at 60,000–80,000 files, but it rejects a blanket token-savings claim. The selected
+model/prompt/output recipe has no earned task acceptance. Next work is a useful task
+recipe and a compact small-task context path, followed by held-out free-form tasks.
+Four calls consumed **3,704 observed prompt + 1,024 output tokens**. Cost/tokens per
+verified completion are undefined with zero completions; money, energy and amortized
+large-repository bootstrap/maintenance costs were not measured. No auxiliary inference
+ran. Foundry preparation took 791/125 ms (cold tiny store, source acceptance, boundary
+publication when applicable, lexical refresh, task setup and packing); baseline file
+reads/assembly were below 1 ms. These are fixture observations, not isolated throughput
+measurements. Cold generation includes worker artifact verification/load; common test
+setup and construction of artifact pins are outside those times. Peak worker memory was
+776,400,896–778,260,480 bytes. Total comparison execution was 232.88 s.
+
+The **first four-call run is also retained**, not silently dropped: all four attempts
+hit the same output ceiling with **unknown usage** (34.537, 47.049, 63.529 and 39.565 s;
+212.19 s total test). That exposed a local accounting gap. The decoder now returns
+actual counters after exhausting a completed output allowance; bounded failure usage
+is included in run/pass totals, without accepting or caching incomplete prose. Invalid
+counters refuse, and interrupted/killed/incomplete computation stays unknown. The
+accounted run repeated the fixed source/tasks/recipe after this repair; generated
+workspace/source handles differ across temporary stores, so Foundry requests are not
+byte-identical across runs. Each run records actual context/request/worker/model digests.
+Across these two experiments there were **eight failed calls**, four with unknown usage;
+the second run's complete counters do not retroactively fill the first run's gaps.
+Raw synthetic reports/logs remain outside Git at `/tmp/foundry-task-quality.json`,
+`/tmp/foundry-task-quality-before-accounting.json` and the corresponding task-quality
+logs. Reproduce with explicit `FOUNDRY_GENERATION_SMOKE_WORKER`,
+`FOUNDRY_GENERATION_SMOKE_GGUF`, optional `FOUNDRY_TASK_COMPARISON_REPORT`, and:
+
+```sh
+cargo test --locked --test task_quality -- --ignored \
+  --exact real_cpu_paired_repair_selection_reports_all_attempts --nocapture
+```
+
+**Embedding/hardware scope.** This host is Linux x86_64, kernel 6.18.44, five CPU
+affinity slots, a four-CPU quota (`400000 100000`), 32 GiB memory and no `/dev/nvidia*`
+or `/dev/dri/render*` devices. No selected embedding weights or macOS execution target
+are configured. The existing macOS parity harness now checks finite/unit-norm vectors,
+explicit eight-sequence admission, printed geometry and full-window query repeatability.
+Those additions are **not target-typechecked or executed** on this Linux host. Portable
+geometry/body/parent fixtures and Linux Metal-refusal checks are separate from real
+embedding numerical, GPU/Metal resource, combined-model and signed-package acceptance.
+The [hardware handoff](measurement-handoff.md) records the concrete command and scope.
+
+Verification: **578 affected automated checks and 21 subprocess recovery scenarios
+passed**, including real MCP transports, gateway, task state/evidence, boundary
+publication, knowledge accounting and portable neural geometry/maintenance. An actual
+`--no-default-features --features test-faults --bin foundry` build passed **99 consumer
+harness checks** and the real OMP live-view test again (10.66 s; same request sizes).
+Harness libraries/fake auxiliaries retain default features; this verifies the actual
+lexical-only application binary, not a claim that `cargo test --no-default-features`
+disables the self dev-dependency's semantic feature. Default all-target and actual
+no-default-feature library/binary Clippy pass with warnings denied. The native
+`generate-worker` binary also passes Clippy; the normal default-feature application
+build is restored, and formatting/local documentation links are checked. The model comparisons
+above are executed experiments with failed task outcomes, not passing quality acceptance.
+
 ## Evidence coverage, host application and real CPU maintenance — 2026-10-10
 
 Experimental branch continuation; no release/default promotion, real-provider cost

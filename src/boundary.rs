@@ -12,10 +12,55 @@ use tree_sitter::Node;
 
 const SCOPES: TableDefinition<&str, &str> = TableDefinition::new("boundary_scopes");
 const KEYS: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("boundary_keys");
-pub const RECIPE: &str = "python-http-v1";
+pub const RECIPE: &str = "python-http-v2";
 const MAX_FILES: usize = 64;
 const MAX_FACTS: usize = 128;
 const MAX_RESULTS: usize = 64;
+
+// Only whole-segment, default string parameters are supported. Converters,
+// repeated parameter names and mixed literal/parameter segments stay incomplete.
+fn route_path(path: &str) -> bool {
+    if !path.starts_with('/') || path.len() > 1024 || path.contains(['?', '#']) {
+        return false;
+    }
+    let mut names = BTreeSet::new();
+    path.split('/').all(|part| {
+        if !part.contains(['{', '}']) {
+            return true;
+        }
+        let Some(name) = part.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+            return false;
+        };
+        let mut bytes = name.bytes();
+        bytes
+            .next()
+            .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+            && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            && names.insert(name)
+    })
+}
+fn matches_route(provider: &Key, consumer: &Key) -> bool {
+    if provider.service != consumer.service || provider.method != consumer.method {
+        return false;
+    }
+    let mut actual = consumer.path.split('/');
+    provider.path.split('/').all(|part| {
+        actual.next().is_some_and(|value| {
+            if part.starts_with('{') {
+                !value.is_empty()
+            } else {
+                part == value
+            }
+        })
+    }) && actual.next().is_none()
+}
+fn method_key(key: &Key) -> Key {
+    Key {
+        service: key.service.clone(),
+        method: key.method.clone(),
+        path: String::new(),
+    }
+}
 
 fn invalid(s: impl Into<String>) -> FoundryError {
     FoundryError::InvalidArgument(s.into())
@@ -103,7 +148,7 @@ impl Config {
         for p in self.paths() {
             validate_path(&p)?;
             if !p.ends_with(".py") {
-                return Err(invalid("python-http-v1 accepts only .py sources"));
+                return Err(invalid("python-http-v2 accepts only .py sources"));
             }
         }
         Ok(())
@@ -388,6 +433,10 @@ impl Engine {
                     for f in old.facts {
                         if let Some(k) = f.key {
                             keys.remove(posting(config_path, &k).as_str(), path.as_str())?;
+                            keys.remove(
+                                posting(config_path, &method_key(&k)).as_str(),
+                                path.as_str(),
+                            )?;
                         }
                     }
                 }
@@ -395,6 +444,10 @@ impl Engine {
                     for f in &next.facts {
                         if let Some(k) = &f.key {
                             keys.insert(posting(config_path, k).as_str(), path.as_str())?;
+                            keys.insert(
+                                posting(config_path, &method_key(k)).as_str(),
+                                path.as_str(),
+                            )?;
                         }
                     }
                     scopes.insert(sk.as_str(), serde_json::to_string(&next)?.as_str())?;
@@ -481,6 +534,7 @@ impl Engine {
                                         .contains(&k.method.as_str())
                                         || !k.path.starts_with('/')
                                         || k.path.len() > 2048
+                                        || (f.role == "provide" && !route_path(&k.path))
                                         || !config.services.iter().any(|s| {
                                             s.id == k.service
                                                 && (f.role == "consume"
@@ -520,7 +574,12 @@ impl Engine {
         // Key postings, not pair materialization or a corpus mapping scan.
         for key in seed_keys.iter().take(MAX_FACTS) {
             control.check()?;
-            for row in keys.get(posting(config_path, key).as_str())? {
+            let lookup = if key.path.contains('{') {
+                method_key(key)
+            } else {
+                key.clone()
+            };
+            for row in keys.get(posting(config_path, &lookup).as_str())? {
                 if examined == 512 {
                     truncated = true;
                     break;
@@ -528,7 +587,9 @@ impl Engine {
                 examined += 1;
                 if let Some(scope) = current.get(row?.value()) {
                     for f in &scope.facts {
-                        if f.role == "consume" && f.key.as_ref() == Some(key) {
+                        if f.role == "consume"
+                            && f.key.as_ref().is_some_and(|k| matches_route(key, k))
+                        {
                             consumers
                                 .insert((f.evidence.path.clone(), f.evidence.start), f.clone());
                         }
@@ -556,11 +617,10 @@ impl Engine {
                     })?;
                 'providers: for path in &service.providers {
                     if let Some(scope) = current.get(path) {
-                        for f in scope
-                            .facts
-                            .iter()
-                            .filter(|f| f.role == "provide" && f.key.as_ref() == Some(key))
-                        {
+                        for f in scope.facts.iter().filter(|f| {
+                            f.role == "provide"
+                                && f.key.as_ref().is_some_and(|k| matches_route(k, key))
+                        }) {
                             providers.push(f.clone());
                             if providers.len() == 17 {
                                 break 'providers;
@@ -581,6 +641,9 @@ impl Engine {
                 } else {
                     match providers.len() {
                         0 => "unresolved",
+                        1 if providers[0].key.as_ref().unwrap().path.contains('{') => {
+                            "route_template"
+                        }
                         1 => "exact_key",
                         _ => "ambiguous",
                     }
@@ -833,10 +896,7 @@ fn extract(
             reason = Some("shadowed_or_escaped_binding".into());
         } else if let Some(value) = value {
             if route {
-                if value.starts_with('/')
-                    && !value.contains(['{', '}', '?', '#'])
-                    && value.len() <= 1024
-                {
+                if route_path(&value) {
                     key = Some(Key {
                         service: service.unwrap().id.clone(),
                         method: method.to_ascii_uppercase(),

@@ -363,7 +363,11 @@ impl Provider {
                 {
                     observed.isolation = Some(isolation)
                 }
-                protocol::Answer::Failed { id: 0, code } => return Err(worker_failure(&code)),
+                protocol::Answer::Failed {
+                    id: 0,
+                    code,
+                    usage: None,
+                } => return Err(worker_failure(&code)),
                 _ => {
                     return Err(fail(
                         "knowledge_provider_malformed",
@@ -412,10 +416,29 @@ impl Provider {
                     ));
                 }
                 observed.peak_gpu_bytes = observed.peak_gpu_bytes.max(gpu_bytes);
+                observed.last_call_usage = Some(usage.clone());
                 self.telemetry.publish(observed);
                 Ok(Reply { content, usage })
             }
-            protocol::Answer::Failed { id: got, code } if got == id => Err(worker_failure(&code)),
+            protocol::Answer::Failed {
+                id: got,
+                code,
+                usage,
+            } if got == id => {
+                if usage.as_ref().is_some_and(|u| {
+                    u.prompt_tokens
+                        .is_none_or(|n| n > self.config.context_tokens.into())
+                        || u.completion_tokens
+                            .is_none_or(|n| n > profile.output_tokens.into())
+                }) {
+                    return Err(fail(
+                        "knowledge_provider_malformed",
+                        "failed worker usage exceeds admitted bounds",
+                    ));
+                }
+                observed.last_call_usage = usage;
+                Err(worker_failure(&code))
+            }
             _ => Err(fail(
                 "knowledge_provider_malformed",
                 "worker response identity mismatch",

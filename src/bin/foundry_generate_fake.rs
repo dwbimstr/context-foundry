@@ -8,14 +8,30 @@ use serde_json::{Value, json};
 struct Fixture {
     memory: u64,
     model_fd: i32,
+    failed_usage: Option<Usage>,
 }
 impl Generator for Fixture {
+    fn failed_usage(&self) -> Option<Usage> {
+        self.failed_usage.clone()
+    }
     fn generate(&mut self, body: &Value) -> Result<(Reply, u64), &'static str> {
         let system = body["messages"][0]["content"].as_str().unwrap_or("");
         let command = system
             .rsplit_once("\nfixture:")
             .map(|(_, command)| command)
             .unwrap_or("");
+        self.failed_usage = None;
+        if matches!(command, "failed_usage" | "failed_usage_invalid") {
+            self.failed_usage = Some(Usage {
+                prompt_tokens: Some(37),
+                completion_tokens: Some(if command == "failed_usage" {
+                    128
+                } else {
+                    u64::MAX
+                }),
+            });
+            return Err("knowledge_output_limit");
+        }
         if command == "hang" {
             std::thread::sleep(std::time::Duration::from_secs(120));
         }
@@ -34,6 +50,7 @@ impl Generator for Fixture {
                     &context_foundry::knowledge::local::protocol::Answer::Failed {
                         id: 999,
                         code: "knowledge_resource_limit".into(),
+                        usage: None,
                     },
                 )
                 .unwrap()
@@ -103,6 +120,7 @@ fn main() {
         Ok(Box::new(Fixture {
             memory: hello.config.memory_bytes,
             model_fd: hello.model_fd,
+            failed_usage: None,
         }))
     });
     std::process::exit(code);

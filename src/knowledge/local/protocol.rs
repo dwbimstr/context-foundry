@@ -32,6 +32,8 @@ pub enum Answer {
     Failed {
         id: u64,
         code: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<Usage>,
     },
 }
 #[derive(Serialize, Deserialize)]

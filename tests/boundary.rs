@@ -151,8 +151,11 @@ fn syntax_distinguishes_calls_from_logs_dynamic_urls_shadowing_and_template_rout
             .resolution,
         "unsupported"
     );
-    e.replace_source("service.py", &PROVIDER.replace("/v1/items", "/v1/{item}"))
-        .unwrap();
+    e.replace_source(
+        "service.py",
+        &PROVIDER.replace("/v1/items", "/v1/{item:path}"),
+    )
+    .unwrap();
     publish(&e);
     assert!(
         read(&e)
@@ -394,4 +397,75 @@ fn capped_provider_extraction_never_certifies_a_unique_match() {
     let r = read(&e);
     assert!(r.relations.iter().all(|r| r.resolution == "incomplete"));
     assert!(r.examined <= 512);
+}
+
+#[test]
+fn template_routes_discover_literal_consumers_from_either_end_without_hiding_overlap() {
+    let (dir, e) = fixture();
+    let route = PROVIDER.replace("/v1/items", "/v1/{item}");
+    e.replace_source("service.py", &route).unwrap();
+    publish(&e);
+    for seed in ["service.py", "client.py"] {
+        let r = e
+            .boundary_relations("boundary.json", &[seed.into()], &Control::unbounded())
+            .unwrap();
+        assert_eq!(
+            r.relations.len(),
+            2,
+            "provider seeds must discover literal consumers"
+        );
+        assert!(
+            r.relations
+                .iter()
+                .all(|r| r.resolution == "route_template" && r.providers.len() == 1)
+        );
+        assert!(r.examined <= 512);
+    }
+    // A literal and a template can overlap: declaration/runtime precedence is
+    // not inferred from this static evidence.
+    e.replace_source("other.py", PROVIDER).unwrap();
+    publish(&e);
+    assert!(
+        read(&e)
+            .relations
+            .iter()
+            .all(|r| r.resolution == "ambiguous" && r.providers.len() == 2)
+    );
+    e.replace_source("other.py", "from fastapi import FastAPI\napp = FastAPI()\n")
+        .unwrap();
+    publish(&e);
+    e.replace_source("client.py", &CLIENT.replace("/v1/items?limit=3", "/v1/"))
+        .unwrap();
+    publish(&e);
+    assert_eq!(
+        e.boundary_relations(
+            "boundary.json",
+            &["client.py".into()],
+            &Control::unbounded()
+        )
+        .unwrap()
+        .relations[0]
+            .resolution,
+        "unresolved"
+    );
+    drop(e);
+    let e = Engine::open_existing(&dir.path().join("store")).unwrap();
+    assert_eq!(
+        read(&e)
+            .relations
+            .iter()
+            .find(|r| r.consumer.evidence.path == "test_contract.py")
+            .unwrap()
+            .resolution,
+        "route_template"
+    );
+    // Unsupported converters and partial-segment syntax invalidate certainty.
+    for path in ["/v1/{item:int}", "/v1/prefix-{item}", "/{item}/{item}"] {
+        e.replace_source("service.py", &PROVIDER.replace("/v1/items", path))
+            .unwrap();
+        publish(&e);
+        let r = read(&e);
+        assert!(r.incomplete_paths.contains(&"service.py".to_string()));
+        assert!(r.relations.iter().all(|r| r.resolution == "incomplete"));
+    }
 }

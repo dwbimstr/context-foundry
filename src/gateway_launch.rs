@@ -516,6 +516,11 @@ pub fn run(options: &Options) -> AResult<i32> {
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .process_group(0);
+    if let Some(owner) = &config.task_view_owner {
+        let token = std::env::var(&owner.token_env)
+            .map_err(|_| invalid("task_view_owner credential environment variable is absent"))?;
+        command.env(&owner.token_env, token);
+    }
     #[cfg(feature = "test-faults")]
     {
         // Test overrides (fake upstream, short timeouts) travel to the

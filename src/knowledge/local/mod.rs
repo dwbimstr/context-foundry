@@ -140,6 +140,8 @@ impl Config {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Observation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_call_usage: Option<super::Usage>,
     pub pid: Option<u32>,
     pub launches: u64,
     pub calls: u64,
@@ -241,6 +243,7 @@ impl Session {
         body: Vec<u8>,
         control: &Control,
     ) -> FResult<super::provider::Reply> {
+        self.observation.last_call_usage = None;
         self.prepare(profile, control)?;
         let result = self
             .provider
