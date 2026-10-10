@@ -327,11 +327,14 @@ query embeddings and document batches alike, behind one model slot:
 Normal training admission returns `isolation_unavailable`. `foundry learning train
 --development-isolation` runs the owner-authorized development profile (spec 013,
 "Development isolation, 2026-10-05"). It is never advertised as production isolation.
-- **Build.** LibTorch stays out of the default build and of every default gate. The
-  worker needs the `learning-worker` feature and the LibTorch 2.11.0 CPU tree:
+- **Build.** LibTorch stays out of default-feature builds and tests. The separate
+  optional-worker CI workflow enables it explicitly. The
+  experimental worker needs the `learning-worker` feature and the LibTorch 2.13.0
+  CPU tree, paired with `tch`/`torch-sys` 0.26.0. The previous 0.24.0/2.11.0 acceptance
+  does not validate this migration; see the [compatibility review](review/tch-026.md).
 
   ```sh
-  export LIBTORCH=$HOME/VSC_DEV/vendor/libtorch-2.11.0/libtorch
+  export LIBTORCH=$HOME/VSC_DEV/vendor/libtorch-2.13.0/libtorch
   cargo build --release --locked --features learning-worker --bin foundry-learn
   # Rust 1.90 floor:
   PATH=$HOME/.rustup/toolchains/1.90.0-aarch64-apple-darwin/bin:$PATH \
@@ -341,12 +344,12 @@ Normal training admission returns `isolation_unavailable`. `foundry learning tra
   `build.rs` records `$LIBTORCH/lib` as the rpath of every target it links (the
   worker, the tests and the parity suite). Nothing depends on `DYLD_LIBRARY_PATH`,
   which SIP strips.
-  The official LibTorch 2.11.0 macOS arm64 tree has a packaging defect. Its
-  `libtorch_cpu.dylib` loads OpenMP from `/opt/llvm-openmp/lib/libomp.dylib`, a path
-  that does not exist; the file ships in `lib/` under that install name. So the build
-  also links a symbol-free stub that makes the binary load `@rpath/libomp.dylib`
-  first, and `libtorch_cpu` then finds the runtime already loaded. The vendor tree is
-  never modified.
+  The inspected official LibTorch 2.13.0 macOS arm64 archive loads OpenMP through
+  `@rpath/libomp.dylib` and carries an `@loader_path` rpath. The former 2.11.0
+  workaround (a symbol-free stub preloading OpenMP for an absolute dependency)
+  is removed. Archive inspection is not a native dyld/bundle test. Its torch dylibs
+  declare macOS 14.0 as their minimum; use a compatible arm64 host. The vendor tree
+  is never modified. Do not bypass LibTorch's version check to use the old runtime.
 - **Profile and bundle.** The learning profile (≤64 KiB, versioned, strict) reuses
   009's worker section: bundle, executable SHA-256 and `worker.scratch_root`. It adds
   `checkpoint_dir`, `libtorch_dir` (LibTorch's `lib`), `load_timeout_seconds` and the
@@ -472,7 +475,8 @@ real bundles is measured separately.
   the version, git commit, target, every file's SHA-256, the versions the core reports
   and the dependency identities: the `Cargo.lock` digest, the number of THIRD-PARTY
   packages, the llama.cpp commit and the semantic profile's name, tch, torch-sys and
-  LibTorch 2.11.0 with the build's LibTorch directory. Weights, datasets, profiles and
+  LibTorch 2.13.0 with the build's LibTorch directory and verified `build-version`.
+  A missing or mismatched build version refuses learning packaging. Weights, datasets, profiles and
   credentials are never packaged.
 - **Layout.** Under a prefix P: `P/bin/foundry` → `../lib/context-foundry/current/bin/foundry`,
   `current` → `<version>`, one `P/lib/context-foundry/<version>/` per installed version,

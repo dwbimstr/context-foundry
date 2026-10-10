@@ -753,6 +753,78 @@ mod tests {
     use super::*;
 
     #[test]
+    fn clipped_adamw_matches_the_pytorch_213_cpu_reference() {
+        // A small operation-level fixture, not checkpoint/model parity. Expected
+        // values came from torch 2.13.0+cpu AdamW(foreach=False, fused=False),
+        // the recipe above and clip_grad_norm_(max_norm=1). This exercises the
+        // actual product optimizer, including autograd, clipping and moments.
+        let empty = || Tensor::zeros([0], (Kind::Float, CPU));
+        let value = Tensor::from_slice(&[1f32, -2.]).set_requires_grad(true);
+        let mut model = Model {
+            encoder: Encoder {
+                tok: empty(),
+                emb_norm: empty(),
+                layers: vec![],
+                final_norm: empty(),
+                named: vec![],
+            },
+            params: vec![Param {
+                name: "fixture".into(),
+                exp_avg: Tensor::zeros_like(&value),
+                exp_avg_sq: Tensor::zeros_like(&value),
+                value,
+            }],
+            frozen_type_rows: empty(),
+            steps: 0,
+            source_dtype: Dtype::F32,
+            weights_sha256: String::new(),
+            encoder_config_sha256: String::new(),
+            encoder_parameters: 0,
+            trainable_parameters: 2,
+            frozen_other_parameters: 0,
+        };
+        let reference = [
+            ([6f32, 8.], 10., [0.9998989701271057, -2.0000979900360107]),
+            (
+                [-1., 2.],
+                2.2360680103302,
+                [0.9998887181282043, -2.0001959800720215],
+            ),
+            (
+                [0.1, -0.2],
+                0.22360679507255554,
+                [0.9998721480369568, -2.0002596378326416],
+            ),
+        ];
+        for (gradient, norm, expected) in reference {
+            model.params[0].value.zero_grad();
+            (&model.params[0].value * Tensor::from_slice(&gradient))
+                .sum(Kind::Float)
+                .backward();
+            assert!((model.clip_and_step().unwrap() - norm).abs() < 1e-6);
+            let actual = Vec::<f32>::try_from(&model.params[0].value).unwrap();
+            for (got, want) in actual.into_iter().zip(expected) {
+                assert!((f64::from(got) - want).abs() < 3e-7, "{got} vs {want}");
+            }
+        }
+        // A failed numerical update must leave parameters and step count alone.
+        let before = f32_bytes(&model.params[0].value);
+        model.params[0].value.zero_grad();
+        (&model.params[0].value * f64::NAN)
+            .sum(Kind::Float)
+            .backward();
+        assert!(matches!(
+            model.clip_and_step(),
+            Err(FoundryError::Learning {
+                code: "nonfinite_gradient",
+                ..
+            })
+        ));
+        assert_eq!(model.steps, 3);
+        assert_eq!(f32_bytes(&model.params[0].value), before);
+    }
+
+    #[test]
     fn the_marker_mask_scores_an_invalid_marker_at_minus_1e4() {
         // F8: unreachable with two valid markers, still the upstream rule.
         let logits = Tensor::from_slice(&[0.25f32, -0.5]).reshape([1, 2]);

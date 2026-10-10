@@ -30,10 +30,14 @@ not issues: see [SECURITY](SECURITY.md).
 - Only for the optional embedding worker (`--features embed-worker`, macOS with Metal):
   `cmake` and a llama.cpp git checkout at the pinned commit `b9acf138`, named by
   `LLAMA_CPP_DIR`. The frozen learning worker (`--features learning-worker`) needs
-  LibTorch 2.11.0 in `LIBTORCH`. Neither is needed for the core.
+  LibTorch 2.13.0 in `LIBTORCH`, paired with `tch`/`torch-sys` 0.26.0.
+  Neither is needed for the core. This migration is under validation; the accepted
+  historical macOS pairing was 0.24.0/2.11.0. See the
+  [compatibility review](docs/review/tch-026.md) before updating a deployed worker.
 
-All development, gates and measurements so far ran on macOS arm64; CI runs the core
-checks on Linux and macOS.
+The historical learning acceptance ran on macOS arm64; CI runs the core checks on
+Linux and macOS. The separate optional-worker workflow tests the paired runtime;
+its weight-free fixtures do not replace macOS checkpoint and bundle acceptance.
 
 ## Build and the fast loop
 

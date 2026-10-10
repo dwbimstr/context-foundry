@@ -61,6 +61,9 @@ reranker is not selected; 009 names the concrete ordering failure needed to revi
 013 is frozen off (2026-10-07): its implemented commands, data and code remain as
 research tooling under development isolation, are not built into the release package
 (no `--with-learning`), and its routing is not advertised.
+The owner-authorized [tch/LibTorch dependency review](../docs/review/tch-026.md)
+prepares an experimental paired upgrade; it does not reactivate 013 or transfer
+historical numerical/package acceptance to the new runtime.
 The [decision-ecosystem map](../docs/references/laya-decision-ecosystem.md) preserves
 the broader typed-input/learning/calibration/deployment scope and review references;
 the first search/graph family is not a claim of full Laya parity.

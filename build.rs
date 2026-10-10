@@ -6,14 +6,12 @@
 //! LibTorch without `DYLD_LIBRARY_PATH`, which SIP strips:
 //!
 //! * `$LIBTORCH/lib` becomes an rpath (`LIBTORCH` is the variable torch-sys
-//!   builds against; it fails the build when unset);
-//! * the official LibTorch 2.11.0 macOS arm64 tree names its OpenMP runtime
-//!   by an absolute path that does not exist (`libtorch_cpu.dylib` →
-//!   `/opt/llvm-openmp/lib/libomp.dylib`; the file ships in `lib/` with that
-//!   install name). The binary therefore also loads `@rpath/libomp.dylib`
-//!   itself, through a symbol-free text stub, so the runtime is already
-//!   loaded under its install name when `libtorch_cpu` asks for it. The
-//!   vendor tree is never modified.
+//!   builds against for the packaged worker);
+//! * the official LibTorch 2.13.0 macOS arm64 archive already loads OpenMP
+//!   through `@rpath/libomp.dylib`, with `@loader_path` in the torch dylib.
+//!   It needs no 2.11.0 symbol-free preload stub. The vendor tree is never
+//!   modified. See docs/review/tch-026.md for the archive identity and the
+//!   separate, still-required native macOS validation.
 //!
 //! 009 T004: with the `embed-worker` feature, `foundry-embed` links a static
 //! llama.cpp (Metal, embedded shader library) that this script builds from
@@ -35,23 +33,6 @@ fn learning_worker() {
     };
     let lib = std::path::Path::new(&libtorch).join("lib");
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib.display());
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
-        && lib.join("libomp.dylib").exists()
-    {
-        let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
-        let stub = out.join("libomp-rpath.tbd");
-        std::fs::write(
-            &stub,
-            "--- !tapi-tbd\ntbd-version: 4\ntargets: [ arm64-macos, x86_64-macos ]\n\
-             install-name: '@rpath/libomp.dylib'\ncurrent-version: 5\n\
-             compatibility-version: 5\n...\n",
-        )
-        .expect("write the libomp stub");
-        println!(
-            "cargo:rustc-link-arg=-Wl,-needed_library,{}",
-            stub.display()
-        );
-    }
 }
 
 /// 009 T004: the `foundry-embed` link against a static llama.cpp built here.

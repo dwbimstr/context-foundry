@@ -1,0 +1,78 @@
+name: Optional learning worker
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - 'src/decision_model*'
+      - 'src/decision_model/**'
+      - 'src/learning*'
+      - 'src/learning/**'
+      - 'src/bin/foundry_learn.rs'
+      - 'tests/learning_worker.rs'
+      - 'tests/install.rs'
+      - 'scripts/package.sh'
+      - 'scripts/learn-worker-bundle.sh'
+      - '.github/workflows/learning-worker.yml'
+permissions:
+  contents: read
+jobs:
+  worker:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: rustup toolchain install 1.90.0 --profile minimal --component clippy
+      - name: Fetch the paired CPU LibTorch archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -s) $(uname -m)" in
+            'Linux x86_64')
+              archive='libtorch-shared-with-deps-2.13.0%2Bcpu.zip'
+              sum=edbf4cbed78433d803e90a65f1752e57783d164bce66c95c0872b2ab8f5c159e ;;
+            'Darwin arm64')
+              archive=libtorch-macos-arm64-2.13.0.zip
+              sum=1e10c6c4dc2764150c9fb2ad28e1889191302734e7f939108e5d2f22f21a06f8 ;;
+            *) echo 'Expected Linux x86_64 or macOS arm64' >&2; exit 1 ;;
+          esac
+          dir="$RUNNER_TEMP/foundry-libtorch"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 "https://download.pytorch.org/libtorch/cpu/$archive" -o "$dir/runtime.zip"
+          echo "$sum  $dir/runtime.zip" | shasum -a 256 -c -
+          unzip -q "$dir/runtime.zip" -d "$dir"
+          echo "LIBTORCH=$dir/libtorch" >> "$GITHUB_ENV"
+      - run: cargo +1.90.0 fetch --locked
+      - run: cargo +1.90.0 clippy --locked --features learning-worker --all-targets -- -D warnings
+      # These tests use real LibTorch and synthetic tensors, with no weights.
+      # They do not replace the checkpoint parity or sandboxed bundle tests.
+      - run: cargo +1.90.0 test --locked --features learning-worker --lib decision_model::net::tests -- --nocapture
+      - run: cargo +1.90.0 build --locked --features learning-worker --bin foundry-learn
+      - name: Load the actual macOS worker without a loader-path override
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set +e
+          env -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH target/debug/foundry-learn --invalid
+          result=$?
+          set -e
+          test "$result" = 64
+          otool -L target/debug/foundry-learn
+      - name: Assemble a development learning package with the real worker
+        if: runner.os == 'macOS'
+        run: |
+          cargo +1.90.0 build --locked --bin foundry
+          scripts/package.sh --out "$RUNNER_TEMP/learning-package" --with-learning --bin-dir "$PWD/target/debug"
+      - name: Check package metadata and version refusal with fixture workers
+        if: runner.os == 'macOS'
+        run: cargo +1.90.0 test --locked --test install worker_components_install_as_bundles_carry_forward_and_disable

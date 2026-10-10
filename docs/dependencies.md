@@ -124,10 +124,13 @@ closure are no longer product dependencies.
 The legacy Laya protocol module (`ureq` client) remains in the library with its
 protocol test, but the CLI no longer reaches it; Laya is not a Cargo dependency and
 remains a separately licensed research reference. The product Cargo graph excludes
-ML/sandbox dependencies. A separate [probe crate](../tools/feasibility/README.md)
-pins tch 0.24.0, PyO3 0.29.2 and USearch 2.26.2 (plus the rmcp 3.5.0 version the
-product now uses); its lock is not the product lock. Contract 013 v4 selects
-LibTorch 2.11.0 for ModernBERT/head work. USearch has a third-party native C++ core;
+LibTorch from default-feature builds. Its optional `learning-worker` and the separate
+[probe crate](../tools/feasibility/README.md) now pin experimental tch 0.26.0 with
+LibTorch 2.13.0; see the [compatibility review](review/tch-026.md).
+The probe also pins PyO3 0.29.2 and USearch 2.26.2 (plus the rmcp 3.5.0 version the
+product now uses); its lock is not the product lock. Contract 013 v4's accepted
+baseline was tch 0.24.0/LibTorch 2.11.0; that acceptance does not transfer to this
+migration. USearch has a third-party native C++ core;
 this does not introduce first-party C++ code. Libkrun remains conditional.
 The selected third-party MLX loader was exercised through Rust PyO3, but private
 runtime distribution remains unaccepted. Record transitive libraries, notices and any VM image/kernel license
