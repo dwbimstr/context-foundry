@@ -17,7 +17,7 @@ const SEEN_PAGE: usize = 128;
 /// At most eight reads/results, each containing at most 2 MiB plus one sentinel
 /// byte. Completed but uncommitted results occupy the same slots as active reads.
 const READ_AHEAD: usize = 8;
-/// Four ready files share one durable source commit; the remaining slots keep
+/// Up to four ready files share one durable source commit; the remaining slots keep
 /// read-ahead bounded and able to overlap the one writer.
 const COMMIT_BATCH: usize = 4;
 /// Publish lexical progress before the whole enumeration has finished.
@@ -98,13 +98,36 @@ impl ScanProgress {
             return Ok(false);
         }
         let mut accepted = Vec::new();
-        for _ in 0..self.pending.len().min(COMMIT_BATCH) {
+        // Opportunistic group sizes need not divide the publication interval.
+        // Finish exactly at its boundary so early visibility/cancellation keep
+        // their existing source-count contract.
+        let until_publish = if self.drain_reason.is_none() {
+            PUBLISH_EVERY.saturating_sub(self.since_publish).max(1)
+        } else {
+            COMMIT_BATCH
+        };
+        for _ in 0..self.pending.len().min(COMMIT_BATCH).min(until_publish) {
             let pending = self.pending.pop_front().expect("a queued read");
-            let read = pending.result.recv().unwrap_or_else(|_| {
+            let disconnected = || {
                 Err(OpenFailure::Io(
                     "an ingestion worker exited without its result".into(),
                 ))
-            });
+            };
+            let read = if accepted.is_empty() {
+                pending.result.recv().unwrap_or_else(|_| disconnected())
+            } else {
+                // Batch ready neighbors, but never withhold a ready prefix while
+                // the next ordered read is still running. Its receiver retains
+                // its slot and is consumed first on the next turn.
+                match pending.result.try_recv() {
+                    Ok(read) => read,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        self.pending.push_front(pending);
+                        break;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => disconnected(),
+                }
+            };
             if !self.check(control) {
                 return Ok(false);
             }

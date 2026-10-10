@@ -6616,3 +6616,50 @@ impl Engine {
         crate::ingest::index(self, root, control)
     }
 }
+
+#[cfg(all(test, feature = "test-faults"))]
+mod batch_tests {
+    use super::*;
+    use crate::fault::{self, Action, names};
+
+    #[test]
+    fn four_prepared_sources_roll_back_together_on_failure_and_cancellation() {
+        for cancel in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("root");
+            std::fs::create_dir(&root).unwrap();
+            let store = dir.path().join("store");
+            let engine = Engine::initialize(&store, &root).unwrap();
+            let batch = |body: &str| {
+                (0..4)
+                    .map(|n| PreparedSource::new(format!("batch{n}.rs"), body.into()).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            engine
+                .replace_prepared_sources(&batch("fn old() {}\n"), &crate::Control::unbounded())
+                .unwrap();
+            drop(engine);
+            let before = crate::testkit::snapshot(&store);
+            let engine = Engine::open_existing(&store).unwrap();
+            fault::disarm_all();
+            fault::arm(
+                names::SOURCE_BATCH_BEFORE_COMMIT,
+                0,
+                if cancel {
+                    Action::Cancel
+                } else {
+                    Action::Fail("injected batch failure".into())
+                },
+            );
+            assert!(
+                engine
+                    .replace_prepared_sources(&batch("fn new() {}\n"), &crate::Control::unbounded())
+                    .is_err()
+            );
+            assert_eq!(fault::reached(names::SOURCE_BATCH_BEFORE_COMMIT), 1);
+            fault::disarm_all();
+            drop(engine);
+            assert_eq!(before, crate::testkit::snapshot(&store));
+        }
+    }
+}

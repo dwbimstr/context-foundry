@@ -1700,7 +1700,9 @@ fn ingestion_batch_failure_and_cancellation_preserve_all_prior_versions() {
         let mut engine = Engine::open_existing(store.path()).unwrap();
         let report = engine.index(&root, &Control::unbounded()).unwrap();
         assert_eq!((report.changed, report.unchanged), (4, 0));
-        assert_eq!(fault::reached(names::SOURCE_BATCH_BEFORE_COMMIT), 1);
+        // Ready prefixes may commit before all four reads finish; grouping is
+        // opportunistic. Rollback above still permits no partial failed group.
+        assert!((1..=4).contains(&fault::reached(names::SOURCE_BATCH_BEFORE_COMMIT)));
         assert_eq!(engine.source_revision().unwrap(), revision + 4);
         assert!(!report.partial);
         fault::disarm_all();

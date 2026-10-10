@@ -1734,3 +1734,16 @@ nor executed here: the selected worker requires a macOS App Sandbox bundle,
 the selected embedding artifacts and Metal hardware. This Linux CPU sandbox has no GPU
 device or embedding weights. Generation's real Qwen CPU results are separate evidence;
 fake embedding transport/lifecycle tests cannot establish embedding numerical quality.
+
+
+T006/T008 ingestion overlap repair (2026-10-10): four-file transaction gathering must
+not delay an available prefix behind a still-running read. The existing ordered
+read/read-writer overlap test exposed that regression. Ingestion now blocks only when
+it has no accepted prefix, then gathers already-ready neighbors up to four; a pending
+next receiver keeps its original slot/order for the next turn. Source descriptors and
+final identity checks, the eight-read/result ceiling, cancellation accounting and
+periodic lexical publication remain. No queue, worker or store contract is added.
+The original synchronization test remains unchanged. Groups stop at the exact lexical
+publication boundary. A direct four-source transaction test preserves rollback coverage;
+the scan fixture permits readiness-dependent successful grouping. Prior cold-bootstrap
+timing is historical; mixed-size throughput still needs a workload comparison.
