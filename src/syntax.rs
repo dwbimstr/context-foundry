@@ -1100,6 +1100,15 @@ pub mod parse_hooks {
 /// a scanner loop only a line break ends (Kotlin's after `@`) cannot run
 /// forever at a forced end of input.
 /// `Ok(None)`: the grammar did not load or the parser returned no tree.
+pub(crate) fn parse_boundary_python(
+    source: &str,
+) -> Result<Option<tree_sitter::Tree>, ParseStopped> {
+    if let Some(stopped) = over_scanner_limit(Lang::Python, source.as_bytes()) {
+        return Err(stopped);
+    }
+    parse(source, &tree_sitter_python::LANGUAGE.into())
+}
+
 fn parse(
     source: &str,
     grammar: &tree_sitter::Language,

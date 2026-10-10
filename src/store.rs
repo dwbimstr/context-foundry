@@ -33,7 +33,7 @@ pub(crate) const META: TableDefinition<&str, &str> = TableDefinition::new("meta"
 pub(crate) const SEEN: TableDefinition<&str, &str> = TableDefinition::new("scan_seen");
 pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("feedback");
 
-pub const SCHEMA_VERSION: u32 = 10;
+pub const SCHEMA_VERSION: u32 = 11;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
 /// Refresh builds a page's search documents on at most this many threads,
@@ -1506,6 +1506,8 @@ pub(crate) struct RecordPlan {
 /// chooses them from this store's index).
 #[derive(Clone, Copy, Default)]
 pub struct ContextOptions<'a> {
+    pub compose_evidence: bool,
+    pub boundary_config: Option<&'a str>,
     pub task: Option<crate::task_context::Scope<'a>>,
     pub memory: bool,
     pub briefs: bool,
@@ -3257,6 +3259,7 @@ fn initialize_tables(tx: &WriteTransaction) -> FResult<()> {
     tx.open_table(FEEDBACK)?;
     tx.open_table(SEEN)?;
     crate::graph::init(tx)?;
+    crate::boundary::init(tx)?;
     crate::graph::init_compiler(tx)?;
     crate::neural::cache::init_tables(tx)?;
     crate::neural::work::init(tx)?;
@@ -3400,12 +3403,12 @@ impl Engine {
                 ));
             };
             match version.value() {
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => {
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" => {
                     return Err(FoundryError::UpgradeRequired {
                         found: version.value().to_owned(),
                     });
                 }
-                "10" => 10u32,
+                "11" => 11u32,
                 other => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: other.to_owned(),
@@ -3413,8 +3416,8 @@ impl Engine {
                 }
             }
         };
-        // Confirm the schema-10 tables exist; missing authoritative tables in
-        // a schema-10 store are corruption, not something an open recreates.
+        // Confirm the schema-11 tables exist; missing authoritative tables in
+        // a schema-11 store are corruption, not something an open recreates.
         {
             let tx = db.begin_read()?;
             tx.open_table(SEEN).map_err(|e| {
@@ -3435,6 +3438,7 @@ impl Engine {
                 .map_err(|e| FoundryError::CorruptStore(format!("source_briefs table: {e}")))?;
             read_counter(&tx.open_table(META)?, "brief_revision")?;
             crate::graph::check_compiler_tables(&tx)?;
+            crate::boundary::check(&tx)?;
             crate::neural::cache::check_tables(&db)?;
             crate::neural::work::check(&db)?;
             crate::knowledge::cache::check(&db)?;
@@ -3502,7 +3506,7 @@ impl Engine {
         }
     }
 
-    /// Explicit v1..=v9 -> v10 transaction under exclusive ownership. The
+    /// Explicit v1..=v10 -> v11 transaction under exclusive ownership. The
     /// cumulative steps preserve source, memory, graph, semantic and learning
     /// data. Version 8 adds source_briefs and its never-reset brief_revision.
     /// Version 10 adds atomic knowledge completion caching and brief lineage.
@@ -3529,7 +3533,7 @@ impl Engine {
                         "store has no schema marker".into(),
                     ));
                 }
-                Some(v) if v.value() == "10" => return Ok(()), // already upgraded
+                Some(v) if v.value() == "11" => return Ok(()), // already upgraded
                 Some(v) if v.value() == "1" => 1u32,
                 Some(v) if v.value() == "2" => 2u32,
                 Some(v) if v.value() == "3" => 3u32,
@@ -3539,6 +3543,7 @@ impl Engine {
                 Some(v) if v.value() == "7" => 7u32,
                 Some(v) if v.value() == "8" => 8u32,
                 Some(v) if v.value() == "9" => 9u32,
+                Some(v) if v.value() == "10" => 10u32,
                 Some(v) => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: v.value().to_owned(),
@@ -3619,6 +3624,7 @@ impl Engine {
             }
             crate::neural::work::init(&tx)?;
             crate::knowledge::cache::init(&tx)?;
+            crate::boundary::init(&tx)?;
             // Publish the schema last inside the same transaction.
             meta.insert("schema", SCHEMA_VERSION.to_string().as_str())?;
         }
@@ -5247,6 +5253,14 @@ impl Engine {
         control: &crate::Control,
         options: &ContextOptions,
     ) -> FResult<crate::memory::MemoryContext> {
+        if options.compose_evidence {
+            return self.compose_task_evidence(query, strategy, control, options);
+        }
+        if options.boundary_config.is_some() {
+            return Err(FoundryError::InvalidArgument(
+                "boundary_config requires compose_evidence".into(),
+            ));
+        }
         if let Some(task) = options.task {
             self.check_task_scope(task)?;
         }
@@ -5611,6 +5625,7 @@ impl Engine {
             item.rank = rank;
         }
         let context = crate::memory::MemoryContext {
+            evidence: None,
             briefs,
             task_view,
             batch: CandidateBatch {

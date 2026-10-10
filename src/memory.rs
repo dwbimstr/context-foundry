@@ -129,6 +129,7 @@ pub enum MemoryRequest {
 /// The combined context outcome (008): the source/graph batch plus the
 /// memory hits validated in the batch's own final read transaction.
 pub struct MemoryContext {
+    pub evidence: Option<crate::task_evidence::Plan>,
     pub task_view: Option<crate::task_context::ContextView>,
     pub briefs: Vec<crate::brief::Record>,
     pub batch: crate::store::CandidateBatch,

@@ -633,15 +633,15 @@ VM compatibility and the library choices remain unexecuted proof obligations. Ex
 publication authorization and destination are still required to upload any artifact.
 
 
-## Experimental schema 10
+## Experimental schema 11
 
-The experimental context branch uses schema 10 for a bounded generated-knowledge
-completion cache and optional source/area lineage. It preserves schema 9 independent
-semantic/knowledge obligations, schema 8 briefs and schema 7 task state.
-Existing schemas 1–9 require explicit
-`foundry --store STORE upgrade-store --to 10`; initialization and ordinary open do not
+The experimental context branch uses schema 11 for source/config-bound relationship
+scopes and key postings. It preserves schema 10 generated-knowledge completion caching
+and lineage, schema 9 independent semantic/knowledge obligations, schema 8 briefs
+and schema 7 task state. Existing schemas 1–10 require explicit
+`foundry --store STORE upgrade-store --to 11`; initialization and ordinary open do not
 upgrade. Preserve a closed-store backup before upgrading an existing store. Older
-binaries refuse schema 10; rollback requires the backup or a compatible binary.
+binaries refuse schema 11; rollback requires the backup or a compatible binary.
 Upgrade preserves source, graph, memory, task, semantic and learning tables. No
 source scanning, provider call or automatic generation is part of the upgrade.
 See the [experimental workflow](experimental-context.md#source-bound-derived-briefs)
@@ -657,7 +657,7 @@ from prior state on restart; watching alone loads no model. Pause through
 require explicit resume. Ordinary status reads a publication observation; use
 `semantic status --audit` or MCP `status {"semantic_audit":true}` for integrity/census.
 
-Semantic generation format v5 remains derived data under schema 10: existing vector-cache
+Semantic generation format v5 remains derived data under schema 11: existing vector-cache
 rows and partitions remain reusable. Older generation formats are refused by name;
 explicit preparation or `repair-index` republishes them from cache. Small edits publish
 one bounded ANN delta and a separate bounded location overlay. Location compaction
@@ -677,7 +677,7 @@ changes and explicit repair rebuild the mapping view; receipts never survive res
 Warm queries check owner/profile/manifest identity; refresh rechecks file versions.
 Explicit audits always validate independently. Cold verification and compaction remain
 corpus-sized. Generation v5 remains unchanged by the knowledge feature; the latter
-requires the explicit schema-10 upgrade.
+was introduced by schema 10 and is preserved by the schema-11 upgrade.
 
 Selective knowledge preparation uses an explicitly configured HTTP or owned local provider and source
 scope under exclusive CLI ownership or the existing MCP owner. Current inputs skip

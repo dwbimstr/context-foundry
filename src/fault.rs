@@ -33,6 +33,10 @@ pub mod names {
         BRIEF_BEFORE_FINAL_VALIDATION,
         "brief.before_final_validation"
     );
+    point!(BOUNDARY_BEFORE_ADMISSION, "boundary.before_admission");
+    point!(BOUNDARY_BEFORE_COMMIT, "boundary.before_commit");
+    point!(BOUNDARY_AFTER_COMMIT, "boundary.after_commit");
+    point!(TASK_EVIDENCE_BEFORE_FINAL, "task_evidence.before_final");
     point!(TASK_BEFORE_COMMIT, "task.before_commit");
     point!(TASK_AFTER_COMMIT, "task.after_commit");
     point!(SOURCE_BEFORE_COMMIT, "source.before_commit");

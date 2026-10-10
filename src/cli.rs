@@ -27,11 +27,34 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum BoundaryCommand {
+    Index {
+        #[arg(long)]
+        config: String,
+        #[arg(long)]
+        path: Vec<String>,
+    },
+    Relations {
+        #[arg(long)]
+        config: String,
+        #[arg(long, required = true)]
+        path: Vec<String>,
+        #[arg(long, default_value_t = 4096)]
+        tokens: usize,
+    },
+}
+
+#[derive(Subcommand)]
 enum Command {
     /// Index a workspace. Respect ignore files; do not execute repository code.
     /// Initializes a store explicitly when none exists.
     Index {
         root: PathBuf,
+    },
+    /// Experimental indexed Python HTTP boundary publication and traversal.
+    Boundary {
+        #[command(subcommand)]
+        command: BoundaryCommand,
     },
     /// Print v2 locator lines (one per hit) within the token budget.
     Search {
@@ -75,6 +98,12 @@ enum Command {
         /// Expected task revision; refuses changed or forgotten task state.
         #[arg(long, requires = "task")]
         task_revision: Option<u64>,
+        /// Compose implementation, boundary consumers, configuration and tests for the selected task.
+        #[arg(long, requires = "task")]
+        compose_evidence: bool,
+        /// Indexed boundary configuration used for task evidence traversal.
+        #[arg(long, requires = "compose_evidence")]
+        boundary_config: Option<String>,
         /// 008: append compact `mem:` lines for validated memory hits.
         #[arg(long = "include-memory")]
         include_memory: bool,
@@ -180,7 +209,7 @@ enum Command {
         #[arg(long = "policy-config", value_name = "FILE")]
         policy_config: Option<PathBuf>,
     },
-    /// Explicit schema upgrade under exclusive ownership; target is schema 10.
+    /// Explicit schema upgrade under exclusive ownership; target is schema 11.
     UpgradeStore {
         #[arg(long)]
         to: u32,
@@ -857,6 +886,8 @@ fn run() -> AResult<()> {
             include_briefs,
             task,
             task_revision,
+            compose_evidence,
+            boundary_config,
             semantic_profile,
             policy_config,
             development_isolation,
@@ -923,6 +954,8 @@ fn run() -> AResult<()> {
                     &control,
                     crate::store::ContextOptions {
                         task: task_scope,
+                        compose_evidence,
+                        boundary_config: boundary_config.as_deref(),
                         memory: include_memory,
                         briefs: include_briefs,
                         policy: routed,
@@ -999,6 +1032,33 @@ fn run() -> AResult<()> {
                     "truncated": packed.truncated,
                 })
             );
+        }
+        Command::Boundary { command } => {
+            let engine = Engine::open_existing(&cli.store)?;
+            let control = live_control();
+            match command {
+                BoundaryCommand::Index { config, path } => println!(
+                    "{}",
+                    serde_json::to_string(&engine.index_boundaries(&config, &path, &control)?)?
+                ),
+                BoundaryCommand::Relations {
+                    config,
+                    path,
+                    tokens,
+                } => {
+                    check_token_budget(tokens)?;
+                    let report = engine.boundary_relations(&config, &path, &control)?;
+                    print!(
+                        "{}",
+                        response::pack_boundaries(
+                            &report,
+                            Budget::request(tokens),
+                            &response::stdout_bytes
+                        )?
+                        .text
+                    );
+                }
+            }
         }
         Command::Graph {
             path,

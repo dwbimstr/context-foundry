@@ -364,6 +364,8 @@ pub fn context_primary_with_options(
     let _ = slot;
     let options = crate::store::ContextOptions {
         task: requested.task,
+        compose_evidence: requested.compose_evidence,
+        boundary_config: requested.boundary_config,
         memory: requested.memory,
         briefs: requested.briefs,
         experimental_behavior: requested.experimental_behavior,
@@ -1554,7 +1556,17 @@ impl FoundryMcp {
                 .and_then(serde_json::Value::as_object_mut)
                 .expect("context properties");
             properties.insert("task_id".into(), serde_json::json!({"type":"string","minLength":1,"maxLength":128,"description":"Primary task ID; requires task_revision."}));
+            properties.insert("compose_evidence".into(), serde_json::json!({"type":"boolean","description":"Compose bounded task evidence in the primary store; requires task_id and task_revision."}));
+            properties.insert("boundary_config".into(), serde_json::json!({"type":"string","description":"Indexed boundary configuration path; requires compose_evidence."}));
             properties.insert("task_revision".into(), serde_json::json!({"type":"integer","minimum":1,"description":"Expected task revision; requires task_id."}));
+        }
+        if state.experimental_task_context {
+            let route = tool_router
+                .map
+                .get_mut("index")
+                .expect("index route exists");
+            let schema = Arc::make_mut(&mut route.attr.input_schema);
+            schema.get_mut("properties").and_then(serde_json::Value::as_object_mut).expect("index properties").insert("boundary".into(), serde_json::json!({"type":"object","additionalProperties":false,"required":["config"],"properties":{"config":{"type":"string","maxLength":4096},"paths":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":4096}}}}));
         }
         if state.knowledge.is_some() {
             for (tool, key, field) in [
@@ -1710,9 +1722,42 @@ impl FoundryMcp {
                 "include_briefs",
                 "task_id",
                 "task_revision",
+                "compose_evidence",
+                "boundary_config",
             ],
         ) {
             return Ok(foundry_error_result(&e));
+        }
+        let compose_evidence = match arguments.get("compose_evidence") {
+            None => false,
+            Some(serde_json::Value::Bool(v)) => *v,
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "compose_evidence must be boolean",
+                    false,
+                ));
+            }
+        };
+        let boundary_config = match arguments.get("boundary_config") {
+            None => None,
+            Some(serde_json::Value::String(v)) if !v.is_empty() && v.len() <= 4096 => {
+                Some(v.clone())
+            }
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "boundary_config must be a bounded indexed path",
+                    false,
+                ));
+            }
+        };
+        if boundary_config.is_some() && !compose_evidence {
+            return Ok(error_result(
+                "invalid_argument",
+                "boundary_config requires compose_evidence",
+                false,
+            ));
         }
         let task = match (arguments.get("task_id"), arguments.get("task_revision")) {
             (None, None) => None,
@@ -1734,6 +1779,20 @@ impl FoundryMcp {
                 ));
             }
         };
+        if compose_evidence && task.is_none() {
+            return Ok(error_result(
+                "invalid_argument",
+                "compose_evidence requires task_id and task_revision",
+                false,
+            ));
+        }
+        if compose_evidence && self.state.meta.len() > 1 {
+            return Ok(error_result(
+                "unsupported_mode",
+                "task evidence composition currently requires a primary-only owner",
+                false,
+            ));
+        }
         if task.is_some() && !self.state.experimental_task_context {
             return Ok(error_result(
                 "unsupported_mode",
@@ -1876,6 +1935,8 @@ impl FoundryMcp {
                         control,
                         crate::store::ContextOptions {
                             task: task_scope,
+                            compose_evidence,
+                            boundary_config: boundary_config.as_deref(),
                             memory: include_memory,
                             briefs: include_briefs,
                             policy: routed,
@@ -2038,9 +2099,70 @@ impl FoundryMcp {
                 "semantic",
                 "priority_paths",
                 "knowledge",
+                "boundary",
             ],
         ) {
             return Ok(foundry_error_result(&e));
+        }
+        if let Some(value) = arguments.get("boundary") {
+            if !self.state.experimental_task_context {
+                return Ok(error_result(
+                    "unsupported_mode",
+                    "boundary publication requires --experimental-task-context",
+                    false,
+                ));
+            }
+            if arguments
+                .keys()
+                .any(|k| !["boundary", "timeout_ms"].contains(&k.as_str()))
+            {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "boundary publication is a separate primary-store index operation",
+                    false,
+                ));
+            }
+            let request =
+                match serde_json::from_value::<crate::boundary::IndexRequest>(value.clone()) {
+                    Ok(r) => r,
+                    Err(_) => {
+                        return Ok(error_result(
+                            "invalid_argument",
+                            "boundary requires config and optional paths",
+                            false,
+                        ));
+                    }
+                };
+            let timeout_ms = match optional_u64(
+                &arguments,
+                "timeout_ms",
+                INDEX_TIMEOUT_MS,
+                INDEX_TIMEOUT_RANGE.0,
+                INDEX_TIMEOUT_RANGE.1,
+            ) {
+                Ok(v) => v,
+                Err(e) => return Ok(foundry_error_result(&e)),
+            };
+            let result = run_op(
+                &self.state,
+                Instant::now() + Duration::from_millis(timeout_ms),
+                Some(ctx.ct.clone()),
+                Self::admission_guard(&ctx),
+                false,
+                move |engines, control| {
+                    engines[0]
+                        .as_ref()
+                        .expect("primary store")
+                        .index_boundaries(&request.config, &request.paths, control)
+                },
+            )
+            .await;
+            return Ok(match result {
+                Ok(report) => text_result(response::compact_json(
+                    &serde_json::to_value(report).expect("publication serializes"),
+                )),
+                Err(e) => foundry_error_result(&e),
+            });
         }
         if let Some(action) = arguments.get("knowledge") {
             if arguments.len() != 1 {
@@ -3303,6 +3425,7 @@ impl FoundryMcp {
                 )?;
                 Ok(MultiOutcome {
                     served: memory::MemoryContext {
+                        evidence: None,
                         batch: roots::merge_context(&batches),
                         hits,
                         task_view,

@@ -1,0 +1,523 @@
+use context_foundry::{
+    Control, Engine, FoundryError, Strategy,
+    fault::{self, Action, names},
+    response::{self, Budget},
+    store::ContextOptions,
+    task_context,
+};
+use serde_json::{Value, json};
+use std::process::Command;
+const BIN: &str = env!("CARGO_BIN_EXE_foundry");
+const SERVICE: &str = "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/v1/items')\ndef items():\n    return {'items': ['book']}\n";
+const CLIENT: &str = "import httpx\ndef fetch_items():\n    return httpx.get('http://catalog/v1/items').json()['products']\n";
+const VERIFY: &str = "import requests\ndef test_items():\n    assert requests.get('http://catalog/v1/items').json()['products'] == ['book']\n";
+struct Env {
+    dir: tempfile::TempDir,
+    engine: Engine,
+    revision: u64,
+    wid: String,
+}
+fn task(e: &Engine, c: Value) -> Result<Value, FoundryError> {
+    e.task_context(
+        &task_context::parse(
+            json!({"workspace_id":e.workspace_id().unwrap(),"task_id":"contract","command":c}),
+        )
+        .unwrap(),
+        &Control::unbounded(),
+    )
+}
+fn fixture() -> Env {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("root")).unwrap();
+    let mut engine =
+        Engine::initialize(&dir.path().join("store"), &dir.path().join("root")).unwrap();
+    for (p, s) in [
+        ("service.py", SERVICE),
+        ("client.py", CLIENT),
+        ("test_contract.py", VERIFY),
+        (
+            "billing.py",
+            "from fastapi import FastAPI\napp = FastAPI()\n@app.get('/v1/items')\ndef items():\n    return {'total': 0}\n",
+        ),
+    ] {
+        engine.replace_source(p, s).unwrap();
+        std::fs::write(dir.path().join("root").join(p), s).unwrap();
+    }
+    let config=json!({"v":1,"services":[{"id":"catalog","providers":["service.py"],"origins":["http://catalog"]},{"id":"billing","providers":["billing.py"],"origins":["http://billing"]}],"consumers":["client.py","test_contract.py"]}).to_string();
+    engine.replace_source("boundary.json", &config).unwrap();
+    std::fs::write(dir.path().join("root/boundary.json"), config).unwrap();
+    engine
+        .index_boundaries("boundary.json", &[], &Control::unbounded())
+        .unwrap();
+    let r = task(
+        &engine,
+        json!({"op":"create","title":"Repair catalog response contract"}),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let edits = json!([
+        {"op":"add","entry":{"id":"shape","kind":"requirement","text":"fetch_items expects products in the catalog response.","author":"operator","provenance":"sandbox task","source_links":[]}},
+        {"op":"add","entry":{"id":"keep","kind":"constraint","text":"Keep GET /v1/items and the billing service unchanged.","author":"operator","provenance":"sandbox task","source_links":[]}},
+        {"op":"add","entry":{"id":"tests","kind":"question","text":"test_items verifies the products response contract.","author":"operator","provenance":"sandbox task","source_links":[]}}
+    ]);
+    let revision = task(
+        &engine,
+        json!({"op":"apply","expected_revision":r,"edits":edits}),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let wid = engine.workspace_id().unwrap();
+    Env {
+        dir,
+        engine,
+        revision,
+        wid,
+    }
+}
+fn compose(e: &Env) -> context_foundry::memory::MemoryContext {
+    e.engine
+        .context_candidates_with(
+            "items",
+            Strategy::Auto,
+            &Control::unbounded(),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &e.wid,
+                    task_id: "contract",
+                    expected_revision: e.revision,
+                }),
+                compose_evidence: true,
+                boundary_config: Some("boundary.json"),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+}
+fn report(text: &str) -> Value {
+    serde_json::from_str(
+        text.lines()
+            .find_map(|l| l.strip_prefix("task-evidence: "))
+            .unwrap(),
+    )
+    .unwrap()
+}
+#[test]
+fn composes_task_and_multiservice_evidence_with_exact_citations_and_no_duplicate_spans() {
+    let e = fixture();
+    let c = compose(&e);
+    let p =
+        response::pack_enriched_context(&c, None, Budget::request(12000), &response::stdout_bytes)
+            .unwrap();
+    let r = report(&p.text);
+    assert_eq!(r["complete"], false);
+    assert_eq!(r["constraints"]["caller_assertions"], 1);
+    for f in [
+        "implementation",
+        "consumers",
+        "configuration",
+        "verification",
+    ] {
+        assert_eq!(
+            r["facets"][f]["state"], "source_candidates_delivered",
+            "{f}: {r}"
+        );
+    }
+    assert!(p.text.contains("task-relationship:"));
+    assert!(r["boundary"]["delivered_relationships"].as_u64().unwrap() > 0);
+    assert!(p.text.contains("\"exact_key\""));
+    assert!(p.text.contains("Keep GET /v1/items"));
+    let source = r["sources"].as_array().unwrap();
+    let mut handles = std::collections::BTreeSet::new();
+    for s in source {
+        assert!(handles.insert(s["handle"].as_str().unwrap()));
+    }
+    assert_eq!(r["verification"], "test_candidates_only_not_executed");
+    let relation = c.evidence.as_ref().unwrap().boundaries.as_ref().unwrap();
+    assert!(
+        relation
+            .relations
+            .iter()
+            .all(|r| r.providers.len() == 1 && r.providers[0].evidence.path == "service.py")
+    );
+}
+#[test]
+fn one_allowance_includes_reports_and_partial_delivery_never_claims_coverage() {
+    let e = fixture();
+    let c = compose(&e);
+    // Escaped JSON envelope is the MCP boundary, not raw text bytes.
+    let boundary = |s: &str| {
+        serde_json::to_vec(&json!({"content":[{"type":"text","text":s}]}))
+            .unwrap()
+            .len()
+    };
+    let mut successes = 0;
+    let mut saw_partial = false;
+    for tokens in [1, 512, 1000, 1500, 2000, 4000, 12000] {
+        match response::pack_enriched_context(&c, None, Budget::request(tokens), &boundary) {
+            Ok(p) => {
+                successes += 1;
+                assert!(p.tokens <= tokens);
+                assert_eq!(p.tokens, response::count_tokens(&p.text));
+                assert!(boundary(&p.text) <= response::BYTE_CAP);
+                let r = report(&p.text);
+                assert_eq!(r["complete"], false);
+                saw_partial |= r["facets"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .any(|v| v["state"] == "omitted_budget" || v["state"] == "addresses_only");
+            }
+            Err(FoundryError::BudgetTooSmall { minimum_tokens }) => {
+                assert!(minimum_tokens > tokens)
+            }
+            Err(e) => panic!("{e:?}"),
+        }
+    }
+    assert!(successes > 0 && saw_partial);
+}
+#[test]
+fn ordinary_context_is_unchanged_and_composition_requires_explicit_task() {
+    let e = fixture();
+    let before = e
+        .engine
+        .context_candidates_with(
+            "items",
+            Strategy::Auto,
+            &Control::unbounded(),
+            &ContextOptions::default(),
+        )
+        .unwrap();
+    let _ = compose(&e);
+    let after = e
+        .engine
+        .context_candidates_with(
+            "items",
+            Strategy::Auto,
+            &Control::unbounded(),
+            &ContextOptions::default(),
+        )
+        .unwrap();
+    let pack = |c| {
+        response::pack_enriched_context(c, None, Budget::request(2048), &response::stdout_bytes)
+            .unwrap()
+            .text
+    };
+    assert_eq!(pack(&before), pack(&after));
+    assert!(!pack(&after).contains("task-evidence:"));
+    assert!(
+        e.engine
+            .context_candidates_with(
+                "items",
+                Strategy::Auto,
+                &Control::unbounded(),
+                &ContextOptions {
+                    compose_evidence: true,
+                    ..Default::default()
+                }
+            )
+            .is_err()
+    );
+}
+#[test]
+fn final_read_revalidates_source_and_task_revision_after_discovery() {
+    let e = fixture();
+    fault::arm(
+        names::TASK_EVIDENCE_BEFORE_FINAL,
+        0,
+        Action::Call(Box::new(|ctx| {
+            ctx.engine
+                .unwrap()
+                .replace_source("service.py", "# changed after discovery\n")
+                .unwrap();
+        })),
+    );
+    let c = compose(&e);
+    fault::disarm_all();
+    assert!(
+        !c.batch
+            .items
+            .iter()
+            .any(|i| i.handle.as_ref().unwrap().path == "service.py")
+    );
+    assert!(
+        c.evidence
+            .as_ref()
+            .unwrap()
+            .boundaries
+            .as_ref()
+            .unwrap()
+            .relations
+            .iter()
+            .all(|r| r.resolution == "incomplete")
+    );
+    let revision = e.revision;
+    fault::arm(
+        names::TASK_EVIDENCE_BEFORE_FINAL,
+        0,
+        Action::Call(Box::new(move |ctx| {
+            task(ctx.engine.unwrap(),json!({"op":"apply","expected_revision":revision,"edits":[{"op":"add","entry":{"id":"changed","kind":"constraint","text":"New constraint","author":"operator","provenance":"concurrent edit","source_links":[]}}]})).unwrap();
+        })),
+    );
+    let result = e.engine.context_candidates_with(
+        "items",
+        Strategy::Auto,
+        &Control::unbounded(),
+        &ContextOptions {
+            task: Some(task_context::Scope {
+                workspace_id: &e.wid,
+                task_id: "contract",
+                expected_revision: e.revision,
+            }),
+            compose_evidence: true,
+            ..Default::default()
+        },
+    );
+    fault::disarm_all();
+    assert!(matches!(result, Err(FoundryError::Conflict(_))));
+}
+#[test]
+fn ambiguous_relationships_are_exposed_and_missing_tests_remain_missing() {
+    let mut e = fixture();
+    e.engine
+        .replace_source(
+            "service.py",
+            &format!("{SERVICE}\n@app.get('/v1/items')\ndef duplicate():\n    return {{}}\n"),
+        )
+        .unwrap();
+    e.engine.delete_source("test_contract.py").unwrap();
+    e.engine
+        .index_boundaries("boundary.json", &[], &Control::unbounded())
+        .unwrap();
+    e.engine.refresh(&Control::unbounded()).unwrap();
+    let c = compose(&e);
+    let p =
+        response::pack_enriched_context(&c, None, Budget::request(12000), &response::stdout_bytes)
+            .unwrap();
+    let r = report(&p.text);
+    assert_eq!(r["facets"]["verification"]["state"], "missing");
+    assert_eq!(r["boundary"]["resolution"]["ambiguous"], 1);
+}
+#[test]
+fn cli_composition_supports_a_sandbox_contract_patch_and_test() {
+    let e = fixture();
+    let root = e.dir.path().join("root");
+    let store = e.dir.path().join("store");
+    let revision = e.revision;
+    drop(e.engine);
+    let out = Command::new(BIN)
+        .arg("--store")
+        .arg(&store)
+        .args([
+            "context",
+            "items",
+            "--task",
+            "contract",
+            "--task-revision",
+            &revision.to_string(),
+            "--compose-evidence",
+            "--boundary-config",
+            "boundary.json",
+            "--tokens",
+            "12000",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(text.contains("['products']"));
+    assert!(text.contains("'items': ['book']"));
+    assert!(text.contains("test_contract.py#"));
+    // Execute the selected provider, consumer and test with a deterministic
+    // in-process transport adapter. This verifies a contract patch, not HTTP
+    // deployment or an LLM's autonomous patch quality.
+    let harness = r#"import sys, types, runpy
+routes = {}
+class App:
+    def get(self, path):
+        def register(f):
+            routes[path] = f
+            return f
+        return register
+sys.modules['fastapi'] = types.SimpleNamespace(FastAPI=App)
+runpy.run_path('service.py')
+class Response:
+    def __init__(self, value): self.value = value
+    def json(self): return self.value
+def get(url): return Response(routes[url.removeprefix('http://catalog')]())
+sys.modules['httpx'] = types.SimpleNamespace(get=get)
+sys.modules['requests'] = types.SimpleNamespace(get=get)
+assert runpy.run_path('client.py')['fetch_items']() == ['book']
+runpy.run_path('test_contract.py')['test_items']()
+"#;
+    let run = || {
+        Command::new("python3")
+            .args(["-c", harness])
+            .current_dir(&root)
+            .output()
+            .unwrap()
+    };
+    assert!(!run().status.success());
+    let billing = std::fs::read(root.join("billing.py")).unwrap();
+    std::fs::write(
+        root.join("service.py"),
+        SERVICE.replace("'items':", "'products':"),
+    )
+    .unwrap();
+    assert!(run().status.success());
+    assert_eq!(billing, std::fs::read(root.join("billing.py")).unwrap());
+}
+#[tokio::test]
+async fn mcp_composition_is_advertised_only_when_enabled_and_uses_real_result_budget() {
+    use rmcp::{ServiceExt, model::CallToolRequestParams, transport::TokioChildProcess};
+    let e = fixture();
+    let store = e.dir.path().join("store");
+    let root = e.dir.path().join("root");
+    let revision = e.revision;
+    drop(e.engine);
+    for enabled in [false, true] {
+        let mut cmd = tokio::process::Command::new(BIN);
+        cmd.arg("--store")
+            .arg(&store)
+            .arg("mcp")
+            .arg("--root")
+            .arg(&root);
+        if enabled {
+            cmd.arg("--experimental-task-context");
+        }
+        let client = ().serve(TokioChildProcess::new(cmd).unwrap()).await.unwrap();
+        let catalog = client.list_tools(None).await.unwrap();
+        let tool = catalog.tools.iter().find(|t| t.name == "context").unwrap();
+        assert_eq!(
+            tool.input_schema["properties"]
+                .get("compose_evidence")
+                .is_some(),
+            enabled
+        );
+        let indexed = client
+            .call_tool(
+                CallToolRequestParams::new("index").with_arguments(
+                    json!({"boundary":{"config":"boundary.json"}})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(indexed.is_error == Some(true), !enabled, "{indexed:?}");
+        let args = json!({"query":"items","task_id":"contract","task_revision":revision,"compose_evidence":true,"boundary_config":"boundary.json","tokens":4000});
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new("context")
+                    .with_arguments(args.as_object().unwrap().clone()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.is_error == Some(true), !enabled, "{result:?}");
+        if enabled {
+            let rmcp::model::ContentBlock::Text(t) = &result.content[0] else {
+                panic!()
+            };
+            assert!(response::count_tokens(&t.text) <= 4000);
+            assert!(serde_json::to_vec(&result).unwrap().len() <= response::BYTE_CAP);
+            assert_eq!(report(&t.text)["complete"], false);
+        }
+        client.cancel().await.unwrap();
+    }
+}
+
+#[test]
+fn derived_vocabulary_discovers_source_and_boundary_neighbors_without_promoting_claims() {
+    let mut e = fixture();
+    let handle = context_foundry::SourceHandle {
+        workspace_id: e.wid.clone(),
+        path: "service.py".into(),
+        sha256: context_foundry::digest(SERVICE.as_bytes()),
+        start: 0,
+        end: SERVICE.len() as u64,
+    }
+    .to_v2();
+    let brief = json!({"cited_spans":[handle],"recipe_sha256":"a".repeat(64),"model":"synthetic/no-provider","artifact_sha256":"b".repeat(64),"prompt_sha256":"c".repeat(64),"generated_at_unix_ms":1,"purpose":[{"text":"quartzfulfillment","citations":[0],"identifiers":[]}],"behavior":[{"text":"Return catalog items.","citations":[0],"identifiers":[]}],"provides":[],"consumes":[],"constraints":[],"tests":[],"unknowns":["Synthetic discovery fixture"]});
+    let request = context_foundry::brief::parse(
+        &serde_json::to_vec(&json!({"workspace_id":e.wid,"command":{"op":"put","brief":brief}}))
+            .unwrap(),
+    )
+    .unwrap();
+    e.engine.brief(&request, &Control::unbounded()).unwrap();
+    // A separate discovery-only task leaves no lexical requirement seeds.
+    task(
+        &e.engine,
+        json!({"op":"forget","expected_revision":e.revision}),
+    )
+    .unwrap();
+    e.revision = task(
+        &e.engine,
+        json!({"op":"create","title":"quartzfulfillment"}),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    e.engine.refresh(&Control::unbounded()).unwrap();
+    let c = e
+        .engine
+        .context_candidates_with(
+            "quartzfulfillment",
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &e.wid,
+                    task_id: "contract",
+                    expected_revision: e.revision,
+                }),
+                compose_evidence: true,
+                boundary_config: Some("boundary.json"),
+                briefs: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(c.briefs.len(), 1);
+    assert!(
+        c.batch
+            .items
+            .iter()
+            .any(|i| i.handle.as_ref().unwrap().path == "client.py")
+    );
+    let p =
+        response::pack_enriched_context(&c, None, Budget::request(12000), &response::stdout_bytes)
+            .unwrap();
+    assert_eq!(report(&p.text)["orientation"]["derived_briefs"], 1);
+    assert!(p.text.contains("\"kind\":\"derived\""));
+    assert_eq!(report(&p.text)["complete"], false);
+    e.engine
+        .replace_source("service.py", "# source replaced\n")
+        .unwrap();
+    let c = e
+        .engine
+        .context_candidates_with(
+            "quartzfulfillment",
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &e.wid,
+                    task_id: "contract",
+                    expected_revision: e.revision,
+                }),
+                compose_evidence: true,
+                boundary_config: Some("boundary.json"),
+                briefs: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(c.briefs.is_empty());
+}

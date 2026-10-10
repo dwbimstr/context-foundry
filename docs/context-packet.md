@@ -51,7 +51,11 @@ generation now adds pinned lazy model snapshots, idle unload and native per-work
 controls, with a Metal control path awaiting hardware acceptance. Opt-in shared memory
 admission reserves both worker ceilings, checks host/container headroom, and unloads idle
 generation under pressure. CPU/global GPU policies and real-model task acceptance remain open.
-Boundary joins and task-evidence composition also remain pending. See [configuration](experimental-context.md#selective-knowledge-generation).
+Schema 11 now adds source/config-bound static Python HTTP boundary joins and explicit
+primary-task evidence composition (005 T005 / 003 T009). Both have sandbox CLI/MCP,
+freshness, budget and lifecycle verification; broader producers and real-host outcomes
+remain open. See [boundary/task usage](experimental-context.md#boundary-relationships-and-task-evidence)
+and [generation configuration](experimental-context.md#selective-knowledge-generation).
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
 [validation](validation.md), plus the [pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
 013 remains frozen. No release or quality gain is claimed.

@@ -836,7 +836,7 @@ policy is introduced. Live-host outcomes remain pending and do not block sandbox
 
 ### T009 — Compose evidence for a repository task
 
-Selected 2026-10-09; not implemented. Extend T008 using the caller's task requirements
+Selected 2026-10-09; bounded experimental composition implemented 2026-10-10. Extend T008 using the caller's task requirements
 and open questions to collect the evidence needed for a change: orientation, relevant
 implementation, callers/boundary consumers, constraints and verification tests.
 010 briefs guide discovery; source and 005 graph citations remain recoverable.
@@ -850,3 +850,55 @@ trace how the selected evidence supports the patch and its test. Later paired ho
 runs compare verified completions, incorrect changes, complete provider usage,
 auxiliary generation and amortized preparation cost. Smaller tool replies alone are
 not success. This acceptance evidence does not block experimental implementation.
+
+
+#### T009 implementation — 2026-10-10
+
+[`task_evidence.rs`](../../src/task_evidence.rs) adds explicit CLI
+`context --task ID --task-revision REV --compose-evidence` and MCP
+`context {task_id,task_revision,compose_evidence:true}` under
+`--experimental-task-context`. Optional `boundary_config` names 005's indexed config;
+`include_briefs` retains 010's explicit opt-in. The initial slice serves one primary
+store; a multi-root owner refuses composition explicitly. Ordinary and exact-name
+context remains byte-compatible without the new option.
+
+The planner starts with eight main-query candidates, at most four selected active
+requirements/questions (1,024 bytes each, four lexical candidates per query), eight
+explicit source links, four source-bound briefs, eight boundary seed paths/eight
+relations and at most 32 final source units. It makes no extra model calls and writes
+no task state. Folded entries use the caller's selected summary; original bytes remain
+recoverable through T007. Brief vocabulary can discover a source and then its boundary
+neighbors. Overlapping ranges with matching provenance are coalesced with their
+attribution; separate functions remain separate units. Enclosing boundary contexts
+over 32 KiB fall back to exact occurrence spans. Other large units deliver a bounded
+prefix with its own exact handle and an explicit discovery-limit indication.
+
+One final read rechecks task revision, source identities, boundary/config dependencies,
+brief lineage and memory revisions. The packer interleaves implementation, consumers,
+configuration, test-path candidates and constraint sources, then considers remaining
+units. Test paths are a heuristic, not an assertion that the test verifies a requirement.
+Caller constraints remain attributed assertions, with semantic conflicts unevaluated.
+Ambiguous/unresolved/incomplete boundary facets are exposed separately.
+
+The ordinary v2 header, mandatory task view, `task-evidence` report, source forms,
+optional `task-relationship` lines, derived briefs and memory share one token/byte
+allowance. The report is recalculated for every packing trial: source candidates,
+addresses only, omitted by budget and missing are distinct. Relationship details are
+included only when both endpoint occurrence spans and configuration source were
+delivered. Derived briefs require their primary cited source body. Reports always state
+`complete:false`, tests unexecuted and host application unknown; matching task words
+does not establish a satisfied requirement. MCP uses its existing reservation/refund
+and serialized-result byte boundary.
+
+[`tests/task_evidence.rs`](../../tests/task_evidence.rs) checks CLI and SDK MCP delivery,
+opt-in catalogs/publication, budget accounting, final-read races, ordinary compatibility,
+deduplication, missing tests, ambiguity and brief-driven discovery. Its two-service
+catalog fixture exposes a provider returning `items` while consumer/test require
+`products`; the delivered spans support a one-line provider repair, with billing and
+the route unchanged. A deterministic in-process Python transport executes the selected
+provider, consumer and test before/after the repair. This verifies the sandbox contract,
+not a deployed HTTP service or autonomous model patch quality. Real-host paired tasks,
+provider economics, broader language/framework coverage and multi-root composition
+remain follow-ups. [Usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
+and [validation](../../docs/validation.md#boundary-relationships-and-task-evidence--2026-10-10)
+retain the practical limits.

@@ -483,7 +483,7 @@ would not have blocked an already accepted smaller CLI or agent release.
 
 ### T005 — Connect repository behavior across process boundaries
 
-Selected 2026-10-09; not implemented. A compiler reference graph does not capture all
+Selected 2026-10-09; first experimental producer implemented 2026-10-10. A compiler reference graph does not capture all
 service/configuration dependencies. Start with one supported producer for declared
 routes/contracts and literal consumers inside an admitted repository. Normalize
 versioned API/topic keys with an explicit recipe, retain evidence spans at both ends,
@@ -502,3 +502,52 @@ consumer. Prakarana `3143213d` spec 063 is a draft reference, not implemented-lo
 evidence; `spine_tree.cpp` currently rolls up derived provides/consumes vocabulary.
 Its spec 058 and `setu_engine.cpp` inform the publication-cost question. Those sources
 were inspected, not executed; the ecosystem plan retains the full pin and differences.
+
+
+#### T005 implementation — 2026-10-10
+
+[`boundary.rs`](../../src/boundary.rs) implements `python-http-v1`: module-level
+FastAPI app declarations, static `@app.get/post/put/patch/delete/head/options` routes
+and direct imported `requests`/`httpx` calls. An **indexed** JSON configuration
+assigns provider files and canonical HTTP origins to service IDs and admits consumer
+files. The key is `(service ID, uppercase method, path)`: API version path components
+and case are retained; URL query/fragment are excluded, with URL-parser path
+normalization on consumers. This is syntactic key agreement, not runtime call proof.
+Template routes, dynamic URLs, unknown origins, escaped/shadowed bindings, parse
+failures and unsupported provider constructs prevent unsupported certainty. A logging
+string alone produces no call. The parser retains existing Python scanner limits and
+deterministic work limits; indexing never imports or executes workspace Python.
+
+Both occurrence and enclosing context spans retain full source hashes. Configuration
+is also cited and hashed. Results distinguish `exact_key`, `ambiguous`, `unresolved`,
+`unsupported` and `incomplete`. Every configured provider scope must be current and
+complete before uniqueness or absence is claimed. A changed/deleted source or config
+invalidates affected evidence immediately on indexed-source acceptance; unrelated
+services remain eligible. Discovery is only within the declared static recipe.
+
+Schema 11 adds two ordinary redb tables: per-config/file scope replacement and key
+postings. Manual bundles replace a whole producer; compiler scopes would falsely
+classify this evidence and invalidate it on unrelated revisions. These two indexes
+avoid those semantics and avoid materializing provider×consumer pairs. Parsing occurs
+outside the write transaction; dependency and prior-scope identity checks precede one
+atomic publication. Unchanged files skip source reconstruction/parsing/writes. Explicit
+changed paths parse only those files; configuration edits retire removed scopes.
+Reads account for at most 64 configured scope rows, then bounded key postings, rather
+than scan repository mappings. This is a bounded selected-set metadata read, not a
+claim of constant total work. Limits: 16 services, 64 distinct Python paths, 64 KiB
+config, 1 MiB parse input, 128 facts/file, 8 traversal seeds, 512 postings and 64
+relations with at most 16 provider candidates each. Caps/incomplete scopes are visible.
+
+CLI `boundary index/relations` and opt-in MCP `index {boundary:{config,paths}}` publish
+or consume this index. T009 consumes it inside the final evidence snapshot. Refresh is
+explicit after source watching/indexing; no new watcher or background parser is added.
+Dynamic/cross-repository joins, other frameworks, parameterized routes and broker
+contracts remain outside this producer. No generated claim becomes a compiler fact.
+
+[`tests/boundary.rs`](../../tests/boundary.rs) covers replay, changed-file publication,
+stale source/config dependencies, ambiguity, unsupported calls, logging strings,
+shadowing, scanner limits, interrupted transactions, process death before/after commit,
+restart, explicit schema upgrade and bounded CLI output. The two-service contract
+fixture in [`tests/task_evidence.rs`](../../tests/task_evidence.rs) supplies the
+implementation/consumer/configuration/test composition. See [usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
+and [validation](../../docs/validation.md#boundary-relationships-and-task-evidence--2026-10-10).

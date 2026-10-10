@@ -571,10 +571,22 @@ fn schema_nine_requires_explicit_atomic_upgrade_without_losing_sources() {
         0,
         Action::Fail("interrupt".into()),
     );
-    assert!(Engine::upgrade_store(&env.store, 10, &Control::unbounded()).is_err());
+    assert!(
+        Engine::upgrade_store(
+            &env.store,
+            context_foundry::SCHEMA_VERSION,
+            &Control::unbounded()
+        )
+        .is_err()
+    );
     fault::disarm_all();
     assert_eq!(context_foundry::testkit::schema_marker(&env.store), "9");
-    Engine::upgrade_store(&env.store, 10, &Control::unbounded()).unwrap();
+    Engine::upgrade_store(
+        &env.store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
     env.reopen();
     assert_eq!(env.engine().source_revision().unwrap(), 5);
     assert_eq!(

@@ -472,6 +472,25 @@ impl Engine {
     pub(crate) fn check_task_scope(&self, scope: Scope<'_>) -> FResult<()> {
         self.task_in(&self.db.begin_read()?, scope).map(|_| ())
     }
+    pub(crate) fn task_entries_in(
+        &self,
+        tx: &redb::ReadTransaction,
+        scope: Scope<'_>,
+    ) -> FResult<Vec<Entry>> {
+        let task = self.task_in(tx, scope)?;
+        Ok(task
+            .entries
+            .iter()
+            .filter(|e| e.view.selected && !task.superseded(&e.entry.id))
+            .map(|e| {
+                let mut entry = e.entry.clone();
+                if let Some(summary) = &e.view.summary {
+                    entry.text = summary.clone();
+                }
+                entry
+            })
+            .collect())
+    }
     pub(crate) fn task_view_in(
         &self,
         tx: &redb::ReadTransaction,

@@ -253,9 +253,9 @@ macOS and network-filesystem event behavior remain unverified.
 ## Recoverable task context
 
 This branch adds recoverable task state beside retrieval. Start with a disposable
-store. New stores use schema 10; an existing store needs an explicit
-`foundry --store STORE upgrade-store --to 10`. Take a closed-store backup first if
-using an existing store: schema 9 and earlier binaries cannot open schema 10, and rollback means
+store. New stores use schema 11; an existing store needs an explicit
+`foundry --store STORE upgrade-store --to 11`. Take a closed-store backup first if
+using an existing store: schema 10 and earlier binaries cannot open schema 11, and rollback means
 restoring that backup. This work does not upgrade stores automatically.
 
 The core works through `foundry --store STORE task-context`, which accepts one JSON
@@ -645,7 +645,7 @@ still be running when a query arrives. Payloads and local preparation are bounde
 Foundry cannot enforce CPU/GPU headroom or terminate computation inside an external service.
 Shutdown closes HTTP and discards uncommitted output before releasing the store.
 
-This uses schema 10 with no further migration. Selected brief publication does not drain
+Knowledge tables were introduced in schema 10; the current branch uses schema 11. Selected brief publication does not drain
 unrelated source work. Owned local generation is available below; real-model task quality
 and CPU/global GPU pressure policies remain open; shared memory admission is described below.
 
@@ -809,3 +809,70 @@ artifact disk/page cache, other processes and other Foundry owners are outside i
 sum. External HTTP servers have no local worker reservation. Global GPU usage, CPU utilization,
 thermal/battery policy and simultaneous real-model hardware acceptance remain open. Without
 this option, previous admission and cache behavior is preserved.
+
+
+## Boundary relationships and task evidence
+
+The first boundary producer supports static Python FastAPI routes and direct literal
+`requests`/`httpx` calls. Put a configuration such as `boundary.json` in the admitted
+workspace and index it with the sources:
+
+```json
+{
+  "v": 1,
+  "services": [
+    {"id": "catalog", "providers": ["services/catalog.py"], "origins": ["http://catalog"]},
+    {"id": "billing", "providers": ["services/billing.py"], "origins": ["http://billing"]}
+  ],
+  "consumers": ["clients/catalog.py", "tests/test_catalog.py"]
+}
+```
+
+```sh
+foundry --store STORE index ROOT
+foundry --store STORE boundary index --config boundary.json
+foundry --store STORE boundary relations --config boundary.json --path services/catalog.py --tokens 4096
+# After indexing/watching an edit, replace just the selected file's facts:
+foundry --store STORE boundary index --config boundary.json --path clients/catalog.py
+```
+
+Paths and config refer to indexed source snapshots, not unindexed filesystem bytes.
+An unchanged publication skips body reads/parsing/writes; changed config hashes
+invalidate old scopes. Refresh all selected files after editing the configuration.
+Changed/missing provider scopes yield `incomplete`, not a false unique/absent match.
+`exact_key` means syntactic method/service/path agreement; it does not prove a runtime
+call or compatible payload. `ambiguous`, `unresolved`, `unsupported` and source spans
+remain visible. Dynamic URLs, parameterized routes, indirect clients and other
+frameworks are outside this first recipe. No workspace Python executes during indexing.
+
+Reuse a task created with the [task-context workflow](#recoverable-task-context),
+retaining its requirements, questions and constraints:
+
+```sh
+foundry --store STORE context 'catalog response contract' \
+  --task contract --task-revision REV --compose-evidence \
+  --boundary-config boundary.json --include-briefs --tokens 8192
+```
+
+The selected task view and all source/relationship/brief/report text share the same
+allowance. `task-evidence` reports bodies, addresses only, omitted-by-budget and missing
+facets; `complete:false` is intentional. Tests are discovered candidates, not executed
+verification. Constraints are caller assertions. Derived briefs retain their distinct
+provenance and require source evidence; nothing claims host conversation application.
+The default context path is unchanged. Composition is currently primary-store only.
+
+For an existing primary-only MCP owner launched with `--experimental-task-context`,
+use `index {"boundary":{"config":"boundary.json","paths":["clients/catalog.py"]}}`
+after accepting source edits, then `context` with `task_id`, `task_revision`,
+`compose_evidence:true` and `boundary_config:"boundary.json"`. Omit `paths` to refresh
+the full configured set. Boundary publication and source indexing are separate bounded
+operations; no background extraction loop is added. `include_briefs:true` keeps the
+existing requirement for a configured knowledge profile on MCP. Without the task flag,
+the catalog advertises neither composition nor boundary publication.
+
+The first recipe admits at most 16 services/64 Python paths and 128 facts per file;
+traversal takes at most eight seeds, examines 512 key postings and emits at most 64
+relations. Composition uses at most four additional lexical task queries, eight links,
+eight relationships, four briefs and 32 source units. These are explicit discovery
+limits, not whole-repository coverage guarantees. See the [owning boundary spec](../specs/005-graph-evidence-lifecycle/spec.md#t005--connect-repository-behavior-across-process-boundaries)
+and [composition spec](../specs/003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task).

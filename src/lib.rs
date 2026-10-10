@@ -27,6 +27,7 @@ macro_rules! fault {
 pub mod adapter_cli;
 pub mod adapter_error;
 pub mod bootstrap;
+pub mod boundary;
 pub mod brief;
 pub mod cli;
 pub mod config;
@@ -56,6 +57,7 @@ pub mod scip;
 pub mod store;
 pub mod syntax;
 pub mod task_context;
+pub mod task_evidence;
 #[cfg(feature = "test-faults")]
 pub mod testkit;
 pub mod usage;

@@ -270,7 +270,7 @@ pending. Sandbox build/test authorization continues.
 | E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; ANN deltas, mapping-only publication, bounded compaction and crash recovery implemented. Warm affected-location, bounded location overlays, shared metadata and clean-restart publication reuse are implemented. Cold verification, changed-input restart and compaction remain corpus-sized; total affected-path cost is not claimed. |
 | E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; opt-in body windows, bounded parent prefixes, versioned limits and actual-token batches implemented. Address profiles/caches preserved; independent area vectors and real-model comparison remain |
 | F | Selective memoized LLM generation, dependency tracking, affected area rollups and indexed derived knowledge | 010 T002: explicit HTTP/CLI generation, transactional completion reuse, bounded transitive lineage and area freshness implemented in schema 10. Continuous MCP scheduling, shared client admission, owned local generation and opt-in shared memory admission are implemented. CPU/global GPU pressure policies, Metal acceptance and real-model task utility remain. A bounded selected-set scan replaces a persistent reverse index for now. |
-| G | Evidence-bearing boundary joins and task-oriented implementation/caller/test composition | 005 T005 / 003 T009; pending |
+| G | Evidence-bearing boundary joins and task-oriented implementation/caller/test composition | 005 T005 / 003 T009: implemented experimentally. Static FastAPI/literal HTTP joins, changed-file publication, source/config freshness, ambiguity and primary-task composition under one allowance. Sandbox contract repair verified; broader producer/host acceptance remains. |
 
 Use work-count assertions in sandbox tests: unchanged replay sends zero embeddings;
 one edit visits only its derivation work and affected dependencies; unchanged inputs
@@ -285,7 +285,8 @@ wall times cannot identify which stage caused them.
 
 Previously selected work also remains open: 009 T005 anchorless miss repair beyond
 tracing; 001 T010 behavioral retrieval acceptance; 003 T006 real-host outcomes and
-application of working views; 010 T002; 005 T005; 003 T009. Experimental task state,
+application of working views; 010 T002 model/resource acceptance; broader 005 T005
+producer coverage and 003 T009 real-host task acceptance. Experimental task state,
 recovery and reminders are implemented, but automatic host application and measured
 quality/economics are not. Package signing/installed-artifact acceptance remain
 release follow-up, not a sandbox prerequisite. 013 stays frozen off.
@@ -298,19 +299,21 @@ no default promotion, release, training unfreeze or predecessor deployment is im
 
 ### Pending work inventory — 2026-10-10
 
-Reviewed after owned local generation and updated with the shared-memory increment.
+Reviewed after shared-memory admission, boundary relationships and task evidence composition.
 This collects the current unfinished work; the linked owning specs retain its contracts.
 Hardware/host evidence is pending acceptance, not a prerequisite for sandbox implementation.
-The next repository-behavior increment is boundary relationships, followed by task evidence
-composition. Resource/scale follow-ups below remain explicit and can proceed when their
-platform or workload is available.
+005 T005 and 003 T009 now have implemented sandbox slices; they are no longer first-build
+TODOs. The suggested next implementation focus is the remaining cold/changed-input
+bootstrap and publication work under 009 T006–T008. Scope a concrete repeated operation
+before adding infrastructure. Resource and broader evidence-coverage follow-ups remain
+explicit and can proceed when their platform or workload is available.
 
 | Work | Remaining TODOs and owner |
 | --- | --- |
-| Shared resources | **Completed this increment:** opt-in embedding/generation ceiling reservations, host/visible-cgroup memory headroom, hysteresis, idle generation eviction, status and lifecycle tests ([010 T002](../specs/010-source-bound-derived-knowledge/spec.md#t002-shared-memory-admission--2026-10-10)). Remaining: CPU utilization policy, global GPU headroom, thermal/battery adaptation, optional embedding eviction and real combined-model hardware acceptance. |
-| Boundary relationships — next | Implement [005 T005](../specs/005-graph-evidence-lifecycle/spec.md#t005--connect-repository-behavior-across-process-boundaries): declared route/contract producer and literal consumer joins, evidence spans, ambiguity/unresolved cases, source invalidation and a multi-service change fixture. |
-| Task evidence composition | Implement [003 T009](../specs/003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task): implementation, callers/boundary consumers, constraints and verification tests under one allowance, with missing/conflicting facets exposed. |
-| Bootstrap/publication scale | Under 009 T006–T008, investigate remaining corpus-sized cold artifact/segment verification, changed-input restart/reconciliation, overflow/repair and compaction costs. Measure actual cold/warm throughput and utilization on large repositories; warm delta fixes do not establish total bootstrap cost. |
+| Shared resources | **Implemented earlier:** opt-in embedding/generation ceiling reservations, host/visible-cgroup memory headroom, hysteresis, idle generation eviction, status and lifecycle tests ([010 T002](../specs/010-source-bound-derived-knowledge/spec.md#t002-shared-memory-admission--2026-10-10)). Remaining: CPU utilization policy, global GPU headroom, thermal/battery adaptation, optional embedding eviction and real combined-model hardware acceptance. |
+| Boundary coverage | **Implemented:** [005 T005](../specs/005-graph-evidence-lifecycle/spec.md#t005--connect-repository-behavior-across-process-boundaries) static Python FastAPI/literal `requests`/`httpx` producer, both-end spans, exact-key/ambiguous/unresolved/unsupported/incomplete states, source/config invalidation, replay and changed-file publication, CLI/MCP surfaces and multi-service fixture. Remaining: select additional real framework/templated-route/broker patterns from concrete tasks; optional automatic extraction maintenance needs a bounded integration design. Cross-repository links remain outside admission. |
+| Task evidence breadth/acceptance | **Implemented:** [003 T009](../specs/003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task) explicit requirements/questions/source-link discovery, source/brief/boundary composition, deduplication, delivered-versus-missing facet reporting, one allowance and a sandbox patch/test trace. Remaining: multi-root composition, broader compiler-caller/test association, semantic constraint-conflict reasoning if justified, and paired real-host outcome/economics acceptance. Current test-path classification is heuristic; caller assertions are unverified. |
+| Bootstrap/publication scale — suggested next | Under 009 T006–T008, investigate remaining corpus-sized cold artifact/segment verification, changed-input restart/reconciliation, overflow/repair and compaction costs. Measure actual cold/warm throughput and utilization on large repositories; warm delta fixes do not establish total bootstrap cost. |
 | Watching and maintenance robustness | Under 001 T011 / 009 T008, validate target platforms and 60k–80k-file workloads. Investigate the intermittent continuous-semantic filesystem-traffic timeout recorded in the local-generation validation; the isolated rerun passed but did not explain it. The 010 HTTP 80 ms deadline fixture also intermittently expires before admission; its unchanged rerun passed, with the limitation recorded in validation. |
 | Chunking/model geometry | Under 009 T009, execute real-device long-context, heterogeneous-batch numerical/quality comparisons. Separate parent/file/area vectors are not implemented. True late chunking remains a backend-dependent candidate, not an implemented capability. |
 | Generated knowledge | Under 010 T002, select a useful model/recipe and establish task benefit, throughput, maintenance costs and amortized economics. The small real Qwen smoke establishes execution only. Dense brief vectors remain optional; a durable reverse index needs evidence that the bounded selected-set scan is insufficient. |
@@ -327,7 +330,8 @@ Frozen/deferred scope is **not** an active implementation queue: 013 learning st
 014 migration awaits a concrete task; 002/004/006/011/012/015 are superseded. Cross-repository
 graph edges, learned selection, KV/latent-memory work and new hardware backends require
 their own concrete scope. Existing watcher, artifact reuse, incremental embedding/enrichment,
-ANN deltas, body/parent chunking and local generation are not reopened as unimplemented work.
+ANN deltas, body/parent chunking, local generation, the first boundary producer and
+primary-task composition are not reopened as unimplemented work.
 
 Use tasks such as tracing a request through configuration and a worker, repairing a
 behavior while preserving its callers, and a multi-service contract change with its
