@@ -62,7 +62,7 @@ protobuf = "=3.7.2"
 # 003 adapter: real MCP SDK (rmcp 3.5.0, feasibility-proven on Rust 1.90) and
 # the async/HTTP runtime it mounts on. The bounded codec rides tokio-util;
 # axum hosts the SDK's tower service at /mcp.
-rmcp = { version = "=3.5.0", features = [
+rmcp = { version = "=3.5.1", features = [
     "server",
     "transport-io",
     "transport-streamable-http-server",
@@ -95,7 +95,7 @@ bytes = "1"
 # the pinned artifact's tokenizer.json and the USearch F16 index. Default on;
 # `--no-default-features` builds the lexical-only core.
 tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
-usearch = { version = "=2.26.2", optional = true }
+usearch = { version = "=2.26.4", optional = true }
 # 013 T002 learning worker only (`learning-worker`): LibTorch through tch,
 # experimental 0.26.0/LibTorch 2.13.0 pairing (docs/review/tch-026.md).
 # Historical D001 acceptance was 0.24.0/2.11.0. The default build never links it. `LIBTORCH` names
@@ -132,7 +132,7 @@ toml = "0.8"
 serde_json = { version = "1", features = ["raw_value"] }
 # Real SDK client + child-process transport are test-only: production code
 # serves, it never connects.
-rmcp = { version = "=3.5.0", features = [
+rmcp = { version = "=3.5.1", features = [
     "client",
     "transport-child-process",
     "transport-streamable-http-client-reqwest",
