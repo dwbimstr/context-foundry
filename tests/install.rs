@@ -1153,7 +1153,7 @@ fn worker_components_install_as_bundles_carry_forward_and_disable() {
     let build_libtorch = base.join("lib torch").join("lib");
     std::fs::create_dir_all(&build_libtorch).unwrap();
     std::fs::write(build_libtorch.join("libtorch.dylib"), "fixture library\n").unwrap();
-    std::fs::write(base.join("lib torch").join("build-version"), "2.11.0\n").unwrap();
+    std::fs::write(base.join("lib torch").join("build-version"), "2.13.0\n").unwrap();
     std::fs::copy(
         env!("CARGO_BIN_EXE_foundry-learn-fake"),
         bin.join("foundry-learn"),
@@ -1173,6 +1173,23 @@ fn worker_components_install_as_bundles_carry_forward_and_disable() {
         profile_arg,
         "--with-learning",
     ];
+    // Never stamp the new runtime requirement onto an old or unidentified
+    // --bin-dir input. These are fixture dylibs, not a native loader test.
+    let build_version = base.join("lib torch").join("build-version");
+    for version in [Some("2.11.0\n"), None] {
+        if let Some(version) = version {
+            std::fs::write(&build_version, version).unwrap();
+        } else {
+            std::fs::remove_file(&build_version).unwrap();
+        }
+        let refused = package_command(&bin, &packages, None, &options)
+            .output()
+            .unwrap();
+        assert_eq!(refused.status.code(), Some(65), "{}", text(&refused.stderr));
+        assert!(text(&refused.stderr).contains("learning package needs a LibTorch 2.13.0 rpath"));
+        assert!(std::fs::read_dir(&packages).unwrap().next().is_none());
+    }
+    std::fs::write(&build_version, "2.13.0\n").unwrap();
     let second_label = format!("{VERSION}-test.2");
     let first = package(&bin, &packages, None, &options);
     let second = package(&bin, &packages, Some(&second_label), &options);
@@ -1224,12 +1241,12 @@ fn worker_components_install_as_bundles_carry_forward_and_disable() {
             .collect::<Vec<_>>(),
         [json!({"name": "llama.cpp", "version": commit, "license": "MIT", "files": ["LICENSE"]})]
     );
-    assert_eq!(dependencies["learning"]["libtorch_required"], "2.11.0");
+    assert_eq!(dependencies["learning"]["libtorch_required"], "2.13.0");
     assert_eq!(
         dependencies["learning"]["libtorch_build_dir"],
         build_libtorch.display().to_string()
     );
-    assert_eq!(dependencies["learning"]["libtorch_build_version"], "2.11.0");
+    assert_eq!(dependencies["learning"]["libtorch_build_version"], "2.13.0");
     assert!(
         dependencies["learning"]["tch"]
             .as_str()

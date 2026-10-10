@@ -8,6 +8,15 @@ matching Prakarana's closed LoRA result; the city map (001 T007, 005 T004) takes
 retrieval decisions deterministically. Re-entry: a G1/G2 result showing a decision the
 deterministic rules get wrong and a model gets right, with the economics gate passing.
 
+**Dependency review (owner, 2026-10-10):** the experimental `tch` 0.26.0 /
+LibTorch 2.13.0 migration is maintenance of this frozen implementation, not
+reactivation. [PR #9 compatibility evidence](../../docs/review/tch-026.md) separates
+Linux numerical-operation checks from pending macOS arm64 worker/package and
+checkpoint parity acceptance. The earlier 0.24.0/2.11.0 results below remain
+historical evidence; their acceptance does not transfer to the new pairing.
+The owner subsequently authorized merging this coordinated migration with macOS
+validation deferred; the freeze and pending target acceptance remain unchanged.
+
 Status: Proposed implementation contract v4, revised 2026-09-29 after bounded Rust
 feasibility probes. T001 (schema 6, `feedback v4`, `learning prepare|check|compose-state`)
 and T002 (the tch training worker, calibration, evaluation and candidates) and T003
@@ -141,7 +150,7 @@ planned paths, upstream tests or scratch probes as implemented product behavior.
 
 ## D001 — Concrete path and remaining feasibility
 
-Select `tch` 0.24.0 / LibTorch 2.11.0, CPU float32 and the pinned pretrained
+The accepted baseline selected `tch` 0.24.0 / LibTorch 2.11.0, CPU float32 and the pinned pretrained
 ModernBERT-large/typed-choice checkpoint in v4. First implementation freezes encoder
 and adapts head/type/scorer. Preserve encoder adaptation as a later supported capability
 only after complete gradient/update and resource acceptance; do not label head fitting
@@ -343,7 +352,8 @@ T003's and SC-004 T004's, each passing only with that task's verification.
   scripts and small Rust changes, no installer framework.
   - `scripts/package.sh --with-learning` packages `libexec/foundry-learn` and
     `scripts/learn-worker-bundle.sh`. `PACKAGE.json` records tch, torch-sys and LibTorch
-    2.11.0 with the build's LibTorch directory. LibTorch and the checkpoint are never
+    2.13.0 with the build's LibTorch directory in the experimental migration
+    (historical accepted packages used 2.11.0). LibTorch and the checkpoint are never
     packaged.
   - `scripts/install.sh install|upgrade --learning-profile FILE` builds the
     ad-hoc-signed `FoundryLearn.app` from the installed worker. It writes an installed

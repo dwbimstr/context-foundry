@@ -7,15 +7,23 @@ Never point these executables at a live store or grant them a home/credential di
 
 ## Pins and preparation
 
+The 2026-10-10 [dependency review](../../docs/review/tch-026.md) coordinates the
+proposed Python torch 2.13.0 update (PR #2) with this scratch crate's `tch` 0.26.0
+pin and the product migration (PR #9). These are the current reproduction inputs;
+the measurements below and files in `results/` used the earlier 2.11.0/0.24.0
+pairing and have **not** been regenerated or accepted for 2.13.0. Updating only
+Python breaks the documented `LIBTORCH_USE_PYTORCH=1` Rust probe build.
+
 - Cargo.lock pins Rust dependencies. Local model/index builds used Rust 1.97.1.
 - MCP was built with Rust 1.90 in `rust:1.90-slim-bookworm`, image digest
   `sha256:64232e656c058f4468e8d024e990acff04f0fd5a5c0a88a574dc37773d7325c9`.
-- Isolated Python 3.12.11 environment: torch 2.11.0, transformers 5.17.0,
+- Historical isolated Python 3.12.11 environment: torch 2.11.0, transformers 5.17.0,
   mlx 0.32.3, mlx-metal 0.32.3, mlx-lm 0.31.3, safetensors 0.8.0.
   These third-party dependencies served the publisher loader and numerical reference;
   no first-party Python model code was written. The complete installed package capture
-  is [runtime-requirements.txt](runtime-requirements.txt); it is an environment record,
-  not a distributable runtime lock with wheel hashes and notices.
+  originally populated [runtime-requirements.txt](runtime-requirements.txt), now
+  updated to the coordinated reproduction inputs. It is not a distributable runtime
+  lock with wheel hashes and notices.
 - Download exact public revisions/files in [artifacts.json](results/artifacts.json),
   verify their SHA256, and review their separate licenses before use. Fetch config
   and unchanged `nemotron3_embed_mlx.py` from the same MLX revision. Fetch

@@ -192,7 +192,7 @@ fi
 if [ "$WITH_LEARNING" = 1 ]; then
     TREE_FEATURES="$TREE_FEATURES,learning-worker"
     if [ "$PREBUILT" = false ]; then
-        [ -n "${LIBTORCH:-}" ] || die 64 "building foundry-learn needs LIBTORCH (the LibTorch 2.11.0 tree)"
+        [ -n "${LIBTORCH:-}" ] || die 64 "building foundry-learn needs LIBTORCH (the LibTorch 2.13.0 tree)"
         "$CARGO" build --manifest-path "$REPO/Cargo.toml" --locked --offline --release \
             --features learning-worker --bin foundry-learn
     fi
@@ -383,8 +383,8 @@ fi
 if [ "$WITH_LEARNING" = 1 ]; then
     COMPONENTS="$COMPONENTS, \"learning\""
     torch_sys=$(lock_version torch-sys)
-    # torch-sys 0.24.0 checks for LibTorch 2.11.0 at build time.
-    [ "$torch_sys" = 0.24.0 ] || die 65 "torch-sys $torch_sys: update the LibTorch requirement recorded here"
+    # torch-sys 0.26.0 checks for LibTorch 2.13.0 at build time.
+    [ "$torch_sys" = 0.26.0 ] || die 65 "torch-sys $torch_sys: update the LibTorch requirement recorded here"
     # Whole pathnames: otool prints `path <dir> (offset N)` under LC_RPATH.
     rpath=$(otool -l "$ROOT/libexec/foundry-learn" | awk '
         /cmd LC_RPATH/ { r = 1; next }
@@ -399,14 +399,16 @@ if [ "$WITH_LEARNING" = 1 ]; then
     if [ -n "$rpath" ] && [ -f "$rpath/../build-version" ]; then
         build_version=$(cat "$rpath/../build-version")
     fi
+    # --bin-dir must not silently label an old or unknown runtime as 2.13.
+    [ "${build_version%%+*}" = 2.13.0 ] || die 65 "learning package needs a LibTorch 2.13.0 rpath with build-version; found '$build_version' at '$rpath'"
     DEPENDENCIES="$DEPENDENCIES,
   \"learning\": {
    \"tch\": $(json_str "$(lock_version tch)"),
    \"torch_sys\": $(json_str "$torch_sys"),
-   \"libtorch_required\": \"2.11.0\",
+   \"libtorch_required\": \"2.13.0\",
    \"libtorch_build_dir\": $(json_str "$rpath"),
    \"libtorch_build_version\": $(json_str "$build_version"),
-   \"note\": \"Not packaged: LibTorch and the checkpoint. The operator supplies LibTorch 2.11.0; learn-worker-bundle.sh makes the learning profile's libtorch_dir the worker's rpath.\"
+   \"note\": \"Not packaged: LibTorch and the checkpoint. The operator supplies LibTorch 2.13.0; learn-worker-bundle.sh makes the learning profile's libtorch_dir the worker's rpath.\"
   }"
 fi
 

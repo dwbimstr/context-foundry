@@ -12,7 +12,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 futures-util = { version = "0.3", features = ["sink"] }
 bytes = "1"
 pyo3 = { version = "=0.29.2", features = ["auto-initialize"], optional = true }
-tch = { version = "=0.24.0", optional = true }
+tch = { version = "=0.26.0", optional = true }
 rmcp = { version = "=3.5.0", features = ["server", "client", "transport-io", "transport-child-process"], optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
 usearch = { version = "=2.26.2", optional = true }
