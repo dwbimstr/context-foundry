@@ -1202,6 +1202,7 @@ async fn start_http(store: &Path, root: &Path) -> HttpServer {
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
@@ -1454,6 +1455,7 @@ async fn session_allowance_exhaustion_refuses_before_dispatch() {
     .unwrap();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
@@ -2689,6 +2691,7 @@ async fn http_refuses_absent_or_blank_token_before_opening_the_store() {
 async fn assert_http_refused(token_env: &str, store: &Path, root: &Path) {
     let result = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
@@ -2913,6 +2916,7 @@ async fn http_sessions_expire_and_admit_again_after_keep_alive() {
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
@@ -4822,6 +4826,7 @@ async fn http_sessions_have_independent_allowances_and_a_lost_delivery_stays_cha
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,

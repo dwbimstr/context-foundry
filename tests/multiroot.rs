@@ -342,6 +342,7 @@ async fn a_ws16_collision_is_refused_through_the_test_seam() {
     );
     context_foundry::fault::override_workspace_id(&ref1_canonical.display().to_string(), &forced);
     let error = context_foundry::mcp::serve_stdio(context_foundry::mcp::ServerOptions {
+        model_resources: None,
         knowledge: None,
         retrieval_trace_dir: None,
         experimental_behavior_context: false,

@@ -718,6 +718,10 @@ does not require delegated cgroups or Landlock. Missing native enforcement refus
 temporary storage/page cache in addition to worker memory. Caps are per worker, not an
 aggregate limit including the owner, resident embedding model, other users or host GPU load.
 Sampling can observe a breach after allocation and is explicitly weaker than a hard quota.
+The optional [shared memory admission policy](experimental-context.md#shared-model-memory-admission)
+reserves the combined embedding/generation ceilings and checks observed headroom before
+background work. It unloads idle generation under pressure. This is an owner-local admission
+bound, not a replacement for native enforcement or a quota on total machine consumption.
 
 `scripts/generate-worker-bundle.sh` creates only the macOS development App Sandbox bundle
 and prints its signed executable hash. It does not notarize, install or establish GPU,

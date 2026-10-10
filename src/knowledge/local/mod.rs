@@ -175,8 +175,29 @@ pub struct Session {
     refused: Option<(String, &'static str)>,
     pub observation: Observation,
     pub telemetry: Telemetry,
+    pub(crate) resources: Option<std::sync::Arc<crate::model_resources::Resources>>,
+    reservation: Option<crate::model_resources::Reservation>,
 }
 impl Session {
+    pub(crate) fn admit_resources(
+        &mut self,
+        profile: &Profile,
+    ) -> Result<(), crate::model_resources::Deferred> {
+        let Some(resources) = &self.resources else {
+            return Ok(());
+        };
+        if let Some(config) = &profile.local
+            && self.reservation.is_none()
+        {
+            self.reservation = Some(resources.reserve(
+                crate::model_resources::Lane::Generation,
+                config.memory_bytes,
+            )?);
+        } else {
+            resources.background()?;
+        }
+        Ok(())
+    }
     pub fn prepare(&mut self, profile: &Profile, control: &Control) -> FResult<()> {
         control.check()?;
         let identity = super::hash(&(&profile.local, &profile.model, &profile.artifact_sha256))?;
@@ -222,21 +243,38 @@ impl Session {
         control: &Control,
     ) -> FResult<super::provider::Reply> {
         self.prepare(profile, control)?;
-        self.provider
+        let result = self
+            .provider
             .as_mut()
             .expect("initialized provider")
             .generate(profile, body, control, &mut self.observation)
-            .await
+            .await;
+        if self.observation.pid.is_none() {
+            self.reservation = None;
+        }
+        result
     }
     pub fn idle(&mut self) {
+        if let Some(Err(reason)) = self
+            .resources
+            .as_ref()
+            .map(|resources| resources.background())
+        {
+            self.unload(reason.code());
+            return;
+        }
         if let Some(provider) = &mut self.provider {
             provider.idle(&mut self.observation);
+        }
+        if self.observation.pid.is_none() {
+            self.reservation = None;
         }
     }
     pub fn unload(&mut self, reason: &str) {
         if let Some(provider) = &mut self.provider {
             provider.unload(reason, &mut self.observation);
         }
+        self.reservation = None;
     }
 }
 

@@ -1329,6 +1329,14 @@ evidence; no real-device throughput or task-quality gain is claimed.
 
 ### T008 — Maintain and publish only changed semantic work
 
+2026-10-10 shared-resource amendment: opt-in owner memory admission reserves the embedding
+worker ceiling before loading and retains it through provider shutdown/reaping. The same
+owner defers background embedding batches under observed memory pressure while preserving
+foreground query access. Generation shares this reservation sum and can unload idle residency.
+The implementation, limitations and verification belong to
+[010 T002 shared admission](../010-source-bound-derived-knowledge/spec.md#t002-shared-memory-admission--2026-10-10).
+Default serving/model/cache identity and existing per-worker controls are unchanged.
+
 Selected; E2/E3 maintenance, ANN deltas, affected-location reconciliation and verified/
 resident segment reuse are implemented experimentally. Generation v5 adds bounded
 location overlays, shared mapping snapshots and clean-restart publication reuse. Depends on

@@ -2035,7 +2035,9 @@ and 21 knowledge tests, including the added mixed provider-failure/window-exhaus
 The 6,000-file watcher suite passed in 127.20 seconds; this is a fixture result, not a
 throughput claim. A build without default features exposed a watcher admission method
 that was unnecessarily gated on embeddings; after removing that gate, the build and all
-21 knowledge integration tests also passed with embeddings disabled. Final all-target
+21 knowledge integration tests also passed under a `--no-default-features` invocation.
+Correction recorded 2026-10-10: the self dev-dependency re-enables semantic in Cargo test,
+so that invocation alone does not establish disabled-feature runtime coverage. Final all-target
 Clippy with warnings denied, formatting and Markdown link checks passed (47 files,
 721 links, 166 heading anchors). No schema migration or dependency changes were added.
 
@@ -2119,9 +2121,64 @@ run and affected-suite rerun; the one transient timeout remains recorded rather 
 reported as an uninterrupted green run. No test deadlines or production scheduling were
 changed to obtain the rerun. The 6,000-file watcher suite passed in 109.53 seconds.
 
-The build and all 30 knowledge tests also passed with embeddings disabled. Native worker
+The no-default-features build and a 30-test knowledge invocation also passed. The self
+dev-dependency re-enables semantic in Cargo test, so the latter does not establish
+disabled-feature integration; the shared-admission checks below exercise those binaries
+directly. Native worker
 build and Clippy, all-target Clippy with warnings denied, formatting, bundle-script syntax
 and Markdown link checks passed (47 files, 729 links, 172 heading anchors). No dependencies,
 schema changes or weights were added. The cloud setup draft records the additional pinned
 CMake/libclang prerequisites and optional native-worker activation; publication/fresh-task
 restoration is not claimed by these current-instance checks.
+
+## Shared model memory admission — 2026-10-10
+
+010 T002 / 009 maintenance now share opt-in worker-ceiling reservations and observed
+memory headroom under the MCP owner. The policy has no schema, dependency or model/cache
+identity change. Tests exercise the public `--model-resources` option, native synthetic
+generation worker, source store and MCP status/context/pause/shutdown paths. The embedding
+provider and deterministic pressure sampler are fixtures; combined real-model performance
+and macOS memory/Metal behavior are not claimed.
+
+New checks cover combined ceilings, refusal before embedding startup, retention through
+provider shutdown, headroom for loading, pressure hysteresis, unavailable observations,
+and status reads that do not sample. Background embedding waits under pressure while a
+foreground query succeeds, then commits all 12 fixture rows after recovery. A synthetic
+sleeping child verifies that idle eviction reaps before releasing capacity and preserves
+artifact descriptors; existing native denial/resource tests retain their separate scope.
+
+CLI/MCP fixtures verify generation reservation while resident, zero reservation after idle
+unload, current-brief replay under pressure with missing artifacts and zero calls/launches,
+zero usage on pressure/budget refusal, foreground source access, responsive pause and durable
+pending work. Restarting after budget refusal completes the four-node plan.
+
+The initial real-container checks exposed an inherited cgroup mount whose root is `/..`,
+while `/proc/self/cgroup` names `/`. Treating that as an ordinary path correctly refused
+observation but prevented admission. A bounded lookup of the owner's live PID now locates
+the actual `init` group and includes its visible ancestor limits. A regression fixture
+checks this namespace case alongside nested `memory.high`/`memory.max` limits and malformed
+observations. No cgroup files or host settings were changed.
+
+Admission is conservative rather than an OS quota: worker ceilings are reserved, while
+host/container availability is sampled. In-flight work keeps existing native limits;
+embedding residency stays available for queries. Owner/index memory, artifact storage,
+other owners/processes and hidden cgroup ancestors are outside the reservation sum.
+CPU utilization, global GPU pressure, thermal/battery policy and live macOS validation
+remain pending in the [inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
+
+Affected suites have passing evidence for **392 tests**: 199 library, 33 knowledge,
+90 MCP and 70 neural-retrieval tests, including ten new tests. The real-model generation
+smoke and semantic measurement remain intentionally ignored in this run. After the cgroup
+fix, one rerun of the existing 80 ms HTTP deadline fixture expired before call admission
+(zero unknown-usage calls versus the fixture's expected one); the full knowledge suite
+then passed unchanged in 34.88 seconds. That transient fixture failure is retained here;
+no production/test deadlines were relaxed. The existing filesystem-traffic semantic case
+passed in the 70-test affected-suite run. This is focused verification, not a claim that
+the entire repository suite was rerun for this increment.
+
+The core and synthetic generator additionally built with `--no-default-features
+--features test-faults`. Invoking the existing knowledge test harness directly against
+those rebuilt executables passed all three new CLI/MCP memory-policy cases in 6.80 seconds,
+without Cargo rebuilding/re-enabling semantic. All-target Clippy with warnings denied,
+formatting and relative Markdown link checks passed (47 files, 741 links, 181 anchors).
+No real-model, macOS/GPU or large-repository performance experiment ran for this increment.

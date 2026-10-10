@@ -88,6 +88,9 @@ pub enum AdapterCommand {
         /// Maintain generated knowledge for accepted changes (pair with --watch).
         #[arg(long, requires = "knowledge_profile")]
         knowledge_maintain: bool,
+        /// Opt-in owner-wide worker memory ceilings and background headroom policy.
+        #[arg(long, value_name = "FILE")]
+        model_resources: Option<PathBuf>,
     },
     /// Inspect repository bootstrap; `--apply` creates/opens the store and indexes baseline source.
     Bootstrap {
@@ -234,6 +237,7 @@ fn serve_mcp(
     no_memory: bool,
     semantic: Option<crate::mcp::SemanticServing>,
     knowledge: Option<crate::knowledge::maintenance::Serving>,
+    model_resources: Option<PathBuf>,
     policy: Option<crate::policy::PolicyServing>,
     retrieval_trace_dir: Option<PathBuf>,
     experimental_behavior_context: bool,
@@ -254,6 +258,10 @@ fn serve_mcp(
         no_memory,
         semantic,
         knowledge,
+        model_resources: model_resources
+            .as_deref()
+            .map(crate::model_resources::Config::load)
+            .transpose()?,
         policy,
         retrieval_trace_dir,
         experimental_behavior_context,
@@ -361,6 +369,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             semantic_maintain,
             knowledge_profile,
             knowledge_maintain,
+            model_resources,
         } => serve_mcp(
             store,
             root,
@@ -379,6 +388,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                 profile,
                 maintain: knowledge_maintain,
             }),
+            model_resources,
             policy_config
                 .map(|config| crate::policy::PolicyServing::new(config, development_isolation)),
             retrieval_trace_dir,

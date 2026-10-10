@@ -85,6 +85,7 @@ struct State {
 pub(crate) struct Maintenance {
     profile: Arc<Profile>,
     local: local::Telemetry,
+    resources: Option<Arc<crate::model_resources::Resources>>,
     state: Mutex<State>,
 }
 impl Maintenance {
@@ -92,6 +93,7 @@ impl Maintenance {
         Self {
             profile: Arc::new(profile),
             local: local::Telemetry::default(),
+            resources: None,
             state: Mutex::new(State {
                 revision: 0,
                 running: false,
@@ -116,6 +118,13 @@ impl Maintenance {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    pub(crate) fn with_resources(
+        mut self,
+        resources: Option<Arc<crate::model_resources::Resources>>,
+    ) -> Self {
+        self.resources = resources;
+        self
     }
     pub(crate) fn start(self: &Arc<Self>, owner: Arc<dyn Owner>, continuous: bool) -> FResult<()> {
         if owner.closing() {
@@ -241,12 +250,15 @@ impl Access for Background<'_> {
         }
         Ok(())
     }
-    fn admit(&mut self, control: &Control) -> FResult<Permit> {
+    fn admit(&mut self, control: &Control, provider: &mut provider::Generation) -> FResult<Permit> {
         loop {
             if self.owner.closing() {
                 control.cancel();
             }
             control.check()?;
+            // Reap idle/pressured residency before taking the pause/admission
+            // lock. Verified snapshots remain reusable through this wait.
+            provider.local.idle();
             // Pause and admission are one decision. This lock is released before
             // HTTP or waiting for an engine; pause never waits for a provider.
             let mut state = self.maintenance.lock();
@@ -256,8 +268,23 @@ impl Access for Background<'_> {
             if state.foreground.is_none_or(|at| at.elapsed() >= QUIET)
                 && let Some(permit) = self.owner.try_model()?
             {
-                state.phase = "generating";
-                return Ok(permit);
+                match provider.local.admit_resources(&self.maintenance.profile) {
+                    Ok(()) => {
+                        state.phase = "generating";
+                        state.reason = None;
+                        return Ok(permit);
+                    }
+                    Err(reason @ crate::model_resources::Deferred::Budget) => {
+                        return Err(fail(
+                            reason.code(),
+                            "configured worker ceilings exceed the owner's memory budget",
+                        ));
+                    }
+                    Err(reason) => {
+                        state.phase = "resource_wait";
+                        state.reason = Some(reason.code().into());
+                    }
+                }
             }
             drop(state);
             std::thread::sleep(POLL);
@@ -276,6 +303,7 @@ fn drive(owner: &dyn Owner, maintenance: &Maintenance, control: &Control) -> FRe
     let mut provider = provider::Generation::default();
     provider.local.observation = maintenance.local.snapshot();
     provider.local.telemetry = maintenance.local.clone();
+    provider.local.resources = maintenance.resources.clone();
     loop {
         if owner.closing() {
             control.cancel();

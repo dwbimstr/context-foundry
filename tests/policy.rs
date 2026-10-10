@@ -2260,6 +2260,7 @@ async fn a_policy_chosen_graph_reaches_the_reference_root_holding_the_definition
     let (input, output) = tokio::io::split(server_io);
     let server = tokio::spawn(context_foundry::mcp::serve_streams(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,

@@ -48,11 +48,13 @@ and a configured provider/scope. MCP now supports explicit continuous knowledge 
 admission and source-first derived context on both transports. Store locks exclude request
 rendering/tokenization and inference; quiet operation waits on source notifications. Owned local
 generation now adds pinned lazy model snapshots, idle unload and native per-worker CPU/RAM
-controls, with a Metal control path awaiting hardware acceptance. Aggregate host/device
-pressure scheduling and real-model task acceptance remain open.
+controls, with a Metal control path awaiting hardware acceptance. Opt-in shared memory
+admission reserves both worker ceilings, checks host/container headroom, and unloads idle
+generation under pressure. CPU/global GPU policies and real-model task acceptance remain open.
 Boundary joins and task-evidence composition also remain pending. See [configuration](experimental-context.md#selective-knowledge-generation).
 Use the [current build order](context-ecosystem-plan.md#revised-build-order) and
-[validation](validation.md). 013 remains frozen. No release or quality gain is claimed.
+[validation](validation.md), plus the [pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
+013 remains frozen. No release or quality gain is claimed.
 
 The table below is the **2026-10-08 main-branch baseline**; later experimental
 amendments supersede its completion and next-work descriptions. Nothing is released.

@@ -3,8 +3,9 @@
 Status: Experimental T001 implemented locally; T002 now implements explicit selective
 HTTP generation, completion reuse, area lineage and opt-in continuous MCP maintenance.
 Shared client admission, derived MCP context and an experimental owned local generator
-with per-worker CPU/RAM/Metal controls are implemented. Aggregate hardware headroom and
-real-model task acceptance remain selected work. The owner's
+with per-worker CPU/RAM/Metal controls and shared memory admission are implemented.
+CPU/global GPU pressure policies, hardware acceptance and real-model task acceptance
+remain selected work. The owner's
 large-repository direction supersedes the earlier blanket deferral.
 Import and lifecycle fixtures use synthetic outputs through real storage, retrieval,
 HTTP/CLI and native-worker boundaries. A separate real CPU smoke is recorded in validation;
@@ -249,7 +250,8 @@ pending nodes, incomplete publication, observed usage and unknown calls.
 The standalone CLI retains the store's exclusive-owner rule. The MCP continuation
 below reuses the same acceptance, cache and generation pipeline inside the existing
 owner; there is no second database writer. The local continuation below adds an owned
-model process. Aggregate hardware headroom and real-model task/throughput evidence remain
+model process. Shared memory headroom is now implemented as described below; CPU/global GPU
+policies and real-model task/throughput evidence remain
 T002 follow-ups. Dense brief vectors remain optional. [tests/knowledge.rs](../../tests/knowledge.rs)
 exercises the real HTTP/CLI/store/retrieval boundaries with a local synthetic server;
 see [validation](../../docs/validation.md#selective-knowledge-generation).
@@ -363,12 +365,45 @@ verified snapshots. Local PID/call/verification/peak/stop observations are avail
 the engine mutex. RAM is sampled; GPU peaks are reported at completed calls, not global
 live telemetry. A worker CPU-lifetime kill reports exit without inventing terminal usage.
 
-This controls one generation worker. Shared active-call admission with embeddings does
-not cap combined resident models, global GPU use, thermal pressure or battery draw.
-Those adaptive policies and macOS hardware/package acceptance remain open, alongside
+This controls one generation worker. Opt-in shared memory admission now accounts for
+combined configured embedding/generation ceilings, as described below. Global GPU use,
+CPU utilization, thermal pressure, battery draw and macOS hardware/package acceptance remain open, alongside
 verified task utility and large-repository economics. Linux synthetic native-denial and
 lifecycle tests plus the real-model smoke are separate evidence in
 [validation](../../docs/validation.md#owned-local-generation-and-resource-controls).
+
+#### T002 shared memory admission — 2026-10-10
+
+Implemented experimentally in [model_resources.rs](../../src/model_resources.rs), shared
+with 009 preparation through the existing MCP owner. `--model-resources FILE` declares
+resident worker-ceiling bytes, observed headroom reserve and recovery margin. It creates
+no durable rows, service, model/cache identity or schema change. Reservations cover
+embedding and local generation; HTTP remains client admission only. Learning stays frozen.
+
+Reserve embedding before startup using the same parsed profile passed to acquisition.
+Its provider thread owns the reservation until worker drop/reaping, including late calls.
+Generation owns its reservation across calls until idle/error/pause/shutdown unload, and
+pressure can evict its idle process without discarding verified artifact descriptors.
+Neither early caller return nor a source transaction releases a live process's reservation.
+A static combined-ceiling failure pauses with `model_memory_budget` before calls/usage;
+temporary pressure/headroom/unknown-observation waits preserve pending work and resume
+within the existing pass deadline. They never enter provider-failure backoff or invent usage.
+
+Linux samples host `MemAvailable` and visible cgroup v2 ancestor high/max headroom; macOS
+conservatively samples free VM pages (hardware acceptance outstanding). Unknown observations
+defer. A low-memory latch clears only above reserve plus margin. New residency also needs
+headroom for its ceiling; samples are memoized for one second and invalidated on reservation
+changes. Status reads only observations. Source/current/cache reuse bypasses model admission;
+foreground embedding stays available, while new background embedding/generation calls wait.
+
+This is admission using configured worker bounds, not a global/hard quota. It excludes
+owner/index memory, artifact storage/page cache, hidden cgroup ancestors and other processes
+from the reservation sum. Native per-worker enforcement is unchanged. In-flight work is not
+preempted by this policy; embedding residency is retained for foreground use. CPU pressure,
+global GPU pressure, thermal/battery adaptation and embedding eviction are still follow-ups.
+Tests cover startup refusal, combined reservations, pressure hysteresis, provider lifetime,
+idle eviction/reaping, cache reuse, pending work, pause/shutdown and foreground service.
+See [configuration and limits](../../docs/experimental-context.md#shared-model-memory-admission).
 
 Pinned backend reference: llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`,
 `include/llama.h` / `llama_model_load_from_file_ptr`, `llama_chat_apply_template`,

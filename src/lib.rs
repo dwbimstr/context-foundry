@@ -45,6 +45,7 @@ pub mod knowledge;
 pub mod learning;
 pub mod mcp;
 pub mod memory;
+pub mod model_resources;
 pub mod neural;
 pub mod policy;
 pub mod receipts;

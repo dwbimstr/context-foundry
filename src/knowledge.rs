@@ -620,7 +620,11 @@ pub(crate) trait Access {
     fn check(&self) -> FResult<()> {
         Ok(())
     }
-    fn admit(&mut self, control: &Control) -> FResult<Self::Permit>;
+    fn admit(
+        &mut self,
+        control: &Control,
+        provider: &mut provider::Generation,
+    ) -> FResult<Self::Permit>;
 }
 struct Direct<'a>(&'a mut Engine);
 impl Access for Direct<'_> {
@@ -633,7 +637,7 @@ impl Access for Direct<'_> {
         control.check()?;
         f(self.0)
     }
-    fn admit(&mut self, control: &Control) -> FResult<()> {
+    fn admit(&mut self, control: &Control, _provider: &mut provider::Generation) -> FResult<()> {
         control.check()
     }
 }
@@ -750,7 +754,7 @@ pub(crate) async fn prepare_access<A: Access>(
                     )?;
                     Ok(())
                 })?;
-                let permit = access.admit(control)?;
+                let permit = access.admit(control, provider)?;
                 report.calls += 1;
                 report.request_tokens_o200k += prepared.tokens;
                 report.requested_output_tokens += profile.output_tokens as u64;

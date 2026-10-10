@@ -5,6 +5,7 @@ use context_foundry::neural::work::Lane;
 use context_foundry::{
     Control, Engine, FoundryError, brief,
     knowledge::{self, Node, Profile, RunLimits, SourceSpan},
+    model_resources,
 };
 use redb::{ReadableDatabase, TableDefinition};
 use serde_json::{Value, json};
@@ -874,6 +875,14 @@ async fn recipe_and_child_source_selection_changes_preserve_exact_plan_identity(
 // Real MCP child-process consumer, using the same HTTP completion fixture above.
 type McpClient = rmcp::service::RunningService<rmcp::RoleClient, ()>;
 async fn launch_mcp(env: &mut Env, maintain: bool, watch: bool) -> McpClient {
+    launch_mcp_resources(env, maintain, watch, None).await
+}
+async fn launch_mcp_resources(
+    env: &mut Env,
+    maintain: bool,
+    watch: bool,
+    resources: Option<model_resources::Config>,
+) -> McpClient {
     use rmcp::ServiceExt;
     let root = env.dir.path().join("root");
     for (path, body) in [
@@ -907,6 +916,11 @@ async fn launch_mcp(env: &mut Env, maintain: bool, watch: bool) -> McpClient {
     }
     if watch {
         command.arg("--watch");
+    }
+    if let Some(resources) = resources {
+        let path = env.dir.path().join("model-resources.json");
+        std::fs::write(&path, serde_json::to_vec(&resources).unwrap()).unwrap();
+        command.arg("--model-resources").arg(path);
     }
     command
         .stdin(std::process::Stdio::piped())
@@ -1260,6 +1274,7 @@ async fn shared_http_delivers_primary_derived_context_across_roots_and_stops_cle
             watch: false,
             semantic: None,
             policy: None,
+            model_resources: None,
             knowledge: Some(knowledge::maintenance::Serving {
                 profile,
                 maintain: true,
@@ -1385,6 +1400,155 @@ fn use_local(env: &mut Env) {
         load_seconds: 10,
         idle_seconds: 1,
     });
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_mcp_memory_policy_tracks_residency_and_cached_replay_bypasses_pressure() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    env.profile.local.as_mut().unwrap().idle_seconds = 3;
+    let policy = || model_resources::Config {
+        resident_bytes: 512 * 1024 * 1024,
+        reserve_bytes: 1024 * 1024,
+        resume_margin_bytes: 1024 * 1024,
+    };
+    let client = launch_mcp_resources(&mut env, true, false, Some(policy())).await;
+    let complete = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["last_run"]["complete"] == true
+    })
+    .await;
+    assert_eq!(
+        complete["model_resources"]["reserved_generation_bytes"],
+        512 * 1024 * 1024u64
+    );
+    assert!(complete["knowledge"]["maintenance"]["local_worker"]["pid"].is_number());
+    let unloaded = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["local_worker"]["pid"].is_null()
+    })
+    .await;
+    assert_eq!(unloaded["model_resources"]["reserved_generation_bytes"], 0);
+    assert_eq!(
+        unloaded["knowledge"]["maintenance"]["local_worker"]["last_stop"],
+        "idle"
+    );
+    stop_mcp(client, &mut env).await;
+    // Source-bound cached/current data needs neither headroom nor model files.
+    let local = env.profile.local.as_ref().unwrap();
+    std::fs::remove_file(&local.gguf).unwrap();
+    std::fs::remove_file(&local.executable).unwrap();
+    let pressure = model_resources::Config {
+        reserve_bytes: 1 << 60,
+        ..policy()
+    };
+    let client = launch_mcp_resources(&mut env, true, false, Some(pressure)).await;
+    let replay = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["last_run"]["complete"] == true
+    })
+    .await;
+    assert_eq!(
+        replay["knowledge"]["maintenance"]["completed_pass_usage"]["calls"],
+        0
+    );
+    assert_eq!(
+        replay["knowledge"]["maintenance"]["local_worker"]["launches"],
+        0
+    );
+    stop_mcp(client, &mut env).await;
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_mcp_memory_policy_defers_without_calls_and_pause_keeps_work() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    let client = launch_mcp_resources(
+        &mut env,
+        true,
+        false,
+        Some(model_resources::Config {
+            resident_bytes: 512 * 1024 * 1024,
+            reserve_bytes: 1 << 60,
+            resume_margin_bytes: 1024,
+        }),
+    )
+    .await;
+    let waiting = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["state"] == "resource_wait"
+    })
+    .await;
+    assert_eq!(
+        waiting["knowledge"]["maintenance"]["reason"],
+        "model_memory_pressure"
+    );
+    assert_eq!(
+        waiting["knowledge"]["maintenance"]["local_worker"]["launches"],
+        0
+    );
+    assert_eq!(waiting["model_resources"]["reserved_generation_bytes"], 0);
+    let context = mcp_call(&client, "context", json!({"query":"opaque","tokens":2048})).await;
+    assert!(context.contains("remove(0)"));
+    let start = Instant::now();
+    mcp_call(&client, "index", json!({"knowledge":"pause"})).await;
+    mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["state"] == "paused"
+    })
+    .await;
+    stop_mcp(client, &mut env).await;
+    assert!(start.elapsed() < Duration::from_secs(2));
+    assert!(env.records().is_empty());
+    assert!(
+        env.engine().knowledge_status().unwrap()["pending"]["paths"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(server.calls(), 0);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_mcp_memory_budget_refuses_before_worker_or_usage_and_restart_recovers() {
+    let server = Server::good();
+    let mut env = Env::new(&server);
+    use_local(&mut env);
+    let client = launch_mcp_resources(
+        &mut env,
+        true,
+        false,
+        Some(model_resources::Config {
+            resident_bytes: 1,
+            reserve_bytes: 1,
+            resume_margin_bytes: 1,
+        }),
+    )
+    .await;
+    let paused = mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["state"] == "paused"
+    })
+    .await;
+    assert_eq!(
+        paused["knowledge"]["maintenance"]["reason"],
+        "model_memory_budget"
+    );
+    assert_eq!(
+        paused["knowledge"]["maintenance"]["completed_pass_usage"]["calls"],
+        0
+    );
+    assert_eq!(
+        paused["knowledge"]["maintenance"]["local_worker"]["launches"],
+        0
+    );
+    stop_mcp(client, &mut env).await;
+    let client = launch_mcp(&mut env, true, false).await;
+    mcp_until(&client, |s| {
+        s["knowledge"]["maintenance"]["last_run"]["complete"] == true
+    })
+    .await;
+    stop_mcp(client, &mut env).await;
+    assert_eq!(env.records().len(), 4);
 }
 
 #[cfg(target_os = "linux")]

@@ -29,6 +29,7 @@ async fn shared_http_watches_only_primary_and_failed_bind_releases_store() {
     const ENV: &str = "FOUNDRY_WATCH_TEST_TOKEN";
     unsafe { std::env::set_var(ENV, "watch-test-token") };
     let options = || ServerOptions {
+        model_resources: None,
         knowledge: None,
         retrieval_trace_dir: None,
         experimental_behavior_context: false,

@@ -504,3 +504,92 @@ fn child_setup(owner: u32, keep: &[i32]) -> std::io::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod pressure_tests {
+    use super::*;
+    use crate::model_resources::{self, Lane, Resources};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+
+    #[test]
+    fn pressure_reaps_idle_child_before_releasing_reservation_and_keeps_snapshots() {
+        // A sleeping process tests the owner's residency lifecycle, not model
+        // execution/isolation (those are tested with foundry-generate-fake).
+        let mut child = Command::new("/bin/sleep")
+            .arg("60")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let input = child.stdin.take().unwrap();
+        let output = child.stdout.take().unwrap();
+        let (_, liveness) = std::io::pipe().unwrap();
+        let memory = Arc::new(AtomicU64::new(2000));
+        let resources = Resources::fixture(
+            model_resources::Config {
+                resident_bytes: 1000,
+                reserve_bytes: 100,
+                resume_margin_bytes: 50,
+            },
+            memory.clone(),
+        );
+        let reservation = resources.reserve(Lane::Generation, 1000).unwrap();
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "development":true,"executable":"/unused","executable_sha256":"a".repeat(64),
+            "gguf":"/unused-model","llama_cpp":super::super::LLAMA_CPP,"chat_template":"chatml",
+            "device":{"kind":"cpu"},"context_tokens":4096,"batch_tokens":128,"threads":1,
+            "memory_bytes":536870912,"memory_enforcement":"hard_address_space",
+            "cpu_seconds":30,"load_seconds":10,"idle_seconds":300
+        }))
+        .unwrap();
+        let telemetry = Telemetry::default();
+        let mut session = super::super::Session {
+            provider: Some(Provider {
+                config,
+                executable: tempfile::tempfile().unwrap(),
+                model: tempfile::tempfile().unwrap(),
+                worker: Some(Worker {
+                    child,
+                    input,
+                    output,
+                    _liveness: liveness,
+                }),
+                next_id: 1,
+                last_use: Instant::now(),
+                telemetry: telemetry.clone(),
+                model_name: "fixture".into(),
+                model_hash: "a".repeat(64),
+            }),
+            refused: None,
+            observation: Observation {
+                pid: Some(pid),
+                ..Default::default()
+            },
+            telemetry,
+            resources: Some(resources.clone()),
+            reservation: Some(reservation),
+        };
+        memory.store(99, Ordering::SeqCst);
+        resources.refresh();
+        session.idle();
+        assert!(
+            !Path::new(&format!("/proc/{pid}")).exists(),
+            "must reap before returning capacity"
+        );
+        assert_eq!(resources.status()["reserved_generation_bytes"], 0);
+        assert_eq!(
+            session.observation.last_stop.as_deref(),
+            Some("model_memory_pressure")
+        );
+        let provider = session.provider.as_ref().unwrap();
+        assert!(provider.worker.is_none());
+        assert!(provider.executable.metadata().is_ok() && provider.model.metadata().is_ok());
+        memory.store(150, Ordering::SeqCst);
+        resources.refresh();
+        assert!(resources.background().is_ok());
+    }
+}

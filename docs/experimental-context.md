@@ -647,7 +647,7 @@ Shutdown closes HTTP and discards uncommitted output before releasing the store.
 
 This uses schema 10 with no further migration. Selected brief publication does not drain
 unrelated source work. Owned local generation is available below; real-model task quality
-and aggregate host/device pressure scheduling remain open.
+and CPU/global GPU pressure policies remain open; shared memory admission is described below.
 
 ## Owned local generation
 
@@ -744,11 +744,68 @@ Continuous maintenance unloads the worker after `idle_seconds`, during budget wa
 and when its run ends. Normal pause finishes the admitted call, then stops and reaps
 the worker. Shutdown/cancellation kills and reaps it before releasing the store; owner
 death also ends computation. A failed call keeps source work pending and completed
-briefs reusable. These are per-worker controls: embedding and generation share active
-background admission, but retained embedding residency is not included in a combined
-host/device quota. Adaptive pressure/battery scheduling remains follow-up work.
+briefs reusable. These native limits are per worker. The optional
+[shared memory policy](#shared-model-memory-admission) additionally accounts for
+retained embedding residency. Global GPU, thermal and battery policies remain follow-up work.
 
 `status.knowledge.maintenance.local_worker` exposes PID, launches, calls, verified bytes,
 sampled peak RAM, reported peak GPU allocation, isolation and last stop reason without
 holding the engine slot. GPU observations update on completed replies and are not live
 machine telemetry. CLI reports include `local_worker`; counters are local to the owner/run.
+
+## Shared model memory admission
+
+Opt in on the MCP owner with `--model-resources /absolute/path/resources.json`:
+
+```json
+{
+  "resident_bytes": 6442450944,
+  "reserve_bytes": 1073741824,
+  "resume_margin_bytes": 268435456
+}
+```
+
+This example reserves up to 6 GiB for the **sum of configured embedding and generation
+worker memory ceilings**, leaves 1 GiB of observed headroom, and requires an additional
+256 MiB before resuming after low-memory pressure. Choose these values for the actual
+machine and profiles. All three fields are mandatory positive byte counts; unknown
+fields, overflow and files larger than 64 KiB are refused. The policy is independent
+of model identity and never invalidates accepted completions or embeddings.
+
+Embedding reserves its ceiling before worker startup and holds it until the provider
+thread has stopped/reaped the worker. Generation reserves before loading/calling and
+releases only after unload/reaping. Idle and pressure unloads keep the existing verified
+artifact snapshots. An embedding worker stays resident for foreground queries: this
+policy does not evict/reload it. If both ceilings cannot fit, generation pauses with
+`model_memory_budget`; restart with appropriate ceilings/budget or a different profile
+combination. A refused embedding startup serves its named lexical fallback; explicit
+continuous semantic startup still requires an available embedding runtime.
+
+Background admission samples at most once a second (also refreshing after reservation
+changes). Linux uses `MemAvailable` and the minimum remaining `memory.max`/`memory.high`
+capacity across the visible cgroup v2 ancestors. It does not change cgroups. Hidden
+ancestors are not observable. Inherited mounts with namespace-relative `/..` roots use
+a bounded owner-PID lookup (128 directories, depth 64) to locate the actual group;
+each proc/cgroup text read is bounded to 64 KiB. Cgroup v1, exhausted lookup bounds,
+malformed/unavailable observations or unsupported
+platforms defer with `model_memory_observation_unavailable`. macOS uses immediately free
+VM pages conservatively, without assuming inactive/compressed pages can be reclaimed;
+this path has not been exercised on hardware here.
+
+A new worker additionally needs headroom for its entire ceiling. Low-memory pressure
+defers both maintenance lanes, and idle generation is reaped on its next maintenance
+poll. Recovery above reserve plus margin reopens admission. In-flight calls retain their
+existing per-worker controls and deadlines; foreground queries continue using the already
+reserved embedding worker. Generation reports `resource_wait` with `model_memory_pressure`,
+`model_memory_headroom` or an unavailable-observation reason; waiting sends no provider
+call and charges no usage. Pause/shutdown remain responsive. Waits respect the existing
+300-second knowledge pass deadline, after which explicit resume may be needed.
+
+`status.model_resources` reports the policy, reservations by lane, last observed available
+bytes, observation age, pressure latch and last admission reason. Reading status does not
+probe the host. Current/cache hits need no worker admission and remain usable under pressure.
+This is owner-local admission, **not an aggregate OS memory quota**: owner/index memory,
+artifact disk/page cache, other processes and other Foundry owners are outside its reservation
+sum. External HTTP servers have no local worker reservation. Global GPU usage, CPU utilization,
+thermal/battery policy and simultaneous real-model hardware acceptance remain open. Without
+this option, previous admission and cache behavior is preserved.

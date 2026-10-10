@@ -575,6 +575,14 @@ impl QueryRuntime {
         development: bool,
     ) -> Result<Self, ProviderError> {
         let profile = Arc::new(SemanticProfile::load(profile_path)?);
+        Self::acquire_profile(profile, development, None)
+    }
+
+    pub(crate) fn acquire_profile(
+        profile: Arc<SemanticProfile>,
+        development: bool,
+        reservation: Option<crate::model_resources::Reservation>,
+    ) -> Result<Self, ProviderError> {
         #[cfg(target_os = "macos")]
         {
             let control = Control::unbounded()
@@ -593,11 +601,12 @@ impl QueryRuntime {
                     )
                 }),
                 tokenizer,
+                reservation,
             )
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (profile, development);
+            let _ = (profile, development, reservation);
             Err(ProviderError::IsolationUnavailable(
                 "no accepted isolation profile admits model execution on this platform".into(),
             ))
@@ -607,14 +616,23 @@ impl QueryRuntime {
     /// Start a runtime over `make` (the supervised worker, or a test
     /// provider). Blocks until the provider is built or refused.
     pub fn start(profile: Arc<SemanticProfile>, make: MakeProvider) -> Result<Self, ProviderError> {
+        Self::start_reserved(profile, make, None)
+    }
+
+    pub(crate) fn start_reserved(
+        profile: Arc<SemanticProfile>,
+        make: MakeProvider,
+        reservation: Option<crate::model_resources::Reservation>,
+    ) -> Result<Self, ProviderError> {
         let tokenizer = DocumentTokenizer::load(&profile)?;
-        Self::start_tokenized(profile, make, tokenizer)
+        Self::start_tokenized(profile, make, tokenizer, reservation)
     }
 
     fn start_tokenized(
         profile: Arc<SemanticProfile>,
         make: MakeProvider,
         tokenizer: DocumentTokenizer,
+        reservation: Option<crate::model_resources::Reservation>,
     ) -> Result<Self, ProviderError> {
         let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
         let (ready_tx, ready_rx) =
@@ -624,6 +642,9 @@ impl QueryRuntime {
         let thread = std::thread::Builder::new()
             .name("foundry-query-provider".into())
             .spawn(move || {
+                // Declared before the provider: released only AFTER its drop
+                // stops/reaps the process, even if the owner abandons a call.
+                let _reservation = reservation;
                 let mut provider = match make() {
                     Ok(provider) => {
                         let _ = ready_tx

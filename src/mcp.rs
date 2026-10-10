@@ -194,6 +194,7 @@ pub(crate) struct Shared {
     semantic: SemanticSlot,
     knowledge: Option<Arc<crate::knowledge::maintenance::Maintenance>>,
     background_model: Arc<std::sync::atomic::AtomicBool>,
+    model_resources: Option<Arc<crate::model_resources::Resources>>,
     /// 009 T003: the owner's one background preparation driver (primary
     /// root only), started by `index {semantic: "prepare"}`, never at startup.
     #[cfg(feature = "semantic")]
@@ -616,6 +617,7 @@ impl Shared {
             semantic: SemanticSlot::default(),
             knowledge: None,
             background_model: Arc::default(),
+            model_resources: None,
             #[cfg(feature = "semantic")]
             preparation: Arc::default(),
             policy: Arc::new(crate::policy::Policy::off()),
@@ -690,6 +692,13 @@ impl Shared {
 #[cfg(feature = "semantic")]
 impl crate::neural::driver::Owner for Shared {
     fn try_model(&self) -> Option<crate::neural::work::ModelPermit> {
+        if self
+            .model_resources
+            .as_ref()
+            .is_some_and(|resources| resources.background().is_err())
+        {
+            return None;
+        }
         crate::neural::work::ModelPermit::try_acquire(&self.background_model)
     }
     fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
@@ -2561,6 +2570,9 @@ impl FoundryMcp {
         };
         // 013 T003: the policy state (no engine work).
         outcome["policy"] = self.state.policy.status();
+        if let Some(resources) = &self.state.model_resources {
+            outcome["model_resources"] = resources.status();
+        }
         Ok(text_result(response::compact_json(&outcome)))
     }
 
@@ -3696,6 +3708,7 @@ pub struct ServerOptions {
     /// keeps every response byte-identical to a build without semantics.
     pub semantic: Option<SemanticServing>,
     pub knowledge: Option<crate::knowledge::maintenance::Serving>,
+    pub model_resources: Option<crate::model_resources::Config>,
     /// 013 T003: the policy config this owner serves, if any. `None` (or a
     /// disabled config) keeps every response byte-identical.
     pub policy: Option<crate::policy::PolicyServing>,
@@ -3756,6 +3769,13 @@ fn refuse_unsupported_semantic() -> FoundryError {
 /// failed start. `None` without a configured profile. Bounded by the
 /// profile's load timeout; nothing loads behind a query afterwards.
 pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
+    semantic_slot_reserved(launch, None)
+}
+
+fn semantic_slot_reserved(
+    launch: Option<SemanticServing>,
+    resources: Option<&Arc<crate::model_resources::Resources>>,
+) -> FResult<SemanticSlot> {
     #[cfg(feature = "semantic")]
     {
         use crate::neural::query::{QueryRuntime, fallback_word};
@@ -3764,6 +3784,22 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
         };
         let fallback =
             |error: crate::neural::provider::ProviderError| fallback_word(&error.to_string());
+        let profile = match crate::neural::profile::SemanticProfile::load(&launch.profile) {
+            Ok(profile) => Arc::new(profile),
+            Err(error) => return Ok(Some(Err(fallback(error)))),
+        };
+        let reservation = match resources
+            .map(|resources| {
+                resources.reserve(
+                    crate::model_resources::Lane::Semantic,
+                    profile.memory_ceiling_bytes,
+                )
+            })
+            .transpose()
+        {
+            Ok(reservation) => reservation,
+            Err(reason) => return Ok(Some(Err(fallback_word(reason.code())))),
+        };
         let cap = launch.cache_cap_bytes;
         let capped = move |runtime: QueryRuntime| match cap {
             Some(bytes) => runtime.with_cache_cap(bytes),
@@ -3773,13 +3809,11 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
         if let Some(make) = launch.provider {
             // Tests only: the provider is built by the caller instead of the
             // supervised worker; everything else is the production path.
-            let started = crate::neural::profile::SemanticProfile::load(&launch.profile)
-                .map(Arc::new)
-                .and_then(|profile| QueryRuntime::start(profile, make));
+            let started = QueryRuntime::start_reserved(profile, make, reservation);
             return Ok(Some(started.map(capped).map(Arc::new).map_err(fallback)));
         }
         Ok(Some(
-            QueryRuntime::acquire(&launch.profile, launch.development)
+            QueryRuntime::acquire_profile(profile, launch.development, reservation)
                 .map(capped)
                 .map(Arc::new)
                 .map_err(fallback),
@@ -3787,6 +3821,7 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
     }
     #[cfg(not(feature = "semantic"))]
     {
+        let _ = resources;
         match launch {
             Some(_) => Err(refuse_unsupported_semantic()),
             None => Ok(None),
@@ -3804,6 +3839,11 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
 /// reference is opened exactly once; the outcome is its coverage for the
 /// whole session, with no retries, and another live owner is never stopped.
 fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResult<Arc<Shared>> {
+    let model_resources = options
+        .model_resources
+        .take()
+        .map(crate::model_resources::Resources::new)
+        .transpose()?;
     let admitted = roots::validate_admission(&options.root, &options.references)
         .map_err(|error| AdapterError::named(error.code(), error.message()))?;
     let primary = &admitted[0];
@@ -3871,7 +3911,7 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
     // A refused or failed start is the named fallback every later request
     // reports, with baseline results intact. Only explicit continuous mode
     // starts preparation at launch; otherwise an index action is required.
-    let semantic = semantic_slot(semantic_launch)?;
+    let semantic = semantic_slot_reserved(semantic_launch, model_resources.as_ref())?;
     // 013 T003: the config is validated and its worker loaded HERE, once,
     // before serving (bounded by the load ceiling). An invalid config or a
     // failed start leaves the policy unavailable by name; baseline
@@ -3906,8 +3946,12 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         source_steps: AtomicUsize::new(0),
         semantic,
         knowledge: knowledge
-            .map(crate::knowledge::maintenance::Maintenance::new)
+            .map(|profile| {
+                crate::knowledge::maintenance::Maintenance::new(profile)
+                    .with_resources(model_resources.clone())
+            })
             .map(Arc::new),
+        model_resources,
         background_model: Arc::default(),
         #[cfg(feature = "semantic")]
         preparation: Arc::default(),
@@ -4836,6 +4880,95 @@ mod tests {
         );
     }
 
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn model_memory_reservation_precedes_embedding_load_and_lasts_through_provider_shutdown() {
+        use crate::model_resources::{Config, Lane, Resources};
+        let dir = tempfile::tempdir().unwrap();
+        let profile = crate::testkit::write_semantic_profile(dir.path(), "memory", |_| {});
+        let parsed = crate::neural::profile::SemanticProfile::load(&profile).unwrap();
+        let ceiling = parsed.memory_ceiling_bytes;
+        let memory = Arc::new(std::sync::atomic::AtomicU64::new(ceiling * 4));
+        let config = Config {
+            resident_bytes: ceiling,
+            reserve_bytes: 1,
+            resume_margin_bytes: 1,
+        };
+        let resources = Resources::fixture(config, memory);
+        let held = resources.reserve(Lane::Generation, 1).unwrap();
+        let refused = semantic_slot_reserved(
+            Some(SemanticServing::with_provider(
+                profile.clone(),
+                Box::new(|| panic!("over-budget load must never start")),
+            )),
+            Some(&resources),
+        )
+        .unwrap();
+        assert!(matches!(refused, Some(Err(reason)) if reason == "fallback:model_memory_budget"));
+        drop(held);
+        let gate = Gate::default();
+        gate.open();
+        let slot = semantic_slot_reserved(
+            Some(SemanticServing::with_provider(
+                profile,
+                gate.maker(parsed.descriptor),
+            )),
+            Some(&resources),
+        )
+        .unwrap();
+        let Some(Ok(runtime)) = slot else {
+            panic!("admitted profile must start");
+        };
+        assert_eq!(resources.status()["reserved_semantic_bytes"], ceiling);
+        assert!(resources.reserve(Lane::Generation, 1).is_err());
+        runtime.shutdown();
+        assert!(gate.dropped());
+        assert_eq!(resources.status()["reserved_semantic_bytes"], 0);
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn model_memory_pressure_defers_semantic_batches_but_serves_queries_and_resumes() {
+        use crate::model_resources::{Config, Resources};
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        gate.open();
+        let mut shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let memory = Arc::new(std::sync::atomic::AtomicU64::new(99));
+        let resources = Resources::fixture(
+            Config {
+                resident_bytes: 1000,
+                reserve_bytes: 100,
+                resume_margin_bytes: 50,
+            },
+            memory.clone(),
+        );
+        Arc::get_mut(&mut shared).unwrap().model_resources = Some(resources.clone());
+        start_preparation(&shared).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while resources.status()["reason"] != "model_memory_pressure" {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(gate.entered(), 0);
+        assert!(!shared.preparation.idle());
+        let runtime = shared.semantic.as_ref().unwrap().as_ref().unwrap();
+        assert!(
+            runtime
+                .embed("note", Instant::now() + Duration::from_secs(2))
+                .is_ok()
+        );
+        memory.store(149, Ordering::SeqCst);
+        resources.refresh();
+        assert!(crate::neural::driver::Owner::try_model(&*shared).is_none());
+        memory.store(150, Ordering::SeqCst);
+        resources.refresh();
+        wait_idle(&shared);
+        let (state, rows) = stopped_state(&shared);
+        assert!(state.last_error.is_none(), "{state:?}");
+        assert_eq!(rows, 12);
+    }
+
     /// `index {semantic: "prepare"}` on the in-crate owner.
     #[cfg(all(feature = "semantic", feature = "test-faults"))]
     fn start_preparation(shared: &Arc<Shared>) -> FResult<()> {
@@ -5755,6 +5888,7 @@ mod tests {
             let (input, output) = tokio::io::split(server_io);
             let server = tokio::spawn(serve_streams(
                 ServerOptions {
+                    model_resources: None,
                     knowledge: None,
                     retrieval_trace_dir: None,
                     experimental_behavior_context: false,
