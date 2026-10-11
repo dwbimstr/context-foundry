@@ -215,6 +215,10 @@ pub struct CoverageSnapshot {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct BootstrapProgress {
     #[serde(default)]
+    pub area_vectors: u64,
+    #[serde(default)]
+    pub embedded_areas: u64,
+    #[serde(default)]
     pub selected_sources: u64,
     pub waves: u64,
     pub priority_waves: u64,
@@ -457,9 +461,13 @@ pub fn validate_units(
         if index > 0 {
             let previous = &units[index - 1];
             let ordered = previous.start < unit.start
-                || (previous.start == unit.start && previous.end > unit.end);
+                || (previous.start == unit.start
+                    && (previous.end > unit.end
+                        || (previous.end == unit.end && previous.input_key < unit.input_key)));
             if !ordered {
-                return Err(format!("card {index} is out of order or repeats a range"));
+                return Err(format!(
+                    "card {index} is out of order or repeats a range/key"
+                ));
             }
         }
         if let Some(body) = body

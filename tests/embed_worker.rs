@@ -105,6 +105,7 @@ fn fake_profile(
         card_tokens: context_foundry::neural::profile::DEFAULT_CARD_TOKENS,
         batch: context_foundry::neural::profile::DEFAULT_BATCH,
         memory_ceiling_bytes: ceiling,
+        cpu: Default::default(),
         load_timeout_seconds: load_timeout,
     }
 }

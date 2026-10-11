@@ -618,3 +618,34 @@ metadata once in the same transaction. Task composition requires all dependency 
 to fit. No new store table or workspace execution is introduced. The opt-in synthetic
 FastAPI consumer test executes a real cross-file nested-router request; broader
 frameworks/brokers and imports through router re-exports remain pending.
+
+
+T005 Flask and execution continuation (2026-10-11): `python-http-v5` adds imported
+Flask/Blueprint constructor aliases, module-level apps, literal route/method declarations
+and directly registered same-file Blueprints. Registration `url_prefix` overrides the
+Blueprint prefix, matching Flask. HEAD/OPTIONS and the default static route are included;
+static-route declaration is not proof that a file exists. String/int route parameters
+are supported; unsupported converters, options, shadowing/escape, factories, nested or
+cross-file Blueprints and unknown mutations keep scope incomplete. Old v4 rows need
+republication. The explicit Flask 3.1.2 runtime fixture confirms selected behavior;
+this remains syntactic producer evidence, not an executed-call claim.
+
+`foundry --store STORE import-execution ARTIFACT.json` separately imports producer
+observations into the existing replaceable graph-bundle owner. The strict v1 artifact
+contains `producer`, `run`, `command`, `completed: true`, `exit_code`, `duration_ms`,
+`test` (an ordinary graph endpoint), and `observations` (`from`, `to`, `kind`, `count`).
+Only positive `calls`/`covers` observations are accepted; these edges represent observed
+presence, not exported frequency or coverage percentages. Bounds are 4 MiB, 16,384
+observations, 32 command arguments / 4,096 aggregate bytes. The artifact SHA-256 is
+computed from exact imported bytes. Publication validates caller, target and test
+source hashes/lines atomically. Graph reads revalidate all three. Replacing a producer
+bundle is atomic; other producers remain. No command is run by the importer or indexer.
+
+Evidence is `observed_by_producer`, with the completed run receipt retained on the edge.
+It is neither compiler resolution nor trusted execution attestation, and cannot prove
+unobserved paths absent or current suite success. Task composition includes observations
+only with all three current source spans under its ordinary budget. The real CPython
+trace fixture captures a dynamic `getattr` call and executed lines while excluding an
+unexecuted error branch. Static adversarial and packing tests check stale suppression
+and invalid-import atomicity. Broader collectors/frameworks/brokers, cross-language
+runtime identity and test-to-requirement coverage remain open.

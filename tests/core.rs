@@ -91,6 +91,76 @@ fn retrieval_trace_distinguishes_selection_caps_from_anchored_packing_omissions(
 }
 
 #[test]
+fn anchorless_context_preserves_code_discovery_and_exact_late_body_excerpts() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    let query = "validate retained checksum before catalog replay";
+    for i in 0..300 {
+        engine
+            .replace_source(
+                &format!("docs/{i}.md"),
+                &format!("# Overview {i}\n{}\n", query.repeat(8)),
+            )
+            .unwrap();
+    }
+    let body = format!(
+        "pub fn execute() {{\n{}    let validate_retained_checksum_before_catalog_replay = verify_checksum();\n}}\n",
+        "    ordinary_step();\n".repeat(600)
+    );
+    engine.replace_source("runner.rs", &body).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let candidates = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let item = candidates
+        .batch
+        .items
+        .iter()
+        .find(|i| i.handle.as_ref().is_some_and(|h| h.path == "runner.rs"))
+        .expect("documentation must not exhaust code discovery");
+    let handle = item.handle.as_ref().unwrap();
+    assert!(
+        handle.start > 0,
+        "the matching late body is required, not the function prefix"
+    );
+    assert!(handle.end - handle.start <= 1536);
+    assert!(item.label.starts_with("excerpt "));
+    for budget in [512, 1024, 2048] {
+        let packed = response::pack_enriched_context(
+            &candidates,
+            None,
+            Budget::request(budget),
+            &response::stdout_bytes,
+        )
+        .unwrap();
+        assert!(packed.tokens <= budget);
+        assert!(packed.text.contains("verify_checksum"));
+        assert!(parse_v2(&packed.text).is_ok());
+    }
+    let context_foundry::store::RenderedForm::Verbatim(excerpt) = &item.forms[0] else {
+        panic!("verbatim source required")
+    };
+    assert_eq!(excerpt, &body[handle.start as usize..handle.end as usize]);
+    // The complementary window still delivers prose on a documentation query.
+    assert!(candidates.batch.items.iter().any(|i| {
+        i.handle
+            .as_ref()
+            .is_some_and(|h| h.path.starts_with("docs/"))
+    }));
+}
+
+#[test]
 fn anchorless_prose_does_not_promote_incidental_common_word_definitions() {
     use context_foundry::store::ContextOptions;
     let dir = tempfile::tempdir().unwrap();

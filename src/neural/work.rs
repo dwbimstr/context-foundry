@@ -38,6 +38,10 @@ struct Meta {
     path_bytes: u64,
     #[serde(default)]
     after: Option<String>,
+    #[serde(default)]
+    overview_revision: u64,
+    #[serde(default)]
+    overview_acknowledged: u64,
 }
 impl Default for Meta {
     fn default() -> Self {
@@ -48,6 +52,8 @@ impl Default for Meta {
             identity: None,
             path_bytes: 0,
             after: None,
+            overview_revision: 0,
+            overview_acknowledged: 0,
         }
     }
 }
@@ -60,7 +66,11 @@ fn meta(table: &impl ReadableTable<&'static str, &'static str>) -> FResult<Meta>
         .get(META)?
         .ok_or_else(|| FoundryError::CorruptStore("derivation work metadata missing".into()))?;
     let meta: Meta = decode(raw.value())?;
-    if meta.version != 1 || meta.path_bytes > MAX_PATH_BYTES || table.len()? > MAX_PATHS + 1 {
+    if meta.version != 1
+        || meta.path_bytes > MAX_PATH_BYTES
+        || table.len()? > MAX_PATHS + 1
+        || meta.overview_acknowledged > meta.overview_revision
+    {
         return Err(FoundryError::CorruptStore(
             "invalid derivation work metadata".into(),
         ));
@@ -91,6 +101,8 @@ pub struct Batch {
     reconcile: bool,
     revision: u64,
     paths: Vec<(String, Version)>,
+    overview_revision: u64,
+    overview_changed: bool,
 }
 impl Batch {
     pub fn requires_reconcile(&self) -> bool {
@@ -98,6 +110,9 @@ impl Batch {
     }
     pub fn paths(&self) -> &[(String, Version)] {
         &self.paths
+    }
+    pub fn overviews_changed(&self) -> bool {
+        self.overview_changed
     }
 }
 
@@ -107,6 +122,7 @@ pub struct Pending {
     pub path_bytes: u64,
     pub reconcile_required: bool,
     pub epoch: u64,
+    pub overviews_pending: bool,
 }
 
 pub(crate) fn init(tx: &WriteTransaction) -> FResult<()> {
@@ -122,6 +138,19 @@ pub(crate) fn invalidate(tx: &WriteTransaction, lane: Lane) -> FResult<()> {
     let mut table = tx.open_table(lane.table())?;
     let mut state = meta(&table)?;
     next_epoch(&mut state)?;
+    table.insert(META, serde_json::to_string(&state)?.as_str())?;
+    Ok(())
+}
+
+/// Brief publication wakes only the overview pass, without invalidating all
+/// source partitions or enqueueing the knowledge generator's own outputs.
+pub(crate) fn overview_changed(tx: &WriteTransaction) -> FResult<()> {
+    let mut table = tx.open_table(SEMANTIC)?;
+    let mut state = meta(&table)?;
+    state.overview_revision = state
+        .overview_revision
+        .checked_add(1)
+        .ok_or(FoundryError::RevisionExhausted)?;
     table.insert(META, serde_json::to_string(&state)?.as_str())?;
     Ok(())
 }
@@ -190,6 +219,7 @@ impl Engine {
             path_bytes: state.path_bytes,
             reconcile_required: state.reconcile,
             epoch: state.epoch,
+            overviews_pending: state.overview_revision != state.overview_acknowledged,
         })
     }
     /// An explicit one-shot preparation audits all sources. Persist that
@@ -261,6 +291,8 @@ impl Engine {
                 reconcile: state.reconcile,
                 revision: crate::store::revision_in(&tx)?,
                 paths,
+                overview_revision: state.overview_revision,
+                overview_changed: state.overview_revision != state.overview_acknowledged,
             }
         };
         tx.commit()?;
@@ -281,6 +313,7 @@ impl Engine {
             if state.identity.as_deref() != Some(&batch.identity) || state.epoch != batch.epoch {
                 return Ok(());
             }
+            state.overview_acknowledged = state.overview_acknowledged.max(batch.overview_revision);
             let remove = if batch.reconcile {
                 let mut keys = Vec::new();
                 for row in table
@@ -398,6 +431,43 @@ mod tests {
         let batch = engine.derivation_batch(lane, identity).unwrap();
         engine.derivation_ack(lane, &batch).unwrap();
     }
+    #[test]
+    fn overview_publication_does_not_rescan_sources_or_erase_later_overviews() {
+        let (dir, engine) = fixture();
+        reconcile(&engine, Lane::Semantic, "hierarchy");
+        let changed = |engine: &Engine| {
+            let tx = engine.db.begin_write().unwrap();
+            overview_changed(&tx).unwrap();
+            tx.commit().unwrap();
+        };
+        changed(&engine);
+        let batch = engine
+            .derivation_batch(Lane::Semantic, "hierarchy")
+            .unwrap();
+        assert!(batch.overviews_changed());
+        assert!(!batch.requires_reconcile() && batch.paths().is_empty());
+        changed(&engine);
+        engine.derivation_ack(Lane::Semantic, &batch).unwrap();
+        assert!(
+            engine
+                .derivation_pending(Lane::Semantic)
+                .unwrap()
+                .overviews_pending
+        );
+        let latest = engine
+            .derivation_batch(Lane::Semantic, "hierarchy")
+            .unwrap();
+        engine.derivation_ack(Lane::Semantic, &latest).unwrap();
+        drop(engine);
+        let engine = Engine::open_existing(&dir.path().join("store")).unwrap();
+        assert!(
+            !engine
+                .derivation_pending(Lane::Semantic)
+                .unwrap()
+                .overviews_pending
+        );
+    }
+
     #[test]
     fn coalescing_acknowledges_only_its_version_and_lane_across_restart() {
         let (dir, mut engine) = fixture();

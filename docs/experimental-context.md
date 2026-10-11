@@ -213,9 +213,73 @@ partitioning/tokenization/storage/retrieval with deterministic provider vectors;
 long-context Metal parity, throughput and task quality are still unexecuted. Source
 plans are bounded by 2 MiB per source, 16,384 windows and 16 MiB accumulated context
 text, plus parser/tokenizer/array overhead. Fresh-card retention remains 2 MiB per source
-with bounded fallback. Separate parent/file/area vectors and late chunking are not
-implemented. See [009 T009](../specs/009-optional-semantic-retrieval/spec.md#t009--use-model-owned-geometry-and-contextual-representations)
+with bounded fallback. Independent representations are now available through the
+opt-in hierarchy recipe below; late chunking remains unimplemented. See [009 T009](../specs/009-optional-semantic-retrieval/spec.md#t009--use-model-owned-geometry-and-contextual-representations)
 and [validation](validation.md#model-aware-bodyparent-inputs--2026-10-10).
+
+## Independent representations and the Linux embedding worker
+
+To retain body vectors and add independent parent/file overviews and current
+multi-source brief vectors, set this top-level semantic-profile field:
+
+```json
+"representation": {"kind": "hierarchy-v1", "parent_tokens": 64}
+```
+
+Use `card_tokens` of at least 256 with the 64-token parent allowance. Run ordinary
+`semantic prepare` or the explicitly enabled continuous MCP lane.
+Source overviews are bounded extracts, not generated architectural claims. Area
+vectors embed existing current multi-source briefs; this setting does not invent
+briefs or start generation. Enable brief delivery to expose their derived text.
+At most 256 current area briefs are admitted from a scan of 4,096 brief rows; excess
+refuses explicitly. They share the vector cache and use a small exact cosine scan.
+Source ANN coverage and area counts are reported separately. No purge is needed.
+
+Ordinary `embed-worker` now includes the checked pooled-output allocation fix.
+Linux CPU uses descriptor `adapter_revision: 3`; the new, unvalidated Metal build uses
+revision 4. Keep every artifact hash, template, dimension and geometry accurate.
+Existing revision 1/2 profiles need their original verified worker binary; the new
+runtime does not relabel their caches. The previous geometry-only revision-2 example
+above describes those legacy workers, not the current native binary.
+
+A Linux bundle contains `foundry-embed` directly. Build with the pinned native
+prerequisites, then package explicitly:
+
+```sh
+cargo build --features embed-worker --bin foundry-embed
+scripts/embed-worker-bundle.sh --binary target/debug/foundry-embed \
+  --out /absolute/new/bundle --profile /absolute/profile.json
+```
+
+Set `worker.bundle` and the printed executable SHA-256 in the profile. The Linux packager
+refuses extra read grants. The supervisor passes verified
+read-only model descriptors. The profile may set `cpu: {"threads": 2, "seconds": 3600}`;
+threads constrain backend/affinity, seconds are a worker-lifetime CPU allowance.
+`memory_ceiling_bytes` also becomes a hard Linux address-space limit before model
+threads start. The checked 8,192-token CPU run used an explicit 8 GiB ceiling; do not
+assume a larger window fits the default ceiling. All native admission still requires
+the existing development-isolation switch. macOS CPU/Metal/package acceptance is
+separate and remains unexecuted here.
+
+Reproduce the bounded real-model scale diagnostic with `tests/semantic_scale.rs`:
+set `FOUNDRY_SEMANTIC_SCALE_PROFILE`, a new outside-Git `FOUNDRY_SEMANTIC_SCALE_DIR`,
+`FOUNDRY_SEMANTIC_SCALE_FILES`, `FOUNDRY_SEMANTIC_SCALE_FAMILIES` and a per-round
+`FOUNDRY_SEMANTIC_SCALE_BUDGET` (at most two rounds). The profile is copied, not changed.
+The 80,000-file run used 512 content families, 900 seconds per round and real Gemma
+vectors. This is explicit repeated-content scale, not 80,000 unique model inputs.
+Use `FOUNDRY_SEMANTIC_SCALE_EXISTING` for the separate real-query serving check.
+
+## Explicit execution evidence
+
+`foundry --store STORE import-execution ARTIFACT.json` imports a strict completed
+producer report; it never runs its command. The v1 schema and bounds live in
+[005](../specs/005-graph-evidence-lifecycle/spec.md). Positive runtime `calls` and
+line `covers` observations retain the exact artifact digest, producer/run/test
+identity and source hashes. They are labeled producer observations, not static
+compiler facts or proof of exhaustive coverage. The ordinary graph command exposes
+them; task composition emits `task-execution` only with all required source bodies.
+A source/test change immediately makes its observation ineligible. Use an explicit
+collector for the chosen runtime; automatic test execution during indexing is absent.
 
 ## Incremental workspace watching
 
@@ -263,9 +327,9 @@ macOS and network-filesystem event behavior remain unverified.
 ## Recoverable task context
 
 This branch adds recoverable task state beside retrieval. Start with a disposable
-store. New stores use schema 11; an existing store needs an explicit
-`foundry --store STORE upgrade-store --to 11`. Take a closed-store backup first if
-using an existing store: schema 10 and earlier binaries cannot open schema 11, and rollback means
+store. New stores use schema 12; an older store needs an explicit
+`foundry --store STORE upgrade-store --to 12`. Take a closed-store backup first if
+using an existing store: earlier binaries cannot open schema 12, and rollback means
 restoring that backup. This work does not upgrade stores automatically.
 
 The core works through `foundry --store STORE task-context`, which accepts one JSON

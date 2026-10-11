@@ -1486,6 +1486,7 @@ impl QueryAnchors {
 
 /// One derived record search candidate before live-row validation (the
 /// document's id and the revision it was indexed at).
+#[derive(Clone)]
 pub(crate) struct RecordCandidate {
     pub id: String,
     pub revision: u64,
@@ -1497,6 +1498,20 @@ pub(crate) struct RecordCandidate {
 pub(crate) struct RecordPlan {
     pub window_full: bool,
     pub candidates: Vec<RecordCandidate>,
+}
+#[cfg(feature = "semantic")]
+impl RecordPlan {
+    pub(crate) fn prepend(&mut self, candidates: impl IntoIterator<Item = RecordCandidate>) {
+        let mut ids = std::collections::BTreeSet::new();
+        let mut merged: Vec<_> = candidates
+            .into_iter()
+            .chain(std::mem::take(&mut self.candidates))
+            .filter(|candidate| ids.insert(candidate.id.clone()))
+            .collect();
+        self.window_full |= merged.len() > 256;
+        merged.truncate(256);
+        self.candidates = merged;
+    }
 }
 
 /// What a context request adds to its query and strategy
@@ -2957,12 +2972,14 @@ fn best_line_index(text: &str, wanted: &std::collections::BTreeSet<String>) -> u
 }
 
 /// One search document selected by a tier, before revalidation.
+#[derive(Clone)]
 struct Candidate {
     tier: u8,
     score: Score,
     path: String,
     hash: String,
     start: u64,
+    end: u64,
     unit_start: u64,
     /// The delivery unit's own start, after its leading run: a tier-1 hit's
     /// best line.
@@ -3065,6 +3082,74 @@ fn ranked_item(
     })
 }
 
+/// Keep the matching indexed document of a long lexical unit, with exact source
+/// coordinates. A prefix of a function is not a substitute for its matching body.
+#[allow(clippy::too_many_arguments)]
+fn ranked_context_item(
+    candidate: &Candidate,
+    rank: usize,
+    workspace_id: &str,
+    sha256: &str,
+    body: &str,
+    wanted: &std::collections::BTreeSet<String>,
+    prose: bool,
+) -> FResult<RankedItem> {
+    if !prose || candidate.unit_end - candidate.unit_start <= 1536 {
+        return ranked_item(candidate, rank, workspace_id, sha256, body, wanted);
+    }
+    let start = candidate.start.max(candidate.unit_start) as usize;
+    let end = candidate.end.min(candidate.unit_end) as usize;
+    let text = body
+        .get(start..end)
+        .ok_or_else(|| FoundryError::CorruptStore("lexical document outside source".into()))?;
+    let wanted: std::collections::BTreeSet<_> = wanted
+        .iter()
+        .filter(|w| !prose_stopword(w))
+        .cloned()
+        .collect();
+    let best = best_line_index(text, &wanted) as usize;
+    let lines: Vec<_> = text.split_inclusive('\n').collect();
+    let before: usize = lines
+        .iter()
+        .take(best.saturating_sub(3))
+        .map(|s| s.len())
+        .sum();
+    let focus: usize = lines.iter().take(best).map(|s| s.len()).sum();
+    let mut from = before;
+    if focus.saturating_sub(from) > 512 {
+        from = focus;
+    }
+    let mut to = (from + 1536).min(text.len());
+    while !text.is_char_boundary(to) {
+        to -= 1;
+    }
+    if let Some(newline) = text[from..to].rfind('\n')
+        && from + newline >= focus
+    {
+        to = from + newline + 1;
+    }
+    if from >= to {
+        return ranked_item(candidate, rank, workspace_id, sha256, body, &wanted);
+    }
+    let mut excerpt = candidate.clone();
+    excerpt.unit_start = (start + from) as u64;
+    excerpt.unit_end = (start + to) as u64;
+    excerpt.unit_head = excerpt.unit_start;
+    let mut item = ranked_item(&excerpt, rank, workspace_id, sha256, body, &wanted)?;
+    item.label = format!("excerpt {}", item.label);
+    Ok(item)
+}
+
+fn prose_stopword(word: &str) -> bool {
+    [
+        "a", "an", "and", "are", "as", "at", "be", "by", "can", "could", "do", "does", "for",
+        "from", "how", "in", "into", "is", "it", "of", "on", "or", "should", "that", "the",
+        "their", "this", "to", "was", "when", "where", "which", "while", "with", "without",
+        "would",
+    ]
+    .contains(&word.to_ascii_lowercase().as_str())
+}
+
 /// One anchor's resolver window within tier 1: the anchor, its definition
 /// count and its range of [`TwoTier::first`], in window order.
 struct WindowSlice {
@@ -3096,6 +3181,7 @@ fn prose_query(query: &str) -> bool {
 
 /// The two-tier collection of one query, before revalidation.
 struct TwoTier {
+    prose: bool,
     first: Vec<Candidate>,
     second: Vec<Candidate>,
     /// A tier window filled.
@@ -4543,6 +4629,7 @@ impl Engine {
         path.map(path_filter).transpose()?;
         let workspace_id = self.require_workspace_id()?;
         let TwoTier {
+            prose,
             first,
             second,
             candidates_full,
@@ -4616,13 +4703,14 @@ impl Engine {
                 verified.insert(candidate.path.clone(), source);
             }
             let body = &verified[&candidate.path].body;
-            items.push(ranked_item(
+            items.push(ranked_context_item(
                 candidate,
                 rank,
                 &workspace_id,
                 &meta.hash,
                 body,
                 &wanted,
+                prose,
             )?);
         }
         let anchors = anchor_windows(
@@ -4788,6 +4876,9 @@ impl Engine {
         }
         let mut clauses: Vec<Box<dyn Query>> = Vec::new();
         for part in query.split_whitespace() {
+            if prose && prose_stopword(part.trim_end_matches(['?', '.', ',', ':'])) {
+                continue;
+            }
             let terms = analyzed_terms(crate::syntax::code_subtokens, part);
             match terms.as_slice() {
                 [] => {}
@@ -4803,6 +4894,9 @@ impl Engine {
         idents.sort();
         idents.dedup();
         for ident in &idents {
+            if prose && prose_stopword(ident) {
+                continue;
+            }
             clauses.push(Box::new(BoostQuery::new(
                 term(fields.ident, ident, IndexRecordOption::WithFreqs),
                 3.0,
@@ -4812,26 +4906,63 @@ impl Engine {
             term(fields.path, query.trim(), IndexRecordOption::Basic),
             100.0,
         )));
-        let collector =
-            TopDocs::with_limit(CANDIDATE_LIMIT).tweak_score(|reader: &SegmentReader| {
-                let key_hash = reader
-                    .fast_fields()
-                    .u64("key_hash")
-                    .expect("schema v2 fast field")
-                    .first_or_default_col(0);
-                move |doc: DocId, score: Score| (score, Reverse(key_hash.get_val(doc)))
-            });
-        let tier2: Vec<(Score, tantivy::DocAddress)> = searcher
-            .search(
-                restrict(Box::new(BooleanQuery::union(clauses))).as_ref(),
-                &collector,
-            )?
-            .into_iter()
-            .map(|((score, _), address)| (score, address))
-            .collect();
-        // A window filled: tier 1's 64 slots with definitions left over (an
-        // anchor's window over more than 64 definitions), or tier 2's limit.
-        let candidates_full = tier1_full || tier2.len() >= CANDIDATE_LIMIT;
+        let per_lane = if prose {
+            CANDIDATE_LIMIT / 2
+        } else {
+            CANDIDATE_LIMIT
+        };
+        let collector = TopDocs::with_limit(per_lane).tweak_score(|reader: &SegmentReader| {
+            let key_hash = reader
+                .fast_fields()
+                .u64("key_hash")
+                .expect("schema v2 fast field")
+                .first_or_default_col(0);
+            move |doc: DocId, score: Score| (score, Reverse(key_hash.get_val(doc)))
+        });
+        let lexical: Box<dyn Query> = Box::new(BooleanQuery::union(clauses));
+        let mut full = false;
+        let mut tier2 = Vec::new();
+        let mut collect = |query: Box<dyn Query>| -> FResult<()> {
+            let found = searcher.search(restrict(query).as_ref(), &collector)?;
+            full |= found.len() == per_lane;
+            tier2.extend(
+                found
+                    .into_iter()
+                    .map(|((score, _), address)| (score, address)),
+            );
+            Ok(())
+        };
+        if prose {
+            // Disjoint windows keep large documentation sets from exhausting
+            // code discovery, and preserve documentation discovery in code-heavy
+            // roots. Their combined cap is still 256 documents.
+            let code: Box<dyn Query> = Box::new(BooleanQuery::new(vec![
+                (Occur::Must, Box::new(tantivy::query::AllQuery)),
+                (
+                    Occur::MustNot,
+                    term(fields.kind, "section", IndexRecordOption::Basic),
+                ),
+                (
+                    Occur::MustNot,
+                    term(fields.kind, "block", IndexRecordOption::Basic),
+                ),
+                (
+                    Occur::MustNot,
+                    term(fields.kind, UNPARSED_KIND, IndexRecordOption::Basic),
+                ),
+            ]));
+            collect(Box::new(BooleanQuery::new(vec![
+                (Occur::Must, lexical.box_clone()),
+                (Occur::Must, code.box_clone()),
+            ])))?;
+            collect(Box::new(BooleanQuery::new(vec![
+                (Occur::Must, lexical),
+                (Occur::MustNot, code),
+            ])))?;
+        } else {
+            collect(lexical)?;
+        }
+        let candidates_full = tier1_full || full;
         control.check()?;
 
         // A resolver-window document is a definition document: it carries
@@ -4863,6 +4994,7 @@ impl Engine {
                     path: text(fields.path).ok_or_else(invalid)?,
                     hash: text(fields.hash).ok_or_else(invalid)?,
                     start: number(fields.start)?,
+                    end: number(fields.end)?,
                     unit_start: number(fields.unit_start)?,
                     unit_head: number(fields.unit_head)?,
                     unit_end: number(fields.unit_end)?,
@@ -4921,7 +5053,24 @@ impl Engine {
                 .then_with(|| a.path.cmp(&b.path))
                 .then_with(|| a.start.cmp(&b.start))
         });
+        if prose {
+            let (code, prose): (Vec<_>, Vec<_>) = second
+                .into_iter()
+                .partition(|c| !["section", "block", UNPARSED_KIND].contains(&c.kind.as_str()));
+            second = Vec::with_capacity(code.len() + prose.len());
+            let mut code = code.into_iter();
+            let mut prose = prose.into_iter();
+            loop {
+                let (a, b) = (code.next(), prose.next());
+                if a.is_none() && b.is_none() {
+                    break;
+                }
+                second.extend(a);
+                second.extend(b);
+            }
+        }
         Ok(TwoTier {
+            prose,
             first,
             second,
             candidates_full,
@@ -4993,6 +5142,7 @@ impl Engine {
         let filter = path.map(path_filter).transpose()?;
         let workspace_id = self.require_workspace_id()?;
         let TwoTier {
+            prose,
             first,
             second,
             candidates_full,
@@ -5155,9 +5305,15 @@ impl Engine {
             let body = &verified[unit_path].body;
             let candidate = by_unit.get(unit).copied();
             let mut item = match candidate {
-                Some(candidate) => {
-                    ranked_item(candidate, rank, &workspace_id, &meta.hash, body, &wanted)?
-                }
+                Some(candidate) => ranked_context_item(
+                    candidate,
+                    rank,
+                    &workspace_id,
+                    &meta.hash,
+                    body,
+                    &wanted,
+                    prose && !from_dense,
+                )?,
                 None => {
                     // A dense-only unit: no delivery-unit label.
                     let (from, to) = (*unit_start as usize, *unit_end as usize);
@@ -5468,9 +5624,14 @@ impl Engine {
                     .clone()
                     .map(|owner| (owner, terms))
             });
-        let brief_plan = (options.briefs && search.anchors.is_empty())
+        #[allow(unused_mut)]
+        let mut brief_plan = (options.briefs && search.anchors.is_empty())
             .then(|| self.record_plan(query, "brief"))
             .transpose()?;
+        #[cfg(feature = "semantic")]
+        if let (Some(plan), Some(dense)) = (&mut brief_plan, options.dense) {
+            plan.prepend(dense.areas.iter().cloned());
+        }
         // A context resolved to graph requests doors (context-v2 § Doors),
         // for the first anchor's target as resolved from the collected
         // windows: the final read can drop that definition, never retarget.

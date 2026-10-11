@@ -527,6 +527,9 @@ impl<'a> Run<'a> {
             if let Some(stop) = self.embed_pass(&mut frontier)? {
                 return Ok(stop);
             }
+            if let Some(stop) = self.area_pass()? {
+                return Ok(stop);
+            }
             // Also publish new locations/complete coverage when every card was
             // reused: cache hits do not increment the new-vector counter.
             if let Some(stop) = self.publish()? {
@@ -554,7 +557,7 @@ impl<'a> Run<'a> {
             let work = hold(self.owner, |engine| {
                 engine.derivation_batch(Lane::Semantic, &identity)
             })?;
-            if !work.requires_reconcile() && work.paths().is_empty() {
+            if !work.requires_reconcile() && work.paths().is_empty() && !work.overviews_changed() {
                 self.sync_progress();
                 hold(self.owner, |engine| {
                     prepare::finalize(engine, &mut self.report, &Ok(Stop::Complete))
@@ -587,6 +590,9 @@ impl<'a> Run<'a> {
                 changed_only: !work.requires_reconcile(),
             };
             if let Some(stop) = self.embed_pass(&mut frontier)? {
+                return Ok(Some(stop));
+            }
+            if let Some(stop) = self.area_pass()? {
                 return Ok(Some(stop));
             }
             if let Some(stop) = self.publish()? {
@@ -707,7 +713,7 @@ impl<'a> Run<'a> {
                 }
             }
             if !batch.is_empty()
-                && let Some(stop) = self.embed(frontier, &mut batch, &mut end, full)?
+                && let Some(stop) = self.embed(frontier, &mut batch, &mut end, full, true)?
             {
                 return Ok(Some(stop));
             }
@@ -850,6 +856,7 @@ impl<'a> Run<'a> {
         batch: &mut Batch,
         end: &mut bool,
         full: usize,
+        source_inputs: bool,
     ) -> FResult<Option<Stop>> {
         #[cfg(feature = "test-faults")]
         self.owner.admitting();
@@ -957,14 +964,65 @@ impl<'a> Run<'a> {
         }
         // Committed is unpublished until a publication, whatever stops the
         // run next: the stop ([`Self::finish`]) publishes it.
-        self.unpublished += size;
-        self.report.embedded_units += size;
+        if source_inputs {
+            self.unpublished += size;
+            self.report.embedded_units += size;
+        } else {
+            self.report.embedded_areas += size;
+        }
         self.sync_progress();
         if let Some(error) = prefetch_error {
             return Err(error);
         }
-        if self.unpublished >= self.published.max(1) {
+        if source_inputs && self.unpublished >= self.published.max(1) {
             return self.publish();
+        }
+        Ok(None)
+    }
+
+    fn area_pass(&mut self) -> FResult<Option<Stop>> {
+        let profile = &self.runtime.profile;
+        let records = hold(self.owner, |engine| {
+            super::area::snapshot(engine, profile, self.control)
+        })?;
+        // Tokenization holds neither the owner slot nor a database transaction.
+        let areas = super::area::render(records, profile, self.runtime.tokenizer(), self.control)?;
+        hold(self.owner, |engine| {
+            super::area::prune(engine, profile, &areas, self.control)
+        })?;
+        self.report.area_vectors = 0;
+        for area in areas {
+            if let Some(stop) = self.requested_stop() {
+                return Ok(Some(stop));
+            }
+            if !hold(self.owner, |engine| {
+                super::area::cached(engine, profile, &area)
+            })? {
+                let mut frontier = Frontier {
+                    order: prepare::SourceOrder::new(&[])?,
+                    walk: None,
+                    priority_revision: None,
+                    changed_only: false,
+                };
+                let mut batch = Batch {
+                    keys: vec![area.key().to_owned()],
+                    inputs: vec![super::provider::TokenizedInput {
+                        ids: area.ids.clone(),
+                    }],
+                };
+                if let Some(stop) = self.embed(&mut frontier, &mut batch, &mut true, 1, false)? {
+                    return Ok(Some(stop));
+                }
+            }
+            if !hold(self.owner, |engine| {
+                super::area::bind(engine, profile, &area.record, self.control)
+            })? {
+                return Ok(Some(Stop::partial(
+                    "stale_area",
+                    "area changed during preparation",
+                )));
+            }
+            self.report.area_vectors += 1;
         }
         Ok(None)
     }
@@ -1390,6 +1448,116 @@ mod tests {
             assert!(Instant::now() < deadline, "the driver never stopped");
             std::thread::sleep(POLL);
         }
+    }
+
+    #[test]
+    fn continuous_area_changes_wake_the_driver_without_reselecting_sources() {
+        use crate::brief;
+        use serde_json::json;
+        let (_dir, engine, mut profile) = notes();
+        Arc::make_mut(&mut profile).representation =
+            super::super::partition::Representation::Hierarchy { parent_tokens: 32 };
+        Arc::make_mut(&mut profile).card_tokens = 512;
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let provider = Sizes {
+            descriptor: profile.descriptor.clone(),
+            sizes: sizes.clone(),
+            foreground: None,
+        };
+        let runtime = Arc::new(
+            QueryRuntime::start(
+                profile,
+                Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+            )
+            .unwrap(),
+        );
+        let owner = Arc::new(Quiet(Mutex::new(engine)));
+        let preparation = Arc::new(Preparation::default());
+        preparation
+            .maintain(owner.clone(), runtime.clone(), None)
+            .unwrap();
+        let settled = |areas| {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                if preparation.live() == Some(Live::Waiting)
+                    && !owner
+                        .0
+                        .lock()
+                        .unwrap()
+                        .derivation_pending(crate::neural::work::Lane::Semantic)
+                        .unwrap()
+                        .overviews_pending
+                    && preparation.lock().bootstrap.area_vectors == areas
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "overview maintenance did not settle"
+                );
+                std::thread::sleep(POLL);
+            }
+        };
+        settled(0);
+        let selected = preparation.lock().bootstrap.selected_sources;
+        let calls = sizes.lock().unwrap().len();
+        let wid = owner.0.lock().unwrap().workspace_id().unwrap();
+        let spans: Vec<_> = (0..2)
+            .map(|n| {
+                let source = format!("# Note {n}\n\nbody of note {n}\n");
+                format!(
+                    "note{n:02}.md#0-{}@{}.{}",
+                    source.len(),
+                    &crate::digest(source.as_bytes())[..32],
+                    &wid[..16]
+                )
+            })
+            .collect();
+        let mut revision = None;
+        let mut id = String::new();
+        for text in [
+            "Explain the shared note workflow.",
+            "Explain the revised shared note workflow.",
+        ] {
+            let input = json!({"cited_spans":spans,"recipe_sha256":"a".repeat(64),"model":"fixture",
+                "artifact_sha256":"b".repeat(64),"prompt_sha256":crate::digest(text.as_bytes()),"generated_at_unix_ms":1,
+                "purpose":[{"text":text,"citations":[0,1],"identifiers":[]}],
+                "behavior":[{"text":"Retain both notes.","citations":[0,1],"identifiers":[]}],
+                "provides":[],"consumes":[],"constraints":[],"tests":[],"unknowns":[]});
+            let request = brief::parse(&serde_json::to_vec(&json!({"workspace_id":wid,"command":{"op":"put","brief":input,"expected_revision":revision}})).unwrap()).unwrap();
+            let result = owner
+                .0
+                .lock()
+                .unwrap()
+                .brief(&request, &Control::unbounded())
+                .unwrap();
+            revision = result["revision"].as_u64();
+            id = result["id"].as_str().unwrap().to_owned();
+            settled(1);
+            assert_eq!(preparation.lock().bootstrap.selected_sources, selected);
+        }
+        assert_eq!(
+            sizes.lock().unwrap().len(),
+            calls + 2,
+            "one new area input per changed brief"
+        );
+        let request = brief::parse(&serde_json::to_vec(&json!({"workspace_id":wid,"command":{"op":"forget","id":id,"expected_revision":revision}})).unwrap()).unwrap();
+        owner
+            .0
+            .lock()
+            .unwrap()
+            .brief(&request, &Control::unbounded())
+            .unwrap();
+        settled(0);
+        assert_eq!(
+            sizes.lock().unwrap().len(),
+            calls + 2,
+            "forgetting embeds nothing"
+        );
+        assert_eq!(preparation.lock().bootstrap.selected_sources, selected);
+        preparation.pause();
+        until_idle(&preparation);
+        runtime.shutdown();
     }
 
     #[test]

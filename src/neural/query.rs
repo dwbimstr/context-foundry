@@ -102,6 +102,7 @@ pub struct DenseHit {
 pub struct DenseWindow {
     pub hits: Vec<DenseHit>,
     generation: Arc<DenseIndex>,
+    pub(crate) areas: Vec<crate::store::RecordCandidate>,
 }
 
 impl std::fmt::Debug for DenseWindow {
@@ -583,7 +584,7 @@ impl QueryRuntime {
         development: bool,
         reservation: Option<crate::model_resources::Reservation>,
     ) -> Result<Self, ProviderError> {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let control = Control::unbounded()
                 .bounded_by(Instant::now() + Duration::from_secs(profile.load_timeout_seconds));
@@ -604,7 +605,7 @@ impl QueryRuntime {
                 reservation,
             )
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = (profile, development, reservation);
             Err(ProviderError::IsolationUnavailable(
@@ -1028,7 +1029,12 @@ impl QueryRuntime {
         let vector = self.embed(query, deadline)?;
         control.check()?;
         let hits = generation.search(&vector, DENSE_WINDOW)?;
-        Ok(DenseWindow { hits, generation })
+        let areas = super::area::search(engine, &self.profile, &vector, control)?;
+        Ok(DenseWindow {
+            hits,
+            generation,
+            areas,
+        })
     }
 
     /// The function digest of the serving profile, for identity checks

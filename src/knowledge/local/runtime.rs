@@ -162,7 +162,7 @@ pub fn serve(
         }
     }
 }
-fn arm_owner(owner: u32, fd: i32) -> io::Result<()> {
+pub(crate) fn arm_owner(owner: u32, fd: i32) -> io::Result<()> {
     #[cfg(target_os = "linux")]
     {
         // A pipe, not PID polling: PID reuse cannot keep an orphan alive.

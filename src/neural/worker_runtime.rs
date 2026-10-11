@@ -75,10 +75,16 @@ pub fn check_real_descriptor(descriptor: &FunctionDescriptor) -> Result<(), Stri
     } else {
         REAL_ADAPTER_REVISION
     };
-    if descriptor.adapter_revision != revision {
+    if ![
+        revision,
+        super::provider::CPU_ADAPTER_REVISION,
+        super::provider::METAL_ADAPTER_REVISION,
+    ]
+    .contains(&descriptor.adapter_revision)
+    {
         return Err(format!(
-            "descriptor claims adapter_revision {}, but the real adapter implements \
-             {revision} for this geometry",
+            "descriptor claims adapter_revision {}; supported identities are legacy \
+             {revision}, pooled CPU 3 and pooled Metal 4 (the binary checks its platform)",
             descriptor.adapter_revision
         ));
     }
@@ -259,6 +265,8 @@ pub struct WorkerArgs {
     /// The supervisor's verified GGUF descriptor. The loader uses this held
     /// file instead of resolving a model pathname after verification.
     pub model_fd: Option<i32>,
+    pub memory_bytes: u64,
+    pub cpu: super::profile::CpuLimits,
     /// Test hooks, armed only by `foundry-embed-fake`.
     #[cfg(feature = "test-faults")]
     pub hooks: Hooks,
@@ -273,6 +281,8 @@ impl WorkerArgs {
         let mut descriptor: Option<FunctionDescriptor> = None;
         let mut model_dir = None;
         let mut model_fd = None;
+        let mut memory_bytes = super::profile::DEFAULT_MEMORY_CEILING_BYTES;
+        let mut cpu = super::profile::CpuLimits::default();
         let mut rest = Vec::new();
         let mut raw = args.into_iter().peekable();
         while let Some(flag) = raw.next() {
@@ -311,9 +321,25 @@ impl WorkerArgs {
                     }
                     model_fd = Some(fd);
                 }
+                "--memory-bytes" => {
+                    memory_bytes = value("--memory-bytes")?
+                        .parse()
+                        .map_err(|_| "invalid memory bytes")?
+                }
+                "--cpu-threads" => {
+                    cpu.threads = value("--cpu-threads")?
+                        .parse()
+                        .map_err(|_| "invalid CPU threads")?
+                }
+                "--cpu-seconds" => {
+                    cpu.seconds = value("--cpu-seconds")?
+                        .parse()
+                        .map_err(|_| "invalid CPU seconds")?
+                }
                 other => rest.push(other.to_string()),
             }
         }
+        cpu.validate()?;
         let expected = descriptor.ok_or("--descriptor is required")?;
         expected
             .validate()
@@ -325,6 +351,8 @@ impl WorkerArgs {
                 expected,
                 model_dir: model_dir.ok_or("--model-dir is required")?,
                 model_fd,
+                memory_bytes,
+                cpu,
                 #[cfg(feature = "test-faults")]
                 hooks: Hooks::default(),
             },
@@ -339,6 +367,8 @@ impl WorkerArgs {
 #[cfg(feature = "test-faults")]
 #[derive(Clone, Debug, Default)]
 pub struct Hooks {
+    /// Verify Linux restrictions inside the same runtime before readiness.
+    pub isolation_probe: bool,
     /// Hold the admission slot sleeping this many milliseconds per call.
     pub slow_ms: u64,
     /// Sleep this many milliseconds before reporting `ready`.
@@ -412,6 +442,7 @@ impl Hooks {
         };
         while i < rest.len() {
             match rest[i].as_str() {
+                "--isolation-probe" => hooks.isolation_probe = true,
                 "--slow-ms" => {
                     hooks.slow_ms = value(&mut i, "--slow-ms", rest)?
                         .parse()
@@ -818,6 +849,22 @@ pub fn serve(args: WorkerArgs, run: impl FnOnce(&mut Engine) -> i32) -> i32 {
         );
         return CONFIG_EXIT;
     }
+    #[cfg(target_os = "linux")]
+    {
+        let Some(fd) = args.model_fd.filter(|fd| *fd != args.liveness_fd) else {
+            eprintln!("a distinct inherited read-only model descriptor is required");
+            return CONFIG_EXIT;
+        };
+        if let Err(error) = crate::knowledge::local::resources::install_cpu(
+            args.cpu.threads,
+            args.memory_bytes,
+            args.cpu.seconds,
+            fd,
+        ) {
+            eprintln!("cannot enforce embedding worker isolation: {error}");
+            return WATCHER_EXIT;
+        }
+    }
     match arm_owner_death_watcher(args.owner_pid, args.liveness_fd) {
         Ok(Armed::Watching) => {}
         // The owner died between the parent check and the registration:
@@ -1022,7 +1069,15 @@ pub enum Armed {
     OwnerGone,
 }
 
+#[cfg(target_os = "linux")]
+pub fn arm_owner_death_watcher(owner_pid: u32, liveness_fd: i32) -> Result<Armed, String> {
+    crate::knowledge::local::runtime::arm_owner(owner_pid, liveness_fd)
+        .map(|()| Armed::Watching)
+        .map_err(|e| e.to_string())
+}
+
 /// What one kqueue event says about the owner.
+#[cfg(target_os = "macos")]
 enum Verdict {
     /// The owner is gone: the process must end.
     Gone,
@@ -1036,6 +1091,7 @@ enum Verdict {
 /// loop, so a notification retrieved while arming can never be lost:
 /// `NOTE_EXIT` on the owner PID, an owner that no longer exists (`ESRCH`),
 /// or end-of-file on the liveness pipe.
+#[cfg(target_os = "macos")]
 fn classify_event(event: &libc::kevent, owner_pid: u32, liveness_fd: i32) -> Verdict {
     if event.flags & libc::EV_ERROR != 0 {
         let errno = event.data as i32;
@@ -1079,6 +1135,7 @@ fn classify_event(event: &libc::kevent, owner_pid: u32, liveness_fd: i32) -> Ver
 /// model or any lock and sits in `kevent` only; on either signal it calls
 /// `_exit`. Events already pending at registration are handled here, with
 /// the watcher loop's own classification, before the thread starts.
+#[cfg(target_os = "macos")]
 pub fn arm_owner_death_watcher(owner_pid: u32, liveness_fd: i32) -> Result<Armed, String> {
     let kq = unsafe { libc::kqueue() };
     if kq < 0 {

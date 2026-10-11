@@ -473,16 +473,21 @@ fn child_setup_with_fds(
                 rlim_cur: value,
                 rlim_max: value,
             };
-            if unsafe { libc::setrlimit(resource, &limit) } != 0 {
+            if unsafe { libc::setrlimit(resource as _, &limit) } != 0 {
                 return Err(std::io::Error::last_os_error());
             }
         }
-        let limit = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        if unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &limit) } != 0 {
-            return Err(std::io::Error::last_os_error());
+        // Linux counts threads against NPROC; its worker seccomp policy blocks
+        // process creation while permitting inference threads.
+        #[cfg(target_os = "macos")]
+        {
+            let limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &limit) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
         }
         for fd in std::iter::once(&read_fd).chain(artifacts.iter()) {
             if unsafe { libc::fcntl(*fd, libc::F_SETFD, 0) } == -1 {
@@ -510,21 +515,26 @@ fn child_setup_with_fds(
 #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
 pub(crate) fn physical_footprint(pid: u32, fault_detail: &str) -> Result<u64, String> {
     neural_fault!(FOOTPRINT_MEASURE, None, fault_detail).map_err(|e| e.to_string())?;
-    let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v0>() };
-    let rc = unsafe {
-        libc::proc_pid_rusage(
-            pid as libc::pid_t,
-            libc::RUSAGE_INFO_V0,
-            std::ptr::addr_of_mut!(info).cast(),
-        )
-    };
-    if rc == 0 {
-        Ok(info.ri_phys_footprint)
-    } else {
-        Err(format!(
-            "proc_pid_rusage: {}",
-            std::io::Error::last_os_error()
-        ))
+    #[cfg(target_os = "linux")]
+    return crate::knowledge::local::resources::memory(pid).map_err(|e| e.to_string());
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v0>() };
+        let rc = unsafe {
+            libc::proc_pid_rusage(
+                pid as libc::pid_t,
+                libc::RUSAGE_INFO_V0,
+                std::ptr::addr_of_mut!(info).cast(),
+            )
+        };
+        if rc == 0 {
+            Ok(info.ri_phys_footprint)
+        } else {
+            Err(format!(
+                "proc_pid_rusage: {}",
+                std::io::Error::last_os_error()
+            ))
+        }
     }
 }
 
@@ -778,11 +788,7 @@ impl WorkerProvider {
         };
         artifacts.check(profile, control)?;
         let model_fd = artifacts.model_fd(profile)?;
-        let executable = profile
-            .worker
-            .bundle
-            .join("Contents/MacOS")
-            .join("foundry-embed");
+        let executable = profile.worker.executable();
         let (sha, _) = hash_regular_file_until(&executable, control)?;
         if sha != profile.worker.executable_sha256 {
             return Err(ProviderError::ProfileInvalid(format!(
@@ -819,6 +825,14 @@ impl WorkerProvider {
             .arg(&profile.model_dir)
             .arg("--model-fd")
             .arg(model_fd.to_string());
+        #[cfg(target_os = "linux")]
+        command
+            .arg("--memory-bytes")
+            .arg(profile.memory_ceiling_bytes.to_string())
+            .arg("--cpu-threads")
+            .arg(profile.cpu.threads.to_string())
+            .arg("--cpu-seconds")
+            .arg(profile.cpu.seconds.to_string());
         command.args(extra_args);
         command
             .current_dir(&scratch_dir)

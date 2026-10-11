@@ -157,6 +157,10 @@ enum Command {
     ImportGraph {
         bundle: PathBuf,
     },
+    /// Import a completed producer execution artifact; never runs its command.
+    ImportExecution {
+        artifact: PathBuf,
+    },
     /// 005: import one completed SCIP artifact bound by a snapshot manifest
     /// (explicit, CLI-only; the importer runs no compiler). Exits 1 for a
     /// partial import, 2 for an invalid invocation, 130 when cancelled.
@@ -1092,6 +1096,17 @@ fn run() -> AResult<()> {
             println!(
                 "{}",
                 serde_json::json!({"imported_edges": engine.import_graph(&bundle)?})
+            );
+        }
+        Command::ImportExecution { artifact } => {
+            let engine = Engine::open_existing(&cli.store)?;
+            let mut bytes = Vec::new();
+            std::fs::File::open(artifact)?
+                .take(4 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)?;
+            println!(
+                "{}",
+                serde_json::json!({"imported_edges":engine.import_execution(&bytes)?})
             );
         }
         Command::ImportScip { index, snapshot } => {

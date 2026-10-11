@@ -26,6 +26,7 @@ pub struct Plan {
     pub discovery_limited: bool,
     pub constraints: usize,
     pub compiler: Vec<crate::graph::ReferencesOutcome>,
+    pub observed: Vec<crate::graph::ObservedEvidence>,
     pub compiler_skipped_seeds: usize,
     pub(crate) reference_uses: BTreeMap<String, reference::Use>,
     pub roots: Vec<String>,
@@ -57,6 +58,7 @@ impl Plan {
         for other in plans {
             primary.roots.extend(other.roots);
             primary.compiler.extend(other.compiler);
+            primary.observed.extend(other.observed);
             primary.reference_uses.extend(other.reference_uses);
             primary.compiler_skipped_seeds += other.compiler_skipped_seeds;
             primary.discovery_limited |= other.discovery_limited;
@@ -81,6 +83,7 @@ impl Plan {
         brief_count: usize,
         relationship_count: usize,
         compiler_count: usize,
+        observed_count: usize,
     ) -> Value {
         let facets: BTreeMap<_,_> = ["implementation","consumers","configuration","verification","constraints"].into_iter().map(|facet| {
             let candidates = self.support.iter().filter(|s|s.facets.contains(facet)).count();
@@ -101,7 +104,8 @@ impl Plan {
                 "discovery":{"queried_entries":self.queried_entries,"unqueried_entries":self.unqueried_entries,"stale_links":self.stale_links,"limited":self.discovery_limited},
                 "boundary":{"requested":self.boundary_requested,"available":self.boundaries.as_ref().map_or(0,|b|b.relations.len()),"delivered":relationship_count,"resolution":resolution,"incomplete_paths":self.boundaries.as_ref().map(|b|&b.incomplete_paths),"truncated":self.boundaries.as_ref().is_some_and(|b|b.truncated)},
                 "compiler":{"kind":"references","delivered":compiler_count,"skipped_seeds":self.compiler_skipped_seeds,"windows":self.compiler.iter().map(|c|json!({"coverage":c.coverage,"references":c.items.len(),"stale":c.stale,"limited":c.candidates_full||c.more||c.definitions_truncated})).collect::<Vec<_>>()},
-                "derived_briefs":brief_count,"verification":"test_candidates_only_not_executed",
+                "derived_briefs":brief_count,"verification":if observed_count > 0 {"producer_execution_observations_delivered"} else {"test_candidates_only_not_executed"},
+                "execution":{"available":self.observed.len(),"delivered":observed_count,"complete_coverage":false,"attestation":"producer_report_only"},
                 "sources":included.iter().enumerate().map(|(n,&(i,f))|json!({"item":n+1,"representation":if f==0{"body"}else{"address"},"facets":self.support[i].facets,"via":self.support[i].via})).collect::<Vec<_>>()});
         }
         json!({"v":1,"scope":if self.roots.len()>1 {"admitted_roots_primary_task"} else {"primary_task"},"roots":self.roots,"complete":false,"host_application":"unknown",
@@ -109,7 +113,8 @@ impl Plan {
             "constraints":{"caller_assertions":self.constraints,"verified":false,"conflicts":"not_evaluated"},"facets":facets,
             "discovery":{"queried_entries":self.queried_entries,"unqueried_entries":self.unqueried_entries,"stale_links":self.stale_links,"limited":self.discovery_limited},
             "boundary":{"available_relationships":self.boundaries.as_ref().map_or(0,|b|b.relations.len()),"delivered_relationships":relationship_count,"state":if self.boundaries.is_some(){"configured"}else if self.boundary_requested{"no_fresh_seeds"}else{"not_requested"},"resolution":resolution,"incomplete_paths":self.boundaries.as_ref().map(|b|&b.incomplete_paths),"truncated":self.boundaries.as_ref().is_some_and(|b|b.truncated)},
-            "verification":"test_candidates_only_not_executed",
+            "verification":if observed_count > 0 {"producer_execution_observations_delivered"} else {"test_candidates_only_not_executed"},
+            "execution":{"available":self.observed.len(),"delivered":observed_count,"complete_coverage":false,"attestation":"producer_report_only"},
             "compiler_relationships":{"kind":"references","skipped_seeds":self.compiler_skipped_seeds,"delivered":compiler_count,"windows":self.compiler.iter().map(|c|json!({"workspace_id":c.freshness.workspace_id,"producer":c.producer,"coverage":c.coverage,"target":c.target,"references":c.items.len(),"examined":c.examined,"stale":c.stale,"limited":c.candidates_full||c.more||c.definitions_truncated})).collect::<Vec<_>>()},
             "sources":included.iter().map(|&(i,f)|json!({"handle":items[i].handle.as_ref().map(SourceHandle::to_v2),"representation":if f==0{"body"}else{"address"},"facets":self.support[i].facets,"via":self.support[i].via})).collect::<Vec<_>>()})
     }
@@ -206,6 +211,7 @@ impl Engine {
             compact: options.compact_evidence,
             support: vec![],
             compiler: vec![],
+            observed: vec![],
             compiler_skipped_seeds: 0,
             reference_uses: BTreeMap::new(),
             roots: vec![self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?],
@@ -276,10 +282,15 @@ impl Engine {
                 }
             }
         }
-        let brief_plan = options
+        #[allow(unused_mut)]
+        let mut brief_plan = options
             .briefs
             .then(|| self.record_plan(query, "brief"))
             .transpose()?;
+        #[cfg(feature = "semantic")]
+        if let (Some(plan), Some(dense)) = (&mut brief_plan, options.dense) {
+            plan.prepend(dense.areas.iter().cloned());
+        }
         fault!(TASK_EVIDENCE_BEFORE_FINAL, Some(self), Some(control), "")?;
         let tx = self.db.begin_read()?;
         // All task state, graph dependencies, briefs, source bytes and memory
@@ -441,6 +452,29 @@ impl Engine {
                 plan.discovery_limited = true;
             }
         }
+        let paths: Vec<_> = candidates
+            .iter()
+            .map(|candidate| candidate.handle.path.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let (observed, limited) = self.execution_evidence_in(&tx, &paths, control)?;
+        plan.discovery_limited |= limited;
+        for evidence in &observed {
+            for (handle, facet) in [
+                (&evidence.from, "consumers"),
+                (&evidence.to, "implementation"),
+                (&evidence.test, "verification"),
+            ] {
+                plan.discovery_limited |= !add(
+                    &mut candidates,
+                    handle.clone(),
+                    facet,
+                    "producer_execution_observation",
+                );
+            }
+        }
+        plan.observed = observed;
         let mut reference_sources = BTreeMap::new();
         for seed in compiler_seeds {
             control.check()?;

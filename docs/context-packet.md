@@ -10,42 +10,37 @@ what to clone, how to prove the setup reproduces the recorded results), follow
 
 ## Where things stand
 
-**Closeout, 2026-10-10:** the implementation through `1cbb6bd` is on
-`experimental/context-ecosystem`, including main's coordinated tch 0.26/LibTorch 2.13
-migration. The [audited capability map](context-ecosystem-plan.md#what-exists-and-what-is-missing)
-links each capability to its code/tests; the [pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
-retains the unfinished work. Use those instead of reopening an implemented subsystem.
+**Continuation, 2026-10-11:** work remains on `experimental/context-ecosystem`,
+including main's coordinated tch 0.26/LibTorch 2.13 migration. The
+[capability map](context-ecosystem-plan.md#what-exists-and-what-is-missing) and
+[pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
+separate implemented behavior from missing capabilities and acceptance work.
 
-The branch contains progressive/incremental semantic preparation, native watching,
-ANN delta publication and reuse, model-aware body/parent windows, source-bound LLM
-briefs/area knowledge and continuous maintenance. It also contains static Python HTTP
-relationships with nested/direct cross-file router dependencies, compiler-grounded
-caller/test syntax, composed task evidence, durable task state, grounded review and
-explicit promotion/forgetting. Frozen and live OMP task-view application, exact request
-receipts, shared memory admission and Linux affinity/cgroup CPU policy are implemented.
-All model lanes and experimental context behavior retain explicit opt-ins.
+The branch contains incremental watching, progressive semantic preparation, ANN delta
+publication/reuse, source-bound generated knowledge, task state and composed evidence,
+frozen/live OMP views, request receipts and Linux resource controls. The latest work
+adds independent parent/file/area vectors under opt-in `hierarchy-v1`, Flask boundaries,
+explicit source-hashed execution imports and atomic caller/target/test delivery.
+The ordinary Linux embedding worker now applies the checked pooled-output fix and
+passes 8,192-token inference under 8 GiB. Tokenizer parity passes. Model lanes and
+experimental retrieval remain explicit opt-ins.
 
-**The product outcome is still open:** development retrieval delivered 1/8 in each
-lexical arm; both the earlier Qwen0.5B and subsequent Qwen3-1.7B/OMP comparisons
-failed both tasks. The stronger model made invalid edits. Neither establishes quality
-or total-cost improvement. The 8,192-file semantic lifecycle uses fixture vectors/tokenization,
-not real-model throughput at 60,000–80,000 files. The opt-in Linux pooled-output
-diagnostic now passes Gemma numerics at 8,192 tokens under 8 GiB (2.72 GiB peak RSS);
-ordinary native builds still need an admitted production fix. Missing coverage,
-runtime adoption, useful model/recipe selection, held-out task economics and native
-macOS/GPU/package acceptance are named in the inventory. Independent parent/file/area
-vectors remain unimplemented; true late chunking is only a backend candidate.
+**The product outcome is still open.** Local anchorless delivery improves from 1/8
+to 2/8 on eight development labels, with no held-out acceptance. Real Gemma prepares
+80,000 synthetic paths in 469.4 s and passes restart/edit/revert/query checks, but the
+corpus repeats 512 families (528 distinct model inputs). Representative unique-content
+scale remains unmeasured. Both parser and overflow tasks fail in both arms of a new
+pinned Qwen2.5-Coder-7B/OMP comparison. Complete usage and smaller prompts do not
+establish verified task or economic benefit. Broader evidence collectors, useful
+model/host selection, realistic task/memory economics and Mac/GPU acceptance remain.
+These are **not all macOS blockers**. Late chunking is still only a backend candidate.
 
-The [latest Linux continuation](validation.md#feasible-linux-repairs-and-task-comparison--2026-10-10)
-records the allocation repair, conservative prose candidate and stronger-model task
-comparison; the prose candidate leaves development retrieval at 1/8 in each arm.
-The [closeout validation](validation.md#ecosystem-closeout-audit--2026-10-10) records
-170 fresh Linux checks, including the installed OMP live-view test with scripted replies.
-Earlier model/scale results remain historical: their `/tmp` raw artifacts did not
-survive the environment restart. Keep new diagnostic directories outside Git on a
-retained workspace path when later analysis is needed. The setup draft's clean-install
-reproduction is not established by restoring this checkout/tool cache. macOS validation
-is deferred by the owner; 013 learning stays frozen off. Nothing is released.
+[Current validation](validation.md#linux-worker-representations-evidence-and-scale--2026-10-11)
+records the bounded experiments, raw artifact locations, failures and checks. New
+artifacts are outside Git under `/workspace/.context-foundry-tools/validation-runs/`;
+older `/tmp` artifacts did not survive the environment restart. A restored tool cache
+does not prove clean installation from the setup draft. macOS validation is deferred
+by the owner; 013 learning remains frozen off. Nothing is released.
 
 The table below is the **2026-10-08 main-branch baseline**; later experimental
 amendments supersede its completion and next-work descriptions. Nothing is released.
@@ -123,9 +118,10 @@ development host*. The raw results, logs and frozen identities are outside Git:
 
 - **Platform.** All development, gates and measurements ran on macOS arm64. CI also
   builds and tests the core on Linux (x86_64). `foundry-embed` (feature `embed-worker`)
-  needs macOS with Metal, its worker isolation is macOS-specific, and the package
-  target is macOS arm64 (`tests/install.rs` builds only there). A Linux host is not a
-  substitute for the macOS gates or the measurements.
+  supports explicitly admitted Linux CPU and macOS Metal workers. Linux isolation
+  and normal-worker numerical checks pass; the revised Metal worker still needs a
+  native runner. The signed package target remains macOS arm64 (`tests/install.rs`
+  builds only there); Linux is not a substitute for those installed-artifact checks.
 - **Toolchains.** Rust stable plus the 1.90 toolchain (the MSRV gate). The worker build
   also needs `cmake` and a llama.cpp git checkout at commit `b9acf138` (`LLAMA_CPP_DIR`).
 - **Network for dependencies.** Three tree-sitter grammars resolve from owner-approved

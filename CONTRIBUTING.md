@@ -27,7 +27,7 @@ not issues: see [SECURITY](SECURITY.md).
 - A C and C++ compiler (Xcode command-line tools on macOS). The first build fetches
   crates and three grammar forks from GitHub.
 - `node` for the documentation link check.
-- Only for the optional embedding worker (`--features embed-worker`, macOS with Metal):
+- Only for the optional embedding worker (`--features embed-worker`, Linux CPU or macOS Metal):
   `cmake` and a llama.cpp git checkout at the pinned commit `b9acf138`, named by
   `LLAMA_CPP_DIR`. The frozen learning worker (`--features learning-worker`) needs
   LibTorch 2.13.0 in `LIBTORCH`, paired with `tch`/`torch-sys` 0.26.0.

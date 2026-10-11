@@ -36,6 +36,7 @@ use crate::neural::provider::{self, ProviderError};
 use crate::syntax::{self, Lang, Unit, UnitKind};
 
 pub mod body;
+pub mod hierarchy;
 
 /// Address cards remain the default and retain their historical identity.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -46,6 +47,10 @@ pub enum Representation {
     Address,
     #[serde(rename = "body-v1")]
     Body { parent_tokens: u32 },
+    /// Independent body, enclosing-unit and file overview inputs. Existing
+    /// body inputs reuse their exact keys; overviews have distinct domains.
+    #[serde(rename = "hierarchy-v1")]
+    Hierarchy { parent_tokens: u32 },
 }
 
 impl Representation {
@@ -57,6 +62,10 @@ impl Representation {
             Self::Address => recipe_id(tokenizer, tokens),
             Self::Body { parent_tokens } => format!(
                 "body-v1+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                crate::store::SEARCH_SCHEMA
+            ),
+            Self::Hierarchy { parent_tokens } => format!(
+                "hierarchy-v1+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
                 crate::store::SEARCH_SCHEMA
             ),
         }

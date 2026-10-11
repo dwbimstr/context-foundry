@@ -17,6 +17,10 @@ pub const SERVING_LIMIT_TOKENS: usize = 2048;
 /// model/backend limit. This constant is not a claim about any model's window.
 pub const MAX_CONTEXT_TOKENS: usize = 32768;
 pub const GEOMETRY_ADAPTER_REVISION: u32 = 2;
+/// Corrected pooled-output recipe, independently bound to the execution backend.
+pub const CPU_ADAPTER_REVISION: u32 = 3;
+pub const METAL_ADAPTER_REVISION: u32 = 4;
+pub const POOLED_NATIVE_RECIPE: &str = "gemma2-pooled-output-v1";
 
 /// Versioned independently of descriptor/IPC layout. The descriptor binds these
 /// context settings to vector identity; workers verify them before reporting ready.

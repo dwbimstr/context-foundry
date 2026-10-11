@@ -18,7 +18,7 @@
 //! `--notices DIR` writes the license text of the linked llama.cpp (embedded
 //! by build.rs from the pinned commit's tree it built; it covers the vendored
 //! ggml) to `DIR/LICENSE` and prints the llama.cpp commit, for package.sh.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn main() {
     use std::io::Write;
 
@@ -31,6 +31,7 @@ fn main() {
         let _ = std::io::stdout().flush();
         std::process::exit(code);
     }
+    #[cfg(target_os = "macos")]
     if let Some(index) = argv.iter().position(|arg| arg == "--probe") {
         let name = argv.get(index + 1).cloned().unwrap_or_default();
         let rest = argv[index + 2..].to_vec();
@@ -55,6 +56,19 @@ fn main() {
             std::process::exit(64);
         }
     }
+    // Validate the held descriptor before the Linux policy denies pathname opens.
+    #[cfg(target_os = "linux")]
+    {
+        let Some(fd) = args.model_fd else {
+            std::process::exit(78)
+        };
+        if let Err(error) = worker_runtime::refuse_split_gguf(&std::path::PathBuf::from(format!(
+            "/proc/self/fd/{fd}"
+        ))) {
+            eprintln!("foundry-embed: {error}");
+            std::process::exit(78);
+        }
+    }
     let code = worker_runtime::serve(args, real_run);
     let _ = std::io::stdout().flush();
     std::process::exit(code);
@@ -64,7 +78,7 @@ fn main() {
 /// verified GGUF, report `ready` with the model's vocabulary bound, then
 /// serve admitted jobs one at a time. Every failure after `ready` is a named
 /// job failure, never a panic.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn real_run(engine: &mut context_foundry::neural::worker_runtime::Engine) -> i32 {
     use context_foundry::neural::worker_runtime::check_real_descriptor;
 
@@ -72,12 +86,30 @@ fn real_run(engine: &mut context_foundry::neural::worker_runtime::Engine) -> i32
         engine.fail_load("descriptor_unsupported", &message);
         return 1;
     }
+    let revision = if cfg!(target_os = "linux") {
+        context_foundry::neural::provider::CPU_ADAPTER_REVISION
+    } else {
+        context_foundry::neural::provider::METAL_ADAPTER_REVISION
+    };
+    if engine.args.expected.adapter_revision != revision {
+        engine.fail_load("descriptor_unsupported", "this pooled-output worker needs the platform-specific adapter revision; retain an old binary to serve an old descriptor");
+        return 1;
+    }
+    #[cfg(target_os = "macos")]
     let gguf = engine
         .args
         .model_fd
         .map(|fd| std::path::PathBuf::from(format!("/dev/fd/{fd}")))
         .unwrap_or_else(|| engine.args.model_dir.join(&engine.args.expected.gguf));
-    let mut embedder = match llama::Embedder::load(&gguf, &engine.args.expected) {
+    #[cfg(target_os = "macos")]
+    let loaded = llama::Embedder::load(&gguf, &engine.args.expected);
+    #[cfg(target_os = "linux")]
+    let loaded = llama::Embedder::load_fd(
+        engine.args.model_fd.unwrap(),
+        &engine.args.expected,
+        engine.args.cpu.threads,
+    );
+    let mut embedder = match loaded {
         Ok(embedder) => embedder,
         Err(message) => {
             engine.fail_load("load_failed", &message);
@@ -99,15 +131,14 @@ fn real_run(engine: &mut context_foundry::neural::worker_runtime::Engine) -> i32
     0
 }
 
-#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod llama {
     use context_foundry::neural::provider::{
         DocumentLimits, FunctionDescriptor, LLAMA_CPP_COMMIT, TokenizedInput,
     };
+    use context_foundry::neural::worker_runtime::mark_phase;
     #[cfg(target_os = "macos")]
-    use context_foundry::neural::worker_runtime::{mark_phase, refuse_split_gguf};
-    #[cfg(all(test, target_os = "linux"))]
-    fn mark_phase(_: &str) {}
+    use context_foundry::neural::worker_runtime::refuse_split_gguf;
     #[cfg(target_os = "macos")]
     use std::ffi::CString;
     use std::ffi::{CStr, c_char, c_void};
@@ -142,11 +173,15 @@ mod llama {
         "build.rs and worker_runtime pin different llama.cpp commits"
     );
 
+    const _: () = assert!(same(
+        env!("FOUNDRY_LLAMA_CPP_RECIPE"),
+        context_foundry::neural::provider::POOLED_NATIVE_RECIPE
+    ));
+
     /// The pinned commit's `LICENSE` (MIT, "The ggml authors"), which
     /// build.rs copied into `OUT_DIR` from the tree it built; at this commit
     /// ggml has no license file of its own, so this one text covers
     /// llama.cpp and its ggml.
-    #[cfg(target_os = "macos")]
     pub const LICENSE: &str = include_str!(concat!(env!("OUT_DIR"), "/llama.cpp-LICENSE"));
 
     const fn same(a: &str, b: &str) -> bool {
@@ -268,14 +303,46 @@ mod llama {
                 ffi::llama_model_load_from_file(c_path.as_ptr(), model_params)
             })
             .ok_or_else(|| format!("llama.cpp could not load {}", path.display()))?;
-            Self::from_model(model, descriptor)
+            Self::from_model(model, descriptor, 2)
         }
 
-        // Shared numerical implementation. Linux compiles this only in the
-        // explicit test binary; production embedding admission remains macOS.
+        #[cfg(target_os = "linux")]
+        pub fn load_fd(
+            fd: i32,
+            descriptor: &FunctionDescriptor,
+            threads: u32,
+        ) -> Result<Self, String> {
+            init_backend();
+            let fd = unsafe { libc::dup(fd) };
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            if unsafe { libc::lseek(fd, 0, libc::SEEK_SET) } < 0 {
+                unsafe { libc::close(fd) };
+                return Err("cannot seek verified GGUF descriptor".into());
+            }
+            let stream = unsafe { libc::fdopen(fd, c"rb".as_ptr()) };
+            if stream.is_null() {
+                unsafe { libc::close(fd) };
+                return Err("cannot open verified GGUF stream".into());
+            }
+            let mut params = unsafe { ffi::llama_model_default_params() };
+            params.n_gpu_layers = 0;
+            params.progress_callback = None;
+            let model = unsafe { ffi::llama_model_load_from_file_ptr(stream.cast(), params) };
+            unsafe { libc::fclose(stream) };
+            Self::from_model(
+                NonNull::new(model).ok_or("CPU model load failed")?,
+                descriptor,
+                threads,
+            )
+        }
+
+        // Shared graph, pooling, truncation and normalization implementation.
         fn from_model(
             model: NonNull<ffi::llama_model>,
             descriptor: &FunctionDescriptor,
+            _threads: u32,
         ) -> Result<Self, String> {
             let pooling = match pooling_type(&descriptor.pooling) {
                 Ok(pooling) => pooling,
@@ -313,10 +380,10 @@ mod llama {
             ctx_params.type_k = ffi::GGML_TYPE_F32;
             ctx_params.type_v = ffi::GGML_TYPE_F32;
             ctx_params.offload_kqv = cfg!(target_os = "macos");
-            #[cfg(all(test, target_os = "linux"))]
+            #[cfg(target_os = "linux")]
             {
-                ctx_params.n_threads = 2;
-                ctx_params.n_threads_batch = 2;
+                ctx_params.n_threads = _threads as i32;
+                ctx_params.n_threads_batch = _threads as i32;
                 ctx_params.op_offload = false;
             }
             ctx_params.no_perf = true;
@@ -402,7 +469,6 @@ mod llama {
 
         /// One past the largest token ID the model accepts: the runtime
         /// refuses any request ID at or above it.
-        #[cfg(target_os = "macos")]
         pub fn vocab_bound(&self) -> u32 {
             self.n_vocab
         }
@@ -525,7 +591,7 @@ mod llama {
         fn cpu_pinned_gemma_batch_geometry() {
             use context_foundry::knowledge::local::{Config, Device, MemoryEnforcement, resources};
             use context_foundry::neural::provider::{
-                ArtifactFile, DESCRIPTOR_VERSION, GEOMETRY_ADAPTER_REVISION, InputGeometry,
+                ArtifactFile, CPU_ADAPTER_REVISION, DESCRIPTOR_VERSION, InputGeometry,
             };
             use sha2::{Digest, Sha256};
             use std::io::{Read, Seek};
@@ -552,7 +618,12 @@ mod llama {
                     assert!(bytes.len() <= 256 * 1024);
                     serde_json::from_slice(&bytes).unwrap()
                 });
+            let tokenizer_parity = cfg!(feature = "semantic")
+                && std::env::var_os("FOUNDRY_EMBED_CPU_TOKENIZER").is_some();
             let mut file = std::fs::File::open(&path).unwrap();
+            #[cfg(feature = "semantic")]
+            let tokenizer = std::env::var_os("FOUNDRY_EMBED_CPU_TOKENIZER")
+                .map(|path| tokenizers::Tokenizer::from_file(path).unwrap());
             let mut hash = Sha256::new();
             let mut buffer = vec![0; 1024 * 1024];
             loop {
@@ -583,7 +654,7 @@ mod llama {
                 pooling: "mean".into(),
                 dimensions: 768,
                 output: "f32".into(),
-                adapter_revision: GEOMETRY_ADAPTER_REVISION,
+                adapter_revision: CPU_ADAPTER_REVISION,
                 document_template: "{text}".into(),
                 geometry: Some(InputGeometry {
                     v: 1,
@@ -625,7 +696,7 @@ mod llama {
             let model = unsafe { ffi::llama_model_load_from_file_ptr(stream.cast(), params) };
             unsafe { libc::fclose(stream) };
             let mut embedder =
-                Embedder::from_model(NonNull::new(model).expect("CPU model load"), &descriptor)
+                Embedder::from_model(NonNull::new(model).expect("CPU model load"), &descriptor, 2)
                     .unwrap();
             let tokenize = |text: &str| {
                 let mut ids = vec![0; limit as usize];
@@ -642,6 +713,18 @@ mod llama {
                     )
                 };
                 assert!(n > 0 && n as usize <= ids.len());
+                #[cfg(feature = "semantic")]
+                if let Some(tokenizer) = &tokenizer {
+                    let encoded = tokenizer.encode(text, true).unwrap();
+                    assert_eq!(
+                        encoded.get_ids(),
+                        ids[..n as usize]
+                            .iter()
+                            .map(|i| *i as u32)
+                            .collect::<Vec<_>>(),
+                        "profile/GGUF token mismatch for {text:?}"
+                    );
+                }
                 TokenizedInput {
                     ids: ids[..n as usize].iter().map(|&i| i as u32).collect(),
                 }
@@ -725,14 +808,14 @@ mod llama {
             assert_eq!(unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) }, 0);
             eprintln!(
                 "CPU_EMBED_RESULT {}",
-                serde_json::json!({"model_sha256":SHA,"llama_cpp":LLAMA_CPP_COMMIT,"native_recipe":option_env!("FOUNDRY_LLAMA_CPP_RECIPE").unwrap_or("upstream"),"backend":"cpu","isolation":isolation,"threads":2,"cpu_seconds":config.cpu_seconds,"memory_ceiling_bytes":config.memory_bytes,"peak_rss_bytes":usage.ru_maxrss as u64 * 1024,"input_tokens":limit,"sequences":8,"minimum_cosine":minimum,"input_sha256":input_hash,"single_vectors":single,"elapsed_ms":started.elapsed().as_millis(),"product_worker_acceptance":false,"tokenizer_json_parity":false})
+                serde_json::json!({"model_sha256":SHA,"llama_cpp":LLAMA_CPP_COMMIT,"native_recipe":option_env!("FOUNDRY_LLAMA_CPP_RECIPE").unwrap_or("upstream"),"backend":"cpu","isolation":isolation,"threads":2,"cpu_seconds":config.cpu_seconds,"memory_ceiling_bytes":config.memory_bytes,"peak_rss_bytes":usage.ru_maxrss as u64 * 1024,"input_tokens":limit,"sequences":8,"minimum_cosine":minimum,"input_sha256":input_hash,"single_vectors":single,"elapsed_ms":started.elapsed().as_millis(),"product_worker_acceptance":false,"tokenizer_json_parity":tokenizer_parity,"tokenizer_parity_cases":if tokenizer_parity {8} else {0}})
             );
         }
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn main() {
-    eprintln!("foundry-embed: the embedding worker targets macOS");
+    eprintln!("foundry-embed: the embedding worker supports macOS and Linux");
     std::process::exit(78);
 }

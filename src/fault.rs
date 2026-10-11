@@ -159,6 +159,12 @@ pub enum GlobalAction {
     Cancel,
     Fail(String),
     Delay(std::time::Duration),
+    /// Hold one workspace at a boundary until its real operation is cancelled.
+    /// Other workspaces and fault points remain serviceable.
+    AwaitCancellation {
+        workspace_id: String,
+        timeout: std::time::Duration,
+    },
 }
 
 struct GlobalArmed {
@@ -185,6 +191,10 @@ pub fn arm_global(name: &str, skip: usize, action: GlobalAction) {
             action,
         },
     );
+}
+
+pub fn disarm_global(name: &str) {
+    armed_global().lock().unwrap().remove(name);
 }
 
 pub fn disarm_all() {
@@ -275,7 +285,9 @@ fn hit_global(name: &str, ctx: &Ctx<'_>) -> FResult<()> {
     if index < state.skip {
         return Ok(());
     }
-    match state.action.clone() {
+    let action = state.action.clone();
+    drop(global);
+    match action {
         GlobalAction::Abort => std::process::abort(),
         GlobalAction::Fail(message) => Err(FoundryError::Internal(anyhow::anyhow!(message))),
         GlobalAction::Cancel => {
@@ -286,6 +298,25 @@ fn hit_global(name: &str, ctx: &Ctx<'_>) -> FResult<()> {
         }
         GlobalAction::Delay(duration) => {
             std::thread::sleep(duration);
+            Ok(())
+        }
+        GlobalAction::AwaitCancellation {
+            workspace_id,
+            timeout,
+        } => {
+            if ctx.engine.and_then(Engine::workspace_id).as_deref() != Some(&workspace_id) {
+                return Ok(());
+            }
+            let control = ctx.control.expect("cancellable operation boundary");
+            let deadline = std::time::Instant::now() + timeout;
+            while !control.is_cancelled() {
+                if std::time::Instant::now() >= deadline {
+                    return Err(FoundryError::Internal(anyhow::anyhow!(
+                        "fault boundary never cancelled"
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
             Ok(())
         }
     }

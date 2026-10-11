@@ -390,7 +390,9 @@ impl Engine {
                 };
                 fault!(BRIEF_BEFORE_COMMIT, Some(self), Some(control), "")?;
                 control.check()?;
+                crate::neural::work::overview_changed(&tx)?;
                 tx.commit()?;
+                self.semantic_wake.notify();
                 fault!(BRIEF_AFTER_COMMIT, Some(self), Some(control), "")?;
                 Ok(result)
             }
@@ -579,7 +581,9 @@ impl Engine {
         };
         fault!(BRIEF_BEFORE_COMMIT, Some(self), Some(control), "")?;
         control.check()?;
+        crate::neural::work::overview_changed(&tx)?;
         tx.commit()?;
+        self.semantic_wake.notify();
         fault!(BRIEF_AFTER_COMMIT, Some(self), Some(control), "")?;
         Ok(result)
     }

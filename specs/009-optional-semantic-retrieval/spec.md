@@ -1171,9 +1171,11 @@ names; ordinary search, explicit identifiers/paths, anchors, graph requests, den
 precedence and final source/budget checks keep their existing contracts. No candidate
 cap is enlarged and no model is replaced. One candidate is selected for this experiment;
 repository development comparisons remain separate from held-out acceptance.
-The corrected diagnostic excludes its own evaluator source. This candidate still
-delivers 1/8 required bodies on those eight labels, matching the baseline; broader
-retrieval usefulness remains open. See the [executed Linux results](../../docs/validation.md#feasible-linux-repairs-and-task-comparison--2026-10-10).
+The corrected diagnostic excludes its own evaluator source. The first candidate
+delivered 1/8 in each arm. The subsequent bounded code/prose windows and exact
+late-body excerpts improve candidate delivery to 2/8 against baseline 1/8; broader
+retrieval usefulness remains open. No expected labels enter selection. See the
+[executed Linux results](../../docs/validation.md).
 
 ### T006 — Bound and parallelize semantic partition computation
 
@@ -1821,3 +1823,70 @@ CPU-second attempt was killed; the final run used 900 CPU seconds with the same
 8 GiB ceiling. Cross-runtime comparison covers the retained short-input vectors;
 there is no stock full-window reference under this ceiling. This closes the sandbox
 allocation failure, not T009's production, tokenizer, representation or quality acceptance.
+
+#### T009 native worker adoption — 2026-10-10
+
+Selected by the owner as part of completing every Linux-feasible ecosystem item.
+The checked allocation replacement now builds with ordinary `embed-worker`;
+`embed-worker-pooled-diagnostic` is only a compatibility alias. New adapter revisions
+bind both recipe and backend: **3 for CPU**, **4 for Metal**. The real binary refuses
+other revisions before loading a model. Legacy 1/2 descriptors and their caches remain
+readable and can still use their original verified macOS worker; changing the adapter
+creates a new vector namespace and never silently relabels cached vectors.
+
+The existing supervisor/protocol now supports Linux. A Linux bundle contains
+`foundry-embed` directly, with the same executable hash verification, held artifact
+descriptors, scratch cleanup, single-flight slot, cancellation and bounded replies.
+Before creating any model/IPC threads, the worker installs the existing descriptor-only
+Linux seccomp policy and hard address-space/CPU limits; no pathname open, network,
+exec or child process is admitted. The held single-file GGUF is header-checked before
+confinement and loaded through `FILE*` afterward. Linux liveness uses the owner's pipe;
+the owner-exit and live-PID RSS checks are exercised separately from macOS kqueue.
+The profile's optional `cpu` controls affinity/thread count and lifetime CPU seconds
+(defaults: two threads, 3,600 seconds; maximum 64 threads / 86,400 seconds). These
+ceilings are not vector identity. All admission remains explicit through the existing
+development-isolation switch; this change does not claim release or signed-package
+acceptance. macOS compilation, Metal numerics, hardware resources and installed package
+checks require the deferred native runner. Linux worker/model results are recorded in
+[validation](../../docs/validation.md).
+
+#### T009 independent representations — 2026-10-11
+
+`hierarchy-v1` is opt-in, with the same `parent_tokens` field as body-v1. It reuses
+body inputs unchanged and adds independent parent and file inputs, each embedded
+normally under the selected document function. Short scopes include all source;
+long scopes select up to 128 distributed declaration headers and a bounded opening
+excerpt. The plan retains spans/text rather than corpus-wide token arrays, with the
+existing 2 MiB source / 16,384-card bounds and a 16 MiB overview-text bound. Parent
+header lookup uses ordered ranges rather than repeated whole-forest scans. Exact
+rendered input determines reuse. Distinct inputs may cite the same source range;
+partition order is start ascending, end descending, then input key ascending.
+Source ANN locations and final-read validation retain their existing owner.
+
+Multi-source derived briefs have separate `area-v1` inputs. The existing source-brief
+owner supplies identity, source hashes and transitive child lineage; the existing
+vector cache stores the independent embedding, and semantic state holds its disposable
+binding. Recomputing or averaging child vectors is not substituted for embedding the
+brief. A bounded exact cosine scan (256 area bindings, top eight) avoids introducing
+another ANN manifest/lifecycle for the small overview set. Preparation checks at most
+4,096 brief rows and refuses excess by name. This deliberate bound remains an acceptance
+limit for larger knowledge graphs, not a claim of exhaustive area coverage. A brief
+with no claim fitting the model allowance stays lexically available and gets no
+generic prefix-only vector.
+
+Area candidates feed the existing opt-in brief discovery/delivery path, including task
+composition, with a final revision/dependency check. Generated prose remains derived.
+CLI and continuous MCP share cache/binding logic. Brief publication/forgetting updates
+an independently acknowledged overview revision in the existing semantic queue, so it
+wakes the area pass without replaying all source partitions or its own generator.
+Late acknowledgments preserve newer obligations. Source changes continue through the
+existing source queue. Area counts are reported separately from source ANN coverage;
+model-call/token/cache totals include all admitted inputs. No new worker, database,
+background loop or source transaction inference is introduced.
+
+Fixture tests cover independent keys, migration/restart/edit/revert/delete reuse,
+bounded retained-card fallback and late dependency rejection. Linux real-model scale
+now completes 80,000 repeated-content files with 512 content families and 528 unique
+inputs, plus real query/ANN delivery. See [validation](../../docs/validation.md) for
+counts and times. This does not close unique-content scale, long-context retrieval
+quality, independent-representation task benefit, late chunking or Metal acceptance.

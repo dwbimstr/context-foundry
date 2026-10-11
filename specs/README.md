@@ -40,8 +40,8 @@ reuses verified/resident segments. Generation v5 adds bounded location overlays,
 metadata snapshots and clean-restart publication reuse. Cold verification, unmatched/overflow restart reconciliation and compaction remain
 corpus-sized; matching changed-input checkpoints use bounded transactional lookups. T009 now implements opt-in body windows
 with bounded parent context, versioned input/call geometry and actual-token batching.
-Address profiles/caches remain usable; real-device parity/quality and independent
-file/area representations remain open. 010 T002 now adds explicit selective HTTP
+Address profiles/caches remain usable. Opt-in hierarchy-v1 now adds independent
+parent/file/area vectors; comparative real-model quality and device parity remain open. 010 T002 now adds explicit selective HTTP
 generation, atomic completion reuse and source-bound area summaries in schema 10.
 Opt-in continuous MCP scheduling, shared client admission and source-first derived
 context now work on both transports. Owned local generation adds pinned snapshot reuse,
@@ -65,14 +65,21 @@ same-file static router mounts, grounded task review and affinity/cgroup CPU adm
 Native generation stops at a completed JSON object, with a revised paired recipe tested
 separately. The next Linux continuation adds nested/direct cross-file router dependencies,
 compiler-reference callee/test-attribute evidence, an offline attribution diagnostic and
-8,192-file semantic lifecycle validation. The eight development retrieval labels show
-no gain (1/8 in each arm), including the subsequent opt-in common-word prose repair.
-Selected Gemma CPU numerics pass at 2,048 tokens; an explicit Linux-only pooled-output
-diagnostic now repairs the pinned runtime's unused-logit allocation and passes at
-8,192 tokens under 8 GiB, with 2.72 GiB peak RSS. Production worker/runtime identity
-and platform adoption remain open. Broader
-frameworks, a useful task model, held-out host outcomes/economics, model-scale throughput
-and production macOS embedding/Metal acceptance remain. See the [updated pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
+8,192-file semantic lifecycle validation. The latest Linux continuation (2026-10-11) adopts the checked pooled-output repair
+in the normal embedding worker, adds CPU revision 3 / Metal revision 4 identities,
+and passes real 8,192-token IPC inference under 8 GiB plus tokenizer parity. Opt-in
+hierarchy-v1 adds independent parent/file/area vectors with incremental exact-input
+reuse. Flask boundaries and explicit source-hashed execution imports extend evidence;
+a real CPython dynamic-call fixture is imported without making execution part of indexing.
+Real Gemma also completes an 80,000-path semantic lifecycle and serving check, with
+512 repeated content families and 528 distinct model inputs. Unique-content repository
+throughput remains open. Eight development retrieval labels improve from 1/8 to 2/8;
+general anchorless and held-out acceptance remain open. A new pinned 7B/OMP comparison
+fails both parser and overflow tasks in both arms despite complete usage and smaller
+composed prompts. Useful task/memory quality and amortized economics remain unproven.
+Native macOS/Metal/GPU/package checks need another runner; the other acceptance gaps
+are not Mac-only. See [current validation](../docs/validation.md#linux-worker-representations-evidence-and-scale--2026-10-11)
+and the [pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.
 

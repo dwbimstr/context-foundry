@@ -2480,6 +2480,7 @@ fn fake_worker_profile(dir: &Path) -> SemanticProfile {
         card_tokens: DEFAULT_CARD_TOKENS,
         batch: DEFAULT_BATCH,
         memory_ceiling_bytes: 3 << 30,
+        cpu: Default::default(),
         load_timeout_seconds: 30,
     }
 }
@@ -6101,6 +6102,145 @@ fn body_recipe_migration_edits_rename_and_revert_reuse_exact_inputs_and_deliver_
         corpus.prepare().document_calls,
         0,
         "switching back preserves address caches"
+    );
+}
+
+#[test]
+fn hierarchy_area_preparation_deduplicates_exact_inputs_and_reuses_on_restart() {
+    use context_foundry::{brief, neural::partition::Representation};
+    let a = "fn refund() { credit(4); }\n";
+    let b = "fn check() { refund(); }\n";
+    let mut corpus = Corpus::new(&[("a.rs".into(), a.into()), ("b.rs".into(), b.into())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    let wid = corpus.engine().workspace_id().unwrap();
+    let handle = |path: &str, body: &str| {
+        format!(
+            "{path}#0-{}@{}.{}",
+            body.len(),
+            &context_foundry::digest(body.as_bytes())[..32],
+            &wid[..16]
+        )
+    };
+    for spans in [
+        [handle("a.rs", a), handle("b.rs", b)],
+        [handle("b.rs", b), handle("a.rs", a)],
+    ] {
+        let input = serde_json::json!({"cited_spans":spans,"recipe_sha256":"a".repeat(64),"model":"fixture/derived",
+            "artifact_sha256":"b".repeat(64),"prompt_sha256":"c".repeat(64),"generated_at_unix_ms":1,
+            "purpose":[{"text":"Refund reimbursement","citations":[0],"identifiers":[]}],
+            "behavior":[{"text":"Credit an account.","citations":[0],"identifiers":[]}],
+            "provides":[],"consumes":[],"constraints":[],"tests":[],"unknowns":[]});
+        let request = brief::parse(
+            &serde_json::to_vec(
+                &serde_json::json!({"workspace_id":wid,"command":{"op":"put","brief":input}}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        corpus
+            .engine()
+            .brief(&request, &Control::unbounded())
+            .unwrap();
+    }
+    let first = corpus.prepare();
+    assert!(!first.partial);
+    assert_eq!(
+        (first.area_vectors, first.embedded_areas),
+        (2, 1),
+        "two provenance bindings share one exact area input"
+    );
+    let restart = corpus.prepare();
+    assert_eq!(
+        (
+            restart.document_calls,
+            restart.area_vectors,
+            restart.embedded_areas
+        ),
+        (0, 2, 0)
+    );
+    assert!(
+        !corpus
+            .engine()
+            .derivation_pending(context_foundry::neural::work::Lane::Semantic)
+            .unwrap()
+            .overviews_pending
+    );
+}
+
+#[test]
+fn hierarchy_vectors_are_independent_and_incremental_with_shared_source_ranges() {
+    use context_foundry::neural::partition::Representation;
+    let path = "src/billing.rs";
+    let original = "impl Billing {\n fn refund() { transfer(400); }\n fn keep() { save(7); }\n}\n";
+    let mut corpus = Corpus::new(&[(path.into(), original.into())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    corpus.prepare();
+    let bodies = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    let prepared = corpus.prepare();
+    assert!(!prepared.partial);
+    assert!(
+        prepared.embedded_units >= 2,
+        "independent overviews are new"
+    );
+    let hierarchy = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    for body in &bodies.units {
+        assert!(
+            hierarchy.units.contains(body),
+            "body key/range remains reusable"
+        );
+    }
+    assert_eq!(hierarchy.units.len(), bodies.units.len() + 2);
+    assert_eq!(corpus.prepare().document_calls, 0, "unchanged restart");
+    let edited = original.replace("transfer(400)", "transfer(800)");
+    corpus.engine().replace_source(path, &edited).unwrap();
+    let changed = corpus.prepare();
+    assert_eq!(
+        changed.embedded_units, 3,
+        "changed body plus independent parent and file"
+    );
+    let mapping = corpus
+        .engine()
+        .semantic_current_mapping(
+            &Control::unbounded(),
+            &corpus.digest(),
+            &corpus.profile.recipe_id(),
+        )
+        .unwrap();
+    assert!(mapping.scope.complete);
+    corpus.engine().replace_source(path, original).unwrap();
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "revert reuses all independent inputs"
+    );
+    corpus.engine().delete_source(path).unwrap();
+    corpus.prepare();
+    assert!(
+        corpus
+            .engine()
+            .semantic_current_mapping(
+                &Control::unbounded(),
+                &corpus.digest(),
+                &corpus.profile.recipe_id()
+            )
+            .unwrap()
+            .units
+            .values()
+            .all(|units| units.iter().all(|unit| unit.path != path))
     );
 }
 

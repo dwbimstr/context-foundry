@@ -1,6 +1,7 @@
 //! 005 T005: explicitly scoped, syntactic HTTP relationships. No workspace code
 //! runs. Scope replacement and key postings share one redb transaction; joins
 //! are resolved at read time against current source/configuration identities.
+mod flask;
 mod imports;
 pub(crate) mod maintenance;
 
@@ -13,7 +14,7 @@ use tree_sitter::Node;
 
 const SCOPES: TableDefinition<&str, &str> = TableDefinition::new("boundary_scopes");
 const KEYS: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("boundary_keys");
-pub const RECIPE: &str = "python-http-v4";
+pub const RECIPE: &str = "python-http-v5";
 const MAX_FILES: usize = 64;
 const MAX_FACTS: usize = 128;
 const MAX_RESULTS: usize = 64;
@@ -45,8 +46,8 @@ fn route_path(path: &str) -> bool {
             .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
             && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
             && names.insert(name)
-            && ["str", "int", "float", "uuid", "path"].contains(&kind)
-            && (kind != "path" || i + 1 == parts.len())
+            && ["str", "int", "float", "uuid", "path", "flask_path"].contains(&kind)
+            && (!["path", "flask_path"].contains(&kind) || i + 1 == parts.len())
     })
 }
 fn matches_value(kind: &str, value: &str) -> bool {
@@ -87,6 +88,9 @@ fn matches_route(provider: &Key, consumer: &Key) -> bool {
             if kind == "path" {
                 return true;
             } // validated terminal converter, including empty
+            if kind == "flask_path" {
+                return !value.is_empty();
+            }
             if !matches_value(kind, value) {
                 return false;
             }
@@ -935,6 +939,7 @@ fn extract(
         stack.extend(children(n).into_iter().rev());
     }
     let mut clients = BTreeSet::new();
+    let flask = flask::extract(config, path, hash, source, root, &nodes);
     let mut constructors = BTreeSet::new();
     let mut router_constructors = BTreeSet::new();
     let mut modules = BTreeSet::new();
@@ -1225,7 +1230,10 @@ fn extract(
     let mut facts = Vec::new();
     let mut complete = !binding_incomplete
         && !mounting_incomplete
-        && (service.is_none() || !apps.is_empty() || !resolved_mounts.is_empty());
+        && (service.is_none()
+            || !apps.is_empty()
+            || !resolved_mounts.is_empty()
+            || flask.is_some());
     for n in nodes {
         if n.kind() != "call" {
             continue;
@@ -1293,7 +1301,7 @@ fn extract(
                         continue;
                     }
                 }
-                if route_path(&value) {
+                if route_path(&value) && !value.contains(":flask_path}") {
                     key = Some(Key {
                         service: service.unwrap().id.clone(),
                         method: method.to_ascii_uppercase(),
@@ -1345,6 +1353,14 @@ fn extract(
             context: span(path, hash, context),
             unsupported: reason,
         });
+    }
+    if let Some((extra, flask_complete)) = flask {
+        complete &= flask_complete;
+        facts.extend(extra);
+        if facts.len() > MAX_FACTS {
+            facts.truncate(MAX_FACTS);
+            complete = false;
+        }
     }
     Ok((facts, complete))
 }

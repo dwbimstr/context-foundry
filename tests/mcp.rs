@@ -2394,13 +2394,33 @@ async fn start_observed_index(
 
 #[tokio::test]
 async fn http_dropped_stream_keeps_slot_and_overload_keeps_control_traffic_serviceable() {
+    use context_foundry::fault::{self, GlobalAction, names::SCAN_BEFORE_OPEN};
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path().join("workspace");
     let store = fixture.path().join("store");
     write_fixture(&root, 1);
     let server = start_http(&store, &root).await;
-    // Grow the workspace after apply so the MCP index has real, long work.
-    write_fixture(&root, BIG_WORKSPACE);
+    // Hold an admitted scan until its actual Control is cancelled. Fixture size
+    // cannot reliably keep an index running while HTTP control traffic executes.
+    let workspace_id =
+        context_foundry::store::workspace_id_for_root(&std::fs::canonicalize(&root).unwrap())
+            .unwrap();
+    fault::arm_global(
+        SCAN_BEFORE_OPEN,
+        0,
+        GlobalAction::AwaitCancellation {
+            workspace_id,
+            timeout: Duration::from_secs(30),
+        },
+    );
+    struct ClearFault;
+    impl Drop for ClearFault {
+        fn drop(&mut self) {
+            fault::disarm_global(SCAN_BEFORE_OPEN);
+        }
+    }
+    let _clear_fault = ClearFault;
+    write_fixture(&root, 8);
     let http = reqwest::Client::new();
     let session = open_session(&http, &server.url).await;
     // A second session carries control traffic while the first is flooded.
@@ -2561,8 +2581,8 @@ async fn http_dropped_stream_keeps_slot_and_overload_keeps_control_traffic_servi
     );
     // A no-op DELETE-cancellation would let the whole index finish.
     assert!(
-        count < BIG_WORKSPACE as u64,
-        "DELETE cancelled the index before it completed ({count} of {BIG_WORKSPACE})"
+        count < 8,
+        "DELETE cancelled the index before it completed ({count} of 8)"
     );
     assert!(
         !last_body.contains("scan_state\\\":\\\"complete"),

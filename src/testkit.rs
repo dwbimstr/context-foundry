@@ -1315,6 +1315,7 @@ pub fn write_semantic_profile(
         card_tokens: crate::neural::profile::DEFAULT_CARD_TOKENS,
         batch: crate::neural::profile::DEFAULT_BATCH,
         memory_ceiling_bytes: 1024,
+        cpu: Default::default(),
         load_timeout_seconds: 1,
     };
     let path = dir.join(format!("profile-{name}.json"));

@@ -105,6 +105,74 @@ fn report(text: &str) -> Value {
     .unwrap()
 }
 #[test]
+fn observed_execution_requires_fresh_proof_and_all_delivered_endpoints() {
+    let e = fixture();
+    let endpoint = |path: &str, body: &str, line: usize| json!({"path":path,"line":line,"symbol":"producer-label","hash":context_foundry::digest(body.as_bytes())});
+    let artifact = json!({"v":1,"producer":"synthetic-test-trace","run":"case-1","command":["fixture-only"],"completed":true,"exit_code":0,"duration_ms":1,
+    "test":endpoint("test_contract.py",VERIFY,2),"observations":[
+        {"from":endpoint("test_contract.py",VERIFY,3),"to":endpoint("service.py",SERVICE,4),"kind":"calls","count":1},
+        {"from":endpoint("test_contract.py",VERIFY,2),"to":endpoint("service.py",SERVICE,5),"kind":"covers","count":1}
+    ]});
+    let bytes = serde_json::to_vec(&artifact).unwrap();
+    assert_eq!(e.engine.import_execution(&bytes).unwrap(), 2);
+    let c = compose(&e);
+    let pack = |tokens| {
+        response::pack_enriched_context(&c, None, Budget::request(tokens), &response::stdout_bytes)
+            .unwrap()
+    };
+    let full = pack(12000);
+    assert_eq!(report(&full.text)["execution"]["delivered"], 2);
+    assert!(full.text.contains("task-execution:"));
+    assert!(full.text.contains(&context_foundry::digest(&bytes)));
+    for budget in [1536, 2048, 4096] {
+        let packed = pack(budget);
+        assert!(packed.tokens <= budget);
+        let delivered = packed
+            .text
+            .lines()
+            .filter(|line| line.starts_with("task-execution:"))
+            .count();
+        assert_eq!(report(&packed.text)["execution"]["delivered"], delivered);
+    }
+    let mut invalid = artifact.clone();
+    invalid["observations"][0]["count"] = 0.into();
+    assert!(
+        e.engine
+            .import_execution(&serde_json::to_vec(&invalid).unwrap())
+            .is_err()
+    );
+    assert_eq!(
+        e.engine
+            .graph("service.py", true, 1, 32)
+            .unwrap()
+            .edges
+            .len(),
+        2,
+        "invalid replacement is atomic"
+    );
+    e.engine
+        .replace_source("test_contract.py", &(VERIFY.to_owned() + "# changed\n"))
+        .unwrap();
+    assert!(
+        e.engine
+            .graph("service.py", true, 1, 32)
+            .unwrap()
+            .edges
+            .is_empty()
+    );
+    let after = compose(&e);
+    let packed = response::pack_enriched_context(
+        &after,
+        None,
+        Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(!packed.text.contains("task-execution:"));
+    assert_eq!(report(&packed.text)["execution"]["delivered"], 0);
+}
+
+#[test]
 fn compact_accounting_preserves_sources_relationships_and_protected_state() {
     let e = fixture();
     let verbose = compose(&e);

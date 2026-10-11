@@ -3,11 +3,33 @@
 use super::Config;
 use std::io;
 
+/// Shared descriptor-only Linux enforcement for owned generation and embedding.
+#[cfg(target_os = "linux")]
+pub fn install_cpu(
+    threads: u32,
+    memory_bytes: u64,
+    cpu_seconds: u64,
+    model_fd: i32,
+) -> io::Result<()> {
+    if !(1..=64).contains(&threads)
+        || !(128 * 1024 * 1024..=128 * 1024 * 1024 * 1024).contains(&memory_bytes)
+        || !(1..=86400).contains(&cpu_seconds)
+    {
+        return Err(io::Error::other("invalid CPU resource limits"));
+    }
+    linux::install(threads, memory_bytes, cpu_seconds, model_fd)
+}
+
 pub fn install(config: &Config, model_fd: i32) -> io::Result<&'static str> {
     config.platform().map_err(io::Error::other)?;
     #[cfg(target_os = "linux")]
     {
-        linux::install(config, model_fd)?;
+        install_cpu(
+            config.threads,
+            config.memory_bytes,
+            config.cpu_seconds,
+            model_fd,
+        )?;
         Ok("linux-seccomp-fd-v1")
     }
     #[cfg(target_os = "macos")]
@@ -55,7 +77,6 @@ pub fn memory(pid: u32) -> io::Result<u64> {
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
-    use crate::knowledge::local::Device;
     fn check(rc: libc::c_long) -> io::Result<()> {
         if rc < 0 {
             Err(io::Error::last_os_error())
@@ -63,10 +84,12 @@ mod linux {
             Ok(())
         }
     }
-    pub fn install(config: &Config, model_fd: i32) -> io::Result<()> {
-        if config.device != Device::Cpu {
-            return Err(io::Error::other("GPU isolation unavailable"));
-        }
+    pub fn install(
+        threads: u32,
+        memory_bytes: u64,
+        cpu_seconds: u64,
+        model_fd: i32,
+    ) -> io::Result<()> {
         // Inherited hard affinity applies to every later model/monitor thread.
         let mut available = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
         check(
@@ -78,7 +101,7 @@ mod linux {
         let mut allowed = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
         let mut count = 0;
         for cpu in 0..libc::CPU_SETSIZE as usize {
-            if unsafe { libc::CPU_ISSET(cpu, &available) } && count < config.threads {
+            if unsafe { libc::CPU_ISSET(cpu, &available) } && count < threads {
                 unsafe { libc::CPU_SET(cpu, &mut allowed) };
                 count += 1;
             }
@@ -91,8 +114,8 @@ mod linux {
         )?;
         check(unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 10) }.into())?;
         for (resource, value) in [
-            (libc::RLIMIT_AS, config.memory_bytes),
-            (libc::RLIMIT_CPU, config.cpu_seconds),
+            (libc::RLIMIT_AS, memory_bytes),
+            (libc::RLIMIT_CPU, cpu_seconds),
             (libc::RLIMIT_CORE, 0),
             (libc::RLIMIT_FSIZE, 0),
             (libc::RLIMIT_NOFILE, 64),

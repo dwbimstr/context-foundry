@@ -577,9 +577,17 @@ policy-routed auto strategy retain their existing selection. Default context and
 ordinary `search` operation are unchanged.
 
 Cause: many definitions named ordinary words such as `read` can occupy all 32 context
-slots ahead of a body matching the complete behavioral query. This exception keeps
-the existing lexical scoring, 256-document window, four-per-file cap, final-read
-freshness and response budget. Dense results retain their existing precedence when
+slots ahead of a body matching the complete behavioral query. The candidate removes
+common English stop words from the prose query clauses and divides the existing
+256-document window into two disjoint 128-document windows: programming units and
+sections/blocks/unparsed text. Their ranked results alternate, code first. Each
+window still uses BM25; either filling reports candidate pressure. This protects
+implementation discovery from a documentation-only candidate window without raising
+the total bound. The four-per-file cap, final-read freshness and response budget
+remain. A lexical unit longer than 1,536 bytes delivers an exact, UTF-8-safe excerpt
+around the best matching line of its indexed document, with at most three preceding
+lines. Its handle names the actual excerpt range and its label says `excerpt`.
+Dense results retain their existing precedence and source ranges when
 present. Tracing adds a bounded `lexical_intent` event; no expected-answer labels enter
 selection. It changes no source index, vector recipe or cache identity. Development
 regressions and public repository comparisons do not establish held-out G2 acceptance.

@@ -95,6 +95,8 @@ macro_rules! neural_fault {
 }
 
 pub mod anchor;
+#[cfg(feature = "semantic")]
+pub(crate) mod area;
 pub mod cache;
 #[cfg(feature = "semantic")]
 pub mod driver;
@@ -113,11 +115,11 @@ pub mod provider;
 #[cfg(feature = "semantic")]
 pub mod query;
 pub mod status;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod supervisor;
 #[cfg(feature = "semantic")]
 pub mod tokenize;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod worker_runtime;
 
 pub mod work;

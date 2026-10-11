@@ -2102,6 +2102,15 @@ fn pack_task_evidence(
         }
     }
     let compiler_end = tail.len();
+    for observed in &plan.observed {
+        tail.push((format!("task-execution: {}\n", serde_json::json!({
+            "evidence":"observed_by_producer","kind":observed.observation.edge.kind,
+            "provider":observed.observation.provider,"execution":observed.observation.execution,
+            "from":observed.from.to_v2(),"to":observed.to.to_v2(),"test":observed.test.to_v2(),
+            "complete_coverage":false
+        })), vec![observed.from.clone(), observed.to.clone(), observed.test.clone()], false));
+    }
+    let observed_end = tail.len();
     for b in &context.briefs {
         let p = HandleRef::parse(&b.brief.cited_spans[0])?;
         let Some(h) = items.iter().filter_map(|i| i.handle.as_ref()).find(|h| {
@@ -2140,6 +2149,9 @@ fn pack_task_evidence(
                 kept.iter().filter(|&&i| i < relationship_count).count(),
                 kept.iter()
                     .filter(|&&i| i >= relationship_count && i < compiler_end)
+                    .count(),
+                kept.iter()
+                    .filter(|&&i| i >= compiler_end && i < observed_end)
                     .count()
             )
         ));

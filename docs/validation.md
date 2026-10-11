@@ -1,5 +1,181 @@
 # Validation
 
+## Linux worker, representations, evidence and scale — 2026-10-11
+
+Continued on `experimental/context-ecosystem`, Rust 1.90, four quota CPUs and no
+GPU. These results supersede the implementation gaps in the preceding checkpoint;
+they do not establish release or macOS/Metal acceptance. Raw artifacts are under
+`/workspace/.context-foundry-tools/validation-runs/`, outside Git. 013 stays off.
+
+**Normal embedding worker.** The exact-source-checked Gemma unused-logit allocation
+repair now applies to ordinary `embed-worker` builds. The retained diagnostic feature
+is an alias. Pinned llama.cpp remains `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`;
+the native recipe is `gemma2-pooled-output-v1`. CPU adapter revision **3** and Metal
+revision **4** give the corrected workers distinct vector identities. Old profiles
+and cache rows remain available with their original verified binaries; a new binary
+does not pretend to implement the old identity. The new Metal identity is untested.
+
+The ordinary Linux supervisor now starts the real worker from verified executable
+and model descriptors. Before model/IPC threads, the worker enforces seccomp syscall
+restrictions, affinity, hard address-space and CPU-time limits, and owner-pipe death
+handling, reusing the local-generation resource implementation. No workspace paths
+or network access are granted. Explicit development admission is still required.
+Fake-worker integration checks exercise syscall denials, limits, malformed replies,
+changed artifacts and owner death. The Linux packaging branch copies the executable
+and pinned native notice; this is not a signed macOS installation check.
+
+The real Gemma BF16 artifact remains SHA-256
+`68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216`.
+The actual tokenizer is `google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b`,
+SHA-256 `4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4`.
+Eight short strings have identical tokenizer.json/GGUF token IDs. Single/batch and
+retained-stock-vector comparisons pass cosine ≥0.9999 (observed minimum 0.99999528).
+Through the normal supervisor and IPC path, two admitted **8,192-token** evaluations,
+short single/batch comparisons and limit-plus-one refusal pass in **175,159 ms** under
+8 GiB and two CPU threads. Peak RSS was not separately measured in that IPC run;
+the earlier 2.72 GiB peak belongs to the diagnostic. An initial harness attempt
+correctly refused 8,192 tokens against a 512-token card allowance; its log is retained.
+Artifacts: `production-embedding-real-8192-admitted.log`,
+`production-tokenizer-parity.{log,json}`, `production-embedding-linux-tests.log`,
+and `production-linux-package.log`. Tested worker SHA-256:
+`8bf85740d78f8c5b7212bc30a25e42596b6491e392f892f24e7db329dd3bf5ff`.
+
+**Independent representations.** Opt-in `hierarchy-v1` keeps exact body-v1 inputs
+and adds separately embedded parent and file inputs. Short scopes retain all source;
+long scopes use bounded extractive declaration overviews. These are not averages of
+child vectors or claims that omitted source is represented. Equal source ranges can
+carry distinct input keys, in deterministic order. Tests cover migration, unchanged
+restart, changed bodies/parents/files, revert, deletion and bounded retained-card
+fallback. Existing body vectors remain reusable.
+
+Current multi-source briefs also have independent vectors in the existing cache.
+Their source dependencies, brief revision and transitive lineage are checked before
+binding and again before delivery. CLI and continuous MCP preparation share this
+path; brief changes wake an overview pass without forcing a whole-source rescan.
+The overview layer scans at most 256 bindings rather than adding another ANN owner;
+preparation refuses more than 4,096 brief rows or 256 eligible area briefs by name.
+Area counts are separate from source ANN coverage. Exact input reuse is tested across
+changed dependencies; stale/deleted source or replaced briefs cannot retain eligibility.
+Real-model superiority of this recipe over body-v1 is still unaccepted.
+
+**Relationships and observed evidence.** `python-http-v5` adds literal Flask routes
+and directly registered same-file Blueprints, prefix overrides, method lists and
+implicit HEAD/OPTIONS/static-route declarations. Source/configuration freshness and
+whole dependency proof still apply. Dynamic/escaped bindings, unsupported converters,
+nested/cross-file Blueprints and unrecognized registrations remain incomplete.
+The explicit Flask 3.1.2 / Werkzeug 3.1.9 runtime cross-check passes.
+
+`import-execution` accepts a bounded, completed producer artifact with positive
+`calls`/`covers` observations, source hashes, command/test identity and an exact
+artifact digest. It executes nothing. These are labeled `observed_by_producer`,
+not compiler facts, full coverage or execution attestation. Task composition emits
+an observation only when its caller, target and test source spans all survive the
+same delivery budget; changed endpoint/test sources suppress it. A separately run
+CPython fixture captures an actual `getattr` dispatch and 12 observations, imports
+them through the CLI, and excludes the unexecuted error branch. Static, budget and
+staleness checks also pass. Artifacts: `flask-runtime-test.log`,
+`observed-runtime-test.log`, `observed-task-test.log`.
+
+**Real-model 80,000-file lifecycle.** The admitted CPU worker, actual tokenizer,
+768-dimensional vectors, cache and ANN publication completed a 43,235,460-byte
+mixed-size corpus. It has **512 distinct content families repeated across 80,000
+paths**, so 86,250 source windows share **528 distinct model inputs**. This validates
+real-model integration and large provenance mappings; it is not 80,000 unique-body
+inference throughput or a representative repository distribution.
+
+| Operation | Elapsed | New inputs / calls | Result |
+| --- | ---: | ---: | --- |
+| Source index | 97,481 ms | — | 80,000 sources |
+| Cold semantic preparation | 469,389 ms | 528 / 72 | Complete; 80,464 model-input tokens |
+| Unchanged restart | 8,649 ms | 0 / 0 | Zero repartitioning |
+| One stored-source edit plus deletion | 18,836 ms | 1 / 1 | One repartitioned source |
+| Revert | 8,579 ms | 0 / 0 | Cached vector reused |
+
+First searchable semantic publication arrived at 28,916 ms. Cold provider time was
+270,731 ms and partition computation 70,671 ms; these are observed counters, not an
+isolated CPU-utilization comparison. Other sandbox builds ran during parts of the
+experiment. The separate real-query check loads the published index, embeds a query
+in 436 ms, and returns verified source in 1,965 tokens; query plus context delivery
+takes 1,148 ms, after 11,578 ms worker acquisition. It checks serving and source
+identity, not recall quality on this repetitive corpus. The 512-file pilot and all
+80,000-file reports are retained in `real-scale-pilot-512/`, `real-scale-80000/` and
+their logs. Budget: two preparation rounds of at most 900 seconds; one round sufficed.
+
+**Anchorless repair.** The opt-in candidate now uses two disjoint 128-document
+windows for code and prose, interleaves them within the existing 256-document cap,
+removes common prose stop words, and returns exact bounded excerpts around matching
+body lines. The starvation/late-body regression passes with unchanged freshness and
+budget checks. On the eight existing development labels, baseline delivery is **1/8**
+and candidate delivery **2/8**; traced/untraced bytes match. Artifact:
+`anchorless-diversified-v2/`. This is a measured local gain, not general or held-out
+acceptance. One expected source, `src/ingest.rs`, is excluded by the existing private-key
+marker policy; the policy was not weakened to increase this score. Historical G2
+inputs remain unavailable, and the six other missing deliveries are still open.
+
+**Paired 7B host tasks: negative.** OMP 18.6.0 runs the parser and overflow repairs
+once per arm, with 64 unrelated functions, an immutable external Rust oracle and
+protected harness files. Model: `Qwen/Qwen2.5-Coder-7B-Instruct-GGUF` revision
+`13fb94bfda8c8cf22497dc57b78f391a9acb426a`, Q4_K_M,
+SHA-256 `509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c`,
+4,683,073,536 bytes. The pinned llama.cpp server uses four CPU threads, no GPU,
+16,384 context, temperature/seed zero and 768 output tokens. Each arm has a 420-second
+limit. No retries, manual patches or oracle relaxation are counted as task success.
+
+| Task / arm | Input / output tokens | Context preparation + host | Verified task |
+| --- | ---: | ---: | --- |
+| Parser / full files | 4,003 / 157 | 0 + 128,789 ms | Failed; no edit |
+| Parser / composed | 2,128 / 164 | 451 + 74,132 ms | Failed; no edit |
+| Overflow / full files | 3,633 / 154 | 0 + 117,255 ms | Failed; no edit |
+| Overflow / composed | 2,059 / 159 | 483 + 72,034 ms | Failed; no edit |
+
+Each arm has one complete gateway request and zero cached-input tokens. The model
+emits JSON write requests as assistant text, so the host applies no patch. Host exit
+success is not task success. The baseline parser proposal would also fail compilation.
+Smaller prompts/latency do not establish benefit per verified completion. This is a
+public calibration, not held-out acceptance or a realistic multi-step benchmark.
+Gateway coverage remains `whole_run_unverified`; complete local receipts do not prove
+visibility into arbitrary host/provider traffic. Server identity is operator-observed,
+not remotely attested. The transport alias's prices do not describe this local model.
+
+The table includes context preparation and all recorded requests, but excludes common
+model acquisition/loading, oracle validation and energy. Loading took 2.48 s; acquisition
+includes a partial sequential download plus 234.97 s of resumed parallel transfer.
+No total monetary or amortized cost claim is made. Artifacts:
+`coder7-{parser,overflow}-v2/`, their logs, `coder7-task-server.log`,
+`../generation-fixture/coder7-artifact.json` and download logs. The earlier harness attempt used an invalid
+Rust path, failed its positive control before any model request and is retained
+separately. The server was stopped after the four arms completed.
+
+macOS/Metal/signing, representative unique-content scale, held-out retrieval and
+realistic multi-step task/memory economics remain distinct acceptance work; they
+are not all macOS blockers.
+
+**Code checks.** Rust 1.90 default all-target Clippy, no-default-feature Clippy and
+native `embed-worker` all-target Clippy pass with warnings denied. Across the ordinary
+suite and focused continuation runs, 1,064 tests pass (latest result per target,
+without counting reruns twice), plus the separate 21-case crash/recovery harness.
+The native embedding binary adds two passing unit tests; its three Linux supervisor
+checks also pass again. Explicit real-model, Flask and CPython checks are reported
+above, separately from fixture counts. Formatting, shell syntax and Markdown links
+pass. macOS-only tests and signed installation checks did not execute on Linux.
+
+The first broad run and a continuation exposed a race in the existing HTTP
+cancellation fixture: all 6,000 files could finish before DELETE. Its original
+isolated pass was insufficient. A test-only, workspace-scoped cancellation hold now
+keeps an admitted scan at a known boundary without blocking other workspaces or
+fault points. The full MCP target passes **90/90**, and semantic retrieval passes
+**79/79**. The library passes **216 tests** including brief-only area maintenance,
+change/forget wakeups without source reselection, exact duplicate-input reuse and
+refusal to create an area vector containing only its generic prefix. This fixes the
+fixture's synchronization without weakening stream-loss, overload, cancellation or
+partial-scan assertions.
+
+Logs: `ecosystem-default-suite.log`, `ecosystem-remaining-suite.log`,
+`final-area-tests.log`, `final-lib.log`, `final-integration-suite.log`,
+`final-{default,no-default,native}-clippy.log`, `final-native-tests.log`,
+`final-recovery.log`, `final-doctests.log` and `final-links.log`. This is sandbox
+implementation/validation, not independent cross-lab review or release acceptance.
+
 ## Feasible Linux repairs and task comparison — 2026-10-10
 
 Continued on `experimental/context-ecosystem`, Rust 1.90, with four visible quota
@@ -47,8 +223,9 @@ and the failed `pooled-8192.log`. To reproduce after the native build prerequisi
 in [CONTRIBUTING](../CONTRIBUTING.md), set `LLAMA_CPP_DIR` to the pinned object store,
 `FOUNDRY_EMBED_CPU_GGUF` to the verified model, and `FOUNDRY_EMBED_CPU_CONTEXT` to
 the desired window. Run the ignored `cpu_pinned_gemma_batch_geometry` binary test
-with `embed-worker` for the stock reference and `embed-worker-pooled-diagnostic`
-for the overlay. Extract the `CPU_EMBED_RESULT` JSON from the first log and supply
+at checkpoint `5b93332` with `embed-worker` for the stock reference and
+`embed-worker-pooled-diagnostic` for the overlay. Current ordinary builds include
+the repair; use the retained stock artifact for comparison. Extract the `CPU_EMBED_RESULT` JSON from the first log and supply
 it as `FOUNDRY_EMBED_CPU_REFERENCE` for the comparisons. Pipe output to a parent-owned
 log: the confined test process cannot write regular files. Keep the 480-second outer
 timeout for the 8,192 run. Profile `tokenizer.json` parity, independent parent/file/area

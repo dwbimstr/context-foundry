@@ -967,3 +967,21 @@ synthetic volume, not task diversity. The composed arm has complete usage; one c
 baseline request is unknown. Neither run establishes quality or total-cost savings.
 The public T003 fixture is not held out. See the current Linux continuation in
 [validation](../../docs/validation.md) for executed outcomes and limits.
+
+
+T009 observed evidence continuation (2026-10-11): explicit completed execution artifacts
+from 005 now supply bounded runtime neighbors. The final snapshot verifies caller,
+target and test source identities; an observation is emitted as `task-execution` only
+when all three source spans are actually delivered. Budget omission is visible in
+execution accounting. Static reference syntax retains `runtime_call: unverified` and
+`test_execution: not_observed`; importing observations does not rewrite those facts.
+Producer-reported execution is not complete test coverage, attestation or task success.
+The explicit Python runtime fixture and task packing/staleness checks are recorded in
+[validation](../../docs/validation.md).
+
+The free-form host harness now supports a second fixed arithmetic-overflow repair and
+an explicitly pinned Qwen2.5-Coder-7B model. Both tasks preserve immutable external
+oracles, protected files, one attempt per arm and full gateway receipt accounting.
+A run cannot claim success merely because the host exits cleanly or uses fewer tokens.
+These public calibration tasks do not replace held-out multi-step repository tasks,
+memory-intervention outcomes or complete amortized model/maintenance economics.

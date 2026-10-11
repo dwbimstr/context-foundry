@@ -32,8 +32,8 @@ pub const MIN_CARD_TOKENS: u32 = 16;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerSpec {
-    /// Absolute path of the signed bundle (`…/FoundryEmbed.app`) whose
-    /// executable is `foundry-embed`.
+    /// Absolute worker directory: signed `…/FoundryEmbed.app` on macOS, or
+    /// a Linux directory containing `foundry-embed`.
     pub bundle: PathBuf,
     /// Lowercase hex SHA-256 of the bundle's executable.
     pub executable_sha256: String,
@@ -42,6 +42,42 @@ pub struct WorkerSpec {
     /// path and the supervisor creates per-run directories under it, so the
     /// two always agree. Not part of the document function.
     pub scratch_root: PathBuf,
+}
+
+impl WorkerSpec {
+    pub fn executable(&self) -> PathBuf {
+        #[cfg(target_os = "macos")]
+        return self.bundle.join("Contents/MacOS/foundry-embed");
+        #[cfg(not(target_os = "macos"))]
+        return self.bundle.join("foundry-embed");
+    }
+}
+
+/// Linux worker resource controls, separate from document/vector identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpuLimits {
+    pub threads: u32,
+    pub seconds: u64,
+}
+impl Default for CpuLimits {
+    fn default() -> Self {
+        Self {
+            threads: 2,
+            seconds: 3600,
+        }
+    }
+}
+impl CpuLimits {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=64).contains(&self.threads) || !(1..=86400).contains(&self.seconds) {
+            return Err("CPU limits require 1..=64 threads and 1..=86400 lifetime seconds".into());
+        }
+        Ok(())
+    }
 }
 
 fn default_card_tokens() -> u32 {
@@ -82,6 +118,8 @@ pub struct SemanticProfile {
     pub memory_ceiling_bytes: u64,
     /// Upper bound on worker start, verification and model load.
     pub load_timeout_seconds: u64,
+    #[serde(default, skip_serializing_if = "CpuLimits::is_default")]
+    pub cpu: CpuLimits,
 }
 
 fn invalid(message: impl Into<String>) -> ProviderError {
@@ -149,6 +187,7 @@ impl SemanticProfile {
     }
 
     pub fn validate(&self) -> Result<(), ProviderError> {
+        self.cpu.validate().map_err(invalid)?;
         if self.v != PROFILE_VERSION {
             return Err(invalid(format!(
                 "profile version {} is not {PROFILE_VERSION}",
@@ -202,11 +241,12 @@ impl SemanticProfile {
                 geometry.inputs
             )));
         }
-        if let super::partition::Representation::Body { parent_tokens } = self.representation
+        if let super::partition::Representation::Body { parent_tokens }
+        | super::partition::Representation::Hierarchy { parent_tokens } = self.representation
             && parent_tokens > self.card_tokens / 4
         {
             return Err(invalid(
-                "body-v1 parent_tokens must be at most one quarter of card_tokens",
+                "body/hierarchy parent_tokens must be at most one quarter of card_tokens",
             ));
         }
         self.check_scratch_disjoint()
@@ -534,7 +574,7 @@ impl VerifiedArtifacts {
         Ok(&self.tokenizer)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(crate) fn model_fd(
         &self,
         profile: &SemanticProfile,

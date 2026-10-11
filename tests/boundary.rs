@@ -33,6 +33,84 @@ fn read(e: &Engine) -> boundary::Relations {
     .unwrap()
 }
 #[test]
+fn flask_blueprint_prefix_override_methods_and_source_freshness() {
+    let (_dir, e) = fixture();
+    let body = "from flask import Flask, Blueprint\napp = Flask(__name__)\napi = Blueprint('api', __name__, url_prefix='/old')\n@api.route('/items', methods=['GET', 'POST'])\ndef items(): return {'items': []}\napp.register_blueprint(api, url_prefix='/v1')\n";
+    e.replace_source("service.py", body).unwrap();
+    publish(&e);
+    let relations = read(&e);
+    assert!(relations.incomplete_paths.is_empty(), "{relations:?}");
+    assert!(
+        relations
+            .relations
+            .iter()
+            .all(|r| r.resolution == "exact_key" && r.providers.len() == 1)
+    );
+    let proof = &relations.relations[0].providers[0];
+    assert_eq!(
+        proof.dependencies.len(),
+        3,
+        "blueprint, registration and app declaration"
+    );
+    assert_eq!(publish(&e).parsed, 0);
+    for changed in [body.replace("url_prefix='/v1'","url_prefix=prefix"),
+        body.replace("methods=['GET', 'POST']","methods=verbs"),
+        format!("{body}configure(api)\n"),
+        body.replace("'/items'","'/items/<uuid:id>'"),
+        body.replace("app.register_blueprint(api, url_prefix='/v1')", "app.register_blueprint(api, url_prefix='/v1')\napp.add_url_rule('/dynamic', view_func=items)")] {
+        e.replace_source("service.py",&changed).unwrap();
+        assert!(read(&e).relations.iter().all(|r|r.resolution=="incomplete"));
+        publish(&e);
+        assert!(read(&e).incomplete_paths.iter().any(|p|p=="service.py"));
+    }
+    e.replace_source("service.py", body).unwrap();
+    publish(&e);
+    assert!(
+        read(&e)
+            .relations
+            .iter()
+            .all(|r| r.resolution == "exact_key")
+    );
+}
+
+#[test]
+#[ignore = "explicit runtime cross-check requires Flask 3.1.2; indexing never executes this"]
+fn real_flask_blueprint_contract() {
+    let (_dir, e) = fixture();
+    let body = "from flask import Flask, Blueprint\napp = Flask(__name__)\napi = Blueprint('api', __name__, url_prefix='/old')\n@api.route('/items/<int:item>', methods=['GET', 'POST'])\ndef items(item): return {'item': item}\napp.register_blueprint(api, url_prefix='/v1')\n";
+    e.replace_source("service.py", body).unwrap();
+    e.replace_source(
+        "client.py",
+        "import requests\ndef fetch(): return requests.get('http://catalog/v1/items/42')\n",
+    )
+    .unwrap();
+    publish(&e);
+    let r = read(&e);
+    assert!(r.relations.iter().any(|r| {
+        r.consumer
+            .key
+            .as_ref()
+            .is_some_and(|k| k.path == "/v1/items/42")
+            && r.resolution == "route_template"
+    }));
+    let program = format!(
+        "{body}\nfrom importlib.metadata import version\nc=app.test_client()\nassert c.get('/v1/items/42').json == {{'item':42}}\nassert c.post('/v1/items/42').status_code == 200\nassert c.head('/v1/items/42').status_code == 200\nassert c.get('/old/items/42').status_code == 404\nassert c.get('/v1/items/-1').status_code == 404\nprint(version('flask'))\n"
+    );
+    let output = Command::new(
+        std::env::var("FOUNDRY_FRAMEWORK_PYTHON").unwrap_or_else(|_| "python3".into()),
+    )
+    .args(["-I", "-B", "-c", &program])
+    .output()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    println!("Flask {}", String::from_utf8_lossy(&output.stdout).trim());
+}
+
+#[test]
 fn publishes_both_spans_reuses_and_recovers_after_restart() {
     let (dir, e) = fixture();
     assert_eq!(publish(&e).parsed, 4);

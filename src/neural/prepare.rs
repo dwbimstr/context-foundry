@@ -145,6 +145,9 @@ pub struct PrepareReport {
     pub reused_partitions: u64,
     pub eligible_units: u64,
     pub embedded_units: u64,
+    /// Independently embedded multi-source brief overviews (outside source ANN).
+    pub area_vectors: u64,
+    pub embedded_areas: u64,
     pub reused_cached_units: u64,
     pub missing_units: u64,
     pub document_calls: u64,
@@ -416,7 +419,7 @@ impl PartitionWorkers {
 }
 
 /// The CLI entry: the provider seam resolves to the supervised worker on
-/// macOS, and to an explicit `isolation_unavailable` elsewhere.
+/// macOS/Linux, and to an explicit `isolation_unavailable` elsewhere.
 pub fn cli_prepare(
     store_dir: &Path,
     profile_path: &Path,
@@ -470,9 +473,9 @@ pub fn cli_prepare_with_priorities(
 /// accepted isolation profile admits execution, every request fails with
 /// `isolation_unavailable` and no model work is attempted.
 fn supervisor_acquire() -> Acquire {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     return Box::new(crate::neural::supervisor::acquire_verified_until);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     return Box::new(
         |_profile: &SemanticProfile,
          _artifacts: &std::sync::Arc<crate::neural::profile::VerifiedArtifacts>,
@@ -503,6 +506,8 @@ pub(crate) fn snapshot_progress(
     report.bootstrap.elapsed_ms = elapsed_ms(started);
     report.bootstrap.selected_sources = report.sources;
     report.bootstrap.embedded_units = report.embedded_units;
+    report.bootstrap.area_vectors = report.area_vectors;
+    report.bootstrap.embedded_areas = report.embedded_areas;
     report.bootstrap.reused_cached_units = report.reused_cached_units;
     report.bootstrap.input_tokens = report.input_tokens;
     report.bootstrap.published_entries = report.index_entries;
@@ -1052,6 +1057,73 @@ fn inner(
         .eligible_units
         .saturating_sub(report.reused_cached_units + report.embedded_units);
 
+    if stop.is_none() {
+        let areas = super::area::inputs(engine, profile, &tokenizer, control)?;
+        super::area::prune(engine, profile, &areas, control)?;
+        for area in areas {
+            if let Some(halted) = admit(control, budget, deadline, reserve) {
+                stop = Some(halted);
+                break;
+            }
+            if !super::area::cached(engine, profile, &area)? {
+                if provider.is_none() {
+                    let verified = artifacts
+                        .take()
+                        .expect("first acquisition")
+                        .complete(profile, control)?;
+                    let acquired = acquire(
+                        profile,
+                        &std::sync::Arc::new(verified),
+                        options.development,
+                        control,
+                    )?;
+                    if acquired.descriptor().digest() != function_digest {
+                        return Err(FoundryError::Semantic {
+                            code: "provider_malformed",
+                            message: "area provider identity differs".into(),
+                        });
+                    }
+                    provider = Some(acquired);
+                    report.provider_state = Some("ready");
+                }
+                if let Some(halted) = admit(control, budget, deadline, reserve) {
+                    stop = Some(halted);
+                    break;
+                }
+                let batch = Batch {
+                    keys: vec![area.key().to_owned()],
+                    inputs: vec![TokenizedInput {
+                        ids: area.ids.clone(),
+                    }],
+                };
+                match flush_batch(
+                    &steps,
+                    provider.as_mut().expect("acquired area provider").as_mut(),
+                    batch,
+                    options.cache_cap_bytes,
+                    control,
+                    report,
+                ) {
+                    Ok(()) => report.embedded_areas += 1,
+                    Err(StopOrError::Stop(partial)) => {
+                        stop = Some(partial);
+                        break;
+                    }
+                    Err(StopOrError::Error(error)) => return Err(error),
+                }
+            }
+            if super::area::bind(engine, profile, &area.record, control)? {
+                report.area_vectors += 1;
+            } else {
+                stop = Some(Stop::partial(
+                    "stale_area",
+                    "area changed during preparation",
+                ));
+                break;
+            }
+        }
+    }
+
     // --- Publication: new vectors were committed, so replay the generation
     // from the cache under the run control — after a complete pass AND after
     // a bounded stop, so partial coverage is searchable. A cancelled run
@@ -1316,6 +1388,7 @@ enum SourceCards {
 enum SourcePlan {
     Address(Vec<Unit>),
     Body(Vec<partition::body::Span>),
+    Hierarchy(Vec<partition::hierarchy::Span>),
 }
 
 /// Cards a selection step found missing, not yet rendered: per source
@@ -1486,6 +1559,22 @@ impl Cards<'_> {
                         |_, card| accept(card),
                     )?;
                 }
+                partition::Representation::Hierarchy { parent_tokens } => {
+                    for span in partition::hierarchy::plan(
+                        body,
+                        Lang::from_path(&path),
+                        &self.recipe(),
+                        parent_tokens as usize,
+                        self.tokenizer,
+                    )? {
+                        accept(partition::hierarchy::card(
+                            body,
+                            &span,
+                            &self.recipe(),
+                            self.tokenizer,
+                        )?);
+                    }
+                }
             }
             retained = kept;
             Ok(tuples)
@@ -1547,12 +1636,22 @@ impl Cards<'_> {
                                 )?;
                                 SourcePlan::Body(spans)
                             }
+                            partition::Representation::Hierarchy { parent_tokens } => {
+                                SourcePlan::Hierarchy(partition::hierarchy::plan(
+                                    body,
+                                    Lang::from_path(&source.path),
+                                    &recipe,
+                                    parent_tokens as usize,
+                                    self.tokenizer,
+                                )?)
+                            }
                         };
                         let _ = units.set(plan);
                     }
                     match units.get().expect("planned source") {
                         SourcePlan::Address(units) => units.len(),
                         SourcePlan::Body(spans) => spans.len(),
+                        SourcePlan::Hierarchy(spans) => spans.len(),
                     }
                 }
                 SourceCards::Prepared(prepared) => {
@@ -1585,6 +1684,12 @@ impl Cards<'_> {
                         SourcePlan::Body(spans) => {
                             partition::body::card(body, &spans[index], &recipe, self.tokenizer)?
                         }
+                        SourcePlan::Hierarchy(spans) => partition::hierarchy::card(
+                            body,
+                            &spans[index],
+                            &recipe,
+                            self.tokenizer,
+                        )?,
                     },
                 };
                 if (card.start, card.end, card.input_key.as_str())
@@ -2274,6 +2379,7 @@ mod tests {
         for representation in [
             partition::Representation::Address,
             partition::Representation::Body { parent_tokens: 16 },
+            partition::Representation::Hierarchy { parent_tokens: 16 },
         ] {
             let (_dir, engine, mut profile) = partition_fixture();
             profile.representation = representation;
@@ -2312,6 +2418,21 @@ mod tests {
                     )
                     .unwrap();
                     expected
+                }
+                partition::Representation::Hierarchy { parent_tokens } => {
+                    partition::hierarchy::plan(
+                        &body,
+                        Lang::from_path("lib.rs"),
+                        &cards.recipe(),
+                        parent_tokens as usize,
+                        &counting,
+                    )
+                    .unwrap()
+                    .iter()
+                    .map(|span| {
+                        partition::hierarchy::card(&body, span, &cards.recipe(), &counting).unwrap()
+                    })
+                    .collect()
                 }
             };
             let once = counting.encodes.load(Ordering::Relaxed);
@@ -2378,7 +2499,9 @@ mod tests {
                 assert_eq!(
                     counting.encodes.load(Ordering::Relaxed),
                     once * if kept { 1 } else { 2 }
-                        + if !kept && !representation.is_address() {
+                        + if !kept
+                            && matches!(representation, partition::Representation::Body { .. })
+                        {
                             expected.len()
                         } else {
                             0
