@@ -1,5 +1,7 @@
 # Context packet: restarting this work elsewhere
 
+**Latest checkpoint, 2026-10-11:** start with the [resumable implementation handoff](resume-context-ecosystem.md). It supersedes the older status paragraphs below; the six acceptance gates are still open in part.
+
 Written 2026-10-08 so that a fresh agent (for example a cloud agent) can continue
 without the original sessions, their memory store or their temporary directories. Read
 it after [AGENTS.md](../AGENTS.md), the [constitution](../.specify/memory/constitution.md)

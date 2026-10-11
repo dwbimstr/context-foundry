@@ -1,5 +1,7 @@
 # Workflows worth building
 
+**Latest checkpoint, 2026-10-11:** start with the [resumable implementation handoff](../docs/resume-context-ecosystem.md). It supersedes the older status paragraphs below; the six acceptance gates are still open in part.
+
 Latest continuation, 2026-10-11: hierarchy preparation publishes an initial view of
 each selected source before exhaustive body refinement. A cold real-model check
 publishes views for all 274 admitted Foundry files while correctly retaining partial
