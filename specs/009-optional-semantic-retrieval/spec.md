@@ -1177,11 +1177,38 @@ late-body excerpts improve candidate delivery to 2/8 against baseline 1/8; broad
 retrieval usefulness remains open. No expected labels enter selection. See the
 [executed Linux results](../../docs/validation.md).
 
+The October 11 continuation reuses the positional body index for distinct-term
+coverage with a bounded proximity tie-breaker, and admits alphabetic hyphenated
+prose. It stays behind the same experimental flag. A frozen Foundry corpus gives
+2/8 required spans versus 1/8 from the saved previous executable; six fresh public
+Rust questions initially give 0/6 in all arms. Neither result establishes a general repair or
+held-out acceptance. The diagnostic supports frozen external roots/labels and a
+same-store previous executable, with source-admission observations kept distinct
+from bounded trace attribution. Rank/packing work remains open.
+
+The representative partial-index probe subsequently exposed dense-subset dominance.
+The same opt-in now interleaves lexical/dense placement, lexical first, only for
+anchorless prose with partial coverage at the final read's source revision. Existing
+caps and freshness checks still apply. Complete coverage, explicit symbols and
+ordinary search preserve T004 placement. This amends the experimental context rule
+linked above; it is not a new provider, corpus scan or default promotion.
+
+Inspection of the public Rust losses also found three relevant rank-2 callables
+whose excerpts contained leading documentation but omitted the declaration. The
+experimental rule now starts a bounded excerpt at the callable head in that case;
+matches within the body retain their focused window. Both remain one exact source
+range under the same 1,536-byte ceiling. Re-evaluation after inspecting these losses
+is development evidence, not a fresh holdout. The earlier failed comparison stays
+in validation alongside the follow-up result: 3/6 required whole-line spans versus
+0/6 controls after preserving declaration-line indentation. Foundry remains 2/8
+versus 1/8. General ranking, per-file selection and macro-contained evidence remain
+open.
+
 ### T006 — Bound and parallelize semantic partition computation
 
 Status: implemented experimentally in the shared CLI/MCP pipeline; sandbox evidence
 is in [validation](../../docs/validation.md#large-repository-architecture-and-parallel-partitioning--2026-10-09).
-Real-model throughput and task benefit remain unmeasured.
+Bounded representative CPU progress is recorded in [current validation](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11); complete repository throughput and task benefit remain unaccepted.
 
 Selected 2026-10-09 for the experimental branch, following the owner's large-repository
 architecture correction. Current `partition_page` tokenizes serially inside a redb
@@ -1890,3 +1917,16 @@ now completes 80,000 repeated-content files with 512 content families and 528 un
 inputs, plus real query/ANN delivery. See [validation](../../docs/validation.md) for
 counts and times. This does not close unique-content scale, long-context retrieval
 quality, independent-representation task benefit, late chunking or Metal acceptance.
+
+
+Representative scale continuation (2026-10-11): a pinned Rust 1.90.0 snapshot has
+55,075 files and 53,897 distinct file contents. Indexing admits 53,955 sources in
+138 s. Real Gemma CPU preparation/resume/edit/revert publishes 582 current cards and
+passes current-source serving checks, but 53,913 sources remain unpartitioned after
+the bounded run. Cold inference takes 542 s versus 0.5 s partition computation.
+This is representative partial-progress evidence, not full 60–80k acceptance.
+Preparation reports now include the existing publication's corpus `coverage`, only
+when source revision/function/recipe still match; otherwise it is null. Run counters
+remain explicitly run-local. No new scan, durable state or on-disk integrity claim
+is introduced. [Validation](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11)
+records the preserved inputs, budgets, remaining coverage and cache checks.

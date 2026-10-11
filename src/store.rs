@@ -16,7 +16,9 @@ use std::cmp::Reverse;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use tantivy::collector::{Count, TopDocs};
-use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery};
+use tantivy::query::{
+    BooleanQuery, BoostQuery, ConstScoreQuery, Occur, PhraseQuery, Query, TermQuery,
+};
 use tantivy::schema::{
     FAST, Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
@@ -3119,6 +3121,27 @@ fn ranked_context_item(
     if focus.saturating_sub(from) > 512 {
         from = focus;
     }
+    // Long introductory docs can match well while leaving the callable itself
+    // entirely outside the excerpt. In that case expose its declaration and
+    // implementation start. Matches within the body retain their focused window.
+    let head = candidate.unit_head as usize;
+    let (start, text, from, focus) = if matches!(candidate.kind.as_str(), "fn" | "method")
+        && start + focus < head
+        && head >= start + (from + 1536).min(text.len())
+    {
+        let start = body
+            .get(..head)
+            .ok_or_else(|| FoundryError::CorruptStore("callable head outside source".into()))?
+            .rfind('\n')
+            .map_or(0, |at| at + 1)
+            .max(candidate.unit_start as usize);
+        let text = body
+            .get(start..candidate.unit_end as usize)
+            .ok_or_else(|| FoundryError::CorruptStore("callable head outside source".into()))?;
+        (start, text, 0, head - start)
+    } else {
+        (start, text, from, focus)
+    };
     let mut to = (from + 1536).min(text.len());
     while !text.is_char_boundary(to) {
         to -= 1;
@@ -3175,8 +3198,62 @@ fn prose_query(query: &str) -> bool {
             .contains(&words[0].to_ascii_lowercase().as_str())
         && words.iter().all(|word| {
             let word = word.trim_end_matches(['?', '.', ',', ':']);
-            !word.is_empty() && word.chars().all(char::is_alphabetic)
+            word.split('-')
+                .all(|part| !part.is_empty() && part.chars().all(char::is_alphabetic))
         })
+}
+
+/// An unmarked capital inside a prose compound (e.g. Cpu-heavy) is not an
+/// explicit symbol request. Marked/shaped identifiers and standalone capitals
+/// still use the ordinary anchor rules, including multi-root selections.
+fn prose_compound(query: &str, anchor: &AnchorCandidate) -> bool {
+    anchor.group == 3
+        && (query
+            .get(..anchor.position)
+            .is_some_and(|s| s.ends_with('-'))
+            || anchor
+                .position
+                .checked_add(anchor.text.len())
+                .and_then(|end| query.get(end..))
+                .is_some_and(|s| s.starts_with('-')))
+}
+
+/// Distinct concept coverage dominates frequency/rarity for prose. Adjacent
+/// concepts within 16 positions break ties, with a total bonus below one term.
+/// This uses the existing positional index; no expansion corpus or extra scan.
+fn prose_lexical(query: &str, body: Field) -> Box<dyn Query> {
+    let mut words = Vec::new();
+    for word in analyzed_terms(crate::syntax::code_subtokens, query) {
+        if !prose_stopword(&word) && !words.contains(&word) {
+            words.push(word);
+            if words.len() == 64 {
+                break;
+            }
+        }
+    }
+    let mut clauses: Vec<Box<dyn Query>> = words
+        .iter()
+        .map(|word| {
+            Box::new(ConstScoreQuery::new(
+                Box::new(TermQuery::new(
+                    Term::from_field_text(body, word),
+                    IndexRecordOption::Basic,
+                )),
+                1.0,
+            )) as Box<dyn Query>
+        })
+        .collect();
+    let bonus = 0.5 / words.len().max(1) as f32;
+    for pair in words.windows(2) {
+        let mut phrase = PhraseQuery::new(
+            pair.iter()
+                .map(|w| Term::from_field_text(body, w))
+                .collect(),
+        );
+        phrase.set_slop(16);
+        clauses.push(Box::new(ConstScoreQuery::new(Box::new(phrase), bonus)));
+    }
+    Box::new(BooleanQuery::union(clauses))
 }
 
 /// The two-tier collection of one query, before revalidation.
@@ -4775,16 +4852,19 @@ impl Engine {
         let mut tier1_full = false;
         let parsed = QueryAnchors::parse(query);
         let qualifiers: Vec<u64> = parsed.qualifiers.iter().map(|q| hash64(q)).collect();
-        let anchors = match selection.anchors {
+        let mut anchors = match selection.anchors {
             Some(chosen) => chosen.to_vec(),
             None => parsed.select(|candidate| {
                 control.check()?;
                 exact_case_defined(&searcher, fields, filter.as_deref(), &candidate.text)
             })?,
         };
+        if selection.prose && prose_query(query) {
+            anchors.retain(|anchor| !prose_compound(query, anchor));
+        }
         let prose = selection.prose && anchors.is_empty() && prose_query(query);
         if prose && let Some(trace) = control.trace() {
-            trace.record(serde_json::json!({"stage":"lexical_intent", "intent":"anchorless_prose", "exact_run_promotion":false}));
+            trace.record(serde_json::json!({"stage":"lexical_intent", "intent":"anchorless_prose", "exact_run_promotion":false, "scoring":"distinct_terms_proximity_v1", "term_limit":64}));
         }
         for anchor in anchors {
             // The anchor's window (context-v2 § Resolver order): every
@@ -4919,7 +4999,11 @@ impl Engine {
                 .first_or_default_col(0);
             move |doc: DocId, score: Score| (score, Reverse(key_hash.get_val(doc)))
         });
-        let lexical: Box<dyn Query> = Box::new(BooleanQuery::union(clauses));
+        let lexical: Box<dyn Query> = if prose {
+            prose_lexical(query, fields.body)
+        } else {
+            Box::new(BooleanQuery::union(clauses))
+        };
         let mut full = false;
         let mut tier2 = Vec::new();
         let mut collect = |query: Box<dyn Query>| -> FResult<()> {
@@ -5245,8 +5329,29 @@ impl Engine {
                 placed.push(((location.path.clone(), location.start, location.end), true));
             }
         }
-        // Then the lexical candidates in today's order (tier 1, tier 2).
-        placed.extend(lexical.iter().map(|candidate| (candidate.unit(), false)));
+        let freshness = self.freshness_in(&tx)?;
+        let word = dense.coverage_at(freshness.source_revision);
+        // A small prepared subset must not consume all early prose slots while
+        // the rest of the current repository is available only lexically. This
+        // opt-in admission uses this SAME final read's coverage and freshness.
+        // Complete coverage, explicit anchors and ordinary search stay dense-first.
+        if prose && word == "partial" {
+            let mut dense_order = std::mem::take(&mut placed).into_iter();
+            let mut lexical_order = lexical.iter().map(|c| (c.unit(), false));
+            loop {
+                let (lexical, dense) = (lexical_order.next(), dense_order.next());
+                if lexical.is_none() && dense.is_none() {
+                    break;
+                }
+                placed.extend(lexical);
+                placed.extend(dense);
+            }
+            if let Some(trace) = control.trace() {
+                trace.record(serde_json::json!({"stage":"placement_policy","policy":"partial_prose_interleave_v1","lexical_first":true}));
+            }
+        } else {
+            placed.extend(lexical.iter().map(|candidate| (candidate.unit(), false)));
+        }
         // The candidate carrying each lexical unit: its first (best-ranked)
         // current document, as in the baseline.
         let mut by_unit: std::collections::HashMap<(String, u64, u64), &Candidate> =
@@ -5360,10 +5465,8 @@ impl Engine {
             }
             items.push(item);
         }
-        let freshness = self.freshness_in(&tx)?;
         // The word describes THIS read (a context recomputes it against its
         // own later final read).
-        let word = dense.coverage_at(freshness.source_revision);
         Ok(CandidateBatch {
             freshness,
             items,

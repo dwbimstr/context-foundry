@@ -366,6 +366,33 @@ fn cold_waves_acquire_once_and_low_budget_does_not_start_a_worker() {
 }
 
 #[test]
+fn partial_prepare_reports_corpus_coverage_separately_from_run_counters() {
+    let paths: Vec<_> = (0..20).map(|i| format!("note{i:02}.md")).collect();
+    let sources: Vec<_> = paths
+        .iter()
+        .map(|p| (p.as_str(), "# A note\nUseful source detail.\n"))
+        .collect();
+    let mut env = Env::new(&sources);
+    let partial = env.prepare(4); // shorter than the publication reserve
+    assert!(partial.partial);
+    assert_eq!(partial.document_calls, 0);
+    let coverage = partial.coverage.expect("published partial corpus counts");
+    assert_eq!(coverage.sources, 20);
+    assert!(coverage.unpartitioned_sources > 0);
+    assert_eq!(coverage.searchable_current_units, 0);
+    assert_eq!(
+        coverage.source_revision,
+        env.open().source_revision().unwrap()
+    );
+    let complete = env.prepare(60);
+    let coverage = complete.coverage.unwrap();
+    assert!(!complete.partial);
+    assert_eq!(coverage.sources, 20);
+    assert_eq!(coverage.unpartitioned_sources, 0);
+    assert_eq!(coverage.searchable_current_units, coverage.eligible_units);
+}
+
+#[test]
 fn edited_input_reembeds_only_its_units() {
     let (mut env, first) = first_preparation(&[
         ("a.md", &body(100)),

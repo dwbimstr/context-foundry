@@ -985,3 +985,22 @@ oracles, protected files, one attempt per arm and full gateway receipt accountin
 A run cannot claim success merely because the host exits cleanly or uses fewer tokens.
 These public calibration tasks do not replace held-out multi-step repository tasks,
 memory-intervention outcomes or complete amortized model/maintenance economics.
+
+The 2026-10-11 continuation checks native tool-call support before task runs. Pinned
+Qwen3-4B-Instruct-2507 supplies real calls where the retained 7B backend fails that
+protocol. The first read/write-only repairs make edits but all fail independent
+checks. The same harness now supports a published `percent-encoding` 2.3.2 seeded
+regression: exact source hashes, original-source positive control, seeded negative
+control, no-alloc/alloc compilation and external malformed/valid/UTF-8/borrowing
+checks. This is public upstream calibration, not a held-out discovery task.
+
+A separately selected parser recipe enables bash and the existing visible fixture
+checks, with compilation outside the protected workspace. The external oracle is
+unchanged and never supplied as feedback. Both arms share the same task budget and
+tool recipe; changing the recipe starts a distinct experiment and retains the failed
+read/write-only attempts. Completion-cost ratios require two verified patches and
+complete request usage. Common model acquisition/loading, energy and amortized
+maintenance stay explicit exclusions, not inferred savings. In the executed public-check
+pair, the full-file control passes; composed context fails at its time limit after
+more known input/output tokens and one unknown request. T006 remains unaccepted. See
+[current results](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11).

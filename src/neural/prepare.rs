@@ -140,9 +140,11 @@ pub struct PrepareReport {
     /// The run's cache cap in bytes (the operator's setting, default
     /// [`cache::DEFAULT_CACHE_CAP_BYTES`]), recorded in the state row.
     pub cache_cap_bytes: u64,
+    /// Sources examined in this run, not the total admitted corpus.
     pub sources: u64,
     pub partitioned_sources: u64,
     pub reused_partitions: u64,
+    /// Cards examined in this run. A partial run may not visit every partition.
     pub eligible_units: u64,
     pub embedded_units: u64,
     /// Independently embedded multi-source brief overviews (outside source ANN).
@@ -150,6 +152,10 @@ pub struct PrepareReport {
     pub embedded_areas: u64,
     pub reused_cached_units: u64,
     pub missing_units: u64,
+    /// Last publication's corpus-wide counts, only when source revision, function
+    /// and recipe are still current. None means unknown; this is not a fresh
+    /// on-disk audit. Includes unpartitioned sources, unlike the run counters.
+    pub coverage: Option<cache::CoverageSnapshot>,
     pub document_calls: u64,
     /// Real-tokenizer token count of the document inputs sent in this run's
     /// document calls (prefix and special tokens included).
@@ -671,6 +677,16 @@ pub(crate) fn finalize(
     }
     report.cache_entries = totals_rows;
     report.cache_bytes = totals_bytes;
+    let revision = engine.source_revision()?;
+    report.coverage = final_state
+        .coverage
+        .as_ref()
+        .filter(|coverage| {
+            coverage.source_revision == revision
+                && coverage.function_digest == report.function_digest
+                && coverage.recipe_id == report.recipe_id
+        })
+        .cloned();
     engine.semantic_set_state(&final_state)
 }
 

@@ -1576,6 +1576,97 @@ fn partial_coverage_serves_prepared_vectors_beside_baseline_candidates_and_says_
     assert!(dusk.semantic);
 }
 
+#[test]
+fn experimental_partial_prose_preserves_unprepared_lexical_evidence_early() {
+    use context_foundry::store::ContextOptions;
+    let mut corpus = Corpus::new(&[]);
+    corpus
+        .engine_mut()
+        .replace_source(
+            "docs/kiln.md",
+            "# Kiln log\n\nThe kiln was fired twice this week.\n",
+        )
+        .unwrap();
+    corpus.engine_mut().refresh(&Control::unbounded()).unwrap();
+    let runtime = corpus.runtime();
+    let query = "twilight onset kiln";
+    let window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let context = |enabled| {
+        corpus
+            .engine()
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Corpus::control(),
+                &ContextOptions {
+                    dense: Some(&window),
+                    experimental_behavior: enabled,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let ordinary = context(false);
+    assert_eq!(
+        ordinary.batch.items[0].handle.as_ref().unwrap().path,
+        DUSK_PATH
+    );
+    let experimental = context(true);
+    assert_eq!(experimental.batch.semantic.as_deref(), Some("partial"));
+    assert_eq!(
+        experimental.batch.items[0].handle.as_ref().unwrap().path,
+        "docs/kiln.md"
+    );
+    assert!(experimental.batch.items[0].semantic.is_none());
+    assert!(
+        experimental
+            .batch
+            .items
+            .iter()
+            .any(|i| i.semantic.is_some())
+    );
+    let packed = response::pack_enriched_context(
+        &experimental,
+        None,
+        response::Budget::request(512),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.tokens <= 512 && packed.text.contains("kiln was fired"));
+    // Stale lexical bytes remain ineligible even when they would win placement.
+    corpus
+        .engine()
+        .replace_source("docs/kiln.md", "# Changed\nUnrelated text.\n")
+        .unwrap();
+    let current = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(
+        current
+            .batch
+            .items
+            .iter()
+            .all(|i| i.handle.as_ref().is_none_or(|h| h.path != "docs/kiln.md"))
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Crowding, preview, lexical span, attribution.
 // ---------------------------------------------------------------------------

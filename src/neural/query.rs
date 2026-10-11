@@ -8,7 +8,7 @@
 //!
 //! 009 T004: only a query without an anchor reaches this module (the
 //! request path decides that before any model call); the candidate assembly
-//! places the window's units first, in similarity order, ahead of the
+//! normally places the window's units first, in similarity order, ahead of the
 //! lexical candidates (`Engine::search_candidates_semantic`). Nothing here
 //! reranks, rewrites the query or calls a second model. A failure at any
 //! step is a NAMED fallback ([`Fallback`]) for the baseline path; it never

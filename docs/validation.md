@@ -1,5 +1,221 @@
 # Validation
 
+## Retrieval, scale and host economics — 2026-10-11
+
+Continued on `experimental/context-ecosystem`, Rust 1.90, Linux with a four-CPU
+quota and no GPU. Artifacts and frozen plans are outside Git under
+`/workspace/.context-foundry-tools/validation-runs/quality-scale-economics-v3/`.
+This checkpoint does not promote defaults or establish release acceptance.
+The saved final CLI executable is pinned by `candidate-artifact.json`, SHA-256
+`a11838c6578dd780e53c7b73c66c1e01a8f7c48f66328ceee43850f870bf0f39`.
+
+**Retrieval.** Final development delivery is **2/8 versus 1/8** on frozen Foundry
+source and **3/6 versus 0/6** on the inspected Rust questions, under unchanged budgets.
+General retrieval acceptance remains open. The existing opt-in scores distinct non-stopword coverage before
+bounded adjacent-term proximity. Repeated or rare single terms cannot outweigh an
+additional covered term. Alphabetic hyphenated prose is admitted while marked/shaped
+symbols retain their normal behavior. Candidate windows, source checks and budgets
+are unchanged. Regression fixtures cover repetition, proximity, compounds, global
+anchor selections and explicit symbols.
+
+The frozen `ebf28f8` source archive was indexed once for a same-store comparison.
+The saved previous executable (SHA-256
+`81b80c9d1cfd554771bcc6a69602d90ef7d48854a8856369967fa71f05897010`)
+delivers **1/8** expected spans there; the candidate delivers **2/8**. This is a new
+corpus/binary comparison, not a reproduction of the earlier checkpoint's 2/8 result.
+Six public Rust-library questions were frozen before candidate evaluation. The
+initial scoring-only comparison delivers **0/6** required spans in all three arms.
+Some discovery losses move to packing, but final delivery remains inadequate.
+The public probes are neither blind G2 nor task-completion evidence; the missing
+preserved G2 inputs remain missing. No general retrieval improvement is established.
+The diagnostic now supports pinned external corpora/labels and previous executables,
+checks label hashes/ranges and distinguishes source-admission observations from
+trace-attributed ranking losses. The existing private-key marker exclusion stays.
+
+A follow-up guard, selected after the real partial-coverage probe, alternates lexical
+and dense placement (lexical first) for experimental anchorless prose when semantic
+coverage is partial. It keeps current unprepared-source evidence early instead of
+letting a small prepared subset occupy every initial slot. Complete coverage,
+explicit anchors and ordinary search retain dense precedence. The six-question
+lexical comparison above predates this separate partial-coverage guard and is not
+claimed as its acceptance result.
+
+The next packing candidate follows the observed rank-2 losses: a callable hit in
+long leading documentation now exposes up to 1,536 exact bytes from its declaration
+head when the matching window would otherwise omit that head. Deep body matches
+still retain their focused excerpt. This uses the existing source coordinates and
+budget, with no new form or fabricated union range. The follow-up comparison uses
+the same frozen sources/labels; having inspected the misses, it is development
+evidence rather than a new holdout.
+
+The first follow-up (`*-declaration-v4/`) exposed the intended declarations but
+still delivered **0/6** required whole-line spans: handles began after indentation.
+The indented-declaration regression now requires the whole line, clipped to the
+original unit. With that correction (`*-declaration-v5/`), the candidate delivers
+**3/6**, versus **0/6** from both legacy and saved previous executable. The recovered
+spans are `from_utf8_lossy`, `make_contiguous` and `binary_search_by`. Foundry remains
+**2/8 versus 1/8**. All traced/untraced responses match and fit 2,048 tokens. These
+results neither relax labels nor establish complete behavioral support; remaining
+Rust losses include low rank, per-file capping and a macro-contained definition.
+
+The real Gemma comparison reuses the representative run's store and vectors, with
+one query per executable and no additional preparation. Both requests succeed at
+2,048 tokens and retain `semantic:partial`. The previous executable begins with
+`RELEASES.md`; the candidate begins with a current lexical implementation in
+`compiler/rustc_infer/src/infer/canonical/canonicalizer.rs`, followed by dense evidence.
+The trace records `partial_prose_interleave_v1`. A separate final-binary repeat also
+succeeds in 1,978 tokens. This verifies the placement policy, not relevance or recall
+superiority on that query. Artifacts:
+`partial-dense-plan.json`, `partial-dense-comparison/`.
+
+**Representative scale.** Acquired the public `rust-lang/rust` 1.90.0 snapshot at
+`1159e78c4747b02ef996e55082b704c09b970588`, archive SHA-256
+`8dc476ed3ccd405304236e3ee737b365b49168f1cfebd4da537ee0b4380e96bf`.
+It contains **55,075 regular files, 53,897 distinct file contents and 191,000,975
+bytes**. File sizes p50/p90/p99 are 593/4,504/41,124 bytes. This is not a 60–80k
+completion claim. No repository code ran during indexing. The ordinary walker admits
+**53,955 sources in 138.070 s**, with 62 reported exclusions, zero scan failures and
+zero parser fallbacks; ignore policy also affects admission.
+
+Real Gemma CPU revision 3 used the existing verified worker, two threads, 8 GiB,
+body-v1/parent64/card512, and 16 frozen size/area priority files. The four preparation
+budgets total 1,140 seconds. Indexing plus preparation, query worker acquisitions
+and checks took 1,260.971 seconds. The profile and raw phases are retained.
+
+| Phase | Preparation seconds | Newly embedded inputs | Active index entries | Partial |
+|---|---:|---:|---:|---|
+| Cold | 556.129 | 230 | 230 | yes |
+| Resume | 273.804 | 176 | 406 | yes |
+| Edit/delete plus backlog | 113.255 | 81 | 480 | yes |
+| Revert plus backlog | 114.069 | 96 | 582 | yes |
+
+First searchable coverage arrived after **14.399 s** of cold preparation. Cold
+partition computation took 0.533 s, provider wait 542.122 s and publication 0.139 s;
+inference dominates this workload. Resume reused 17 partitions and 223 cached inputs.
+Six prior vectors survived edit/delete and seven survived revert with unchanged
+values. Source edits affect only the experiment's store snapshot, then both files
+are restored. The delta phases also prepare backlog; their inference totals are not
+pure changed-input costs. All four real query/ANN/current-source delivery checks pass
+at 2,048 tokens; query plus delivery takes 0.582–0.825 s after separate 10.772–11.031 s
+worker acquisitions. These checks establish serving integrity, not retrieval recall.
+
+Final recorded coverage is **42 partitioned sources, 2,198 discovered cards, 582
+searchable cards, 583 cache entries and 53,913 unpartitioned sources**. A release-notes
+passage heads the last serving probe. Searchable partial coverage is not demonstrated
+useful coverage of the whole repository. Representative bootstrap remains expensive;
+full unique-content scale, task-relevant coverage and scheduling/backend improvements
+remain open. The earlier repeated-family 80k success cannot substitute for this result.
+
+The run exposed an accounting ambiguity: preparation's `sources`, `eligible_units`
+and `missing_units` count examined work, not the whole corpus. `PrepareReport` now
+also exposes `coverage`, the last publication's corpus counts only when source
+revision/function/recipe are current. Stale or absent observations return `null`;
+this is not a new disk audit. The real run predates this report-only addition; its
+final corpus counts were read separately through ordinary `semantic status`.
+
+**Host protocol and repair quality.** The retained Qwen2.5-Coder-7B backend fails
+three native tool-call probes (`auto`, required, explicit formatting): replies contain
+tool-shaped text rather than protocol calls. A pinned
+`unsloth/Qwen3-4B-Instruct-2507-GGUF` revision
+`a06e946bb6b655725eafa393f4a9745d460374c9`, Q4_K_M, passes the native call probe.
+Artifact SHA-256 is
+`3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597`,
+2,497,281,120 bytes, Apache-2.0. A 300-second serial download stopped incomplete;
+the bounded eight-range resume took 93.479 seconds and the final digest passes.
+Those acquisition attempts are retained, not charged as zero. The ordinary local
+llama.cpp server uses the existing pinned source, four CPU threads, zero GPU layers,
+16,384 context, temperature/seed zero, thinking off and prompt caching disabled.
+It is an operator-launched server, not an isolated production generation worker.
+
+OMP 18.6.0 now makes actual file edits in both expanded-fixture arms. With read/write
+tools, a 420-second task ceiling and 768 output tokens per request, all four repairs
+still fail the unchanged external Rust checker. Each uses three completed requests,
+with zero reported cached input. Protected files are unchanged.
+
+| Task / arm | Input / output tokens | Measured task ms | Verified task |
+| --- | ---: | ---: | --- |
+| Parser / full files | 12,524 / 455 | 277,382 | Failed; rejects additional `=` |
+| Parser / composed | 6,887 / 417 | 150,878 | Failed; rejects additional `=` |
+| Overflow / full files | 11,381 / 496 | 252,744 | Failed; multiplication panic |
+| Overflow / composed | 6,697 / 500 | 153,611 | Failed; multiplication panic |
+
+Reports now calculate a paired completion comparison only when **both** independent
+repairs pass and every request has complete input/output/cache usage. These failures
+therefore return `not_established`. Measured task wall time includes context preparation,
+gateway/host startup, requests, teardown and the oracle, with orchestration separated.
+Common fixture setup, model acquisition/loading, energy and amortized maintenance are
+outside that number. Monetary cost remains unknown. File-backed transcripts survive
+outer cancellation. Public calibration tasks do not establish held-out task benefit.
+These named-helper repairs compare initial evidence composition; they do not test
+anchorless discovery or demonstrate that the retrieval repair caused task success.
+
+The upstream repair uses published `percent-encoding` **2.3.2** (MIT OR Apache-2.0),
+archive SHA-256 `9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220`.
+Five source/manifest/license hashes are checked before private workspace copies are
+made; source is not vendored. The seed makes `src/lib.rs::after_percent_sign` consume
+the live iterator before validation. The original passes the external positive
+control; the seed fails it. The oracle compiles alloc/no-alloc and checks all 256 byte
+escapes, malformed/incomplete mixtures, UTF-8 behavior and unchanged-input borrowing.
+Both arms use exact-text `read,edit`, fuzzy edits off, 420 seconds and 768 output
+tokens. Full source is 21,863 bytes across two Rust files, without synthetic padding.
+
+Both upstream arms fail. Full files make an incorrect edit that loses `A` from `%A`;
+composed context makes four completed reading requests but no edit. Both hosts exit
+unsuccessfully at their own time limit (the separate outer timeout flag is false).
+Measured task wall is **421,235 / 422,613 ms**. The full-file arm has one complete
+request (**7,689 input / 636 output**) and one unknown request; the composed arm has
+four complete requests (**17,712 / 287**) and one unknown request. These are known
+subtotals, not complete attempt costs. Both recorded cache subtotals are zero with
+one unknown request. The harness now exposes such known/unknown accounting directly;
+this run's subtotals were recovered separately from its retained receipts.
+No verified completion or economic advantage is established on the upstream task.
+Artifacts: `upstream-task-plan.json`, `upstream-host-recipe.json`, `qwen3-percent/`,
+`percent-known-usage.json`. An earlier build failed because a test deadline variable
+was placed in the checker; that harness error was fixed before either model arm ran.
+
+The separately frozen parser recipe enables `read,write,bash` and gives both arms
+the existing visible fixture-check command, 900 seconds, a 420-second request-idle
+ceiling and 768 output tokens. External assertions remain hidden and unchanged;
+build output stays outside the protected workspace. The full-file arm fixes a Rust
+type error and then an untrimmed value through actual public feedback. Its final
+patch passes the independent oracle and preserves all protected files: **7 complete
+requests, 37,848 input / 1,374 output tokens, zero cached input, 892,260 ms**. This
+establishes one completed public calibration task, not representative task acceptance.
+Artifacts: `public-check-host-plan.json`, `qwen3-parser-public-check/`.
+One readiness attempt used the wrong health-route prefix and expired before any
+host request; the server was stopped and the corrected route admitted the run.
+The successful model readiness observation is 1,831 ms, outside both task clocks.
+
+The composed arm **fails** the external oracle and exits at its own 900-second
+limit after **12 requests** (11 complete, one unknown). Known usage alone is
+**40,654 input / 1,802 output tokens**, already above the successful full-file arm;
+the complete totals remain unknown. Known cached input is zero with one unknown
+request. Measured wall is **901,755 ms**, including 458 ms context preparation.
+Repeated edits retain semantic mistakes and introduce compiler errors; one write
+tool invocation fails. Both arms preserve protected files. The tool transcript audit
+shows reads/writes of `src/records.rs` and execution of the provided public checker,
+without external-oracle feedback. `completion_comparison` correctly returns
+`not_established`. This is a negative matched outcome for the composed-context
+recipe, not evidence of completion-cost savings. The visible-test loop enables a
+successful control but does not establish reliable Foundry-assisted task completion.
+
+**Remaining work.** Linux work still includes better ranking/per-file selection,
+macro-contained evidence, fresh retrieval acceptance, complete unique-content
+60–80k preparation with useful coverage and inference/scheduling improvements,
+and reliable multi-file/memory-sensitive host tasks with all bootstrap, maintenance
+and request costs. The public repair failures remain evidence against accepting the
+current model/recipe. Native macOS/Metal/GPU and signed-package checks require other
+hardware; they are not the only unfinished work. The
+[pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
+retains the broader ecosystem TODOs.
+
+**Code checks.** 263 focused source, multi-root, semantic preparation/retrieval and
+response tests pass (78 + 20 + 69 + 80 + 16), with the changed excerpt suites repeated
+after the range correction. The completion-accounting guard passes; the external
+attribution and representative-scale harnesses compile and their explicit runs are
+reported above. Default and no-default-feature all-target Clippy pass with warnings
+denied. These functional checks do not turn a failed model task into a pass.
+
 ## Linux worker, representations, evidence and scale — 2026-10-11
 
 Continued on `experimental/context-ecosystem`, Rust 1.90, four quota CPUs and no

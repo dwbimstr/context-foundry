@@ -229,24 +229,59 @@ fn repository_development_attribution() {
     let output = std::path::PathBuf::from(
         std::env::var_os("FOUNDRY_ATTRIBUTION_DIR").expect("new output directory"),
     );
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    assert!(!output.starts_with(root));
+    let root = std::env::var_os("FOUNDRY_ATTRIBUTION_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| env!("CARGO_MANIFEST_DIR").into());
+    assert!(!output.starts_with(env!("CARGO_MANIFEST_DIR")));
     use std::os::unix::fs::DirBuilderExt as _;
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&output)
         .unwrap();
-    let mut engine = Engine::initialize(&output.join("store"), root).unwrap();
+    let store = std::env::var_os("FOUNDRY_ATTRIBUTION_STORE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| output.join("store"));
+    let existing = store.exists();
+    let mut engine = if existing {
+        Engine::open_existing(&store)
+    } else {
+        Engine::initialize(&store, &root)
+    }
+    .unwrap();
     let deadline =
         || Control::with_deadline(std::time::Instant::now() + std::time::Duration::from_secs(300));
-    let indexed = engine.index(root, &deadline()).unwrap();
+    let indexed = if existing {
+        None
+    } else {
+        Some(engine.index(&root, &deadline()).unwrap())
+    };
     // The diagnostic's literal questions/expected snippets are evaluator data.
     // Indexing this file would rank those labels as repository evidence.
     let excluded = "tests/retrieval_attribution.rs";
     engine.delete_source(excluded).unwrap();
     engine.refresh(&deadline()).unwrap();
     let wid = engine.workspace_id().unwrap();
-    let frozen: Vec<_> = CASES
+    let source_revision = engine.status().unwrap().source_revision;
+    let external: Option<Value> = std::env::var_os("FOUNDRY_ATTRIBUTION_LABELS")
+        .map(|path| serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap());
+    let cases: Vec<_> = external.as_ref().map_or_else(
+        || CASES.to_vec(),
+        |v| {
+            v["labels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| {
+                    (
+                        v["query"].as_str().unwrap(),
+                        v["path"].as_str().unwrap(),
+                        v["needle"].as_str().unwrap(),
+                    )
+                })
+                .collect()
+        },
+    );
+    let frozen: Vec<_> = cases
         .iter()
         .map(|&(query, path, needle)| {
             let body = std::fs::read_to_string(root.join(path)).unwrap();
@@ -265,6 +300,13 @@ fn repository_development_attribution() {
             )
         })
         .collect();
+    if let Some(external) = &external {
+        for ((_, expected), label) in frozen.iter().zip(external["labels"].as_array().unwrap()) {
+            assert_eq!(label["sha256"], expected.sha256, "frozen corpus changed");
+            assert_eq!(label["start"], expected.start, "frozen label moved");
+            assert_eq!(label["end"], expected.end, "frozen label moved");
+        }
+    }
     std::fs::write(
         output.join("labels.json"),
         serde_json::to_vec_pretty(&frozen).unwrap(),
@@ -272,6 +314,13 @@ fn repository_development_attribution() {
     .unwrap();
     let mut rows = Vec::new();
     for (id, (query, expected)) in frozen.iter().enumerate() {
+        let admission = engine.source(&expected.path).unwrap();
+        let exclusion = indexed.as_ref().and_then(|report| {
+            report
+                .exclusion_samples
+                .iter()
+                .find(|s| s.starts_with(&format!("{}:", expected.path)))
+        });
         for behavior in [false, true] {
             let trace = RetrievalTrace::default();
             let started = std::time::Instant::now();
@@ -322,10 +371,49 @@ fn repository_development_attribution() {
                 if behavior { "behavior" } else { "baseline" }
             );
             std::fs::write(output.join(&name), serde_json::to_vec_pretty(&r).unwrap()).unwrap();
-            rows.push(json!({"id":id,"query":query,"expected":expected,"behavior":behavior,"tokens":packed.tokens,"traced_elapsed_ms":elapsed,"record":name,"attribution":attribute(&r,query,expected)}));
+            rows.push(json!({"id":id,"query":query,"expected":expected,"behavior":behavior,"tokens":packed.tokens,"traced_elapsed_ms":elapsed,"record":name,"source_admission":{"source_revision":source_revision,"present":admission.is_some(),"sha256":admission.as_ref().map(|s|&s.hash),"exclusion_sample":exclusion},"attribution":attribute(&r,query,expected)}));
         }
     }
-    let report = json!({"scope":"repository_development_lexical_diagnostic","historical_g2":false,"excluded_evaluator_sources":[excluded],"indexed":indexed,"budget":2048,"rows":rows});
+    drop(engine);
+    for (id, (query, expected)) in frozen.iter().enumerate() {
+        if let Some(binary) = std::env::var_os("FOUNDRY_ATTRIBUTION_BASELINE") {
+            let directory = output.join(format!("{id}-previous"));
+            let started = std::time::Instant::now();
+            // The external binary is explicitly supplied by the operator. No
+            // indexed source selects or runs it. Both use the same store bytes.
+            let result = std::process::Command::new("timeout")
+                .arg("30s")
+                .arg(binary)
+                .arg("--store")
+                .arg(&store)
+                .arg("context")
+                .arg(query)
+                .args([
+                    "--tokens",
+                    "2048",
+                    "--strategy",
+                    "search",
+                    "--experimental-behavior-context",
+                    "--retrieval-trace-dir",
+                ])
+                .arg(&directory)
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            let files: Vec<_> = std::fs::read_dir(&directory)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .collect();
+            assert_eq!(files.len(), 1);
+            let r: Value = serde_json::from_slice(&std::fs::read(&files[0]).unwrap()).unwrap();
+            rows.push(json!({"id":id,"query":query,"expected":expected,"variant":"previous_experimental","elapsed_ms":started.elapsed().as_millis(),"record":files[0],"attribution":attribute(&r,query,expected)}));
+        }
+    }
+    let report = json!({"scope":"public_lexical_diagnostic_not_blind_acceptance","historical_g2":false,"root":root,"external_labels":external,"excluded_evaluator_sources":[excluded],"indexed":indexed,"budget":2048,"rows":rows});
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report).unwrap(),

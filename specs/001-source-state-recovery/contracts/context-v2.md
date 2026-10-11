@@ -570,7 +570,10 @@ holds per index state.
 With `experimental_behavior` enabled for search-context requests, an anchorless
 plain-language query uses tier 2 without promoting incidental exact-definition runs
 to tier 1. Eligibility requires at least three whitespace-separated words, each
-alphabetic after trimming trailing `?`, `.`, `,` or `:`. Queries starting with
+alphabetic (including hyphen-separated alphabetic compounds) after trimming trailing
+`?`, `.`, `,` or `:`. A capitalized group-3 candidate inside an unmarked compound
+does not alone turn prose into a symbol request; marked and shaped names still do.
+Queries starting with
 `where`, `find`, `locate`, `show` or `who` retain the baseline. Explicit code/path
 syntax, admitted anchors (including global multi-root anchors), graph strategy and
 policy-routed auto strategy retain their existing selection. Default context and the
@@ -581,14 +584,28 @@ slots ahead of a body matching the complete behavioral query. The candidate remo
 common English stop words from the prose query clauses and divides the existing
 256-document window into two disjoint 128-document windows: programming units and
 sections/blocks/unparsed text. Their ranked results alternate, code first. Each
-window still uses BM25; either filling reports candidate pressure. This protects
+window uses distinct non-stopword subtoken coverage (at most 64 terms). Adjacent
+query terms within 16 indexed positions add a combined bonus below half a term;
+repetition, identifier frequency and rare single terms cannot outweigh an additional
+covered term. This reuses the positional body index. Either window filling reports
+candidate pressure. This protects
 implementation discovery from a documentation-only candidate window without raising
 the total bound. The four-per-file cap, final-read freshness and response budget
 remain. A lexical unit longer than 1,536 bytes delivers an exact, UTF-8-safe excerpt
 around the best matching line of its indexed document, with at most three preceding
-lines. Its handle names the actual excerpt range and its label says `excerpt`.
-Dense results retain their existing precedence and source ranges when
-present. Tracing adds a bounded `lexical_intent` event; no expected-answer labels enter
+lines. If a callable's (`fn`/`method`) best line is in leading documentation and this
+window would exclude its declaration head, take up to 1,536 bytes from that head
+line (clipped to the original unit), preserving indentation. This exposes its
+declaration and implementation start rather than only long introductory examples. Body matches keep their focused window. Its handle names the
+actual contiguous excerpt range and its label says `excerpt`; omitted documentation
+is not claimed as delivered.
+Complete semantic coverage retains dense precedence. For experimental anchorless
+prose with partial semantic coverage at the final read's source revision, lexical
+and dense candidates alternate, lexical first, before ordinary deduplication and
+caps. This keeps an unprepared repository region eligible for early delivery while
+the small prepared subset remains usable. Explicit anchors and ordinary search keep
+dense precedence. All dense source ranges remain unchanged. Tracing adds bounded
+`lexical_intent` and partial `placement_policy` events; no expected-answer labels enter
 selection. It changes no source index, vector recipe or cache identity. Development
 regressions and public repository comparisons do not establish held-out G2 acceptance.
 

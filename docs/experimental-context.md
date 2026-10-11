@@ -269,6 +269,77 @@ The 80,000-file run used 512 content families, 900 seconds per round and real Ge
 vectors. This is explicit repeated-content scale, not 80,000 unique model inputs.
 Use `FOUNDRY_SEMANTIC_SCALE_EXISTING` for the separate real-query serving check.
 
+For an actual repository distribution, run the ignored
+`representative_repository_progress_and_resume` test instead. Set a new
+`FOUNDRY_SEMANTIC_SCALE_DIR`, an acquired outside-Git `FOUNDRY_SEMANTIC_SCALE_ROOT`,
+the real `FOUNDRY_SEMANTIC_SCALE_PROFILE`, and `FOUNDRY_SEMANTIC_SCALE_PLAN` pointing
+to a frozen JSON object with `priority_paths` (2–16 admitted files), four `budgets`
+(cold, resume, edit/delete, revert; at most 1,800 seconds total), and corpus identity
+metadata. The test indexes without executing repository code. Only its private
+store snapshot is edited; both source files are restored. The profile copy uses
+body-v1, parent allowance 64 and card limit 512. It saves each partial run, checks
+retained cached vectors and current-source delivery, and reports remaining work
+instead of asserting full bootstrap. Resume and delta phases may also advance the
+unprepared backlog; their total inference is not pure changed-input cost.
+
+Preparation reports now include `coverage`, the last publication's corpus counts
+checked against the current source revision, function and recipe. It is `null` when
+that observation is unavailable or stale, and is not a fresh disk audit. The older
+`sources`, `eligible_units` and `missing_units` fields describe this run's examined
+work. In particular, zero run-local missing cards cannot prove that an unpartitioned
+corpus is ready. Check `coverage.unpartitioned_sources` and the explicit partial flag.
+
+The ignored `repository_development_attribution` diagnostic accepts a frozen
+`FOUNDRY_ATTRIBUTION_ROOT`, optional existing `FOUNDRY_ATTRIBUTION_STORE`, and
+`FOUNDRY_ATTRIBUTION_LABELS` containing a `labels` array with `query`, `path`,
+`needle`, `sha256`, `start` and `end`. Label hashes/ranges are checked before queries.
+`FOUNDRY_ATTRIBUTION_BASELINE` optionally names an operator-selected executable;
+it runs the previous experimental selection against the same store after the Rust
+owner closes. Keep evaluator files outside the corpus, and retain the executable
+hash and build provenance. The current diagnostic still excludes its own source.
+All output requires a new outside-Git `FOUNDRY_ATTRIBUTION_DIR`. These public probes
+are development evidence, not preserved or independently held-out G2.
+
+## Paired host repair diagnostics
+
+The ignored `gateway::host_task` diagnostic runs installed OMP against an
+operator-launched loopback model server. Pin and verify the model and test its native
+tool-call protocol first; assistant text resembling a tool call is not executed.
+Set `FOUNDRY_OMP_BUN`, `FOUNDRY_OMP_CLI`, `FOUNDRY_HOST_RUSTC`,
+`FOUNDRY_HOST_TASK_PORT`, `FOUNDRY_HOST_TASK_MODEL`, and a new outside-Git
+`FOUNDRY_HOST_TASK_DIR`. The added model selector `qwen3-4b-instruct-2507` records the
+verified Q4_K_M artifact identity; the gateway's `glm-5.3-flash` transport alias is
+neither model attestation nor a price source.
+
+Scenarios are `parser`, `overflow`, and `percent_decode`. The first two optionally
+use `FOUNDRY_HOST_TASK_SOURCE_SCALE=expanded`, which adds explicitly synthetic
+unrelated functions. The last requires `FOUNDRY_HOST_TASK_UPSTREAM` pointing to
+published `percent-encoding` 2.3.2 source: `Cargo.toml`, `src/lib.rs`,
+`src/ascii_set.rs`, `LICENSE-MIT`, and `LICENSE-APACHE`. Their hashes are checked
+before copying. It introduces a live-iterator consumption bug only in private
+workspace copies and uses the original as a positive control. An external checker
+compiles no-alloc and alloc configurations and verifies all byte escapes, malformed
+escapes, UTF-8 results and borrowing. Both arms use OMP's exact-text `read,edit`
+recipe with fuzzy edits disabled. It is a seeded upstream exercise, not a discovered
+upstream vulnerability or held-out production task. No upstream source is vendored.
+
+For `parser` with `qwen3-4b-instruct-2507`, the separate
+`FOUNDRY_HOST_TASK_PUBLIC_CHECK=1` recipe enables `read,write,bash`, supplies a command
+for the existing visible fixture checks, and allows 900 seconds per arm with a
+420-second request-idle ceiling. Builds go outside the protected workspace. The
+external oracle is unchanged and hidden. Freeze this choice before running; retain
+the read/write-only failures rather than replacing them with the retry's result.
+
+The arms receive full source/manifest text or a composed 2,048-token Foundry view;
+both can make additional tool calls. Each gets one attempt under the pinned limit.
+Reports retain all requests and failures, including file-backed logs on timeout.
+`observed_usage` keeps known token subtotals and unknown-request counts; a missing
+request makes the complete total unknown rather than discarding known incurred cost.
+Measured wall time includes context preparation, gateway/host startup, requests,
+teardown and the oracle. Fixture setup, model acquisition/loading and energy are
+separate. Savings require two verified repairs and complete request usage; alias
+pricing and shorter failed responses cannot establish monetary or amortized benefit.
+
 ## Explicit execution evidence
 
 `foundry --store STORE import-execution ARTIFACT.json` imports a strict completed

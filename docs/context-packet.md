@@ -28,14 +28,30 @@ experimental retrieval remain explicit opt-ins.
 **The product outcome is still open.** Local anchorless delivery improves from 1/8
 to 2/8 on eight development labels, with no held-out acceptance. Real Gemma prepares
 80,000 synthetic paths in 469.4 s and passes restart/edit/revert/query checks, but the
-corpus repeats 512 families (528 distinct model inputs). Representative unique-content
-scale remains unmeasured. Both parser and overflow tasks fail in both arms of a new
-pinned Qwen2.5-Coder-7B/OMP comparison. Complete usage and smaller prompts do not
-establish verified task or economic benefit. Broader evidence collectors, useful
-model/host selection, realistic task/memory economics and Mac/GPU acceptance remain.
+corpus repeats 512 families (528 distinct model inputs). A representative Rust 1.90
+snapshot now admits 53,955 sources in 138 s. Bounded real Gemma preparation, resume,
+edit/delete, revert and query checks pass, but only 42 sources have partitions and
+582 cards are searchable; 53,913 sources remain unpartitioned. Model inference
+dominates. This is partial evidence, not full unique-content 60–80k validation.
+The frozen Foundry comparison delivers 2/8 versus the previous executable's 1/8;
+the initial public Rust comparison delivers 0/6 in every arm. Preserving whole
+declaration lines after long documentation raises the candidate to 3/6 on those
+inspected cases; controls remain 0/6. Experimental prose scoring and partial-coverage
+interleaving preserve source and budget checks; general retrieval quality remains
+open.
+
+The Qwen3-4B-Instruct-2507 backend passes native tool-call probing and makes actual
+OMP edits, resolving the previous 7B protocol failure. The read/write-only parser
+and overflow tasks still fail in both arms. Complete usage and smaller prompts do
+not establish verified task or economic benefit. A seeded repair in published
+`percent-encoding` 2.3.2 also fails both arms at the task limit, with one unknown
+request per arm; known request subtotals are retained separately. With public test
+feedback, full-file context finally passes the independent parser oracle, but the
+composed arm fails at its limit and consumes more known tokens. No completion-cost
+benefit is established. Broader evidence collectors, useful model/host selection, realistic task/memory economics and Mac/GPU acceptance remain.
 These are **not all macOS blockers**. Late chunking is still only a backend candidate.
 
-[Current validation](validation.md#linux-worker-representations-evidence-and-scale--2026-10-11)
+[Current validation](validation.md#retrieval-scale-and-host-economics--2026-10-11)
 records the bounded experiments, raw artifact locations, failures and checks. New
 artifacts are outside Git under `/workspace/.context-foundry-tools/validation-runs/`;
 older `/tmp` artifacts did not survive the environment restart. A restored tool cache

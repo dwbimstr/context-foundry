@@ -161,6 +161,152 @@ fn anchorless_context_preserves_code_discovery_and_exact_late_body_excerpts() {
 }
 
 #[test]
+fn prose_matching_long_callable_docs_delivers_the_declaration_and_implementation() {
+    use context_foundry::store::{ContextOptions, RenderedForm};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    let body = format!(
+        "/// Keep accepted entries in stable order.\n{}    pub fn sift(entries: &mut Vec<u8>) {{\n        entries.retain(|v| *v > 0);\n    }}\n",
+        "/// Extended usage example — additional explanation.\n".repeat(150)
+    );
+    engine.replace_source("sift.rs", &body).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = "keep accepted entries in stable order";
+    let candidates = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let item = candidates
+        .batch
+        .items
+        .iter()
+        .find(|item| item.label == "excerpt fn sift")
+        .unwrap();
+    let handle = item.handle.as_ref().unwrap();
+    assert_eq!(handle.sha256, context_foundry::digest(body.as_bytes()));
+    assert_eq!(handle.start as usize, body.find("    pub fn sift").unwrap());
+    assert!(handle.end - handle.start <= 1536);
+    let RenderedForm::Verbatim(text) = &item.forms[0] else {
+        panic!("exact source required")
+    };
+    assert_eq!(text, &body[handle.start as usize..handle.end as usize]);
+    assert!(text.contains("pub fn sift"));
+    assert!(text.contains("entries.retain"));
+    for budget in [512, 1024, 2048] {
+        let packed = response::pack_enriched_context(
+            &candidates,
+            None,
+            Budget::request(budget),
+            &response::stdout_bytes,
+        )
+        .unwrap();
+        assert!(packed.tokens <= budget);
+        assert!(packed.text.contains("pub fn sift"));
+        assert!(packed.text.contains("entries.retain"));
+        assert!(parse_v2(&packed.text).is_ok());
+    }
+}
+
+#[test]
+fn prose_coverage_and_proximity_beat_repeated_single_term_and_accept_compounds() {
+    use context_foundry::store::{ContextOptions, QueryAnchors};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    engine
+        .replace_source(
+            "constant.rs",
+            "pub const CPU: usize = 4;\npub struct Cpu;\n",
+        )
+        .unwrap();
+    engine
+        .replace_source(
+            "broad.rs",
+            &format!(
+                "pub fn perform() {{ preserve(); {} catalog(); {} checksum(); }}\n",
+                "padding();".repeat(20),
+                "padding();".repeat(20)
+            ),
+        )
+        .unwrap();
+    engine
+        .replace_source(
+            "near.rs",
+            "pub fn restore() { preserve_catalog_checksum(); }\n",
+        )
+        .unwrap();
+    engine.replace_source("worker.rs", "/// Schedule CPU heavy processing outside transactions.\npub fn schedule() { spawn_worker(); }\n").unwrap();
+    for i in 0..40 {
+        engine
+            .replace_source(
+                &format!("noise{i}.rs"),
+                &format!("pub fn checksum() {{ {} }}\n", "checksum();".repeat(30)),
+            )
+            .unwrap();
+    }
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = |text, anchors| {
+        engine
+            .context_candidates_with(
+                text,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: true,
+                    anchors,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let candidates = query("preserve catalog checksum", None);
+    assert_eq!(
+        candidates.batch.items[0].handle.as_ref().unwrap().path,
+        "near.rs"
+    );
+    assert_eq!(
+        candidates.batch.items[1].handle.as_ref().unwrap().path,
+        "broad.rs"
+    );
+    let prose = "schedule Cpu-heavy processing outside transactions";
+    let candidates = query(prose, None);
+    assert_eq!(
+        candidates.batch.items[0].handle.as_ref().unwrap().path,
+        "worker.rs"
+    );
+    assert!(candidates.batch.anchors.is_empty());
+    // Multi-root admission must not turn the compound back into a symbol query.
+    let anchors = QueryAnchors::parse(prose)
+        .select(|_| Ok::<_, std::convert::Infallible>(true))
+        .unwrap();
+    let multi = query(prose, Some(&anchors));
+    assert!(multi.batch.anchors.is_empty());
+    assert_eq!(
+        multi.batch.items[0].handle,
+        candidates.batch.items[0].handle
+    );
+    let symbol = query("schedule `CPU` heavy processing", None);
+    assert_eq!(
+        symbol.batch.anchors[0].entries[0]
+            .handle
+            .as_ref()
+            .unwrap()
+            .path,
+        "constant.rs"
+    );
+}
+
+#[test]
 fn anchorless_prose_does_not_promote_incidental_common_word_definitions() {
     use context_foundry::store::ContextOptions;
     let dir = tempfile::tempdir().unwrap();
