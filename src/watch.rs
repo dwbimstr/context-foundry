@@ -45,6 +45,7 @@ struct Queue {
     bytes: usize,
     dirty: bool,
     epoch: u64,
+    foreground_generation: u64,
     first: Instant,
     last: Instant,
     status: Status,
@@ -93,6 +94,8 @@ pub(crate) struct Watch {
     wake: Condvar,
     stop: Control,
     running: AtomicBool,
+    #[cfg(test)]
+    contention_wait: Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 impl Watch {
     pub(crate) fn new(root: PathBuf, store: PathBuf) -> Arc<Self> {
@@ -105,6 +108,7 @@ impl Watch {
                 bytes: 0,
                 dirty: true,
                 epoch: 0,
+                foreground_generation: 0,
                 first: Instant::now(),
                 last: Instant::now(),
                 status: Status {
@@ -126,6 +130,8 @@ impl Watch {
             wake: Condvar::new(),
             stop: Control::unbounded(),
             running: AtomicBool::new(false),
+            #[cfg(test)]
+            contention_wait: Mutex::new(None),
         })
     }
     pub(crate) fn start(
@@ -160,6 +166,52 @@ impl Watch {
     pub(crate) fn cancel(&self) {
         self.stop.cancel();
         self.wake.notify_all();
+    }
+    /// The last foreground engine operation released its slot. This is only a
+    /// scheduling hint: it creates no source work and changes no admission rule.
+    pub(crate) fn foreground_released(&self) {
+        let mut queue = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.stop.is_cancelled() {
+            return;
+        }
+        queue.foreground_generation = queue.foreground_generation.wrapping_add(1);
+        self.wake.notify_all();
+    }
+    pub(crate) fn foreground_generation(&self) -> u64 {
+        self.queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .foreground_generation
+    }
+    /// Capture the generation before trying the owner slot, then compare under
+    /// the condvar's mutex. A release before waiting cannot become a lost wake.
+    /// The return value says whether the retry interval actually elapsed.
+    pub(crate) fn wait_after_contention(&self, generation: u64, time: Duration) -> bool {
+        let queue = self
+            .queue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.stop.is_cancelled() || queue.foreground_generation != generation {
+            return false;
+        }
+        #[cfg(test)]
+        if let Some(armed) = self.contention_wait.lock().unwrap().take() {
+            // Signal while holding the queue lock: a concurrent release must
+            // wait until Condvar atomically unlocks it and starts waiting.
+            armed.send(()).unwrap();
+        }
+        self.wake
+            .wait_timeout(queue, time)
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .1
+            .timed_out()
+    }
+    #[cfg(test)]
+    pub(crate) fn observe_contention_wait(&self, armed: std::sync::mpsc::Sender<()>) {
+        *self.contention_wait.lock().unwrap() = Some(armed);
     }
     pub(crate) fn idle(&self) -> bool {
         !self.running.load(Ordering::SeqCst)
@@ -335,6 +387,7 @@ impl Watch {
             }
             let mut result = Ok(());
             let mut idle = false;
+            let foreground_generation = self.foreground_generation();
             let admitted = owner.try_watch_step(&mut |engine| {
                 result = (|| -> FResult<()> {
                     self.stop.check()?;
@@ -476,20 +529,28 @@ impl Watch {
                 q.status.last_error = Some(bounded(&error.to_string()));
                 q.status.phase = "backoff";
                 drain = true;
-            } else if idle || contended {
+            } else if contended {
+                self.wait_after_contention(foreground_generation, Duration::from_millis(25));
+            } else if idle {
                 self.pause(Duration::from_millis(25));
             } else {
                 std::thread::yield_now();
             }
         }
-        // No scan can be published as complete on shutdown. Best effort cleanup
-        // follows in-flight foreground work; next startup always reconciles.
+        // No scan can be published as complete on shutdown. A full scan was
+        // already marked incomplete when it started. A closing owner refuses
+        // all watch admission, so do not retry an impossible cleanup slot;
+        // next startup always reconciles. A separately cancelled watcher can
+        // still record its abort while its owner remains available.
         if let Some(active) = scan {
             for _ in 0..1000 {
+                if owner.closing() {
+                    break;
+                }
                 match owner.try_watch_step(&mut |engine| {
                     let _ = active.abort(engine);
                 }) {
-                    Ok(false) => self.pause(Duration::from_millis(5)),
+                    Ok(false) if !owner.closing() => self.pause(Duration::from_millis(5)),
                     _ => break,
                 }
             }
@@ -833,6 +894,15 @@ mod tests {
             }
         });
         wait(&watch, |s| s["phase"] == "idle");
+        // Foreground observation may finish while the watcher is idle. These
+        // scheduling wakes must never become filesystem hints or body rescans.
+        for _ in 0..16 {
+            watch.foreground_released();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(watch.status(0)["source_reads"], 48);
+        assert_eq!(watch.status(0)["pending_paths"], 0);
+        assert_eq!(watch.status(0)["dirty_root"], false);
         watch.cancel();
         worker.join().unwrap();
         assert!(
@@ -841,6 +911,81 @@ mod tests {
         );
         assert_eq!(watch.status(0)["source_reads"], 48);
         assert_eq!(watch.status(0)["full_reconciliations"], 0);
+    }
+
+    #[test]
+    fn owner_shutdown_skips_refused_cleanup_and_restart_reconciles_the_incomplete_scan() {
+        struct ClosingOwner {
+            engine: Mutex<Engine>,
+            closing: AtomicBool,
+            initial_scan: u64,
+            refused_cleanup: std::sync::atomic::AtomicUsize,
+        }
+        impl Owner for ClosingOwner {
+            fn try_watch_step(&self, step: &mut dyn FnMut(&mut Engine)) -> FResult<bool> {
+                if self.closing() {
+                    self.refused_cleanup.fetch_add(1, Ordering::SeqCst);
+                    return Ok(false);
+                }
+                let mut engine = self.engine.lock().unwrap();
+                step(&mut engine);
+                // Close at the actual boundary immediately after ChangeScan
+                // starts, before it can visit or sweep any source.
+                if engine.current_scan_id()? != self.initial_scan {
+                    self.closing.store(true, Ordering::SeqCst);
+                }
+                Ok(true)
+            }
+            fn closing(&self) -> bool {
+                self.closing.load(Ordering::SeqCst)
+            }
+        }
+        let mut f = fixture();
+        fs::write(f.root.join("a.rs"), "fn before() {}\n").unwrap();
+        fs::write(f.root.join("removed.rs"), "fn old() {}\n").unwrap();
+        f.engine.index(&f.root, &Control::unbounded()).unwrap();
+        let initial_scan = f.engine.current_scan_id().unwrap();
+        let store = f.engine.directory().to_owned();
+        fs::write(f.root.join("a.rs"), "fn after() {}\n").unwrap();
+        fs::remove_file(f.root.join("removed.rs")).unwrap();
+        let reader = Arc::new(ChangeReader::new(&f.engine, &f.root).unwrap());
+        let watch = Watch::new(f.root.clone(), store.clone());
+        let owner = ClosingOwner {
+            engine: Mutex::new(f.engine),
+            closing: AtomicBool::new(false),
+            initial_scan,
+            refused_cleanup: std::sync::atomic::AtomicUsize::new(0),
+        };
+        watch.running.store(true, Ordering::SeqCst);
+        {
+            let _finish = Running(Arc::clone(&watch));
+            watch.drive(&owner, reader);
+        }
+        assert!(owner.closing());
+        assert!(watch.idle());
+        assert_eq!(
+            owner.refused_cleanup.load(Ordering::SeqCst),
+            0,
+            "a closing owner can never admit abort; do not poll it 1000 times"
+        );
+        assert_eq!(watch.status(0)["source_reads"], 0);
+        let engine = owner.engine.into_inner().unwrap();
+        assert_eq!(engine.status().unwrap().scan_state, "incomplete");
+        assert!(
+            engine.source("removed.rs").unwrap().is_some(),
+            "no interrupted sweep"
+        );
+        drop(engine);
+        let mut reopened = Engine::open_existing(&store).unwrap();
+        assert_eq!(reopened.status().unwrap().scan_state, "incomplete");
+        reopened.index(&f.root, &Control::unbounded()).unwrap();
+        assert_eq!(reopened.status().unwrap().scan_state, "complete");
+        assert_eq!(reopened.status().unwrap().source_count, 1);
+        assert!(reopened.source("removed.rs").unwrap().is_none());
+        assert_eq!(
+            reopened.source("a.rs").unwrap().unwrap().hash,
+            crate::digest(b"fn after() {}\n")
+        );
     }
     #[test]
     fn lost_hint_reconciliation_and_restart_recover_changes_without_a_durable_event_queue() {

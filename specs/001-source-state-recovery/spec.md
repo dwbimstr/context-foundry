@@ -772,6 +772,17 @@ these steps; an individual OS call or commit is not a hard latency bound. Read f
 with a visible error. The queue bound excludes OS/native-library registrations.
 Status exposes pending work, overflows, last success and sticky backend errors.
 
+Foreground handoff correction, 2026-10-11: the last foreground engine call now
+notifies a contended watcher after releasing its engine guard. A generation checked
+under the existing queue mutex prevents a release-before-wait from being lost.
+This wakes scheduling only; it does not enqueue paths, dirty the root or trigger an
+idle body rescan. The foreground counter lives inside the blocking call and releases
+on success, error or unwind. Shutdown refuses new watch work; an incomplete scan
+skips futile abort-slot retries against a closing owner and is reconciled on restart.
+The existing page sizes, foreground priority, 25 ms contention fallback and 180-second
+6,000-file test deadline are unchanged. Linux owner-boundary, restart and integration
+checks pass; native throughput requires its own rerun.
+
 Intentional differences from the pinned Prakarana implementation: native hints drive
 maintenance, idle ticks do not read source bodies, no periodic all-source treadmill,
 and no separate ledger/graph service. Notification loss without a rescan signal is

@@ -841,6 +841,9 @@ impl crate::knowledge::maintenance::Owner for Shared {
 /// preparation. Each callback is one file, walk entry, deletion or index page.
 impl crate::watch::Owner for Shared {
     fn try_watch_step(&self, step: &mut dyn FnMut(&mut Engine)) -> FResult<bool> {
+        if self.shutdown.is_cancelled() {
+            return Ok(false);
+        }
         #[cfg(feature = "semantic")]
         if self
             .semantic_turn
@@ -862,7 +865,7 @@ impl crate::watch::Owner for Shared {
                 )));
             }
         };
-        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+        if self.shutdown.is_cancelled() || self.in_flight_engine.load(Ordering::SeqCst) > 0 {
             return Ok(false);
         }
         let engine = engines[0].as_mut().expect("primary engine is open");
@@ -1006,6 +1009,29 @@ impl From<FoundryError> for OpError {
     }
 }
 
+/// Lives inside the blocking engine call, so errors, unwinding and a detached
+/// async waiter cannot release foreground priority before the call releases its
+/// engine guard. Only the final operation wakes contended source maintenance.
+struct InFlightEngine(Arc<Shared>);
+
+impl InFlightEngine {
+    fn new(shared: Arc<Shared>) -> Self {
+        shared.in_flight_engine.fetch_add(1, Ordering::SeqCst);
+        Self(shared)
+    }
+}
+
+impl Drop for InFlightEngine {
+    fn drop(&mut self) {
+        if self.0.in_flight_engine.fetch_sub(1, Ordering::SeqCst) == 1
+            && !self.0.shutdown.is_cancelled()
+            && let Some(watch) = &self.0.watch
+        {
+            watch.foreground_released();
+        }
+    }
+}
+
 /// Run one READ operation: the shared deadline and any cancellation are
 /// checked again after the library call returns, so an expired or cancelled
 /// read never returns success.
@@ -1055,9 +1081,10 @@ where
         let shared = task_shared;
         let control = Control::with_deadline(deadline);
         register_hub.register(control.cancel_flag());
-        shared.in_flight_engine.fetch_add(1, Ordering::SeqCst);
+        let in_flight = InFlightEngine::new(Arc::clone(&shared));
         let slot_shared = Arc::clone(&shared);
         let joined = tokio::task::spawn_blocking(move || {
+            let _in_flight = in_flight;
             // Admission: zero queue behind another operation; the
             // preparation driver's short store step is waited for. The guard
             // (the one engine slot, spanning every root of this owner) is
@@ -1073,8 +1100,8 @@ where
             out
         })
         .await;
-        // Counter and permit release strictly after the engine call returned.
-        shared.in_flight_engine.fetch_sub(1, Ordering::SeqCst);
+        // The blocking closure released its counter after its engine guard.
+        // The handler permit likewise lasts through the actual call.
         drop(guard);
         match joined {
             Ok(result) => result,
@@ -5087,6 +5114,165 @@ mod tests {
         assert_eq!(foreground.await.unwrap().unwrap(), 1);
         assert!(worker.join().unwrap());
         assert!(shared.try_watch_step(&mut |_| {}).unwrap());
+    }
+
+    fn watched_owner(dir: &Path) -> (Arc<Shared>, Arc<crate::watch::Watch>) {
+        let root = dir.join("root");
+        let store = dir.join("store");
+        std::fs::create_dir(&root).unwrap();
+        let engine = Engine::initialize(&store, &root).unwrap();
+        let watch = crate::watch::Watch::new(root.clone(), store);
+        let mut shared = Shared::single_root(engine, root, BudgetConfig::default());
+        shared.watch = Some(Arc::clone(&watch));
+        (Arc::new(shared), watch)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn foreground_release_wakes_an_already_waiting_watch() {
+        use crate::watch::Owner;
+        let dir = tempfile::tempdir().unwrap();
+        let (shared, watch) = watched_owner(dir.path());
+        let before = watch.status(0);
+        let generation = watch.foreground_generation();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let foreground = tokio::spawn({
+            let shared = Arc::clone(&shared);
+            async move {
+                run_engine_op(
+                    &shared,
+                    Instant::now() + READ_DEADLINE,
+                    None,
+                    None,
+                    move |_, _| {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv_timeout(Duration::from_secs(15)).unwrap();
+                        Ok(())
+                    },
+                )
+                .await
+            }
+        });
+        entered_rx.await.unwrap();
+        assert!(
+            !shared
+                .try_watch_step(&mut |_| panic!("foreground owns the slot"))
+                .unwrap()
+        );
+        let (armed_tx, armed_rx) = std::sync::mpsc::channel();
+        watch.observe_contention_wait(armed_tx);
+        let waiter = std::thread::spawn({
+            let watch = Arc::clone(&watch);
+            move || watch.wait_after_contention(generation, Duration::from_secs(15))
+        });
+        armed_rx.recv_timeout(Duration::from_secs(15)).unwrap();
+        release_tx.send(()).unwrap();
+        foreground.await.unwrap().unwrap();
+        assert!(
+            !waiter.join().unwrap(),
+            "release must notify, not consume the retry timeout"
+        );
+        assert_eq!(shared.in_flight_engine.load(Ordering::SeqCst), 0);
+        assert!(shared.try_watch_step(&mut |_| {}).unwrap());
+        assert_eq!(watch.status(0), before, "a release creates no source work");
+    }
+
+    #[tokio::test]
+    async fn foreground_release_before_watch_wait_is_not_lost_and_only_last_release_wakes() {
+        use crate::watch::Owner;
+        let dir = tempfile::tempdir().unwrap();
+        let (shared, watch) = watched_owner(dir.path());
+        let before = watch.status(0);
+        let generation = watch.foreground_generation();
+        let other = InFlightEngine::new(Arc::clone(&shared));
+        assert!(
+            !shared
+                .try_watch_step(&mut |_| panic!("foreground is in flight"))
+                .unwrap()
+        );
+        let result: Result<(), OpError> = run_engine_op(
+            &shared,
+            Instant::now() + READ_DEADLINE,
+            None,
+            None,
+            |_, _| {
+                Err(FoundryError::InvalidArgument(
+                    "expected fixture error".into(),
+                ))
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(OpError::Core(FoundryError::InvalidArgument(_)))
+        ));
+        assert_eq!(shared.in_flight_engine.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            watch.foreground_generation(),
+            generation,
+            "another operation still owns priority"
+        );
+        assert!(
+            !shared
+                .try_watch_step(&mut |_| panic!("last foreground has not released"))
+                .unwrap()
+        );
+        drop(other);
+        assert_eq!(shared.in_flight_engine.load(Ordering::SeqCst), 0);
+        assert_ne!(watch.foreground_generation(), generation);
+        assert!(
+            !watch.wait_after_contention(generation, Duration::from_secs(15)),
+            "release before the wait must bypass sleeping"
+        );
+        assert!(shared.try_watch_step(&mut |_| {}).unwrap());
+        assert_eq!(
+            watch.status(0),
+            before,
+            "release does not enqueue a reconciliation"
+        );
+    }
+
+    #[tokio::test]
+    async fn foreground_unwind_releases_accounting_and_shutdown_never_resumes_watch() {
+        use crate::watch::Owner;
+        let dir = tempfile::tempdir().unwrap();
+        let (shared, watch) = watched_owner(dir.path());
+        let generation = watch.foreground_generation();
+        let result: Result<(), OpError> = run_engine_op(
+            &shared,
+            Instant::now() + READ_DEADLINE,
+            None,
+            None,
+            |_, _| panic!("expected engine-call unwind"),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(OpError::Core(FoundryError::Internal(_)))
+        ));
+        assert_eq!(shared.in_flight_engine.load(Ordering::SeqCst), 0);
+        assert_ne!(watch.foreground_generation(), generation);
+        assert_eq!(shared.slot_holder.load(Ordering::SeqCst), SLOT_FREE);
+
+        // Use a separate owner because the panic correctly poisoned the first
+        // engine mutex; shutdown must refuse even an otherwise healthy slot.
+        let closing_dir = tempfile::tempdir().unwrap();
+        let (closing, watch) = watched_owner(closing_dir.path());
+        let generation = watch.foreground_generation();
+        let operation = InFlightEngine::new(Arc::clone(&closing));
+        closing.shutdown.cancel();
+        drop(operation);
+        assert_eq!(closing.in_flight_engine.load(Ordering::SeqCst), 0);
+        assert_eq!(watch.foreground_generation(), generation);
+        assert!(
+            !closing
+                .try_watch_step(&mut |_| panic!("closed owner must not resume"))
+                .unwrap()
+        );
+        watch.cancel();
+        watch.foreground_released();
+        assert_eq!(watch.foreground_generation(), generation);
+        assert!(!watch.wait_after_contention(generation, Duration::from_secs(15)));
     }
 
     /// Concurrent same-session reservations released together never reserve
