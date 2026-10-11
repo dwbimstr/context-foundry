@@ -910,16 +910,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn named_read_failure_uses_backoff_and_does_not_retire_prior_records() {
-        use std::os::unix::ffi::OsStringExt;
         let f = fixture();
         f.engine
             .replace_source("kept.rs", "fn preserved() {}\n")
             .unwrap();
-        fs::write(
-            f.root.join(std::ffi::OsString::from_vec(vec![0xff])),
-            "bad path",
-        )
-        .unwrap();
+        // APFS rejects non-UTF-8 filenames before the watcher can inspect them.
+        // A newline is valid in Unix filenames but violates Foundry's source-path
+        // contract, so both macOS and Linux exercise a real failed reconciliation.
+        fs::write(f.root.join("bad\npath.rs"), "bad path").unwrap();
         let reader = Arc::new(ChangeReader::new(&f.engine, &f.root).unwrap());
         let watch = Watch::new(f.root.clone(), f.engine.directory().to_owned());
         let owner = Arc::new(TestOwner {
@@ -929,7 +927,12 @@ mod tests {
         watch.start(owner.clone(), reader).unwrap();
         wait(&watch, |s| s["phase"] == "backoff");
         let before = watch.status(0);
-        assert!(before["last_error"].as_str().unwrap().contains("UTF-8"));
+        assert!(
+            before["last_error"]
+                .as_str()
+                .unwrap()
+                .contains("source path contains forbidden control characters")
+        );
         std::thread::sleep(Duration::from_millis(150));
         assert_eq!(
             watch.status(0)["full_reconciliations"],

@@ -52,6 +52,9 @@ impl Server {
                     }
                     Err(e) => panic!("{e}"),
                 };
+                // BSD/macOS accepts can inherit the listener's O_NONBLOCK.
+                // The fixture parser uses bounded blocking reads on each stream.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .unwrap();
@@ -93,7 +96,13 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        self.thread.take().unwrap().join().unwrap();
+        if let Err(error) = self.thread.take().unwrap().join()
+            && !std::thread::panicking()
+        {
+            // Preserve fixture failure without aborting the whole test binary
+            // through a second panic while a failed assertion is unwinding.
+            std::panic::resume_unwind(error);
+        }
     }
 }
 fn read_request(stream: &mut TcpStream) -> Value {

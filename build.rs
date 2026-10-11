@@ -25,6 +25,19 @@ fn main() {
 
 fn learning_worker() {
     println!("cargo:rerun-if-env-changed=LIBTORCH");
+    // Bundling adds the operator's LibTorch LC_RPATH after linking. Reserve
+    // explicit space for new load commands, including both fixture rpaths;
+    // padding only existing install names does not guarantee room for additions.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        for (feature, binary) in [
+            ("CARGO_FEATURE_LEARNING_WORKER", "foundry-learn"),
+            ("CARGO_FEATURE_TEST_FAULTS", "foundry-learn-fake"),
+        ] {
+            if std::env::var_os(feature).is_some() {
+                println!("cargo:rustc-link-arg-bin={binary}=-Wl,-headerpad,0x2000");
+            }
+        }
+    }
     if std::env::var_os("CARGO_FEATURE_LEARNING_WORKER").is_none() {
         return;
     }
