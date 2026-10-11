@@ -30,8 +30,13 @@ cache-only or unpublished inputs cannot supply evidence. The scorer considers at
 80 paths, 512 KiB per partition row, 8 MiB total mapping bytes, 32,768 units and 4,096
 distinct resident vectors. Vector slots rotate between selected files; shared inputs
 are scored once. It computes cosine from resident f16 vectors, accounting for their
-norms, and returns at most 64 labels with input-key tie breaking. Work counts and
-truncation are traced. This avoids filtered ANN's potentially corpus-wide traversal
+norms, and returns at most 64 labels with input-key tie breaking. While filling that
+window it applies the existing four-per-file delivery quota to distinct joined
+locations, continuing through the same bounded scored set when a label has no
+remaining admissible location. Shared labels retain only individually admissible
+locations. This prevents a file's fifth body from consuming a label slot that
+placement would later discard; it adds neither scored inputs nor delivery slots.
+Work counts, candidate-window quota skips and truncation are traced. This avoids filtered ANN's potentially corpus-wide traversal
 when a selected subset has few or no body vectors. The ordinary global ANN search is
 unchanged. Refined labels carry only the exact locations that passed those joins;
 a shared input cannot import another file's unverified provenance. Ordinary hits

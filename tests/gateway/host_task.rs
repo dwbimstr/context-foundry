@@ -303,12 +303,22 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
             "Qwen3-4B-Instruct-2507 Q4_K_M CPU",
             "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
         ),
+        "qwen3-coder-30b-a3b-instruct" => (
+            "Qwen3-Coder-30B-A3B-Instruct Q4_K_M CPU",
+            "fadc3e5f8d42bf7e894a785b05082e47daee4df26680389817e2093056f088ad",
+        ),
         _ => panic!("unsupported explicitly pinned task model"),
     };
     let public_check = std::env::var("FOUNDRY_HOST_TASK_PUBLIC_CHECK").as_deref() == Ok("1");
     let (task_seconds, output_limit) = if public_check {
         (900, 768)
-    } else if ["qwen-coder-7b", "qwen3-4b-instruct-2507"].contains(&backend.as_str()) {
+    } else if [
+        "qwen-coder-7b",
+        "qwen3-4b-instruct-2507",
+        "qwen3-coder-30b-a3b-instruct",
+    ]
+    .contains(&backend.as_str())
+    {
         (420, 768)
     } else {
         (180, 512)
@@ -338,7 +348,12 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
     assert!(
         !public_check
             || (["parser", "percent_decode"].contains(&scenario.as_str())
-                && ["qwen3-4b-instruct-2507", "qwen-coder-7b"].contains(&backend.as_str()))
+                && [
+                    "qwen3-4b-instruct-2507",
+                    "qwen-coder-7b",
+                    "qwen3-coder-30b-a3b-instruct"
+                ]
+                .contains(&backend.as_str()))
     );
     let percent = scenario == "percent_decode";
     // Whole upstream source can take over two minutes to prefill on this CPU;

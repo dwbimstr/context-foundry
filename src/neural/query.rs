@@ -247,15 +247,7 @@ impl DenseWindow {
                     .cmp(self.generation.input_key(b.label))
             })
         });
-        hits.truncate(DENSE_WINDOW);
-        let hits = hits
-            .into_iter()
-            .map(|hit| {
-                let locations = joined.remove(&hit.label).unwrap_or_default();
-                stats.retained_locations += locations.len();
-                RefinedHit { hit, locations }
-            })
-            .collect();
+        let hits = refinement_candidate_window(hits, joined, &mut stats, control)?;
         control.check()?;
         Ok(Refinement { hits, stats })
     }
@@ -356,6 +348,52 @@ fn refinement_working_set(
     }
 }
 
+/// Apply the existing delivery quota before spending the fixed label window.
+/// The input is already sorted by cosine and input key. Backfill only from that
+/// same bounded scored set: a file's fifth body cannot evict another file's first
+/// body and then be discarded during placement. Shared labels keep only their
+/// individually admissible, point-joined locations. Final-read freshness and the
+/// ordinary placement cap still apply after this candidate selection.
+fn refinement_candidate_window<'a>(
+    hits: Vec<DenseHit>,
+    mut joined: std::collections::BTreeMap<usize, Vec<&'a UnitLocation>>,
+    stats: &mut RefinementStats,
+    control: &Control,
+) -> Result<Vec<RefinedHit<'a>>, Fallback> {
+    use std::collections::{BTreeMap, BTreeSet};
+    control.check()?;
+    let mut kept = Vec::with_capacity(DENSE_WINDOW.min(hits.len()));
+    let mut per_file = BTreeMap::<&str, usize>::new();
+    let mut seen = BTreeSet::new();
+    for hit in hits {
+        control.check()?;
+        if kept.len() == DENSE_WINDOW {
+            break;
+        }
+        stats.labels_examined += 1;
+        let mut locations = Vec::new();
+        for location in joined.remove(&hit.label).unwrap_or_default() {
+            control.check()?;
+            if !seen.insert((location.path.as_str(), location.start, location.end)) {
+                stats.duplicate_locations += 1;
+                continue;
+            }
+            let count = per_file.entry(location.path.as_str()).or_default();
+            if *count == crate::store::PER_FILE_CAP {
+                stats.quota_skipped_locations += 1;
+                continue;
+            }
+            *count += 1;
+            locations.push(location);
+        }
+        if !locations.is_empty() {
+            stats.retained_locations += locations.len();
+            kept.push(RefinedHit { hit, locations });
+        }
+    }
+    Ok(kept)
+}
+
 pub(crate) struct RefinedHit<'a> {
     pub hit: DenseHit,
     /// Only the exact locations admitted by the bounded current-partition join.
@@ -437,6 +475,10 @@ pub(crate) struct RefinementStats {
     joined_locations: usize,
     retained_locations: usize,
     vectors_scored: usize,
+    labels_examined: usize,
+    /// Candidate-window quota skips, before final-read placement counters.
+    quota_skipped_locations: usize,
+    duplicate_locations: usize,
     pub(crate) truncated: bool,
 }
 
@@ -1458,6 +1500,124 @@ mod tests {
             refinement_working_set(vec![VecDeque::new(); 80], 4096, &Control::unbounded()).unwrap(),
             (vec![], false)
         );
+    }
+
+    #[test]
+    fn refinement_window_backfills_after_file_quota_without_growing_the_window() {
+        let locations: Vec<_> = (0..140)
+            .map(|label| UnitLocation {
+                kind: super::super::cache::CardKind::Body,
+                path: if label < 64 {
+                    "src/repeated.rs".into()
+                } else {
+                    format!("src/independent_{label:03}.rs")
+                },
+                start: (label * 8) as u64,
+                end: (label * 8 + 8) as u64,
+                source_sha256: "ab".repeat(32),
+            })
+            .collect();
+        let hits = || {
+            (0..locations.len())
+                .map(|label| DenseHit {
+                    label,
+                    distance: label as f32 / 1000.0,
+                })
+                .collect()
+        };
+        let joined = || {
+            locations
+                .iter()
+                .enumerate()
+                .map(|(label, location)| (label, vec![location]))
+                .collect()
+        };
+        let mut stats = RefinementStats::default();
+        let selected =
+            refinement_candidate_window(hits(), joined(), &mut stats, &Control::unbounded())
+                .unwrap();
+        // Truncating the raw scores to 64 first would yield only four useful
+        // candidates, all from repeated.rs, after the ordinary file cap.
+        assert_eq!(selected.len(), DENSE_WINDOW);
+        let expected: Vec<_> = (0..crate::store::PER_FILE_CAP).chain(64..124).collect();
+        assert_eq!(
+            selected.iter().map(|hit| hit.hit.label).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(stats.labels_examined, 124);
+        assert_eq!(stats.quota_skipped_locations, 60);
+        assert_eq!(stats.retained_locations, 64);
+        assert_eq!(stats.duplicate_locations, 0);
+        assert!(
+            !stats.truncated,
+            "this is the existing delivery quota, not an examination limit"
+        );
+        let replay = refinement_candidate_window(
+            hits(),
+            joined(),
+            &mut RefinementStats::default(),
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert_eq!(
+            replay.iter().map(|hit| hit.hit.label).collect::<Vec<_>>(),
+            expected
+        );
+        assert!(
+            refinement_candidate_window(
+                hits(),
+                joined(),
+                &mut RefinementStats::default(),
+                &Control::cancelled()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn refinement_window_caps_shared_locations_individually_and_deduplicates_spans() {
+        let locations: Vec<_> = ["a", "a", "a", "a", "a", "b", "b", "b", "b", "b", "c"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, path)| UnitLocation {
+                kind: super::super::cache::CardKind::Body,
+                path: format!("src/{path}.rs"),
+                start: (index * 8) as u64,
+                end: (index * 8 + 8) as u64,
+                source_sha256: "ab".repeat(32),
+            })
+            .collect();
+        let joined = [
+            (0, locations[..4].iter().collect()),
+            (1, locations[4..10].iter().collect()),
+            (2, vec![&locations[10]]),
+            (3, vec![&locations[0], &locations[10]]),
+        ]
+        .into();
+        let hits = (0..4)
+            .map(|label| DenseHit {
+                label,
+                distance: label as f32,
+            })
+            .collect();
+        let mut stats = RefinementStats::default();
+        let selected =
+            refinement_candidate_window(hits, joined, &mut stats, &Control::unbounded()).unwrap();
+        assert_eq!(
+            selected.iter().map(|hit| hit.hit.label).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert_eq!(selected[1].locations.len(), crate::store::PER_FILE_CAP);
+        assert!(
+            selected[1]
+                .locations
+                .iter()
+                .all(|location| location.path == "src/b.rs")
+        );
+        assert_eq!(stats.retained_locations, 9);
+        assert_eq!(stats.quota_skipped_locations, 2);
+        assert_eq!(stats.duplicate_locations, 2);
+        assert_eq!(stats.labels_examined, 4);
     }
 
     #[test]

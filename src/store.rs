@@ -127,7 +127,7 @@ pub const MAX_ANCHORS: usize = 4;
 /// lines (context-v2 § Anchored context).
 pub const ANCHOR_LIST: usize = 16;
 /// At most this many hits per file survive materialization.
-const PER_FILE_CAP: usize = 4;
+pub(crate) const PER_FILE_CAP: usize = 4;
 /// Context draws at most this many delivery units from the ranking.
 const CONTEXT_UNITS: usize = 32;
 /// Context adds at most this many file outlines.
