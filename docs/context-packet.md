@@ -25,6 +25,16 @@ The normal Linux embedding worker includes the 8,192-token pooled-output repair.
 
 Current evidence and limits:
 
+The newest [code continuation](validation.md#ecosystem-code-improvements--2026-10-11)
+adds `overview-v1` broad file preparation, bounded overview fitting, explicit-language
+and Unicode prose repair, requirement/execution source joins, `usage economics` and
+the macOS CPU sampler. Go delivery is now **5/8**, preserving all preceding Foundry/Rust
+successes. Broader inflection expansion was removed after Rust regressions. The new
+resource code needs native compilation/acceptance. Raw current artifacts are in
+`/workspace/.context-foundry-tools/validation-runs/ecosystem-code-v6/`; the detailed
+v5 baseline below remains historical. None of these changes establishes full retrieval
+or general task-quality/total-cost benefits.
+
 - **Retrieval:** experimental delivery remains 2/8 on Foundry, 3/6 on inspected Rust
   and 5/8 on additional public Rust questions. Two-passage selection and conservative
   language-qualifier disambiguation preserve every prior success; mixed-corpus Go
@@ -60,14 +70,14 @@ Current evidence and limits:
   suitable runner. Model/representation quality still needs independent evaluation.
 
 These are **not all macOS blockers**. Late chunking remains a conditional backend
-candidate; native macOS CPU policy, global GPU headroom and useful generated-knowledge/
+candidate; native macOS CPU acceptance, global GPU headroom and useful generated-knowledge/
 memory outcomes also remain open. 013 stays frozen off. Nothing is released or
 promoted to a new default.
 
 [Current validation](validation.md#broader-evidence-and-representative-workload--2026-10-11)
 records raw artifact locations, frozen identities, failures and checks. Current files
 are outside Git under `/workspace/.context-foundry-tools/validation-runs/`, with the
-latest corpus, profiles, reports and transcripts in `quality-scale-economics-v5`.
+prior corpus, profiles, reports and transcripts in `quality-scale-economics-v5`.
 Historical `/tmp` artifacts did not survive the environment restart. Restored tool
 caches do not prove a clean installation from the onboarding draft; see [resume](resume.md).
 

@@ -1,5 +1,12 @@
 # Workflows worth building
 
+Code continuation, 2026-10-11: 009 adds opt-in file-overview bootstrap and bounded
+fitting plus conservative prose-language repair; 003 adds declared task economics and
+explicit requirement/execution joins; 010 adds native macOS CPU sampling code, pending
+native acceptance. Current Go probes deliver 5/8 versus prior 1/8 while retaining
+Foundry/Rust successes. General quality, complete representative inference, task benefits
+and hardware acceptance remain open. See [current validation](../docs/validation.md#ecosystem-code-improvements--2026-10-11).
+
 Restarting this work on another host or with a fresh agent: start with the
 [context packet](../docs/context-packet.md).
 

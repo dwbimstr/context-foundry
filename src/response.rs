@@ -2107,6 +2107,7 @@ fn pack_task_evidence(
             "evidence":"observed_by_producer","kind":observed.observation.edge.kind,
             "provider":observed.observation.provider,"execution":observed.observation.execution,
             "from":observed.from.to_v2(),"to":observed.to.to_v2(),"test":observed.test.to_v2(),
+            "requirements":{"ids":plan.observed_requirements(observed),"basis":"explicit_source_link_overlap","satisfied":"not_established"},
             "complete_coverage":false
         })), vec![observed.from.clone(), observed.to.clone(), observed.test.clone()], false));
     }

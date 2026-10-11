@@ -106,7 +106,39 @@ fn report(text: &str) -> Value {
 }
 #[test]
 fn observed_execution_requires_fresh_proof_and_all_delivered_endpoints() {
-    let e = fixture();
+    let mut e = fixture();
+    let link = |path: &str, body: &str, start, end| {
+        context_foundry::SourceHandle {
+            workspace_id: e.wid.clone(),
+            path: path.into(),
+            sha256: context_foundry::digest(body.as_bytes()),
+            start,
+            end,
+        }
+        .to_v2()
+    };
+    let invalid_link = link("service.py", SERVICE, 0, SERVICE.len() as u64 + 10);
+    assert!(matches!(
+        task(
+            &e.engine,
+            json!({"op":"apply","expected_revision":e.revision,"edits":[
+                {"op":"add","entry":{"id":"invalid_range","kind":"requirement","text":"Invalid link cannot become coverage.","author":"operator","provenance":"fixture","source_links":[invalid_link]}}
+            ]})
+        ),
+        Err(FoundryError::InvalidRange)
+    ));
+    let edits: Vec<_> = [
+        ("emitted_products", link("service.py", SERVICE, SERVICE.find("    return").unwrap() as u64, SERVICE.len() as u64)),
+        ("unexecuted_line", link("service.py", SERVICE, 0, 5)),
+        ("test_only", link("test_contract.py", VERIFY, 0, VERIFY.len() as u64)),
+    ].into_iter().map(|(id, source)| json!({"op":"add","entry":{"id":id,"kind":"requirement","text":"Keep the declared response contract.","author":"operator","provenance":"fixture explicit source mapping","source_links":[source]}})).collect();
+    e.revision = task(
+        &e.engine,
+        json!({"op":"apply","expected_revision":e.revision,"edits":edits}),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
     let endpoint = |path: &str, body: &str, line: usize| json!({"path":path,"line":line,"symbol":"producer-label","hash":context_foundry::digest(body.as_bytes())});
     let artifact = json!({"v":1,"producer":"synthetic-test-trace","run":"case-1","command":["fixture-only"],"completed":true,"exit_code":0,"duration_ms":1,
     "test":endpoint("test_contract.py",VERIFY,2),"observations":[
@@ -124,6 +156,26 @@ fn observed_execution_requires_fresh_proof_and_all_delivered_endpoints() {
     assert_eq!(report(&full.text)["execution"]["delivered"], 2);
     assert!(full.text.contains("task-execution:"));
     assert!(full.text.contains(&context_foundry::digest(&bytes)));
+    for line in full
+        .text
+        .lines()
+        .filter_map(|line| line.strip_prefix("task-execution: "))
+    {
+        let observation: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(
+            observation["requirements"]["basis"],
+            "explicit_source_link_overlap"
+        );
+        assert_eq!(observation["requirements"]["satisfied"], "not_established");
+        assert_eq!(
+            observation["requirements"]["ids"],
+            if observation["kind"] == "covers" {
+                json!(["emitted_products"])
+            } else {
+                json!([])
+            }
+        );
+    }
     for budget in [1536, 2048, 4096] {
         let packed = pack(budget);
         assert!(packed.tokens <= budget);

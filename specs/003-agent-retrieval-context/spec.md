@@ -1032,3 +1032,19 @@ completion-cost eligibility rule remain unchanged. Failed and incompletely meter
 runs stay in the record. The comparator reports total and uncached input ratios
 separately, rejects impossible cached totals, and leaves monetary/amortized cost
 unknown; cached input is observed usage, not inferred monetary savings.
+
+T006/T009 code continuation (2026-10-11): `usage economics --manifest FILE` now reuses
+production receipt validation to account for all declared task attempts and shared
+bootstrap/maintenance/retrieval/auxiliary work. Failed attempts count; duplicate request
+attribution across logs refuses. Partial fields, conflicting/invalid receipts and
+missing expected requests suppress completion-cost claims. Observed costs and an
+explicit reuse projection are separate; currencies never combine. External task
+outcomes/digests are reported inputs, not checker execution or attestation by Foundry.
+See the [manifest contract](contracts/adapter-economics.md#declared-task-economics).
+
+Task composition now joins fresh explicit requirement source links to overlapping
+observed target lines. Delivered `task-execution.requirements` lists only those task
+entry IDs, with `basis: explicit_source_link_overlap` and satisfaction not established.
+Text similarity, an observing-test link alone and stale/foreign source identities do
+not produce a join. All original endpoint/test bodies must still fit atomically.
+This supplies traceability, not requirement correctness or exhaustive coverage.

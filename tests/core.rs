@@ -224,6 +224,125 @@ fn prose_language_qualifiers_do_not_hijack_explicit_symbol_resolution() {
 }
 
 #[test]
+fn prose_language_preference_applies_before_discovery_without_excluding_fallbacks() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    for i in 0..150 {
+        engine
+            .replace_source(
+                &format!("rust/{i}.rs"),
+                "/// Remove leading and trailing whitespace from a Go string.\nfn trim() {}\n",
+            )
+            .unwrap();
+    }
+    engine.replace_source("strings.go", "package sample\n// TrimSpace removes whitespace from a string.\nfunc TrimSpace(s string) string { return trim(s) }\n").unwrap();
+    engine
+        .replace_source(
+            "docs.md",
+            "# Guide\nRemove leading and trailing whitespace from a Go string.\n",
+        )
+        .unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = |text| {
+        engine
+            .context_candidates_with(
+                text,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let selected = query("remove leading and trailing whitespace from a Go string");
+    assert_eq!(
+        selected.batch.items[0].handle.as_ref().unwrap().path,
+        "strings.go"
+    );
+    assert!(
+        selected
+            .batch
+            .items
+            .iter()
+            .any(|i| i.handle.as_ref().is_some_and(|h| h.path == "docs.md"))
+    );
+    assert!(selected.batch.items.iter().any(|i| {
+        i.handle
+            .as_ref()
+            .is_some_and(|h| h.path.starts_with("rust/"))
+    }));
+    // No eligible language evidence: the query still has useful fallback hits.
+    assert!(
+        !query("remove whitespace from a Python string")
+            .batch
+            .items
+            .is_empty()
+    );
+    // Conflicting explicit languages do not silently select either side.
+    let mixed = query("convert a Go string to a Rust string removing whitespace");
+    assert!(
+        mixed.batch.items[0]
+            .handle
+            .as_ref()
+            .unwrap()
+            .path
+            .starts_with("rust/")
+    );
+}
+
+#[test]
+fn standard_adjectives_in_prose_are_not_symbol_requests() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    engine
+        .replace_source("unicode.go", "package sample\nfunc Unicode() {}\n")
+        .unwrap();
+    engine.replace_source("strings.go", "package sample\n// Removes leading Unicode whitespace from a string.\nfunc TrimSpace(s string) string { return s }\n").unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = |text| {
+        engine
+            .context_candidates_with(
+                text,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        query("remove leading Unicode whitespace from a Go string")
+            .batch
+            .items[0]
+            .handle
+            .as_ref()
+            .unwrap()
+            .path,
+        "strings.go"
+    );
+    for explicit in [
+        "Unicode",
+        "call Unicode with a callback",
+        "call `Unicode` with a callback",
+    ] {
+        assert_eq!(
+            query(explicit).batch.items[0].handle.as_ref().unwrap().path,
+            "unicode.go"
+        );
+    }
+}
+
+#[test]
 fn prose_context_keeps_distinct_matches_inside_one_long_function() {
     use context_foundry::store::{ContextOptions, RenderedForm};
     let dir = tempfile::tempdir().unwrap();

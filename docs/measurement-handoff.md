@@ -1,5 +1,22 @@
 # Measurement handoff
 
+**2026-10-11 resource-code handoff.** The macOS CPU sampler now exists in
+[`model_resources.rs`](../src/model_resources.rs), using the existing optional
+background CPU policy. Linux verifies tick accounting/reset and policy hysteresis;
+native compilation and actual CPU-pressure behavior have not run here. On the Mac:
+
+```sh
+cargo test --locked --lib native_macos_cpu_observation -- --ignored --nocapture
+```
+
+Then check configured pause/resume thresholds with foreground demand and both model
+lanes, preserving unknown-sample refusal and worker lifetime. This is host CPU
+admission, not GPU headroom, a hard CPU quota or thermal/battery policy. Those remain
+separate TODOs. `overview-v1` and hierarchy's `+overview2` fitting recipe also need
+representation-quality and device checks; complete file-vector coverage is not full
+body evidence or a task-quality result. The [latest Linux record](validation.md#ecosystem-code-improvements--2026-10-11)
+preserves the precise corpus/input counts and bounded real-model progress.
+
 **2026-10-11 portable numerical handoff.** Linux has verified real CPU embedding
 artifacts; macOS/Metal hardware remains unavailable in this sandbox. The new
 [`embedding_parity`](../tests/embedding_parity.rs) test writes a versioned receipt

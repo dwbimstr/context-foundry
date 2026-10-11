@@ -231,13 +231,20 @@ impl Resources {
     }
     pub(crate) fn status(&self) -> serde_json::Value {
         let state = self.lock();
+        let cpu_scope = if cfg!(target_os = "linux") {
+            "linux_affinity_and_visible_cgroup_v2"
+        } else if cfg!(target_os = "macos") {
+            "macos_host_cpu_ticks"
+        } else {
+            "unavailable"
+        };
         serde_json::json!({"policy":self.config,"reserved_semantic_bytes":state.reserved[0],
             "reserved_generation_bytes":state.reserved[1],"available_bytes":state.available,
             "observation_age_ms":state.sampled.map(|at| at.elapsed().as_millis().min(u64::MAX as u128) as u64),
             "reason":state.reason.map(Deferred::code),"pressure":state.pressure,
             "scope":"embedding_and_generation_worker_ceilings", "sample_interval_ms":1000,
             "background_cpu":{"enabled":self.config.background_cpu.is_some(),"busy_percent":state.cpu_percent,
-                "pressure":state.cpu_pressure,"scope":"linux_affinity_and_visible_cgroup_v2",
+                "pressure":state.cpu_pressure,"scope":cpu_scope,
                 "observation_age_ms":state.cpu_sampled.map(|at| at.elapsed().as_millis().min(u64::MAX as u128) as u64)}})
     }
     #[cfg(test)]
@@ -358,7 +365,50 @@ fn cpu_sample() -> Option<CpuSample> {
         at: Instant::now(),
     })
 }
-#[cfg(not(target_os = "linux"))]
+/// Darwin reports cumulative user/system/idle/nice ticks. Keep this conversion
+/// portable so counter wrap/reset and idle accounting have Linux regressions.
+#[cfg(any(target_os = "macos", test))]
+fn darwin_cpu_ticks([user, system, idle, nice]: [u32; 4]) -> CpuTicks {
+    let busy = u64::from(user) + u64::from(system) + u64::from(nice);
+    CpuTicks {
+        busy,
+        total: busy + u64::from(idle),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn cpu_sample() -> Option<CpuSample> {
+    // Host utilization is an admission signal, not an affinity/quota guarantee.
+    // The existing sampled hysteresis also governs this platform. A reset,
+    // wrapped counter or changed CPU count starts a new observation interval.
+    unsafe {
+        let cpus = libc::sysconf(libc::_SC_NPROCESSORS_ONLN);
+        if !(1..=4096).contains(&cpus) {
+            return None;
+        }
+        let host = libc::mach_host_self();
+        let mut stats: libc::host_cpu_load_info = std::mem::zeroed();
+        let mut count = libc::HOST_CPU_LOAD_INFO_COUNT;
+        let result = libc::host_statistics(
+            host,
+            libc::HOST_CPU_LOAD_INFO,
+            &mut stats as *mut _ as *mut libc::integer_t,
+            &mut count,
+        );
+        libc::mach_port_deallocate(libc::mach_task_self(), host);
+        if result != libc::KERN_SUCCESS || count != libc::HOST_CPU_LOAD_INFO_COUNT {
+            return None;
+        }
+        Some(CpuSample {
+            cpus: (0..cpus as usize).collect(),
+            ticks: darwin_cpu_ticks(stats.cpu_ticks),
+            groups: vec![],
+            at: Instant::now(),
+        })
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn cpu_sample() -> Option<CpuSample> {
     None
 }
@@ -659,6 +709,30 @@ fn available_memory() -> Option<u64> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+    #[test]
+    fn darwin_cpu_accounting_includes_nice_and_refuses_counter_reset() {
+        let before = darwin_cpu_ticks([10, 20, 60, 10]);
+        let after = darwin_cpu_ticks([20, 30, 125, 25]);
+        assert_eq!(after.percent_since(before), Some(35));
+        assert_eq!(before.percent_since(after), None);
+        assert_eq!(before.percent_since(before), None);
+        assert_eq!(
+            darwin_cpu_ticks([u32::MAX; 4]).total,
+            u64::from(u32::MAX) * 4
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "native macOS host CPU observation and pressure acceptance"]
+    fn native_macos_cpu_observation() {
+        let before = cpu_sample().expect("native CPU sample");
+        std::thread::sleep(Duration::from_millis(250));
+        let after = cpu_sample().expect("second native CPU sample");
+        assert!(after.percent_since(&before).is_some());
+        assert!(!after.cpus.is_empty());
+        assert!(after.groups.is_empty(), "Darwin has no Linux cgroup claim");
+    }
     fn config() -> Config {
         Config {
             resident_bytes: 1000,

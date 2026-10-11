@@ -27,6 +27,9 @@ pub struct Plan {
     pub constraints: usize,
     pub compiler: Vec<crate::graph::ReferencesOutcome>,
     pub observed: Vec<crate::graph::ObservedEvidence>,
+    /// Explicit requirement-to-source links, validated in the final snapshot.
+    /// An execution overlap is traceability, never proof of requirement success.
+    pub(crate) requirement_links: Vec<(String, SourceHandle)>,
     pub compiler_skipped_seeds: usize,
     pub(crate) reference_uses: BTreeMap<String, reference::Use>,
     pub roots: Vec<String>,
@@ -59,6 +62,7 @@ impl Plan {
             primary.roots.extend(other.roots);
             primary.compiler.extend(other.compiler);
             primary.observed.extend(other.observed);
+            primary.requirement_links.extend(other.requirement_links);
             primary.reference_uses.extend(other.reference_uses);
             primary.compiler_skipped_seeds += other.compiler_skipped_seeds;
             primary.discovery_limited |= other.discovery_limited;
@@ -73,6 +77,28 @@ impl Plan {
             })
             .collect();
         primary
+    }
+
+    pub(crate) fn observed_requirements(
+        &self,
+        evidence: &crate::graph::ObservedEvidence,
+    ) -> Vec<&str> {
+        self.requirement_links
+            .iter()
+            .filter_map(|(id, link)| {
+                // The target is the observed call/covered line. The observing test
+                // alone and a lexical similarity to a requirement establish no join.
+                let target = &evidence.to;
+                (link.workspace_id == target.workspace_id
+                    && link.path == target.path
+                    && link.sha256 == target.sha256
+                    && link.start < target.end
+                    && target.start < link.end)
+                    .then_some(id.as_str())
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     /// Availability is not delivery and lexical matching is not task completion.
@@ -212,6 +238,7 @@ impl Engine {
             support: vec![],
             compiler: vec![],
             observed: vec![],
+            requirement_links: vec![],
             compiler_skipped_seeds: 0,
             reference_uses: BTreeMap::new(),
             roots: vec![self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?],
@@ -329,23 +356,35 @@ impl Engine {
                 if let Some(m) =
                     meta.filter(|m| m.hash.starts_with(&h.sha32) && h.ws16 == wid[..16])
                 {
+                    if h.start >= h.end || h.end > m.bytes as u64 {
+                        plan.stale_links += 1;
+                        continue;
+                    }
+                    let handle = SourceHandle {
+                        workspace_id: wid.clone(),
+                        path: h.path.clone(),
+                        sha256: m.hash.clone(),
+                        start: h.start,
+                        end: h.end,
+                    };
+                    if e.kind == Kind::Requirement {
+                        let Some((_, body)) = crate::boundary::source_in(&tx, &h.path)? else {
+                            plan.stale_links += 1;
+                            continue;
+                        };
+                        if body.get(h.start as usize..h.end as usize).is_none() {
+                            plan.stale_links += 1;
+                            continue;
+                        }
+                        plan.requirement_links.push((e.id.clone(), handle.clone()));
+                    }
                     let f = if e.kind == Kind::Constraint {
                         "constraints"
                     } else {
                         facet(&h.path)
                     };
-                    plan.discovery_limited |= !add(
-                        &mut candidates,
-                        SourceHandle {
-                            workspace_id: wid.clone(),
-                            path: h.path,
-                            sha256: m.hash,
-                            start: h.start,
-                            end: h.end,
-                        },
-                        f,
-                        &format!("task:{}", e.id),
-                    );
+                    plan.discovery_limited |=
+                        !add(&mut candidates, handle, f, &format!("task:{}", e.id));
                 } else {
                     plan.stale_links += 1;
                 }

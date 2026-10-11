@@ -244,6 +244,25 @@ At most 256 current area briefs are admitted from a scan of 4,096 brief rows; ex
 refuses explicitly. They share the vector cache and use a small exact cosine scan.
 Source ANN coverage and area counts are reported separately. No purge is needed.
 
+For broad preparation with at most one input per nonblank source, use:
+
+```json
+"representation": {"kind": "overview-v1"}
+```
+
+This fits an extractive file overview without computing every body/parent card.
+The existing area-brief lane is retained, with the same bounds and derived provenance.
+It works through ordinary `semantic prepare`, priorities and continuous maintenance.
+Switching to `hierarchy-v1` later reuses matching file vectors while adding body/parent
+inputs. Both recipes now use bounded prefix fitting for file extracts; hierarchy's
+recipe identity includes `+overview2`, so older partitions refit and unchanged exact
+inputs still reuse their vectors. No source transaction holds the tokenizer or model.
+
+One source recipe is active at a time. This is not automatic per-query body expansion.
+“Complete” is coverage of that recipe, not every source byte, every useful behavior
+or guaranteed task evidence. Keep lexical/source retrieval available. Compare task
+quality before selecting this experimental representation for a deployment.
+
 Ordinary `embed-worker` now includes the checked pooled-output allocation fix.
 Linux CPU uses descriptor `adapter_revision: 3`; the new, unvalidated Metal build uses
 revision 4. Keep every artifact hash, template, dimension and geometry accurate.
@@ -384,6 +403,25 @@ compiler facts or proof of exhaustive coverage. The ordinary graph command expos
 them; task composition emits `task-execution` only with all required source bodies.
 A source/test change immediately makes its observation ineligible. Use an explicit
 collector for the chosen runtime; automatic test execution during indexing is absent.
+
+Fresh explicit requirement source links can join an observed target line. The execution
+row lists the matching task entry IDs as `explicit_source_link_overlap`; it still says
+requirement satisfaction is `not_established`. All caller/target/test source bodies
+must fit before the row is delivered. Similar text or a link only to the observing test
+does not prove a requirement-to-implementation relationship.
+
+## Task-cost accounting
+
+`foundry usage economics --manifest FILE` combines declared receipt logs for every
+task attempt and shared bootstrap, maintenance, retrieval and auxiliary work. Follow
+the [manifest contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#declared-task-economics).
+It retains failed-attempt costs, checks expected request counts, identifies missing
+fields and refuses double attribution across logs. Cached input is counted once.
+Known costs per currency and observed cost per reported completion are separate from
+an explicitly assumed reuse projection. No passing tasks, unknown task outcomes or
+incomplete usage leave the relevant completion ratios null. Checker digests identify
+externally reported outcomes; this command does not run checkers or attest their truth.
+Absent prices, hidden traffic and unreported local energy remain unknown.
 
 ## Incremental workspace watching
 
@@ -1001,7 +1039,7 @@ probe the host. Current/cache hits need no worker admission and remain usable un
 This is owner-local admission, **not an aggregate OS memory quota**: owner/index memory,
 artifact disk/page cache, other processes and other Foundry owners are outside its reservation
 sum. External HTTP servers have no local worker reservation. Global GPU usage,
-native macOS CPU observation, thermal/battery policy and simultaneous real-model hardware acceptance remain open. Without
+native macOS CPU acceptance, thermal/battery policy and simultaneous real-model hardware acceptance remain open. Without
 this option, previous admission and cache behavior is preserved.
 
 
@@ -1016,8 +1054,11 @@ sampling interval. Initial or missing/malformed observations defer by name; stat
 do not sample. It preserves idle generation residency under CPU contention.
 This is contention admission, not a hard CPU limit. Ancestors hidden outside the cgroup
 mount, cgroup v1 and affinity masks beyond the platform CPU-set capacity are not covered.
-Leave the field absent on macOS until its sampler is implemented and verified. Global
-GPU pressure, thermal/battery policy and task-quality/economics acceptance remain pending.
+macOS now has a native host-tick sampler using the same policy and a distinct status
+scope (`macos_host_cpu_ticks`). Its arithmetic/reset behavior is tested on Linux;
+native compilation, sampling and real pressure/resume acceptance are outstanding.
+It does not claim Linux affinity/cgroup limits on macOS. Global GPU pressure,
+thermal/battery policy and task-quality/economics acceptance remain pending.
 
 ## Boundary relationships and task evidence
 

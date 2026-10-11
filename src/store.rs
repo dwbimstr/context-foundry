@@ -3274,7 +3274,8 @@ pub(crate) fn prose_context_query(query: &str, strategy: Strategy, has_policy: b
 /// Unmarked prose compounds and language qualifiers (e.g. "a Go string")
 /// should not resolve to an unrelated capitalized function. Explicit call/name
 /// requests and marked/shaped identifiers retain ordinary anchor precedence.
-/// This affects intent only; a language qualifier never filters admitted roots.
+/// A qualifier never filters admitted roots. Experimental prose ranking may
+/// prefer its language, while retaining documentation and other-language hits.
 pub(crate) fn incidental_prose_anchor(query: &str, anchor: &AnchorCandidate) -> bool {
     if anchor.group != 3 {
         return false;
@@ -3295,9 +3296,12 @@ pub(crate) fn incidental_prose_anchor(query: &str, anchor: &AnchorCandidate) -> 
         "Java",
         "Javascript",
         "Typescript",
+        "JavaScript",
+        "TypeScript",
         "Ruby",
         "Swift",
         "Kotlin",
+        "Unicode",
     ]
     .contains(&anchor.text.as_str())
         || before.split_whitespace().any(|word| {
@@ -3309,11 +3313,67 @@ pub(crate) fn incidental_prose_anchor(query: &str, anchor: &AnchorCandidate) -> 
     }
     after.split_whitespace().next().is_some_and(|word| {
         [
-            "string", "slice", "map", "array", "boolean", "bytes", "channel", "code", "source",
-            "package", "module", "path", "reader",
+            "string",
+            "slice",
+            "map",
+            "array",
+            "boolean",
+            "bytes",
+            "channel",
+            "code",
+            "source",
+            "package",
+            "module",
+            "path",
+            "reader",
+            "whitespace",
+            "character",
+            "characters",
+            "text",
         ]
         .contains(&word.trim_end_matches(['?', '.', ',', ':']))
     })
+}
+
+/// Only an unambiguous, explicitly capitalized language followed by a source
+/// noun supplies a preference. Ordinary English ("go through"), symbol calls,
+/// and cross-language questions do not. This uses query text, never corpus labels.
+fn prose_language(query: &str) -> Option<&'static str> {
+    let words: Vec<_> = query.split_whitespace().collect();
+    if words.iter().any(|word| {
+        ["call", "invoke", "named", "symbol", "function", "method"]
+            .contains(&word.to_ascii_lowercase().as_str())
+    }) {
+        return None;
+    }
+    let mut language = None;
+    for pair in words.windows(2) {
+        let candidate = match pair[0] {
+            "Go" => "go",
+            "Rust" => "rust",
+            "Python" => "python",
+            "Java" => "java",
+            "Javascript" | "JavaScript" => "javascript",
+            "Typescript" | "TypeScript" => "typescript",
+            "Ruby" => "ruby",
+            "Swift" => "swift",
+            "Kotlin" => "kotlin",
+            _ => continue,
+        };
+        if ![
+            "string", "slice", "map", "array", "boolean", "bytes", "channel", "code", "source",
+            "package", "module", "path", "reader",
+        ]
+        .contains(&pair[1].trim_end_matches(['?', '.', ',', ':']))
+        {
+            continue;
+        }
+        if language.is_some_and(|old| old != candidate) {
+            return None;
+        }
+        language = Some(candidate);
+    }
+    language
 }
 
 /// Distinct concept coverage dominates frequency/rarity for prose. Adjacent
@@ -3321,8 +3381,12 @@ pub(crate) fn incidental_prose_anchor(query: &str, anchor: &AnchorCandidate) -> 
 /// This uses the existing positional index; no expansion corpus or extra scan.
 fn prose_lexical(query: &str, body: Field) -> Box<dyn Query> {
     let mut words = Vec::new();
+    let language = prose_language(query);
     for word in analyzed_terms(crate::syntax::code_subtokens, query) {
-        if !prose_stopword(&word) && !words.contains(&word) {
+        // A requested language is a metadata preference, not a required
+        // behavioral concept. Rewarding its incidental appearance in long
+        // comments can bury the implementation whose comments omit it.
+        if language != Some(word.as_str()) && !prose_stopword(&word) && !words.contains(&word) {
             words.push(word);
             if words.len() == 64 {
                 break;
@@ -5104,7 +5168,29 @@ impl Engine {
             move |doc: DocId, score: Score| (score, Reverse(key_hash.get_val(doc)))
         });
         let lexical: Box<dyn Query> = if prose {
-            prose_lexical(query, fields.body)
+            let lexical = prose_lexical(query, fields.body);
+            if let Some(language) = prose_language(query) {
+                if let Some(trace) = control.trace() {
+                    trace.record(serde_json::json!({"stage":"lexical_language","language":language,"policy":"prefer_explicit_language_v1","filters_roots":false}));
+                }
+                // Distinct-term scores are bounded by 64.5. Prefer matching
+                // language before spending the fixed discovery window; adding
+                // this after TopDocs would leave relevant files undiscovered.
+                // The lexical Must keeps unrelated files out; Should preserves
+                // fallback languages and the separate documentation window.
+                Box::new(BooleanQuery::new(vec![
+                    (Occur::Must, lexical),
+                    (
+                        Occur::Should,
+                        Box::new(ConstScoreQuery::new(
+                            term(fields.lang, language, IndexRecordOption::Basic),
+                            65.0,
+                        )),
+                    ),
+                ]))
+            } else {
+                lexical
+            }
         } else {
             Box::new(BooleanQuery::union(clauses))
         };

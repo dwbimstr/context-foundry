@@ -38,6 +38,8 @@ use serde_json::{Map, Value};
 
 use crate::adapter_error::{AResult, AdapterError};
 
+pub mod economics;
+
 /// One host session file is at most 512 MiB; larger input refuses.
 pub const SESSION_MAX_BYTES: usize = 512 * 1024 * 1024;
 /// One session line is at most 32 MiB; a longer line refuses.

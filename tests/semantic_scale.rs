@@ -11,7 +11,7 @@ use context_foundry::{Control, Engine, testkit};
 use serde_json::json;
 use std::time::{Duration, Instant};
 
-/// Inventory every admitted source with the production body fitter and exact
+/// Inventory every admitted source with the selected production fitter and exact
 /// tokenizer. This measures the whole inference obligation without pretending
 /// that tokenization or a small embedded sample completed model coverage.
 #[test]
@@ -33,9 +33,13 @@ fn representative_corpus_workload_inventory() {
     let files = manifest["files"].as_array().unwrap();
     assert!((60_000..=80_000).contains(&files.len()));
     let profile = SemanticProfile::load(&path("FOUNDRY_SEMANTIC_SCALE_PROFILE")).unwrap();
-    let partition::Representation::Body { parent_tokens } = profile.representation else {
-        panic!("body profile required")
-    };
+    assert!(
+        matches!(
+            profile.representation,
+            partition::Representation::Body { .. } | partition::Representation::Overview
+        ),
+        "body or overview profile required"
+    );
     // An explicit continuation reuses only a verified fitted prefix. The full
     // key set is intentionally not persisted, so distinct-input totals become
     // bounds across phases rather than an invented exact union.
@@ -80,16 +84,27 @@ fn representative_corpus_workload_inventory() {
             .unwrap_or(prior_tokens)
     });
     let store = previous.as_ref().map_or_else(
-        || dir.join("store"),
+        || {
+            std::env::var_os("FOUNDRY_SEMANTIC_SCALE_STORE")
+                .map_or_else(|| dir.join("store"), PathBuf::from)
+        },
         |(path, v, _)| {
             v["store_directory"]
                 .as_str()
                 .map_or_else(|| path.parent().unwrap().join("store"), PathBuf::from)
         },
     );
+    assert!(
+        store.is_absolute()
+            && !store.starts_with(env!("CARGO_MANIFEST_DIR"))
+            && !store.starts_with(&root)
+    );
     let started = Instant::now();
-    let control = Control::with_deadline(started + Duration::from_secs(1800));
-    let mut engine = if previous.is_some() {
+    let budget_seconds: u64 = std::env::var("FOUNDRY_SEMANTIC_SCALE_BUDGET_SECONDS")
+        .map_or(1800, |value| value.parse().unwrap());
+    assert!((1..=1800).contains(&budget_seconds));
+    let control = Control::with_deadline(started + Duration::from_secs(budget_seconds));
+    let mut engine = if previous.is_some() || store.exists() {
         Engine::open_existing(&store)
     } else {
         Engine::initialize(&store, &root)
@@ -148,7 +163,7 @@ fn representative_corpus_workload_inventory() {
         let key_lower = prior_keys.max(keys.len() as u64);
         let key_upper = prior_keys_upper + keys.len() as u64;
         let token_sum = keys.values().sum::<usize>() as u64;
-        let report = json!({"scope":"corpus_exact_input_workload_not_embedding_or_retrieval_acceptance",
+        let report = json!({"scope":"corpus_exact_input_workload_not_embedding_or_retrieval_acceptance","budget_seconds":budget_seconds,
             "first_manifest_offset":first,"previous_report_sha256":previous.as_ref().map(|(_,_,h)| h),"store_directory":store,
             "distinct_model_inputs_lower_bound":key_lower,"distinct_model_inputs_upper_bound":key_upper,
             "distinct_input_tokens_lower_bound":prior_tokens.max(token_sum),"distinct_input_tokens_upper_bound":prior_tokens_upper+token_sum,
@@ -186,23 +201,39 @@ fn representative_corpus_workload_inventory() {
             .entry(name.split('/').next().unwrap().into())
             .or_default();
         project[0] += 1;
-        let fitted = partition::body::visit(
-            &body,
-            context_foundry::syntax::Lang::from_path(name),
-            &recipe,
-            parent_tokens as usize,
-            &tokenizer,
-            |_, card| {
-                count += 1;
-                cards += 1;
-                tokens += card.ids.len() as u64;
-                project[1] += 1;
-                project[2] += card.ids.len() as u64;
-                if let Some(previous) = keys.insert(card.input_key, card.ids.len()) {
-                    assert_eq!(previous, card.ids.len());
+        let mut accept = |card: partition::Card| {
+            count += 1;
+            cards += 1;
+            tokens += card.ids.len() as u64;
+            project[1] += 1;
+            project[2] += card.ids.len() as u64;
+            if let Some(previous) = keys.insert(card.input_key, card.ids.len()) {
+                assert_eq!(previous, card.ids.len());
+            }
+        };
+        let lang = context_foundry::syntax::Lang::from_path(name);
+        let fitted = match profile.representation {
+            partition::Representation::Body { parent_tokens } => partition::body::visit(
+                &body,
+                lang,
+                &recipe,
+                parent_tokens as usize,
+                &tokenizer,
+                |_, card| accept(card),
+            ),
+            partition::Representation::Overview => partition::hierarchy::file_plan(
+                &body, lang, &recipe, &tokenizer,
+            )
+            .and_then(|spans| {
+                for span in spans {
+                    accept(partition::hierarchy::card(
+                        &body, &span, &recipe, &tokenizer,
+                    )?);
                 }
-            },
-        );
+                Ok(())
+            }),
+            _ => unreachable!("validated profile"),
+        };
         if let Err(error) = fitted {
             save(
                 visited, admitted, excluded, empty, cards, tokens, &keys, &projects,

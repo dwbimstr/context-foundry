@@ -1623,6 +1623,21 @@ impl Cards<'_> {
                         )?);
                     }
                 }
+                partition::Representation::Overview => {
+                    for span in partition::hierarchy::file_plan(
+                        body,
+                        Lang::from_path(&path),
+                        &self.recipe(),
+                        self.tokenizer,
+                    )? {
+                        accept(partition::hierarchy::card(
+                            body,
+                            &span,
+                            &self.recipe(),
+                            self.tokenizer,
+                        )?);
+                    }
+                }
             }
             retained = kept;
             Ok(tuples)
@@ -1690,6 +1705,14 @@ impl Cards<'_> {
                                     Lang::from_path(&source.path),
                                     &recipe,
                                     parent_tokens as usize,
+                                    self.tokenizer,
+                                )?)
+                            }
+                            partition::Representation::Overview => {
+                                SourcePlan::Hierarchy(partition::hierarchy::file_plan(
+                                    body,
+                                    Lang::from_path(&source.path),
+                                    &recipe,
                                     self.tokenizer,
                                 )?)
                             }
@@ -2428,6 +2451,7 @@ mod tests {
             partition::Representation::Address,
             partition::Representation::Body { parent_tokens: 16 },
             partition::Representation::Hierarchy { parent_tokens: 16 },
+            partition::Representation::Overview,
         ] {
             let (_dir, engine, mut profile) = partition_fixture();
             profile.representation = representation;
@@ -2482,12 +2506,29 @@ mod tests {
                     })
                     .collect()
                 }
+                partition::Representation::Overview => partition::hierarchy::file_plan(
+                    &body,
+                    Lang::from_path("lib.rs"),
+                    &cards.recipe(),
+                    &counting,
+                )
+                .unwrap()
+                .iter()
+                .map(|span| {
+                    partition::hierarchy::card(&body, span, &cards.recipe(), &counting).unwrap()
+                })
+                .collect(),
             };
             let once = counting.encodes.load(Ordering::Relaxed);
             let pool = PartitionWorkers::new(2);
             // 512 admits the array poorly; 4096 allows some ids before overflowing.
             // Both must fall back without changing any card or dropping later units.
-            for limit in [RETAINED_CARD_BYTES, 0, 512, 4096] {
+            let limits: &[usize] = if representation == partition::Representation::Overview {
+                &[RETAINED_CARD_BYTES, 0]
+            } else {
+                &[RETAINED_CARD_BYTES, 0, 512, 4096]
+            };
+            for &limit in limits {
                 counting.encodes.store(0, Ordering::Relaxed);
                 let source = engine.semantic_partition_source("lib.rs", &hash).unwrap();
                 let computed = if limit == RETAINED_CARD_BYTES {

@@ -572,6 +572,8 @@ impl ReceiptLog {
 /// missing; conflicting keys are counted once, never averaged or guessed.
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Summary {
+    pub input_sha256: String,
+    pub input_bytes: u64,
     pub rows: u64,
     pub receipts_with_usage: u64,
     pub receipts_missing_usage: u64,
@@ -581,6 +583,9 @@ pub struct Summary {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cached_input_tokens: u64,
+    /// Counts per admitted receipt. A partially metered receipt is not complete
+    /// merely because it supplied one of input/output. Totals above are subtotals.
+    pub missing: BTreeMap<String, u64>,
     /// Known cost totals per currency, complete triples only.
     pub cost_microunits: BTreeMap<String, u64>,
     pub outcomes: BTreeMap<String, u64>,
@@ -600,6 +605,15 @@ fn checked_total(total: &mut u64, value: u64, what: &str) -> AResult<()> {
 /// truncating, and the file is read through a bounded reader so an
 /// oversized input is refused without being loaded.
 pub fn summarize(path: &Path) -> AResult<Summary> {
+    summarize_disjoint(path, &mut std::collections::BTreeSet::new())
+}
+
+/// A task-cost report may contain several logs, but a request can belong to
+/// only one attempt/phase. Retries inside one log keep ordinary deduplication.
+pub(crate) fn summarize_disjoint(
+    path: &Path,
+    attributed: &mut std::collections::BTreeSet<(String, String, String)>,
+) -> AResult<Summary> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .and_then(|file| {
@@ -615,7 +629,11 @@ pub fn summarize(path: &Path) -> AResult<Summary> {
             ),
         ));
     }
-    let mut summary = Summary::default();
+    let mut summary = Summary {
+        input_sha256: crate::digest(&bytes),
+        input_bytes: bytes.len() as u64,
+        ..Summary::default()
+    };
     let mut dedup = ReceiptDedup::default();
     for line in bytes.split(|b| *b == b'\n') {
         if line.is_empty() {
@@ -646,6 +664,16 @@ pub fn summarize(path: &Path) -> AResult<Summary> {
                 continue;
             }
         }
+        if !attributed.insert((
+            receipt.adapter_id.clone(),
+            receipt.session_id.clone(),
+            receipt.request_id.clone(),
+        )) {
+            return Err(AdapterError::named(
+                "usage_attribution_conflict",
+                "one request appears in several task-cost logs",
+            ));
+        }
         *summary
             .outcomes
             .entry(receipt.outcome.as_str().to_owned())
@@ -654,6 +682,16 @@ pub fn summarize(path: &Path) -> AResult<Summary> {
             summary.receipts_with_usage += 1;
         } else {
             summary.receipts_missing_usage += 1;
+        }
+        for (name, present) in [
+            ("input_tokens", receipt.input_tokens.is_some()),
+            ("output_tokens", receipt.output_tokens.is_some()),
+            ("cached_input_tokens", receipt.cached_input_tokens.is_some()),
+            ("cost_microunits", receipt.cost_microunits.is_some()),
+        ] {
+            if !present {
+                *summary.missing.entry(name.into()).or_default() += 1;
+            }
         }
         checked_total(
             &mut summary.input_tokens,

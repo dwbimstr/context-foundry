@@ -183,6 +183,12 @@ pub enum AdapterCommand {
 
 #[derive(Subcommand)]
 pub enum UsageAction {
+    /// Account for declared task attempts and shared preparation/maintenance costs.
+    Economics {
+        /// Bounded manifest of receipt logs and externally reported task outcomes.
+        #[arg(long)]
+        manifest: PathBuf,
+    },
     /// Summarize known totals plus missing/conflicting coverage (<=16 MiB, <=10,000 rows).
     Summarize {
         #[arg(long)]
@@ -558,6 +564,10 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             }
         }
         AdapterCommand::Usage { action } => match action {
+            UsageAction::Economics { manifest } => println!(
+                "{}",
+                serde_json::to_string_pretty(&crate::usage::economics::report(&manifest)?)?
+            ),
             UsageAction::Summarize { input } => println!(
                 "{}",
                 serde_json::to_string_pretty(&crate::receipts::summarize(&input)?)?

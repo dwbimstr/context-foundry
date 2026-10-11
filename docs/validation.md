@@ -1,5 +1,106 @@
 # Validation
 
+## Ecosystem code improvements — 2026-10-11
+
+Continued from `6637414` on `experimental/context-ecosystem`, using the existing
+Rust 1.90/Linux setup. Artifacts are outside Git in
+`/workspace/.context-foundry-tools/validation-runs/ecosystem-code-v6/`.
+No default promotion, release, new model, host-task success or native Mac/GPU
+acceptance is claimed. The code focus is useful preparation with fewer inputs,
+retrieval intent, evidence traceability and complete declared-scope accounting.
+
+**Retrieval.** The final conservative repair prefers an explicit language before the
+fixed candidate window, removes that qualifier from behavioral term scoring and
+treats unmarked “Unicode whitespace” as prose. Ordinary/marked symbol behavior,
+source validation, per-file caps and the 2,048-token probe allowance remain intact.
+Frozen development results (`retrieval-final-*/report.json`):
+
+| Corpus | Preceding experimental | Final candidate |
+| --- | --- | --- |
+| Foundry, 8 questions | 2/8 | 2/8 |
+| Inspected Rust, 6 questions | 3/6 | 3/6 |
+| Additional Rust, 8 questions | 5/8 | 5/8 |
+| Mixed-corpus Go, 8 questions | 1/8 | 5/8 |
+
+No previously delivered span is lost. The four Go gains are Cut, ParseBool,
+ToValidUTF8 and Clone; TrimSpace/Join still reach the candidate cutoff and ReadAll
+is unknown in the bounded window. Foundry still has excerpt and discovery/coverage
+losses; these are not held-out acceptance results. The initial language-preference-only
+variant did not improve these counts. A broader inflection variant reached Foundry
+3/8 and Go 6/8 but lost one delivered answer in each Rust set (2/6 and 4/8); it was
+removed. Its failures remain in `retrieval-inflections-*`.
+
+**Preparation.** `overview-v1` computes at most one source input per nonblank file
+without body/parent fitting. It shares exact file inputs with hierarchy-v1 and the
+existing bounded area lane. The file fitter now uses bounded distributed extracts and
+logarithmic prefix fitting; the hierarchy recipe ID includes `+overview2` to invalidate
+old partitions while retaining exact-input vector reuse. Contract checks cover UTF-8,
+bounded tokenizer work, retained-card fallback, expansion, changes, revert, restart
+and deletion. Overviews are extracts that may omit source, not complete behavioral
+representations or automatic query-triggered body expansion.
+
+The same pinned Rust 1.90/Go 1.25 manifest has 69,565 regular files and 67,663 admitted
+sources. With the real tokenizer and the unchanged 512-token allowance, complete
+inventory (`overview-inventory-v2/workload.json`) records **67,585 card locations,
+63,621 distinct inputs, 12,999,181 distinct input tokens and 195,443,712 raw vector
+bytes (186.39 MiB)**; 78 sources have no card. The body recipe's prior complete
+inventory required 782,716–831,067 distinct inputs and 2.24–2.38 GiB of raw vectors.
+This measures a smaller representation obligation, not equal quality or completed
+inference. The debug inventory finishes in 390,792 ms, including 9,198 ms of unchanged
+index reconciliation; other checks overlapped parts of these diagnostics, so timings
+are not an isolated throughput comparison. The original greedy-fitter inventory
+stopped at 600 seconds after 35,388 admitted sources; its partial result is retained.
+A reuse-harness attempt initially called the initializer on an existing store; it
+refused without fitting and was corrected to open the existing store.
+
+The unchanged ordinary Gemma CPU worker (revision 3, four threads, 8 GiB ceiling)
+then prepares this representation under 120/60-second budgets, with two explicit Go
+priorities. Cold: 404 embeddings / 78,588 tokens / 108,675 ms, publishing 404 vectors
+and 441 current locations. Resume: 188 new embeddings / 33,646 tokens / 54,461 ms,
+446 cached-unit reuses, publishing **592 vectors and 635 current locations**.
+Both stop `budget_exhausted` with no provider/publication error. **67,021 sources
+remain unpartitioned**; this is bounded real inference, not complete semantic scale.
+The actual partial serving check returns the requested sort.Search declaration/body,
+validates three current source handles and trace/stdout agreement within 2,048 tokens
+(`representative-serving-fixed/report.json`). Fresh worker acquisition is included
+in its 15,836 ms; this is not a resident-host latency claim. Exact executable/profile
+hashes live in `artifacts.json`; the semantic snapshot precedes a later defensive
+requirement-link validation change, which does not affect semantic preparation.
+
+**Evidence and economics.** Task execution proofs now carry requirement IDs only for
+fresh explicit source links overlapping their observed target. Source ranges, hashes
+and UTF-8 boundaries are checked; the observing test alone and similar prose do not
+establish a join. The proof still requires all endpoint/test bodies and says satisfaction
+is not established. `usage economics` reuses production receipt parsing, counts failed
+attempts, refuses cross-log request attribution, reports missing categories/requests,
+separates cached input and keeps observed costs apart from an explicit reuse projection.
+It reports external checker identities, not execution attestation or hidden traffic.
+Replaying all four preserved percent-decoder failures gives zero completed tasks,
+127,095 known input tokens and 6,147 known output tokens, incomplete usage and unknown
+prices. Completion economics stays null (`host-economics-report.json`). No new host
+model run or success is claimed.
+
+**Resources and checks.** The macOS host-CPU sampler is implemented using existing
+Mach bindings and the existing admission hysteresis. Portable arithmetic/reset tests
+pass; native compilation/observation and pressure behavior remain unrun. The focused
+suite passes **540 tests** (three explicit checks remain ignored): 219 library,
+82 core, 90 MCP, 20 multiroot, 83 neural retrieval, 16 response, two attribution,
+15 task evidence, ten usage and three task-economics tests. A later retained-overview
+fallback check and all 15 task-evidence tests pass after final link validation. The
+test first tried inserting an invalid link and correctly received `InvalidRange`;
+the repaired test now asserts that refusal. All-target Clippy with denied warnings,
+the genuine no-default-features library check, formatting and Markdown links pass.
+
+**Remaining:** general anchorless/behavioral retrieval and independent quality
+acceptance; simultaneous coarse/selective body preparation and better overview content
+where needed; full representative inference, useful serving and sustained maintenance/
+compaction; broader static frameworks/runtime collectors and requirement satisfaction;
+reliable free-form and memory-sensitive tasks with total/amortized cost benefits;
+native Mac/Metal CPU/GPU parity, pressure, thermal/battery and signed-package acceptance.
+Global GPU policy and optional embedding eviction remain implementation work.
+These are recorded in the [pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10),
+not silently closed as environment-only TODOs. Learning remains frozen off.
+
 ## Broader evidence and representative workload — 2026-10-11
 
 Continued on `experimental/context-ecosystem` with Rust 1.90, Linux x86_64,

@@ -6391,6 +6391,103 @@ fn hierarchy_area_preparation_deduplicates_exact_inputs_and_reuses_on_restart() 
 }
 
 #[test]
+fn overview_bootstrap_bounds_inputs_and_reuses_them_during_hierarchy_expansion() {
+    use context_foundry::neural::partition::Representation;
+    let original: String = (0..80)
+        .map(|n| format!("/// Transfer record {n}.\nfn transfer_{n}() {{ save({n}); }}\n"))
+        .collect();
+    let path = "src/billing.rs";
+    let mut corpus = Corpus::new(&[
+        (path.into(), original.clone()),
+        ("empty.rs".into(), " \n".into()),
+    ]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation = Representation::Overview;
+    let save_profile = |corpus: &Corpus| {
+        std::fs::write(
+            &corpus.profile_path,
+            serde_json::to_vec(&*corpus.profile).unwrap(),
+        )
+        .unwrap()
+    };
+    save_profile(&corpus);
+    let prepared = corpus.prepare();
+    assert!(!prepared.partial, "{prepared:?}");
+    assert_eq!(
+        prepared.embedded_units, 7,
+        "one bounded input plus six built-in nonblank fixture files, not eighty bodies"
+    );
+    let overview = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    assert_eq!(overview.units.len(), 1);
+    assert_eq!(
+        (overview.units[0].start, overview.units[0].end),
+        (0, original.len())
+    );
+    assert!(
+        corpus
+            .engine()
+            .semantic_partition("empty.rs")
+            .unwrap()
+            .unwrap()
+            .units
+            .is_empty()
+    );
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "unchanged restart reuses the file vector"
+    );
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    save_profile(&corpus);
+    let expanded = corpus.prepare();
+    assert!(!expanded.partial);
+    let hierarchy = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    assert!(hierarchy.units.contains(&overview.units[0]));
+    assert!(
+        expanded.reused_cached_units >= 1,
+        "file vector reused during expansion"
+    );
+    Arc::make_mut(&mut corpus.profile).representation = Representation::Overview;
+    save_profile(&corpus);
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "switching back reuses the cache"
+    );
+    corpus
+        .engine()
+        .replace_source(
+            path,
+            &original.replace("Transfer record 0", "Refund record 0"),
+        )
+        .unwrap();
+    assert_eq!(
+        corpus.prepare().embedded_units,
+        1,
+        "only the changed overview"
+    );
+    corpus.engine().replace_source(path, &original).unwrap();
+    assert_eq!(corpus.prepare().document_calls, 0, "revert reuse");
+    corpus.engine().delete_source(path).unwrap();
+    corpus.prepare();
+    let mapping = corpus
+        .engine()
+        .semantic_current_mapping(
+            &Control::unbounded(),
+            &corpus.digest(),
+            &corpus.profile.recipe_id(),
+        )
+        .unwrap();
+    assert!(
+        mapping
+            .units
+            .values()
+            .all(|locations| locations.iter().all(|location| location.path != path))
+    );
+}
+
+#[test]
 fn hierarchy_vectors_are_independent_and_incremental_with_shared_source_ranges() {
     use context_foundry::neural::partition::Representation;
     let path = "src/billing.rs";

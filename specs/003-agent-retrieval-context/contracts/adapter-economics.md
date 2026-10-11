@@ -713,3 +713,56 @@ used through the SDK. Foundry additionally pins the local endpoint, bounds resol
 checks task identity/revision and never retries a model request automatically. Actual
 owner restart/refusal tests are in `tests/gateway.rs`; the installed OMP 18.6.0 consumer
 test verifies a post-export owner edit, outgoing revision and preserved saved history.
+
+## Declared task economics
+
+Experimental 2026-10-11: `foundry usage economics --manifest FILE` opens no store,
+executes no checker and contacts no provider. It accepts this strict v1 manifest:
+
+```json
+{
+  "v": 1,
+  "reuse_completions": 20,
+  "attempts": [{
+    "id": "repair-attempt-1",
+    "task": "repair-trial-1",
+    "outcome": "passed",
+    "verification_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "usage": {"receipts": "attempt.jsonl", "expected_requests": 7}
+  }],
+  "shared": [{
+    "phase": "bootstrap",
+    "usage": {"receipts": "bootstrap.jsonl", "expected_requests": 2}
+  }]
+}
+```
+
+Replace the example digest with the actual external checker result digest. Outcomes
+are `passed`, `failed` or `unknown`; known outcomes require a digest. They remain
+**externally reported, not attested**. All attempts, including failures/retries, count
+in cost; distinct task IDs with a reported pass form the completion denominator. Use
+distinct task IDs for independent repeated trials. Unknown outcomes or no completions
+leave completion ratios null. This command does not compare models or claim benefits.
+
+The manifest is at most 128 KiB with 1–256 unique attempt IDs, a positive reuse horizon
+and at most four unique shared phases: `bootstrap`, `maintenance`, `retrieval`,
+`auxiliary`. Log paths resolve beside the manifest. Logs must be distinct regular files,
+at most 64 MiB combined and within the existing per-log 16 MiB/10,000-row bounds. Each
+request tuple can be attributed to only one log. Within-log identical retries retain
+ordinary deduplication. Excess, overflow and cross-log attribution conflicts refuse.
+
+Each summary records exact log SHA-256/bytes, known subtotals and missing-field counts.
+An input-only or output-only receipt is partial even though it has some usage. Expected
+request counts must match and invalid/conflicting rows suppress completeness. This
+checks the **declared logs only**, not hidden traffic or whole-run coverage. Known
+failed/partial costs remain visible; absent prices are unknown, never zero-dollar work.
+Cached tokens are an input subset, never added twice. Complete cache/input observations
+allow a separate uncached-input count. Tokens across different models are raw work
+counters, not money or equivalent compute.
+
+For each currency, observed cost per reported completion includes all attempt and shared
+costs divided by completed tasks. The projection is attempt cost per completion plus
+shared cost divided by `reuse_completions`; it explicitly assumes the declared shared
+costs occur once over that horizon. Future maintenance, local energy and omitted work
+are not inferred. Supply receipts for those costs when measured. Neither projection
+nor smaller prompts establish task-quality or economic acceptance.

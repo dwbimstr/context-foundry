@@ -6,6 +6,68 @@ use super::*;
 const MAX_PLAN_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CARDS: usize = 16_384;
 
+/// Fit a distributed file extract with logarithmically many tokenizations.
+/// The previous greedy loop re-encoded a nearly full input for every remaining
+/// header. This bounded prefix search always verifies the retained text; token
+/// counts need not be monotonic and no maximal-fill claim is made.
+fn fit_file_extract(
+    source: &str,
+    prefix: &str,
+    excerpts: &[(usize, usize)],
+    recipe: &CardRecipe<'_>,
+    tokens: &dyn TokenCount,
+) -> Result<String, ProviderError> {
+    let mut text = prefix.to_owned();
+    let limit = prefix
+        .len()
+        .saturating_add(recipe.card_tokens.saturating_mul(16));
+    for &(start, end) in excerpts {
+        let part = &source[start..end];
+        let mut length = part.len().min(limit.saturating_sub(text.len()));
+        while !part.is_char_boundary(length) {
+            length -= 1;
+        }
+        text.push_str(&part[..length]);
+        if text.len() >= limit || length < part.len() {
+            break;
+        }
+        text.push('\n');
+    }
+    let fits = |end| {
+        tokens
+            .count(&provider::render(recipe.template, &text[..end]))
+            .map(|count| count <= recipe.card_tokens)
+    };
+    if fits(text.len())? {
+        return Ok(text);
+    }
+    let (mut low, mut high) = (prefix.len(), text.len().saturating_sub(1));
+    while low < high {
+        let mut middle = low + (high - low).div_ceil(2);
+        while !text.is_char_boundary(middle) {
+            middle -= 1;
+        }
+        if middle <= low {
+            middle = low + text[low..].chars().next().map_or(0, char::len_utf8);
+            if middle > high || middle <= low {
+                break;
+            }
+        }
+        if fits(middle)? {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    if low == prefix.len() {
+        return Err(ProviderError::InputTooLarge(
+            "file overview cannot fit source content".into(),
+        ));
+    }
+    text.truncate(low);
+    Ok(text)
+}
+
 #[derive(Clone, Debug)]
 enum Content {
     Body(body::Span),
@@ -101,42 +163,48 @@ fn overview(
             queue.push_back((mid, hi));
             queue.push_back((lo + 1, mid));
         }
-        let mut text = prefix.clone();
-        for (lo, hi) in excerpts {
-            let mut part = &source[lo..hi];
-            // Bounds pathological single-line signatures before tokenization.
-            let mut cap = part.len().min(recipe.card_tokens.saturating_mul(16));
-            while !part.is_char_boundary(cap) {
-                cap -= 1;
-            }
-            part = &part[..cap];
-            let candidate = format!("{text}{part}\n");
-            if tokens.count(&provider::render(recipe.template, &candidate))? <= recipe.card_tokens {
-                text = candidate;
-            }
-        }
-        if text == prefix {
-            let mut length = (end - start).min(recipe.card_tokens.saturating_mul(16));
-            loop {
-                while !source.is_char_boundary(start + length) {
-                    length -= 1;
+        if kind == "file" {
+            fit_file_extract(source, &prefix, &excerpts, recipe, tokens)?
+        } else {
+            let mut text = prefix.clone();
+            for (lo, hi) in excerpts {
+                let mut part = &source[lo..hi];
+                // Bounds pathological single-line signatures before tokenization.
+                let mut cap = part.len().min(recipe.card_tokens.saturating_mul(16));
+                while !part.is_char_boundary(cap) {
+                    cap -= 1;
                 }
-                if length == 0 {
-                    return Err(ProviderError::InputTooLarge(
-                        "overview cannot fit any source content".into(),
-                    ));
-                }
-                let candidate = format!("{prefix}{}", &source[start..start + length]);
+                part = &part[..cap];
+                let candidate = format!("{text}{part}\n");
                 if tokens.count(&provider::render(recipe.template, &candidate))?
                     <= recipe.card_tokens
                 {
                     text = candidate;
-                    break;
                 }
-                length /= 2;
             }
+            if text == prefix {
+                let mut length = (end - start).min(recipe.card_tokens.saturating_mul(16));
+                loop {
+                    while !source.is_char_boundary(start + length) {
+                        length -= 1;
+                    }
+                    if length == 0 {
+                        return Err(ProviderError::InputTooLarge(
+                            "overview cannot fit any source content".into(),
+                        ));
+                    }
+                    let candidate = format!("{prefix}{}", &source[start..start + length]);
+                    if tokens.count(&provider::render(recipe.template, &candidate))?
+                        <= recipe.card_tokens
+                    {
+                        text = candidate;
+                        break;
+                    }
+                    length /= 2;
+                }
+            }
+            text
         }
-        text
     };
     let rendered = provider::render(recipe.template, &text);
     if tokens.count(&rendered)? > recipe.card_tokens {
@@ -150,6 +218,49 @@ fn overview(
         key: provider::input_key(recipe.function_digest, &rendered),
         content: Content::Overview(text),
     })
+}
+
+fn headers(source: &str, units: &[Unit]) -> Vec<(usize, usize)> {
+    let mut headers: Vec<_> = units
+        .iter()
+        .filter_map(|unit| {
+            let end = unit.body.map_or_else(
+                || {
+                    source[unit.head..unit.end]
+                        .find('\n')
+                        .map_or(unit.end, |i| unit.head + i + 1)
+                },
+                |(body, _)| signature_end(source, unit.head, body).min(unit.end),
+            );
+            (unit.head < end).then_some((unit.head, end))
+        })
+        .collect();
+    headers.sort_unstable();
+    headers.dedup();
+    headers
+}
+
+/// Broad, bounded startup: at most one input per nonblank source. This never
+/// fits body windows merely to discard them. Matching file inputs retain
+/// hierarchy-v1's exact keys; source freshness still binds their locations.
+pub fn file_plan(
+    source: &str,
+    lang: Option<Lang>,
+    recipe: &CardRecipe<'_>,
+    tokens: &dyn TokenCount,
+) -> Result<Vec<Span>, ProviderError> {
+    if source.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let units = lang.map_or_else(Vec::new, |lang| syntax::units(source, lang));
+    Ok(vec![overview(
+        source,
+        &headers(source, &units),
+        0..source.len(),
+        "file",
+        recipe,
+        tokens,
+    )?])
 }
 
 /// One bounded source plan; token arrays are not retained. Source coordinates
@@ -174,22 +285,7 @@ pub fn plan(
         return Ok(spans);
     }
     let units = lang.map_or_else(Vec::new, |lang| syntax::units(source, lang));
-    let mut headers: Vec<_> = units
-        .iter()
-        .filter_map(|unit| {
-            let end = unit.body.map_or_else(
-                || {
-                    source[unit.head..unit.end]
-                        .find('\n')
-                        .map_or(unit.end, |i| unit.head + i + 1)
-                },
-                |(body, _)| signature_end(source, unit.head, body).min(unit.end),
-            );
-            (unit.head < end).then_some((unit.head, end))
-        })
-        .collect();
-    headers.sort_unstable();
-    headers.dedup();
+    let headers = headers(source, &units);
     let mut bytes = 0usize;
     let mut add = |span: Span| -> Result<(), ProviderError> {
         if let Content::Overview(text) = &span.content {
@@ -230,4 +326,50 @@ pub fn plan(
     });
     spans.dedup_by(|a, b| (a.start, a.end, &a.key) == (b.start, b.end, &b.key));
     Ok(spans)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Bytes(AtomicUsize);
+    impl TokenCount for Bytes {
+        fn encode(&self, text: &str) -> Result<TokenizedText, ProviderError> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Ok(TokenizedText {
+                ids: text.as_bytes().iter().map(|&b| u32::from(b)).collect(),
+                offsets: text
+                    .char_indices()
+                    .flat_map(|(i, c)| std::iter::repeat_n((i, i + c.len_utf8()), c.len_utf8()))
+                    .collect(),
+            })
+        }
+    }
+    #[test]
+    fn file_overview_fitting_is_bounded_and_preserves_utf8() {
+        let tokens = Bytes(AtomicUsize::new(0));
+        let recipe = CardRecipe {
+            template: "{text}",
+            function_digest: "fixture",
+            card_tokens: 256,
+        };
+        let source: String = (0..200)
+            .map(|n| format!("/// Item {n}.\nfn item_{n}() {{ save({n}); }}\n"))
+            .collect();
+        let plan = file_plan(&source, Some(Lang::Rust), &recipe, &tokens).unwrap();
+        let card = card(&source, &plan[0], &recipe, &tokens).unwrap();
+        assert!(card.ids.len() <= 256);
+        assert!(
+            tokens.0.load(Ordering::Relaxed) <= 24,
+            "bounded prefix fitting, not one encoding per declaration"
+        );
+        let recipe = CardRecipe {
+            card_tokens: 4,
+            ..recipe
+        };
+        assert_eq!(
+            fit_file_extract("🦀a", "", &[(0, 5)], &recipe, &tokens).unwrap(),
+            "🦀"
+        );
+    }
 }

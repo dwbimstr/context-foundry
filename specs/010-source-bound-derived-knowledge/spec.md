@@ -1,5 +1,21 @@
 # 010 — Source-bound derived repository knowledge
 
+Resource code continuation, 2026-10-11: native macOS CPU admission is implemented in
+[model_resources.rs](../../src/model_resources.rs). `host_statistics` supplies
+user/system/idle/nice ticks to the existing optional `background_cpu` hysteresis; online
+CPU count changes and counter wrap/reset invalidate an interval. Ports are released on
+both successful and failed observations. Status identifies `macos_host_cpu_ticks`,
+not Linux affinity/cgroups. No CPU quota, GPU headroom, thermal or battery guarantee is
+added. Linux tests verify the arithmetic and existing pressure/lifetime behavior; the
+native sampler is neither compiled nor executed in this Linux sandbox. Run the ignored
+`native_macos_cpu_observation` test and real pressure/resume checks on macOS before
+acceptance. Global GPU policy, optional embedding eviction and combined-model device
+acceptance remain open.
+
+Binding reference inspected: libc **0.2.189**, `src/unix/bsd/apple/mod.rs` definitions
+of `host_cpu_load_info`, `HOST_CPU_LOAD_INFO_COUNT` and `host_statistics`. T002 uses
+that existing dependency's Mach bindings; it does not add a resource service or backend.
+
 Status: Experimental T001 implemented locally; T002 now implements explicit selective
 HTTP generation, completion reuse, area lineage and opt-in continuous MCP maintenance.
 Shared client admission, derived MCP context and an experimental owned local generator

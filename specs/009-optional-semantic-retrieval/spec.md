@@ -1,5 +1,30 @@
 # 009 — Neural context that becomes useful and stays prepared
 
+Implementation continuation, 2026-10-11: T005 now treats an unambiguous explicit
+language qualifier as a metadata preference before the bounded lexical window, and
+removes that qualifier from behavioral term scoring. Documentation and other languages
+remain eligible; ordinary/marked symbol requests retain precedence. Unmarked “Unicode
+whitespace” is also prose. A broader inflection expansion was removed after losing
+previously delivered Rust evidence. See [current results](../../docs/validation.md#ecosystem-code-improvements--2026-10-11).
+
+T007/T009 add opt-in `representation: {"kind":"overview-v1"}`: at most one independent
+file vector per nonblank admitted source, plus the existing bounded area-brief lane.
+It uses the same file input as hierarchy-v1 without computing body/parent cards. This
+reduces the exhaustive function-card obligation without adding a scheduler, model,
+table or automatic generation. File extracts use distributed declaration headers,
+bounded bytes and logarithmic prefix fitting; every retained input is checked against
+the actual tokenizer. The hierarchy recipe ID now includes `+overview2`, forcing old
+partitions to refit while preserving exact-input cache reuse (including all unchanged
+body inputs). Short complete-file inputs keep their existing keys.
+
+Existing CLI/MCP preparation, priorities, watching, changed-input publication and
+restart/revert reuse apply. Switching to hierarchy-v1 expands the recipe and reuses
+matching overview vectors. There is still one active source recipe: this is not a
+simultaneous coarse index with automatic query-triggered body preparation. “Complete”
+means complete for the selected recipe; a file vector does not represent every omitted
+body byte or establish complete retrieval. Comparative quality, full representative
+inference and selective mixed-granularity preparation remain open.
+
 Planning addition, 2026-10-09: [T005](#t005--diagnose-and-improve-anchorless-evidence-retrieval)
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
 It does not change T001–T004 acceptance or semantic enablement/package restrictions.

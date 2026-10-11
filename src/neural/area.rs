@@ -43,6 +43,7 @@ fn enabled(profile: &SemanticProfile) -> bool {
     matches!(
         profile.representation,
         super::partition::Representation::Hierarchy { .. }
+            | super::partition::Representation::Overview
     )
 }
 

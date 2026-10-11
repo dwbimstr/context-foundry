@@ -51,6 +51,10 @@ pub enum Representation {
     /// body inputs reuse their exact keys; overviews have distinct domains.
     #[serde(rename = "hierarchy-v1")]
     Hierarchy { parent_tokens: u32 },
+    /// One extractive file overview, without computing body or parent cards.
+    /// Reuses the hierarchy file input for later expansion.
+    #[serde(rename = "overview-v1")]
+    Overview,
 }
 
 impl Representation {
@@ -65,7 +69,11 @@ impl Representation {
                 crate::store::SEARCH_SCHEMA
             ),
             Self::Hierarchy { parent_tokens } => format!(
-                "hierarchy-v1+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                "hierarchy-v1+overview2+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                crate::store::SEARCH_SCHEMA
+            ),
+            Self::Overview => format!(
+                "overview-v1+units{}:{tokens}+{tokenizer}",
                 crate::store::SEARCH_SCHEMA
             ),
         }

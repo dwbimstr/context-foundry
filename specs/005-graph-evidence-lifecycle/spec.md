@@ -665,3 +665,9 @@ unexecuted branch, and invalidates observations when the observing test changes 
 restart. This validates the existing import contract, not a deployed general-purpose
 collector or test-to-requirement inference. Broader frameworks/brokers, re-exports,
 async/background trace attribution and cross-language identity remain open.
+
+The 2026-10-11 task-composition continuation maps explicit fresh requirement links to
+observed target source lines, with task entry IDs attached to the existing bounded
+execution proof. It adds no graph truth or execution behavior. A positive overlap is
+traceability only; satisfaction and complete coverage remain unestablished. Broader
+collectors/frameworks and runtime identity remain open under T005.
