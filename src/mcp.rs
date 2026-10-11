@@ -229,12 +229,33 @@ enum SemanticPlan {
     Fallback(String),
 }
 
-/// The dense window for one request, under the request's own read deadline,
-/// or the named fallback. Never fails the request. A query with an anchor
+/// The shared admission predicate. A query with an anchor
 /// (the `anchors` a multi-root owner chose, else this store's own choice)
 /// never calls the model and is served exactly as without a profile (009
 /// T004 "Placement"); an error choosing them is left to the baseline call,
 /// which makes the same choice.
+#[cfg(feature = "semantic")]
+fn semantic_anchored(
+    engine: &Engine,
+    query: &str,
+    path: Option<&str>,
+    control: &Control,
+    anchors: Option<&[crate::store::AnchorCandidate]>,
+    prose: bool,
+) -> bool {
+    let anchored = |chosen: &[crate::store::AnchorCandidate]| {
+        chosen
+            .iter()
+            .any(|anchor| !prose || !crate::store::incidental_prose_anchor(query, anchor))
+    };
+    match anchors {
+        Some(chosen) => anchored(chosen),
+        None => crate::roots::select_anchors(&[engine], query, path, control)
+            .map_or(true, |chosen| anchored(&chosen)),
+    }
+}
+
+/// The dense window under the request's read deadline, or a named fallback.
 #[cfg(feature = "semantic")]
 fn plan_semantic(
     slot: &SemanticSlot,
@@ -245,20 +266,7 @@ fn plan_semantic(
     anchors: Option<&[crate::store::AnchorCandidate]>,
     prose: bool,
 ) -> SemanticPlan {
-    if slot.is_none() {
-        return SemanticPlan::Off;
-    }
-    let anchored = |chosen: &[crate::store::AnchorCandidate]| {
-        chosen
-            .iter()
-            .any(|anchor| !prose || !crate::store::incidental_prose_anchor(query, anchor))
-    };
-    let anchored = match anchors {
-        Some(chosen) => anchored(chosen),
-        None => crate::roots::select_anchors(&[engine], query, path, control)
-            .map_or(true, |chosen| anchored(&chosen)),
-    };
-    if anchored {
+    if slot.is_none() || semantic_anchored(engine, query, path, control, anchors, prose) {
         return SemanticPlan::Off;
     }
     match slot {
@@ -3974,6 +3982,30 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
     semantic_slot_reserved(launch, None)
 }
 
+/// A single CLI request can establish that it needs no model before opening
+/// artifacts or reserving/loading a worker. Resident MCP startup is unchanged.
+/// This shares the actual request's anchor/prose predicate; it is not a second
+/// routing heuristic. Query/index errors remain the baseline reader's concern.
+pub(crate) fn cli_semantic_slot(
+    launch: Option<SemanticServing>,
+    engine: &Engine,
+    query: &str,
+    path: Option<&str>,
+    prose: bool,
+    control: &Control,
+) -> FResult<SemanticSlot> {
+    #[cfg(feature = "semantic")]
+    if launch.is_some() && semantic_anchored(engine, query, path, control, None, prose) {
+        if let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({"stage":"semantic_startup", "state":"skipped", "reason":"anchor_or_baseline_error"}));
+        }
+        return Ok(None);
+    }
+    #[cfg(not(feature = "semantic"))]
+    let _ = (engine, query, path, prose, control);
+    semantic_slot(launch)
+}
+
 fn semantic_slot_reserved(
     launch: Option<SemanticServing>,
     resources: Option<&Arc<crate::model_resources::Resources>>,
@@ -4540,6 +4572,63 @@ fn admit_stdio_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn cli_semantic_startup_uses_request_anchor_scope_before_acquiring_a_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+        engine
+            .replace_source("names.rs", "fn Named() {}\nfn Go() {}\n")
+            .unwrap();
+        engine.refresh(&Control::unbounded()).unwrap();
+        let profile = crate::testkit::write_semantic_profile(dir.path(), "preflight", |_| {});
+        let acquisitions = Arc::new(AtomicUsize::new(0));
+        for (query, path, prose, skip) in [
+            ("call Named", None, false, true),
+            ("call `missing`", None, false, true),
+            ("convert a Go string", None, true, false),
+            ("convert a Go string", None, false, true),
+            ("latent conceptual behavior", None, true, false),
+            ("call Named", Some("elsewhere"), false, false),
+        ] {
+            let before = acquisitions.load(Ordering::SeqCst);
+            let calls = acquisitions.clone();
+            let launch = SemanticServing::with_provider(
+                profile.clone(),
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Err(crate::neural::provider::ProviderError::Busy)
+                }),
+            );
+            let slot = cli_semantic_slot(
+                Some(launch),
+                &engine,
+                query,
+                path,
+                prose,
+                &Control::unbounded(),
+            )
+            .unwrap();
+            assert_eq!(slot.is_none(), skip, "{query}, {path:?}, {prose}");
+            assert_eq!(
+                acquisitions.load(Ordering::SeqCst) - before,
+                usize::from(!skip)
+            );
+        }
+        let skipped = cli_semantic_slot(
+            Some(SemanticServing::new(dir.path().join("absent.json"), true)),
+            &engine,
+            "`Named`",
+            None,
+            false,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert!(skipped.is_none(), "an unused profile is not opened");
+    }
 
     fn request_message(id: i64) -> RxJsonRpcMessage<RoleServer> {
         serde_json::from_value(

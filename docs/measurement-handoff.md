@@ -12,7 +12,7 @@ cargo test --locked --lib native_macos_cpu_observation -- --ignored --nocapture
 Then check configured pause/resume thresholds with foreground demand and both model
 lanes, preserving unknown-sample refusal and worker lifetime. This is host CPU
 admission, not GPU headroom, a hard CPU quota or thermal/battery policy. Those remain
-separate TODOs. `overview-v1` and hierarchy's `+overview2` fitting recipe also need
+separate TODOs. `overview-v1` and hierarchy's `+overview3` fitting recipe also need
 representation-quality and device checks; complete file-vector coverage is not full
 body evidence or a task-quality result. The [latest Linux record](validation.md#ecosystem-code-improvements--2026-10-11)
 preserves the precise corpus/input counts and bounded real-model progress.

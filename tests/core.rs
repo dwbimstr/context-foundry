@@ -296,6 +296,66 @@ fn prose_language_preference_applies_before_discovery_without_excluding_fallback
 }
 
 #[test]
+fn prose_plural_acronyms_match_the_acronym_without_changing_symbol_requests() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&dir.path().join("ws"));
+    engine
+        .replace_source(
+            "a.rs",
+            "/// Collect ap into the catalog.\nfn incidental() {}\n",
+        )
+        .unwrap();
+    engine
+        .replace_source(
+            "z.rs",
+            "/// Collect api into the catalog.\nfn useful() {}\n",
+        )
+        .unwrap();
+    drain(&mut engine);
+    let query = "collect APIs into the catalog";
+    let experimental = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        experimental.batch.items[0].handle.as_ref().unwrap().path,
+        "z.rs"
+    );
+    let ordinary = engine
+        .context_candidates(query, Strategy::Search, &Control::unbounded())
+        .unwrap();
+    assert_eq!(ordinary.items[0].handle.as_ref().unwrap().path, "a.rs");
+    engine.replace_source("named.rs", "fn APIs() {}\n").unwrap();
+    drain(&mut engine);
+    for query in ["call APIs with an argument", "call `APIs` with an argument"] {
+        let named = engine
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(named.batch.anchors[0].anchor, "APIs");
+        assert_eq!(
+            named.batch.items[0].handle.as_ref().unwrap().path,
+            "named.rs"
+        );
+    }
+}
+
+#[test]
 fn standard_adjectives_in_prose_are_not_symbol_requests() {
     use context_foundry::store::ContextOptions;
     let dir = tempfile::tempdir().unwrap();

@@ -254,9 +254,20 @@ This fits an extractive file overview without computing every body/parent card.
 The existing area-brief lane is retained, with the same bounds and derived provenance.
 It works through ordinary `semantic prepare`, priorities and continuous maintenance.
 Switching to `hierarchy-v1` later reuses matching file vectors while adding body/parent
-inputs. Both recipes now use bounded prefix fitting for file extracts; hierarchy's
-recipe identity includes `+overview2`, so older partitions refit and unchanged exact
-inputs still reuse their vectors. No source transaction holds the tokenizer or model.
+inputs. Both recipe identities include `+overview3`, so older partitions refit and
+unchanged exact inputs still reuse their vectors. Short complete inputs skip parsing;
+files without declarations use bounded distributed text samples and never a blank
+opening alone. No source transaction holds the tokenizer or model.
+
+With `--experimental-behavior-context`, complete file-overview results also interleave
+lexical matches first. Long overview/hierarchy hits can deliver an exact local passage
+instead of the file prefix. Its semantic tag describes how the containing unit was
+selected; the passage has no independent vector or similarity score. Diagnostics
+retain both ranges. No-overlap queries keep the ordinary source-unit fallback.
+
+CLI requests that resolve explicit/defined anchors now skip unused semantic startup,
+using the same path/prose rules as retrieval. Eligible requests still load their
+configured model normally. Resident MCP startup and maintenance are unchanged.
 
 One source recipe is active at a time. This is not automatic per-query body expansion.
 “Complete” is coverage of that recipe, not every source byte, every useful behavior
@@ -349,6 +360,13 @@ The ignored `repository_development_attribution` diagnostic accepts a frozen
 it runs the previous experimental selection against the same store after the Rust
 owner closes. Keep evaluator files outside the corpus, and retain the executable
 hash and build provenance. The current diagnostic still excludes its own source.
+`FOUNDRY_ATTRIBUTION_SEMANTIC_PROFILE` adds the actual current CLI/worker path against
+the same already-prepared store, with the same frozen spans and 2,048-token budget.
+Each semantic CLI has a 90-second process timeout including model startup; baseline
+CLI calls retain 30 seconds. This does not prepare vectors or attest host consumption.
+Each external row records its semantic decision, including timeouts/fallbacks, so
+lexical delivery cannot be mistaken for a model result. The operator explicitly
+selects development isolation by invoking this diagnostic.
 All output requires a new outside-Git `FOUNDRY_ATTRIBUTION_DIR`. These public probes
 are development evidence, not preserved or independently held-out G2.
 

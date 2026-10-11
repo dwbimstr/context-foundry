@@ -67,7 +67,7 @@ enum Command {
         #[arg(long)]
         path: Option<String>,
         /// 009 T002: fuse dense evidence from this semantic profile into
-        /// the lexical candidates. The worker loads at command start.
+        /// the lexical candidates. Only eligible queries load the worker.
         #[arg(long = "semantic-profile", value_name = "FILE")]
         semantic_profile: Option<PathBuf>,
         /// Required to run the development-isolated worker.
@@ -114,7 +114,7 @@ enum Command {
         #[arg(long)]
         include_briefs: bool,
         /// 009 T002: fuse dense evidence from this semantic profile into
-        /// the lexical candidates. The worker loads at command start.
+        /// the lexical candidates. Only eligible queries load the worker.
         #[arg(long = "semantic-profile", value_name = "FILE")]
         semantic_profile: Option<PathBuf>,
         /// 013 T003: route `--strategy auto` with the learned policy this
@@ -857,7 +857,14 @@ fn run() -> AResult<()> {
             let engine = Engine::open_existing(&cli.store)?;
             let semantic = semantic_launch(semantic_profile, development_isolation);
             let outcome = if let Some(launch) = semantic {
-                let slot = crate::mcp::semantic_slot(Some(launch))?;
+                let slot = crate::mcp::cli_semantic_slot(
+                    Some(launch),
+                    &engine,
+                    &query,
+                    path.as_deref(),
+                    false,
+                    &Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE),
+                )?;
                 let control = Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE);
                 Engine::search_outcome(crate::mcp::search_primary(
                     &slot,
@@ -917,10 +924,9 @@ fn run() -> AResult<()> {
                 let engine = Engine::open_existing(&cli.store)?;
                 // 008: memory candidates validate in the SAME final read as the
                 // source and graph items; one snapshot governs the response.
-                // 009 T002: with a profile the worker loads at command start
-                // (bounded by the profile's load timeout); the query ceiling
-                // then applies to the embedding call only. A refused or failed
-                // worker leaves baseline results with the reason in the header.
+                // The shared anchor/prose rule can skip unused semantic startup.
+                // Otherwise loading keeps its separate profile timeout and a
+                // refusal leaves baseline results with the named fallback.
                 let semantic = semantic_launch(semantic_profile, development_isolation);
                 // 013 T003: the policy config is validated and its worker loaded
                 // at command start, outside the request's read deadline; an
@@ -939,7 +945,16 @@ fn run() -> AResult<()> {
                 let routed = policy.as_ref().filter(|policy| policy.routes());
                 let bounded_query = semantic.is_some() || routed.is_some();
                 // Worker admission/load stays outside the query deadline.
-                let slot = crate::mcp::semantic_slot(semantic)?;
+                let slot = crate::mcp::cli_semantic_slot(
+                    semantic,
+                    &engine,
+                    &query,
+                    None,
+                    experimental_behavior_context
+                        && crate::store::prose_context_query(&query, strategy, routed.is_some()),
+                    &Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE)
+                        .with_trace(trace.clone()),
+                )?;
                 let control = if bounded_query {
                     Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE)
                 } else {

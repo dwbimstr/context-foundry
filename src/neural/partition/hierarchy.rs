@@ -39,6 +39,11 @@ fn fit_file_extract(
             .map(|count| count <= recipe.card_tokens)
     };
     if fits(text.len())? {
+        if text[prefix.len()..].trim().is_empty() {
+            return Err(ProviderError::InputTooLarge(
+                "file overview has no source content".into(),
+            ));
+        }
         return Ok(text);
     }
     let (mut low, mut high) = (prefix.len(), text.len().saturating_sub(1));
@@ -59,7 +64,7 @@ fn fit_file_extract(
             high = middle - 1;
         }
     }
-    if low == prefix.len() {
+    if text[prefix.len()..low].trim().is_empty() {
         return Err(ProviderError::InputTooLarge(
             "file overview cannot fit source content".into(),
         ));
@@ -128,15 +133,8 @@ fn overview(
     let prefix = format!("hierarchy-v1 {kind}\nextractive overview (may omit source):\n");
     // A complete short scope is more useful than just signatures. Long scopes
     // use their opening documentation and distributed declaration headers.
-    let full = (end - start <= recipe.card_tokens.saturating_mul(16))
-        .then(|| format!("{prefix}{}", &source[start..end]));
-    let fits_full = full
-        .as_ref()
-        .map(|full| tokens.count(&provider::render(recipe.template, full)))
-        .transpose()?
-        .is_some_and(|count| count <= recipe.card_tokens);
-    let text = if fits_full {
-        full.expect("counted complete scope")
+    let text = if let Some(full) = complete_text(&source[start..end], &prefix, recipe, tokens)? {
+        full
     } else {
         let mut excerpts = Vec::new();
         let first = source[start..end]
@@ -147,6 +145,12 @@ fn overview(
         // declarations. Deep forests do not cause repeated whole-file scans.
         let lo = headers.partition_point(|&(head, _)| head < start);
         let hi = headers.partition_point(|&(head, _)| head < end);
+        if kind == "file" && lo == hi {
+            // Unmapped/plain text and parse fallbacks have no declarations.
+            // Their first line may be blank or a license. Use bounded source
+            // samples instead of embedding a generic prefix for every file.
+            excerpts = text_excerpts(source, start..end);
+        }
         let mut queue = std::collections::VecDeque::from([(lo, hi)]);
         while let Some((lo, hi)) = queue.pop_front() {
             if lo >= hi {
@@ -220,6 +224,64 @@ fn overview(
     })
 }
 
+fn complete_text(
+    source: &str,
+    prefix: &str,
+    recipe: &CardRecipe<'_>,
+    tokens: &dyn TokenCount,
+) -> Result<Option<String>, ProviderError> {
+    if source.len() > recipe.card_tokens.saturating_mul(16) {
+        return Ok(None);
+    }
+    let text = format!("{prefix}{source}");
+    Ok(
+        (tokens.count(&provider::render(recipe.template, &text))? <= recipe.card_tokens)
+            .then_some(text),
+    )
+}
+
+/// Sample independent regions in a stable breadth-first order. Each sample
+/// contributes at most 256 bytes, so a single long opening line cannot consume
+/// the entire extraction allowance. Source is never rewritten or decoded lossy.
+fn text_excerpts(source: &str, range: std::ops::Range<usize>) -> Vec<(usize, usize)> {
+    let mut excerpts = Vec::new();
+    for slot in [0, 8, 4, 12, 2, 6, 10, 14, 1, 3, 5, 7, 9, 11, 13, 15] {
+        let mut start = range.start + range.len() * slot / 16;
+        while !source.is_char_boundary(start) {
+            start -= 1;
+        }
+        let line = source[range.start..start]
+            .rfind('\n')
+            .map_or(range.start, |at| range.start + at + 1);
+        if start - line <= 128 {
+            start = line;
+        }
+        let mut end = (start + 256).min(range.end);
+        while !source.is_char_boundary(end) {
+            end -= 1;
+        }
+        start += source[start..end].len() - source[start..end].trim_start().len();
+        if !source[start..end].trim().is_empty() && !excerpts.contains(&(start, end)) {
+            excerpts.push((start, end));
+        }
+    }
+    // Sparse files can have source between every sampled region. Retain at
+    // least some actual nonblank content instead of publishing a prefix alone.
+    if excerpts.is_empty()
+        && let Some((at, _)) = source[range.clone()]
+            .char_indices()
+            .find(|(_, c)| !c.is_whitespace())
+    {
+        let start = range.start + at;
+        let mut end = (start + 256).min(range.end);
+        while !source.is_char_boundary(end) {
+            end -= 1;
+        }
+        excerpts.push((start, end));
+    }
+    excerpts
+}
+
 fn headers(source: &str, units: &[Unit]) -> Vec<(usize, usize)> {
     let mut headers: Vec<_> = units
         .iter()
@@ -251,6 +313,23 @@ pub fn file_plan(
 ) -> Result<Vec<Span>, ProviderError> {
     if source.trim().is_empty() {
         return Ok(Vec::new());
+    }
+    // Most repository files are small. If all their bytes fit, parsing a
+    // syntax forest cannot improve this input. The exact input/cache key is
+    // identical to hierarchy's full-file representation.
+    let fitting = tokens.fitting();
+    let counter = fitting.as_deref().unwrap_or(tokens);
+    let prefix = "hierarchy-v1 file\nextractive overview (may omit source):\n";
+    if let Some(text) = complete_text(source, prefix, recipe, counter)? {
+        return Ok(vec![Span {
+            start: 0,
+            end: source.len(),
+            key: provider::input_key(
+                recipe.function_digest,
+                &provider::render(recipe.template, &text),
+            ),
+            content: Content::Overview(text),
+        }]);
     }
     let units = lang.map_or_else(Vec::new, |lang| syntax::units(source, lang));
     Ok(vec![overview(
@@ -370,6 +449,65 @@ mod tests {
         assert_eq!(
             fit_file_extract("🦀a", "", &[(0, 5)], &recipe, &tokens).unwrap(),
             "🦀"
+        );
+    }
+
+    #[test]
+    fn unparsed_overviews_represent_content_after_blank_and_long_openings() {
+        let tokens = Bytes(AtomicUsize::new(0));
+        let recipe = CardRecipe {
+            template: "{text}",
+            function_digest: "fixture",
+            card_tokens: 800,
+        };
+        let first = format!(
+            "\n{}\nmidpoint revenue recognition\n{}",
+            "🦀".repeat(1000),
+            "x".repeat(4000)
+        );
+        let second = first.replace("revenue recognition", "inventory tracking");
+        let a = file_plan(&first, None, &recipe, &tokens).unwrap();
+        let b = file_plan(&second, None, &recipe, &tokens).unwrap();
+        assert_ne!(
+            a[0].key, b[0].key,
+            "middle samples affect the independent vector input"
+        );
+        let input = card(&first, &a[0], &recipe, &tokens).unwrap();
+        let text = String::from_utf8(input.ids.iter().map(|&id| id as u8).collect()).unwrap();
+        assert!(text.contains("midpoint revenue recognition"), "{text}");
+        assert!(input.ids.len() <= 800);
+        let sparse = format!("{}unique content{}", "\n".repeat(17000), "\n".repeat(31000));
+        let plan = file_plan(&sparse, None, &recipe, &tokens).unwrap();
+        let input = card(&sparse, &plan[0], &recipe, &tokens).unwrap();
+        assert!(
+            String::from_utf8(input.ids.iter().map(|&id| id as u8).collect())
+                .unwrap()
+                .contains("unique content")
+        );
+        assert!(fit_file_extract("\n", "prefix", &[(0, 1)], &recipe, &tokens).is_err());
+    }
+
+    #[test]
+    fn short_file_fast_path_has_the_same_input_as_full_hierarchy() {
+        let tokens = Bytes(AtomicUsize::new(0));
+        let recipe = CardRecipe {
+            template: "document: {text}",
+            function_digest: "fixture",
+            card_tokens: 256,
+        };
+        let source = "// settle an account\nfn settle() { credit(); }\n";
+        let file = file_plan(source, Some(Lang::Rust), &recipe, &tokens).unwrap();
+        assert_eq!(
+            tokens.0.load(Ordering::Relaxed),
+            1,
+            "one complete-input fit"
+        );
+        let hierarchy = plan(source, Some(Lang::Rust), &recipe, 32, &tokens).unwrap();
+        assert!(hierarchy.iter().any(|span| span.key == file[0].key));
+        assert!(
+            file_plan(" \n\t", None, &recipe, &tokens)
+                .unwrap()
+                .is_empty()
         );
     }
 }

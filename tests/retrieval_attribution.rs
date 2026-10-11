@@ -454,14 +454,30 @@ fn repository_development_attribution() {
         }
     }
     drop(engine);
+    let mut variants = Vec::new();
+    if let Some(binary) = std::env::var_os("FOUNDRY_ATTRIBUTION_BASELINE") {
+        variants.push((
+            "previous_experimental",
+            std::path::PathBuf::from(binary),
+            None,
+        ));
+    }
+    if let Some(profile) = std::env::var_os("FOUNDRY_ATTRIBUTION_SEMANTIC_PROFILE") {
+        variants.push((
+            "candidate_semantic",
+            std::path::PathBuf::from(env!("CARGO_BIN_EXE_foundry")),
+            Some(std::path::PathBuf::from(profile)),
+        ));
+    }
     for (id, (query, expected)) in frozen.iter().enumerate() {
-        if let Some(binary) = std::env::var_os("FOUNDRY_ATTRIBUTION_BASELINE") {
-            let directory = output.join(format!("{id}-previous"));
+        for (variant, binary, profile) in &variants {
+            let directory = output.join(format!("{id}-{variant}"));
             let started = std::time::Instant::now();
             // The external binary is explicitly supplied by the operator. No
             // indexed source selects or runs it. Both use the same store bytes.
-            let result = std::process::Command::new("timeout")
-                .arg("30s")
+            let mut command = std::process::Command::new("timeout");
+            command
+                .arg(if profile.is_some() { "90s" } else { "30s" })
                 .arg(binary)
                 .arg("--store")
                 .arg(&store)
@@ -475,9 +491,14 @@ fn repository_development_attribution() {
                     "--experimental-behavior-context",
                     "--retrieval-trace-dir",
                 ])
-                .arg(&directory)
-                .output()
-                .unwrap();
+                .arg(&directory);
+            if let Some(profile) = profile {
+                command
+                    .arg("--semantic-profile")
+                    .arg(profile)
+                    .arg("--development-isolation");
+            }
+            let result = command.output().unwrap();
             assert!(
                 result.status.success(),
                 "{}",
@@ -489,10 +510,21 @@ fn repository_development_attribution() {
                 .collect();
             assert_eq!(files.len(), 1);
             let r: Value = serde_json::from_slice(&std::fs::read(&files[0]).unwrap()).unwrap();
-            rows.push(json!({"id":id,"query":query,"expected":expected,"variant":"previous_experimental","elapsed_ms":started.elapsed().as_millis(),"record":files[0],"attribution":attribute(&r,query,expected)}));
+            assert_eq!(
+                r["outcome"]["text"].as_str().unwrap().as_bytes(),
+                result.stdout
+            );
+            let semantic_decisions: Vec<_> = r["trace"]["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|event| event["stage"] == "semantic")
+                .map(|event| &event["decision"])
+                .collect();
+            rows.push(json!({"id":id,"query":query,"expected":expected,"variant":variant,"profile":profile,"semantic_decisions":semantic_decisions,"elapsed_ms":started.elapsed().as_millis(),"record":files[0],"attribution":attribute(&r,query,expected)}));
         }
     }
-    let report = json!({"scope":"public_lexical_diagnostic_not_blind_acceptance","historical_g2":false,"root":root,"external_labels":external,"excluded_evaluator_sources":[excluded],"indexed":indexed,"budget":2048,"rows":rows});
+    let report = json!({"scope":"public_retrieval_diagnostic_not_blind_acceptance","historical_g2":false,"root":root,"external_labels":external,"excluded_evaluator_sources":[excluded],"indexed":indexed,"budget":2048,"rows":rows});
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report).unwrap(),

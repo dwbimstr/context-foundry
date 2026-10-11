@@ -69,11 +69,11 @@ impl Representation {
                 crate::store::SEARCH_SCHEMA
             ),
             Self::Hierarchy { parent_tokens } => format!(
-                "hierarchy-v1+overview2+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                "hierarchy-v1+overview3+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
                 crate::store::SEARCH_SCHEMA
             ),
             Self::Overview => format!(
-                "overview-v1+units{}:{tokens}+{tokenizer}",
+                "overview-v1+overview3+units{}:{tokens}+{tokenizer}",
                 crate::store::SEARCH_SCHEMA
             ),
         }

@@ -6391,6 +6391,120 @@ fn hierarchy_area_preparation_deduplicates_exact_inputs_and_reuses_on_restart() 
 }
 
 #[test]
+fn coarse_semantic_context_focuses_current_evidence_beyond_the_file_prefix() {
+    use context_foundry::neural::partition::Representation;
+    use context_foundry::store::ContextOptions;
+    let path = "src/payments.rs";
+    let body = format!(
+        "// repayment credit reimbursement\n{}fn settle() {{\n    // refund cancelled payments\n    return_credit();\n}}\n{}",
+        "// ordinary unrelated setup\n".repeat(200),
+        "// ordinary unrelated cleanup\n".repeat(200),
+    );
+    let mut corpus = Corpus::unprepared(&[(path.into(), body.clone())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation = Representation::Overview;
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert!(!corpus.prepare().partial);
+    let runtime = corpus.runtime();
+    let query = "refund cancelled payments";
+    let window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let candidates = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(candidates.batch.semantic.as_deref(), Some("ready"));
+    assert!(
+        candidates.batch.items[0].semantic.is_none(),
+        "complete file coverage keeps precise lexical evidence first"
+    );
+    let item = candidates
+        .batch
+        .items
+        .iter()
+        .find(|item| item.is_dense_only() && item.handle.as_ref().is_some_and(|h| h.path == path))
+        .expect("independent file vector is served");
+    let handle = item.handle.as_ref().unwrap();
+    assert!(handle.start > 4000, "the evidence is past the prefix");
+    assert!(handle.end - handle.start <= 1536);
+    assert_eq!(
+        item.forms[0],
+        context_foundry::store::RenderedForm::Verbatim(
+            body[handle.start as usize..handle.end as usize].into()
+        )
+    );
+    let packed = response::pack_enriched_context(
+        &candidates,
+        None,
+        response::Budget::request(1024),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.tokens <= 1024);
+    assert!(packed.text.contains("return_credit();"), "{}", packed.text);
+    assert!(
+        trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| {
+                event["stage"] == "materialization"
+                    && event["origin"] == "dense"
+                    && event["unit"]["path"] == path
+                    && event["unit"]["start"] == 0
+                    && event["excerpt"]["start"] == handle.start
+                    && event["passage_independently_embedded"] == false
+            })
+    );
+    // A loaded coarse generation cannot cite the old passage after an edit,
+    // including an edit not yet published to the lexical index.
+    corpus
+        .engine_mut()
+        .replace_source(path, "fn updated() {}\n")
+        .unwrap();
+    let current = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(
+        !current
+            .batch
+            .items
+            .iter()
+            .any(|item| item.handle.as_ref().is_some_and(|h| h.path == path))
+    );
+}
+
+#[test]
 fn overview_bootstrap_bounds_inputs_and_reuses_them_during_hierarchy_expansion() {
     use context_foundry::neural::partition::Representation;
     let original: String = (0..80)

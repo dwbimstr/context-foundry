@@ -1,11 +1,14 @@
 # Workflows worth building
 
-Code continuation, 2026-10-11: 009 adds opt-in file-overview bootstrap and bounded
-fitting plus conservative prose-language repair; 003 adds declared task economics and
-explicit requirement/execution joins; 010 adds native macOS CPU sampling code, pending
-native acceptance. Current Go probes deliver 5/8 versus prior 1/8 while retaining
-Foundry/Rust successes. General quality, complete representative inference, task benefits
-and hardware acceptance remain open. See [current validation](../docs/validation.md#ecosystem-code-improvements--2026-10-11).
+Delivery/startup continuation, 2026-10-11: 009 adds focused coarse-vector evidence,
+complete-overview lexical interleaving, plural acronym queries, nonblank extractive
+fallbacks and unused CLI model-startup avoidance. The file-capable recipes are now
+`+overview3`; exact-input reuse remains. Real Gemma completes all 274 admitted files
+of the pinned Foundry snapshot, but final semantic delivery remains 2/8. Preserved
+lexical results remain Foundry 2/8, Rust 3/6 and 5/8, Go 5/8. The current detector
+source indexes itself without changing private-key rejection. General retrieval,
+complete representative inference, task benefits and hardware acceptance remain open.
+See [current validation](../docs/validation.md#evidence-delivery-and-unused-startup--2026-10-11).
 
 Restarting this work on another host or with a fresh agent: start with the
 [context packet](../docs/context-packet.md).

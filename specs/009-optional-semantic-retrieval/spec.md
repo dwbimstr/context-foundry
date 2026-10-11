@@ -1,5 +1,30 @@
 # 009 — Neural context that becomes useful and stays prepared
 
+Evidence-delivery continuation, 2026-10-11: experimental prose context can focus
+long overview/hierarchy candidates to an exact source passage of at most 1,536
+bytes. Dense-only passages maximize distinct query concepts across adjacent lines,
+with bounded leading context and UTF-8-safe offsets. They retain final-read source
+identity and the semantic selection tag; no new passage vector/similarity is claimed.
+If no query concept occurs, ordinary unit delivery remains. Traces record both the
+original dense unit and its materialized handle. Address/body profiles and ordinary
+symbol/search requests retain their existing materialization.
+
+Complete file-overview coverage now interleaves lexical evidence first, just as
+partial preparation does: complete coarse coverage does not justify spending every
+early slot on file vectors. Existing candidate/per-file/output limits still apply.
+Plural uppercase acronyms in prose use the acronym (`CPUs` → `cpu`) rather than
+CamelCase fragments (`CP`/`Us`); explicit/defined symbol requests are unchanged.
+Two broader lexical scoring trials regressed preserved evidence and were removed.
+
+CLI `search`/`context` now apply the same anchor/prose admission predicate before
+opening the semantic profile or starting its worker. Explicit/defined anchors that
+already bypass semantic queries also bypass their unused tokenizer, artifact hashes
+and model load. A query admitted for semantic retrieval retains the existing startup
+timeout, fallback behavior and separate read deadline. Scoped searches use their
+actual path filter; incidental language qualifiers still reach the provider when
+experimental prose is enabled. Resident MCP startup, ownership and maintenance are
+unchanged; a build without semantic support still rejects the configured feature.
+
 Implementation continuation, 2026-10-11: T005 now treats an unambiguous explicit
 language qualifier as a metadata preference before the bounded lexical window, and
 removes that qualifier from behavioral term scoring. Documentation and other languages
@@ -13,9 +38,14 @@ It uses the same file input as hierarchy-v1 without computing body/parent cards.
 reduces the exhaustive function-card obligation without adding a scheduler, model,
 table or automatic generation. File extracts use distributed declaration headers,
 bounded bytes and logarithmic prefix fitting; every retained input is checked against
-the actual tokenizer. The hierarchy recipe ID now includes `+overview2`, forcing old
+the actual tokenizer. Both file-capable recipe IDs now include `+overview3`, forcing old
 partitions to refit while preserving exact-input cache reuse (including all unchanged
-body inputs). Short complete-file inputs keep their existing keys.
+body inputs). Short complete-file inputs keep their existing keys and skip syntax
+parsing in overview preparation. Files without declarations sample up to 16 source
+regions, each at most 256 bytes before fitting, instead of representing only their
+first line. Sparse input falls back to actual nonblank content; prefix-only file
+inputs are refused. This is extractive coverage, not a claim that every part survived
+the token fit. Parent extraction and body inputs retain their previous identity.
 
 Existing CLI/MCP preparation, priorities, watching, changed-input publication and
 restart/revert reuse apply. Switching to hierarchy-v1 expands the recipe and reuses

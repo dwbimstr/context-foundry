@@ -2973,6 +2973,104 @@ fn best_line_index(text: &str, wanted: &std::collections::BTreeSet<String>) -> u
     best.1
 }
 
+/// A bounded passage containing the most distinct query concepts, then their
+/// tightest occurrence span. Count each concept once: repeated boilerplate must
+/// not outrank evidence spread over adjacent lines. Offsets always cite source.
+#[cfg(feature = "semantic")]
+fn prose_passage(
+    text: &str,
+    wanted: &std::collections::BTreeSet<String>,
+) -> Option<(usize, usize)> {
+    const BYTES: usize = 1536;
+    let words: std::collections::BTreeMap<_, _> = wanted
+        .iter()
+        .filter(|word| !prose_stopword(word))
+        .take(64)
+        .enumerate()
+        .map(|(id, word)| (word.as_str(), id))
+        .collect();
+    if words.is_empty() {
+        return None;
+    }
+    let hits: Vec<_> = crate::syntax::code_subtokens(text)
+        .into_iter()
+        .filter_map(|(start, end)| {
+            words
+                .get(text[start..end].to_lowercase().as_str())
+                .map(|&id| (start, end, id))
+        })
+        .collect();
+    let mut counts = [0usize; 64];
+    let (mut right, mut distinct) = (0, 0);
+    let mut best = None;
+    for left in 0..hits.len() {
+        while right < hits.len() && hits[right].1 - hits[left].0 <= BYTES {
+            let count = &mut counts[hits[right].2];
+            distinct += usize::from(*count == 0);
+            *count += 1;
+            right += 1;
+        }
+        if right == left {
+            // A single pathological identifier cannot fit the passage.
+            right += 1;
+            continue;
+        }
+        let (start, end) = (hits[left].0, hits[right - 1].1);
+        let key = (distinct, Reverse(end - start), Reverse(start));
+        if best.is_none_or(|(previous, _, _)| key > previous) {
+            best = Some((key, start, end));
+        }
+        counts[hits[left].2] -= 1;
+        distinct -= usize::from(counts[hits[left].2] == 0);
+    }
+    let (_, start, end) = best?;
+    // Include a little leading context, provided it cannot displace a match.
+    let line = text[..start].rfind('\n').map_or(0, |at| at + 1);
+    let before = text[..line]
+        .match_indices('\n')
+        .rev()
+        .nth(3)
+        .map_or(0, |(at, _)| at + 1);
+    let mut from = if start - before <= 256 { before } else { line };
+    if end - from > BYTES {
+        from = start;
+    }
+    let mut to = (from + BYTES).min(text.len());
+    while !text.is_char_boundary(to) {
+        to -= 1;
+    }
+    if let Some(newline) = text[from..to].rfind('\n')
+        && from + newline + 1 >= end
+    {
+        to = from + newline + 1;
+    }
+    Some((from, to))
+}
+
+#[cfg(all(test, feature = "semantic"))]
+mod passage_tests {
+    use super::*;
+
+    #[test]
+    fn dense_passages_join_adjacent_concepts_without_rewarding_repetition() {
+        let wanted = ["refund", "cancelled", "payments"].map(String::from).into();
+        let text = format!(
+            "{}{}fn settle() {{\n    refund();\n    cancelled();\n    payments();\n}}\n{}",
+            "refund ".repeat(400),
+            "\n// ordinary setup\n".repeat(100),
+            "🦀".repeat(600)
+        );
+        let (start, end) = prose_passage(&text, &wanted).unwrap();
+        assert!(end - start <= 1536);
+        let passage = &text[start..end];
+        for needle in ["fn settle", "refund();", "cancelled();", "payments();"] {
+            assert!(passage.contains(needle), "{passage}");
+        }
+        assert_eq!(prose_passage("only unrelated source", &wanted), None);
+        assert_eq!(prose_passage(&text, &["the".into()].into()), None);
+    }
+}
+
 /// One search document selected by a tier, before revalidation.
 #[derive(Clone)]
 struct Candidate {
@@ -3376,13 +3474,32 @@ fn prose_language(query: &str) -> Option<&'static str> {
     language
 }
 
+/// Query-only prose normalization; stored identifiers and explicit code requests
+/// retain their original tokenizer and schema.
+fn prose_terms(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .flat_map(|word| {
+            let word = word.trim_end_matches(['?', '.', ',', ':']);
+            // CamelCase analysis splits "CPUs" as "CP"/"Us". In prose an
+            // uppercase acronym followed only by plural s names the acronym;
+            // ordinary/explicit identifier requests retain the indexed analysis.
+            let word = word
+                .strip_suffix('s')
+                .filter(|stem| stem.len() >= 2 && stem.bytes().all(|b| b.is_ascii_uppercase()))
+                .unwrap_or(word);
+            analyzed_terms(crate::syntax::code_subtokens, word)
+        })
+        .collect()
+}
+
 /// Distinct concept coverage dominates frequency/rarity for prose. Adjacent
 /// concepts within 16 positions break ties, with a total bonus below one term.
 /// This uses the existing positional index; no expansion corpus or extra scan.
 fn prose_lexical(query: &str, body: Field) -> Box<dyn Query> {
     let mut words = Vec::new();
     let language = prose_language(query);
-    for word in analyzed_terms(crate::syntax::code_subtokens, query) {
+    for word in prose_terms(query) {
         // A requested language is a metadata preference, not a required
         // behavioral concept. Rewarding its incidental appearance in long
         // comments can bury the implementation whose comments omit it.
@@ -4926,10 +5043,13 @@ impl Engine {
             candidate.trace(control, &workspace_id, rank, "kept");
             kept.push(candidate);
         }
-        let wanted: std::collections::BTreeSet<String> =
+        let wanted: std::collections::BTreeSet<String> = if prose {
+            prose_terms(query)
+        } else {
             analyzed_terms(crate::syntax::code_subtokens, query)
-                .into_iter()
-                .collect();
+        }
+        .into_iter()
+        .collect();
         let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
             std::collections::BTreeMap::new();
         let mut items = Vec::with_capacity(kept.len());
@@ -5445,10 +5565,13 @@ impl Engine {
             }
             Ok(())
         };
-        let wanted: std::collections::BTreeSet<String> =
+        let wanted: std::collections::BTreeSet<String> = if prose {
+            prose_terms(query)
+        } else {
             analyzed_terms(crate::syntax::code_subtokens, query)
-                .into_iter()
-                .collect();
+        }
+        .into_iter()
+        .collect();
         let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
             std::collections::BTreeMap::new();
         // The anchor windows, from the tier-1 documents as collected; their
@@ -5529,8 +5652,11 @@ impl Engine {
         // A small prepared subset must not consume all early prose slots while
         // the rest of the current repository is available only lexically. This
         // opt-in admission uses this SAME final read's coverage and freshness.
-        // Complete coverage, explicit anchors and ordinary search stay dense-first.
-        if prose && word == "partial" {
+        // A complete file-overview recipe is still coarse: full file coverage
+        // does not make its extracts more precise than lexical source matches.
+        // Complete body/address coverage, anchors and ordinary search keep their
+        // existing placement. No new candidate or output slots are allocated.
+        if prose && (word == "partial" || dense.file_overviews_only()) {
             let mut dense_order = std::mem::take(&mut placed).into_iter();
             let mut lexical_order = lexical.iter().map(|c| (c.selection_unit(prose), false));
             loop {
@@ -5542,7 +5668,12 @@ impl Engine {
                 placed.extend(dense);
             }
             if let Some(trace) = control.trace() {
-                trace.record(serde_json::json!({"stage":"placement_policy","policy":"partial_prose_interleave_v1","lexical_first":true}));
+                let policy = if dense.file_overviews_only() {
+                    "coarse_prose_interleave_v1"
+                } else {
+                    "partial_prose_interleave_v1"
+                };
+                trace.record(serde_json::json!({"stage":"placement_policy","policy":policy,"lexical_first":true}));
             }
         } else {
             placed.extend(
@@ -5603,6 +5734,7 @@ impl Engine {
         let mut items = Vec::with_capacity(kept.len());
         let mut delivered = std::collections::BTreeSet::new();
         for (rank, (unit, from_dense)) in kept.into_iter().enumerate() {
+            control.check()?;
             let (unit_path, unit_start, unit_end) = unit;
             let Some(Some(meta)) = current.get(unit_path) else {
                 continue;
@@ -5626,7 +5758,7 @@ impl Engine {
                     &meta.hash,
                     body,
                     &wanted,
-                    prose && !from_dense,
+                    prose && (!from_dense || dense.has_overviews()),
                 )?,
                 None => {
                     // A dense-only unit: no delivery-unit label.
@@ -5640,6 +5772,15 @@ impl Engine {
                             "candidate unit outside {unit_path}"
                         )));
                     }
+                    let (from, to, focused) = if prose && dense.has_overviews() && to - from > 1536
+                    {
+                        prose_passage(&body[from..to], &wanted)
+                            .map_or((from, to, false), |(start, end)| {
+                                (from + start, from + end, true)
+                            })
+                    } else {
+                        (from, to, false)
+                    };
                     let text = &body[from..to];
                     let newlines = |bytes: &[u8]| bytes.iter().filter(|&&b| b == b'\n').count();
                     let start_line = newlines(&body.as_bytes()[..from]) as u64 + 1;
@@ -5652,13 +5793,22 @@ impl Engine {
                             workspace_id: workspace_id.clone(),
                             path: unit_path.clone(),
                             sha256: meta.hash.clone(),
-                            start: *unit_start,
-                            end: *unit_end,
+                            start: from as u64,
+                            end: to as u64,
                         }),
                         start_line,
                         end_line,
-                        line: start_line,
-                        label: String::new(),
+                        line: start_line
+                            + if focused {
+                                best_line_index(text, &wanted)
+                            } else {
+                                0
+                            },
+                        label: if focused {
+                            "excerpt".into()
+                        } else {
+                            String::new()
+                        },
                         lang: crate::syntax::Lang::from_path(unit_path)
                             .map(|lang| lang.tag().to_owned()),
                         semantic: None,
@@ -5671,6 +5821,20 @@ impl Engine {
                 item.semantic = Some(SemanticEvidence {
                     dense_only: candidate.is_none(),
                 });
+                if let Some(trace) = control.trace() {
+                    let focused = item
+                        .handle
+                        .as_ref()
+                        .is_some_and(|h| (h.start, h.end) != (*unit_start, *unit_end));
+                    trace.record(serde_json::json!({
+                        "stage":"materialization", "origin":"dense", "rank":rank,
+                        "unit":{"workspace_id":workspace_id,"path":unit_path,"sha256":meta.hash,
+                            "start":unit_start,"end":unit_end},
+                        "excerpt":item.handle,
+                        "local_query_focus":focused,
+                        "passage_independently_embedded":focused.then_some(false),
+                    }));
+                }
             } else if let Some(candidate) = candidate {
                 candidate.trace_materialization(control, &item);
             }

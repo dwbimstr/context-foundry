@@ -1,5 +1,110 @@
 # Validation
 
+## Evidence delivery and unused startup — 2026-10-11
+
+Continued from `e282d4a` on `experimental/context-ecosystem`. Private artifacts are
+in `/workspace/.context-foundry-tools/validation-runs/evidence-delivery-v7/`.
+The existing Rust 1.90/Linux toolchain and pinned Gemma CPU worker were reused;
+no default promotion, release or native Mac/GPU acceptance is claimed.
+
+**Implemented.** Long overview/hierarchy hits in experimental prose context can
+return a current, exact local passage rather than the beginning of a large file.
+Dense-only selection counts distinct concepts across adjacent lines, caps the excerpt
+at 1,536 bytes and keeps UTF-8 boundaries. Traces retain the dense unit and actual
+excerpt separately; the excerpt is not independently embedded or similarity-scored.
+Complete `overview-v1` coverage now interleaves lexical matches first, preserving
+precise matches when every file has only a coarse representation. Existing discovery,
+per-file and output limits remain. Plural uppercase acronyms such as `CPUs` now query
+`cpu`, rather than CamelCase fragments `CP` and `Us`; explicit symbols retain their
+existing rules. No whole-repository source scan was added to retrieval.
+
+Overview preparation skips parsing when the complete input fits. Files without
+parsed declarations use up to 16 distributed text samples (256 bytes each before
+fitting), with a nonblank fallback for sparse files. Empty extracts are refused.
+Both file-capable recipes include `+overview3`: old partitions refit, while unchanged
+exact inputs reuse cached vectors. Body/address recipes retain their identities.
+The previous 67,663-source inventory is evidence for its prior recipe, not a newly
+executed inventory of this revision. Full representative inference remains open.
+
+**Preserved retrieval.** All frozen development queries retain their earlier delivered
+spans under the same 2,048-token allowance (`retrieval-final-*/report.json`):
+
+| Corpus | Previous experimental | Current lexical |
+| --- | --- | --- |
+| Foundry | 2/8 | 2/8 |
+| Inspected Rust | 3/6 | 3/6 |
+| Additional Rust | 5/8 | 5/8 |
+| Mixed-corpus Go | 5/8 | 5/8 |
+
+The acronym fix brings the CPU case into selection but still loses its required
+span during excerpt selection. This is not a delivered-answer gain. A broad lexical
+passage change lost one Rust answer and was removed; a length-normalized scoring
+trial also regressed delivery and was removed. Raw failures remain under
+`retrieval-passage-*` and `retrieval-length-v2-*`. The earlier `retrieval-length-*`
+launch is explicitly invalid: a failed build left the old executable in place and
+the accidental run was stopped. It contributes no result above.
+
+**Complete small-repository model check.** A fresh index of the pinned Foundry
+snapshot excludes the evaluator and retains the admission policy. The ordinary
+Gemma CPU worker prepares all **274 admitted sources / 274 independent inputs**,
+with 84,927 input tokens, in **160,618 ms**. All 274 vectors/locations are searchable,
+zero sources remain unpartitioned, and there are no provider/publication errors.
+An unchanged fresh-process preparation finishes in 2,665 ms with **zero document
+calls**. These are debug command observations; some checks overlapped, so they are
+not an isolated throughput comparison or 60–80k acceptance.
+
+The attribution diagnostic now optionally runs the real CLI/model path using
+`FOUNDRY_ATTRIBUTION_SEMANTIC_PROFILE`, preserving the frozen questions, exact spans,
+source identity and 2,048-token budget. The initial dense-first coarse run delivers
+only **1/8**, losing one lexical success. The final interleave delivers **2/8**, retaining
+both lexical successes but establishing no general semantic gain
+(`foundry-semantic-accepted/report.json`): all seven eligible queries use the real
+dense path, and the anchored eighth skips it. The preceding final trial overlapped
+CPU-heavy checks and had five timeout fallbacks; it remains preserved separately.
+The repeated trial changed no query/deadline/token budget and ran with other heavy
+checks stopped. Per-row semantic decisions now make those fallbacks explicit.
+Whole-file coverage is insufficient evidence of useful retrieval. No new host-task benefit is claimed.
+
+**Unused model startup.** The real explicit-symbol probe previously spent 13,712 ms
+starting a worker it never queried. CLI search/context now share the request's
+anchor/prose predicate before opening an unused profile, hashing artifacts, loading
+a tokenizer or acquiring its model. Eligible queries keep the normal startup/fallback
+path; resident MCP startup is unchanged. The same real-profile anchored command now
+finishes in **1,535 ms with byte-identical output**. Its trace records skipped startup;
+a provider-factory test separately proves no acquisition and verifies path/prose
+admission. Scoped CLI search also stays byte-identical. This single observation
+(`startup-report.json`) is an avoided-startup result, not a controlled latency
+benchmark or total task-cost benefit. The unanchored
+follow-up reaches real dense serving and delivers the expected source span. Its
+initial byte-equality check failed because the earlier comparison had used a timeout
+fallback; that difference is retained in `startup-unanchored-report.json`, not labeled
+a production failure or byte-identical result. The final eight-query run above
+confirms the intended behavior.
+
+**Source admission.** The fresh frozen index explains one persistent absent source:
+`src/ingest.rs` contains the detector's own private-key marker literal. Its current
+source now constructs the identical runtime constant from pieces, so it no longer
+excludes itself. Both actual markers remain rejected. A fresh current-checkout scan
+admits **279 sources**, reports zero failures and excludes only the binary SCIP
+fixture (`self-index.json`). The frozen corpus and its eight-question denominator
+were not edited or relabeled.
+
+**Checks.** Focused library, core, MCP, multi-root, neural retrieval, response and
+attribution suites pass: **519 passed, 3 explicitly ignored**. Lifecycle checks cover exact-input reuse, recipe expansion,
+changes/reverts/deletion, stale coarse generations, UTF-8 excerpts and source-empty
+fallbacks. CLI startup/refusal and real anchored/unanchored consumers pass. The
+explicit representative-scale tests remain ignored in the ordinary suite; the
+small real-model run above is recorded separately. Clippy with warnings denied, the no-default-features library build, formatting and
+documentation links pass. This is focused validation, not a full feature/platform suite.
+
+**Remaining work.** General ranking/excerpt delivery and independent acceptance;
+automatic selective body preparation alongside the coarse index; complete current
+representative inference and sustained semantic/knowledge churn; broader boundary
+and execution collectors; useful free-form/memory-sensitive tasks and complete
+amortized cost benefits; native Mac/Metal/GPU resource/isolation/package acceptance.
+These remain active TODOs, with hardware-dependent work separated from Linux-feasible
+implementation. No measurements or TODOs were waived to make the branch look complete.
+
 ## Ecosystem code improvements — 2026-10-11
 
 Continued from `6637414` on `experimental/context-ecosystem`, using the existing

@@ -1017,8 +1017,10 @@ fn source_content(bytes: &[u8]) -> Result<&str, &'static str> {
         return Err("binary NUL");
     }
     let text = std::str::from_utf8(bytes).map_err(|_| "not UTF-8")?;
-    if text.contains("-----BEGIN PRIVATE KEY-----")
-        || text.contains("-----BEGIN RSA PRIVATE KEY-----")
+    // Keep the exact runtime markers, without causing this detector's own
+    // source to be excluded when a user indexes Foundry itself.
+    if text.contains(concat!("-----BEGIN ", "PRIVATE KEY-----"))
+        || text.contains(concat!("-----BEGIN ", "RSA PRIVATE KEY-----"))
     {
         return Err("private key marker");
     }
@@ -1177,6 +1179,17 @@ impl ChangeScan {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn private_key_markers_still_exclude_inputs_without_excluding_the_detector() {
+        assert!(super::source_content(include_bytes!("ingest.rs")).is_ok());
+        for kind in ["PRIVATE KEY", "RSA PRIVATE KEY"] {
+            let text = format!("before\n-----BEGIN {kind}-----\nafter\n");
+            assert_eq!(
+                super::source_content(text.as_bytes()),
+                Err("private key marker")
+            );
+        }
+    }
     use super::OpenFailure;
     use super::held::{open_relative, open_root};
     use std::fs;

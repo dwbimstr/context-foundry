@@ -114,6 +114,17 @@ impl std::fmt::Debug for DenseWindow {
 }
 
 impl DenseWindow {
+    /// These opt-in recipes can map a small extractive input to a whole file
+    /// or parent. Context may focus their source locally; this does not mean
+    /// the resulting passage received its own embedding or similarity score.
+    pub(crate) fn has_overviews(&self) -> bool {
+        self.file_overviews_only() || self.generation.identity.recipe.starts_with("hierarchy-v1+")
+    }
+
+    pub(crate) fn file_overviews_only(&self) -> bool {
+        self.generation.identity.recipe.starts_with("overview-v1+")
+    }
+
     /// The document-input key of one hit.
     pub fn input_key(&self, hit: &DenseHit) -> &str {
         self.generation.input_key(hit.label)

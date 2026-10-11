@@ -25,20 +25,27 @@ The normal Linux embedding worker includes the 8,192-token pooled-output repair.
 
 Current evidence and limits:
 
-The newest [code continuation](validation.md#ecosystem-code-improvements--2026-10-11)
-adds `overview-v1` broad file preparation, bounded overview fitting, explicit-language
-and Unicode prose repair, requirement/execution source joins, `usage economics` and
-the macOS CPU sampler. Go delivery is now **5/8**, preserving all preceding Foundry/Rust
-successes. Broader inflection expansion was removed after Rust regressions. The new
-resource code needs native compilation/acceptance. Raw current artifacts are in
-`/workspace/.context-foundry-tools/validation-runs/ecosystem-code-v6/`; the detailed
-v5 baseline below remains historical. None of these changes establishes full retrieval
-or general task-quality/total-cost benefits.
+The newest [delivery/startup continuation](validation.md#evidence-delivery-and-unused-startup--2026-10-11)
+adds exact local evidence from coarse vectors, preserves lexical priority under complete
+file-overview coverage, fixes plural acronym queries and skips unused CLI model startup.
+File/hierarchy recipes now use `+overview3`: rerun explicit preparation (or the already
+opted-in maintainer); unchanged exact inputs reuse cached vectors. Short file inputs
+skip parsing, and files without declarations get nonblank distributed extracts. Foundry's
+own detector source no longer excludes itself; actual key markers remain rejected.
+
+The real model completes all 274 admitted files of the pinned Foundry snapshot in
+160.6 s; unchanged preparation makes zero document calls. Final semantic delivery is
+still **2/8**, retaining lexical successes without establishing a general gain. Preserved
+lexical results remain Foundry **2/8**, Rust **3/6** and **5/8**, Go **5/8**. One real
+anchored CLI drops from 13.7 s to 1.5 s with identical output after skipping its unused
+model; total task benefits remain unproven. Artifacts are under
+`/workspace/.context-foundry-tools/validation-runs/evidence-delivery-v7/`.
+The v6/v5 inventories below are historical, not renewed scale acceptance of this recipe.
 
 - **Retrieval:** experimental delivery remains 2/8 on Foundry, 3/6 on inspected Rust
   and 5/8 on additional public Rust questions. Two-passage selection and conservative
   language-qualifier disambiguation preserve every prior success; mixed-corpus Go
-  improves from 0/8 to 1/8. CLI/MCP semantic admission now shares the prose rules;
+  delivers 5/8 with the final conservative repair. CLI/MCP semantic admission now shares the prose rules;
   a real partial-coverage query returns the target in 2,042 tokens. Traces distinguish
   excerpts from outlines. General ranking,
   per-file selection, macro evidence and independent acceptance remain open.
@@ -55,8 +62,8 @@ or general task-quality/total-cost benefits.
 - **Evidence:** direct configured FastAPI package routers and literal Flask routes/
   Blueprints are supported. Actual FastAPI package and Flask dynamic-callback checks
   pass; observing-test edits invalidate imported observations after restart. Broader
-  frameworks, collectors, cross-language callers and test-to-requirement coverage
-  remain open. Indexing never executes a framework or test.
+  frameworks, collectors, cross-language callers and semantic requirement satisfaction
+  remain open; explicit source-link/observed-line overlap is implemented. Indexing never executes a framework or test.
 - **Task economics:** Qwen3-4B-Instruct-2507/OMP can make real edits. Both corrected
   parser patches pass their external oracle, but composed execution times out with
   greater known usage. Two further upstream percent-decoder pairs expose 18 unchanged
