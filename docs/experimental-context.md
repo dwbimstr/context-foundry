@@ -119,6 +119,15 @@ bounded prefetch with one provider call; overlapping priority inputs are dedupli
 before another call. Foreground admission retains one model slot; the opt-in geometry
 and body recipe below extend input sizing and actual-token batch packing.
 
+A contended wave now yields after eight new inputs, so one large priority file
+cannot hold up every later priority scope or the background. CLI and MCP use the
+same limit; pending changed paths also rotate. A queued continuation stores only
+the wave's source bounds and resumes through current partition/cache lookups.
+MCP excludes both in-flight and prefetched keys. This trades some repeated cache
+lookups/rendering for bounded turns without retaining source/token buffers per
+queued scope. The bound counts inputs, not wall time; a slow call can still consume
+the run budget. It does not increase model capacity or establish whole-corpus quality.
+
 The semantic CPU pool starts only when a new partition needs computation and is
 reused across waves (and MCP prepare runs), with at most eight workers. Fresh
 verified cards pass directly to selection under a 2 MiB retained-payload limit per
@@ -288,6 +297,30 @@ that observation is unavailable or stale, and is not a fresh disk audit. The old
 `sources`, `eligible_units` and `missing_units` fields describe this run's examined
 work. In particular, zero run-local missing cards cannot prove that an unpartitioned
 corpus is ready. Check `coverage.unpartitioned_sources` and the explicit partial flag.
+
+The ignored `representative_cpu_batch_comparison` uses the same root/profile/plan
+variables and a new output directory. Its plan contains `selected_files` rows of
+`[relative_path, byte_length, sha256]`, between 4 and 16 files. It chooses the middle
+body card of each source, then compares 2/4 CPU threads and 1/8 inputs per call in
+two reversed rounds under a 900-second total deadline. Inputs and vectors stay
+outside Git. Reports separate acquisition and inference, check normalized finite
+vectors and cosine agreement of at least 0.9999, and retain completed rows on failure.
+This diagnoses runtime throughput; it does not certify retrieval quality or full
+scale. Run it without another model or build consuming the same CPU quota.
+
+On the measured four-CPU Linux host, the pinned Gemma BF16/body-v1 profile with
+`"cpu": {"threads": 4, "seconds": 3600}` and `"batch": 1` also improves a separate
+bounded preparation run: all 16 priority files receive vectors, compared with six
+under two threads/batch eight on the same candidate. Five files are fully covered;
+the full repository remains partial. These are explicit profile choices for the
+validated standalone workload, not automatic defaults for other hosts or GPU/Metal.
+See [the comparison and limits](validation.md#fair-preparation-and-evidence-delivery--2026-10-11).
+
+`representative_priority_coverage` instead reads `FOUNDRY_SEMANTIC_SCALE_EXISTING`
+after a preparation run, checks the frozen plan's source hashes and reports current
+partition/cache counts for those files to a new `priority-coverage.json` in the
+output directory. It runs no inference. Cached cards, complete file coverage and
+complete repository coverage are separate observations.
 
 The ignored `repository_development_attribution` diagnostic accepts a frozen
 `FOUNDRY_ATTRIBUTION_ROOT`, optional existing `FOUNDRY_ATTRIBUTION_STORE`, and

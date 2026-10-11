@@ -1,5 +1,176 @@
 # Validation
 
+## Fair preparation and evidence delivery — 2026-10-11
+
+Continued on `experimental/context-ecosystem`, Rust 1.90, the same four-CPU Linux
+quota and no GPU. Frozen plans, raw reports, failed attempts and model/tool logs
+remain outside Git under
+`/workspace/.context-foundry-tools/validation-runs/quality-scale-economics-v4/`.
+The existing onboarding environment and tool activation were reused; no environment
+configuration change or publication was needed. This checkpoint is experimental.
+
+**Task composition and real host.** The composer incorrectly promoted file-outline
+handles to full source bodies. Those ranges swallowed the selected caller functions
+during coalescing, and the large resulting unit degraded to an address under the
+2,048-token budget. Outline-only candidates now stay out of the source-seed window.
+Ordinary outlines, source identity, protected task state and final-read validation
+are unchanged. The new regression delivers the caller's public checks without the
+64 unrelated functions. All 15 task-evidence tests pass.
+
+One frozen matched pair repeats the expanded parser task with OMP 18.6.0 and the
+same pinned Qwen3-4B-Instruct-2507 Q4_K_M model, four CPU threads, public checks,
+768 output tokens per request and 900 seconds per arm. No other model or build ran
+during the pair. The exact composition-only executable and test binary are recorded
+in `host-artifacts.json`; the later retrieval/scheduler edits were built afterward.
+The final source in **both arms passes the unchanged external oracle**, including
+Unicode trimming, additional delimiters and borrowed slices. Protected files stay
+unchanged; `host-tool-audit.json` confirms only the repair file and visible checker
+were used. This does not establish observed requirement coverage in the product.
+
+| Arm | Requests complete / unknown | Known input / output / cached tokens | Measured task ms | Host completion |
+|---|---:|---:|---:|---|
+| Full files | 4 / 0 | 19,474 / 794 / 0 | 451,453 | Completed |
+| Composed | 10 / 1 | 40,844 / 1,349 / 0 | 901,814 | Task deadline; final patch passes |
+
+The composed run needs several compiler/test feedback cycles and reaches its limit
+during a subsequent request. Its complete usage remains unknown, while its known
+input already exceeds twice the successful control's. `completion_comparison` stays
+`not_established`. The prior negative run is retained below. Passing this patch is
+useful new evidence, not proof that this fix caused a general task-quality gain or
+reduced cost. The fixture is artificially expanded and the helper is named; this is
+neither realistic multi-file acceptance nor anchorless retrieval acceptance. Model
+acquisition/loading, shared fixture setup, energy and amortization remain outside
+the paired task clock. Monetary benefit is unestablished.
+
+**Retrieval candidate rejected.** A bounded passage-locality reranker used the same
+256-document discovery window, 2,048-token responses and frozen source/span labels.
+It added no model, index schema or source scan. The previous experimental executable
+is `fe37eff3` (SHA-256 `a11838c6578dd780e53c7b73c66c1e01a8f7c48f66328ceee43850f870bf0f39`).
+
+| Frozen public probes | Legacy delivery | Previous experimental | Passage candidate |
+|---|---:|---:|---:|
+| Foundry, eight development questions | 1/8 | 2/8 | 2/8 |
+| Rust, six inspected questions | 0/6 | 3/6 | 2/6 |
+| Rust, eight additional questions | 0/8 | 5/8 | 5/8 |
+
+The candidate loses `binary_search_by` at packing and adds no delivered spans. It
+was removed; the previous experimental ranking remains. `retrieval-summary.json`
+and the three `retrieval-*/` directories retain every miss and unknown attribution;
+unknown is not counted as delivered. `rejected-locality.patch`, executable and
+`rejected-locality-decision.json` preserve the rejected implementation. The eight
+additional questions were frozen before execution but are public, author-visible
+library probes, not an independently reviewed holdout. There is no general
+anchorless acceptance or task-quality result here. Traced and untraced responses
+match. Sequential debug executables and filesystem warming do not support a
+ranking-latency claim.
+
+The rejected design consulted Tantivy **0.26.2**,
+`postings/segment_postings.rs::SegmentPostings::seek` and
+`postings/postings.rs::Postings::positions`; the upstream
+`block_segment_postings.rs::test_block_segment_postings_seek` was inspected, not run.
+The prototype used nondecreasing seeks over the bounded candidates for 009 T005;
+no upstream change or continued Foundry passage reranking is shipped.
+
+**Bounded preparation turns.** The CLI and MCP preparation paths now yield a
+contended source wave after eight new inputs. This prevents one large file from
+consuming every inference turn before later priorities are visited. Queued cursors
+retain only source bounds, and resume by checking current partitions/cache keys;
+MCP also excludes in-flight and prefetched inputs. No new persisted state or model
+slot is introduced. Replays cost cache lookups and occasional source rendering.
+The limit counts inputs, not wall time, and does not increase inference throughput.
+
+The frozen Rust store is copied into two experiment-owned stores and semantic state
+is purged in each copy. The original 53,955-source store stays untouched. Both arms
+use the same 16 frozen size/area priority paths, ordinary CPU worker, two threads,
+batch eight and 180-second budget; copy/purge and existing lexical indexing are
+excluded. Admission stops early when insufficient time remains for another call.
+The candidate reaches six requested files with current cached vectors versus one
+for the previous executable; three requested files are fully cached versus one.
+It publishes 87 current vectors in 166.8 s versus 70 in 174.7 s. First searchable
+coverage is 15.1 s versus 14.7 s. Distinct input lengths differ between arms, so vector
+counts are coverage observations rather than a controlled inference-speed ratio.
+
+Candidate partition work is 0.9 s and replay rendering is 1.9 s, compared with 0.4 s
+and zero for the baseline; inference still dominates at 149.8 s versus 160.6 s.
+The tradeoff improves priority coverage in this bounded run, with the anticipated
+CPU replay overhead. CLI cancellation/resume and MCP prefetch regression tests
+also verify that accepted inputs are not inferred twice. Complete source/corpus
+coverage and retrieval recall are separate requirements. Raw preparation, source-
+hash-checked cache coverage and binary identities live in `priority-plan.json`,
+`priority-report.json`, `priority-artifacts.json` and the `priority-*/` directories.
+
+A separate 90-second candidate resume adds 24 new vectors (111 total) in 81.6 s,
+with 23 partitioned sources and 53,932 still unpartitioned. Existing progress becomes
+searchable after 4.0 s; one delta is published and no generation is rebuilt. The
+same six priority files have vectors and the same three are fully cached. This
+resume preserves progress but does not improve priority breadth in its short budget.
+Run counters include repeated cache lookups; they are not distinct corpus coverage.
+
+**CPU threads and batch size.** The ordinary isolated Linux worker embeds the
+middle body card from each of 16 frozen Rust files across library/compiler/tools/tests
+and approximately 1/4/16/64 KiB source sizes. These are 16 distinct inputs totalling
+3,452 tokens, using body-v1, 64 parent tokens and a 512-token card cap. The exact
+Gemma BF16 model, tokenizer and worker are those pinned in the preceding checkpoint;
+function digest is `701e4ff37f617ee634c299754b745180deb20d65455852aaca6194f44d75d61f`.
+The plan allows 900 seconds, uses two reversed rounds and stops on an error or
+vector mismatch. All eight arms finish in 135.9 seconds without a concurrent build
+or model. Every vector is finite, normalized and 768-dimensional. Minimum cosine
+against the first arm is 0.9999952; maximum absolute coordinate difference is
+0.0003921. Changing only threads with batch one is identical in this sample.
+
+| CPU threads | Inputs per call | Inference ms, two rounds |
+|---|---:|---:|
+| 2 | 1 | 7,379 / 6,569 |
+| 4 | 1 | 3,898 / 4,001 |
+| 2 | 8 | 11,288 / 11,076 |
+| 4 | 8 | 6,527 / 6,340 |
+
+Each acquisition separately takes 8,954–9,365 ms, including verification and worker
+startup/loading. Four threads help this sample; larger batches hurt it. These are
+real inference observations, not an explanation of the backend's bottleneck, a
+full-scale throughput result or evidence of retrieval quality. The diagnostic is
+`tests/semantic_scale.rs::representative_cpu_batch_comparison`; frozen selection,
+inputs, vectors and each progress row are in `cpu-batch-plan.json` and `cpu-batch/`.
+No global thread/batch default changes. GPU/Metal behavior remains untested here.
+
+The separately frozen follow-up applies **four CPU threads and batch one** to a
+fresh semantic-only copy of the same Rust store, keeping the candidate, priorities,
+model, representation and 180-second budget unchanged. It publishes **305 distinct
+vectors covering 326 current source units** in 162.9 s. All **16/16 priority files**
+have current vectors; **5/16** are fully cached. First searchable coverage is 13.7 s.
+Input volume is 113,988 tokens, with 136.2 s provider wait, 2.3 s partition work,
+8.7 s replay rendering and 0.2 s publication. Identical inputs can cover multiple
+source locations, hence the distinct vector/source-unit counts.
+
+This supports the selected runtime settings for this standalone CPU workload and
+shows the replay overhead becoming more visible as inference speeds up. The
+scheduling-only result remains the separate 1/16 to 6/16 comparison above; the
+16/16 result also changes CPU/batch settings. It is one follow-up, not a randomized
+whole-repository trial. Only 24 sources have partitions; **53,931 remain
+unpartitioned**, and no required-span recall or complete-file coverage is inferred
+from a file having some vectors. `priority-tuned-plan.json`,
+`priority-tuned-profile.json`, `priority-tuned-report.json` and `priority-tuned/`
+retain the inputs and outputs. No model/profile default was promoted.
+The final candidate executable SHA-256 is
+`3a95367d6f2e90e1673119788bd5d776977cea28108d2e4180c1fd5ad5b9b3a0`.
+
+**Checks and remaining scope.** Focused checks pass: 70 preparation integration
+checks, 80 neural retrieval checks (one ignored), 85 neural unit checks, 15 task-
+evidence checks, 16 response checks and 20 multiroot checks. After removing the
+rejected ranking candidate, all 78 core checks pass. Rust 1.90 formatting, default
+and no-default-feature all-target Clippy with warnings denied, Markdown links and
+`git diff --check` pass. The real CPU comparison and priority coverage diagnostics
+were explicitly executed; the real OMP harness records outcomes rather than turning
+its execution into a task-quality pass. This was self-review, not independent review.
+
+The [pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
+retains general retrieval/held-out acceptance, complete unique-content 60–80k model
+coverage, broader observed relationships/test evidence, useful generated knowledge
+and realistic task/memory economics. These remain Linux-capable work, not all hardware
+blockers. Native macOS/Metal/GPU/package acceptance still requires another runner.
+013 remains frozen off. No release, push, hosted publication or default promotion
+was performed.
+
 ## Retrieval, scale and host economics — 2026-10-11
 
 Continued on `experimental/context-ecosystem`, Rust 1.90, Linux with a four-CPU

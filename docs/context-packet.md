@@ -33,12 +33,22 @@ snapshot now admits 53,955 sources in 138 s. Bounded real Gemma preparation, res
 edit/delete, revert and query checks pass, but only 42 sources have partitions and
 582 cards are searchable; 53,913 sources remain unpartitioned. Model inference
 dominates. This is partial evidence, not full unique-content 60–80k validation.
+Contended inference waves now yield after eight inputs. A separate cold comparison
+with the same model/profile and 180-second budgets reaches six of 16 priority files
+versus one before; three files are fully cached versus one. Real CPU comparisons
+also favor four threads and one input per call for the tested 16 distinct chunks.
+A separate cold follow-up with those settings reaches all 16 priorities (five fully
+cached), publishing 305 vectors for 326 source units within the same 180-second
+budget. Its store still has 53,931 unpartitioned sources. These results do not close
+complete repository coverage or justify global defaults.
 The frozen Foundry comparison delivers 2/8 versus the previous executable's 1/8;
 the initial public Rust comparison delivers 0/6 in every arm. Preserving whole
 declaration lines after long documentation raises the candidate to 3/6 on those
 inspected cases; controls remain 0/6. Experimental prose scoring and partial-coverage
 interleaving preserve source and budget checks; general retrieval quality remains
-open.
+open. Eight additional public Rust probes deliver 5/8 versus legacy 0/8. A passage
+reranker added no delivery and regressed the prior Rust set from 3/6 to 2/6; it was
+rejected and the previous experimental ranking retained.
 
 The Qwen3-4B-Instruct-2507 backend passes native tool-call probing and makes actual
 OMP edits, resolving the previous 7B protocol failure. The read/write-only parser
@@ -47,11 +57,15 @@ not establish verified task or economic benefit. A seeded repair in published
 `percent-encoding` 2.3.2 also fails both arms at the task limit, with one unknown
 request per arm; known request subtotals are retained separately. With public test
 feedback, full-file context finally passes the independent parser oracle, but the
-composed arm fails at its limit and consumes more known tokens. No completion-cost
+composed arm fails at its limit and consumes more known tokens. The next correction
+keeps file outlines out of task source seeds so they cannot swallow exact callers.
+Both follow-up final patches pass the unchanged oracle. The full-file host completes
+in 4 requests; the composed host still reaches its deadline with 10 metered requests
+and 1 unknown. Its known input is 40,844 versus 19,474 tokens. No completion-cost
 benefit is established. Broader evidence collectors, useful model/host selection, realistic task/memory economics and Mac/GPU acceptance remain.
 These are **not all macOS blockers**. Late chunking is still only a backend candidate.
 
-[Current validation](validation.md#retrieval-scale-and-host-economics--2026-10-11)
+[Current validation](validation.md#fair-preparation-and-evidence-delivery--2026-10-11)
 records the bounded experiments, raw artifact locations, failures and checks. New
 artifacts are outside Git under `/workspace/.context-foundry-tools/validation-runs/`;
 older `/tmp` artifacts did not survive the environment restart. A restored tool cache

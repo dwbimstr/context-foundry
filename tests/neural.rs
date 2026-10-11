@@ -2715,6 +2715,53 @@ fn a_v1_profile_is_refused_by_name_and_its_retained_data_is_kept() {
 }
 
 #[test]
+fn large_priority_source_yields_inference_and_resumes_from_committed_cache() {
+    use context_foundry::fault::{self, Action};
+    let large: String = (0..40)
+        .map(|n| format!("pub fn priority_{n:02}() -> u32 {{ {n} }}\n"))
+        .collect();
+    let mut sources: Vec<_> = (0..16)
+        .map(|n| (format!("a/{n:03}.md"), body(100 + n)))
+        .collect();
+    sources.push(("z/large.rs".into(), large));
+    let borrowed: Vec<_> = sources
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect();
+    let mut env = Env::new(&borrowed);
+    env.close();
+    let control = Control::unbounded();
+    fault::arm(prepare::fault_names::AFTER_PUBLISH, 2, Action::Cancel);
+    let report = prepare::run(
+        &env.store,
+        &PrepareOptions {
+            profile_path: &env.profile,
+            budget_seconds: 60,
+            development: false,
+            cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+            started: Instant::now(),
+            control: &control,
+            priority_paths: &["z".into()],
+        },
+        env.factory.acquire(),
+    )
+    .unwrap();
+    fault::disarm_all();
+    assert_eq!(report.reason_code, Some("cancelled"));
+    assert_eq!(report.embedded_units, 16);
+    assert!(
+        env.open().semantic_partition("a/000.md").unwrap().is_some(),
+        "the background must run before all forty priority inputs"
+    );
+    assert_eq!(env.status().searchable_current_units, 16);
+    let resumed = env.prepare(60);
+    assert!(!resumed.partial, "{resumed:?}");
+    assert_eq!(resumed.embedded_units, 40);
+    assert_eq!(env.status().searchable_current_units, 56);
+    assert_eq!(env.prepare(60).embedded_units, 0);
+}
+
+#[test]
 fn progressive_cli_priority_and_background_publish_before_the_corpus_is_partitioned() {
     use context_foundry::fault::{self, Action};
     let sources: Vec<_> = (0..64)
@@ -2751,7 +2798,7 @@ fn progressive_cli_priority_and_background_publish_before_the_corpus_is_partitio
     .unwrap();
     fault::disarm_all();
     assert_eq!(report.reason_code, Some("cancelled"));
-    assert_eq!(report.bootstrap.waves, 2);
+    assert_eq!(report.bootstrap.waves, 2, "{report:?}");
     assert_eq!(report.bootstrap.priority_waves, 1);
     assert_eq!(report.bootstrap.generation_builds, 1);
     assert_eq!(report.bootstrap.delta_publications, 1);

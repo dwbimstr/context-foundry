@@ -872,7 +872,12 @@ explicit source links, four source-bound briefs, eight boundary seed paths/eight
 relations and at most 32 final source units. It makes no extra model calls and writes
 no task state. Folded entries use the caller's selected summary; original bytes remain
 recoverable through T007. Brief vocabulary can discover a source and then its boundary
-neighbors. Overlapping ranges with matching provenance are coalesced with their
+neighbors. File-outline candidates are excluded from the primary source-seed
+window: their whole-file handles describe reduced forms, not selected source
+bodies. Promoting those handles swallowed the actual caller functions during
+coalescing and left only a file address under a small budget. The continuation
+preserves the bounded function spans without changing ordinary outline delivery.
+Overlapping ranges with matching provenance are coalesced with their
 attribution; separate functions remain separate units. Enclosing boundary contexts
 over 32 KiB fall back to exact occurrence spans. Other large units deliver a bounded
 prefix with its own exact handle and an explicit discovery-limit indication.
@@ -1004,3 +1009,11 @@ maintenance stay explicit exclusions, not inferred savings. In the executed publ
 pair, the full-file control passes; composed context fails at its time limit after
 more known input/output tokens and one unknown request. T006 remains unaccepted. See
 [current results](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11).
+
+After the T009 outline/source-seed correction, a new frozen pair on the same public
+parser task produces two patches that pass the unchanged external oracle. Full-file
+context completes with 4 metered requests; composed context reaches its host deadline
+with 10 metered and 1 unknown request. Known composed input is 40,844 tokens versus
+19,474 for the control. A correct final patch does not turn an unfinished, incompletely
+metered host run into a completion-cost win. General task/economic acceptance remains
+open; see [the follow-up](../../docs/validation.md#fair-preparation-and-evidence-delivery--2026-10-11).

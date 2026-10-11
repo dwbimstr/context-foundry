@@ -74,6 +74,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// A wave retains at most eight verified source bodies (16 MiB maximum).
 pub(crate) const PARTITION_WAVE: usize = 8;
+/// Yield a contended source wave after this many selected inputs. A large file
+/// must not monopolize inference while other requested areas wait.
+pub(crate) const WAVE_INPUTS: usize = 8;
 /// Retained card payload per source, including allocated ids/key/array capacity.
 /// At most one eight-source wave survives into selection. Larger sources use
 /// the existing bounded on-demand render path instead of retaining their cards.
@@ -243,6 +246,10 @@ pub(crate) struct SourceCursor {
     pub exact: bool,
     pub scope: Option<String>,
     pub after: Option<String>,
+    /// An unfinished wave's lower bound (outer Some also represents the start
+    /// of the corpus). `after` retains its upper bound. Replay uses cache keys;
+    /// queued cursors retain no source bodies, token arrays or worker state.
+    pub resume_before: Option<Option<String>>,
 }
 
 /// At most sixteen priority cursors and one ordinary cursor. Alternate one wave
@@ -260,6 +267,7 @@ impl SourceOrder {
                     scope: Some(path),
                     after: None,
                     exact: true,
+                    resume_before: None,
                 })
                 .collect(),
             background: None,
@@ -285,6 +293,7 @@ impl SourceOrder {
                     scope: Some(scope),
                     after: None,
                     exact: false,
+                    resume_before: None,
                 })
                 .collect(),
             background: Some(SourceCursor::default()),
@@ -299,6 +308,9 @@ impl SourceOrder {
             self.priority_turn = true;
             self.background.take()
         }
+    }
+    pub(crate) fn waiting(&self) -> bool {
+        !self.priority.is_empty() || self.background.is_some()
     }
     pub(crate) fn advance(&mut self, cursor: SourceCursor, done: bool) {
         if done {
@@ -906,16 +918,25 @@ fn inner(
     let mut order = SourceOrder::new(options.priority_paths)?;
     let mut stop: Option<Stop> = None;
     'waves: while let Some(mut cursor) = order.next() {
-        let before = cursor.after.clone();
-        let (progress, inputs) = steps.partition_inputs_in(
-            &mut cursor.after,
-            cursor.scope.as_deref(),
-            cursor.exact,
-            PARTITION_WAVE,
-            None,
-            report,
-            &mut || halt(control, budget),
-        )?;
+        if let Some(halted) = halt(control, budget) {
+            stop = Some(halted);
+            break;
+        }
+        let resumed = cursor.resume_before.take();
+        let before = resumed.clone().unwrap_or_else(|| cursor.after.clone());
+        let (progress, inputs) = if resumed.is_some() {
+            (Progress::More, Vec::new())
+        } else {
+            steps.partition_inputs_in(
+                &mut cursor.after,
+                cursor.scope.as_deref(),
+                cursor.exact,
+                PARTITION_WAVE,
+                None,
+                report,
+                &mut || halt(control, budget),
+            )?
+        };
         if let Progress::Halted(halted) = progress {
             stop = Some(halted);
             break;
@@ -937,17 +958,23 @@ fn inner(
         if cursor.after != before {
             report.bootstrap.waves += 1;
             report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
-            let mut walk = Walk::wave(cursor.scope.clone(), before, cursor.after.clone())
+            let mut walk = Walk::wave(cursor.scope.clone(), before.clone(), cursor.after.clone())
                 .with_retained(retained);
+            walk.exact = cursor.exact;
             let mut pending = Batch::default();
             let mut end = false;
+            let mut wave_inputs = 0;
             loop {
                 if pending.is_empty() {
                     let mut selection = Selection::default();
                     end = match steps.select_batch(
                         &mut walk,
                         &mut selection,
-                        steps.cards.limits().inputs,
+                        if order.waiting() {
+                            steps.cards.limits().inputs.min(WAVE_INPUTS - wave_inputs)
+                        } else {
+                            steps.cards.limits().inputs
+                        },
                         usize::MAX,
                         report,
                         &mut || halt(control, budget),
@@ -1030,6 +1057,7 @@ fn inner(
                         walk.seen.clear(); // Accepted keys are now in the durable cache.
                         report.embedded_units += size;
                         unpublished += size;
+                        wave_inputs += size as usize;
                     }
                     Err(StopOrError::Stop(partial)) => {
                         stop = Some(partial);
@@ -1053,6 +1081,10 @@ fn inner(
                     snapshot_progress(report, options.started);
                 }
                 if end && pending.is_empty() {
+                    break;
+                }
+                if wave_inputs >= WAVE_INPUTS && order.waiting() {
+                    cursor.resume_before = Some(before.clone());
                     break;
                 }
             }

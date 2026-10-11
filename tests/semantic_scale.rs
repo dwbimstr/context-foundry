@@ -11,6 +11,210 @@ use context_foundry::{Control, Engine, testkit};
 use serde_json::json;
 use std::time::{Duration, Instant};
 
+/// Real source/tokenizer/isolated worker, with the same exact inputs in every
+/// arm. This diagnoses inference geometry; it is not a corpus-completion or
+/// retrieval-quality test. The operator supplies frozen source hashes first.
+#[test]
+#[ignore = "real CPU comparison; explicit root/profile/plan/new output outside Git"]
+fn representative_cpu_batch_comparison() {
+    use context_foundry::neural::{
+        partition, provider::TokenizedInput, supervisor, tokenize::DocumentTokenizer,
+    };
+    use std::path::PathBuf;
+    let env_path = |key| PathBuf::from(std::env::var_os(key).expect(key));
+    let dir = env_path("FOUNDRY_SEMANTIC_SCALE_DIR");
+    let root = env_path("FOUNDRY_SEMANTIC_SCALE_ROOT")
+        .canonicalize()
+        .unwrap();
+    assert!(
+        dir.is_absolute()
+            && !dir.starts_with(env!("CARGO_MANIFEST_DIR"))
+            && !dir.starts_with(&root)
+    );
+    std::fs::create_dir(&dir).unwrap();
+    let plan: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(env_path("FOUNDRY_SEMANTIC_SCALE_PLAN")).unwrap())
+            .unwrap();
+    let files = plan["selected_files"].as_array().unwrap();
+    assert!((4..=16).contains(&files.len()));
+    let started = Instant::now();
+    let control = Control::with_deadline(started + Duration::from_secs(900));
+    let mut profile = SemanticProfile::load(&env_path("FOUNDRY_SEMANTIC_SCALE_PROFILE")).unwrap();
+    profile.card_tokens = 512;
+    profile.batch = 8;
+    profile.representation = partition::Representation::Body { parent_tokens: 64 };
+    let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+    let digest = profile.descriptor.digest();
+    let recipe = partition::CardRecipe {
+        template: &profile.descriptor.document_template,
+        function_digest: &digest,
+        card_tokens: 512,
+    };
+    let mut inputs = Vec::new();
+    let mut sources = Vec::new();
+    for file in files {
+        let path = file[0].as_str().unwrap();
+        context_foundry::store::validate_path(path).unwrap();
+        let source = std::fs::read_to_string(root.join(path)).unwrap();
+        assert_eq!(file[1], source.len());
+        assert_eq!(file[2], context_foundry::digest(source.as_bytes()));
+        let mut cards = Vec::new();
+        partition::body::visit(
+            &source,
+            context_foundry::syntax::Lang::from_path(path),
+            &recipe,
+            64,
+            &tokenizer,
+            |_, card| cards.push(card),
+        )
+        .unwrap();
+        assert!(!cards.is_empty());
+        let card = &cards[cards.len() / 2];
+        sources.push(json!({"path":path,"source_sha256":file[2],"card_index":cards.len()/2,"cards":cards.len(),"start":card.start,"end":card.end,"input_key":card.input_key,"tokens":card.ids.len()}));
+        inputs.push(TokenizedInput {
+            ids: card.ids.clone(),
+        });
+    }
+    assert_eq!(
+        sources
+            .iter()
+            .map(|s| s["input_key"].as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        inputs.len()
+    );
+    std::fs::write(dir.join("inputs.json"), serde_json::to_vec_pretty(&json!({"profile":profile,"sources":sources,"selection":"middle body card from each frozen size/area source","tokens":inputs.iter().map(|i|i.ids.len()).sum::<usize>()})).unwrap()).unwrap();
+    let mut reference: Option<Vec<Vec<f32>>> = None;
+    let mut rows = Vec::new();
+    // Reverse the order in the second round; load time is separately reported.
+    let variants = [
+        (2, 1),
+        (4, 8),
+        (4, 1),
+        (2, 8),
+        (2, 8),
+        (4, 1),
+        (4, 8),
+        (2, 1),
+    ];
+    for (run, (threads, batch)) in variants.into_iter().enumerate() {
+        profile.cpu.threads = threads;
+        profile.cpu.seconds = 3600;
+        let acquisition = Instant::now();
+        let mut worker = supervisor::acquire_until(&profile, true, &control).unwrap();
+        let acquisition_ms = acquisition.elapsed().as_millis();
+        let inference = Instant::now();
+        let mut vectors = Vec::new();
+        let mut error = None;
+        for chunk in inputs.chunks(batch) {
+            match worker.embed_documents(chunk, &control) {
+                Ok(output) => vectors.extend(output),
+                Err(e) => {
+                    error = Some(e.to_string());
+                    break;
+                }
+            }
+        }
+        let inference_ms = inference.elapsed().as_millis();
+        drop(worker);
+        let mut minimum_cosine = 1.0f64;
+        let mut maximum_absolute_error = 0.0f64;
+        let valid = vectors.len() == inputs.len()
+            && vectors.iter().all(|v| {
+                v.len() == profile.descriptor.dims()
+                    && v.iter().all(|x| x.is_finite())
+                    && (v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt() - 1.0).abs()
+                        < 0.0001
+            });
+        if valid && let Some(expected) = &reference {
+            for (a, b) in vectors.iter().zip(expected) {
+                let norm = |v: &[f32]| v.iter().map(|x| f64::from(*x).powi(2)).sum::<f64>().sqrt();
+                let cosine = a
+                    .iter()
+                    .zip(b)
+                    .map(|(a, b)| f64::from(*a) * f64::from(*b))
+                    .sum::<f64>()
+                    / (norm(a) * norm(b));
+                minimum_cosine = minimum_cosine.min(cosine);
+                for (a, b) in a.iter().zip(b) {
+                    maximum_absolute_error =
+                        maximum_absolute_error.max((f64::from(*a) - f64::from(*b)).abs());
+                }
+            }
+        }
+        if valid && reference.is_none() {
+            reference = Some(vectors.clone());
+        }
+        std::fs::write(
+            dir.join(format!("vectors-{run}.json")),
+            serde_json::to_vec(&vectors).unwrap(),
+        )
+        .unwrap();
+        rows.push(json!({"run":run,"threads":threads,"batch":batch,"acquisition_ms":acquisition_ms,"inference_ms":inference_ms,"completed_inputs":vectors.len(),"valid":valid,"minimum_cosine":minimum_cosine,"maximum_absolute_error":maximum_absolute_error,"error":error}));
+        std::fs::write(dir.join("report.json"), serde_json::to_vec_pretty(&json!({"scope":"representative_input_cpu_batch_comparison_not_corpus_completion_or_quality","function_digest":digest,"deadline_seconds":900,"tokens_per_arm":inputs.iter().map(|i|i.ids.len()).sum::<usize>(),"rows":rows,"elapsed_ms":started.elapsed().as_millis()})).unwrap()).unwrap();
+        assert!(
+            error.is_none() && valid && minimum_cosine >= 0.9999,
+            "{}",
+            rows.last().unwrap()
+        );
+    }
+}
+
+/// Inspect explicitly named priority files after an external CLI run. Cached
+/// inputs are counted separately from complete source and repository coverage.
+#[test]
+#[ignore = "explicit existing experiment store and frozen source plan"]
+fn representative_priority_coverage() {
+    use context_foundry::neural::{cache::CacheLookup, partition::Representation};
+    use std::path::PathBuf;
+    let env_path = |key| PathBuf::from(std::env::var_os(key).expect(key));
+    let dir = env_path("FOUNDRY_SEMANTIC_SCALE_DIR");
+    assert!(dir.is_absolute() && !dir.starts_with(env!("CARGO_MANIFEST_DIR")));
+    let engine = Engine::open_existing(&env_path("FOUNDRY_SEMANTIC_SCALE_EXISTING")).unwrap();
+    let plan: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(env_path("FOUNDRY_SEMANTIC_SCALE_PLAN")).unwrap())
+            .unwrap();
+    let mut profile = SemanticProfile::load(&env_path("FOUNDRY_SEMANTIC_SCALE_PROFILE")).unwrap();
+    profile.representation = Representation::Body { parent_tokens: 64 };
+    profile.card_tokens = 512;
+    let mut rows = Vec::new();
+    let files = plan["selected_files"].as_array().unwrap();
+    assert!((1..=16).contains(&files.len()));
+    for file in files {
+        let path = file[0].as_str().unwrap();
+        let source = engine.source(path).unwrap().unwrap();
+        assert_eq!(file[2], source.hash);
+        let record = engine.semantic_partition(path).unwrap();
+        let mut cached = 0;
+        if let Some(record) = &record {
+            assert_eq!(record.source_hash, source.hash);
+            assert_eq!(record.recipe_id, profile.recipe_id());
+            assert_eq!(record.function_digest, profile.descriptor.digest());
+            for unit in &record.units {
+                if matches!(
+                    engine
+                        .semantic_cache_lookup(
+                            &unit.input_key,
+                            &record.function_digest,
+                            profile.descriptor.dims()
+                        )
+                        .unwrap(),
+                    CacheLookup::Hit(_)
+                ) {
+                    cached += 1;
+                }
+            }
+        }
+        rows.push(json!({"path":path,"partitioned":record.is_some(),"cards":record.as_ref().map(|r|r.units.len()),"cached_cards":cached}));
+    }
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join("priority-coverage.json"))
+        .unwrap();
+    serde_json::to_writer_pretty(file, &json!({"scope":"current_priority_input_cache_coverage_not_recall_or_whole_corpus_completion","rows":rows,"source_revision":engine.status().unwrap().source_revision})).unwrap();
+}
+
 /// Unlike the repeated-family stress fixture below, this indexes an explicitly
 /// supplied public repository and preserves partial real-model progress. The
 /// caller freezes acquisition identity and priority paths before running it.

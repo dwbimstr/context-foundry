@@ -173,6 +173,87 @@ fn observed_execution_requires_fresh_proof_and_all_delivered_endpoints() {
 }
 
 #[test]
+fn composition_keeps_caller_bodies_instead_of_expanding_file_outlines() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    engine
+        .replace_source(
+            "src/records.rs",
+            include_str!("fixtures/agent-task/src/records.rs"),
+        )
+        .unwrap();
+    let mut caller = include_str!("fixtures/agent-task/src/main.rs").to_owned();
+    for i in 0..64 {
+        caller.push_str(&format!(
+            "\nfn unrelated_{i}() {{ println!(\"unrelated display configuration\"); }}\n"
+        ));
+    }
+    engine.replace_source("src/main.rs", &caller).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let revision = task(
+        &engine,
+        json!({"op":"create","title":"Preserve parser callers"}),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let revision = task(&engine, json!({"op":"apply","expected_revision":revision,"edits":[
+        {"op":"add","entry":{"id":"goal","kind":"requirement","text":"Trim whitespace on both sides of the first = and reject an empty key. Preserve the borrowed Option interface and additional delimiters in values.","author":"operator","provenance":"fixture","source_links":[]}},
+        {"op":"add","entry":{"id":"caller","kind":"question","text":"What do callers require from parse_record?","author":"operator","provenance":"fixture","source_links":[]}}
+    ]})).unwrap()["revision"].as_u64().unwrap();
+    let wid = engine.workspace_id().unwrap();
+    let c = engine
+        .context_candidates_with(
+            "parse_record",
+            Strategy::Auto,
+            &Control::unbounded(),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &wid,
+                    task_id: "contract",
+                    expected_revision: revision,
+                }),
+                compose_evidence: true,
+                compact_evidence: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let packed =
+        response::pack_enriched_context(&c, None, Budget::request(2048), &response::stdout_bytes)
+            .unwrap();
+    assert!(packed.tokens <= 2048);
+    assert!(packed.text.contains("fn check()"), "{}", packed.text);
+    assert!(packed.text.contains("Some((\"mode\", \"a=b\"))"));
+    assert!(!packed.text.contains("unrelated_"));
+    let source_text = packed
+        .text
+        .lines()
+        .filter(|line| !line.starts_with("task-view:") && !line.starts_with("task-evidence:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    for item in context_foundry::testkit::parse_v2(&source_text)
+        .unwrap()
+        .items
+    {
+        let h = context_foundry::store::HandleRef::parse(&item.handle).unwrap();
+        if h.path == "src/main.rs" && item.form.is_none() {
+            assert_eq!(
+                item.body.trim_end_matches('\n'),
+                caller[h.start as usize..h.end as usize].trim_end_matches('\n')
+            );
+        }
+    }
+    // Without imported compiler/execution evidence, source text does not assert
+    // resolved callers, observed coverage or a satisfied task requirement.
+    assert_eq!(report(&packed.text)["complete"], false);
+    assert_eq!(report(&packed.text)["execution"]["delivered"], 0);
+}
+
+#[test]
 fn compact_accounting_preserves_sources_relationships_and_protected_state() {
     let e = fixture();
     let verbose = compose(&e);

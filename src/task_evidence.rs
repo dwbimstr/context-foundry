@@ -233,8 +233,16 @@ impl Engine {
         plain.briefs = false;
         let mut context = self.context_candidates_with(query, strategy, control, &plain)?;
         let mut candidates = Vec::new();
-        plan.discovery_limited |=
-            context.batch.items.len() > 8 || context.batch.counters.candidates_full;
+        // Outlines describe a file; their handle is not a request for its entire
+        // body. Promoting them to source spans swallows the selected functions
+        // during union and can leave only an address under a small budget.
+        let source_seeds: Vec<_> = context
+            .batch
+            .items
+            .iter()
+            .filter(|item| item.tier != crate::store::TIER_OUTLINE)
+            .collect();
+        plan.discovery_limited |= source_seeds.len() > 8 || context.batch.counters.candidates_full;
         // Compiler handle resolution needs exact definition units, so retain
         // original query spans before evidence-body union merges adjacent units.
         let mut compiler_seeds = Vec::new();
@@ -253,7 +261,7 @@ impl Engine {
         };
         // Keep a bounded primary-query seed window before task-specific
         // discovery so one broad query cannot consume every evidence slot.
-        for i in context.batch.items.iter().take(8) {
+        for i in source_seeds.into_iter().take(8) {
             if let Some(h) = &i.handle {
                 plan.discovery_limited |= compiler_seed(h);
                 plan.discovery_limited |= !add(&mut candidates, h.clone(), facet(&h.path), "query");

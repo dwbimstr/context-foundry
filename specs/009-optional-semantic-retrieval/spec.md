@@ -1204,6 +1204,13 @@ in validation alongside the follow-up result: 3/6 required whole-line spans vers
 versus 1/8. General ranking, per-file selection and macro-contained evidence remain
 open.
 
+A 2026-10-11 candidate reranked that discovery window by distinct concepts in
+64-position passages. It was rejected: Foundry stayed at 2/8, eight additional
+public Rust questions stayed at 5/8, and the earlier Rust set regressed from 3/6
+to 2/6. The unchanged ranking remains experimental; neither set is held-out
+acceptance. The raw comparison and rejected patch are retained outside Git in the
+[current validation record](../../docs/validation.md#fair-preparation-and-evidence-delivery--2026-10-11).
+
 ### T006 — Bound and parallelize semantic partition computation
 
 Status: implemented experimentally in the shared CLI/MCP pipeline; sandbox evidence
@@ -1270,8 +1277,18 @@ the selected runtime/device is available; do not extrapolate a fake provider's s
 T007 implementation (experimental): [prepare.rs](../../src/neural/prepare.rs) and
 [driver.rs](../../src/neural/driver.rs) compose up to eight new partitions with
 selection/embedding, alternate at most 16 priority cursors with a general cursor,
-and keep one provider call plus one bounded prefetch. Priority revisits use the
-cache or pending-key exclusion, not duplicate inference. No durable cursor is needed:
+and keep one provider call plus one bounded prefetch. The 2026-10-11 continuation
+limits a contended wave to eight new inputs before another cursor gets a turn,
+including continuous changed-path work. Queued resumptions retain only source-range
+bounds; accepted and in-flight keys prevent duplicate inference. Replaying a wave
+may reread cached keys and render its next cards; it retains no queued source bodies
+or token arrays. An uncontended wave continues without that replay overhead.
+The turn limit counts inputs, not wall time. This addresses large-file monopolization
+of priority rotation, not model throughput or complete coverage across all files.
+The same-budget real Rust comparison reaches six of 16 priority files versus one before. A separate four-thread,
+single-input follow-up reaches all 16, with five fully cached; full corpus coverage
+remains open. See [the measured limits](../../docs/validation.md#fair-preparation-and-evidence-delivery--2026-10-11).
+Priority revisits use the cache or pending-key exclusion, not duplicate inference. No durable cursor is needed:
 restart replays accepted partition/cache state. [index.rs](../../src/neural/index.rs)
 walks prepared keys and compares current-partition count/source revision for complete
 coverage, publishing first coverage and then geometric growth plus final scope.

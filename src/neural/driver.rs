@@ -412,6 +412,8 @@ enum Failed {
 struct Frontier {
     order: prepare::SourceOrder,
     walk: Option<Walk>,
+    active_cursor: Option<prepare::SourceCursor>,
+    wave_inputs: usize,
     priority_revision: Option<u64>,
     changed_only: bool,
 }
@@ -521,6 +523,8 @@ impl<'a> Run<'a> {
             let mut frontier = Frontier {
                 order: prepare::SourceOrder::new(&[])?,
                 walk: None,
+                active_cursor: None,
+                wave_inputs: 0,
                 priority_revision: None,
                 changed_only: false,
             };
@@ -586,6 +590,8 @@ impl<'a> Run<'a> {
                     prepare::SourceOrder::changed(work.paths().iter().map(|(path, _)| path.clone()))
                 },
                 walk: None,
+                active_cursor: None,
+                wave_inputs: 0,
                 priority_revision: None,
                 changed_only: !work.requires_reconcile(),
             };
@@ -739,6 +745,25 @@ impl<'a> Run<'a> {
             if let Some(stop) = self.requested_stop() {
                 return Ok(Selected::Halted(stop));
             }
+            {
+                let state = self.preparation.lock();
+                if !frontier.changed_only
+                    && frontier.priority_revision != Some(state.priority_revision)
+                {
+                    frontier.order.prioritize(&state.priority_paths)?;
+                    frontier.priority_revision = Some(state.priority_revision);
+                }
+            }
+            if frontier.walk.is_some()
+                && frontier.wave_inputs >= prepare::WAVE_INPUTS
+                && frontier.order.waiting()
+            {
+                frontier.walk = None;
+                frontier.order.advance(
+                    frontier.active_cursor.take().expect("active wave cursor"),
+                    false,
+                );
+            }
             if frontier.walk.is_none() {
                 // A prefetch must not become an all-corpus partition barrier
                 // when the next areas have only cached or zero-card sources.
@@ -746,20 +771,16 @@ impl<'a> Run<'a> {
                     return Ok(Selected::Yield);
                 }
                 waves += 1;
-                {
-                    let state = self.preparation.lock();
-                    if !frontier.changed_only
-                        && frontier.priority_revision != Some(state.priority_revision)
-                    {
-                        frontier.order.prioritize(&state.priority_paths)?;
-                        frontier.priority_revision = Some(state.priority_revision);
-                    }
-                }
                 let Some(mut cursor) = frontier.order.next() else {
                     return Ok(Selected::End);
                 };
-                let before = cursor.after.clone();
-                let (progress, retained) = self.partition_wave(&mut cursor)?;
+                let resumed = cursor.resume_before.take();
+                let before = resumed.clone().unwrap_or_else(|| cursor.after.clone());
+                let (progress, retained) = if resumed.is_some() {
+                    (Progress::More, Vec::new())
+                } else {
+                    self.partition_wave(&mut cursor)?
+                };
                 if let Progress::Halted(stop) = progress {
                     return Ok(Selected::Halted(stop));
                 }
@@ -767,13 +788,18 @@ impl<'a> Run<'a> {
                 if cursor.after != before {
                     self.report.bootstrap.waves += 1;
                     self.report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
-                    let mut walk = Walk::wave(cursor.scope.clone(), before, cursor.after.clone())
-                        .with_retained(retained);
+                    let mut walk =
+                        Walk::wave(cursor.scope.clone(), before.clone(), cursor.after.clone())
+                            .with_retained(retained);
                     walk.exact = cursor.exact;
                     frontier.walk = Some(walk);
+                    cursor.resume_before = Some(before);
+                    frontier.active_cursor = Some(cursor);
+                    frontier.wave_inputs = 0;
                     self.sync_progress();
+                } else {
+                    frontier.order.advance(cursor, done);
                 }
-                frontier.order.advance(cursor, done);
                 if frontier.walk.is_none() {
                     continue;
                 }
@@ -802,13 +828,18 @@ impl<'a> Run<'a> {
                 .select_batch(
                     frontier.walk.as_mut().expect("wave exists"),
                     &mut selection,
-                    target - batch.len(),
+                    if frontier.order.waiting() {
+                        (target - batch.len()).min(prepare::WAVE_INPUTS - frontier.wave_inputs)
+                    } else {
+                        target - batch.len()
+                    },
                     SOURCES_PER_STEP,
                     report,
                     &mut || owner.closing().then(cancelled),
                 )
             })?;
             if selection.len() > 0 {
+                frontier.wave_inputs += selection.len();
                 let started = Instant::now();
                 let rendered = cards.render(selection);
                 self.report.bootstrap.render_ms += prepare::elapsed_ms(started);
@@ -819,6 +850,9 @@ impl<'a> Run<'a> {
             match selected {
                 Selected::End => {
                     frontier.walk = None;
+                    let mut cursor = frontier.active_cursor.take().expect("active wave cursor");
+                    cursor.resume_before = None;
+                    frontier.order.advance(cursor, false);
                     // Send a short first wave without waiting for later sources.
                     // The following wave is prepared by the one in-call prefetch.
                     if !batch.is_empty() {
@@ -831,7 +865,22 @@ impl<'a> Run<'a> {
                         return Ok(Selected::Halted(stop));
                     }
                 }
-                other => return Ok(other),
+                other => {
+                    if matches!(other, Selected::Full)
+                        && frontier.wave_inputs >= prepare::WAVE_INPUTS
+                        && frontier.order.waiting()
+                    {
+                        // Replay only this wave's bounded source range later.
+                        // In-flight and buffered keys are excluded above; accepted
+                        // work is found in the durable cache after each commit.
+                        frontier.walk = None;
+                        frontier.order.advance(
+                            frontier.active_cursor.take().expect("active wave cursor"),
+                            false,
+                        );
+                    }
+                    return Ok(other);
+                }
             }
         }
     }
@@ -1001,6 +1050,8 @@ impl<'a> Run<'a> {
                 let mut frontier = Frontier {
                     order: prepare::SourceOrder::new(&[])?,
                     walk: None,
+                    active_cursor: None,
+                    wave_inputs: 0,
                     priority_revision: None,
                     changed_only: false,
                 };
@@ -1448,6 +1499,90 @@ mod tests {
             assert!(Instant::now() < deadline, "the driver never stopped");
             std::thread::sleep(POLL);
         }
+    }
+
+    #[test]
+    fn large_priority_wave_yields_to_background_without_duplicate_prefetch() {
+        struct Checked {
+            inner: Sizes,
+            owner: Arc<Quiet>,
+            seen: Arc<Mutex<std::collections::HashSet<Vec<u32>>>>,
+        }
+        impl EmbeddingProvider for Checked {
+            fn descriptor(&self) -> &FunctionDescriptor {
+                self.inner.descriptor()
+            }
+            fn embed_query(
+                &mut self,
+                _: &TokenizedInput,
+                _: Instant,
+            ) -> Result<Vec<f32>, ProviderError> {
+                unreachable!()
+            }
+            fn embed_documents(
+                &mut self,
+                inputs: &[TokenizedInput],
+                control: &Control,
+            ) -> Result<Vec<Vec<f32>>, ProviderError> {
+                if self.inner.sizes.lock().unwrap().len() == 1 {
+                    assert!(
+                        self.owner
+                            .0
+                            .lock()
+                            .unwrap()
+                            .semantic_partition("note00.md")
+                            .unwrap()
+                            .is_some(),
+                        "background must be prepared for the second call"
+                    );
+                }
+                for input in inputs {
+                    assert!(
+                        self.seen.lock().unwrap().insert(input.ids.clone()),
+                        "a prefetched or committed input must not be inferred twice"
+                    );
+                }
+                self.inner.embed_documents(inputs, control)
+            }
+        }
+        let (_dir, engine, profile) = notes();
+        let large: String = (0..40)
+            .map(|i| format!("pub fn priority_{i:02}() -> u32 {{ {i} }}\n"))
+            .collect();
+        engine.replace_source("z/large.rs", &large).unwrap();
+        let owner = Arc::new(Quiet(Mutex::new(engine)));
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let provider = Checked {
+            inner: Sizes {
+                descriptor: profile.descriptor.clone(),
+                sizes: Arc::clone(&sizes),
+                foreground: None,
+            },
+            owner: Arc::clone(&owner),
+            seen: Arc::clone(&seen),
+        };
+        let runtime = Arc::new(
+            QueryRuntime::start(
+                profile,
+                Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+            )
+            .unwrap(),
+        );
+        let preparation = Arc::new(Preparation::default());
+        preparation
+            .prepare_with_priorities(
+                Arc::clone(&owner) as Arc<dyn Owner>,
+                Arc::clone(&runtime),
+                Some(vec!["z".into()]),
+            )
+            .unwrap();
+        until_idle(&preparation);
+        runtime.shutdown();
+        let state = owner.0.lock().unwrap().semantic_state().unwrap().unwrap();
+        assert!(state.last_error.is_none(), "{state:?}");
+        assert_eq!(state.committed_units, 52);
+        assert_eq!(seen.lock().unwrap().len(), 52);
     }
 
     #[test]
