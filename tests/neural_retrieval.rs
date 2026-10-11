@@ -6739,6 +6739,7 @@ fn representation_metadata_upgrade_reuses_exact_vectors() {
         .as_str()
         .unwrap()
         .replace("+kinds1", "")
+        .replace("+kinds2", "")
         .into();
     for unit in record["units"].as_array_mut().unwrap() {
         unit.as_object_mut().unwrap().remove("kind");
@@ -6776,6 +6777,276 @@ fn representation_metadata_upgrade_reuses_exact_vectors() {
             .all(|unit| unit.kind == context_foundry::neural::cache::CardKind::Body)
     );
     assert_eq!(corpus.prepare().document_calls, 0);
+}
+
+#[test]
+fn container_role_upgrade_reuses_vectors_and_republishes_exact_roles() {
+    use context_foundry::neural::cache::{CardKind, PartitionRecord};
+    let path = "src/container_roles.rs";
+    let source = "impl Billing {\n    fn adjust() { settle(); }\n}\n";
+    let mut corpus = Corpus::unprepared(&[(path.into(), source.into())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    assert!(!corpus.prepare().partial);
+    let current = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    assert!(
+        current
+            .units
+            .iter()
+            .any(|unit| unit.kind == CardKind::ContainerFragment)
+    );
+    let digest = corpus.digest();
+    let previous_recipe = current.recipe_id.replace("+kinds2", "+kinds1");
+    assert_ne!(previous_recipe, current.recipe_id);
+    let calls = corpus.probe.document_calls();
+    let control = Control::unbounded();
+
+    // Seed the complete previous metadata recipe, then publish its real ANN
+    // generation through the ordinary cache-backed rebuild. The rendered inputs
+    // are unchanged; kinds1 classified every body-recipe location as Body.
+    corpus.engine = None;
+    let previous: Vec<(String, PartitionRecord)> =
+        testkit::table_rows(&corpus.store, "semantic_partitions")
+            .into_iter()
+            .map(|(path, raw)| {
+                let mut record: PartitionRecord = serde_json::from_str(&raw).unwrap();
+                assert_eq!(record.recipe_id, current.recipe_id);
+                record.recipe_id = previous_recipe.clone();
+                for unit in &mut record.units {
+                    unit.kind = CardKind::Body;
+                }
+                (path, record)
+            })
+            .collect();
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    for (previous_path, record) in &previous {
+        corpus
+            .engine()
+            .semantic_record_partition(
+                previous_path,
+                &record.source_hash,
+                &record.recipe_id,
+                &digest,
+                Some(&record.units),
+                &|body| {
+                    assert_eq!(context_foundry::digest(body.as_bytes()), record.source_hash);
+                    Ok(record.units.clone())
+                },
+            )
+            .unwrap();
+    }
+    corpus
+        .engine()
+        .semantic_begin_run(|state| {
+            state.recipe_id = Some(previous_recipe.clone());
+            state.coverage = None;
+            state.bootstrap = None;
+            state.state = "stopped".into();
+        })
+        .unwrap();
+    let published = corpus.engine().semantic_rebuild_index(&control).unwrap();
+    assert!(published.rebuilt && published.reason.is_none() && published.entries > 0);
+    let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+    let prior_generation =
+        index::validate_generation_with(&store, &digest, &previous_recipe, DIMENSIONS, &control)
+            .unwrap();
+    assert_eq!(prior_generation.manifest.coverage, index::COVERAGE_COMPLETE);
+    assert!(
+        prior_generation
+            .labels
+            .values()
+            .flat_map(|locations| locations.iter())
+            .all(|location| location.kind == CardKind::Body)
+    );
+    for unit in &current.units {
+        assert!(
+            prior_generation.labels[&unit.input_key]
+                .iter()
+                .any(|location| {
+                    location.path == path
+                        && location.start == unit.start as u64
+                        && location.end == unit.end as u64
+                        && location.kind == CardKind::Body
+                })
+        );
+    }
+    assert_eq!(corpus.probe.document_calls(), calls);
+
+    let upgraded = corpus.prepare();
+    assert!(!upgraded.partial && upgraded.index_published);
+    assert_eq!(upgraded.document_calls, 0);
+    assert_eq!(upgraded.input_tokens, 0);
+    assert_eq!(corpus.probe.document_calls(), calls);
+    let restored = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    assert_eq!(restored.recipe_id, current.recipe_id);
+    assert_eq!(
+        restored.units, current.units,
+        "metadata changes neither source coordinates nor exact input keys"
+    );
+    let mapping = corpus
+        .engine()
+        .semantic_current_mapping(&control, &digest, &corpus.profile.recipe_id())
+        .unwrap();
+    assert!(
+        mapping
+            .units
+            .values()
+            .flat_map(|locations| locations.iter())
+            .any(|location| location.path == path && location.kind == CardKind::ContainerFragment)
+    );
+    let upgraded_generation =
+        index::validate_generation_with(&store, &digest, &current.recipe_id, DIMENSIONS, &control)
+            .unwrap();
+    assert_eq!(
+        upgraded_generation.manifest.coverage,
+        index::COVERAGE_COMPLETE
+    );
+    assert_eq!(
+        upgraded_generation.manifest.count,
+        prior_generation.manifest.count
+    );
+    assert_eq!(
+        upgraded_generation.labels.keys().collect::<BTreeSet<_>>(),
+        prior_generation.labels.keys().collect::<BTreeSet<_>>(),
+        "republication retains every exact cached input"
+    );
+    for unit in &current.units {
+        assert!(
+            upgraded_generation.labels[&unit.input_key]
+                .iter()
+                .any(|location| {
+                    location.path == path
+                        && location.start == unit.start as u64
+                        && location.end == unit.end as u64
+                        && location.kind == unit.kind
+                })
+        );
+    }
+    assert_eq!(corpus.prepare().document_calls, 0);
+    assert_eq!(corpus.probe.document_calls(), calls);
+}
+
+#[test]
+fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
+    use context_foundry::neural::{cache::CardKind, partition::Representation};
+    use context_foundry::store::ContextOptions;
+    let path = "src/refund_containers.rs";
+    let source: String = (0..12)
+        .map(|i| {
+            format!(
+                "impl RefundTiming{i} {{\n    fn operation_{i}() {{ apply_adjustment({i}); }}\n}}\n"
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&[(path.into(), source.clone())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert!(!corpus.prepare().partial);
+    let partition = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    let fragments: BTreeSet<_> = partition
+        .units
+        .iter()
+        .filter(|unit| unit.kind == CardKind::ContainerFragment)
+        .map(|unit| (unit.start as u64, unit.end as u64))
+        .collect();
+    let bodies: BTreeSet<_> = partition
+        .units
+        .iter()
+        .filter(|unit| unit.kind == CardKind::Body)
+        .map(|unit| (unit.start as u64, unit.end as u64))
+        .collect();
+    assert!(fragments.len() >= 12 && bodies.len() == 12);
+    let runtime = corpus.runtime();
+    let mut window = runtime
+        .window(
+            corpus.engine(),
+            "refund timing rules",
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    // A valid coarse/discovery window may consist entirely of high-scoring
+    // container fragments. They must not consume independently scored Body slots.
+    window.hits = window
+        .hits
+        .iter()
+        .filter(|hit| {
+            window
+                .units(hit)
+                .iter()
+                .any(|unit| unit.path == path && unit.kind == CardKind::ContainerFragment)
+        })
+        .cloned()
+        .collect();
+    assert!(!window.hits.is_empty());
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let result = corpus
+        .engine()
+        .context_candidates_with(
+            "refund timing rules",
+            Strategy::Search,
+            &Corpus::control().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let selected: Vec<_> = result
+        .batch
+        .items
+        .iter()
+        .filter_map(|item| item.handle.as_ref())
+        .filter(|handle| handle.path == path && bodies.contains(&(handle.start, handle.end)))
+        .collect();
+    assert_eq!(
+        selected.len(),
+        4,
+        "all four file slots can carry implementation bodies"
+    );
+    assert!(
+        selected
+            .iter()
+            .all(|handle| !fragments.contains(&(handle.start, handle.end)))
+    );
+    let events = trace.snapshot();
+    let refined: Vec<_> = events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| {
+            event["stage"] == "selection"
+                && event["refined"] == true
+                && event["unit"]["path"] == path
+        })
+        .collect();
+    assert_eq!(refined.len(), 4);
+    assert!(
+        refined
+            .iter()
+            .all(|event| event["representation"] == "body")
+    );
+    let packed = response::pack_enriched_context(
+        &result,
+        None,
+        Budget::request(BUDGET),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.tokens <= BUDGET);
+    assert!(
+        packed.text.contains("apply_adjustment"),
+        "body evidence crosses the ordinary response boundary"
+    );
+    let before = corpus.probe.document_calls();
+    assert_eq!(corpus.prepare().document_calls, 0);
+    assert_eq!(corpus.probe.document_calls(), before);
 }
 
 #[test]

@@ -121,12 +121,23 @@ and body recipe below extend input sizing and actual-token batch packing.
 
 A contended wave now yields after eight new inputs, so one large priority file
 cannot hold up every later priority scope or the background. CLI and MCP use the
-same limit; pending changed paths also rotate. A queued continuation stores only
-the wave's source bounds and resumes through current partition/cache lookups.
-MCP excludes both in-flight and prefetched keys. This trades some repeated cache
-lookups/rendering for bounded turns without retaining source/token buffers per
-queued scope. The bound counts inputs, not wall time; a slow call can still consume
-the run budget. It does not increase model capacity or establish whole-corpus quality.
+same limit; pending changed paths also rotate. A queued continuation stores the
+wave's source bounds and next-card position, checked against the current path,
+source hash, recipe and embedding-function digest before use. This avoids repeatedly
+examining the already selected prefix of a large source. CLI selection fits the
+remaining turn; MCP retains its bounded pending batch and excludes both in-flight
+and prefetched keys across yields. The bound counts inputs, not wall time; a slow
+call can still consume the run budget.
+
+All queued cursors share one transient paused-plan cache, capped at 32 entries and
+16 MiB of accounted retained payload. It can retain verified source bodies and
+parsed hierarchy plans, but no token arrays. Resume consumes an entry; replacement,
+eviction or an oversized plan discards it without discarding the scalar position.
+A miss refits the source; a changed source/recipe/function restarts it. Rendering
+still checks the selected role/range/key against its current partition. The cache
+ends with the pass or command and adds no persistent state. It is separate from the
+active wave and prefetch limits below, not a process RAM limit or a guarantee of
+whole-corpus throughput or quality.
 
 The semantic CPU pool starts only when a new partition needs computation and is
 reused across waves (and MCP prepare runs), with at most eight workers. Fresh

@@ -8,9 +8,22 @@ const MAX_CHUNKS: usize = 16_384;
 
 #[derive(Clone, Debug)]
 pub struct Span {
+    kind: crate::neural::cache::CardKind,
     pub start: usize,
     pub end: usize,
     context: Arc<str>,
+}
+
+impl Span {
+    /// Conservatively count shared context per reference when retaining a plan.
+    pub(super) fn retained_heap_bytes(&self) -> usize {
+        let alignment = std::mem::align_of::<usize>();
+        self.context
+            .len()
+            .checked_add(2 * std::mem::size_of::<usize>())
+            .and_then(|bytes| bytes.checked_add(alignment - 1))
+            .map_or(usize::MAX, |bytes| bytes & !(alignment - 1))
+    }
 }
 
 fn prefix(context: &str) -> String {
@@ -45,7 +58,7 @@ pub fn card(
         ));
     }
     Ok(Card {
-        kind: crate::neural::cache::CardKind::Body,
+        kind: span.kind,
         start: span.start,
         end: span.end,
         input_key: provider::input_key(recipe.function_digest, &rendered),
@@ -107,6 +120,51 @@ fn context(
     Ok(Arc::from(text))
 }
 
+/// Only parsed nonleaf containers can have structural residuals. The syntax
+/// body boundary proves which delimiter belongs to this container; the residual
+/// must otherwise be whitespace. Fields, initializers, comments, leaf declarations
+/// and prototypes retain Body, as do unknown-language/uncertain residuals. Leading
+/// documentation is retained as Body rather than being discarded as a header.
+fn region_kind(
+    source: &str,
+    units: &[Unit],
+    owner: Option<usize>,
+    start: usize,
+    end: usize,
+) -> crate::neural::cache::CardKind {
+    use crate::neural::cache::CardKind;
+    let Some(unit) = owner.map(|index| &units[index]) else {
+        return CardKind::Body;
+    };
+    if unit.children.is_empty()
+        || matches!(
+            unit.kind,
+            UnitKind::Fn | UnitKind::Method | UnitKind::Macro | UnitKind::Section | UnitKind::Block
+        )
+        || (start == unit.start && end == unit.end)
+    {
+        return CardKind::Body;
+    }
+    let Some((body_start, body_end)) = unit.body else {
+        return CardKind::Body;
+    };
+    let opening = start <= unit.head
+        && source[start..unit.head].trim().is_empty()
+        && ((end <= body_start)
+            || (start <= body_start && body_start < end && source[body_start..end].trim() == "{"));
+    let closing = body_end > body_start
+        && source.as_bytes().get(body_end - 1) == Some(&b'}')
+        && start < body_end
+        && body_end <= end
+        && source[start..body_end - 1].trim().is_empty()
+        && source[body_end..end].trim().is_empty();
+    if opening || closing {
+        CardKind::ContainerFragment
+    } else {
+        CardKind::Body
+    }
+}
+
 /// Compute/stream cards without retaining corpus-wide token arrays. The fallback
 /// render path retains just spans and shared context strings for one source.
 pub fn visit(
@@ -126,7 +184,9 @@ pub fn visit(
             "body recipe/source exceeds its bounds".into(),
         ));
     }
-    let units = lang.map_or_else(Vec::new, |lang| syntax::units(source, lang));
+    let (units, clean_tree) = lang
+        .map(|lang| syntax::units_with_certainty(source, lang))
+        .unwrap_or_default();
     let preamble = units.first().map_or(0, |unit| unit.start);
     // Unit ownership is determined in one ordered traversal. Functions/methods
     // stay whole even with nested definitions; containers contribute residuals
@@ -181,6 +241,11 @@ pub fn visit(
             ));
         }
         let mut span = Span {
+            kind: if clean_tree {
+                region_kind(source, &units, owner, start, end)
+            } else {
+                crate::neural::cache::CardKind::Body
+            },
             start,
             end,
             context,
@@ -193,10 +258,11 @@ pub fn visit(
                     "body source exceeds 16384 windows".into(),
                 ));
             }
+            let kind = span.kind;
             emit(
                 span,
                 Card {
-                    kind: crate::neural::cache::CardKind::Body,
+                    kind,
                     start,
                     end,
                     input_key: provider::input_key(recipe.function_digest, &rendered),
@@ -253,7 +319,7 @@ pub fn visit(
                 let (rendered, encoded) = encode(source, &span, recipe, tokens)?;
                 if !encoded.ids.is_empty() && encoded.ids.len() <= recipe.card_tokens {
                     break Card {
-                        kind: crate::neural::cache::CardKind::Body,
+                        kind: span.kind,
                         start: span.start,
                         end: span.end,
                         input_key: provider::input_key(recipe.function_digest, &rendered),
@@ -373,6 +439,100 @@ mod tests {
         let chunks = collect(config, None, 128, 16);
         assert_eq!(chunks.len(), 1);
         assert!(text(&chunks[0].1).contains(config));
+    }
+
+    #[test]
+    fn container_fragments_keep_coverage_keys_and_useful_residuals() {
+        use crate::neural::cache::CardKind;
+        let source = "impl Billing {\n    fn apply() { settle(); }\n    // Keep the operational rationale.\n    const LIMIT: usize = 4;\n}\ntrait Service {\n    fn declaration(&self);\n}\nstruct Empty;\n";
+        let cards = collect(source, Some(Lang::Rust), 512, 64);
+        let fragments: Vec<_> = cards
+            .iter()
+            .filter(|(_, card)| card.kind == CardKind::ContainerFragment)
+            .collect();
+        assert!(
+            fragments
+                .iter()
+                .any(|(span, _)| source[span.start..span.end].trim() == "impl Billing {")
+        );
+        assert!(
+            fragments
+                .iter()
+                .any(|(span, _)| source[span.start..span.end].trim() == "}")
+        );
+        for needle in [
+            "fn apply()",
+            "const LIMIT",
+            "fn declaration",
+            "struct Empty",
+        ] {
+            assert!(
+                cards.iter().any(|(span, card)| card.kind == CardKind::Body
+                    && source[span.start..span.end].contains(needle)),
+                "{needle}"
+            );
+        }
+        let mut covered = vec![false; source.len()];
+        for (span, card) in &cards {
+            let mut former = span.clone();
+            former.kind = CardKind::Body;
+            let before = super::card(source, &former, &recipe(512), &Bytes).unwrap();
+            assert_eq!(card.input_key, before.input_key);
+            assert_eq!(
+                card.ids, before.ids,
+                "classification changes no model input"
+            );
+            assert_eq!(
+                *card,
+                super::card(source, span, &recipe(512), &Bytes).unwrap()
+            );
+            for seen in &mut covered[span.start..span.end] {
+                assert!(!*seen);
+                *seen = true;
+            }
+        }
+        for (index, byte) in source.bytes().enumerate() {
+            assert!(covered[index] || byte.is_ascii_whitespace());
+        }
+        // A class residual containing a real assignment must not become a shell.
+        let python =
+            "class Settings:\n    retries = 4\n    def apply(self):\n        return self.retries\n";
+        assert!(
+            collect(python, Some(Lang::Python), 512, 64)
+                .iter()
+                .any(|(span, card)| card.kind == CardKind::Body
+                    && python[span.start..span.end].contains("retries = 4"))
+        );
+        assert!(
+            collect(source, None, 128, 16)
+                .iter()
+                .all(|(_, card)| card.kind == CardKind::Body)
+        );
+    }
+
+    #[test]
+    fn recovered_syntax_keeps_all_residuals_as_body() {
+        use crate::neural::cache::CardKind;
+        // A valid nonleaf container still exists before the malformed item.
+        // A locally plausible shell must not acquire a stronger role from an
+        // error-recovered tree elsewhere in the same source.
+        let source = "impl Billing {\n    fn apply() { settle(); }\n}\nfn broken( {\n";
+        let (units, clean_tree) = syntax::units_with_certainty(source, Lang::Rust);
+        assert!(!clean_tree);
+        assert!(units.iter().any(|unit| !unit.children.is_empty()));
+        let cards = collect(source, Some(Lang::Rust), 512, 64);
+        assert!(!cards.is_empty());
+        assert!(cards.iter().all(|(_, card)| card.kind == CardKind::Body));
+        let mut covered = vec![false; source.len()];
+        for (span, _) in cards {
+            for seen in &mut covered[span.start..span.end] {
+                assert!(!*seen);
+                *seen = true;
+            }
+        }
+        for (index, byte) in source.bytes().enumerate() {
+            assert!(covered[index] || byte.is_ascii_whitespace());
+        }
     }
 
     #[test]

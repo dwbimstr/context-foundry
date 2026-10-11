@@ -54,6 +54,23 @@ in ordinary responses. Exact lexical matches retain their labels without replaci
 the independently scored body bytes. Traces distinguish representation role,
 refinement and independently embedded passages from focused coarse excerpts.
 
+Container-fragment classification correction: Body/Hierarchy metadata recipes use
+`+kinds2`. Parsed nonleaf-container residuals proven to contain only an opening
+header/delimiter or a closing delimiter and whitespace are `container_fragment`,
+not `body`. Full declarations/prototypes, functions/macros, meaningful residual
+fields/assignments/comments and uncertain/unparsed source remain body evidence.
+Classification requires the existing parser pass to prove the entire syntax tree
+free of recovered errors or missing nodes; otherwise every span remains Body.
+Leading documentation also remains body evidence. Every original non-whitespace
+source span, rendered input and input key is retained; reclassification refits and
+republishes metadata with exact cached-vector reuse and preserves completeness.
+Address/Overview recipes remain `+kinds1`. Current recipe validation rejects unknown
+or conflicting metadata versions and roles. Fragments can still discover a file and
+render their exact source spans through ordinary ANN delivery, but cannot consume
+hierarchy's independently scored Body refinement quota. Body-only serving retains
+its existing ordering; default address and unknown-language behavior are unchanged.
+This corrects role eligibility, not the model's relevance scores or output budgets.
+
 CLI lifecycle correction, 2026-10-11: the per-command semantic slot now waits
 for the existing runtime shutdown before leaving scope, on success or error. Closing
 the job channel alone detached the provider thread, allowing CLI exit to interrupt
@@ -68,9 +85,10 @@ parent inputs. Hierarchy's existing preorder puts a representation spanning the
 whole file first (a complete body or parent may share that range for a short file). A second
 cursor pass then consumes all remaining uncached inputs. Both passes preserve
 priority/background fairness and changed-path scope; updating priorities updates
-the pending refinement pass too. No new cache, index, schema or input recipe is
-introduced. Cursors contain no source bodies or token arrays. Accepted and in-flight
-keys retain ordinary deduplication, and restart/revert reuse remains exact.
+the pending refinement pass too. No new durable cache, index, schema or input recipe
+is introduced. Cursors contain scalar progress, with no source bodies or token
+arrays; the transient paused-plan budget below is shared across them. Accepted and
+in-flight keys retain ordinary deduplication, and restart/revert reuse remains exact.
 
 The transition publishes accepted file views before body refinement, including
 cache-only mapping changes. Resident prefetch stops at that boundary and drains all
@@ -1419,10 +1437,30 @@ T007 implementation (experimental): [prepare.rs](../../src/neural/prepare.rs) an
 selection/embedding, alternate at most 16 priority cursors with a general cursor,
 and keep one provider call plus one bounded prefetch. The 2026-10-11 continuation
 limits a contended wave to eight new inputs before another cursor gets a turn,
-including continuous changed-path work. Queued resumptions retain only source-range
-bounds; accepted and in-flight keys prevent duplicate inference. Replaying a wave
-may reread cached keys and render its next cards; it retains no queued source bodies
-or token arrays. An uncontended wave continues without that replay overhead.
+including continuous changed-path work. Queued resumptions retain source-range
+bounds and the next card index, bound to path, source hash, full partition recipe
+and embedding-function digest. Selection rechecks those identities against current
+source metadata and partitions; rendering still compares each selected role/range/key
+tuple. A changed identity discards the old position and starts that source afresh.
+Accepted, buffered and in-flight keys retain ordinary deduplication.
+
+One transient paused-plan cache is shared by all cursors in a CLI run or MCP pass:
+at most 32 entries and 16 MiB of accounted retained payload, including its queue
+allocation, source bodies, owned strings, parsed hierarchy spans and their contexts.
+It retains no token arrays or prepared-card handoffs. Entries are consumed on resume;
+same-path replacement invalidates stale identity, and FIFO eviction or an oversized
+plan falls back to rebuilding the plan while preserving scalar progress. Thus a
+cache miss can repeat parsing/fitting but does not restart growing cached prefixes.
+The cache disappears on pass/command exit; restart derives work from accepted
+partition/cache state. It is additional to the active wave and prefetch bounds, not
+a whole-process memory limit. Parser, tokenizer, thread-stack and allocator overhead
+remain outside retained-payload accounting.
+
+CLI selection is capped by the remaining eight-input turn, so a fairness yield
+cannot discard uncommitted pending inputs. MCP keeps its bounded batch across
+cursor yields and excludes both buffered and in-flight keys from further selection.
+No store transaction or MCP engine slot is held during rendering, fitting or model
+execution. File-view publication still drains initial inputs before refinement.
 The turn limit counts inputs, not wall time. This addresses large-file monopolization
 of priority rotation, not model throughput or complete coverage across all files.
 The same-budget real Rust comparison reaches six of 16 priority files versus one before. A separate four-thread,

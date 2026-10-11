@@ -65,11 +65,11 @@ impl Representation {
         match self {
             Self::Address => recipe_id(tokenizer, tokens),
             Self::Body { parent_tokens } => format!(
-                "body-v1+kinds1+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                "body-v1+kinds2+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
                 crate::store::SOURCE_UNIT_SCHEMA
             ),
             Self::Hierarchy { parent_tokens } => format!(
-                "hierarchy-v1+overview3+kinds1+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                "hierarchy-v1+overview3+kinds2+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
                 crate::store::SOURCE_UNIT_SCHEMA
             ),
             Self::Overview => format!(

@@ -5945,6 +5945,13 @@ impl Engine {
             control.check()?;
             let from_dense = kind.is_some();
             let exact_body = kind == Some(crate::neural::cache::CardKind::Body);
+            let exact_span = matches!(
+                kind,
+                Some(
+                    crate::neural::cache::CardKind::Body
+                        | crate::neural::cache::CardKind::ContainerFragment
+                )
+            );
             let (unit_path, unit_start, unit_end) = unit;
             let Some(Some(meta)) = current.get(unit_path) else {
                 continue;
@@ -5963,7 +5970,7 @@ impl Engine {
             }
             .copied();
             let mut item = match candidate {
-                Some(candidate) if exact_body => {
+                Some(candidate) if exact_span => {
                     ranked_item(candidate, rank, &workspace_id, &meta.hash, body, &wanted)?
                 }
                 Some(candidate) => ranked_context_item(
@@ -5988,7 +5995,7 @@ impl Engine {
                         )));
                     }
                     let (from, to, focused) =
-                        if prose && !exact_body && dense.has_overviews() && to - from > 1536 {
+                        if prose && !exact_span && dense.has_overviews() && to - from > 1536 {
                             prose_passage(&body[from..to], &wanted)
                                 .map_or((from, to, false), |(start, end)| {
                                     (from + start, from + end, true)

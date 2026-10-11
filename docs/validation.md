@@ -6,6 +6,34 @@ Work continues on `experimental/context-ecosystem`; the open acceptance conditio
 are not closed by the checks below. Private receipts and executable identities are
 under `/workspace/.context-foundry-tools/validation-runs/realistic-delivery-v11/`.
 
+**Completed hierarchy diagnostic.** The pinned SIMD revision-5 Gemma worker now
+prepares all 274 admitted frozen Foundry sources: 13,822 distinct vectors,
+14,453 current searchable locations and 3,608,991 input tokens. The three
+preparation phases take 2,710,537 ms in total; provider calls account for
+2,413,715 ms. Initial whole-file views precede refinement. Unchanged replay takes
+3,977 ms with no embedding calls, token inputs, partitioning or worker acquisition.
+Complete coverage nevertheless delivers only **1/8** frozen development answers,
+versus lexical **2/8**: coverage-dependent dense precedence displaces the previously
+delivered failed-attempt recall. All eight remain in the denominator, including
+the source excluded by the unchanged private-key-marker policy.
+
+The first controlled correction classifies 984 parsed container fragments separately
+from implementation bodies. It preserves every input key/source span and reuses all
+13,822 vectors with zero migration or replay inference. Delivery remains **1/8**;
+removing structural fragments does not resolve legitimate sibling-function ranking.
+These are exposed development results, not held-out acceptance. The completed
+baseline and role-only reports remain in `foundry-hierarchy-complete-01/` and
+`foundry-hierarchy-roleonly-01/`. Focused boundary checks pass: 245 library,
+91 semantic-retrieval and two attribution tests, plus all-target Clippy. They cover
+the shared 16 MiB hierarchy resume cache, freshness/eviction, CLI/MCP pending work,
+file-first publication and zero-call replay; larger-scale throughput is still open.
+
+The full default Ubuntu job at `bc10986` passes (1,131 tests). The corresponding
+Mac job passes 1,231 tests and fails one: the 6,000-source watcher reaches 5,806
+sources at its unchanged 180-second reconciliation deadline. This is retained as
+a failure; native model acceptance and the foreground-release investigation are
+separate ongoing checks.
+
 **Implementation.** Retrieval now distinguishes representation roles and scores
 current resident body vectors within bounded candidate files. A scored vector can
 deliver only the exact current locations that passed its partition/generation join.

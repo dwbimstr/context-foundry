@@ -79,6 +79,8 @@ pub enum CardKind {
     Unknown,
     Address,
     Body,
+    /// A parsed container header/delimiter residual, not an implementation body.
+    ContainerFragment,
     Parent,
     File,
 }
@@ -88,14 +90,25 @@ impl CardKind {
     /// carry a role it can actually render; a file overview cannot acquire body
     /// semantics by changing only its location metadata.
     pub(crate) fn valid_for(self, recipe: &str) -> bool {
-        if !recipe.split('+').any(|part| part == "kinds1") {
-            return true;
+        let mut versions = recipe.split('+').filter(|part| part.starts_with("kinds"));
+        let version = versions.next();
+        if versions.next().is_some() {
+            return false;
         }
+        let fragments = match version {
+            None => return self != Self::ContainerFragment, // only roles predating metadata
+            Some("kinds1") => false,
+            Some("kinds2") => true,
+            Some(_) => return false,
+        };
         match recipe.split('+').next() {
             Some("cards-v1") => self == Self::Address,
-            Some("body-v1") => self == Self::Body,
+            Some("body-v1") => self == Self::Body || (fragments && self == Self::ContainerFragment),
             Some("overview-v1") => self == Self::File,
-            Some("hierarchy-v1") => matches!(self, Self::Body | Self::Parent | Self::File),
+            Some("hierarchy-v1") => {
+                matches!(self, Self::Body | Self::Parent | Self::File)
+                    || (fragments && self == Self::ContainerFragment)
+            }
             _ => false,
         }
     }
@@ -1399,6 +1412,7 @@ mod tests {
                 CardKind::Unknown,
                 CardKind::Address,
                 CardKind::Body,
+                CardKind::ContainerFragment,
                 CardKind::Parent,
                 CardKind::File,
             ] {
@@ -1427,7 +1441,27 @@ mod tests {
                 );
             }
         }
+        for recipe in ["body-v1", "hierarchy-v1"] {
+            assert!(
+                CardKind::ContainerFragment.valid_for(&format!("{recipe}+kinds2+units5:512+t"))
+            );
+            assert!(
+                !CardKind::ContainerFragment.valid_for(&format!("{recipe}+kinds1+units5:512+t"))
+            );
+            assert!(!CardKind::Unknown.valid_for(&format!("{recipe}+kinds2+units5:512+t")));
+            assert!(!CardKind::Address.valid_for(&format!("{recipe}+kinds2+units5:512+t")));
+        }
+        for recipe in [
+            "cards-v1+kinds2",
+            "overview-v1+kinds2",
+            "body-v1+kinds3",
+            "body-v1+kinds1+kinds2",
+            "body-v1+kinds2+kinds2",
+        ] {
+            assert!(!CardKind::ContainerFragment.valid_for(recipe), "{recipe}");
+        }
         assert!(CardKind::Unknown.valid_for("cards-v1+units5:512+tokenizer"));
+        assert!(!CardKind::ContainerFragment.valid_for("body-v1+units5:512+tokenizer"));
     }
 
     #[test]

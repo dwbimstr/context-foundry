@@ -374,6 +374,15 @@ pub fn units(source: &str, lang: Lang) -> Vec<Unit> {
     analyze(source, lang, Need::Units).units
 }
 
+/// The same single-pass forest with a conservative proof that its parser did
+/// not recover errors or missing nodes. Unsupported, stopped and non-tree
+/// analyses have no such proof; callers must keep their ordinary fallback.
+#[cfg(feature = "semantic")]
+pub(crate) fn units_with_certainty(source: &str, lang: Lang) -> (Vec<Unit>, bool) {
+    let analysis = analyze(source, lang, Need::Units);
+    (analysis.units, analysis.clean_tree)
+}
+
 /// What one parse collects besides the unit forest.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Need {
@@ -391,6 +400,7 @@ enum Need {
 #[derive(Default)]
 struct Analysis {
     units: Vec<Unit>,
+    clean_tree: bool,
     comments: Vec<(usize, usize)>,
     members: Vec<(usize, usize)>,
     imports: Vec<String>,
@@ -1206,8 +1216,8 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
             return out;
         }
     };
-    let collect_calls =
-        need == Need::Imports && call_language(lang) && !tree.root_node().has_error();
+    extras.clean_tree = !tree.root_node().has_error();
+    let collect_calls = need == Need::Imports && call_language(lang) && extras.clean_tree;
     if need == Need::Imports && call_language(lang) {
         extras.call_coverage = Some(if collect_calls {
             "complete"

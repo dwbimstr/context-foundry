@@ -81,6 +81,10 @@ pub(crate) const WAVE_INPUTS: usize = 8;
 /// At most one eight-source wave survives into selection. Larger sources use
 /// the existing bounded on-demand render path instead of retaining their cards.
 const RETAINED_CARD_BYTES: usize = 2 * 1024 * 1024;
+/// One shared budget for paused hierarchy bodies/plans across all cursors.
+/// Token arrays never enter this cache. Eviction preserves scalar progress.
+const PAUSED_PLAN_BYTES: usize = 16 * 1024 * 1024;
+const PAUSED_PLAN_SLOTS: usize = 32;
 
 /// Lazily started CPU workers, reused across waves (and MCP prepare runs).
 /// No store, profile or source is retained here. `install` joins each wave,
@@ -246,10 +250,9 @@ pub(crate) struct SourceCursor {
     pub exact: bool,
     pub scope: Option<String>,
     pub after: Option<String>,
-    /// An unfinished wave's lower bound (outer Some also represents the start
-    /// of the corpus). `after` retains its upper bound. Replay uses cache keys;
-    /// queued cursors retain no source bodies, token arrays or worker state.
-    pub resume_before: Option<Option<String>>,
+    /// Scalar progress in an unfinished wave; `after` retains its upper bound.
+    /// Bodies/plans live only in the run's single byte-capped paused cache.
+    pub resume: Option<WalkPosition>,
 }
 
 /// At most sixteen priority cursors and one ordinary cursor per pass. Hierarchy
@@ -271,7 +274,7 @@ impl SourceOrder {
                     scope: Some(path),
                     after: None,
                     exact: true,
-                    resume_before: None,
+                    resume: None,
                 })
                 .collect(),
             background: None,
@@ -315,7 +318,7 @@ impl SourceOrder {
                     scope: Some(scope),
                     after: None,
                     exact: false,
-                    resume_before: None,
+                    resume: None,
                 })
                 .collect(),
             background: Some(SourceCursor::default()),
@@ -947,6 +950,7 @@ fn inner(
     let mut order =
         SourceOrder::new(options.priority_paths)?.for_representation(profile.representation);
     let mut overview_phase = order.overview_first();
+    let mut paused = PausedSources::default();
     let mut stop: Option<Stop> = None;
     'waves: while let Some(mut cursor) = order.next() {
         if let Some(halted) = halt(control, budget) {
@@ -963,8 +967,10 @@ fn inner(
             overview_phase = false;
             snapshot_progress(report, options.started);
         }
-        let resumed = cursor.resume_before.take();
-        let before = resumed.clone().unwrap_or_else(|| cursor.after.clone());
+        let resumed = cursor.resume.take();
+        let before = resumed
+            .as_ref()
+            .map_or_else(|| cursor.after.clone(), |position| position.after.clone());
         let (progress, inputs) = if resumed.is_some() {
             (Progress::More, Vec::new())
         } else {
@@ -1001,6 +1007,9 @@ fn inner(
             report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
             let mut walk = Walk::wave(cursor.scope.clone(), before.clone(), cursor.after.clone())
                 .with_retained(retained);
+            if let Some(position) = resumed {
+                walk = walk.restore(position, &mut paused);
+            }
             walk.exact = cursor.exact;
             walk.overview_first = order.overview_first();
             let mut pending = Batch::default();
@@ -1126,7 +1135,7 @@ fn inner(
                     break;
                 }
                 if wave_inputs >= WAVE_INPUTS && order.waiting() {
-                    cursor.resume_before = Some(before.clone());
+                    cursor.resume = Some(walk.pause(&mut paused));
                     break;
                 }
             }
@@ -1431,12 +1440,48 @@ pub(crate) struct Walk {
     scope: Option<String>,
     through: Option<String>,
     partial: Option<(Rc<SourceVersion>, usize)>,
+    position: Option<CardPosition>,
     seen: HashSet<String>,
     retained: Vec<PreparedCards>,
 }
 impl Walk {
     pub(crate) fn with_retained(mut self, retained: Vec<PreparedCards>) -> Self {
         self.retained = retained;
+        self
+    }
+
+    /// Keep only scalar progress in the cursor. Parsed hierarchy state may be
+    /// kept under the one global budget; a miss changes work, never inputs.
+    pub(crate) fn pause(self, paused: &mut PausedSources) -> WalkPosition {
+        let partial = self
+            .partial
+            .map(|(source, next)| {
+                let position = CardPosition {
+                    path: source.path.clone(),
+                    hash: source.hash.clone(),
+                    recipe: source.recipe.clone(),
+                    function_digest: source.function_digest.clone(),
+                    next,
+                };
+                paused.insert(source);
+                position
+            })
+            .or(self.position);
+        WalkPosition {
+            after: self.after,
+            partial,
+        }
+    }
+
+    pub(crate) fn restore(mut self, position: WalkPosition, paused: &mut PausedSources) -> Self {
+        self.after = position.after;
+        if let Some(position) = position.partial {
+            if let Some(source) = paused.take(&position) {
+                self.partial = Some((source, position.next));
+            } else {
+                self.position = Some(position);
+            }
+        }
         self
     }
 
@@ -1459,13 +1504,164 @@ impl Walk {
     }
 }
 
+/// A queued cursor owns no source body, parsed plan or token array.
+#[derive(Clone)]
+pub(crate) struct WalkPosition {
+    pub(crate) after: Option<String>,
+    partial: Option<CardPosition>,
+}
+
+#[derive(Clone)]
+struct CardPosition {
+    path: String,
+    hash: String,
+    recipe: String,
+    function_digest: String,
+    next: usize,
+}
+
+impl CardPosition {
+    fn matches(&self, path: &str, hash: &str, recipe: &str, function: &str) -> bool {
+        self.path == path
+            && self.hash == hash
+            && self.recipe == recipe
+            && self.function_digest == function
+    }
+}
+
+/// Shared by every cursor in one CLI run / MCP pass. Entries are consumed on
+/// resume, so an active walk is not simultaneously charged as paused. The
+/// fixed queue allocation and all retained payload capacities fit `limit`.
+/// Cancellation drops this local state; accepted inputs stay in durable cache.
+pub(crate) struct PausedSources {
+    entries: VecDeque<(usize, Rc<SourceVersion>)>,
+    bytes: usize,
+    limit: usize,
+}
+
+impl Default for PausedSources {
+    fn default() -> Self {
+        Self::new(PAUSED_PLAN_BYTES)
+    }
+}
+
+impl PausedSources {
+    fn new(limit: usize) -> Self {
+        let metadata = PAUSED_PLAN_SLOTS * std::mem::size_of::<(usize, Rc<SourceVersion>)>();
+        let entries = if metadata <= limit {
+            VecDeque::with_capacity(PAUSED_PLAN_SLOTS)
+        } else {
+            VecDeque::new()
+        };
+        let bytes = entries.capacity() * std::mem::size_of::<(usize, Rc<SourceVersion>)>();
+        if bytes > limit {
+            return Self {
+                entries: VecDeque::new(),
+                bytes: 0,
+                limit,
+            };
+        }
+        Self {
+            entries,
+            bytes,
+            limit,
+        }
+    }
+
+    fn remove(&mut self, path: &str) -> Option<Rc<SourceVersion>> {
+        let index = self
+            .entries
+            .iter()
+            .position(|(_, source)| source.path == path)?;
+        let (bytes, source) = self.entries.remove(index).expect("known paused source");
+        self.bytes -= bytes;
+        Some(source)
+    }
+
+    fn insert(&mut self, source: Rc<SourceVersion>) {
+        self.remove(&source.path); // Same-path replacement invalidates old identity.
+        let Some(bytes) = source.paused_bytes() else {
+            return;
+        };
+        let metadata = self.entries.capacity() * std::mem::size_of::<(usize, Rc<SourceVersion>)>();
+        if self.entries.capacity() == 0 || bytes > self.limit.saturating_sub(metadata) {
+            return;
+        }
+        while self.entries.len() == self.entries.capacity()
+            || self.bytes.saturating_add(bytes) > self.limit
+        {
+            let (evicted, _) = self.entries.pop_front().expect("bounded paused cache");
+            self.bytes -= evicted;
+        }
+        self.entries.push_back((bytes, source));
+        self.bytes += bytes;
+    }
+
+    fn take(&mut self, position: &CardPosition) -> Option<Rc<SourceVersion>> {
+        self.remove(&position.path).filter(|source| {
+            source.matches(
+                &position.path,
+                &position.hash,
+                &position.recipe,
+                &position.function_digest,
+            )
+        })
+    }
+}
+
 /// One verified source version: either fresh prepared cards or its body
 /// and lazily parsed units. A partially consumed source carries this input
 /// across batches; unchanged fresh inputs need no second body read or parse.
 struct SourceVersion {
     path: String,
     hash: String,
+    recipe: String,
+    function_digest: String,
     content: SourceCards,
+    paused_size: OnceCell<usize>,
+}
+
+impl SourceVersion {
+    fn matches(&self, path: &str, hash: &str, recipe: &str, function: &str) -> bool {
+        self.path == path
+            && self.hash == hash
+            && self.recipe == recipe
+            && self.function_digest == function
+    }
+
+    fn paused_bytes(&self) -> Option<usize> {
+        if let Some(bytes) = self.paused_size.get() {
+            return Some(*bytes);
+        }
+        // Only parsed hierarchy plans are retained across turns. Fresh card
+        // token arrays and other representations use scalar progress alone.
+        let SourceCards::Body { body, units } = &self.content else {
+            return None;
+        };
+        let SourcePlan::Hierarchy(spans) = units.get()? else {
+            return None;
+        };
+        let mut bytes = std::mem::size_of::<Self>() + 2 * std::mem::size_of::<usize>(); // Rc header
+        for capacity in [
+            self.path.capacity(),
+            self.hash.capacity(),
+            self.recipe.capacity(),
+            self.function_digest.capacity(),
+            body.capacity(),
+        ] {
+            bytes = bytes.saturating_add(capacity);
+        }
+        bytes = bytes.saturating_add(
+            spans
+                .capacity()
+                .saturating_mul(std::mem::size_of::<partition::hierarchy::Span>()),
+        );
+        for span in spans {
+            bytes = bytes.saturating_add(span.retained_heap_bytes());
+        }
+        let _ = self.paused_size.set(bytes);
+        Some(bytes)
+    }
 }
 
 enum SourceCards {
@@ -1724,6 +1920,11 @@ impl Cards<'_> {
         let mut batch = Batch::default();
         for selected in selection.sources {
             let source = &selected.source;
+            if source.recipe != self.profile.recipe_id()
+                || source.function_digest != self.function_digest
+            {
+                return Err(partition_invalid("resumed source identity changed".into()));
+            }
             let count = match &source.content {
                 SourceCards::Body { body, units } => {
                     if units.get().is_none() {
@@ -1991,11 +2192,16 @@ impl Steps<'_> {
                     return Ok(Selected::Yield);
                 }
                 examined += 1;
-                let resumed = walk
-                    .partial
-                    .take()
-                    .filter(|(source, _)| source.path == *path && source.hash == meta.hash);
-                let first = resumed.as_ref().map_or(0, |(_, next)| *next);
+                let resumed = walk.partial.take().filter(|(source, _)| {
+                    source.matches(path, &meta.hash, self.recipe, self.cards.function_digest)
+                });
+                let position = walk.position.take().filter(|position| {
+                    position.matches(path, &meta.hash, self.recipe, self.cards.function_digest)
+                });
+                let first = resumed.as_ref().map_or_else(
+                    || position.as_ref().map_or(0, |position| position.next),
+                    |(_, next)| *next,
+                );
                 if let Some(record) = self.engine.semantic_partition(path)?
                     && cache::partition_is_current(
                         &record,
@@ -2069,7 +2275,10 @@ impl Steps<'_> {
                                 Rc::new(SourceVersion {
                                     path: path.clone(),
                                     hash: meta.hash.clone(),
+                                    recipe: self.recipe.to_owned(),
+                                    function_digest: self.cards.function_digest.to_owned(),
                                     content,
+                                    paused_size: OnceCell::new(),
                                 })
                             }
                         };
@@ -2849,6 +3058,388 @@ mod tests {
         assert_eq!(
             cards.render(selection).err().unwrap().code(),
             "partition_invalid"
+        );
+    }
+
+    /// Counts real cache examinations and tokenizer calls while two hierarchy
+    /// sources alternate eight-input turns. The replay control reproduces the
+    /// former cursor reset; no provider or timing assertion is involved.
+    #[test]
+    fn hierarchy_turns_resume_linearly_without_replanning() {
+        use std::collections::BTreeMap;
+        use std::sync::atomic::Ordering;
+
+        fn exercise(
+            mode: u8,
+            limit: usize,
+        ) -> (u64, usize, BTreeMap<String, Vec<u32>>, Vec<String>) {
+            let (_dir, engine, mut profile) = partition_fixture();
+            profile.representation = partition::Representation::Hierarchy { parent_tokens: 16 };
+            let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+            let counting = Counting::new(&tokenizer);
+            let digest = profile.descriptor.digest();
+            let recipe = profile.recipe_id();
+            let cards = Cards {
+                tokenizer: &counting,
+                profile: &profile,
+                function_digest: &digest,
+            };
+            let paths = ["a.rs".to_owned(), "b.rs".to_owned()];
+            let mut total = 0;
+            for (file, path) in paths.iter().enumerate() {
+                let body: String = (0..96).map(|n| format!("/// Item {file}_{n}.\npub fn item_{file}_{n:03}() -> u32 {{\n    {}\n}}\n\n", file * 1000 + n)).collect();
+                engine.replace_source(path, &body).unwrap();
+                let hash = engine.source(path).unwrap().unwrap().hash;
+                let computed = cards
+                    .prepare_source(
+                        engine.semantic_partition_source(path, &hash).unwrap(),
+                        &recipe,
+                        0,
+                    )
+                    .unwrap();
+                engine
+                    .semantic_accept_partition(computed.partition)
+                    .unwrap();
+                total += engine
+                    .semantic_partition(path)
+                    .unwrap()
+                    .unwrap()
+                    .units
+                    .len() as u64;
+            }
+            counting.encodes.store(0, Ordering::Relaxed);
+            let steps = Steps {
+                engine: &engine,
+                cards,
+                recipe: &recipe,
+            };
+            let mut order = SourceOrder::changed(paths.iter().cloned())
+                .for_representation(profile.representation);
+            let mut paused = PausedSources::new(limit);
+            let mut report = PrepareReport::default();
+            let mut actual = BTreeMap::new();
+            let mut turns = Vec::new();
+            let mut overview_inputs = 0;
+            while let Some(mut cursor) = order.next() {
+                let path = cursor.scope.clone().unwrap();
+                cursor.after = Some(path.clone());
+                let resumed = cursor.resume.take();
+                let before = resumed.as_ref().and_then(|position| position.after.clone());
+                let mut walk = Walk::wave(Some(path.clone()), before, Some(path.clone()));
+                walk.exact = true;
+                walk.overview_first = order.overview_first();
+                if let Some(position) = resumed {
+                    walk = walk.restore(position, &mut paused);
+                }
+                loop {
+                    let mut selection = Selection::default();
+                    let selected = steps
+                        .select_batch(
+                            &mut walk,
+                            &mut selection,
+                            WAVE_INPUTS,
+                            usize::MAX,
+                            &mut report,
+                            &mut || None,
+                        )
+                        .unwrap();
+                    if walk.overview_first {
+                        assert!(
+                            selection
+                                .sources
+                                .iter()
+                                .all(|source| source.wanted.iter().all(|(index, _)| *index == 0))
+                        );
+                    } else {
+                        assert_eq!(
+                            overview_inputs, 2,
+                            "file-view pass drains before body refinement"
+                        );
+                    }
+                    let batch = cards.render(selection).unwrap();
+                    assert!(batch.len() <= WAVE_INPUTS);
+                    if !batch.is_empty() {
+                        if walk.overview_first {
+                            overview_inputs += batch.len();
+                        } else {
+                            turns.push(path.clone());
+                        }
+                        let entries: Vec<_> = batch
+                            .keys
+                            .iter()
+                            .map(|key| (key.clone(), vec![1.0; cards.dims()]))
+                            .collect();
+                        engine
+                            .semantic_cache_commit(&entries, &digest, cards.dims(), u64::MAX)
+                            .unwrap();
+                        for (key, input) in batch.keys.into_iter().zip(batch.inputs) {
+                            assert!(
+                                actual.insert(key, input.ids).is_none(),
+                                "no repeated model input"
+                            );
+                        }
+                        walk.seen.clear();
+                    }
+                    if matches!(selected, Selected::End) {
+                        order.advance(cursor, true);
+                        break;
+                    }
+                    if mode != 2 && order.waiting() {
+                        cursor.resume = Some(if mode == 0 {
+                            WalkPosition {
+                                after: None,
+                                partial: None,
+                            } // prior replay behavior
+                        } else {
+                            walk.pause(&mut paused)
+                        });
+                        assert!(paused.bytes <= limit, "all cursors share one byte cap");
+                        order.advance(cursor, false);
+                        break;
+                    }
+                }
+            }
+            if mode != 0 {
+                assert_eq!(
+                    report.eligible_units,
+                    total + 2,
+                    "each card examined once plus the two cached file views"
+                );
+            }
+            // An unchanged fresh walk selects no inputs and never invokes the tokenizer.
+            let before = counting.encodes.load(Ordering::Relaxed);
+            for path in &paths {
+                let mut walk = Walk::wave(Some(path.clone()), None, Some(path.clone()));
+                walk.exact = true;
+                let mut selection = Selection::default();
+                assert!(matches!(
+                    steps
+                        .select_batch(
+                            &mut walk,
+                            &mut selection,
+                            WAVE_INPUTS,
+                            usize::MAX,
+                            &mut PrepareReport::default(),
+                            &mut || None
+                        )
+                        .unwrap(),
+                    Selected::End
+                ));
+                assert!(cards.render(selection).unwrap().is_empty());
+            }
+            assert_eq!(
+                counting.encodes.load(Ordering::Relaxed),
+                before,
+                "unchanged replay has zero render work"
+            );
+            (report.eligible_units, before, actual, turns)
+        }
+
+        let replay = exercise(0, 0);
+        let resumed = exercise(1, PAUSED_PLAN_BYTES);
+        let scalar_only = exercise(1, 0);
+        let uninterrupted = exercise(2, 0);
+        eprintln!(
+            "hierarchy resume: units/tokenizer calls replay={}/{}, scalar={}/{}, bounded={}/{}, uninterrupted={}/{}",
+            replay.0,
+            replay.1,
+            scalar_only.0,
+            scalar_only.1,
+            resumed.0,
+            resumed.1,
+            uninterrupted.0,
+            uninterrupted.1
+        );
+        assert_eq!(resumed.2, replay.2);
+        assert_eq!(resumed.2, scalar_only.2);
+        assert_eq!(resumed.2, uninterrupted.2);
+        assert!(
+            replay.0 > resumed.0 * 4,
+            "control really reexamines growing cache prefixes"
+        );
+        assert_eq!(
+            resumed.1, uninterrupted.1,
+            "turns add no hierarchy re-planning"
+        );
+        assert!(
+            scalar_only.1 > resumed.1 * 2,
+            "positions alone do not remove re-planning"
+        );
+        assert!(resumed.3.len() > 8);
+        assert!(
+            resumed.3.windows(2).all(|pair| pair[0] != pair[1]),
+            "eight-input turns remain fair"
+        );
+    }
+
+    #[test]
+    fn paused_hierarchy_plans_are_globally_bounded_and_recheck_identity() {
+        let (_dir, engine, mut profile) = partition_fixture();
+        profile.representation = partition::Representation::Hierarchy { parent_tokens: 16 };
+        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+        let counting = Counting::new(&tokenizer);
+        let digest = profile.descriptor.digest();
+        let recipe = profile.recipe_id();
+        let cards = Cards {
+            tokenizer: &counting,
+            profile: &profile,
+            function_digest: &digest,
+        };
+        let source = |name: &str| {
+            (0..40)
+                .map(|n| format!("pub fn {name}_{n:02}() -> usize {{ {n} }}\n"))
+                .collect::<String>()
+        };
+        let accept = |body: &str| {
+            engine.replace_source("lib.rs", body).unwrap();
+            let hash = engine.source("lib.rs").unwrap().unwrap().hash;
+            let computed = cards
+                .prepare_source(
+                    engine.semantic_partition_source("lib.rs", &hash).unwrap(),
+                    &recipe,
+                    0,
+                )
+                .unwrap();
+            engine
+                .semantic_accept_partition(computed.partition)
+                .unwrap();
+        };
+        accept(&source("old"));
+        let steps = Steps {
+            engine: &engine,
+            cards,
+            recipe: &recipe,
+        };
+        let mut walk = Walk::wave(Some("lib.rs".into()), None, Some("lib.rs".into()));
+        walk.exact = true;
+        let mut selection = Selection::default();
+        steps
+            .select_batch(
+                &mut walk,
+                &mut selection,
+                WAVE_INPUTS,
+                usize::MAX,
+                &mut PrepareReport::default(),
+                &mut || None,
+            )
+            .unwrap();
+        cards.render(selection).unwrap();
+        let version = Rc::clone(&walk.partial.as_ref().unwrap().0);
+        let bytes = version.paused_bytes().unwrap();
+        let metadata = PAUSED_PLAN_SLOTS * std::mem::size_of::<(usize, Rc<SourceVersion>)>();
+        let mut paused = PausedSources::new(metadata + bytes);
+        let position = walk.pause(&mut paused);
+        assert_eq!(paused.bytes, metadata + bytes);
+        // A different path consumes the same global budget and evicts the first.
+        let mut other = SourceVersion {
+            path: "two.rs".into(),
+            hash: version.hash.clone(),
+            recipe: recipe.clone(),
+            function_digest: digest.clone(),
+            content: SourceCards::Body {
+                body: source("old"),
+                units: OnceCell::new(),
+            },
+            paused_size: OnceCell::new(),
+        };
+        if let SourceCards::Body { body, units } = &mut other.content {
+            units
+                .set(SourcePlan::Hierarchy(
+                    partition::hierarchy::plan(
+                        body,
+                        Lang::from_path("two.rs"),
+                        &cards.recipe(),
+                        16,
+                        &counting,
+                    )
+                    .unwrap(),
+                ))
+                .ok()
+                .unwrap();
+        }
+        let other = Rc::new(other);
+        paused = PausedSources::new(metadata + bytes.max(other.paused_bytes().unwrap()));
+        paused.insert(Rc::clone(&version));
+        paused.insert(other);
+        assert!(paused.bytes <= paused.limit && paused.entries.len() <= 1);
+        assert!(
+            paused.take(position.partial.as_ref().unwrap()).is_none(),
+            "another cursor cannot extend the global budget"
+        );
+        paused.insert(Rc::clone(&version));
+        for field in 0..3 {
+            let mut wrong = position.partial.clone().unwrap();
+            match field {
+                0 => wrong.hash.push('x'),
+                1 => wrong.recipe.push('x'),
+                _ => wrong.function_digest.push('x'),
+            }
+            assert!(paused.take(&wrong).is_none());
+            assert!(
+                paused.entries.is_empty(),
+                "same-path identity mismatch evicts stale plan"
+            );
+            paused.insert(Rc::clone(&version));
+        }
+        // Cancellation does no selection/tokenization and preserves the resume point.
+        let mut resumed = Walk::wave(Some("lib.rs".into()), None, Some("lib.rs".into()))
+            .restore(position.clone(), &mut paused);
+        resumed.exact = true;
+        let before = counting.encodes.load(std::sync::atomic::Ordering::Relaxed);
+        let mut report = PrepareReport::default();
+        assert!(matches!(
+            steps
+                .select_batch(
+                    &mut resumed,
+                    &mut Selection::default(),
+                    WAVE_INPUTS,
+                    usize::MAX,
+                    &mut report,
+                    &mut || Some(Stop::partial("cancelled", "test"))
+                )
+                .unwrap(),
+            Selected::Halted(_)
+        ));
+        assert_eq!(report.eligible_units, 0);
+        assert_eq!(
+            counting.encodes.load(std::sync::atomic::Ordering::Relaxed),
+            before
+        );
+        // Replacing a source invalidates both its plan and scalar next-card index.
+        accept(&source("new"));
+        let mut selection = Selection::default();
+        steps
+            .select_batch(
+                &mut resumed,
+                &mut selection,
+                WAVE_INPUTS,
+                usize::MAX,
+                &mut report,
+                &mut || None,
+            )
+            .unwrap();
+        assert_eq!(selection.sources[0].wanted[0].0, 0);
+        let rendered = cards.render(selection).unwrap();
+        assert_eq!(
+            rendered.keys[0],
+            engine.semantic_partition("lib.rs").unwrap().unwrap().units[0].input_key
+        );
+        let mut selection = Selection::default();
+        steps
+            .select_batch(
+                &mut resumed,
+                &mut selection,
+                WAVE_INPUTS,
+                usize::MAX,
+                &mut report,
+                &mut || None,
+            )
+            .unwrap();
+        selection.sources[0].wanted[0].1.input_key = "00".repeat(32);
+        assert_eq!(
+            cards.render(selection).err().unwrap().code(),
+            "partition_invalid",
+            "cached plans still verify every selected tuple"
         );
     }
 

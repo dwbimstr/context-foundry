@@ -412,10 +412,20 @@ enum Failed {
 struct Frontier {
     order: prepare::SourceOrder,
     walk: Option<Walk>,
+    paused: prepare::PausedSources,
     active_cursor: Option<prepare::SourceCursor>,
     wave_inputs: usize,
     priority_revision: Option<u64>,
     changed_only: bool,
+}
+
+impl Frontier {
+    fn yield_wave(&mut self) {
+        let walk = self.walk.take().expect("active wave");
+        let mut cursor = self.active_cursor.take().expect("active wave cursor");
+        cursor.resume = Some(walk.pause(&mut self.paused));
+        self.order.advance(cursor, false);
+    }
 }
 
 /// One run of the driver: identity, accounting and publication bookkeeping.
@@ -526,6 +536,7 @@ impl<'a> Run<'a> {
                 order: prepare::SourceOrder::new(&[])?
                     .for_representation(self.runtime.profile.representation),
                 walk: None,
+                paused: prepare::PausedSources::default(),
                 active_cursor: None,
                 wave_inputs: 0,
                 priority_revision: None,
@@ -594,6 +605,7 @@ impl<'a> Run<'a> {
                 })
                 .for_representation(self.runtime.profile.representation),
                 walk: None,
+                paused: prepare::PausedSources::default(),
                 active_cursor: None,
                 wave_inputs: 0,
                 priority_revision: None,
@@ -775,11 +787,7 @@ impl<'a> Run<'a> {
                 && frontier.wave_inputs >= prepare::WAVE_INPUTS
                 && frontier.order.waiting()
             {
-                frontier.walk = None;
-                frontier.order.advance(
-                    frontier.active_cursor.take().expect("active wave cursor"),
-                    false,
-                );
+                frontier.yield_wave();
             }
             if frontier.walk.is_none() {
                 // A prefetch must not become an all-corpus partition barrier
@@ -797,8 +805,10 @@ impl<'a> Run<'a> {
                     frontier.order.advance(cursor, false);
                     return Ok(Selected::Full);
                 }
-                let resumed = cursor.resume_before.take();
-                let before = resumed.clone().unwrap_or_else(|| cursor.after.clone());
+                let resumed = cursor.resume.take();
+                let before = resumed
+                    .as_ref()
+                    .map_or_else(|| cursor.after.clone(), |position| position.after.clone());
                 let (progress, retained) = if resumed.is_some() {
                     (Progress::More, Vec::new())
                 } else {
@@ -814,10 +824,12 @@ impl<'a> Run<'a> {
                     let mut walk =
                         Walk::wave(cursor.scope.clone(), before.clone(), cursor.after.clone())
                             .with_retained(retained);
+                    if let Some(position) = resumed {
+                        walk = walk.restore(position, &mut frontier.paused);
+                    }
                     walk.exact = cursor.exact;
                     walk.overview_first = frontier.order.overview_first();
                     frontier.walk = Some(walk);
-                    cursor.resume_before = Some(before);
                     frontier.active_cursor = Some(cursor);
                     frontier.wave_inputs = 0;
                     self.sync_progress();
@@ -875,7 +887,7 @@ impl<'a> Run<'a> {
                 Selected::End => {
                     frontier.walk = None;
                     let mut cursor = frontier.active_cursor.take().expect("active wave cursor");
-                    cursor.resume_before = None;
+                    cursor.resume = None;
                     frontier.order.advance(cursor, false);
                     // Send a short first wave without waiting for later sources.
                     // The following wave is prepared by the one in-call prefetch.
@@ -894,14 +906,9 @@ impl<'a> Run<'a> {
                         && frontier.wave_inputs >= prepare::WAVE_INPUTS
                         && frontier.order.waiting()
                     {
-                        // Replay only this wave's bounded source range later.
-                        // In-flight and buffered keys are excluded above; accepted
-                        // work is found in the durable cache after each commit.
-                        frontier.walk = None;
-                        frontier.order.advance(
-                            frontier.active_cursor.take().expect("active wave cursor"),
-                            false,
-                        );
+                        // Scalar progress skips already selected inputs; in-flight
+                        // and buffered keys remain excluded across other cursors.
+                        frontier.yield_wave();
                     }
                     return Ok(other);
                 }
@@ -1080,6 +1087,7 @@ impl<'a> Run<'a> {
                     order: prepare::SourceOrder::new(&[])?
                         .for_representation(self.runtime.profile.representation),
                     walk: None,
+                    paused: prepare::PausedSources::default(),
                     active_cursor: None,
                     wave_inputs: 0,
                     priority_revision: None,
@@ -1613,6 +1621,286 @@ mod tests {
         assert!(state.last_error.is_none(), "{state:?}");
         assert_eq!(state.committed_units, 52);
         assert_eq!(seen.lock().unwrap().len(), 52);
+    }
+
+    /// Exercise the actual CLI pending loop and MCP prefetch loop, including
+    /// short source tails, cached holes, duplicate keys and non-divisor batches.
+    #[test]
+    fn cli_and_mcp_hierarchy_turns_preserve_mixed_pending_inputs() {
+        use crate::neural::partition::Representation;
+        use crate::neural::tokenize::DocumentTokenizer;
+        use std::collections::HashSet;
+
+        struct Checked {
+            inner: Sizes,
+            seen: Arc<Mutex<HashSet<Vec<u32>>>>,
+            first: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+        }
+        impl EmbeddingProvider for Checked {
+            fn descriptor(&self) -> &FunctionDescriptor {
+                self.inner.descriptor()
+            }
+            fn embed_query(
+                &mut self,
+                _: &TokenizedInput,
+                _: Instant,
+            ) -> Result<Vec<f32>, ProviderError> {
+                unreachable!()
+            }
+            fn embed_documents(
+                &mut self,
+                inputs: &[TokenizedInput],
+                control: &Control,
+            ) -> Result<Vec<Vec<f32>>, ProviderError> {
+                for input in inputs {
+                    assert!(
+                        self.seen.lock().unwrap().insert(input.ids.clone()),
+                        "no committed or prefetched input may be inferred twice"
+                    );
+                }
+                let result = self.inner.embed_documents(inputs, control);
+                if let Some((entered, release)) = self.first.take() {
+                    entered.send(()).unwrap();
+                    release.recv_timeout(Duration::from_secs(30)).unwrap();
+                }
+                result
+            }
+        }
+        for mcp in [false, true] {
+            for batch in [1, 3] {
+                let (dir, engine, mut profile) = notes();
+                Arc::make_mut(&mut profile).representation =
+                    Representation::Hierarchy { parent_tokens: 32 };
+                Arc::make_mut(&mut profile).card_tokens = 512;
+                Arc::make_mut(&mut profile).batch = batch;
+                let profile_path = dir.path().join("profile-notes.json");
+                std::fs::write(&profile_path, serde_json::to_vec(profile.as_ref()).unwrap())
+                    .unwrap();
+                let mut paths: Vec<String> = (0..12).map(|n| format!("note{n:02}.md")).collect();
+                for (path, count, family) in [
+                    ("z/short.rs", 3, "short"),
+                    ("z/twin.rs", 3, "short"),
+                    ("z/large.rs", 41, "large"),
+                    ("a/middle.rs", 17, "middle"),
+                ] {
+                    let body: String = (0..count)
+                        .map(|n| format!("pub fn {family}_{n:02}() -> u32 {{ {n} }}\n"))
+                        .collect();
+                    engine.replace_source(path, &body).unwrap();
+                    paths.push(path.into());
+                }
+                let digest = profile.descriptor.digest();
+                let recipe = profile.recipe_id();
+                let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+                let steps = Steps {
+                    engine: &engine,
+                    cards: Cards {
+                        tokenizer: &tokenizer,
+                        profile: &profile,
+                        function_digest: &digest,
+                    },
+                    recipe: &recipe,
+                };
+                let mut after = None;
+                while !matches!(
+                    steps
+                        .partition_page(
+                            &mut after,
+                            8,
+                            None,
+                            &Control::unbounded(),
+                            &mut PrepareReport::default(),
+                            &mut || None
+                        )
+                        .unwrap(),
+                    Progress::Done
+                ) {}
+                let partitions: Vec<_> = paths
+                    .iter()
+                    .map(|path| engine.semantic_partition(path).unwrap().unwrap())
+                    .collect();
+                let keys: HashSet<_> = partitions
+                    .iter()
+                    .flat_map(|partition| partition.units.iter().map(|unit| unit.input_key.clone()))
+                    .collect();
+                let locations: usize = partitions
+                    .iter()
+                    .map(|partition| partition.units.len())
+                    .sum();
+                assert!(keys.len() < locations, "fixture includes shared input keys");
+                assert!(
+                    keys.len() > 8 * 4,
+                    "fixture requires repeated contended turns"
+                );
+                let large = engine.semantic_partition("z/large.rs").unwrap().unwrap();
+                let seeded: Vec<_> = large
+                    .units
+                    .iter()
+                    .skip(2)
+                    .step_by(5)
+                    .take(3)
+                    .map(|unit| (unit.input_key.clone(), unit_vector(&profile.descriptor)))
+                    .collect();
+                assert_eq!(seeded.len(), 3);
+                engine
+                    .semantic_cache_commit(&seeded, &digest, profile.descriptor.dims(), u64::MAX)
+                    .unwrap();
+                drop(tokenizer);
+                let sizes = Arc::new(Mutex::new(Vec::new()));
+                let seen = Arc::new(Mutex::new(HashSet::new()));
+                let preparation = Arc::new(Preparation::default());
+                let priorities = vec!["z".into(), "a".into()];
+                if mcp {
+                    let (entered_tx, entered) = mpsc::channel();
+                    let (release, release_rx) = mpsc::channel();
+                    let (prefetched_tx, prefetched) = mpsc::channel();
+                    let owner = Arc::new(Counted {
+                        engine: Mutex::new(engine),
+                        in_flight: AtomicUsize::new(0),
+                        closing: AtomicBool::new(false),
+                        prefetched: Mutex::new(prefetched_tx),
+                        fail_prefetch: AtomicBool::new(false),
+                        armed: AtomicBool::new(false),
+                    });
+                    let provider = Checked {
+                        inner: Sizes {
+                            descriptor: profile.descriptor.clone(),
+                            sizes: Arc::clone(&sizes),
+                            foreground: Some(Arc::clone(&preparation)),
+                        },
+                        seen: Arc::clone(&seen),
+                        first: Some((entered_tx, release_rx)),
+                    };
+                    let runtime = Arc::new(
+                        QueryRuntime::start(
+                            Arc::clone(&profile),
+                            Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+                        )
+                        .unwrap(),
+                    );
+                    preparation
+                        .prepare_with_priorities(
+                            Arc::clone(&owner) as Arc<dyn Owner>,
+                            Arc::clone(&runtime),
+                            Some(priorities),
+                        )
+                        .unwrap();
+                    entered.recv_timeout(Duration::from_secs(30)).unwrap();
+                    assert!(
+                        prefetched.recv_timeout(Duration::from_secs(30)).unwrap() > 0,
+                        "the real driver buffers inputs while the first call is blocked"
+                    );
+                    release.send(()).unwrap();
+                    until_idle(&preparation);
+                    if batch == 3 {
+                        assert!(
+                            prefetched.try_iter().any(|size| size == 3),
+                            "a full prefetch must survive smaller foreground admissions"
+                        );
+                    }
+                    let before = sizes.lock().unwrap().len();
+                    preparation
+                        .prepare(Arc::clone(&owner) as Arc<dyn Owner>, Arc::clone(&runtime))
+                        .unwrap();
+                    until_idle(&preparation);
+                    runtime.shutdown();
+                    assert_eq!(
+                        sizes.lock().unwrap().len(),
+                        before,
+                        "unchanged MCP replay has zero calls"
+                    );
+                    let status = locked(&owner.engine)
+                        .semantic_status(&Control::unbounded())
+                        .unwrap();
+                    assert!(status.last_error.is_none(), "{status:?}");
+                    assert_eq!(status.cached_current_units, locations as u64, "{status:?}");
+                    assert_eq!(
+                        status.searchable_current_units, locations as u64,
+                        "{status:?}"
+                    );
+                    assert_eq!(status.unpartitioned_sources, 0, "{status:?}");
+                    assert_eq!(status.missing_units, 0, "{status:?}");
+                    assert!(
+                        sizes
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .skip(1)
+                            .all(|size| *size <= FOREGROUND_BATCH)
+                    );
+                } else {
+                    drop(engine);
+                    let provider_sizes = Arc::clone(&sizes);
+                    let provider_seen = Arc::clone(&seen);
+                    let control = Control::unbounded();
+                    let options = prepare::PrepareOptions {
+                        profile_path: &profile_path,
+                        budget_seconds: 60,
+                        development: true,
+                        cache_cap_bytes: u64::MAX,
+                        started: Instant::now(),
+                        control: &control,
+                        priority_paths: &priorities,
+                    };
+                    let report = prepare::run(
+                        &dir.path().join("store"),
+                        &options,
+                        Box::new(move |profile, _, _, _| {
+                            Ok(Box::new(Checked {
+                                inner: Sizes {
+                                    descriptor: profile.descriptor.clone(),
+                                    sizes: Arc::clone(&provider_sizes),
+                                    foreground: None,
+                                },
+                                seen: Arc::clone(&provider_seen),
+                                first: None,
+                            }))
+                        }),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        report.embedded_units as usize,
+                        keys.len() - seeded.len(),
+                        "{report:?}"
+                    );
+                    let replay = prepare::run(
+                        &dir.path().join("store"),
+                        &prepare::PrepareOptions {
+                            started: Instant::now(),
+                            ..options
+                        },
+                        Box::new(|_, _, _, _| {
+                            panic!("unchanged CLI replay must not acquire a provider")
+                        }),
+                    )
+                    .unwrap();
+                    assert_eq!(replay.document_calls, 0, "{replay:?}");
+                    let engine = Engine::open_existing(&dir.path().join("store")).unwrap();
+                    let status = engine.semantic_status(&control).unwrap();
+                    assert!(status.last_error.is_none(), "{status:?}");
+                    assert_eq!(status.cached_current_units, locations as u64, "{status:?}");
+                    assert_eq!(
+                        status.searchable_current_units, locations as u64,
+                        "{status:?}"
+                    );
+                    assert_eq!(status.unpartitioned_sources, 0, "{status:?}");
+                    assert_eq!(status.missing_units, 0, "{status:?}");
+                }
+                assert!(
+                    sizes
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .all(|size| *size <= batch as usize)
+                );
+                assert_eq!(
+                    sizes.lock().unwrap().iter().sum::<usize>(),
+                    keys.len() - seeded.len(),
+                    "all missing unique inputs committed exactly once: mcp={mcp}, batch={batch}"
+                );
+                assert_eq!(seen.lock().unwrap().len(), keys.len() - seeded.len());
+            }
+        }
     }
 
     #[test]

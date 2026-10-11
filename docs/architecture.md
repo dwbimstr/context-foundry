@@ -357,8 +357,14 @@ explicit priority scopes with the ordinary walk, and publishes the first accepte
 batch before unprepared sources are visited. Mapping publication walks prepared
 rows; geometric growth amortizes full USearch builds without a new segment format.
 One prefetch can prepare one more wave while the provider runs. Bounded pending
-keys prevent duplicate calls where priority/background waves overlap. Status exposes
-partial coverage and stage accounting; exact-profile cache reuse survives restart.
+keys prevent duplicate calls where priority/background waves overlap. Contended
+turns keep a scalar next-card position, revalidated against source hash, recipe and
+function identity. One transient cache shared by the run/pass may retain up to
+32 paused hierarchy plans under a global 16 MiB retained-payload cap; it retains
+no token arrays. Eviction preserves scalar progress, identity changes restart the
+source, and exit drops the cache. This bound is additional to the active wave and
+prefetch, not a whole-process RAM limit. Status exposes partial coverage and stage
+accounting; exact-profile durable cache reuse survives restart.
 See [usage and limits](experimental-context.md#progressive-semantic-bootstrapping).
 
 The owner's 2026-10-09 scale direction also reactivates 010 for source-bound LLM
