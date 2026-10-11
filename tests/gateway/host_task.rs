@@ -54,6 +54,7 @@ fn completion_comparison(rows: &[Value]) -> Value {
                 ]
                 .iter()
                 .all(|k| r[k].as_u64().is_some())
+                && r["cached_input_tokens"].as_u64() <= r["input_tokens"].as_u64()
         });
     if !eligible {
         return json!({"status":"not_established","reason":"requires_two_completed_verified_repairs_and_complete_usage","monetary_cost":null});
@@ -62,7 +63,11 @@ fn completion_comparison(rows: &[Value]) -> Value {
         let denominator = rows[0][key].as_f64().unwrap();
         (denominator > 0.0).then(|| rows[1][key].as_f64().unwrap() / denominator)
     };
-    json!({"status":"paired_calibration_only","input_token_ratio":ratio("input_tokens"),"output_token_ratio":ratio("output_tokens"),"measured_wall_ratio":ratio("total_measured_task_ms"),"monetary_cost":null,"amortized_total_cost":null})
+    let uncached = |i: usize| {
+        rows[i]["input_tokens"].as_u64().unwrap() - rows[i]["cached_input_tokens"].as_u64().unwrap()
+    };
+    let uncached_ratio = (uncached(0) > 0).then(|| uncached(1) as f64 / uncached(0) as f64);
+    json!({"status":"paired_calibration_only","input_token_ratio":ratio("input_tokens"),"uncached_input_token_ratio":uncached_ratio,"output_token_ratio":ratio("output_tokens"),"measured_wall_ratio":ratio("total_measured_task_ms"),"monetary_cost":null,"amortized_total_cost":null})
 }
 
 #[test]
@@ -77,6 +82,7 @@ fn failed_or_incompletely_metered_repairs_never_establish_completion_savings() {
         ("host_success", json!(false)),
         ("input_tokens", Value::Null),
         ("cached_input_tokens", Value::Null),
+        ("cached_input_tokens", json!(101)),
         ("complete_requests", json!(1)),
         ("timeout", json!(true)),
     ] {
@@ -87,6 +93,15 @@ fn failed_or_incompletely_metered_repairs_never_establish_completion_savings() {
             "not_established"
         );
     }
+    let mut cached_control = row.clone();
+    cached_control["cached_input_tokens"] = json!(60);
+    let mut cached_candidate = row;
+    cached_candidate["input_tokens"] = json!(200);
+    cached_candidate["cached_input_tokens"] = json!(180);
+    let comparison = completion_comparison(&[cached_control, cached_candidate]);
+    assert_eq!(comparison["input_token_ratio"], 2.0);
+    assert_eq!(comparison["uncached_input_token_ratio"], 0.5);
+    assert!(comparison["monetary_cost"].is_null());
 }
 
 fn check(workspace: &Path, output: &Path, rustc: &Path, scenario: &str) -> bool {
@@ -228,7 +243,11 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
     };
     let scenario = std::env::var("FOUNDRY_HOST_TASK_SCENARIO").unwrap_or_else(|_| "parser".into());
     assert!(["parser", "overflow", "percent_decode"].contains(&scenario.as_str()));
-    assert!(!public_check || (scenario == "parser" && backend == "qwen3-4b-instruct-2507"));
+    assert!(
+        !public_check
+            || (["parser", "percent_decode"].contains(&scenario.as_str())
+                && backend == "qwen3-4b-instruct-2507")
+    );
     let percent = scenario == "percent_decode";
     // Whole upstream source can take over two minutes to prefill on this CPU;
     // share its declared task ceiling instead of the small fixture's idle cap.
@@ -337,6 +356,7 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         "checker must accept a correct borrowed repair"
     );
     let mut rows = Vec::new();
+    let reset_slot = std::env::var("FOUNDRY_HOST_TASK_RESET_SLOT").as_deref() == Ok("1");
     for arm in ["full_files", "foundry_composed"] {
         let dir = output.join(arm);
         let workspace = dir.join("workspace");
@@ -345,6 +365,38 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         for path in [workspace.join("src"), agent.clone(), sessions.clone()] {
             std::fs::create_dir_all(path).unwrap();
         }
+        // Explicit local llama-server calibration only. With --cache-ram 0,
+        // clearing its sole slot prevents cross-arm prefix reuse while allowing
+        // ordinary caching within each task. Preserve the upstream receipt.
+        let cache_reset = if reset_slot {
+            let reset: Value = reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .unwrap()
+                .post(format!(
+                    "http://127.0.0.1:{port}/api/coding/paas/v4/slots/0?action=erase"
+                ))
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            assert_eq!(reset["id_slot"], 0);
+            assert!(reset["n_erased"].as_u64().is_some());
+            std::fs::write(
+                dir.join("cache-reset.json"),
+                serde_json::to_vec_pretty(&reset).unwrap(),
+            )
+            .unwrap();
+            Some(reset)
+        } else {
+            None
+        };
         for file in files {
             std::fs::copy(fixture.join(file), workspace.join(file)).unwrap();
         }
@@ -448,17 +500,24 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
                 |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
             let script = dir.join("public-check.sh");
             let binary = dir.join("public-check-bin");
-            std::fs::write(
-                &script,
+            let source = if percent {
+                format!(
+                    "#!/bin/sh\nset -eu\n{} --edition=2018 --test --cfg 'feature=\"alloc\"' --cfg 'feature=\"std\"' {} -o {}\nexec {}\n",
+                    quote(&rustc),
+                    quote(&workspace.join("src/lib.rs")),
+                    quote(&binary),
+                    quote(&binary)
+                )
+            } else {
                 format!(
                     "#!/bin/sh\nset -eu\n{} --edition=2024 {} -o {}\nexec {} check\n",
                     quote(&rustc),
                     quote(&workspace.join("src/main.rs")),
                     quote(&binary),
                     quote(&binary)
-                ),
-            )
-            .unwrap();
+                )
+            };
+            std::fs::write(&script, source).unwrap();
             Some(format!("/bin/sh {}", quote(&script)))
         } else {
             None
@@ -488,14 +547,18 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
             dir.join("omp").strip_prefix("/").unwrap().display()
         );
         let mut command = tokio::process::Command::new(&bun);
-        let host_tools = if public_check {
+        let host_tools = if public_check && percent {
+            "read,edit,bash"
+        } else if public_check {
             "read,write,bash"
         } else if percent {
             "read,edit"
         } else {
             "read,write"
         };
-        let system = if public_check {
+        let system = if public_check && percent {
+            "Complete the requested code repair using read, edit and bash. Preserve user constraints and verify the edit using the public checks."
+        } else if public_check {
             "Complete the requested code repair using read, write and bash. Preserve user constraints and verify the edit using the public checks."
         } else if percent {
             "Complete the requested code repair using read and edit. Preserve user constraints."
@@ -603,6 +666,7 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         let total_ms = started.elapsed().as_millis();
         rows.push(json!({"arm":arm,"host_success":host_success,"timeout":timed_out,"oracle_pass":checked,"protected_files_unchanged":preserved,"source_changed":changed,"verified_task":checked&&preserved,
             "public_check_command":public_command,
+            "cache_reset_before_task":cache_reset,
             "preparation_ms":preparation_ms,"host_elapsed_ms":elapsed_ms,"orchestration_and_check_ms":total_ms-preparation_ms-elapsed_ms,"total_measured_task_ms":total_ms,"requests":receipts.len(),"input_tokens":sum(|r|r.input_tokens),"output_tokens":sum(|r|r.output_tokens),"cached_input_tokens":sum(|r|r.cached_input_tokens),
             "observed_usage":{"input":observed(|r|r.input_tokens),"output":observed(|r|r.output_tokens),"cached_input":observed(|r|r.cached_input_tokens)},
             "complete_requests":receipts.iter().filter(|r|r.outcome==Outcome::Complete).count(),"gateway":finished.final_line()}));
@@ -612,7 +676,7 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         )
         .unwrap();
     }
-    let report = json!({"version":2,"scope":"public_single_task_free_form_host_calibration","scenario":scenario,"held_out":false,"host":"OMP 18.6.0","actual_backend":model,"model_sha256":model_sha,"source_scale":scale,"upstream_crate":percent.then_some("percent-encoding 2.3.2 seeded regression, archive 9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"),"tools":if public_check {"read,write,bash"} else if percent {"read,edit; replace mode; fuzzy=false"} else {"read,write"},"public_check_enabled":public_check,"backend_identity":"operator_launched_local_server_not_remote_attestation","transport_alias":"glm-5.3-flash","llama_cpp":"b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea","attempts_per_arm":1,"model_output_limit":output_limit,"task_seconds":task_seconds,"request_idle_seconds":idle_seconds,"cost_boundary":"context preparation, gateway/host startup, all requests, teardown and oracle; common fixture setup, model acquisition/loading and energy excluded and separately recorded, never inferred from source tokens","completion_comparison":completion_comparison(&rows),"rows":rows});
+    let report = json!({"version":2,"scope":"public_single_task_free_form_host_calibration","scenario":scenario,"held_out":false,"host":"OMP 18.6.0","actual_backend":model,"model_sha256":model_sha,"source_scale":scale,"upstream_crate":percent.then_some("percent-encoding 2.3.2 seeded regression, archive 9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"),"tools":if public_check && percent {"read,edit,bash; replace mode; fuzzy=false"} else if public_check {"read,write,bash"} else if percent {"read,edit; replace mode; fuzzy=false"} else {"read,write"},"public_check_enabled":public_check,"backend_identity":"operator_launched_local_server_not_remote_attestation","transport_alias":"glm-5.3-flash","llama_cpp":"b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea","attempts_per_arm":1,"model_output_limit":output_limit,"task_seconds":task_seconds,"request_idle_seconds":idle_seconds,"cost_boundary":"context preparation, gateway/host startup, all requests, teardown and oracle; common fixture setup, model acquisition/loading and energy excluded and separately recorded, never inferred from source tokens","completion_comparison":completion_comparison(&rows),"rows":rows});
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report).unwrap(),

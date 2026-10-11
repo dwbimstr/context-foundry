@@ -776,6 +776,64 @@ fn search_returns_locators_and_never_a_selection_tag() {
     assert_eq!(span_of(&answer.parsed.items[0].handle).0, DUSK_PATH);
 }
 
+/// Prose intent must agree at model admission and final lexical selection.
+#[test]
+fn experimental_prose_uses_the_same_anchor_intent_for_model_admission_and_selection() {
+    use context_foundry::store::ContextOptions;
+    let corpus = Corpus::new(&[
+        ("worker.go".into(), "package sample\nfunc Go() {}\n".into()),
+        ("cpu.rs".into(), "pub fn Cpu() {}\n".into()),
+    ]);
+    for shared_anchors in [false, true] {
+        let slot = corpus.slot();
+        let read = |query: &str, enabled| {
+            let anchors = context_foundry::roots::select_anchors(
+                &[corpus.engine()],
+                query,
+                None,
+                &Corpus::control(),
+            )
+            .unwrap();
+            mcp::context_primary_with_options(
+                &slot,
+                corpus.engine(),
+                query,
+                Strategy::Search,
+                &Corpus::control(),
+                ContextOptions {
+                    anchors: shared_anchors.then_some(anchors.as_slice()),
+                    experimental_behavior: enabled,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        for query in [
+            "refund timing for a Go string",
+            "refund timing for Cpu-heavy source",
+        ] {
+            let calls = corpus.probe.query_calls();
+            assert!(read(query, false).batch.semantic.is_none());
+            assert_eq!(corpus.probe.query_calls(), calls);
+            assert_eq!(read(query, true).batch.semantic.as_deref(), Some("ready"));
+            assert_eq!(
+                corpus.probe.query_calls(),
+                calls + 1,
+                "prose must reach the provider"
+            );
+        }
+        for query in ["`Go`", "call Go string helper", "call `Go` with a callback"] {
+            let calls = corpus.probe.query_calls();
+            assert!(read(query, true).batch.semantic.is_none(), "{query}");
+            assert_eq!(
+                corpus.probe.query_calls(),
+                calls,
+                "explicit symbol must not call the model"
+            );
+        }
+    }
+}
+
 /// 009 T004 "Placement": a query with an anchor never calls the model; its
 /// search and context answers are the answers without a profile, byte for
 /// byte (no `semantic:` word, no tag).
@@ -1574,6 +1632,73 @@ fn partial_coverage_serves_prepared_vectors_beside_baseline_candidates_and_says_
         .item(DUSK_PATH)
         .expect("prepared vectors still serve");
     assert!(dusk.semantic);
+}
+
+#[test]
+fn partial_semantics_preserves_distinct_lexical_passages_and_dense_evidence() {
+    use context_foundry::store::ContextOptions;
+    let mut corpus = Corpus::new(&[]);
+    let body = format!(
+        "fn fire() {{\n    twilight_onset_kiln_prepare();\n{}    twilight_onset_kiln_finish();\n}}\n",
+        "    ordinary_step();\n".repeat(400)
+    );
+    corpus
+        .engine_mut()
+        .replace_source("kiln.rs", &body)
+        .unwrap();
+    corpus.engine_mut().refresh(&Control::unbounded()).unwrap();
+    let runtime = corpus.runtime();
+    let query = "twilight onset kiln";
+    let window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let candidates = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(candidates.batch.semantic.as_deref(), Some("partial"));
+    let passages: Vec<_> = candidates
+        .batch
+        .items
+        .iter()
+        .filter(|i| i.label == "excerpt fn fire")
+        .collect();
+    assert_eq!(passages.len(), 2);
+    for item in passages {
+        let handle = item.handle.as_ref().unwrap();
+        assert!(item.semantic.is_none());
+        assert_eq!(
+            item.forms[0],
+            context_foundry::store::RenderedForm::Verbatim(
+                body[handle.start as usize..handle.end as usize].into()
+            )
+        );
+    }
+    assert!(candidates.batch.items.iter().any(|i| i.semantic.is_some()));
+    let packed = response::pack_enriched_context(
+        &candidates,
+        None,
+        response::Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.text.contains("twilight_onset_kiln_prepare"));
+    assert!(packed.text.contains("twilight_onset_kiln_finish"));
+    assert!(packed.tokens <= 2048);
 }
 
 #[test]

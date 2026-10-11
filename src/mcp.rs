@@ -243,14 +243,20 @@ fn plan_semantic(
     path: Option<&str>,
     control: &Control,
     anchors: Option<&[crate::store::AnchorCandidate]>,
+    prose: bool,
 ) -> SemanticPlan {
     if slot.is_none() {
         return SemanticPlan::Off;
     }
+    let anchored = |chosen: &[crate::store::AnchorCandidate]| {
+        chosen
+            .iter()
+            .any(|anchor| !prose || !crate::store::incidental_prose_anchor(query, anchor))
+    };
     let anchored = match anchors {
-        Some(chosen) => !chosen.is_empty(),
+        Some(chosen) => anchored(chosen),
         None => crate::roots::select_anchors(&[engine], query, path, control)
-            .map_or(true, |chosen| !chosen.is_empty()),
+            .map_or(true, |chosen| anchored(&chosen)),
     };
     if anchored {
         return SemanticPlan::Off;
@@ -284,7 +290,7 @@ pub fn search_primary(
     anchors: Option<&[crate::store::AnchorCandidate]>,
 ) -> FResult<crate::store::CandidateBatch> {
     #[cfg(feature = "semantic")]
-    match plan_semantic(slot, engine, query, path, control, anchors) {
+    match plan_semantic(slot, engine, query, path, control, anchors, false) {
         SemanticPlan::Off => {}
         SemanticPlan::Dense(window) => {
             return engine
@@ -345,8 +351,18 @@ pub fn context_primary_with_options(
     if let Some(task) = requested.task {
         engine.check_task_scope(task)?;
     }
+    let policy = requested.policy.filter(|policy| policy.routes());
     #[cfg(feature = "semantic")]
-    let plan = plan_semantic(slot, engine, query, None, control, requested.anchors);
+    let plan = plan_semantic(
+        slot,
+        engine,
+        query,
+        None,
+        control,
+        requested.anchors,
+        requested.experimental_behavior
+            && crate::store::prose_context_query(query, strategy, policy.is_some()),
+    );
     #[cfg(feature = "semantic")]
     if let Some(trace) = control.trace() {
         let state = match &plan {
@@ -375,7 +391,7 @@ pub fn context_primary_with_options(
             SemanticPlan::Dense(window) => Some(window),
             _ => None,
         },
-        policy: requested.policy.filter(|policy| policy.routes()),
+        policy,
         anchors: requested.anchors,
     };
     #[cfg_attr(not(feature = "semantic"), allow(unused_mut))]

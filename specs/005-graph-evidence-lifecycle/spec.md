@@ -649,3 +649,19 @@ trace fixture captures a dynamic `getattr` call and executed lines while excludi
 unexecuted error branch. Static adversarial and packing tests check stale suppression
 and invalid-import atomicity. Broader collectors/frameworks/brokers, cross-language
 runtime identity and test-to-requirement coverage remain open.
+
+
+T005 package and observed-framework continuation (2026-10-11):
+`python-http-v6` resolves a direct router definition in either an explicitly
+configured `module.py` or `package/__init__.py`, including `from . import router`.
+Competing configured module/package layouts, re-exports, cycles and escaped aliases
+remain incomplete. Existing service-wide hashes protect package dependencies before
+publication and on reads; old recipe rows require republication. No Python import
+execution or path search is introduced. Tests live in
+[`boundary.rs`](../../tests/boundary.rs), including an explicitly executed FastAPI
+package fixture. The execution-import fixture now also exercises a real Flask request
+that dynamically selects a callback, retains observed test-line evidence, excludes an
+unexecuted branch, and invalidates observations when the observing test changes after
+restart. This validates the existing import contract, not a deployed general-purpose
+collector or test-to-requirement inference. Broader frameworks/brokers, re-exports,
+async/background trace attribution and cross-language identity remain open.

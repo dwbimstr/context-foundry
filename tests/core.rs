@@ -161,6 +161,126 @@ fn anchorless_context_preserves_code_discovery_and_exact_late_body_excerpts() {
 }
 
 #[test]
+fn prose_language_qualifiers_do_not_hijack_explicit_symbol_resolution() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    engine
+        .replace_source(
+            "worker.go",
+            "package sample\n// Go starts a worker.\nfunc Go(f func()) { f() }\n",
+        )
+        .unwrap();
+    engine.replace_source("strings.go", "package sample\n// TrimSpace removes leading and trailing whitespace from a string.\nfunc TrimSpace(s string) string { return trim(s) }\n").unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = "remove leading and trailing whitespace from a Go string";
+    let read = |query, enabled| {
+        engine
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: enabled,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        read(query, false).batch.items[0]
+            .handle
+            .as_ref()
+            .unwrap()
+            .path,
+        "worker.go"
+    );
+    assert_eq!(
+        read(query, true).batch.items[0]
+            .handle
+            .as_ref()
+            .unwrap()
+            .path,
+        "strings.go"
+    );
+    for explicit in [
+        "Go",
+        "call Go with a callback",
+        "call `Go` with a callback",
+        "call Go string helper",
+    ] {
+        assert_eq!(
+            read(explicit, true).batch.items[0]
+                .handle
+                .as_ref()
+                .unwrap()
+                .path,
+            "worker.go",
+            "explicit call remains a symbol request: {explicit}"
+        );
+    }
+}
+
+#[test]
+fn prose_context_keeps_distinct_matches_inside_one_long_function() {
+    use context_foundry::store::{ContextOptions, RenderedForm};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    let body = format!(
+        "pub fn inspect() {{\n    validate_certificate_signature();\n{}    reject_revoked_certificate();\n{}    audit_certificate_signature();\n}}\n",
+        "    ordinary_step();\n".repeat(200),
+        "    ordinary_step();\n".repeat(200),
+    );
+    engine.replace_source("certificates.rs", &body).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = "validate certificate signature reject revoked certificate";
+    let candidates = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let excerpts: Vec<_> = candidates
+        .batch
+        .items
+        .iter()
+        .filter(|i| i.label == "excerpt fn inspect")
+        .collect();
+    assert_eq!(
+        excerpts.len(),
+        2,
+        "long units have a bounded number of matching windows"
+    );
+    for item in excerpts {
+        let handle = item.handle.as_ref().unwrap();
+        let RenderedForm::Verbatim(text) = &item.forms[0] else {
+            panic!("exact source required")
+        };
+        assert_eq!(text, &body[handle.start as usize..handle.end as usize]);
+    }
+    let packed = response::pack_enriched_context(
+        &candidates,
+        None,
+        Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.text.contains("validate_certificate_signature"));
+    assert!(packed.text.contains("reject_revoked_certificate"));
+    assert!(packed.tokens <= 2048);
+    assert!(parse_v2(&packed.text).is_ok());
+}
+
+#[test]
 fn prose_matching_long_callable_docs_delivers_the_declaration_and_implementation() {
     use context_foundry::store::{ContextOptions, RenderedForm};
     let dir = tempfile::tempdir().unwrap();

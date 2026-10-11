@@ -84,7 +84,25 @@ both Qwen3-4B/OMP parser patches pass the unchanged oracle, but the composed hos
 still reaches its deadline with greater known usage. Useful general task/memory
 quality and amortized economics remain unproven. Native macOS/Metal/GPU/package
 checks need another runner; the other acceptance gaps are not Mac-only.
-See [current validation](../docs/validation.md#fair-preparation-and-evidence-delivery--2026-10-11)
+The next continuation adds direct package-initializer router definitions, a real
+FastAPI package request and observed Flask dynamic callbacks, including invalidation
+after an observing-test edit. Long prose units can now contribute two disjoint exact passages within existing
+budgets. Materialization traces distinguish excerpt loss from packing; outline handles
+no longer count as delivered body evidence. Portable native embedding receipts and a
+strict CPU/Metal comparator are implemented; Linux passes the 8,192-token receipt,
+but native Metal comparison remains unexecuted. Two further upstream percent-decoder
+pairs expose unchanged public unit tests and compare prompt caching on/off. Every arm
+still fails the external oracle; cached input savings do not establish task benefit.
+The combined Rust/Go corpus now contains 69,565 regular files / 68,056 distinct
+contents. All 67,663 admitted sources index and fit through a retained 30-minute
+partial phase plus an 82-second verified continuation. Its 944,387 card locations
+need at least 782,716 distinct vectors: raw float payload alone exceeds the default
+2 GiB cache cap. Real preparation/resume publishes 2,820 vectors, reuses all 2,678
+cached inputs on resume and leaves 67,631 sources unpartitioned. Full model coverage
+is separate and remains open. The new Go
+retrieval probes improve from 0/8 to 1/8, preserving all prior Foundry/Rust successes;
+this still does not establish general retrieval quality.
+See [current validation](../docs/validation.md#broader-evidence-and-representative-workload--2026-10-11)
 and the [pending inventory](../docs/context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
 Other deferred specs remain deferred; 013 stays frozen off. The task
 table below records the existing implementation baseline and remaining obligations.

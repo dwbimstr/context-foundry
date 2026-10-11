@@ -44,6 +44,7 @@ fn attribute(record: &Value, query: &str, expected: &SourceHandle) -> Value {
     let matching: Vec<_> = delivered
         .items
         .iter()
+        .filter(|i| i.form.as_deref() != Some("outline"))
         .filter(|i| {
             context_foundry::store::HandleRef::parse(&i.handle).is_ok_and(|h| {
                 expected.workspace_id.starts_with(&h.ws16)
@@ -72,6 +73,7 @@ fn attribute(record: &Value, query: &str, expected: &SourceHandle) -> Value {
         .as_array()
         .into_iter()
         .flatten()
+        .filter(|i| i["tier"] != context_foundry::store::TIER_OUTLINE)
         .any(|i| covers(&i["unit"], expected))
         || pack["anchors"].as_array().into_iter().flatten().any(|a| {
             a["units"]
@@ -82,6 +84,29 @@ fn attribute(record: &Value, query: &str, expected: &SourceHandle) -> Value {
         });
     if in_pack {
         return json!({"result":"loss","stage":if matching.is_empty(){"packing_omission"}else{"representation_reduction"}});
+    }
+    let materialized: Vec<_> = events
+        .iter()
+        .filter(|e| e["stage"] == "materialization" && covers(&e["unit"], expected))
+        .collect();
+    if !materialized.is_empty() {
+        if materialized.iter().all(|e| {
+            let excerpt = &e["excerpt"];
+            let (Some(start), Some(end)) = (excerpt["start"].as_u64(), excerpt["end"].as_u64())
+            else {
+                return false;
+            };
+            excerpt["workspace_id"] == expected.workspace_id
+                && excerpt["path"] == expected.path
+                && excerpt["sha256"] == expected.sha256
+                && start < end
+                && e["unit"]["start"].as_u64().is_some_and(|n| n <= start)
+                && e["unit"]["end"].as_u64().is_some_and(|n| n >= end)
+                && !covers(excerpt, expected)
+        }) {
+            return json!({"result":"loss","stage":"evidence_window"});
+        }
+        return unknown("materialization_and_packing_not_correlated");
     }
     let seen: Vec<_> = events
         .iter()
@@ -112,6 +137,60 @@ fn attribute(record: &Value, query: &str, expected: &SourceHandle) -> Value {
 
 fn record(trace: &RetrievalTrace, text: &str) -> Value {
     json!({"version":1,"operation":"context","trace":trace.snapshot(),"outcome":{"status":"success","text":text,"sha256":context_foundry::digest(text.as_bytes())}})
+}
+
+#[test]
+fn attribution_distinguishes_excerpt_selection_from_missing_discovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    let body = format!(
+        "pub fn process() {{\n    retain_expected_records();\n{}    restore_catalog();\n}}\n",
+        "    ordinary_step();\n".repeat(500)
+    );
+    engine.replace_source("lib.rs", &body).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = "retain expected records";
+    let trace = RetrievalTrace::default();
+    let candidates = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let start = body.find("restore_catalog").unwrap();
+    let expected = SourceHandle {
+        workspace_id: engine.workspace_id().unwrap(),
+        path: "lib.rs".into(),
+        sha256: context_foundry::digest(body.as_bytes()),
+        start: start as u64,
+        end: (start + "restore_catalog".len()) as u64,
+    };
+    let packed = response::pack_enriched_context(
+        &candidates,
+        None,
+        response::Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    let r = record(&trace, &packed.text);
+    assert_eq!(attribute(&r, query, &expected)["stage"], "evidence_window");
+    let mut incomplete = r.clone();
+    for event in incomplete["trace"]["events"].as_array_mut().unwrap() {
+        if event["stage"] == "materialization" {
+            event["excerpt"] = Value::Null;
+        }
+    }
+    assert_eq!(
+        attribute(&incomplete, query, &expected)["result"],
+        "unknown"
+    );
 }
 
 #[test]

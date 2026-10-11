@@ -1,5 +1,216 @@
 # Validation
 
+## Broader evidence and representative workload — 2026-10-11
+
+Continued on `experimental/context-ecosystem` with Rust 1.90, Linux x86_64,
+a four-CPU quota and no exposed GPU. Foundry/test executables are debug builds;
+model work uses the pinned ordinary CPU worker. These are diagnostic timings, not
+a release throughput claim. The existing onboarding setup was reused.
+Plans, exact source manifests, model receipts, failed launches and task transcripts
+remain outside Git under
+`/workspace/.context-foundry-tools/validation-runs/quality-scale-economics-v5/`.
+Nothing here promotes experimental retrieval, selects a generally useful model or
+releases a package. Full repository/model coverage and native hardware acceptance
+are separate from the completed implementation checks below.
+
+**Evidence and retrieval implementation.** `python-http-v6` adds direct router
+definitions in explicitly configured Python package initializers, including relative
+`from . import router`. Competing module/package layouts, re-exports, cycles and
+escaped aliases remain incomplete. Package changes invalidate the service proof.
+The real FastAPI package request passes with FastAPI 0.141.1, Starlette 1.6.0 and
+httpx 0.28.1. The Flask 3.1.2 execution fixture imports **19 observed relationships**,
+including a dynamically selected callback, and excludes the unexecuted error branch.
+Changing the observing test after reopening the store suppresses its observations.
+The earlier direct CPython fixture also passes (12 observations). The first Flask
+attempt lacked the framework on system Python; the retained successful run uses the
+existing explicit `FOUNDRY_FRAMEWORK_PYTHON` environment. Indexing never runs Python.
+These are real consumers of owned fixtures, not general collectors or inferred
+requirement coverage.
+
+Experimental prose retrieval keeps up to two disjoint matching documents from a
+long unit within the existing 256-document discovery window, four-item file cap and
+response budget. Exact duplicate rendered handles are removed, dense locations keep
+their ranges, and ordinary/anchored search remains unchanged. New regressions require
+two separated passages, exact source bytes and partial semantic evidence under one
+budget. A reproduced language ambiguity is also repaired: “a Go string” previously
+anchored an unrelated function named `Go`. In experimental prose mode an unmarked
+language name modifying a data/source noun is now treated as a qualifier. Explicit
+call/name requests and marked/shaped identifiers retain symbol precedence. This
+changes intent, not repository admission or language filtering. The real serving
+check also exposed inconsistent admission: lexical selection suppressed the `Go`
+anchor while the CLI/MCP semantic gate still skipped the model. Both paths now use
+the same intent/filter rules. A failing-before/passing-after regression counts actual
+fixture-provider calls with local and supplied root anchors; explicit symbol anchors
+and ordinary search retain their existing no-call behavior.
+
+| Frozen public questions | Ordinary delivery | Previous experimental (`6f2ad67`) | Final candidate |
+|---|---:|---:|---:|
+| Foundry development set | 1/8 | 2/8 | 2/8 |
+| Rust inspected set | 0/6 | 3/6 | 3/6 |
+| Rust additional set | 0/8 | 5/8 | 5/8 |
+| Go in the combined corpus | 0/8 | 0/8 | 1/8 |
+
+Every previous delivered span is retained. The new Go success is `sort.Search`;
+other Go misses include two candidate-limit losses, one per-file-cap loss, two
+packing omissions and two unresolved discovery cases. These are source-span checks
+under the unchanged 2,048-token budget, not proof that an agent can complete a task.
+General anchorless/held-out acceptance remains open. Traced/untraced outputs match;
+sequential debug runs and filesystem warming do not support latency claims.
+
+Traces now distinguish the matching index document from the delivered excerpt. The
+attribution test caught a diagnostic error: whole-file outline handles were counted
+as evidence that source bodies reached packing. Outlines are now excluded from that
+inference, and a verified unit whose excerpt misses the label is reported as
+`evidence_window`. Missing or inconsistent trace evidence stays unknown. Labels do
+not enter ranking or delivery. Eight additional public Go questions are frozen before
+querying the new combined corpus; they are source-inspected development probes, not
+an independent holdout.
+
+**Representative corpus.** The pinned combined source tree contains **69,565 regular
+files, 68,056 distinct file contents and 324,780,308 bytes**. It combines Rust 1.90.0
+(`1159e78c4747b02ef996e55082b704c09b970588`) with Go 1.25.0
+(`6e676ab2b809d46623acb5988248d95d1eb7939c`). Go's archive SHA-256 is
+`7e5813e23f221dc193dec557379fe22607baa6fc2e321a1b8e39b658848a5f5f`;
+the exact combined manifest is
+`b4c3e6a6c5d89d8ef2c05be8397c7b8434026d30483c38db417a9b6066389b80`.
+There is no synthetic content repetition. The new ignored
+`representative_corpus_workload_inventory` checks source admission and current hashes,
+then serially fits admitted sources with the production body-v1 recipe (512-token cards,
+64-token parents) and real tokenizer. Its report separates complete fitting from
+embedding execution, distinct inputs from source locations, and current counts from
+partial progress. Its serial offline fitting time is not a production bootstrap
+throughput measurement. Whole-corpus inference is not established by the corpus file count.
+
+The initial scan indexes **67,663 sources in 219,827 ms**, with no pending source
+work. Of the 69,565 manifest files, 1,902 are not admitted; the scan's 816 explicit
+exclusion events are a different measure from all ignored/not-admitted manifest
+files. The 1,800-second inventory then reaches 65,783 files and stops at its declared
+deadline (failure retained). A separately recorded continuation reuses the same
+store/profile/manifest, rechecks the fitted prefix's current hashes and fits only the
+remaining 3,782 files. It passes in **82,046 ms**, including 9,653 ms indexing and
+4,559 ms prefix verification. No model or build runs concurrently with either phase.
+
+Every admitted source now fits: **944,387 source-card locations**, 150,527,648 tokens
+including duplicate inputs, and 78 admitted sources without cards. Rust contributes
+53,955 sources / 501,682 cards; Go contributes 13,708 sources / 442,705 cards. Since
+the first phase did not persist its full key set, combined distinct-input counts are
+honest bounds: **782,716–831,067 inputs** and **131,313,896–141,600,550 tokens**.
+Raw float vector payload is **2,404,503,552–2,553,037,824 bytes (2.24–2.38 GiB)**,
+already above the default 2 GiB cache cap before metadata or ANN storage. Completing
+this recipe therefore needs an explicitly larger cache allocation and sufficient disk,
+as well as inference time. No default capacity or model choice changes. Fitting is
+complete; full semantic preparation/serving and representative churn remain open.
+The failed first phase and successful continuation are separate artifacts, with a
+hash link to the previous report; neither the original deadline nor its outcome is
+rewritten.
+
+**Real preparation and reuse on that store.** The normal CPU worker uses the same
+pinned Gemma BF16/tokenizer, body-v1 512/64 recipe, four CPU threads, single-input
+calls and an 8 GiB worker ceiling. Its CPU lifetime ceiling is explicitly raised to
+7,200 CPU-seconds for the 1,800-second wall budget; this does not change function or
+cache identity. The corpus and OS file cache are already warm from the inventory;
+“cold” here means an empty semantic cache, not a clean machine/install benchmark.
+No other model or build runs during either phase.
+
+| Phase | Budget / measured ms | New vectors / reused cached units | Model input tokens | Published vectors | Unpartitioned sources |
+|---|---:|---:|---:|---:|---:|
+| Empty semantic cache | 1,800 s / 1,620,928 | 2,678 / 0 | 1,332,355 | 2,678 | 67,639 |
+| Resume | 120 s / 108,491 | 142 / 2,678 | 71,089 | 2,820 | 67,631 |
+
+Both pause with `budget_exhausted` while preserving the publication reserve; neither
+reports a provider/publication error or hits the cache cap. First searchable output
+arrives after **14,636 ms**. Cold provider calls take **1,569,857 ms (96.85% of elapsed)**,
+versus 8,157 ms fitting, 9,371 ms rendering and 1,523 ms publication. The worker's
+process counters show about 3.9 CPU cores used. This recipe's bottleneck is inference.
+The resume adds only new inputs and publishes one delta with zero base-index rebuilds.
+
+After resume, only **32 sources have partitions**: 3,775 current eligible locations,
+2,820 cached/searchable, and 955 still missing, plus 67,631 unpartitioned sources.
+A partition is not proof that all of a file's evidence is ready. At the cold phase's
+849 input tokens/second, a straight token-rate extrapolation of the complete workload
+is about **43–46 provider-hours**. That is an illustration, not measured completion:
+input-length mix, per-call overhead and later maintenance/publication costs differ.
+Full representative semantic coverage and sustained churn remain unvalidated. More
+file-parsing threads alone would not remove the measured model-call cost.
+
+The first real serving check retains its failure: the semantic decision was `off`
+because of that incidental `Go` anchor. After the admission repair, the same query,
+profile, store and 2,048-token budget pass. The trace records a real dense decision
+with 64 hits and partial coverage; the final response delivers `sort.Search` in
+**2,042 o200k tokens**. All five returned source handles match current file hashes
+and bounds, and the trace's delivery equals stdout. The fresh CLI process takes
+15,823 ms including worker startup; this is not resident-host latency or general
+semantic-quality acceptance. See `representative-serving-fixed/report.json`.
+
+**Uncached upstream host pair.** Both arms use the same pinned percent-encoding 2.3.2
+seeded repair, unchanged external oracle, protected-file checks, Qwen3-4B-Instruct-2507
+Q4_K_M model, OMP 18.6.0, four CPU threads, 768 output tokens per request and 900-second
+task budget. The new recipe exposes the package's **18 unchanged upstream unit tests**
+through a public checker; tools are read/edit/bash with exact replacement edits.
+The original upstream source passes those tests. No other model or build runs during
+the pair. The raw uncached report mistakenly labels the tools read/write/bash; the
+actual launcher and tool transcript use edit, and the harness label is corrected.
+
+| Arm | Complete / unknown requests | Known input / output / cached tokens | Measured task ms | Result |
+|---|---:|---:|---:|---|
+| Full files | 3 / 1 | 27,000 / 1,216 / 0 | 901,222 | Host deadline; external oracle fails |
+| Composed | 4 / 0 | 22,673 / 1,196 / 0 | 591,139 | Host completes; external oracle fails |
+
+Both preserve protected files. The composed patch passes the upstream unit tests but
+turns `%A` into `%` in the external oracle; later oracle assertions are not reached.
+Public-test success is therefore insufficient evidence of task completion. `completion_comparison` remains
+`not_established`; incomplete usage is never replaced with its known subtotal.
+Model acquisition, common fixture setup, energy and amortized maintenance remain
+explicit exclusions from the paired task clock. Per-arm fixture verification and cache
+reset are experiment setup outside that clock.
+
+A separately frozen pair enables ordinary prompt caching and erases the server's
+sole slot before each arm. `--cache-ram 0` prevents saved in-memory slot snapshots;
+the operator supplies an empty `--slot-save-path` solely to enable erase actions.
+The first launch returned HTTP 501 before any task request because that option was
+missing; it is retained as setup failure, then corrected. No save/restore is called.
+Erase receipts and observed cached tokens are retained. The task/oracle/budgets remain
+fixed. Completion accounting now distinguishes total input from uncached input and
+refuses cached totals greater than input; neither ratio establishes monetary cost.
+
+| Cached arm | Complete / unknown requests | Total input / cached / uncached input | Output | Task ms | Result |
+|---|---:|---:|---:|---:|---|
+| Full files | 7 / 0 | 73,462 / 61,914 / 11,548 | 2,967 | 784,812 | Host completes; patch does not compile |
+| Composed | 1 / 0 | 3,960 / 0 / 3,960 | 768 | 145,715 | Host completes without tool calls or edits; original bug fails |
+
+The erase receipts record zero tokens before the first arm and 12,699 erased before
+the second. Both preserve protected files. All four arms' tool transcripts pass the
+workspace/checker audit, and all preserve the upstream test module byte for byte
+(`public-test-integrity.json`); no hidden oracle feedback is supplied. The composed cached
+arm stops at its output limit without attempting the repair. Complete metering of a
+failed task does not earn a cost-per-completion comparison. These fixed-order, single
+public repair attempts do not establish causal, multi-file or memory-sensitive
+benefit. Cached processing is a separate measure from total supplied context, and
+OMP's uncached input count must not replace the gateway's total input count.
+
+**Native validation handoff.** The ordinary Linux CPU worker emits a portable receipt
+for four literal short inputs (single calls versus a four-input batch) and one exact
+8,192-token input. It passes in **54,052 ms** under the 8 GiB ceiling, with finite,
+normalized 768-dimensional outputs and matching short-input vectors. The receipt
+records worker/model/tokenizer/geometry identities and exact token IDs. The comparator
+requires identical inputs and descriptors except the intentional CPU/Metal adapter
+revision, normalization error at most 0.0001 and cosine at least 0.9999. Its rejection
+fixtures pass. The CPU receipt is `cpu-embedding-receipt.json` in the artifact directory.
+There is no macOS runner or exposed GPU here, so **Metal comparison has not run**.
+[Exact handoff commands](measurement-handoff.md) cover native capture/comparison;
+existing batch/repeat/limit/isolation/resource and signed-install checks remain owed.
+
+
+**Implementation checks.** Core (80), multi-root (20), semantic retrieval (82),
+boundary (20), response (16), task evidence (15), attribution (2), receipt comparison
+(1) and the completion-cost accounting guard pass. The explicit FastAPI package,
+CPython/Flask execution and real CPU receipt checks also pass. The full inventory
+continuation and four frozen retrieval comparisons pass with the limitations above.
+All-target Clippy with warnings denied, the genuine library build without default
+features, formatting and Markdown links pass. Native Metal comparison remains ignored
+until a real receipt is available. No whole-suite or signed-release pass is claimed.
+
+
 ## Fair preparation and evidence delivery — 2026-10-11
 
 Continued on `experimental/context-ecosystem`, Rust 1.90, the same four-CPU Linux

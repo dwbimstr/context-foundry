@@ -1947,3 +1947,31 @@ when source revision/function/recipe still match; otherwise it is null. Run coun
 remain explicitly run-local. No new scan, durable state or on-disk integrity claim
 is introduced. [Validation](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11)
 records the preserved inputs, budgets, remaining coverage and cache checks.
+
+
+Further Linux continuation (2026-10-11): experimental prose delivery keeps at most
+two disjoint matching documents per long unit under the existing candidate window,
+four-item file cap and response budget. Exact rendered handles are deduplicated;
+anchored/ordinary retrieval keeps its prior unit identity, and dense locations retain
+their own ranges. Trace events expose the selected document and final excerpt so the
+offline diagnostic can identify an evidence-window loss instead of conflating it with
+failed discovery. Regression tests cover multiple passages, partial dense coverage,
+source identity and malformed/missing attribution evidence. An unmarked language
+qualifier such as “a Go string” no longer anchors an unrelated function named `Go`
+in experimental prose mode. Explicit call/name requests and marked/shaped identifiers
+retain symbol precedence; this does not filter repositories by language. CLI/MCP
+semantic admission uses these same rules, so an incidental capital cannot silently
+disable the model after lexical selection classifies the request as prose. The frozen
+Foundry/Rust scores remain 2/8, 3/6 and 5/8, preserving every delivered span. Eight
+new Go questions on the mixed corpus improve from 0/8 to 1/8. These are bounded
+evidence repairs, not general acceptance.
+
+`representative_corpus_workload_inventory` uses a pinned 60–80k public file manifest,
+source admission and current hashes, the production body fitter and real tokenizer to
+count the entire distinct model-input/token obligation. Completion of that inventory
+is separate from vector inference and ANN coverage. Raw counts, bounded real-model
+progress and remaining acceptance are recorded in the latest validation entry. The
+portable `embedding_parity` receipt/comparator covers exact CPU/Metal token inputs,
+including 8,192 tokens, with backend identities kept distinct. Native macOS execution,
+GPU resource tests and signed package acceptance remain required; Linux checks alone
+cannot close them. See [the native handoff](../../docs/measurement-handoff.md).

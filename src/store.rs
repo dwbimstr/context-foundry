@@ -3000,15 +3000,70 @@ impl Candidate {
         (self.path.clone(), self.unit_start, self.unit_end)
     }
 
+    fn selection_unit(&self, prose: bool) -> (String, u64, u64) {
+        if prose && self.tier == 2 && self.unit_end.saturating_sub(self.unit_start) > 1536 {
+            (
+                self.path.clone(),
+                self.start.max(self.unit_start),
+                self.end.min(self.unit_end),
+            )
+        } else {
+            self.unit()
+        }
+    }
+
     fn trace(&self, control: &crate::Control, workspace: &str, rank: usize, outcome: &str) {
         if let Some(trace) = control.trace() {
             trace.record(serde_json::json!({
                 "stage": "selection", "origin": "lexical", "tier": self.tier,
                 "rank": rank, "outcome": outcome, "label": self.qname,
+                "document": {"start": self.start, "end": self.end},
                 "unit": {"workspace_id": workspace, "path": self.path,
                     "sha256": self.hash, "start": self.unit_start, "end": self.unit_end},
             }));
         }
+    }
+
+    fn trace_materialization(&self, control: &crate::Control, item: &RankedItem) {
+        if let Some(trace) = control.trace()
+            && let Some(handle) = &item.handle
+        {
+            trace.record(serde_json::json!({
+                "stage":"materialization", "origin":"lexical", "rank":item.rank,
+                "unit":{"workspace_id":handle.workspace_id,"path":self.path,"sha256":handle.sha256,
+                    "start":self.unit_start,"end":self.unit_end},
+                "excerpt":handle,
+            }));
+        }
+    }
+}
+
+/// A long unit may contain several independently useful matches. Keep at most
+/// two disjoint documents in experimental prose context, within the existing
+/// candidate, per-file and delivery budgets. Anchored retrieval is unchanged.
+#[derive(Default)]
+struct LexicalSelection {
+    spans: std::collections::BTreeMap<(String, u64, u64), Vec<(u64, u64)>>,
+}
+
+impl LexicalSelection {
+    fn insert(&mut self, candidate: &Candidate, prose: bool) -> Result<(), &'static str> {
+        let unit = candidate.unit();
+        let (_, start, end) = candidate.selection_unit(prose);
+        let limit = if (start, end) == (unit.1, unit.2) {
+            1
+        } else {
+            2
+        };
+        let spans = self.spans.entry(unit).or_default();
+        if spans.iter().any(|&(s, e)| start < e && s < end) {
+            return Err("duplicate");
+        }
+        if spans.len() >= limit {
+            return Err("unit_window_cap");
+        }
+        spans.push((start, end));
+        Ok(())
     }
 }
 
@@ -3203,19 +3258,62 @@ fn prose_query(query: &str) -> bool {
         })
 }
 
-/// An unmarked capital inside a prose compound (e.g. Cpu-heavy) is not an
-/// explicit symbol request. Marked/shaped identifiers and standalone capitals
-/// still use the ordinary anchor rules, including multi-root selections.
-fn prose_compound(query: &str, anchor: &AnchorCandidate) -> bool {
-    anchor.group == 3
-        && (query
-            .get(..anchor.position)
-            .is_some_and(|s| s.ends_with('-'))
-            || anchor
-                .position
-                .checked_add(anchor.text.len())
-                .and_then(|end| query.get(end..))
-                .is_some_and(|s| s.starts_with('-')))
+/// Shared by lexical selection and semantic admission. An active policy owns
+/// auto routing; explicit graph requests retain their ordinary anchor rules.
+pub(crate) fn prose_context_query(query: &str, strategy: Strategy, has_policy: bool) -> bool {
+    prose_query(query)
+        && match strategy {
+            Strategy::Search => true,
+            Strategy::Auto => {
+                !has_policy && response::strategy_for_query(query) == Strategy::Search
+            }
+            Strategy::Graph => false,
+        }
+}
+
+/// Unmarked prose compounds and language qualifiers (e.g. "a Go string")
+/// should not resolve to an unrelated capitalized function. Explicit call/name
+/// requests and marked/shaped identifiers retain ordinary anchor precedence.
+/// This affects intent only; a language qualifier never filters admitted roots.
+pub(crate) fn incidental_prose_anchor(query: &str, anchor: &AnchorCandidate) -> bool {
+    if anchor.group != 3 {
+        return false;
+    }
+    let before = query.get(..anchor.position).unwrap_or_default();
+    let after = anchor
+        .position
+        .checked_add(anchor.text.len())
+        .and_then(|end| query.get(end..))
+        .unwrap_or_default();
+    if before.ends_with('-') || after.starts_with('-') {
+        return true;
+    }
+    if ![
+        "Go",
+        "Rust",
+        "Python",
+        "Java",
+        "Javascript",
+        "Typescript",
+        "Ruby",
+        "Swift",
+        "Kotlin",
+    ]
+    .contains(&anchor.text.as_str())
+        || before.split_whitespace().any(|word| {
+            ["call", "invoke", "named", "symbol", "function", "method"]
+                .contains(&word.to_ascii_lowercase().as_str())
+        })
+    {
+        return false;
+    }
+    after.split_whitespace().next().is_some_and(|word| {
+        [
+            "string", "slice", "map", "array", "boolean", "bytes", "channel", "code", "source",
+            "package", "module", "path", "reader",
+        ]
+        .contains(&word.trim_end_matches(['?', '.', ',', ':']))
+    })
 }
 
 /// Distinct concept coverage dominates frequency/rarity for prose. Adjacent
@@ -4725,7 +4823,7 @@ impl Engine {
         };
         let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
             std::collections::BTreeMap::new();
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = LexicalSelection::default();
         let mut per_file: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
         let mut kept: Vec<&Candidate> = Vec::new();
@@ -4745,8 +4843,8 @@ impl Engine {
                 candidate.trace(control, &workspace_id, rank, "stale");
                 continue;
             }
-            if !seen.insert(candidate.unit()) {
-                candidate.trace(control, &workspace_id, rank, "duplicate");
+            if let Err(outcome) = seen.insert(candidate, prose) {
+                candidate.trace(control, &workspace_id, rank, outcome);
                 continue;
             }
             let count = per_file.entry(candidate.path.clone()).or_default();
@@ -4771,6 +4869,7 @@ impl Engine {
         let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
             std::collections::BTreeMap::new();
         let mut items = Vec::with_capacity(kept.len());
+        let mut delivered = std::collections::BTreeSet::new();
         for (rank, candidate) in kept.into_iter().enumerate() {
             let Some(Some(meta)) = current.get(&candidate.path) else {
                 continue;
@@ -4780,7 +4879,7 @@ impl Engine {
                 verified.insert(candidate.path.clone(), source);
             }
             let body = &verified[&candidate.path].body;
-            items.push(ranked_context_item(
+            let item = ranked_context_item(
                 candidate,
                 rank,
                 &workspace_id,
@@ -4788,7 +4887,12 @@ impl Engine {
                 body,
                 &wanted,
                 prose,
-            )?);
+            )?;
+            candidate.trace_materialization(control, &item);
+            let handle = item.handle.as_ref().expect("source candidate");
+            if delivered.insert((handle.path.clone(), handle.start, handle.end)) {
+                items.push(item);
+            }
         }
         let anchors = anchor_windows(
             &windows,
@@ -4860,7 +4964,7 @@ impl Engine {
             })?,
         };
         if selection.prose && prose_query(query) {
-            anchors.retain(|anchor| !prose_compound(query, anchor));
+            anchors.retain(|anchor| !incidental_prose_anchor(query, anchor));
         }
         let prose = selection.prose && anchors.is_empty() && prose_query(query);
         if prose && let Some(trace) = control.trace() {
@@ -5277,12 +5381,17 @@ impl Engine {
         )?;
         // Lexical documents of the current source version only.
         let mut lexical: Vec<Candidate> = Vec::with_capacity(first.len() + second.len());
+        let mut lexical_selection = LexicalSelection::default();
         for (rank, candidate) in first.into_iter().chain(second).enumerate() {
             load(&mut current, &candidate.path)?;
             if current[&candidate.path]
                 .as_ref()
                 .is_some_and(|meta| meta.hash == candidate.hash)
             {
+                if let Err(outcome) = lexical_selection.insert(&candidate, prose) {
+                    candidate.trace(control, &workspace_id, rank, outcome);
+                    continue;
+                }
                 candidate.trace(control, &workspace_id, rank, "eligible");
                 lexical.push(candidate);
             } else {
@@ -5337,7 +5446,7 @@ impl Engine {
         // Complete coverage, explicit anchors and ordinary search stay dense-first.
         if prose && word == "partial" {
             let mut dense_order = std::mem::take(&mut placed).into_iter();
-            let mut lexical_order = lexical.iter().map(|c| (c.unit(), false));
+            let mut lexical_order = lexical.iter().map(|c| (c.selection_unit(prose), false));
             loop {
                 let (lexical, dense) = (lexical_order.next(), dense_order.next());
                 if lexical.is_none() && dense.is_none() {
@@ -5350,14 +5459,22 @@ impl Engine {
                 trace.record(serde_json::json!({"stage":"placement_policy","policy":"partial_prose_interleave_v1","lexical_first":true}));
             }
         } else {
-            placed.extend(lexical.iter().map(|candidate| (candidate.unit(), false)));
+            placed.extend(
+                lexical
+                    .iter()
+                    .map(|candidate| (candidate.selection_unit(prose), false)),
+            );
         }
         // The candidate carrying each lexical unit: its first (best-ranked)
         // current document, as in the baseline.
         let mut by_unit: std::collections::HashMap<(String, u64, u64), &Candidate> =
             std::collections::HashMap::new();
+        let mut by_document = std::collections::HashMap::new();
         for candidate in &lexical {
             by_unit.entry(candidate.unit()).or_insert(candidate);
+            by_document
+                .entry(candidate.selection_unit(prose))
+                .or_insert(candidate);
         }
 
         // The baseline's merge per unit, per-file cap and cut, over the
@@ -5398,6 +5515,7 @@ impl Engine {
             kept.push((unit, *from_dense));
         }
         let mut items = Vec::with_capacity(kept.len());
+        let mut delivered = std::collections::BTreeSet::new();
         for (rank, (unit, from_dense)) in kept.into_iter().enumerate() {
             let (unit_path, unit_start, unit_end) = unit;
             let Some(Some(meta)) = current.get(unit_path) else {
@@ -5408,7 +5526,12 @@ impl Engine {
                 verified.insert(unit_path.clone(), source);
             }
             let body = &verified[unit_path].body;
-            let candidate = by_unit.get(unit).copied();
+            let candidate = if from_dense {
+                by_unit.get(unit)
+            } else {
+                by_document.get(unit)
+            }
+            .copied();
             let mut item = match candidate {
                 Some(candidate) => ranked_context_item(
                     candidate,
@@ -5462,8 +5585,13 @@ impl Engine {
                 item.semantic = Some(SemanticEvidence {
                     dense_only: candidate.is_none(),
                 });
+            } else if let Some(candidate) = candidate {
+                candidate.trace_materialization(control, &item);
             }
-            items.push(item);
+            let handle = item.handle.as_ref().expect("source candidate");
+            if delivered.insert((handle.path.clone(), handle.start, handle.end)) {
+                items.push(item);
+            }
         }
         // The word describes THIS read (a context recomputes it against its
         // own later final read).
@@ -5676,13 +5804,7 @@ impl Engine {
         let selection = SearchSelection {
             anchors,
             prose: options.experimental_behavior
-                && match strategy {
-                    Strategy::Search => true,
-                    Strategy::Auto => {
-                        policy.is_none() && response::strategy_for_query(query) == Strategy::Search
-                    }
-                    Strategy::Graph => false,
-                },
+                && prose_context_query(query, strategy, policy.is_some()),
         };
         #[cfg(feature = "semantic")]
         let search = match options.dense {

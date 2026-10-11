@@ -27,19 +27,27 @@ fn module_path(path: &str, module: &str, admitted: &[String]) -> Option<String> 
         p
     };
     let rest = &module[dots..];
-    if rest.is_empty()
-        || rest
-            .split('.')
-            .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'))
+    if (rest.is_empty() && dots == 0)
+        || (!rest.is_empty()
+            && rest.split('.').any(|p| {
+                p.is_empty() || !p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            }))
     {
         return None;
     }
-    parts.extend(rest.split('.'));
+    if !rest.is_empty() {
+        parts.extend(rest.split('.'));
+    }
     let stem = parts.join("/");
     let file = format!("{stem}.py");
-    // Package initializers/re-exports and competing module layouts are outside
-    // this recipe. The configured namespace is the only search path.
-    (admitted.contains(&file) && !admitted.contains(&format!("{stem}/__init__.py"))).then_some(file)
+    let package = format!("{stem}/__init__.py");
+    // Only direct definitions in one explicitly configured module or package.
+    // Re-exports, search-path precedence and competing layouts are not guessed.
+    match (admitted.contains(&file), admitted.contains(&package)) {
+        (true, false) => Some(file),
+        (false, true) => Some(package),
+        _ => None,
+    }
 }
 
 pub(super) fn collect(

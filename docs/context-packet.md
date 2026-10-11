@@ -11,66 +11,65 @@ what to clone, how to prove the setup reproduces the recorded results), follow
 ## Where things stand
 
 **Continuation, 2026-10-11:** work remains on `experimental/context-ecosystem`,
-including main's coordinated tch 0.26/LibTorch 2.13 migration. The
-[capability map](context-ecosystem-plan.md#what-exists-and-what-is-missing) and
-[pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
-separate implemented behavior from missing capabilities and acceptance work.
+including main's coordinated tch 0.26/LibTorch 2.13 migration. The product outcome is
+still open. The [capability map](context-ecosystem-plan.md#what-exists-and-what-is-missing)
+and [pending inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10)
+separate missing capabilities from implemented behavior awaiting acceptance.
 
-The branch contains incremental watching, progressive semantic preparation, ANN delta
-publication/reuse, source-bound generated knowledge, task state and composed evidence,
-frozen/live OMP views, request receipts and Linux resource controls. The latest work
-adds independent parent/file/area vectors under opt-in `hierarchy-v1`, Flask boundaries,
-explicit source-hashed execution imports and atomic caller/target/test delivery.
-The ordinary Linux embedding worker now applies the checked pooled-output fix and
-passes 8,192-token inference under 8 GiB. Tokenizer parity passes. Model lanes and
-experimental retrieval remain explicit opt-ins.
+The branch implements incremental watching, progressive semantic preparation, ANN
+delta publication/reuse, source-bound generated knowledge, task state and composed
+evidence, frozen/live OMP views, request receipts and Linux resource controls.
+Model lanes and experimental retrieval remain explicit opt-ins. Independent
+parent/file/area vectors exist under `hierarchy-v1`; the area bound is 256 records.
+The normal Linux embedding worker includes the 8,192-token pooled-output repair.
 
-**The product outcome is still open.** Local anchorless delivery improves from 1/8
-to 2/8 on eight development labels, with no held-out acceptance. Real Gemma prepares
-80,000 synthetic paths in 469.4 s and passes restart/edit/revert/query checks, but the
-corpus repeats 512 families (528 distinct model inputs). A representative Rust 1.90
-snapshot now admits 53,955 sources in 138 s. Bounded real Gemma preparation, resume,
-edit/delete, revert and query checks pass, but only 42 sources have partitions and
-582 cards are searchable; 53,913 sources remain unpartitioned. Model inference
-dominates. This is partial evidence, not full unique-content 60–80k validation.
-Contended inference waves now yield after eight inputs. A separate cold comparison
-with the same model/profile and 180-second budgets reaches six of 16 priority files
-versus one before; three files are fully cached versus one. Real CPU comparisons
-also favor four threads and one input per call for the tested 16 distinct chunks.
-A separate cold follow-up with those settings reaches all 16 priorities (five fully
-cached), publishing 305 vectors for 326 source units within the same 180-second
-budget. Its store still has 53,931 unpartitioned sources. These results do not close
-complete repository coverage or justify global defaults.
-The frozen Foundry comparison delivers 2/8 versus the previous executable's 1/8;
-the initial public Rust comparison delivers 0/6 in every arm. Preserving whole
-declaration lines after long documentation raises the candidate to 3/6 on those
-inspected cases; controls remain 0/6. Experimental prose scoring and partial-coverage
-interleaving preserve source and budget checks; general retrieval quality remains
-open. Eight additional public Rust probes deliver 5/8 versus legacy 0/8. A passage
-reranker added no delivery and regressed the prior Rust set from 3/6 to 2/6; it was
-rejected and the previous experimental ranking retained.
+Current evidence and limits:
 
-The Qwen3-4B-Instruct-2507 backend passes native tool-call probing and makes actual
-OMP edits, resolving the previous 7B protocol failure. The read/write-only parser
-and overflow tasks still fail in both arms. Complete usage and smaller prompts do
-not establish verified task or economic benefit. A seeded repair in published
-`percent-encoding` 2.3.2 also fails both arms at the task limit, with one unknown
-request per arm; known request subtotals are retained separately. With public test
-feedback, full-file context finally passes the independent parser oracle, but the
-composed arm fails at its limit and consumes more known tokens. The next correction
-keeps file outlines out of task source seeds so they cannot swallow exact callers.
-Both follow-up final patches pass the unchanged oracle. The full-file host completes
-in 4 requests; the composed host still reaches its deadline with 10 metered requests
-and 1 unknown. Its known input is 40,844 versus 19,474 tokens. No completion-cost
-benefit is established. Broader evidence collectors, useful model/host selection, realistic task/memory economics and Mac/GPU acceptance remain.
-These are **not all macOS blockers**. Late chunking is still only a backend candidate.
+- **Retrieval:** experimental delivery remains 2/8 on Foundry, 3/6 on inspected Rust
+  and 5/8 on additional public Rust questions. Two-passage selection and conservative
+  language-qualifier disambiguation preserve every prior success; mixed-corpus Go
+  improves from 0/8 to 1/8. CLI/MCP semantic admission now shares the prose rules;
+  a real partial-coverage query returns the target in 2,042 tokens. Traces distinguish
+  excerpts from outlines. General ranking,
+  per-file selection, macro evidence and independent acceptance remain open.
+- **Scale:** the pinned Rust/Go corpus contains 69,565 regular files / 68,056 distinct
+  contents. All 67,663 admitted sources index in 219.8 s and fit through a retained
+  30-minute partial phase plus an 82-second verified continuation. Its 944,387 card
+  locations require 782,716–831,067 distinct vectors, or 2.24–2.38 GiB of raw float
+  payload before metadata/ANN storage. The default 2 GiB cache cannot complete this
+  recipe. Real preparation/resume publishes 2,820 vectors, reusing all 2,678 cached
+  inputs on resume; 67,631 sources remain unpartitioned. Cold provider calls take
+  96.85% of elapsed. Full model coverage, useful serving and sustained churn remain open;
+  fitting is not inference. The earlier repeated-family 80k lifecycle passes but
+  represents only 528 distinct model inputs.
+- **Evidence:** direct configured FastAPI package routers and literal Flask routes/
+  Blueprints are supported. Actual FastAPI package and Flask dynamic-callback checks
+  pass; observing-test edits invalidate imported observations after restart. Broader
+  frameworks, collectors, cross-language callers and test-to-requirement coverage
+  remain open. Indexing never executes a framework or test.
+- **Task economics:** Qwen3-4B-Instruct-2507/OMP can make real edits. Both corrected
+  parser patches pass their external oracle, but composed execution times out with
+  greater known usage. Two further upstream percent-decoder pairs expose 18 unchanged
+  public tests and compare prompt caching off/on. Every arm fails the external oracle;
+  the cached composed arm makes no edits. No general task or total-cost benefit is
+  established. Unknown usage and failed attempts remain in the record.
+- **Native validation:** Linux passes tokenizer parity, 8,192-token inference under
+  8 GiB and the new portable single/batched/full-window receipt. Strict CPU/Metal
+  comparison and [native commands](measurement-handoff.md) are ready. No Metal receipt
+  exists here; GPU resource/isolation and signed installed-package checks need a
+  suitable runner. Model/representation quality still needs independent evaluation.
 
-[Current validation](validation.md#fair-preparation-and-evidence-delivery--2026-10-11)
-records the bounded experiments, raw artifact locations, failures and checks. New
-artifacts are outside Git under `/workspace/.context-foundry-tools/validation-runs/`;
-older `/tmp` artifacts did not survive the environment restart. A restored tool cache
-does not prove clean installation from the setup draft. macOS validation is deferred
-by the owner; 013 learning remains frozen off. Nothing is released.
+These are **not all macOS blockers**. Late chunking remains a conditional backend
+candidate; native macOS CPU policy, global GPU headroom and useful generated-knowledge/
+memory outcomes also remain open. 013 stays frozen off. Nothing is released or
+promoted to a new default.
+
+[Current validation](validation.md#broader-evidence-and-representative-workload--2026-10-11)
+records raw artifact locations, frozen identities, failures and checks. Current files
+are outside Git under `/workspace/.context-foundry-tools/validation-runs/`, with the
+latest corpus, profiles, reports and transcripts in `quality-scale-economics-v5`.
+Historical `/tmp` artifacts did not survive the environment restart. Restored tool
+caches do not prove a clean installation from the onboarding draft; see [resume](resume.md).
 
 The table below is the **2026-10-08 main-branch baseline**; later experimental
 amendments supersede its completion and next-work descriptions. Nothing is released.

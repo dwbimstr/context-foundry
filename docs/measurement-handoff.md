@@ -1,9 +1,82 @@
 # Measurement handoff
 
+**2026-10-11 portable numerical handoff.** Linux has verified real CPU embedding
+artifacts; macOS/Metal hardware remains unavailable in this sandbox. The new
+[`embedding_parity`](../tests/embedding_parity.rs) test writes a versioned receipt
+containing the descriptor, worker executable hash, exact token IDs, vectors,
+platform and elapsed time. It requires the production 8,192-token geometry, checks
+four heterogeneous inputs singly and together, and includes a full-window input.
+It refuses an existing output path. Run the same test separately on Linux CPU
+(adapter revision 3) and Apple silicon Metal (revision 4), using the same pinned
+BF16 GGUF, tokenizer, pooling, dimensions, templates and geometry:
+
+```sh
+FOUNDRY_EMBED_PROFILE=/absolute/native-profile.json \
+FOUNDRY_EMBED_RECEIPT=/absolute/new-native-receipt.json \
+cargo test --locked --test embedding_parity \
+  -- --ignored --exact real_native_embedding_receipt --nocapture
+
+FOUNDRY_EMBED_CPU_RECEIPT=/absolute/cpu-receipt.json \
+FOUNDRY_EMBED_METAL_RECEIPT=/absolute/metal-receipt.json \
+cargo test --locked --test embedding_parity \
+  -- --ignored --exact compare_cpu_and_metal_receipts --nocapture
+```
+
+Build the native worker with `cargo build --locked --features embed-worker --bin
+foundry-embed`, package it with `scripts/embed-worker-bundle.sh`, and update the
+profile with the executable hash **after signing**. Use physical model/scratch paths
+and the existing bundle instructions. The comparator requires matching descriptors
+except for the backend revision and identical token inputs. Both vectors must be
+finite and normalized within 0.0001, with cosine at least 0.9999. It explicitly
+requires Linux and macOS arm64 receipts; a Linux-only or zero-test run cannot pass
+as Metal validation. Passing does not make the two function/cache identities
+interchangeable, select a model, establish retrieval quality, or certify GPU pressure,
+isolation or a distributed package. Keep the existing native lifecycle and signed
+installed-artifact checks below.
+
+**Representative workload continuation.** The Linux corpus, exact manifest, profile
+and raw reports are recorded in [current validation](validation.md#broader-evidence-and-representative-workload--2026-10-11).
+To inventory another restored copy, provide the 60–80k regular-file manifest as JSON
+`{"files":[["relative/path", byte_length, "sha256"], ...]}` and the matching body-v1
+profile. Use a new absolute output directory outside Git and outside the corpus:
+
+```sh
+FOUNDRY_SEMANTIC_SCALE_ROOT=/absolute/corpus \
+FOUNDRY_SEMANTIC_SCALE_MANIFEST=/absolute/manifest.json \
+FOUNDRY_SEMANTIC_SCALE_PROFILE=/absolute/body-profile.json \
+FOUNDRY_SEMANTIC_SCALE_DIR=/absolute/new-inventory \
+cargo test --locked --test semantic_scale \
+  -- --ignored --exact representative_corpus_workload_inventory --nocapture
+
+foundry --store /absolute/new-inventory/store semantic prepare \
+  --profile /absolute/body-profile.json --budget-seconds 1800 --development-isolation
+```
+
+The inventory has a 1,800-second deadline including indexing; failure preserves a
+partial workload report. To continue only its unfinished suffix, set
+`FOUNDRY_SEMANTIC_SCALE_PREVIOUS=/absolute/prior-inventory/workload.json` and select
+a new output directory with the same manifest/root/profile. The prior store must
+have no source changes; the continuation rechecks the fitted prefix's hashes.
+Use the `store_directory` from the continuation report for subsequent preparation;
+the new report directory does not duplicate the store. Per-file counts continue exactly. Because the prior key set is not persisted,
+combined distinct-input/token counts become explicit bounds rather than an exact
+union; raw vector-payload bounds follow those counts. Preserve the failed phase.
+The inventory uses the real tokenizer but performs no model inference
+and does not persist semantic partitions. Preparation must still fit/cache/publish
+its own current sources. Resume the same store/profile, retaining every phase's
+output and the current coverage counts. Freeze hardware, budget, artifact hashes,
+cache capacity and corpus identity before timing; run one model/build job at a time.
+The measured Rust/Go recipe needs at least 2.24 GiB of raw vector payload; the
+default 2 GiB cache cap cannot cover it. Select a larger explicit `--cache-cap` and
+check disk for cache, partitions and ANN storage before attempting a complete run.
+Full completion requires no unpartitioned sources, missing inputs or unpublished
+current locations, followed by real serving and changed-input checks. A completed
+file scan or fitting inventory alone cannot close semantic scale acceptance.
+
 **2026-10-10 continuation:** historical results below do not cover the new explicit
 geometry/body representation or generation Metal controls. This cloud sandbox is
 Linux x86_64 with a four-CPU cgroup quota, five affinity-visible CPUs and 32 GiB memory;
-there is no exposed GPU, macOS execution target or selected embedding artifact.
+there is no exposed GPU or macOS execution target. The subsequent Linux work selected and verified real embedding artifacts.
 Real CPU generation comparisons are recorded in [validation](validation.md).
 For an admitted macOS development bundle and explicitly selected profile, run:
 
@@ -30,10 +103,9 @@ large to copy. Rows 1–3, 5, 6 and 7 below ran on the development host (Apple s
 The selected profile is EmbeddingGemma 2. Nemotron 3 Embed 1B's G2 runs were INVALID,
 and the owner closed it.
 
-What remains is row 4, which needs the Developer ID-signed package, and two
-record-only timings that this host could not take without swapping. Every task below
-is implemented, reviewed and gated. This file lists only what is still owed, what each
-measurement decides, and how to run it.
+For that 2026-10-08 baseline, row 4 and two record-only timings remained. The newer
+continuation above adds open numerical, scale and hardware checks; the historical
+table does not establish their acceptance. The baseline timing attempts swapped.
 
 ## While this handoff is open
 

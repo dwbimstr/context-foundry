@@ -14,7 +14,7 @@ use tree_sitter::Node;
 
 const SCOPES: TableDefinition<&str, &str> = TableDefinition::new("boundary_scopes");
 const KEYS: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("boundary_keys");
-pub const RECIPE: &str = "python-http-v5";
+pub const RECIPE: &str = "python-http-v6";
 const MAX_FILES: usize = 64;
 const MAX_FACTS: usize = 128;
 const MAX_RESULTS: usize = 64;

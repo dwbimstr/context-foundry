@@ -11,6 +11,231 @@ use context_foundry::{Control, Engine, testkit};
 use serde_json::json;
 use std::time::{Duration, Instant};
 
+/// Inventory every admitted source with the production body fitter and exact
+/// tokenizer. This measures the whole inference obligation without pretending
+/// that tokenization or a small embedded sample completed model coverage.
+#[test]
+#[ignore = "explicit 60–80k public manifest, profile and new output outside Git"]
+fn representative_corpus_workload_inventory() {
+    use context_foundry::neural::{partition, tokenize::DocumentTokenizer};
+    use std::{collections::BTreeMap, path::PathBuf};
+    let path = |key| PathBuf::from(std::env::var_os(key).expect(key));
+    let dir = path("FOUNDRY_SEMANTIC_SCALE_DIR");
+    let root = path("FOUNDRY_SEMANTIC_SCALE_ROOT").canonicalize().unwrap();
+    assert!(
+        dir.is_absolute()
+            && !dir.starts_with(env!("CARGO_MANIFEST_DIR"))
+            && !dir.starts_with(&root)
+    );
+    std::fs::create_dir(&dir).unwrap();
+    let manifest_bytes = std::fs::read(path("FOUNDRY_SEMANTIC_SCALE_MANIFEST")).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+    let files = manifest["files"].as_array().unwrap();
+    assert!((60_000..=80_000).contains(&files.len()));
+    let profile = SemanticProfile::load(&path("FOUNDRY_SEMANTIC_SCALE_PROFILE")).unwrap();
+    let partition::Representation::Body { parent_tokens } = profile.representation else {
+        panic!("body profile required")
+    };
+    // An explicit continuation reuses only a verified fitted prefix. The full
+    // key set is intentionally not persisted, so distinct-input totals become
+    // bounds across phases rather than an invented exact union.
+    let previous = std::env::var_os("FOUNDRY_SEMANTIC_SCALE_PREVIOUS").map(|path| {
+        let path = PathBuf::from(path);
+        let bytes = std::fs::read(&path).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            value["manifest_sha256"],
+            context_foundry::digest(&manifest_bytes)
+        );
+        assert_eq!(value["profile"], serde_json::to_value(&profile).unwrap());
+        assert_eq!(value["complete"], false);
+        assert!(!path.parent().unwrap().join("failure.json").exists());
+        (path, value, context_foundry::digest(&bytes))
+    });
+    let prior = |key: &str| {
+        previous
+            .as_ref()
+            .map_or(0, |(_, v, _)| v[key].as_u64().unwrap())
+    };
+    let first = prior("visited_files") as usize;
+    assert!(first < files.len());
+    let prior_keys = previous.as_ref().map_or(0, |(_, v, _)| {
+        v["distinct_model_inputs_lower_bound"]
+            .as_u64()
+            .unwrap_or_else(|| v["distinct_model_inputs"].as_u64().unwrap())
+    });
+    let prior_keys_upper = previous.as_ref().map_or(0, |(_, v, _)| {
+        v["distinct_model_inputs_upper_bound"]
+            .as_u64()
+            .unwrap_or(prior_keys)
+    });
+    let prior_tokens = previous.as_ref().map_or(0, |(_, v, _)| {
+        v["distinct_input_tokens_lower_bound"]
+            .as_u64()
+            .unwrap_or_else(|| v["distinct_input_tokens"].as_u64().unwrap())
+    });
+    let prior_tokens_upper = previous.as_ref().map_or(0, |(_, v, _)| {
+        v["distinct_input_tokens_upper_bound"]
+            .as_u64()
+            .unwrap_or(prior_tokens)
+    });
+    let store = previous.as_ref().map_or_else(
+        || dir.join("store"),
+        |(path, v, _)| {
+            v["store_directory"]
+                .as_str()
+                .map_or_else(|| path.parent().unwrap().join("store"), PathBuf::from)
+        },
+    );
+    let started = Instant::now();
+    let control = Control::with_deadline(started + Duration::from_secs(1800));
+    let mut engine = if previous.is_some() {
+        Engine::open_existing(&store)
+    } else {
+        Engine::initialize(&store, &root)
+    }
+    .unwrap();
+    let indexed = engine.index(&root, &control).unwrap();
+    assert!(!indexed.partial);
+    let index_ms = started.elapsed().as_millis();
+    if let Some((_, previous, _)) = &previous {
+        assert_eq!(
+            previous["indexed"]["source_revision"],
+            indexed.source_revision
+        );
+        assert_eq!((indexed.changed, indexed.deleted), (0, 0));
+        for file in files.iter().take(first) {
+            control.check().unwrap();
+            let name = file[0].as_str().unwrap();
+            if let Some(source) = engine.source(name).unwrap() {
+                assert_eq!(file[2], source.hash);
+                assert_eq!(
+                    file[2],
+                    context_foundry::digest(&std::fs::read(root.join(name)).unwrap())
+                );
+            }
+        }
+    }
+    let prefix_verification_ms = started.elapsed().as_millis() - index_ms;
+    let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+    let function = profile.descriptor.digest();
+    let recipe = partition::CardRecipe {
+        template: &profile.descriptor.document_template,
+        function_digest: &function,
+        card_tokens: profile.card_tokens as usize,
+    };
+    let mut keys = BTreeMap::<String, usize>::new();
+    let (mut visited, mut admitted, mut excluded, mut empty, mut cards, mut tokens) = (
+        first as u64,
+        prior("admitted_sources"),
+        prior("excluded_files"),
+        prior("sources_without_cards"),
+        prior("source_card_locations"),
+        prior("tokens_including_duplicate_inputs"),
+    );
+    let mut projects: BTreeMap<String, [u64; 3]> =
+        previous.as_ref().map_or_else(BTreeMap::new, |(_, v, _)| {
+            serde_json::from_value(v["projects_admitted_cards_tokens"].clone()).unwrap()
+        });
+    let save = |visited,
+                admitted,
+                excluded,
+                empty,
+                cards,
+                tokens,
+                keys: &BTreeMap<String, usize>,
+                projects: &BTreeMap<String, [u64; 3]>| {
+        let key_lower = prior_keys.max(keys.len() as u64);
+        let key_upper = prior_keys_upper + keys.len() as u64;
+        let token_sum = keys.values().sum::<usize>() as u64;
+        let report = json!({"scope":"corpus_exact_input_workload_not_embedding_or_retrieval_acceptance",
+            "first_manifest_offset":first,"previous_report_sha256":previous.as_ref().map(|(_,_,h)| h),"store_directory":store,
+            "distinct_model_inputs_lower_bound":key_lower,"distinct_model_inputs_upper_bound":key_upper,
+            "distinct_input_tokens_lower_bound":prior_tokens.max(token_sum),"distinct_input_tokens_upper_bound":prior_tokens_upper+token_sum,
+            "f32_vector_payload_bytes_lower_bound":key_lower * profile.descriptor.dims() as u64 * 4,"f32_vector_payload_bytes_upper_bound":key_upper * profile.descriptor.dims() as u64 * 4, "complete":visited == files.len() as u64, "inference_executed":false,
+            "manifest_sha256":context_foundry::digest(&manifest_bytes), "regular_files":files.len(),"visited_files":visited,"admitted_sources":admitted,"excluded_files":excluded,"sources_without_cards":empty,
+            "source_card_locations":cards,"tokens_including_duplicate_inputs":tokens,"distinct_model_inputs":previous.is_none().then_some(keys.len()),"distinct_input_tokens":previous.is_none().then_some(token_sum),
+            "f32_vector_payload_bytes":previous.is_none().then_some(keys.len() * profile.descriptor.dims() * 4),
+            "projects_admitted_cards_tokens":projects,"profile":profile,"indexed":indexed,"index_ms":index_ms,"prefix_verification_ms":prefix_verification_ms,"elapsed_ms":started.elapsed().as_millis()});
+        std::fs::write(
+            dir.join("workload.json"),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .unwrap();
+    };
+    save(
+        visited, admitted, excluded, empty, cards, tokens, &keys, &projects,
+    );
+    for file in files.iter().skip(first) {
+        if control.check().is_err() {
+            break;
+        }
+        let name = file[0].as_str().unwrap();
+        let Some(source) = engine.source(name).unwrap() else {
+            visited += 1;
+            excluded += 1;
+            continue;
+        };
+        let body = std::fs::read_to_string(root.join(name)).unwrap();
+        assert_eq!(file[1], body.len());
+        assert_eq!(file[2], context_foundry::digest(body.as_bytes()));
+        assert_eq!(file[2], source.hash, "indexed source differs from manifest");
+        admitted += 1;
+        let mut count = 0;
+        let project = projects
+            .entry(name.split('/').next().unwrap().into())
+            .or_default();
+        project[0] += 1;
+        let fitted = partition::body::visit(
+            &body,
+            context_foundry::syntax::Lang::from_path(name),
+            &recipe,
+            parent_tokens as usize,
+            &tokenizer,
+            |_, card| {
+                count += 1;
+                cards += 1;
+                tokens += card.ids.len() as u64;
+                project[1] += 1;
+                project[2] += card.ids.len() as u64;
+                if let Some(previous) = keys.insert(card.input_key, card.ids.len()) {
+                    assert_eq!(previous, card.ids.len());
+                }
+            },
+        );
+        if let Err(error) = fitted {
+            save(
+                visited, admitted, excluded, empty, cards, tokens, &keys, &projects,
+            );
+            std::fs::write(
+                dir.join("failure.json"),
+                serde_json::to_vec_pretty(
+                    &json!({"path":name,"source_sha256":source.hash,"error":error.to_string()}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            panic!("{name}: {error}");
+        }
+        visited += 1;
+        empty += u64::from(count == 0);
+        if visited % 1000 == 0 {
+            save(
+                visited, admitted, excluded, empty, cards, tokens, &keys, &projects,
+            );
+        }
+    }
+    save(
+        visited, admitted, excluded, empty, cards, tokens, &keys, &projects,
+    );
+    assert_eq!(
+        visited,
+        files.len() as u64,
+        "deadline: partial workload report retained"
+    );
+    assert_eq!(admitted, engine.status().unwrap().source_count);
+}
+
 /// Real source/tokenizer/isolated worker, with the same exact inputs in every
 /// arm. This diagnoses inference geometry; it is not a corpus-completion or
 /// retrieval-quality test. The operator supplies frozen source hashes first.

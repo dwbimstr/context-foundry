@@ -1017,3 +1017,18 @@ with 10 metered and 1 unknown request. Known composed input is 40,844 tokens ver
 19,474 for the control. A correct final patch does not turn an unfinished, incompletely
 metered host run into a completion-cost win. General task/economic acceptance remains
 open; see [the follow-up](../../docs/validation.md#fair-preparation-and-evidence-delivery--2026-10-11).
+
+
+The next host recipe also exposes percent-encoding 2.3.2's unchanged upstream unit
+tests through a public checker, with exact edits and bash available in both arms.
+An explicit local-server slot reset allows a separate prompt-cached comparison with
+empty initial KV state in each arm and actual cached-token accounting. It uses
+llama.cpp `b9acf138`, `tools/server/server-context.cpp::handle_slots_erase` and
+`tools/server/tests/unit/test_slot_save.py::test_slot_erase` (inspected, not run).
+Foundry's real-host harness checks and retains each erase response; its ordinary
+uncached recipe remains available. This affects only the explicitly invoked local
+calibration harness. External oracles, protected files, task/output budgets and the
+completion-cost eligibility rule remain unchanged. Failed and incompletely metered
+runs stay in the record. The comparator reports total and uncached input ratios
+separately, rejects impossible cached totals, and leaves monetary/amortized cost
+unknown; cached input is observed usage, not inferred monetary savings.

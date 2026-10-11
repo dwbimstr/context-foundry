@@ -946,3 +946,71 @@ fn relative_router_imports_require_a_configured_unambiguous_package_path() {
         "competing module layouts cannot certify the join"
     );
 }
+
+#[test]
+fn package_router_definitions_are_source_bound_without_following_reexports() {
+    let (_dir, e) = fixture();
+    let app = "from fastapi import FastAPI\nfrom . import router\napp = FastAPI()\napp.include_router(router, prefix='/v1')\n";
+    let routes = "from fastapi import APIRouter\nrouter = APIRouter()\n@router.get('/items')\ndef items(): return {}\n";
+    let config = json!({"v":1,"services":[{"id":"catalog","providers":["pkg/app.py","pkg/__init__.py"],"origins":["http://catalog"]}],"consumers":["client.py"]}).to_string();
+    e.replace_source("boundary.json", &config).unwrap();
+    e.replace_source("pkg/app.py", app).unwrap();
+    e.replace_source("pkg/__init__.py", routes).unwrap();
+    publish(&e);
+    let relation = &read(&e).relations[0];
+    assert_eq!(relation.resolution, "exact_key");
+    assert_eq!(relation.providers[0].evidence.path, "pkg/__init__.py");
+    // An edit to the imported package invalidates the published service proof.
+    e.replace_source("pkg/__init__.py", &routes.replace("'/items'", "'/books'"))
+        .unwrap();
+    assert_eq!(read(&e).relations[0].resolution, "incomplete");
+    publish(&e);
+    assert!(read(&e).relations[0].providers.is_empty());
+    e.replace_source("pkg/__init__.py", "from .routes import router\n")
+        .unwrap();
+    e.replace_source("pkg/routes.py", routes).unwrap();
+    publish(&e);
+    assert_eq!(read(&e).relations[0].resolution, "incomplete");
+    e.replace_source("pkg/__init__.py", routes).unwrap();
+    for import in ["from pkg import router", "from . import router"] {
+        e.replace_source("pkg/app.py", &app.replace("from . import router", import))
+            .unwrap();
+        publish(&e);
+        assert_eq!(read(&e).relations[0].resolution, "exact_key");
+    }
+    e.replace_source(
+        "pkg/__init__.py",
+        &(String::from("from .app import app\n") + routes),
+    )
+    .unwrap();
+    publish(&e);
+    assert_eq!(
+        read(&e).relations[0].resolution,
+        "incomplete",
+        "package cycles stay unsupported"
+    );
+}
+
+#[test]
+#[ignore = "requires installed FastAPI/Starlette/httpx; runs only a generated fixture"]
+fn real_fastapi_package_router_contract() {
+    let (dir, e) = fixture();
+    let root = dir.path().join("root");
+    std::fs::create_dir(root.join("pkg")).unwrap();
+    let app = "from fastapi import FastAPI\nfrom . import router\napp = FastAPI()\napp.include_router(router, prefix='/v1')\n";
+    let routes = "from fastapi import APIRouter\nrouter = APIRouter()\n@router.get('/items')\ndef items(): return {'items':['book']}\n";
+    e.replace_source("boundary.json", &json!({"v":1,"services":[{"id":"catalog","providers":["pkg/app.py","pkg/__init__.py"],"origins":["http://catalog"]}],"consumers":["client.py"]}).to_string()).unwrap();
+    for (path, body) in [("pkg/app.py", app), ("pkg/__init__.py", routes)] {
+        e.replace_source(path, body).unwrap();
+        std::fs::write(root.join(path), body).unwrap();
+    }
+    assert_eq!(publish(&e).incomplete, 0);
+    assert_eq!(read(&e).relations[0].resolution, "exact_key");
+    let out = Command::new("python3").args(["-B", "-c", "from pkg.app import app\nfrom fastapi.testclient import TestClient\nimport importlib.metadata as m\nr=TestClient(app).get('/v1/items',follow_redirects=False)\nassert r.status_code==200 and r.json()=={'items':['book']}\nprint(m.version('fastapi'),m.version('starlette'),m.version('httpx'))"]).current_dir(root).output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    eprintln!("runtime {}", String::from_utf8_lossy(&out.stdout));
+}
