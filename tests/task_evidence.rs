@@ -407,51 +407,65 @@ fn composed_mounted_routes_require_declaration_and_mount_bodies() {
 
 #[test]
 fn cross_file_mount_proof_is_delivered_whole_or_omitted() {
-    let e = fixture();
-    e.engine.replace_source("service.py","from fastapi import FastAPI\nfrom routes import router\napp = FastAPI()\napp.include_router(router, prefix='/v1')\n").unwrap();
-    e.engine.replace_source("routes.py","from fastapi import APIRouter\nrouter = APIRouter()\n@router.get('/items')\ndef items(): return {'items':['book']}\n").unwrap();
-    e.engine.replace_source("boundary.json", &json!({"v":1,"services":[{"id":"catalog","providers":["service.py","routes.py"],"origins":["http://catalog"]}],"consumers":["client.py","test_contract.py"]}).to_string()).unwrap();
-    e.engine
-        .index_boundaries("boundary.json", &[], &Control::unbounded())
-        .unwrap();
-    let c = compose(&e);
-    let mut count = 0;
-    for tokens in [1500, 2500, 4000, 12000] {
-        let Ok(p) = response::pack_enriched_context(
-            &c,
-            None,
-            Budget::request(tokens),
-            &response::stdout_bytes,
-        ) else {
-            continue;
+    for reexport in [false, true] {
+        let e = fixture();
+        let mut providers = vec!["service.py", "routes.py"];
+        let import = if reexport {
+            e.engine
+                .replace_source("public/__init__.py", "from routes import router\n")
+                .unwrap();
+            providers.push("public/__init__.py");
+            "from public import router"
+        } else {
+            "from routes import router"
         };
-        let r = report(&p.text);
-        for line in p
-            .text
-            .lines()
-            .filter_map(|l| l.strip_prefix("task-relationship: "))
-        {
-            let relationship: Value = serde_json::from_str(line).unwrap();
-            let deps = relationship["dependencies"].as_array().unwrap();
-            assert_eq!(deps.len(), 3);
-            for dependency in deps {
-                let wanted =
-                    context_foundry::store::HandleRef::parse(dependency.as_str().unwrap()).unwrap();
-                assert!(r["sources"].as_array().unwrap().iter().any(|s| {
-                    let h = context_foundry::store::HandleRef::parse(s["handle"].as_str().unwrap())
-                        .unwrap();
-                    s["representation"] == "body"
-                        && h.path == wanted.path
-                        && h.sha32 == wanted.sha32
-                        && h.start <= wanted.start
-                        && h.end >= wanted.end
-                }));
+        e.engine.replace_source("service.py", &format!("from fastapi import FastAPI\n{import}\napp = FastAPI()\napp.include_router(router, prefix='/v1')\n")).unwrap();
+        e.engine.replace_source("routes.py","from fastapi import APIRouter\nrouter = APIRouter()\n@router.get('/items')\ndef items(): return {'items':['book']}\n").unwrap();
+        e.engine.replace_source("boundary.json", &json!({"v":1,"services":[{"id":"catalog","providers":providers,"origins":["http://catalog"]}],"consumers":["client.py","test_contract.py"]}).to_string()).unwrap();
+        e.engine
+            .index_boundaries("boundary.json", &[], &Control::unbounded())
+            .unwrap();
+        let c = compose(&e);
+        let mut count = 0;
+        for tokens in [1500, 2500, 4000, 12000] {
+            let Ok(p) = response::pack_enriched_context(
+                &c,
+                None,
+                Budget::request(tokens),
+                &response::stdout_bytes,
+            ) else {
+                continue;
+            };
+            let r = report(&p.text);
+            for line in p
+                .text
+                .lines()
+                .filter_map(|l| l.strip_prefix("task-relationship: "))
+            {
+                let relationship: Value = serde_json::from_str(line).unwrap();
+                let deps = relationship["dependencies"].as_array().unwrap();
+                assert_eq!(deps.len(), 3 + usize::from(reexport));
+                for dependency in deps {
+                    let wanted =
+                        context_foundry::store::HandleRef::parse(dependency.as_str().unwrap())
+                            .unwrap();
+                    assert!(r["sources"].as_array().unwrap().iter().any(|s| {
+                        let h =
+                            context_foundry::store::HandleRef::parse(s["handle"].as_str().unwrap())
+                                .unwrap();
+                        s["representation"] == "body"
+                            && h.path == wanted.path
+                            && h.sha32 == wanted.sha32
+                            && h.start <= wanted.start
+                            && h.end >= wanted.end
+                    }));
+                }
+                count += 1;
             }
-            count += 1;
+            assert!(p.tokens <= tokens);
         }
-        assert!(p.tokens <= tokens);
+        assert!(count > 0);
     }
-    assert!(count > 0);
 }
 #[test]
 fn composes_task_and_multiservice_evidence_with_exact_citations_and_no_duplicate_spans() {

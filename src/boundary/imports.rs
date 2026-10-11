@@ -1,4 +1,5 @@
-//! Narrow, source-only Python imports for direct cross-file router mounts.
+//! Narrow, source-only Python imports for cross-file router mounts and named
+//! re-exports. Cycles, shadowing, escape and unconfigured modules stay incomplete.
 //! All files are explicitly configured providers of the same service. This is
 //! not Python import execution or a claim about runtime module resolution.
 use super::*;
@@ -8,6 +9,7 @@ pub(super) struct External {
     pub mounts: BTreeMap<String, (String, Vec<Span>)>,
     pub accepted: BTreeSet<usize>,
     pub incomplete: bool,
+    pub reexport_only: bool,
     pub inputs: BTreeMap<String, Option<String>>,
 }
 
@@ -41,8 +43,8 @@ fn module_path(path: &str, module: &str, admitted: &[String]) -> Option<String> 
     let stem = parts.join("/");
     let file = format!("{stem}.py");
     let package = format!("{stem}/__init__.py");
-    // Only direct definitions in one explicitly configured module or package.
-    // Re-exports, search-path precedence and competing layouts are not guessed.
+    // Exactly one explicitly configured module or package. Search-path
+    // precedence and competing layouts are not guessed.
     match (admitted.contains(&file), admitted.contains(&package)) {
         (true, false) => Some(file),
         (false, true) => Some(package),
@@ -58,6 +60,8 @@ pub(super) fn collect(
     let mut out = BTreeMap::<String, External>::new();
     let mut claimed = BTreeSet::new();
     let mut edges = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut exports = BTreeMap::<String, BTreeMap<String, (String, String, Span)>>::new();
+    let mut mounts = Vec::new();
     let mut active = false;
     for path in &service.providers {
         control.check()?;
@@ -122,6 +126,19 @@ pub(super) fn collect(
             .iter()
             .map(|(name, (_, _, n))| (name.clone(), vec![(n.start_byte(), n.end_byte())]))
             .collect();
+        let import_starts: BTreeSet<_> =
+            bindings.values().map(|(_, _, n)| n.start_byte()).collect();
+        // A pure forwarding module need not construct its own app. Arbitrary
+        // module code, unsupported imports or conditional exports cannot use
+        // this exemption from the extractor's missing-app check.
+        out.entry(path.clone()).or_default().reexport_only = !bindings.is_empty()
+            && top.iter().all(|n| {
+                import_starts.contains(&n.start_byte())
+                    || n.kind() == "comment"
+                    || (n.kind() == "expression_statement"
+                        && n.named_child(0)
+                            .is_some_and(|n| literal(n, source).is_some()))
+            });
         for &statement in &top {
             if statement.kind() != "expression_statement" {
                 continue;
@@ -163,19 +180,13 @@ pub(super) fn collect(
                 .or_default()
                 .accepted
                 .insert(n.start_byte());
-            let destination = out.entry(target.clone()).or_default();
-            if claimed.insert((target.clone(), symbol.clone())) {
-                destination.mounts.insert(
-                    symbol.clone(),
-                    (
-                        prefix,
-                        vec![span(path, &meta.hash, *import), span(path, &meta.hash, n)],
-                    ),
-                );
-            } else {
-                destination.mounts.remove(symbol);
-                destination.incomplete = true;
-            }
+            mounts.push((
+                path.clone(),
+                target.clone(),
+                symbol.clone(),
+                prefix,
+                vec![span(path, &meta.hash, *import), span(path, &meta.hash, n)],
+            ));
         }
         // Any escaped/shadowed imported alias makes the entire service proof
         // incomplete. Do not follow alias assignments, calls or star imports.
@@ -199,6 +210,42 @@ pub(super) fn collect(
                 out.entry(path.clone()).or_default().incomplete = true;
             }
             stack.extend(children(n));
+        }
+        exports.insert(
+            path.clone(),
+            bindings
+                .into_iter()
+                .map(|(alias, (target, symbol, import))| {
+                    (alias, (target, symbol, span(path, &meta.hash, import)))
+                })
+                .collect(),
+        );
+    }
+    // Resolve only explicit named imports after every configured module has
+    // been examined. The original binding/escape checks still govern each
+    // intermediate module. No source lookup or Python execution occurs here.
+    for (importer, mut target, mut symbol, prefix, mut dependencies) in mounts {
+        let mut visited = BTreeSet::new();
+        loop {
+            control.check()?;
+            if !visited.insert(target.clone()) || visited.len() > service.providers.len() {
+                out.entry(importer.clone()).or_default().incomplete = true;
+                break;
+            }
+            if let Some((next, name, import)) = exports.get(&target).and_then(|e| e.get(&symbol)) {
+                dependencies.push(import.clone());
+                target = next.clone();
+                symbol = name.clone();
+                continue;
+            }
+            let destination = out.entry(target.clone()).or_default();
+            if claimed.insert((target.clone(), symbol.clone())) {
+                destination.mounts.insert(symbol, (prefix, dependencies));
+            } else {
+                destination.mounts.remove(&symbol);
+                destination.incomplete = true;
+            }
+            break;
         }
     }
     if active {

@@ -671,3 +671,22 @@ observed target source lines, with task entry IDs attached to the existing bound
 execution proof. It adds no graph truth or execution behavior. A positive overlap is
 traceability only; satisfaction and complete coverage remain unestablished. Broader
 collectors/frameworks and runtime identity remain open under T005.
+
+T005 named re-export continuation (2026-10-11): `python-http-v7` follows explicit
+module-level `from module import name [as alias]` chains to a configured router
+definition, including package initializers. Every hop must resolve unambiguously
+inside the same configured service; traversal cannot exceed its 64-file admission.
+The published provider cites each import hop, the router declaration and the app
+registration. Existing service-wide input hashes govern stale suppression, restart,
+changed-path republication and the final commit check. No table, source admission,
+Python execution or runtime-resolution claim is added.
+
+A forwarding module containing only these imports, comments and simple string
+literals need not construct an app itself. Other module code cannot use that
+exemption. Unsupported/star/conditional imports, cycles, competing layouts,
+duplicate/shadowed/escaped aliases and multiple mounts remain incomplete. Old recipe
+rows need explicit or already-enabled watcher republication. Tests cover two-hop
+aliases, edits/reverts/deletion/restart, refusal cases and whole-proof task packing;
+an explicitly invoked real FastAPI fixture confirms a request through a package
+re-export. Broader import forms, frameworks, dynamic collectors and cross-language
+evidence remain open.

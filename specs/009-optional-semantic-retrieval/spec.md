@@ -12,8 +12,11 @@ symbol/search requests retain their existing materialization.
 Complete file-overview coverage now interleaves lexical evidence first, just as
 partial preparation does: complete coarse coverage does not justify spending every
 early slot on file vectors. Existing candidate/per-file/output limits still apply.
-Plural uppercase acronyms in prose use the acronym (`CPUs` → `cpu`) rather than
-CamelCase fragments (`CP`/`Us`); explicit/defined symbol requests are unchanged.
+Plural uppercase acronyms in prose use singular/plural alternatives (`CPUs` →
+`cpu` or `cpus`) rather than CamelCase fragments (`CP`/`Us`). Both alternatives
+share one constant concept score and one adjacent-concept bonus; repeating either
+form in the query or document adds no concept score. Explicit/defined symbol
+requests and stored tokenization are unchanged.
 Two broader lexical scoring trials regressed preserved evidence and were removed.
 
 CLI `search`/`context` now apply the same anchor/prose admission predicate before

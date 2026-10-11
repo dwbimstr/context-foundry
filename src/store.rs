@@ -3476,7 +3476,7 @@ fn prose_language(query: &str) -> Option<&'static str> {
 
 /// Query-only prose normalization; stored identifiers and explicit code requests
 /// retain their original tokenizer and schema.
-fn prose_terms(query: &str) -> Vec<String> {
+fn prose_concepts(query: &str) -> Vec<Vec<String>> {
     query
         .split_whitespace()
         .flat_map(|word| {
@@ -3484,39 +3484,69 @@ fn prose_terms(query: &str) -> Vec<String> {
             // CamelCase analysis splits "CPUs" as "CP"/"Us". In prose an
             // uppercase acronym followed only by plural s names the acronym;
             // ordinary/explicit identifier requests retain the indexed analysis.
-            let word = word
+            if let Some(stem) = word
                 .strip_suffix('s')
                 .filter(|stem| stem.len() >= 2 && stem.bytes().all(|b| b.is_ascii_uppercase()))
-                .unwrap_or(word);
+            {
+                // Both cpu and cpus occur in ordinary source. They express
+                // one query concept, not two separately rewarded matches.
+                return vec![vec![stem.to_ascii_lowercase(), word.to_ascii_lowercase()]];
+            }
             analyzed_terms(crate::syntax::code_subtokens, word)
+                .into_iter()
+                .map(|word| vec![word])
+                .collect()
         })
         .collect()
+}
+
+fn prose_terms(query: &str) -> Vec<String> {
+    prose_concepts(query).into_iter().flatten().collect()
 }
 
 /// Distinct concept coverage dominates frequency/rarity for prose. Adjacent
 /// concepts within 16 positions break ties, with a total bonus below one term.
 /// This uses the existing positional index; no expansion corpus or extra scan.
 fn prose_lexical(query: &str, body: Field) -> Box<dyn Query> {
-    let mut words = Vec::new();
+    let mut words: Vec<Vec<String>> = Vec::new();
     let language = prose_language(query);
-    for word in prose_terms(query) {
+    for concept in prose_concepts(query) {
         // A requested language is a metadata preference, not a required
         // behavioral concept. Rewarding its incidental appearance in long
         // comments can bury the implementation whose comments omit it.
-        if language != Some(word.as_str()) && !prose_stopword(&word) && !words.contains(&word) {
-            words.push(word);
-            if words.len() == 64 {
-                break;
+        if language == Some(concept[0].as_str()) || prose_stopword(&concept[0]) {
+            continue;
+        }
+        if let Some(previous) = words
+            .iter_mut()
+            .find(|previous| concept.iter().any(|word| previous.contains(word)))
+        {
+            for word in concept {
+                if !previous.contains(&word) {
+                    previous.push(word);
+                }
             }
+            continue;
+        }
+        words.push(concept);
+        if words.len() == 64 {
+            break;
         }
     }
     let mut clauses: Vec<Box<dyn Query>> = words
         .iter()
-        .map(|word| {
+        .map(|concept| {
             Box::new(ConstScoreQuery::new(
-                Box::new(TermQuery::new(
-                    Term::from_field_text(body, word),
-                    IndexRecordOption::Basic,
+                Box::new(BooleanQuery::union(
+                    concept
+                        .iter()
+                        .map(|word| {
+                            Box::new(TermQuery::new(
+                                Term::from_field_text(body, word),
+                                IndexRecordOption::Basic,
+                            )) as Box<dyn Query>
+                        })
+                        .collect(),
                 )),
                 1.0,
             )) as Box<dyn Query>
@@ -3524,13 +3554,21 @@ fn prose_lexical(query: &str, body: Field) -> Box<dyn Query> {
         .collect();
     let bonus = 0.5 / words.len().max(1) as f32;
     for pair in words.windows(2) {
-        let mut phrase = PhraseQuery::new(
-            pair.iter()
-                .map(|w| Term::from_field_text(body, w))
-                .collect(),
-        );
-        phrase.set_slop(16);
-        clauses.push(Box::new(ConstScoreQuery::new(Box::new(phrase), bonus)));
+        let mut phrases = Vec::new();
+        for left in &pair[0] {
+            for right in &pair[1] {
+                let mut phrase = PhraseQuery::new(vec![
+                    Term::from_field_text(body, left),
+                    Term::from_field_text(body, right),
+                ]);
+                phrase.set_slop(16);
+                phrases.push(Box::new(phrase) as Box<dyn Query>);
+            }
+        }
+        clauses.push(Box::new(ConstScoreQuery::new(
+            Box::new(BooleanQuery::union(phrases)),
+            bonus,
+        )));
     }
     Box::new(BooleanQuery::union(clauses))
 }

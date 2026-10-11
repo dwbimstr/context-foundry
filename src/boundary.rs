@@ -14,7 +14,7 @@ use tree_sitter::Node;
 
 const SCOPES: TableDefinition<&str, &str> = TableDefinition::new("boundary_scopes");
 const KEYS: MultimapTableDefinition<&str, &str> = MultimapTableDefinition::new("boundary_keys");
-pub const RECIPE: &str = "python-http-v6";
+pub const RECIPE: &str = "python-http-v7";
 const MAX_FILES: usize = 64;
 const MAX_FACTS: usize = 128;
 const MAX_RESULTS: usize = 64;
@@ -1233,6 +1233,7 @@ fn extract(
         && (service.is_none()
             || !apps.is_empty()
             || !resolved_mounts.is_empty()
+            || external.is_some_and(|e| e.reexport_only)
             || flask.is_some());
     for n in nodes {
         if n.kind() != "call" {

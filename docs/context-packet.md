@@ -25,7 +25,16 @@ The normal Linux embedding worker includes the 8,192-token pooled-output repair.
 
 Current evidence and limits:
 
-The newest [delivery/startup continuation](validation.md#evidence-delivery-and-unused-startup--2026-10-11)
+The latest [re-export/fitting continuation](validation.md#named-re-exports-and-current-fitting--2026-10-11)
+supports named router re-exports in configured Python modules with every hop cited.
+Boundary scopes now use `python-http-v7` and require republication. Acronym prose
+matches singular/plural forms as one concept. Current `overview3` fitting covers
+all 67,663 admitted Rust/Go sources across verified phases: 60,735–65,959 distinct
+inputs and 14.65–15.86 million tokens. This has not completed corpus-wide inference.
+Focused checks pass (556 tests), including bounded task proof delivery. Separate
+real FastAPI re-export checks also pass. Further import forms/frameworks, general quality and economics remain.
+
+The preceding [delivery/startup continuation](validation.md#evidence-delivery-and-unused-startup--2026-10-11)
 adds exact local evidence from coarse vectors, preserves lexical priority under complete
 file-overview coverage, fixes plural acronym queries and skips unused CLI model startup.
 File/hierarchy recipes now use `+overview3`: rerun explicit preparation (or the already
@@ -40,7 +49,8 @@ lexical results remain Foundry **2/8**, Rust **3/6** and **5/8**, Go **5/8**. On
 anchored CLI drops from 13.7 s to 1.5 s with identical output after skipping its unused
 model; total task benefits remain unproven. Artifacts are under
 `/workspace/.context-foundry-tools/validation-runs/evidence-delivery-v7/`.
-The v6/v5 inventories below are historical, not renewed scale acceptance of this recipe.
+The v6/v5 inventories below are historical; the current fitting result above also
+does not establish full-model scale acceptance.
 
 - **Retrieval:** experimental delivery remains 2/8 on Foundry, 3/6 on inspected Rust
   and 5/8 on additional public Rust questions. Two-passage selection and conservative
@@ -81,7 +91,7 @@ candidate; native macOS CPU acceptance, global GPU headroom and useful generated
 memory outcomes also remain open. 013 stays frozen off. Nothing is released or
 promoted to a new default.
 
-[Current validation](validation.md#broader-evidence-and-representative-workload--2026-10-11)
+[Current validation](validation.md#named-re-exports-and-current-fitting--2026-10-11)
 records raw artifact locations, frozen identities, failures and checks. Current files
 are outside Git under `/workspace/.context-foundry-tools/validation-runs/`, with the
 prior corpus, profiles, reports and transcripts in `quality-scale-economics-v5`.

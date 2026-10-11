@@ -1,5 +1,78 @@
 # Validation
 
+## Named re-exports and current fitting — 2026-10-11
+
+Continued from `b54ab8a` on `experimental/context-ecosystem`. Private artifacts:
+`/workspace/.context-foundry-tools/validation-runs/prose-aliases-v8/` and
+`/workspace/.context-foundry-tools/validation-runs/router-reexports-v9/`.
+
+**Retrieval.** Plural uppercase acronyms now match both ordinary source forms
+(`CPUs` matches `cpu` or `cpus`). The alternatives share one concept score and one
+proximity bonus, including repeated singular/plural query forms. Explicit symbols
+and the stored tokenizer are unchanged. Preserved lexical delivery remains Foundry
+2/8, inspected Rust 3/6, additional Rust 5/8 and Go 5/8. No previously delivered span
+is lost, and this matching fix alone establishes no general quality gain.
+The final quiet real-model comparison also remains **2/8**: seven eligible queries
+use dense serving without fallbacks and the anchored query skips the worker
+(`router-reexports-v9/foundry-semantic-accepted/report.json`). The questions, source
+hashes, deadlines and 2,048-token allowance are unchanged. Five cases lose evidence
+at materialization and one frozen source remains excluded; those failures remain open.
+
+**Boundary evidence.** `python-http-v7` follows named router re-exports through
+configured modules/package initializers, retaining exact import-hop dependencies.
+Pure forwarding modules need no app of their own; arbitrary code, unsupported imports,
+cycles, ambiguous layouts, escaped/shadowed aliases and multiple mounts remain
+incomplete. Resolution stays inside the configured service's existing 64-file bound.
+Dependency edits, deletion and restart suppress stale relationships; changed-path
+publication refreshes the admitted service, and unchanged replay parses zero files.
+Task composition delivers every dependency body or omits the relationship under its
+existing allowance. Old boundary recipe rows require republication.
+
+Real FastAPI **0.141.1**, Starlette **1.6.0**, httpx **0.28.1** passes a generated
+request through a package re-export. The four explicitly invoked FastAPI fixtures
+pass. The first Flask invocation selected a Python without Flask and failed import;
+using the already installed framework environment, the Flask **3.1.2** fixture passes.
+An initial implementation test caught forwarding modules being marked incomplete
+solely for lacking an app; the fix permits only the restricted forwarding syntax.
+Failures remain recorded alongside corrected runs. Indexing executes no Python.
+
+**Current representative fitting.** The same pinned Rust/Go manifest has 69,565
+regular files and **67,663 admitted sources**. All now fit with the current
+`overview-v1+overview3` recipe and real tokenizer, producing **67,585 card locations**;
+78 sources produce no card. The 600-second phase stops at 64,112 files as declared,
+retaining its partial report. Verified continuation finishes the remaining manifest
+in **69,091 ms**, including 4,429 ms checking the prefix's source hashes. Both phases
+use the same fitter executable, recorded in `inventory-provenance.json`.
+
+Distinct keys are not retained between phases, so the combined obligation is a bound:
+**60,735–65,959 inputs**, **14,651,529–15,857,818 input tokens**, and **177.93–193.24 MiB**
+of raw float vectors before metadata/ANN storage. Total tokens including duplicate
+inputs are 16,163,103. This token obligation exceeds the preceding recipe's 12,999,181
+distinct tokens; distributed extracts retain more source at a preparation cost.
+Compilation/retrieval checks overlapped parts of fitting, so wall times are not an
+isolated throughput comparison. This completes current fitting, **not full model
+inference or representative retrieval acceptance**. The small repository's completed
+274-vector model check remains separately scoped below.
+
+The inventory diagnostic now also records and checks the versioned fitter recipe
+before accepting a continuation. A matching profile alone cannot authorize mixing
+old/new extraction rules. Missing/older recipe identities are refused before indexing;
+the two completed phases above precede this guard and have separate same-binary
+provenance. Their raw reports were not relabeled.
+
+**Checks.** Focused library, core, MCP, multi-root, neural retrieval, response,
+attribution, boundary and task-evidence suites: **556 passed, 8 explicitly ignored**.
+The extended task packing check also passes for both direct and re-exported imports.
+Five framework checks were invoked separately as described above. Clippy with warnings
+denied, no-default-features library build, formatting and documentation links pass.
+
+**Remaining.** General retrieval quality and independent acceptance; selective body
+preparation alongside coarse coverage; full current-recipe representative inference,
+serving and sustained churn; further frameworks/import forms/dynamic collectors;
+reliable host tasks and complete amortized cost benefits; native macOS/Metal/GPU and
+installed-package acceptance. These are still active, and several remain Linux-feasible.
+013 stays frozen off; no release or default promotion is claimed.
+
 ## Evidence delivery and unused startup — 2026-10-11
 
 Continued from `e282d4a` on `experimental/context-ecosystem`. Private artifacts are

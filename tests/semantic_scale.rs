@@ -33,6 +33,9 @@ fn representative_corpus_workload_inventory() {
     let files = manifest["files"].as_array().unwrap();
     assert!((60_000..=80_000).contains(&files.len()));
     let profile = SemanticProfile::load(&path("FOUNDRY_SEMANTIC_SCALE_PROFILE")).unwrap();
+    let recipe_id = profile
+        .representation
+        .recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
     assert!(
         matches!(
             profile.representation,
@@ -52,6 +55,10 @@ fn representative_corpus_workload_inventory() {
             context_foundry::digest(&manifest_bytes)
         );
         assert_eq!(value["profile"], serde_json::to_value(&profile).unwrap());
+        assert_eq!(
+            value["recipe_id"], recipe_id,
+            "continuation requires the same versioned fitter; old reports without its identity cannot resume"
+        );
         assert_eq!(value["complete"], false);
         assert!(!path.parent().unwrap().join("failure.json").exists());
         (path, value, context_foundry::digest(&bytes))
@@ -171,7 +178,7 @@ fn representative_corpus_workload_inventory() {
             "manifest_sha256":context_foundry::digest(&manifest_bytes), "regular_files":files.len(),"visited_files":visited,"admitted_sources":admitted,"excluded_files":excluded,"sources_without_cards":empty,
             "source_card_locations":cards,"tokens_including_duplicate_inputs":tokens,"distinct_model_inputs":previous.is_none().then_some(keys.len()),"distinct_input_tokens":previous.is_none().then_some(token_sum),
             "f32_vector_payload_bytes":previous.is_none().then_some(keys.len() * profile.descriptor.dims() * 4),
-            "projects_admitted_cards_tokens":projects,"profile":profile,"indexed":indexed,"index_ms":index_ms,"prefix_verification_ms":prefix_verification_ms,"elapsed_ms":started.elapsed().as_millis()});
+            "projects_admitted_cards_tokens":projects,"profile":profile,"recipe_id":recipe_id,"indexed":indexed,"index_ms":index_ms,"prefix_verification_ms":prefix_verification_ms,"elapsed_ms":started.elapsed().as_millis()});
         std::fs::write(
             dir.join("workload.json"),
             serde_json::to_vec_pretty(&report).unwrap(),

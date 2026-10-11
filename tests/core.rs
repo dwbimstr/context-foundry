@@ -356,6 +356,56 @@ fn prose_plural_acronyms_match_the_acronym_without_changing_symbol_requests() {
 }
 
 #[test]
+fn prose_acronym_forms_share_one_score_and_keep_plural_only_source() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&dir.path().join("ws"));
+    for (name, form) in [("one", "cpu"), ("many", "cpus"), ("both", "cpu cpus")] {
+        engine
+            .replace_source(
+                &format!("{name}.rs"),
+                &format!("/// Collect {form} utilization sample.\nfn {name}() {{}}\n"),
+            )
+            .unwrap();
+    }
+    drain(&mut engine);
+    let mut score = None;
+    for query in [
+        "collect CPUs utilization sample",
+        "collect CPUs CPU utilization sample",
+        "collect CPU CPUs utilization sample",
+    ] {
+        let candidates = engine
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(candidates.batch.items.len(), 3);
+        let score = *score.get_or_insert(candidates.batch.items[0].score);
+        assert!(
+            candidates
+                .batch
+                .items
+                .iter()
+                .all(|item| item.score == score)
+        );
+        assert!(
+            candidates
+                .batch
+                .items
+                .iter()
+                .any(|item| { item.handle.as_ref().unwrap().path == "many.rs" })
+        );
+    }
+}
+
+#[test]
 fn standard_adjectives_in_prose_are_not_symbol_requests() {
     use context_foundry::store::ContextOptions;
     let dir = tempfile::tempdir().unwrap();

@@ -1241,7 +1241,7 @@ results in subsequent host requests. The live mode does not automatically upgrad
 old transformed carrier, broaden the one-carrier binding, or establish provider usage.
 See the [exact contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#live-owner-synchronization--2026-10-10).
 
-Boundary recipe `python-http-v6` links literal consumers to whole-segment FastAPI
+Boundary recipe `python-http-v7` links literal consumers to whole-segment FastAPI
 parameters: default/explicit `str`, `int`, `float`, `uuid`, and terminal `path`.
 A terminal path converter can match empty or multiple segments. Mixed segments,
 custom converters, nonterminal path converters and percent-encoded URLs are unsupported.
@@ -1254,13 +1254,16 @@ cited dependencies; task composition delivers their bodies before emitting the r
 Up to eight same-file nested router links and direct configured cross-file imports
 (`from module import router [as alias]`) compose their prefixes and citations. Imports
 resolve only among explicitly configured provider modules or package `__init__.py`
-files in the same service. Package routers must be direct definitions; `from . import
-router` can refer to that containing package. A competing `pkg.py` and `pkg/__init__.py`
+files in the same service. `from . import router` can refer to that containing
+package. Explicit named re-export chains through configured modules are supported,
+with every import hop cited. An import-only forwarding module (plus comments/simple
+string literals) need not construct an app; arbitrary module code is not covered by
+that exemption. A competing `pkg.py` and `pkg/__init__.py`
 layout remains ambiguous. Registration
 order must follow child registration. An importer change invalidates dependent scopes
 immediately; the next enabled publication refreshes that bounded service. All import,
 declaration and registration bodies must fit for a delivered task relationship.
-Dynamic prefixes, re-exports, cyclic or escaped aliases, early/multiple
+Dynamic prefixes, unsupported/star/conditional imports, cyclic or escaped aliases, early/multiple
 registrations and other constructor/mount options leave coverage incomplete. Reindex
 the configured boundary scopes after upgrading: old hashes alone do not make earlier
 recipes current. Literal Flask routes and same-file Blueprints with literal registration

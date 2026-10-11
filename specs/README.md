@@ -1,5 +1,12 @@
 # Workflows worth building
 
+The next continuation adds named configured router re-exports with whole-proof task
+delivery and singular/plural acronym alternatives that share one query score. The
+current overview fitter covers all 67,663 admitted representative sources across
+verified phases; its input obligation is 60,735–65,959 distinct vectors. Full inference,
+general retrieval/task benefits and native hardware acceptance remain open. See
+[current validation](../docs/validation.md#named-re-exports-and-current-fitting--2026-10-11).
+
 Delivery/startup continuation, 2026-10-11: 009 adds focused coarse-vector evidence,
 complete-overview lexical interleaving, plural acronym queries, nonblank extractive
 fallbacks and unused CLI model-startup avoidance. The file-capable recipes are now

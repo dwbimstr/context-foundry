@@ -14,7 +14,7 @@ lanes, preserving unknown-sample refusal and worker lifetime. This is host CPU
 admission, not GPU headroom, a hard CPU quota or thermal/battery policy. Those remain
 separate TODOs. `overview-v1` and hierarchy's `+overview3` fitting recipe also need
 representation-quality and device checks; complete file-vector coverage is not full
-body evidence or a task-quality result. The [latest Linux record](validation.md#ecosystem-code-improvements--2026-10-11)
+body evidence or a task-quality result. The [latest Linux record](validation.md#named-re-exports-and-current-fitting--2026-10-11)
 preserves the precise corpus/input counts and bounded real-model progress.
 
 **2026-10-11 portable numerical handoff.** Linux has verified real CPU embedding
@@ -73,7 +73,9 @@ The inventory has a 1,800-second deadline including indexing; failure preserves 
 partial workload report. To continue only its unfinished suffix, set
 `FOUNDRY_SEMANTIC_SCALE_PREVIOUS=/absolute/prior-inventory/workload.json` and select
 a new output directory with the same manifest/root/profile. The prior store must
-have no source changes; the continuation rechecks the fitted prefix's hashes.
+have no source changes; the continuation rechecks the fitted prefix's hashes. The
+report must also carry the matching versioned `recipe_id`; missing/older fitter
+identities are refused before indexing, even if profile and source hashes match.
 Use the `store_directory` from the continuation report for subsequent preparation;
 the new report directory does not duplicate the store. Per-file counts continue exactly. Because the prior key set is not persisted,
 combined distinct-input/token counts become explicit bounds rather than an exact
@@ -83,10 +85,12 @@ and does not persist semantic partitions. Preparation must still fit/cache/publi
 its own current sources. Resume the same store/profile, retaining every phase's
 output and the current coverage counts. Freeze hardware, budget, artifact hashes,
 cache capacity and corpus identity before timing; run one model/build job at a time.
-The measured Rust/Go recipe needs at least 2.24 GiB of raw vector payload; the
+The measured Rust/Go **body recipe** needs at least 2.24 GiB of raw vector payload; the
 default 2 GiB cache cap cannot cover it. Select a larger explicit `--cache-cap` and
 check disk for cache, partitions and ANN storage before attempting a complete run.
-Full completion requires no unpartitioned sources, missing inputs or unpublished
+The current overview recipe has completed fitting (177.93–193.24 MiB raw vectors),
+with representation quality and full inference still unaccepted. Full completion
+requires no unpartitioned sources, missing inputs or unpublished
 current locations, followed by real serving and changed-input checks. A completed
 file scan or fitting inventory alone cannot close semantic scale acceptance.
 
