@@ -4672,12 +4672,14 @@ fn a_panic_in_the_earliest_keys_build_names_it_and_indexes_every_other_key() {
     expected[0] = "unparsed".to_owned();
     assert_eq!(kinds(&first), expected);
     assert_eq!(kinds(&plain), vec!["block".to_owned(); plain.len()]);
+    assert_eq!(first[0]["call_coverage"][0], "incomplete");
+    assert_eq!(plain[0]["call_coverage"][0], "unsupported");
     let without = |docs: &[serde_json::Value]| -> Vec<serde_json::Value> {
         docs.iter()
             .map(|doc| {
                 let mut doc = doc.clone();
                 let fields = doc.as_object_mut().unwrap();
-                for name in ["key", "key_hash", "path", "dir", "kind"] {
+                for name in ["key", "key_hash", "path", "dir", "kind", "call_coverage"] {
                     fields.remove(name);
                 }
                 doc
@@ -5202,4 +5204,32 @@ fn a_committed_parse_panic_is_named_although_the_run_is_cancelled_after_commit()
     );
     assert_eq!(report.pending_sources, 2, "the page was not acknowledged");
     assert_eq!(engine.status().unwrap().parse_failures, Some(1));
+}
+
+#[test]
+fn call_posting_search_upgrade_requires_explicit_derived_repair_without_source_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, mut engine) = setup(&dir.path().join("ws"));
+    engine
+        .replace_source("callee.rs", "fn callee() {}\nfn caller() { callee(); }\n")
+        .unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let source_revision = engine.source_revision().unwrap();
+    let source = engine.source("callee.rs").unwrap().unwrap().hash;
+    drop(engine);
+    testkit::set_meta(store.path(), "search_schema", Some("5"));
+    let engine = Engine::open_existing(store.path()).unwrap();
+    assert_eq!(engine.status().unwrap().index_state, "repair_required");
+    assert!(engine.search("callee", 8).is_err());
+    assert_eq!(engine.source_revision().unwrap(), source_revision);
+    assert_eq!(engine.source("callee.rs").unwrap().unwrap().hash, source);
+    drop(engine);
+    Engine::repair_index(store.path(), &Control::unbounded()).unwrap();
+    assert_eq!(
+        testkit::meta_value(store.path(), "search_schema").as_deref(),
+        Some("6")
+    );
+    let engine = Engine::open_existing(store.path()).unwrap();
+    assert!(!engine.search("callee", 8).unwrap().hits.is_empty());
+    assert_eq!(engine.source_revision().unwrap(), source_revision);
 }

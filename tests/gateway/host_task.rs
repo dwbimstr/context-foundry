@@ -35,6 +35,75 @@ const PERCENT_ASSERTIONS: &str = r#"
     assert_eq!(records::utf8_percent_encode("a b", records::NON_ALPHANUMERIC).to_string(), "a%20b");
 "#;
 
+// This reads a stopped gateway, unlike the shared live-reader helper. Preserve
+// usable receipts, but an incomplete or malformed tail cannot establish coverage.
+fn stopped_receipts(bytes: &[u8]) -> (Vec<Receipt>, bool) {
+    let mut rows = Vec::new();
+    let mut complete = true;
+    for line in bytes.split_inclusive(|&byte| byte == b'\n') {
+        if !line.ends_with(b"\n") {
+            complete = false;
+            continue;
+        }
+        match Receipt::parse(line) {
+            Ok(row) => rows.push(row),
+            Err(_) => complete = false,
+        }
+    }
+    (rows, complete)
+}
+
+fn receipt_accounting_complete(rows: &[Receipt], log_complete: bool, gateway: &Value) -> bool {
+    log_complete
+        && gateway["log_failed"] == false
+        && gateway["totals_overflowed"] == false
+        && gateway["attempts"].as_u64() == Some(rows.len() as u64)
+        && [
+            ("complete", Outcome::Complete),
+            ("failed", Outcome::Failed),
+            ("unknown", Outcome::Unknown),
+        ]
+        .iter()
+        .all(|(key, outcome)| {
+            gateway[*key].as_u64()
+                == Some(rows.iter().filter(|row| row.outcome == *outcome).count() as u64)
+        })
+}
+
+#[test]
+fn stopped_receipt_damage_and_gateway_disagreement_refuse_complete_accounting() {
+    let row = br#"{"v":1,"adapter_id":"test","session_id":"session","request_id":"request","model_id":"model","outcome":"complete","input_tokens":10,"output_tokens":2,"cached_input_tokens":0}"#;
+    let mut bytes = row.to_vec();
+    bytes.push(b'\n');
+    let (rows, complete) = stopped_receipts(&bytes);
+    let gateway = json!({"attempts":1,"complete":1,"failed":0,"unknown":0,"log_failed":false,"totals_overflowed":false});
+    assert_eq!(rows.len(), 1);
+    assert!(receipt_accounting_complete(&rows, complete, &gateway));
+    for tail in [
+        row.as_slice(),
+        b"{\"v\":".as_slice(),
+        b"invalid\n".as_slice(),
+    ] {
+        let mut damaged = bytes.clone();
+        damaged.extend_from_slice(tail);
+        let (retained, complete) = stopped_receipts(&damaged);
+        assert_eq!(retained.len(), 1, "known paid work remains visible");
+        assert!(!receipt_accounting_complete(&retained, complete, &gateway));
+    }
+    for (key, value) in [
+        ("attempts", json!(2)),
+        ("complete", json!(0)),
+        ("unknown", json!(1)),
+        ("log_failed", json!(true)),
+        ("totals_overflowed", json!(true)),
+    ] {
+        let mut inconsistent = gateway.clone();
+        inconsistent[key] = value;
+        assert!(!receipt_accounting_complete(&rows, true, &inconsistent));
+    }
+    assert!(!receipt_accounting_complete(&rows, false, &gateway));
+}
+
 /// A smaller failed response is not an economic win. Keep raw attempt costs,
 /// but only compare completion costs when both independently checked repairs
 /// pass and every gateway request has known input/output/cache usage.
@@ -42,6 +111,7 @@ fn completion_comparison(rows: &[Value]) -> Value {
     let eligible = rows.len() == 2
         && rows.iter().all(|r| {
             r["verified_task"] == true
+                && r["receipt_accounting_complete"] == true
                 && r["host_success"] == true
                 && r["timeout"] == false
                 && r["requests"].as_u64().is_some_and(|n| n > 0)
@@ -72,12 +142,14 @@ fn completion_comparison(rows: &[Value]) -> Value {
 
 #[test]
 fn failed_or_incompletely_metered_repairs_never_establish_completion_savings() {
-    let row = json!({"verified_task":true,"host_success":true,"timeout":false,"requests":2,"complete_requests":2,"input_tokens":100,"output_tokens":10,"cached_input_tokens":0,"total_measured_task_ms":200});
+    let row = json!({"receipt_accounting_complete":true,"verified_task":true,"host_success":true,"timeout":false,"requests":2,"complete_requests":2,"input_tokens":100,"output_tokens":10,"cached_input_tokens":0,"total_measured_task_ms":200});
     assert_eq!(
         completion_comparison(&[row.clone(), row.clone()])["status"],
         "paired_calibration_only"
     );
     for (key, value) in [
+        ("receipt_accounting_complete", json!(false)),
+        ("receipt_accounting_complete", Value::Null),
         ("verified_task", json!(false)),
         ("host_success", json!(false)),
         ("input_tokens", Value::Null),
@@ -241,6 +313,26 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
     } else {
         (180, 512)
     };
+    let configured_limit = |name: &str, default: u64, low: u64, high: u64| {
+        let value = match std::env::var(name) {
+            Ok(value) => value
+                .parse::<u64>()
+                .expect("host task limit must be an integer"),
+            Err(std::env::VarError::NotPresent) => default,
+            Err(error) => panic!("invalid {name}: {error}"),
+        };
+        assert!(
+            (low..=high).contains(&value),
+            "{name} must be in {low}..={high}"
+        );
+        value
+    };
+    let output_limit = configured_limit("FOUNDRY_HOST_TASK_OUTPUT_LIMIT", output_limit, 1, 4096);
+    let context_window = configured_limit("FOUNDRY_HOST_TASK_CONTEXT_WINDOW", 16384, 4096, 131072);
+    assert!(
+        output_limit < context_window,
+        "output limit must leave room for input"
+    );
     let scenario = std::env::var("FOUNDRY_HOST_TASK_SCENARIO").unwrap_or_else(|_| "parser".into());
     assert!(["parser", "overflow", "percent_decode"].contains(&scenario.as_str()));
     assert!(
@@ -332,6 +424,22 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         .mode(0o700)
         .create(&output)
         .unwrap();
+    // Preserve the installed OMP engineering workflow. A custom --system-prompt
+    // replaces that workflow; an explicit bundled template avoids discovery of
+    // unrelated SYSTEM.md overrides while allowing scoped additive constraints.
+    let system_template = Path::new(&cli)
+        .parent()
+        .and_then(Path::parent)
+        .expect("OMP dist/cli.js package directory")
+        .join("src/prompts/system/system-prompt.md");
+    let system_template_bytes = std::fs::read(&system_template).unwrap();
+    let system_template_sha = context_foundry::digest(&system_template_bytes);
+    assert_eq!(
+        system_template_sha, "0c02a5913988f0bd374926ccfa2961a95c8ba00c1b445041a435d5ef86e33736",
+        "pinned OMP 18.6.0 bundled system template changed"
+    );
+    let recorded_system_template = output.join("system-template.md");
+    std::fs::write(&recorded_system_template, system_template_bytes).unwrap();
     // Positive control stays outside both model-visible workspaces/prompts.
     let control = output.join("oracle-control");
     std::fs::create_dir_all(control.join("src")).unwrap();
@@ -538,7 +646,7 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         );
         std::fs::write(
             agent.join("models.yml"),
-            format!("{}    modelOverrides:\n      glm-5.3-flash:\n        contextWindow: 16384\n        maxTokens: {output_limit}\n        reasoning: false\n", gateway.ready["omp_models_yml"].as_str().unwrap()),
+            format!("{}    modelOverrides:\n      glm-5.3-flash:\n        contextWindow: {context_window}\n        maxTokens: {output_limit}\n        reasoning: false\n", gateway.ready["omp_models_yml"].as_str().unwrap()),
         )
         .unwrap();
         let config_dir = format!(
@@ -565,6 +673,10 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         } else {
             "Complete the requested code repair using read and write. Preserve user constraints."
         };
+        let system_append = format!(
+            "{system} Explicit user restrictions on editable files take precedence over general instructions to update tests, documentation, or changelogs. Keep provided public checks unchanged. Keep temporary verification and build outputs outside the workspace."
+        );
+        std::fs::write(dir.join("system-append.txt"), &system_append).unwrap();
         command
             .arg(&cli)
             .args([
@@ -583,8 +695,10 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
                 "--no-skills",
                 "--no-rules",
                 "--no-title",
-                "--system-prompt",
-                system,
+                "--system-prompt-template",
+                recorded_system_template.to_str().unwrap(),
+                "--append-system-prompt",
+                &system_append,
                 "--max-time",
                 &format!("{task_seconds}s"),
                 "--approval-mode",
@@ -608,6 +722,13 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
                 .env("PI_EDIT_VARIANT", "replace")
                 .env("PI_EDIT_FUZZY", "0");
         }
+        let host_argv = serde_json::to_vec_pretty(&json!({
+            "program": Path::new(&bun).display().to_string(),
+            "args": command.as_std().get_args().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>()
+        })).unwrap();
+        std::fs::write(dir.join("host-argv.json"), &host_argv).unwrap();
+        let host_settings_sha =
+            context_foundry::digest(&std::fs::read(agent.join("models.yml")).unwrap());
         let model_started = Instant::now();
         // File-backed logs survive outer cancellation and preserve the partial
         // tool transcript; output() would discard it when its future is dropped.
@@ -626,7 +747,12 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         };
         let finished = gateway.terminate();
         finished.assert_no_secrets();
-        let receipts = gateway.receipts();
+        let (receipts, receipt_log_complete) = std::fs::read(dir.join("run/receipts.jsonl"))
+            .map(|bytes| stopped_receipts(&bytes))
+            .unwrap_or_else(|_| (Vec::new(), false));
+        let gateway_summary = finished.final_line();
+        let receipt_accounting_complete =
+            receipt_accounting_complete(&receipts, receipt_log_complete, &gateway_summary);
         assert!(
             receipts
                 .iter()
@@ -665,18 +791,23 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         let changed = before_source != std::fs::read(workspace.join(edited_file)).unwrap();
         let total_ms = started.elapsed().as_millis();
         rows.push(json!({"arm":arm,"host_success":host_success,"timeout":timed_out,"oracle_pass":checked,"protected_files_unchanged":preserved,"source_changed":changed,"verified_task":checked&&preserved,
+            "receipt_accounting_complete":receipt_accounting_complete,"receipt_log_complete":receipt_log_complete,
             "public_check_command":public_command,
+            "system_template_sha256":system_template_sha,
+            "system_append_sha256":context_foundry::digest(system_append.as_bytes()),
+            "host_argv_sha256":context_foundry::digest(&host_argv),
+            "host_model_settings_sha256":host_settings_sha,
             "cache_reset_before_task":cache_reset,
             "preparation_ms":preparation_ms,"host_elapsed_ms":elapsed_ms,"orchestration_and_check_ms":total_ms-preparation_ms-elapsed_ms,"total_measured_task_ms":total_ms,"requests":receipts.len(),"input_tokens":sum(|r|r.input_tokens),"output_tokens":sum(|r|r.output_tokens),"cached_input_tokens":sum(|r|r.cached_input_tokens),
             "observed_usage":{"input":observed(|r|r.input_tokens),"output":observed(|r|r.output_tokens),"cached_input":observed(|r|r.cached_input_tokens)},
-            "complete_requests":receipts.iter().filter(|r|r.outcome==Outcome::Complete).count(),"gateway":finished.final_line()}));
+            "complete_requests":receipts.iter().filter(|r|r.outcome==Outcome::Complete).count(),"gateway":gateway_summary}));
         std::fs::write(
             output.join("progress.json"),
             serde_json::to_vec_pretty(&rows).unwrap(),
         )
         .unwrap();
     }
-    let report = json!({"version":2,"scope":"public_single_task_free_form_host_calibration","scenario":scenario,"held_out":false,"host":"OMP 18.6.0","actual_backend":model,"model_sha256":model_sha,"source_scale":scale,"upstream_crate":percent.then_some("percent-encoding 2.3.2 seeded regression, archive 9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"),"tools":if public_check && percent {"read,edit,bash; replace mode; fuzzy=false"} else if public_check {"read,write,bash"} else if percent {"read,edit; replace mode; fuzzy=false"} else {"read,write"},"public_check_enabled":public_check,"backend_identity":"operator_launched_local_server_not_remote_attestation","transport_alias":"glm-5.3-flash","llama_cpp":"b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea","attempts_per_arm":1,"model_output_limit":output_limit,"task_seconds":task_seconds,"request_idle_seconds":idle_seconds,"cost_boundary":"context preparation, gateway/host startup, all requests, teardown and oracle; common fixture setup, model acquisition/loading and energy excluded and separately recorded, never inferred from source tokens","completion_comparison":completion_comparison(&rows),"rows":rows});
+    let report = json!({"version":3,"system_prompt_recipe":"omp_18_6_0_bundled_template_with_scope_append","scope":"public_single_task_free_form_host_calibration","scenario":scenario,"held_out":false,"host":"OMP 18.6.0","actual_backend":model,"model_sha256":model_sha,"source_scale":scale,"upstream_crate":percent.then_some("percent-encoding 2.3.2 seeded regression, archive 9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"),"tools":if public_check && percent {"read,edit,bash; replace mode; fuzzy=false"} else if public_check {"read,write,bash"} else if percent {"read,edit; replace mode; fuzzy=false"} else {"read,write"},"public_check_enabled":public_check,"backend_identity":"operator_launched_local_server_not_remote_attestation","transport_alias":"glm-5.3-flash","llama_cpp":"b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea","attempts_per_arm":1,"model_output_limit":output_limit,"model_context_window":context_window,"task_seconds":task_seconds,"request_idle_seconds":idle_seconds,"cost_boundary":"context preparation, gateway/host startup, all requests, teardown and oracle; common fixture setup, model acquisition/loading and energy excluded and separately recorded, never inferred from source tokens","completion_comparison":completion_comparison(&rows),"rows":rows});
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report).unwrap(),

@@ -20,6 +20,8 @@ pub const GEOMETRY_ADAPTER_REVISION: u32 = 2;
 /// Corrected pooled-output recipe, independently bound to the execution backend.
 pub const CPU_ADAPTER_REVISION: u32 = 3;
 pub const METAL_ADAPTER_REVISION: u32 = 4;
+/// Explicit Linux x86_64 AVX-512 BF16 kernels; never share a baseline namespace.
+pub const CPU_AVX512_BF16_ADAPTER_REVISION: u32 = 5;
 pub const POOLED_NATIVE_RECIPE: &str = "gemma2-pooled-output-v1";
 
 /// Versioned independently of descriptor/IPC layout. The descriptor binds these

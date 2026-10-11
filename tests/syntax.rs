@@ -4309,3 +4309,64 @@ macro_rules! auto {
     );
     assert_tiles(source, Some(Lang::Rust));
 }
+
+#[test]
+fn call_postings_share_index_parse_and_exclude_mentions_and_arbitrary_macro_dsl() {
+    for (path, body) in [
+        (
+            "lib.rs",
+            "fn caller() { target_call(); target_call(); let value = mention_only; sink(value); let s = \"string_only()\"; dsl!(macro_only()); assert_eq!(assertion_call(), 1); }\n",
+        ),
+        (
+            "lib.py",
+            "def caller():\n    pkg.target_call()\n    pkg.target_call()\n    value = mention_only\n    sink(value)\n    s = 'string_only()'\n",
+        ),
+        (
+            "lib.ts",
+            "function caller() { pkg.target_call(); pkg.target_call(); const value = mention_only; sink(value); const s = 'string_only()'; }\n",
+        ),
+        (
+            "lib.go",
+            "package lib\nfunc caller() { pkg.target_call(); pkg.target_call(); value := mention_only; sink(value) }\n",
+        ),
+    ] {
+        let indexed = context_foundry::syntax::index(body, Lang::from_path(path)).unwrap();
+        assert_eq!(indexed.call_coverage, "complete", "{path}");
+        assert_eq!(
+            indexed
+                .call_names
+                .iter()
+                .filter(|n| *n == "target_call")
+                .count(),
+            1
+        );
+        assert!(indexed.call_names.iter().any(|n| n == "sink"));
+        for excluded in ["caller", "mention_only", "string_only", "macro_only"] {
+            assert!(
+                !indexed.call_names.iter().any(|n| n == excluded),
+                "{path}: {excluded}"
+            );
+        }
+        if path.ends_with("rs") {
+            assert!(indexed.call_names.iter().any(|n| n == "assertion_call"));
+        }
+    }
+    assert_eq!(
+        context_foundry::syntax::index("void call() { other(); }", Some(Lang::C))
+            .unwrap()
+            .call_coverage,
+        "unsupported"
+    );
+    let broken = context_foundry::syntax::index("fn (}", Some(Lang::Rust)).unwrap();
+    assert_eq!(broken.call_coverage, "incomplete");
+    assert!(broken.call_names.is_empty());
+    let big = format!(
+        "fn caller() {{\n{}\n}}",
+        (0..4097)
+            .map(|i| format!("unique_{i}();"))
+            .collect::<String>()
+    );
+    let capped = context_foundry::syntax::index(&big, Some(Lang::Rust)).unwrap();
+    assert_eq!(capped.call_names.len(), 4096);
+    assert_eq!(capped.call_coverage, "incomplete");
+}

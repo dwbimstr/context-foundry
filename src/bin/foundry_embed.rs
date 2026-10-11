@@ -86,13 +86,18 @@ fn real_run(engine: &mut context_foundry::neural::worker_runtime::Engine) -> i32
         engine.fail_load("descriptor_unsupported", &message);
         return 1;
     }
-    let revision = if cfg!(target_os = "linux") {
+    let revision = if cfg!(feature = "embed-worker-avx512-bf16") {
+        context_foundry::neural::provider::CPU_AVX512_BF16_ADAPTER_REVISION
+    } else if cfg!(target_os = "linux") {
         context_foundry::neural::provider::CPU_ADAPTER_REVISION
     } else {
         context_foundry::neural::provider::METAL_ADAPTER_REVISION
     };
-    if engine.args.expected.adapter_revision != revision {
-        engine.fail_load("descriptor_unsupported", "this pooled-output worker needs the platform-specific adapter revision; retain an old binary to serve an old descriptor");
+    if let Err(message) = context_foundry::neural::worker_runtime::check_embedding_worker_revision(
+        engine.args.expected.adapter_revision,
+        revision,
+    ) {
+        engine.fail_load("descriptor_unsupported", &message);
         return 1;
     }
     #[cfg(target_os = "macos")]
@@ -258,6 +263,29 @@ mod llama {
         let _ = std::io::stderr().write_all(bytes);
     }
 
+    #[cfg(all(
+        target_os = "linux",
+        target_arch = "x86_64",
+        feature = "embed-worker-avx512-bf16"
+    ))]
+    fn check_cpu_capabilities() -> Result<(), String> {
+        // All fixed CMake AVX-512 flags must be available, including OS-enabled
+        // vector state. Run before the first native call, not after SIGILL.
+        let supported = std::is_x86_feature_detected!("avx2")
+            && std::is_x86_feature_detected!("fma")
+            && std::is_x86_feature_detected!("f16c")
+            && std::is_x86_feature_detected!("avx512f")
+            && std::is_x86_feature_detected!("avx512cd")
+            && std::is_x86_feature_detected!("avx512vl")
+            && std::is_x86_feature_detected!("avx512dq")
+            && std::is_x86_feature_detected!("avx512bw")
+            && std::is_x86_feature_detected!("avx512bf16");
+        if !supported {
+            return Err("AVX-512 BF16 embedding worker is unsupported on this CPU; use the baseline worker/profile".into());
+        }
+        Ok(())
+    }
+
     fn init_backend() {
         BACKEND.call_once(|| unsafe {
             // Before any other llama.cpp call, so no line uses the default sink.
@@ -312,6 +340,8 @@ mod llama {
             descriptor: &FunctionDescriptor,
             threads: u32,
         ) -> Result<Self, String> {
+            #[cfg(all(target_arch = "x86_64", feature = "embed-worker-avx512-bf16"))]
+            check_cpu_capabilities()?;
             init_backend();
             let fd = unsafe { libc::dup(fd) };
             if fd < 0 {
@@ -591,7 +621,7 @@ mod llama {
         fn cpu_pinned_gemma_batch_geometry() {
             use context_foundry::knowledge::local::{Config, Device, MemoryEnforcement, resources};
             use context_foundry::neural::provider::{
-                ArtifactFile, CPU_ADAPTER_REVISION, DESCRIPTOR_VERSION, InputGeometry,
+                ArtifactFile, DESCRIPTOR_VERSION, InputGeometry,
             };
             use sha2::{Digest, Sha256};
             use std::io::{Read, Seek};
@@ -654,7 +684,11 @@ mod llama {
                 pooling: "mean".into(),
                 dimensions: 768,
                 output: "f32".into(),
-                adapter_revision: CPU_ADAPTER_REVISION,
+                adapter_revision: if cfg!(feature = "embed-worker-avx512-bf16") {
+                    context_foundry::neural::provider::CPU_AVX512_BF16_ADAPTER_REVISION
+                } else {
+                    context_foundry::neural::provider::CPU_ADAPTER_REVISION
+                },
                 document_template: "{text}".into(),
                 geometry: Some(InputGeometry {
                     v: 1,
@@ -808,7 +842,7 @@ mod llama {
             assert_eq!(unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) }, 0);
             eprintln!(
                 "CPU_EMBED_RESULT {}",
-                serde_json::json!({"model_sha256":SHA,"llama_cpp":LLAMA_CPP_COMMIT,"native_recipe":option_env!("FOUNDRY_LLAMA_CPP_RECIPE").unwrap_or("upstream"),"backend":"cpu","isolation":isolation,"threads":2,"cpu_seconds":config.cpu_seconds,"memory_ceiling_bytes":config.memory_bytes,"peak_rss_bytes":usage.ru_maxrss as u64 * 1024,"input_tokens":limit,"sequences":8,"minimum_cosine":minimum,"input_sha256":input_hash,"single_vectors":single,"elapsed_ms":started.elapsed().as_millis(),"product_worker_acceptance":false,"tokenizer_json_parity":tokenizer_parity,"tokenizer_parity_cases":if tokenizer_parity {8} else {0}})
+                serde_json::json!({"model_sha256":SHA,"llama_cpp":LLAMA_CPP_COMMIT,"native_recipe":option_env!("FOUNDRY_LLAMA_CPP_RECIPE").unwrap_or("upstream"),"backend":"cpu","cpu_variant":option_env!("FOUNDRY_LLAMA_CPU_VARIANT").unwrap_or("baseline"),"adapter_revision":descriptor.adapter_revision,"isolation":isolation,"threads":2,"cpu_seconds":config.cpu_seconds,"memory_ceiling_bytes":config.memory_bytes,"peak_rss_bytes":usage.ru_maxrss as u64 * 1024,"input_tokens":limit,"sequences":8,"minimum_cosine":minimum,"input_sha256":input_hash,"single_vectors":single,"elapsed_ms":started.elapsed().as_millis(),"product_worker_acceptance":false,"tokenizer_json_parity":tokenizer_parity,"tokenizer_parity_cases":if tokenizer_parity {8} else {0}})
             );
         }
     }

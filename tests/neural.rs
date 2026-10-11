@@ -1556,6 +1556,7 @@ fn one_entry() -> Vec<index::GenerationEntry> {
         input_key: "00".repeat(32),
         vector: vec![0.5f32; DIMS],
         units: vec![index::UnitLocation {
+            kind: context_foundry::neural::cache::CardKind::Address,
             path: "a.md".into(),
             start: 0,
             end: 1,
@@ -1792,6 +1793,7 @@ fn renderer(env: &Env) -> impl Fn(&str, &str) -> Result<Vec<PartitionUnit>, Foun
         Ok(cards
             .into_iter()
             .map(|card| PartitionUnit {
+                kind: card.kind,
                 start: card.start,
                 end: card.end,
                 input_key: card.input_key,
@@ -1835,6 +1837,7 @@ fn mapping_acceptance_validates_the_cards_against_the_current_body() {
         ranges
             .iter()
             .map(|&(start, end)| PartitionUnit {
+                kind: context_foundry::neural::cache::CardKind::Address,
                 start,
                 end,
                 input_key: key.clone(),
@@ -1879,6 +1882,7 @@ fn mapping_acceptance_validates_the_cards_against_the_current_body() {
     // A key that is not lowercase SHA-256 hex is refused.
     let with_key = |key: &str| {
         vec![PartitionUnit {
+            kind: context_foundry::neural::cache::CardKind::Address,
             start: 0,
             end: 100,
             input_key: key.to_owned(),

@@ -3895,6 +3895,21 @@ async fn exported_view_applies_at_final_bytes_refuses_broken_bindings_and_replay
 async fn real_omp_applies_live_view_on_resumed_tool_history() {
     let bun = std::env::var_os("FOUNDRY_OMP_BUN").expect("Bun executable");
     let cli = std::env::var_os("FOUNDRY_OMP_CLI").expect("OMP dist/cli.js");
+    // Use the installed 18.6.0 template explicitly: ambient SYSTEM.md files
+    // must not replace the default workflow in this consumer-boundary check.
+    let template = PathBuf::from(&cli)
+        .parent()
+        .expect("OMP dist directory")
+        .parent()
+        .expect("OMP package directory")
+        .join("src/prompts/system/system-prompt.md");
+    assert_eq!(
+        context_foundry::digest(&std::fs::read(&template).expect("installed OMP default template")),
+        "0c02a5913988f0bd374926ccfa2961a95c8ba00c1b445041a435d5ef86e33736",
+        "the consumer prompt fixture is pinned to OMP 18.6.0"
+    );
+    const APPEND: &str =
+        "OMP prompt-append fixture: read the requested fixture and preserve user constraints.";
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().join("workspace");
     let agent = dir.path().join("omp/agent");
@@ -3949,8 +3964,10 @@ async fn real_omp_applies_live_view_on_resumed_tool_history() {
                 "--no-skills",
                 "--no-rules",
                 "--no-title",
-                "--system-prompt",
-                "Read the requested fixture and preserve user constraints.",
+                "--system-prompt-template",
+                template.to_str().unwrap(),
+                "--append-system-prompt",
+                APPEND,
                 "--max-time",
                 "45s",
                 "--approval-mode",
@@ -4049,6 +4066,30 @@ async fn real_omp_applies_live_view_on_resumed_tool_history() {
         gateway.stderr.lock().unwrap()
     );
     assert_eq!(upstream.count(), 3);
+    // Assert the actual outbound payload after host and gateway processing,
+    // including the tool continuation and resumed session. This is scripted
+    // provider integration evidence, not a hash claim about real model runs.
+    for (index, captured) in upstream.received().iter().enumerate() {
+        let request: Value = serde_json::from_slice(&captured.body).unwrap();
+        let system = request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "system" || message["role"] == "developer")
+            .map(|message| message["content"].as_str().expect("text system content"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        assert!(
+            system.contains("# 2. Research Before Editing")
+                && system.contains("Non-trivial work: NEVER yield without a smoke run:"),
+            "request {index}: the default research and verification workflow must survive"
+        );
+        assert_eq!(
+            system.matches(APPEND).count(),
+            1,
+            "request {index}: the append must accompany, not replace, the default workflow"
+        );
+    }
     let receipts = gateway.wait_receipts(1).await;
     let application = receipts[0]
         .observation

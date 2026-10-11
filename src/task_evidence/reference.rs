@@ -1,8 +1,8 @@
 //! Syntax corroborates compiler occurrences and discovers explicitly unresolved
 //! call-name candidates. Neither operation resolves names or proves execution.
+use crate::syntax::{assertion_call, call_name, call_target};
 use crate::{SourceHandle, graph::ReferenceItem};
 use std::collections::BTreeSet;
-use tree_sitter::Node;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Use {
@@ -15,58 +15,6 @@ pub(crate) fn key(reference: &ReferenceItem) -> String {
         "{}:{}",
         reference.unit.workspace_id, reference.occurrence_id
     )
-}
-
-fn target(mut n: Node<'_>) -> Node<'_> {
-    loop {
-        let field = match n.kind() {
-            "generic_function" => "function",
-            "scoped_identifier" => "name",
-            "field_expression" => "field",
-            "attribute" => "attribute",
-            "member_expression" => "property",
-            "selector_expression" => "field",
-            _ => return n,
-        };
-        match n.child_by_field_name(field) {
-            Some(next) => n = next,
-            None => return n,
-        }
-    }
-}
-
-/// Rust assertion macros keep their arguments as token trees. A name directly
-/// followed by parentheses is a useful unresolved candidate in these expression
-/// macros; strings, values passed as arguments and arbitrary macro DSLs are not.
-fn assertion_call(node: Node<'_>, body: &str) -> Option<(usize, usize)> {
-    if node.kind() != "identifier" {
-        return None;
-    }
-    let arguments = node.next_named_sibling()?;
-    if arguments.kind() != "token_tree" || !body[arguments.byte_range()].starts_with('(') {
-        return None;
-    }
-    let mut parent = node.parent();
-    while let Some(ancestor) = parent {
-        if ancestor.kind() == "macro_invocation" {
-            let name = ancestor.child_by_field_name("macro")?;
-            return [
-                "assert",
-                "assert_eq",
-                "assert_ne",
-                "debug_assert",
-                "debug_assert_eq",
-                "debug_assert_ne",
-            ]
-            .contains(&&body[name.byte_range()])
-            .then_some((node.start_byte(), arguments.end_byte()));
-        }
-        if ancestor.kind() != "token_tree" {
-            return None;
-        }
-        parent = ancestor.parent();
-    }
-    None
 }
 
 pub(crate) fn classify(tree: &tree_sitter::Tree, body: &str, r: &ReferenceItem) -> Use {
@@ -100,7 +48,7 @@ fn classify_at(tree: &tree_sitter::Tree, body: &str, occurrence: &SourceHandle) 
         if matches!(node.kind(), "call_expression" | "call")
             && let Some(function) = node.child_by_field_name("function")
         {
-            let name = target(function);
+            let name = call_target(function);
             if name.start_byte() as u64 == occurrence.start
                 && name.end_byte() as u64 == occurrence.end
             {
@@ -168,11 +116,7 @@ pub(crate) fn candidates(
         }
         let node = cursor.node();
         let assertion = assertion_call(node, body);
-        let name = if matches!(node.kind(), "call_expression" | "call") {
-            node.child_by_field_name("function").map(target)
-        } else {
-            assertion.map(|_| node)
-        };
+        let name = call_name(node, body);
         if let Some(name) = name
             && names.contains(&body[name.byte_range()])
         {

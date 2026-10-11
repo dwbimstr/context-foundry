@@ -246,7 +246,7 @@ pub(super) fn full(
     built: &dyn Fn(),
 ) -> FResult<Staged> {
     // Validate all direct callers before cloning potentially oversized mappings.
-    check_entries(entries)?;
+    check_entries(entries, &identity.recipe)?;
     let units = entries
         .iter()
         .map(|entry| {
@@ -278,11 +278,19 @@ pub(super) fn full(
         .map(|result| result.0)
 }
 
-fn check_entries(entries: &[GenerationEntry]) -> FResult<()> {
+fn check_entries(entries: &[GenerationEntry], recipe: &str) -> FResult<()> {
     let mut metadata = 64u64;
     let mut vectors = 0u64;
     let mut seen = BTreeSet::new();
     for entry in entries {
+        // Publication must enforce the same location contract as a fresh load.
+        // Refuse before staging can replace the last readable generation.
+        if !is_hex64(&entry.input_key) || !locations::valid_units(&entry.units, recipe) {
+            return Err(FoundryError::Semantic {
+                code: "cache_corrupt",
+                message: "invalid input key or locations in generation input".into(),
+            });
+        }
         if !seen.insert(&entry.input_key) {
             return Err(FoundryError::Semantic {
                 code: "cache_corrupt",
@@ -307,7 +315,7 @@ fn encode_index(
     built: &dyn Fn(),
 ) -> FResult<Vec<u8>> {
     use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
-    check_entries(entries)?;
+    check_entries(entries, &identity.recipe)?;
     let options = IndexOptions {
         dimensions: identity.dimensions,
         metric: MetricKind::Cos,
@@ -525,6 +533,7 @@ mod tests {
                     input_key: format!("{i:064x}"),
                     vector,
                     units: vec![UnitLocation {
+                        kind: crate::neural::cache::CardKind::Address,
                         path: format!("src/{i}.rs"),
                         start: 0,
                         end: 10,
@@ -658,8 +667,9 @@ mod tests {
         let delta_path = directory.join(generation.manifest.delta_file().unwrap());
         let delta_inode = std::fs::metadata(&delta_path).unwrap().ino();
         current[0].units[0].path = "renamed.rs".into();
-        let duplicate = current[0].units[0].clone();
-        current[0].units.push(duplicate);
+        let mut shared = current[0].units[0].clone();
+        shared.path = "renamed_copy.rs".into();
+        current[0].units.push(shared);
         let plan = Plan::new(mapping(&current, 3), Some(generation));
         assert!(
             plan.needed().is_empty(),

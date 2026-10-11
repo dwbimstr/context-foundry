@@ -1143,3 +1143,231 @@ async fn admitted_root_composition_uses_one_primary_task_and_preserves_root_iden
     }
     client.cancel().await.unwrap();
 }
+
+#[test]
+fn snapshot_execution_is_labeled_in_delivery_and_suppressed_by_a_third_source_edit() {
+    let e = fixture();
+    let endpoint = |path: &str, body: &str, line| json!({"path":path,"line":line,"symbol":"reported","hash":context_foundry::digest(body.as_bytes())});
+    let artifact = json!({"v":2,"producer":"synthetic-snapshot","scope":"contract","run":"one",
+    "command":["fixture-not-executed"],"completed":true,"exit_code":0,"duration_ms":1,
+    "workspace_id":e.wid,"source_revision":e.engine.source_revision().unwrap(),
+    "inputs":[{"path":"service.py","sha256":context_foundry::digest(SERVICE.as_bytes())},{"path":"test_contract.py","sha256":context_foundry::digest(VERIFY.as_bytes())}],
+    "test":endpoint("test_contract.py",VERIFY,2),"observations":[
+        {"from":endpoint("test_contract.py",VERIFY,3),"to":endpoint("service.py",SERVICE,5),"kind":"covers","count":1}
+    ]});
+    e.engine
+        .import_execution(&serde_json::to_vec(&artifact).unwrap())
+        .unwrap();
+    let render = || {
+        response::pack_enriched_context(
+            &compose(&e),
+            None,
+            Budget::request(12000),
+            &response::stdout_bytes,
+        )
+        .unwrap()
+    };
+    let delivered = render();
+    assert_eq!(report(&delivered.text)["execution"]["delivered"], 1);
+    let receipt: Value = serde_json::from_str(
+        delivered
+            .text
+            .lines()
+            .find_map(|l| l.strip_prefix("task-execution: "))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt["execution"]["freshness"], "workspace_revision");
+    assert_eq!(receipt["execution"]["scope"], "contract");
+    assert_eq!(receipt["complete_coverage"], false);
+    // Conservative snapshot eligibility covers even sources outside the manifest.
+    e.engine
+        .replace_source("billing.py", "def unrelated(): return 42\n")
+        .unwrap();
+    let stale = render();
+    assert_eq!(report(&stale.text)["execution"]["delivered"], 0);
+    assert!(!stale.text.contains("task-execution:"));
+}
+
+#[test]
+fn indexed_call_postings_discover_external_callers_then_revalidate_edits_deletion_and_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let store = dir.path().join("store");
+    let mut engine = Engine::initialize(&store, &root).unwrap();
+    engine
+        .replace_source("src/subject.rs", "pub fn needle_target() {}\n")
+        .unwrap();
+    // These mentions outrank the actual distant caller in ordinary lexical
+    // discovery, but they never occupy source-level call postings.
+    for i in 0..32 {
+        engine
+            .replace_source(
+                &format!("src/mention_{i}.rs"),
+                &format!(
+                    "fn mention_{i}() {{\n// {}\n}}\n",
+                    "needle_target ".repeat(80)
+                ),
+            )
+            .unwrap();
+    }
+    let caller = format!(
+        "fn outside_call() {{\n{}    needle_target();\n}}\n",
+        "    let unused = 0;\n".repeat(300)
+    );
+    let test = "#[test]\nfn validates_external() { assert_eq!(needle_target(), ()); }\n";
+    engine.replace_source("src/outside.rs", &caller).unwrap();
+    engine.replace_source("tests/outside.rs", test).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let wid = engine.workspace_id().unwrap();
+    engine.task_context(&task_context::parse(json!({"workspace_id":wid,"task_id":"call-index","command":{"op":"create","title":"Preserve behavior"}})).unwrap(),&Control::unbounded()).unwrap();
+    let plain = engine
+        .context_candidates("`needle_target`", Strategy::Search, &Control::unbounded())
+        .unwrap();
+    assert!(
+        !plain
+            .items
+            .iter()
+            .filter(|item| item.tier != context_foundry::store::TIER_OUTLINE)
+            .take(8)
+            .any(|item| item
+                .handle
+                .as_ref()
+                .is_some_and(|h| h.path == "src/outside.rs")),
+        "fixture caller must be outside the initial eight sources"
+    );
+    fn collect(engine: &Engine) -> context_foundry::memory::MemoryContext {
+        let wid = engine.workspace_id().unwrap();
+        engine
+            .context_candidates_with(
+                "`needle_target`",
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    task: Some(task_context::Scope {
+                        workspace_id: &wid,
+                        task_id: "call-index",
+                        expected_revision: 1,
+                    }),
+                    compose_evidence: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    }
+    let context = collect(&engine);
+    assert_eq!(
+        context.evidence.as_ref().unwrap().syntax_index_candidates,
+        2
+    );
+    assert!(context.batch.items.iter().any(|item| {
+        item.handle
+            .as_ref()
+            .is_some_and(|h| h.path == "src/outside.rs")
+    }));
+    assert!(context.batch.items.iter().any(|item| {
+        item.handle
+            .as_ref()
+            .is_some_and(|h| h.path == "tests/outside.rs")
+    }));
+    let packed = response::pack_enriched_context(
+        &context,
+        None,
+        Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.text.contains("fn outside_call()"));
+    assert!(packed.text.contains("fn validates_external()"));
+    assert_eq!(
+        report(&packed.text)["syntax"]["discovery"]["scope"],
+        "admitted_source_call_postings"
+    );
+    assert_eq!(report(&packed.text)["syntax"]["runtime_call"], "unverified");
+    fault::arm(
+        names::TASK_EVIDENCE_BEFORE_FINAL,
+        0,
+        Action::Call(Box::new(|ctx| {
+            ctx.engine
+                .unwrap()
+                .replace_source("src/outside.rs", "fn changed() {}\n")
+                .unwrap();
+        })),
+    );
+    let changed = collect(&engine);
+    fault::disarm_all();
+    assert_eq!(changed.evidence.as_ref().unwrap().syntax_index_stale, 1);
+    assert!(!changed.batch.items.iter().any(|item| {
+        item.handle
+            .as_ref()
+            .is_some_and(|h| h.path == "src/outside.rs")
+    }));
+    engine.refresh(&Control::unbounded()).unwrap();
+    drop(engine);
+    engine = Engine::open_existing(&store).unwrap();
+    assert_eq!(
+        collect(&engine)
+            .evidence
+            .as_ref()
+            .unwrap()
+            .syntax_index_candidates,
+        1
+    );
+    engine.replace_source("src/outside.rs", &caller).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    engine.delete_source("tests/outside.rs").unwrap();
+    let deleted = collect(&engine);
+    assert_eq!(deleted.evidence.as_ref().unwrap().syntax_index_stale, 1);
+    assert!(!deleted.batch.items.iter().any(|item| {
+        item.handle
+            .as_ref()
+            .is_some_and(|h| h.path == "tests/outside.rs")
+    }));
+    engine.refresh(&Control::unbounded()).unwrap();
+    assert_eq!(
+        collect(&engine)
+            .evidence
+            .as_ref()
+            .unwrap()
+            .syntax_index_candidates,
+        1
+    );
+}
+
+#[test]
+fn indexed_call_source_window_exposes_omitted_matching_files() {
+    let e = fixture();
+    e.engine
+        .replace_source("target.rs", "fn bounded_target() {}\n")
+        .unwrap();
+    for i in 0..12 {
+        e.engine
+            .replace_source(
+                &format!("call_{i}.rs"),
+                &format!("fn caller_{i}() {{ bounded_target(); }}\n"),
+            )
+            .unwrap();
+    }
+    let mut engine = e.engine;
+    engine.refresh(&Control::unbounded()).unwrap();
+    let context = engine
+        .context_candidates_with(
+            "`bounded_target`",
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &e.wid,
+                    task_id: "contract",
+                    expected_revision: e.revision,
+                }),
+                compose_evidence: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let evidence = context.evidence.unwrap();
+    assert_eq!(evidence.syntax_index_candidates, 8);
+    assert!(evidence.syntax_index_limited && evidence.discovery_limited);
+}

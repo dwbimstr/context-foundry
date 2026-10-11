@@ -125,6 +125,7 @@ pub(super) fn metadata<T: Clone>(
 #[derive(Default)]
 pub(crate) struct Cache {
     directory: Option<(u64, u64)>,
+    recipe: Option<String>,
     pub(super) members: Option<Metadata<Arc<Vec<String>>>>,
     pub(super) locations: Option<Metadata<Locations>>,
     pub(super) overlay: Option<Metadata<locations::Overlay>>,
@@ -139,7 +140,8 @@ impl Cache {
         manifest: &GenerationManifest,
     ) -> Result<(), GenerationError> {
         let directory = dir.identity().map_err(|e| unavailable(e.to_string()))?;
-        if self.directory != Some(directory) {
+        if self.directory != Some(directory) || self.recipe.as_deref() != Some(&manifest.recipe_id)
+        {
             self.receipts.clear();
             self.members = None;
             self.locations = None;
@@ -147,6 +149,7 @@ impl Cache {
             self.outside = None;
             self.snapshot = None;
             self.directory = Some(directory);
+            self.recipe = Some(manifest.recipe_id.clone());
         }
         self.receipts.retain(|hash, _| {
             hash == &manifest.index_sha256

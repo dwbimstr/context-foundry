@@ -116,7 +116,16 @@ fn real_native_embedding_receipt() {
     assert!(!output.exists(), "preserve previous receipts");
     let mut profile = SemanticProfile::load(&path("FOUNDRY_EMBED_PROFILE")).unwrap();
     let revision = match std::env::consts::OS {
-        "linux" => CPU_ADAPTER_REVISION,
+        "linux" => {
+            assert!(
+                [
+                    CPU_ADAPTER_REVISION,
+                    context_foundry::neural::provider::CPU_AVX512_BF16_ADAPTER_REVISION
+                ]
+                .contains(&profile.descriptor.adapter_revision)
+            );
+            profile.descriptor.adapter_revision
+        }
         "macos" => METAL_ADAPTER_REVISION,
         other => panic!("unsupported native validation target: {other}"),
     };

@@ -5758,6 +5758,7 @@ fn accept_fixture_edit(corpus: &Corpus, path: &str, body: &str) {
     let units: Vec<_> = cards
         .iter()
         .map(|card| cache::PartitionUnit {
+            kind: card.kind,
             start: card.start,
             end: card.end,
             input_key: card.input_key.clone(),
@@ -6722,6 +6723,466 @@ async fn hierarchy_cli_and_resident_bootstrap_cover_files_before_body_inference(
 }
 
 #[test]
+fn representation_metadata_upgrade_reuses_exact_vectors() {
+    let mut corpus = Corpus::unprepared(&[]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    assert!(!corpus.prepare().partial);
+    let mut record = serde_json::to_value(
+        corpus
+            .engine()
+            .semantic_partition(CODE_PATH)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    record["recipe_id"] = record["recipe_id"]
+        .as_str()
+        .unwrap()
+        .replace("+kinds1", "")
+        .into();
+    for unit in record["units"].as_array_mut().unwrap() {
+        unit.as_object_mut().unwrap().remove("kind");
+    }
+    let legacy: context_foundry::neural::cache::PartitionRecord =
+        serde_json::from_value(record.clone()).unwrap();
+    assert!(
+        legacy
+            .units
+            .iter()
+            .all(|unit| unit.kind == context_foundry::neural::cache::CardKind::Unknown)
+    );
+    corpus.engine = None;
+    testkit::write_raw_partition(
+        &corpus.store,
+        CODE_PATH,
+        &serde_json::to_string(&record).unwrap(),
+    );
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    let upgraded = corpus.prepare();
+    assert!(!upgraded.partial);
+    assert_eq!(
+        upgraded.document_calls, 0,
+        "metadata versioning must not re-embed identical inputs"
+    );
+    let record = corpus
+        .engine()
+        .semantic_partition(CODE_PATH)
+        .unwrap()
+        .unwrap();
+    assert!(
+        record
+            .units
+            .iter()
+            .all(|unit| unit.kind == context_foundry::neural::cache::CardKind::Body)
+    );
+    assert_eq!(corpus.prepare().document_calls, 0);
+}
+
+#[test]
+fn serving_rejects_a_rehashed_mapping_that_claims_the_wrong_representation() {
+    let corpus = Corpus::new(&[]);
+    let runtime = corpus.runtime();
+    let window = || {
+        runtime.window(
+            corpus.engine(),
+            DUSK_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &Control::unbounded(),
+        )
+    };
+    assert!(window().is_ok());
+    let directory = index::generation_dir(&corpus.store, &corpus.digest());
+    let manifest_path = directory.join(index::MANIFEST_FILE);
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    let old_labels = directory.join(format!(
+        "locations-{}.json",
+        manifest["labels_sha256"].as_str().unwrap()
+    ));
+    let mut labels: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(old_labels).unwrap()).unwrap();
+    labels["labels"][0]["units"][0]["kind"] = "body".into();
+    let bytes = serde_json::to_vec(&labels).unwrap();
+    let hash = context_foundry::digest(&bytes);
+    std::fs::write(directory.join(format!("locations-{hash}.json")), bytes).unwrap();
+    manifest["labels_sha256"] = hash.into();
+    std::fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let calls = corpus.probe.query_calls();
+    let refused = window().unwrap_err();
+    assert_eq!(refused.code, "index_unavailable");
+    assert_eq!(
+        corpus.probe.query_calls(),
+        calls,
+        "reject malformed provenance before embedding"
+    );
+    runtime.shutdown();
+}
+
+#[test]
+fn hierarchy_refinement_preserves_scored_body_spans_and_rechecks_freshness() {
+    use context_foundry::neural::cache::CardKind;
+    use context_foundry::neural::partition::Representation;
+    use context_foundry::store::ContextOptions;
+    let path = "src/settlement.rs";
+    let source = format!(
+        "/// Reimbursement timing for cancelled transfers.\nfn settle() {{\n{}    issue_credit();\n}}\n{}",
+        "    // Preserve the original transaction state.\n".repeat(48),
+        "// refund timing is discussed elsewhere\n".repeat(70),
+    );
+    let shared_path = "src/settlement_copy.rs";
+    let mut extra = vec![(path.into(), source.clone()), (shared_path.into(), source)];
+    extra.extend((0..128).map(|i| {
+        (
+            format!("src/unrelated_{i}.rs"),
+            format!("fn inventory_{i}() {{ record_serial({i}); }}\n"),
+        )
+    }));
+    let mut corpus = Corpus::unprepared(&extra);
+    select_body_recipe(&mut corpus, 2048, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert!(!corpus.prepare().partial);
+    let partition = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    let bodies: BTreeSet<_> = partition
+        .units
+        .iter()
+        .filter(|unit| unit.kind == CardKind::Body)
+        .map(|unit| (unit.start as u64, unit.end as u64))
+        .collect();
+    assert!(!bodies.is_empty());
+    let runtime = corpus.runtime();
+    let query = "refund timing rules";
+    let mut window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    // Exercise the refinement boundary with a coarse-only initial ANN window.
+    // The body inputs exist in the generation but none is in these initial hits.
+    window.hits = window
+        .hits
+        .iter()
+        .filter(|hit| {
+            window
+                .units(hit)
+                .iter()
+                .any(|unit| unit.kind == CardKind::File)
+        })
+        .cloned()
+        .collect();
+    assert!(!window.hits.is_empty());
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let select = || {
+        corpus
+            .engine()
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Corpus::control().with_trace(Some(trace.clone())),
+                &ContextOptions {
+                    dense: Some(&window),
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let result = select();
+    assert!(
+        trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["stage"] == "selection"
+                && event["refined"] == true
+                && event["representation"] == "body"
+                && event["outcome"] == "eligible"
+                && event["unit"]["path"] == path),
+        "bounded scoring must discover a published body beyond the initial ANN window"
+    );
+    assert!(
+        result.batch.items.iter().any(|item| {
+            item.semantic.is_some()
+                && item.handle.as_ref().is_some_and(|handle| {
+                    handle.path == path && bodies.contains(&(handle.start, handle.end))
+                })
+        }),
+        "an independently scored body passage must survive materialization"
+    );
+    // The generation has many unrelated vectors, but refinement reads only
+    // selected mappings and never needs to traverse those ANN nodes.
+    let mapping = corpus
+        .engine()
+        .semantic_current_mapping(
+            &Corpus::control(),
+            &corpus.digest(),
+            &corpus.profile.recipe_id(),
+        )
+        .unwrap();
+    assert!(mapping.units.len() > DENSE_WINDOW * 2);
+    let paths: BTreeSet<_> = mapping
+        .units
+        .values()
+        .flat_map(|units| units.iter().map(|unit| unit.path.clone()))
+        .collect();
+    let saved: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            (
+                path.clone(),
+                corpus.engine().semantic_partition(path).unwrap().unwrap(),
+            )
+        })
+        .collect();
+    let replace_mapping =
+        |path: &str,
+         record: &context_foundry::neural::cache::PartitionRecord,
+         units: &[context_foundry::neural::cache::PartitionUnit]| {
+            corpus
+                .engine()
+                .semantic_record_partition(
+                    path,
+                    &record.source_hash,
+                    &record.recipe_id,
+                    &record.function_digest,
+                    Some(units),
+                    &|_| Ok(units.to_vec()),
+                )
+                .unwrap();
+        };
+    let shared = saved
+        .iter()
+        .find(|(path, _)| path == shared_path)
+        .unwrap()
+        .1
+        .clone();
+    assert!(
+        shared
+            .units
+            .iter()
+            .filter(|unit| unit.kind == CardKind::Body)
+            .all(|unit| partition
+                .units
+                .iter()
+                .any(|other| other.input_key == unit.input_key))
+    );
+    let coarse: Vec<_> = shared
+        .units
+        .iter()
+        .filter(|unit| unit.kind == CardKind::File)
+        .cloned()
+        .collect();
+    let assert_joined_only = |before: usize| {
+        let snapshot = trace.snapshot();
+        let events = &snapshot["events"].as_array().unwrap()[before..];
+        assert!(events.iter().any(|event| event["stage"] == "selection"
+            && event["refined"] == true
+            && event["outcome"] == "eligible"
+            && event["unit"]["path"] == path));
+        assert!(
+            !events.iter().any(|event| event["stage"] == "selection"
+                && event["refined"] == true
+                && event["unit"]["path"] == shared_path),
+            "a shared input key cannot promote an unjoined location"
+        );
+    };
+    replace_mapping(shared_path, &shared, &coarse);
+    let before = trace.snapshot()["events"].as_array().unwrap().len();
+    select();
+    assert_joined_only(before);
+    // A row too large for bounded query decoding must not piggyback on the
+    // same input key's successfully joined provenance in the other file.
+    let mut oversized = shared.units.clone();
+    oversized.extend((0..corpus.source(shared_path).len()).map(|start| {
+        context_foundry::neural::cache::PartitionUnit {
+            kind: CardKind::Body,
+            start,
+            end: start + 1,
+            input_key: "ab".repeat(32),
+        }
+    }));
+    oversized.sort_by(|a, b| {
+        a.start
+            .cmp(&b.start)
+            .then_with(|| b.end.cmp(&a.end))
+            .then_with(|| a.input_key.cmp(&b.input_key))
+    });
+    assert!(serde_json::to_vec(&oversized).unwrap().len() > 512 * 1024);
+    replace_mapping(shared_path, &shared, &oversized);
+    let before = trace.snapshot()["events"].as_array().unwrap().len();
+    let bounded = select();
+    assert!(bounded.batch.counters.candidates_full);
+    let packed = response::pack_enriched_context(
+        &bounded,
+        None,
+        response::Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(
+        packed
+            .text
+            .lines()
+            .next()
+            .unwrap()
+            .contains("candidates:full")
+    );
+    assert_joined_only(before);
+    assert!(
+        trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|event| event["stage"] == "refinement")
+            .unwrap()["work"]["mapping_rows_skipped"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    replace_mapping(shared_path, &shared, &shared.units);
+    // Keep every selected source current but remove its fine partition work.
+    // The retained generation still contains body vectors: this specifically
+    // tests the selected metadata gate, not an empty global ANN shortcut.
+    for (path, record) in &saved {
+        let coarse: Vec<_> = record
+            .units
+            .iter()
+            .filter(|unit| unit.kind == CardKind::File)
+            .cloned()
+            .collect();
+        replace_mapping(path, record, &coarse);
+    }
+    select();
+    let last_work = || {
+        trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|event| event["stage"] == "refinement")
+            .unwrap()["work"]
+            .clone()
+    };
+    assert_eq!(last_work()["vectors_scored"], 0);
+    assert_eq!(last_work()["unpublished_units"], 0);
+    for (path, record) in &saved {
+        replace_mapping(path, record, &record.units);
+    }
+    // A current Body mapping alone is insufficient: its exact key must also
+    // occur in this retained publication before any resident vector is read.
+    let mut unpublished = partition.units.clone();
+    unpublished
+        .iter_mut()
+        .find(|unit| unit.kind == CardKind::Body)
+        .unwrap()
+        .input_key = "ef".repeat(32);
+    replace_mapping(path, &partition, &unpublished);
+    select();
+    assert!(last_work()["unpublished_units"].as_u64().unwrap() > 0);
+    replace_mapping(path, &partition, &partition.units);
+    corpus
+        .engine()
+        .replace_source(path, "fn replaced() {}\n")
+        .unwrap();
+    let fresh = select();
+    assert!(
+        fresh.batch.items.iter().all(|item| item
+            .handle
+            .as_ref()
+            .is_none_or(|handle| handle.path != path)),
+        "the retained query/generation cannot bypass the final source hash check"
+    );
+    runtime.shutdown();
+    assert!(
+        corpus.prepare().document_calls > 0,
+        "the changed source needs new body and overview inputs"
+    );
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "unchanged replay has no inference"
+    );
+}
+
+#[test]
+fn exact_body_keeps_matching_lexical_label_without_refocusing() {
+    use context_foundry::neural::{cache::CardKind, partition::Representation};
+    use context_foundry::store::{ContextOptions, RenderedForm};
+    let path = "src/refund_rule.rs";
+    let source = "fn refund_rule() { issue_credit(); }";
+    let mut corpus = Corpus::unprepared(&[(path.into(), source.into())]);
+    select_body_recipe(&mut corpus, 2048, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert!(!corpus.prepare().partial);
+    assert!(
+        corpus
+            .engine()
+            .semantic_partition(path)
+            .unwrap()
+            .unwrap()
+            .units
+            .iter()
+            .any(|unit| unit.kind == CardKind::Body && unit.start == 0 && unit.end == source.len())
+    );
+    let runtime = corpus.runtime();
+    let query = "refund timing rules";
+    let window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let context = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let item = context
+        .batch
+        .items
+        .iter()
+        .find(|item| {
+            item.handle.as_ref().is_some_and(|handle| {
+                handle.path == path && handle.start == 0 && handle.end == source.len() as u64
+            })
+        })
+        .unwrap();
+    assert_eq!(item.label, "fn refund_rule");
+    assert!(item.semantic.is_some());
+    assert!(
+        !item.is_dense_only(),
+        "the exact lexical delivery unit supports this body span"
+    );
+    assert_eq!(item.forms, vec![RenderedForm::Verbatim(source.into())]);
+    runtime.shutdown();
+}
+
+#[test]
 fn hierarchy_vectors_are_independent_and_incremental_with_shared_source_ranges() {
     use context_foundry::neural::partition::Representation;
     let path = "src/billing.rs";
@@ -7068,6 +7529,7 @@ fn restarted_partial_mapping_refreshes_shared_cache_keys_without_a_partition_cen
             None,
             &|body| {
                 Ok(vec![context_foundry::neural::cache::PartitionUnit {
+                    kind: context_foundry::neural::cache::CardKind::Address,
                     start: 0,
                     end: body.len(),
                     input_key: key.clone(),

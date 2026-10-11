@@ -1604,6 +1604,7 @@ impl Cards<'_> {
             let mut tuples = Vec::new();
             let mut accept = |card: partition::Card| {
                 tuples.push(PartitionUnit {
+                    kind: card.kind,
                     start: card.start,
                     end: card.end,
                     input_key: card.input_key.clone(),
@@ -1806,8 +1807,13 @@ impl Cards<'_> {
                         )?,
                     },
                 };
-                if (card.start, card.end, card.input_key.as_str())
-                    != (recorded.start, recorded.end, recorded.input_key.as_str())
+                if (card.kind, card.start, card.end, card.input_key.as_str())
+                    != (
+                        recorded.kind,
+                        recorded.start,
+                        recorded.end,
+                        recorded.input_key.as_str(),
+                    )
                 {
                     return Err(partition_invalid(format!(
                         "{}: card {index} is recorded as {}..{}, but renders as {}..{} under \

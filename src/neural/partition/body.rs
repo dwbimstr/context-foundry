@@ -45,6 +45,7 @@ pub fn card(
         ));
     }
     Ok(Card {
+        kind: crate::neural::cache::CardKind::Body,
         start: span.start,
         end: span.end,
         input_key: provider::input_key(recipe.function_digest, &rendered),
@@ -195,6 +196,7 @@ pub fn visit(
             emit(
                 span,
                 Card {
+                    kind: crate::neural::cache::CardKind::Body,
                     start,
                     end,
                     input_key: provider::input_key(recipe.function_digest, &rendered),
@@ -251,6 +253,7 @@ pub fn visit(
                 let (rendered, encoded) = encode(source, &span, recipe, tokens)?;
                 if !encoded.ids.is_empty() && encoded.ids.len() <= recipe.card_tokens {
                     break Card {
+                        kind: crate::neural::cache::CardKind::Body,
                         start: span.start,
                         end: span.end,
                         input_key: provider::input_key(recipe.function_digest, &rendered),

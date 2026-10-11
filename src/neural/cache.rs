@@ -70,10 +70,43 @@ pub struct PartitionRecord {
     pub units: Vec<PartitionUnit>,
 }
 
+/// What the exact model input represents. Legacy mappings remain readable, but
+/// unknown provenance cannot be promoted to independently scored body evidence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CardKind {
+    #[default]
+    Unknown,
+    Address,
+    Body,
+    Parent,
+    File,
+}
+
+impl CardKind {
+    /// Legacy recipes predate representation metadata. A current recipe must
+    /// carry a role it can actually render; a file overview cannot acquire body
+    /// semantics by changing only its location metadata.
+    pub(crate) fn valid_for(self, recipe: &str) -> bool {
+        if !recipe.split('+').any(|part| part == "kinds1") {
+            return true;
+        }
+        match recipe.split('+').next() {
+            Some("cards-v1") => self == Self::Address,
+            Some("body-v1") => self == Self::Body,
+            Some("overview-v1") => self == Self::File,
+            Some("hierarchy-v1") => matches!(self, Self::Body | Self::Parent | Self::File),
+            _ => false,
+        }
+    }
+}
+
 /// One card's provenance: the unit range it was rendered from and the key
 /// of its exact rendered input.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PartitionUnit {
+    #[serde(default)]
+    pub kind: CardKind,
     pub start: usize,
     pub end: usize,
     pub input_key: String,
@@ -115,6 +148,12 @@ impl PartitionSource {
         let units = cards(&self.body)?;
         validate_units(&units, self.body.len(), Some(&self.body))
             .map_err(|m| invalid_partition(format!("{}: {m}", self.path)))?;
+        if units.iter().any(|unit| !unit.kind.valid_for(recipe_id)) {
+            return Err(invalid_partition(format!(
+                "{}: card role is incompatible with the partition recipe",
+                self.path
+            )));
+        }
         if let Some(claimed) = claimed
             && let Some(message) = first_difference(claimed, &units)
         {
@@ -455,6 +494,11 @@ pub fn validate_units(
                 unit.end
             ));
         }
+        if unit.kind == CardKind::File && (unit.start != 0 || unit.end != len) {
+            return Err(format!(
+                "card {index} claims file provenance for a partial range"
+            ));
+        }
         if !is_key(&unit.input_key) {
             return Err(format!("card {index} has a malformed input key"));
         }
@@ -519,6 +563,10 @@ pub fn partition_is_current(
     record.source_hash == meta.hash
         && record.recipe_id == recipe_id
         && record.function_digest == function_digest
+        && record
+            .units
+            .iter()
+            .all(|unit| unit.kind.valid_for(recipe_id))
         && validate_units(&record.units, meta.bytes, None).is_ok()
 }
 
@@ -599,6 +647,14 @@ impl MappingPage {
             cache: tx.open_table(CACHE)?,
         })
     }
+    /// Point-read size guard for selected query mappings, before JSON allocation.
+    pub(crate) fn partition_bytes(&self, path: &str) -> FResult<usize> {
+        Ok(self
+            .partitions
+            .get(path)?
+            .map_or(0, |raw| raw.value().len()))
+    }
+
     pub(crate) fn partition(
         &self,
         path: &str,
@@ -1329,6 +1385,52 @@ mod tests {
     const DIGEST: &str = "abababababababababababababababababababababababababababababababab";
 
     #[test]
+    fn current_partition_rejects_a_role_the_recipe_cannot_render() {
+        for (recipe, accepted) in [
+            ("cards-v1", vec![CardKind::Address]),
+            ("body-v1", vec![CardKind::Body]),
+            ("overview-v1", vec![CardKind::File]),
+            (
+                "hierarchy-v1",
+                vec![CardKind::File, CardKind::Parent, CardKind::Body],
+            ),
+        ] {
+            for kind in [
+                CardKind::Unknown,
+                CardKind::Address,
+                CardKind::Body,
+                CardKind::Parent,
+                CardKind::File,
+            ] {
+                let source = PartitionSource {
+                    path: "src/example.rs".into(),
+                    source_hash: DIGEST.into(),
+                    body: "fn example() {}".into(),
+                };
+                let result = source.prepare(
+                    &format!("{recipe}+kinds1+units5:512+tokenizer"),
+                    DIGEST,
+                    None,
+                    |body| {
+                        Ok(vec![PartitionUnit {
+                            kind,
+                            start: 0,
+                            end: body.len(),
+                            input_key: DIGEST.into(),
+                        }])
+                    },
+                );
+                assert_eq!(
+                    result.is_ok(),
+                    accepted.contains(&kind),
+                    "{recipe}: {kind:?}"
+                );
+            }
+        }
+        assert!(CardKind::Unknown.valid_for("cards-v1+units5:512+tokenizer"));
+    }
+
+    #[test]
     fn rows_describe_their_own_dimension_and_legacy_rows_are_retained() {
         for dims in [768, 512, 256, 128, 2048] {
             let row = encode_row(DIGEST, &vec![0.5; dims]);
@@ -1368,6 +1470,7 @@ mod tests {
     fn cards_may_nest_and_be_absent_but_never_repeat_or_leave_the_source() {
         let key = "e".repeat(64);
         let unit = |start: usize, end: usize| PartitionUnit {
+            kind: crate::neural::cache::CardKind::Address,
             start,
             end,
             input_key: key.clone(),

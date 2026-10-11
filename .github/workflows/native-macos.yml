@@ -1,0 +1,53 @@
+name: Native macOS acceptance
+on:
+  push:
+    branches: [experimental/context-ecosystem]
+    paths:
+      - '.github/workflows/native-macos.yml'
+      - 'scripts/native-macos-acceptance.py'
+      - 'scripts/embed-worker-bundle.sh'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - 'src/model_resources.rs'
+      - 'src/bin/foundry_embed.rs'
+      - 'src/neural/**'
+      - 'tests/embed_worker.rs'
+      - 'tests/embedding_parity.rs'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-macos-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  native:
+    # Fixed arm64 image; architecture alone does not establish Metal access.
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Record native CPU, actual Metal and owned worker acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/native-macos-acceptance.py \
+            --out "$RUNNER_TEMP/native-macos-results" \
+            --work "$RUNNER_TEMP/native-macos-work"
+      - name: Preserve results even when GPU acceptance is blocked or fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-macos-results/
+          if-no-files-found: error
+          retention-days: 14

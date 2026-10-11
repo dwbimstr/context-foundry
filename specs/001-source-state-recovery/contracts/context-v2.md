@@ -220,7 +220,9 @@ segments appear only when not at their default:
 10. `candidates:full` when a candidate window filled: search tier 1's 64 slots with
     definitions left over, tier 2 at 256, an exact-doors references window (256
     records, 64 files) or its exact-name resolution, or the approximate-doors window of
-    256 units;
+    256 units, or a bounded semantic provenance, file-discovery or refinement
+    examination window. Semantic working limits do not increase `omitted` or
+    `capped`: their unexamined locations were not materialized delivery items;
 11. (removed by 005 T004) `graph:<state>` reported path-seeded graph expansion; an
     anchored context reports `doors:<state>` instead (§ Anchored context);
 12. `examined:<n>`: `foundry references` only, always present. Counts the graph records
@@ -883,6 +885,29 @@ context replaced § Compact context and search schema `"4"` replaced `"3"` in §
 version gate (001 T007); when 005 T004 is accepted, § Doors replaces the path-seeded
 graph expansion and the graph keyword routing of § Context candidates and routing.
 Every later change to what a search document contains bumps the schema again.
+
+### Call-name postings — 2026-10-11
+
+The current derived search schema is `"6"`. Each source's first search document adds
+`call_name` (multi-valued exact `STRING`) and `call_coverage` (`STRING`, stored).
+The existing ingestion parse collects distinct terminal call names for the supported
+Rust, Python, Go and JavaScript/TypeScript/TSX recipes. Comments and repeated calls
+cannot occupy extra source slots. No source is enrolled, executed or parsed a second
+time to build these fields; no new store table or background owner is introduced.
+At most 4,096 distinct names of at most 1,024 bytes are retained per source, under the
+existing 1 MiB source and deterministic `2^25` parser-work limits. Coverage values are
+`complete`, `incomplete` or `unsupported` for the syntax recipe, not runtime behavior.
+Rust assertion token-tree ancestry is bounded at 32; arbitrary macro DSLs are unsupported.
+
+A schema-5 index reports `repair_required` until the explicit command
+`foundry --store STORE repair-index` rebuilds derived documents from authoritative
+sources. This does not upgrade the authoritative store schema or discard sources,
+memories or tasks. `SOURCE_UNIT_SCHEMA` remains independently `"5"`; semantic
+partition recipes use that version, not search schema 6. Search-only posting changes
+do not change model inputs or independently invalidate their partitions. Other
+representation-recipe changes, such as the explicit `+kinds1` component, retain their
+own invalidation rules. The bounded consumer and final identity/AST checks are in
+[003 T009](../../003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task).
 
 ### Roles
 

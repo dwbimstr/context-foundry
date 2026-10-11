@@ -890,6 +890,7 @@ fn semantic_crash_child(work: &Path, stage: &str) {
                 None,
                 &|body| {
                     Ok(vec![cache::PartitionUnit {
+                        kind: context_foundry::neural::cache::CardKind::Address,
                         start: 0,
                         end: body.len(),
                         input_key: key.clone(),

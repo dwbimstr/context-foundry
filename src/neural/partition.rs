@@ -2,7 +2,7 @@
 //! bodies").
 //!
 //! T009's opt-in body/parent recipe lives in [`body`]. The address recipe
-//! described below remains the default, with its original identity.
+//! described below remains the default, with its exact model inputs unchanged.
 //!
 //! One card per definition (001 T007's definitions: a named
 //! programming-language unit, a Rust `impl` excluded) and per Markdown
@@ -38,7 +38,7 @@ use crate::syntax::{self, Lang, Unit, UnitKind};
 pub mod body;
 pub mod hierarchy;
 
-/// Address cards remain the default and retain their historical identity.
+/// Address cards remain the default and retain their exact model inputs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum Representation {
@@ -65,16 +65,16 @@ impl Representation {
         match self {
             Self::Address => recipe_id(tokenizer, tokens),
             Self::Body { parent_tokens } => format!(
-                "body-v1+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
-                crate::store::SEARCH_SCHEMA
+                "body-v1+kinds1+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                crate::store::SOURCE_UNIT_SCHEMA
             ),
             Self::Hierarchy { parent_tokens } => format!(
-                "hierarchy-v1+overview3+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
-                crate::store::SEARCH_SCHEMA
+                "hierarchy-v1+overview3+kinds1+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                crate::store::SOURCE_UNIT_SCHEMA
             ),
             Self::Overview => format!(
-                "overview-v1+overview3+units{}:{tokens}+{tokenizer}",
-                crate::store::SEARCH_SCHEMA
+                "overview-v1+overview3+kinds1+units{}:{tokens}+{tokenizer}",
+                crate::store::SOURCE_UNIT_SCHEMA
             ),
         }
     }
@@ -85,20 +85,21 @@ pub const RECIPE_GRAMMAR: &str = "cards-v1";
 
 /// The partition recipe id for one tokenizer identity and card limit. It
 /// participates in mapping eligibility: a partition row under another
-/// recipe is stale. It names the search index version too, which changes
+/// recipe is stale. It names the source-unit grammar version too, which changes
 /// whenever units can (a grammar, language or unit-kind change, 001's index
 /// version gate): a source partitioned before such a change, even into no
 /// cards, is partitioned again, while unchanged card inputs keep their
 /// cached vectors.
 pub fn recipe_id(tokenizer_identity: &str, card_tokens: u32) -> String {
-    let units = crate::store::SEARCH_SCHEMA;
-    format!("{RECIPE_GRAMMAR}+units{units}:{card_tokens}+{tokenizer_identity}")
+    let units = crate::store::SOURCE_UNIT_SCHEMA;
+    format!("{RECIPE_GRAMMAR}+kinds1+units{units}:{card_tokens}+{tokenizer_identity}")
 }
 
 /// One rendered card: the unit's half-open byte range, its exact
 /// document-input key and the exact model-input token ids.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Card {
+    pub kind: super::cache::CardKind,
     pub start: usize,
     pub end: usize,
     pub input_key: String,
@@ -185,6 +186,7 @@ pub fn card(
 ) -> Result<Card, ProviderError> {
     let (rendered, ids) = render_card(source, path, unit, recipe, tokens)?;
     Ok(Card {
+        kind: super::cache::CardKind::Address,
         start: unit.start,
         end: unit.end,
         input_key: provider::input_key(recipe.function_digest, &rendered),

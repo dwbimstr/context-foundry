@@ -631,24 +631,54 @@ republication. The explicit Flask 3.1.2 runtime fixture confirms selected behavi
 this remains syntactic producer evidence, not an executed-call claim.
 
 `foundry --store STORE import-execution ARTIFACT.json` separately imports producer
-observations into the existing replaceable graph-bundle owner. The strict v1 artifact
-contains `producer`, `run`, `command`, `completed: true`, `exit_code`, `duration_ms`,
-`test` (an ordinary graph endpoint), and `observations` (`from`, `to`, `kind`, `count`).
-Only positive `calls`/`covers` observations are accepted; these edges represent observed
-presence, not exported frequency or coverage percentages. Bounds are 4 MiB, 16,384
-observations, 32 command arguments / 4,096 aggregate bytes. The artifact SHA-256 is
-computed from exact imported bytes. Publication validates caller, target and test
-source hashes/lines atomically. Graph reads revalidate all three. Replacing a producer
-bundle is atomic; other producers remain. No command is run by the importer or indexer.
+observations into the existing replaceable graph-bundle owner. Both strict artifact
+versions contain `producer`, `run`, `command`, `completed: true`, `exit_code`,
+`duration_ms`, `test` (an ordinary graph endpoint), and `observations`
+(`from`, `to`, `kind`, `count`). Only positive `calls`/`covers` observations are
+accepted; edges represent observed presence, not exported frequency or coverage
+percentages. Bounds are 4 MiB, 16,384 observations, 32 command arguments / 4,096
+aggregate argument bytes, 100 producer bytes and 128 run bytes. The artifact
+SHA-256 identifies the exact imported bytes. No command is run by the importer or
+indexer. A completed run may have a nonzero exit code; its observations do not
+claim that its tests passed.
 
-Evidence is `observed_by_producer`, with the completed run receipt retained on the edge.
-It is neither compiler resolution nor trusted execution attestation, and cannot prove
-unobserved paths absent or current suite success. Task composition includes observations
-only with all three current source spans under its ordinary budget. The real CPython
-trace fixture captures a dynamic `getattr` call and executed lines while excluding an
-unexecuted error branch. Static adversarial and packing tests check stale suppression
-and invalid-import atomicity. Broader collectors/frameworks/brokers, cross-language
-runtime identity and test-to-requirement coverage remain open.
+V2 requires `v: 2`, a nonblank `scope` of at most 128 bytes, `workspace_id`,
+`source_revision`, and `inputs: [{"path": "...", "sha256": "..."}]` with
+1–16,384 distinct admitted paths. The collector captures the indexed workspace
+revision and source identities before execution and reports its relevant source
+inputs. Import checks the workspace/revision, every supplied input hash and all
+caller/target/test endpoint hashes and lines in the same write transaction as
+replacement. Every endpoint must belong to the manifest. Invalid input preserves
+the prior collection. The test endpoint is checked even for an empty observation set.
+
+The replaceable collection is `(producer, scope)`: two tests from one producer can
+coexist, reimport replaces just that scope, and a valid completed empty set clears
+just that scope. V2 uses a namespace separate from legacy bundles. Each edge retains
+the producer/scope and a bounded snapshot receipt containing the workspace/revision,
+input-array digest and input count; it does not repeat the full manifest. Graph and
+task reads label this `freshness: workspace_revision` and require the current
+workspace/revision plus caller/target/test identities. Any accepted indexed-source
+change invalidates the entire run, including an edit to a third source outside the
+manifest. Reverting that edit does not revive the old revision. This deliberately
+conservative rule does not selectively preserve runs after unrelated source edits.
+
+Legacy `v: 1` remains importable and replaces the whole producer bundle. Its explicit
+`freshness: endpoint_only` checks caller/target/test identities; it cannot claim
+snapshot or collection scope. Existing v1 rows retain this weaker interpretation.
+The authoritative store schema remains unchanged; older executables that reject the
+new receipt fields cannot consume these rows and must not be used as a downgrade.
+
+Evidence is `observed_by_producer`, not compiler resolution or execution attestation.
+The importer validates the supplied manifest; it cannot establish that the producer
+listed every runtime input. Indexed revisions do not detect filesystem changes not
+yet accepted into the store, external dependencies, runtime configuration or an
+unreported execution. Neither version proves unobserved paths absent, exhaustive
+suite execution, requirement satisfaction or current suite success. Task composition
+includes observations only with all caller/target/test spans under its ordinary
+budget. The explicit CPython fixture captures a dynamic `getattr` call and executed
+lines while excluding an unexecuted error branch. Regressions cover two collection
+scopes, atomic rejection, third-source invalidation and restart. Broader collectors,
+frameworks/brokers, cross-language identity and test-to-requirement coverage remain open.
 
 
 T005 package and observed-framework continuation (2026-10-11):
@@ -661,9 +691,12 @@ execution or path search is introduced. Tests live in
 [`boundary.rs`](../../tests/boundary.rs), including an explicitly executed FastAPI
 package fixture. The execution-import fixture now also exercises a real Flask request
 that dynamically selects a callback, retains observed test-line evidence, excludes an
-unexecuted branch, and invalidates observations when the observing test changes after
-restart. This validates the existing import contract, not a deployed general-purpose
-collector or test-to-requirement inference. Broader frameworks/brokers, re-exports,
+unexecuted branch, and invalidates v2 observations after an intermediate route source
+changes even though the observed caller, target and test remain unchanged. After a
+fresh collection, an observing-test edit also invalidates the observations after
+restart. The collector captures the indexed snapshot before explicit execution and
+checks its fixture files again afterward. These generated fixtures validate the import
+contract, not a deployed general-purpose collector or test-to-requirement inference. Broader frameworks/brokers, re-exports,
 async/background trace attribution and cross-language identity remain open.
 
 The 2026-10-11 task-composition continuation maps explicit fresh requirement links to

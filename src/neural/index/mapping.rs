@@ -160,6 +160,7 @@ impl View {
                 let units = self.units.entry(unit.input_key.clone()).or_default();
                 let units = std::sync::Arc::make_mut(units);
                 let location = UnitLocation {
+                    kind: unit.kind,
                     path: path.to_owned(),
                     start: unit.start as u64,
                     end: unit.end as u64,
@@ -546,6 +547,7 @@ mod tests {
         engine
             .semantic_record_partition(path, &hash, "recipe", &digest(), None, &|body| {
                 Ok(vec![cache::PartitionUnit {
+                    kind: crate::neural::cache::CardKind::Address,
                     start: 0,
                     end: body.len(),
                     input_key: format!("{key:064x}"),

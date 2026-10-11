@@ -62,12 +62,22 @@ pub fn write_notices(dir: &Path, license: &str) -> i32 {
     0
 }
 
-/// Refuse a descriptor that claims a recipe other than the one the real
-/// worker implements: the adapter revision, the llama.cpp commit, and an
-/// inventory naming the GGUF and the core's tokenizer (each therefore
-/// hash-verified before load). Pooling, output and dimension are checked by
-/// [`FunctionDescriptor::validate`]. Checked by the supervisor before launch
-/// and by the worker itself before the model loads.
+/// A binary may serve exactly its compiled numerical recipe, even when another
+/// recipe is supported by the supervisor. Never relabel an existing cache.
+pub fn check_embedding_worker_revision(requested: u32, compiled: u32) -> Result<(), String> {
+    if requested != compiled {
+        return Err(format!(
+            "this embedding worker requires adapter revision {compiled}, received {requested}"
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse a descriptor outside the real workers' supported recipes: adapter
+/// revision, pinned llama.cpp commit and hash-verified GGUF/tokenizer inventory.
+/// Pooling, output and dimensions are checked by [`FunctionDescriptor::validate`].
+/// The supervisor and worker both check before model loading; the binary also
+/// requires its exact compiled revision.
 pub fn check_real_descriptor(descriptor: &FunctionDescriptor) -> Result<(), String> {
     descriptor.validate()?;
     let revision = if descriptor.geometry.is_some() {
@@ -79,12 +89,13 @@ pub fn check_real_descriptor(descriptor: &FunctionDescriptor) -> Result<(), Stri
         revision,
         super::provider::CPU_ADAPTER_REVISION,
         super::provider::METAL_ADAPTER_REVISION,
+        super::provider::CPU_AVX512_BF16_ADAPTER_REVISION,
     ]
     .contains(&descriptor.adapter_revision)
     {
         return Err(format!(
             "descriptor claims adapter_revision {}; supported identities are legacy \
-             {revision}, pooled CPU 3 and pooled Metal 4 (the binary checks its platform)",
+             {revision}, pooled CPU 3, pooled Metal 4 and AVX-512 BF16 CPU 5 (the binary checks its variant)",
             descriptor.adapter_revision
         ));
     }
@@ -1402,6 +1413,25 @@ pub fn allocate_touching(mib: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedding_variants_refuse_other_cache_namespaces() {
+        for compiled in [3, 4, 5] {
+            for requested in [1, 2, 3, 4, 5, 6] {
+                assert_eq!(
+                    check_embedding_worker_revision(requested, compiled).is_ok(),
+                    requested == compiled
+                );
+            }
+        }
+        let baseline = fake_descriptor();
+        let mut simd = baseline.clone();
+        simd.adapter_revision = super::super::provider::CPU_AVX512_BF16_ADAPTER_REVISION;
+        assert!(check_real_descriptor(&simd).is_ok());
+        assert_ne!(baseline.digest(), simd.digest());
+        simd.adapter_revision = 6;
+        assert!(check_real_descriptor(&simd).is_err());
+    }
 
     /// A GGUF string: its u64 length, then its bytes.
     fn string(text: &str) -> Vec<u8> {

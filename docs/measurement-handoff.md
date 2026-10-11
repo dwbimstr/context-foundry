@@ -1,18 +1,38 @@
 # Measurement handoff
 
+The experimental branch now includes an explicit
+[native macOS workflow](../.github/workflows/native-macos.yml) and
+[reproducible runner](../scripts/native-macos-acceptance.py). It runs the native CPU
+checks and synthetic worker lifecycle checks, then requires a successful Metal
+compute dispatch before downloading pinned public embedding artifacts. A signed
+development worker must produce the full-window receipt and be observed and reaped.
+The runner preserves failures and blocked hardware as such; adding the job does not
+establish acceptance. Its selected checks exclude generation, real-model owner death
+under pressure, global GPU headroom and signed installed-package acceptance.
+
 **2026-10-11 resource-code handoff.** The macOS CPU sampler now exists in
 [`model_resources.rs`](../src/model_resources.rs), using the existing optional
 background CPU policy. Linux verifies tick accounting/reset and policy hysteresis;
-native compilation and actual CPU-pressure behavior have not run here. On the Mac:
+native compilation and actual CPU-pressure behavior have not run here. The current
+Linux environment has no configured native Mac runner or GPU access. On an idle Mac:
 
 ```sh
-cargo test --locked --lib native_macos_cpu_observation -- --ignored --nocapture
+cargo test --locked --lib model_resources::tests::native_macos_cpu_observation \
+  -- --ignored --exact --nocapture --test-threads=1
+cargo test --locked --lib model_resources::tests::native_macos_cpu_pressure_pauses_and_resumes_both_lanes \
+  -- --ignored --exact --nocapture --test-threads=1
 ```
 
-Then check configured pause/resume thresholds with foreground demand and both model
-lanes, preserving unknown-sample refusal and worker lifetime. This is host CPU
-admission, not GPU headroom, a hard CPU quota or thermal/battery policy. Those remain
-separate TODOs. `overview-v1` and hierarchy's `+overview3` fitting recipe also need
+The first check samples real CPU counters twice. The second uses bounded CPU load and
+the actual CPU/memory sampler to check unknown-sample refusal, background pause/resume
+for semantic and generation reservations, foreground admission, reservation retention
+and release. It requires 1–128 logical CPUs and enough free memory for its small
+reservations; it uses no model weights. This is an admission-API check. It does not
+launch model workers, prove worker lifetime or measure GPU allocations, throughput,
+hard CPU quotas or thermal/battery policy. Actual model-worker pressure/lifecycle,
+Metal parity and signed installed-artifact checks below remain separate acceptance.
+The current default macOS CI job does not run these ignored checks or enable native
+model-worker features. `overview-v1` and hierarchy's `+overview3` fitting recipe also need
 representation-quality and device checks; complete file-vector coverage is not full
 body evidence or a task-quality result. The [latest Linux record](validation.md#named-re-exports-and-current-fitting--2026-10-11)
 preserves the precise corpus/input counts and bounded real-model progress.
@@ -39,10 +59,23 @@ cargo test --locked --test embedding_parity \
   -- --ignored --exact compare_cpu_and_metal_receipts --nocapture
 ```
 
-Build the native worker with `cargo build --locked --features embed-worker --bin
-foundry-embed`, package it with `scripts/embed-worker-bundle.sh`, and update the
-profile with the executable hash **after signing**. Use physical model/scratch paths
-and the existing bundle instructions. The comparator requires matching descriptors
+Use a non-root Apple-silicon Mac with Rust 1.90 or newer, CMake, Xcode/macOS SDK
+and Metal compiler tools, libclang and signing tools. `LLAMA_CPP_DIR` must name a
+llama.cpp repository containing pinned commit
+`b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`. With the explicit native model/tokenizer
+profile, existing physical model/scratch directories and a fresh bundle destination:
+
+```sh
+LLAMA_CPP_DIR=/absolute/llama.cpp cargo build --locked --features embed-worker --bin foundry-embed
+scripts/embed-worker-bundle.sh --binary target/debug/foundry-embed \
+  --out /absolute/new/FoundryEmbed.app --profile /absolute/native-profile.json
+```
+
+Update the profile's bundle path and executable hash **after signing**. The optional
+Linux AVX-512 BF16 worker uses adapter revision 5: it can produce its own receipt,
+but the CPU/Metal comparator requires baseline revision 3 and Metal revision 4.
+A revision-5 receipt does not satisfy that comparison. Use the existing bundle
+instructions for signing and installed-artifact acceptance. The comparator requires matching descriptors
 except for the backend revision and identical token inputs. Both vectors must be
 finite and normalized within 0.0001, with cosine at least 0.9999. It explicitly
 requires Linux and macOS arm64 receipts; a Linux-only or zero-test run cannot pass

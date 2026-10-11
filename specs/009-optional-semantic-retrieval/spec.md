@@ -1,5 +1,53 @@
 # 009 — Neural context that becomes useful and stays prepared
 
+Opt-in Linux CPU efficiency variant, 2026-10-11: the explicit
+`embed-worker-avx512-bf16` build uses fixed AVX-512/BF16 flags on Linux x86_64,
+with runtime capability refusal before native initialization. Ordinary workers
+retain the portable baseline. Adapter revision **5** owns the new numerical
+namespace; revisions 3/4 and their caches are never relabeled. The pinned weights,
+input geometry, pooling and allocation repair stay unchanged. The same-input
+128-source comparison reduces provider time from 30.838 to 17.939 seconds, with
+minimum cosine 0.999990767 against baseline; reversed and mixed-length batches also
+pass. This bounded measurement supports explicitly selecting the variant for longer
+preparation; it establishes neither completed corpus inference nor retrieval quality.
+The unchanged portable build remains the default. See [validation](../../docs/validation.md).
+
+Representation and localization correction, 2026-10-11: partition and published
+location metadata now records `address`, `body`, `parent` or `file`. Recipes include
+`+kinds1`; legacy missing roles decode as `unknown`, require refitting under the new
+recipe, and cannot claim independent body evidence. Exact rendered input keys remain
+unchanged, so current cached vectors are reused during metadata upgrades. Acceptance,
+currentness and generation decoding reject roles incompatible with the recipe; file
+locations span the whole source. Metadata verification caches include the recipe.
+Source-unit schema 5 is independent of derived search schema 6.
+
+Experimental prose retrieval with hierarchy vectors reuses its one query embedding
+to localize independently embedded bodies within up to 64 dense-selected source paths
+plus the first 16 lexical candidates' paths. Selected partition point reads are joined
+against the retained generation's published locations and resident segment membership;
+cache-only or unpublished inputs cannot supply evidence. The scorer considers at most
+80 paths, 512 KiB per partition row, 8 MiB total mapping bytes, 32,768 units and 4,096
+distinct resident vectors. Vector slots rotate between selected files; shared inputs
+are scored once. It computes cosine from resident f16 vectors, accounting for their
+norms, and returns at most 64 labels with input-key tie breaking. Work counts and
+truncation are traced. This avoids filtered ANN's potentially corpus-wide traversal
+when a selected subset has few or no body vectors. The ordinary global ANN search is
+unchanged. Refined labels carry only the exact locations that passed those joins;
+a shared input cannot import another file's unverified provenance. Ordinary hits
+admit at most 4,096 locations fairly across the 64 labels, using logarithmic exact
+path/subtree lookup. The same admitted locations supply discovery and delivery.
+Refined labels precede the original 64 before the existing per-file and
+output candidate limits. Final source hashes and ranges are checked in one read
+snapshot. Materialization retains exact scored body
+spans instead of substituting lexical excerpts. A partial hierarchy interleaves body
+hits first only when a refined location survives that final check; otherwise coarse
+ordering stays unchanged. File-only profiles do not perform a body search. No source
+inference, preparation, extra model call, output allowance or automatic refinement
+job is introduced by reading. Examination limits also surface as `candidates:full`
+in ordinary responses. Exact lexical matches retain their labels without replacing
+the independently scored body bytes. Traces distinguish representation role,
+refinement and independently embedded passages from focused coarse excerpts.
+
 CLI lifecycle correction, 2026-10-11: the per-command semantic slot now waits
 for the existing runtime shutdown before leaving scope, on success or error. Closing
 the job channel alone detached the provider thread, allowing CLI exit to interrupt
@@ -1602,8 +1650,11 @@ MCP driver:
   Backoff releases the serving slot, observes pause/shutdown and admits no model work.
   Exhaustion pauses by name with pending work intact; finalization does not retry again.
   CLI publication retains its existing bounded-command, named-failure behavior.
-- Query fan-out is at most two USearch filtered searches and 128 candidates before
-  merging the final 64. Segment ordinals select immutable input keys; a persistent
+- The global query window uses at most two USearch filtered searches and 128 candidates
+  before merging its final 64. Opt-in hierarchy localization adds bounded exact
+  resident-vector scoring as described above, yielding at most another 64 labels
+  before the existing delivery limits. It adds no ANN traversal or model call.
+  Segment ordinals select immutable input keys; a persistent
   ordered map checks active membership and supplies locations in O(log n).
   Tombstones are excluded inside ANN selection, before the candidate window is limited;
   final source-hash/range eligibility remains unchanged. Segment memberships are

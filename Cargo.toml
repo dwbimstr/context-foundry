@@ -119,6 +119,9 @@ semantic = ["dep:tokenizers", "dep:usearch"]
 # bindgen and links the static archives into that binary alone; `foundry`
 # and the default build never touch llama.cpp.
 embed-worker = ["dep:bindgen"]
+# Opt-in Linux x86_64 AVX-512 BF16 worker; separate adapter identity and runtime
+# capability refusal. The portable CPU worker remains the default.
+embed-worker-avx512-bf16 = ["embed-worker"]
 # Compatibility alias for the original diagnostic build. The corrected runtime
 # is now part of embed-worker; adapter revisions distinguish CPU and Metal.
 embed-worker-pooled-diagnostic = ["embed-worker"]

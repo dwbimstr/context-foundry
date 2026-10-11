@@ -79,6 +79,40 @@ pub struct Execution {
     pub exit_code: i32,
     pub duration_ms: u64,
     pub test: Endpoint,
+    /// Legacy receipts validate only caller/target/test endpoints. V2 receipts
+    /// additionally bind every observation to one admitted source snapshot.
+    #[serde(default)]
+    pub freshness: ExecutionFreshness,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<ExecutionSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionFreshness {
+    #[default]
+    EndpointOnly,
+    WorkspaceRevision,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionSnapshot {
+    pub workspace_id: String,
+    pub source_revision: u64,
+    pub inputs_sha256: String,
+    pub input_count: usize,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ExecutionSource {
+    path: String,
+    sha256: String,
 }
 
 #[derive(Deserialize)]
@@ -93,6 +127,14 @@ struct ExecutionInput {
     duration_ms: u64,
     test: Endpoint,
     observations: Vec<Observation>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    workspace_id: Option<String>,
+    #[serde(default)]
+    source_revision: Option<u64>,
+    #[serde(default)]
+    inputs: Option<Vec<ExecutionSource>>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,7 +166,7 @@ pub(crate) fn init(tx: &WriteTransaction) -> FResult<()> {
 impl Engine {
     /// Replace one producer's entire bundle atomically; other producers remain intact.
     pub fn import_graph(&self, bundle: &GraphBundle) -> FResult<usize> {
-        self.import_graph_execution(bundle, None)
+        self.import_graph_execution(bundle, None, None)
     }
 
     /// Import caller-supplied runtime calls and positively executed source lines.
@@ -135,7 +177,7 @@ impl Engine {
         }
         let input: ExecutionInput = serde_json::from_slice(bytes)
             .map_err(|e| invalid(format!("invalid execution artifact: {e}")))?;
-        if input.v != 1
+        if ![1, 2].contains(&input.v)
             || !input.completed
             || input.run.trim().is_empty()
             || input.run.len() > 128
@@ -154,6 +196,54 @@ impl Engine {
                 "execution requires a completed bounded run and positive calls/covers observations",
             ));
         }
+        let snapshot = if input.v == 2 {
+            let scope = input
+                .scope
+                .as_deref()
+                .filter(|s| !s.trim().is_empty() && s.len() <= 128);
+            let workspace_id = input.workspace_id.as_ref();
+            let revision = input.source_revision;
+            let inputs = input.inputs.as_ref();
+            let (Some(_), Some(workspace_id), Some(source_revision), Some(inputs)) =
+                (scope, workspace_id, revision, inputs)
+            else {
+                return Err(invalid(
+                    "execution v2 requires scope, workspace_id, source_revision and inputs",
+                ));
+            };
+            if inputs.is_empty() || inputs.len() > 16_384 {
+                return Err(invalid(
+                    "execution input manifest requires 1..16384 sources",
+                ));
+            }
+            Some(ExecutionSnapshot {
+                workspace_id: workspace_id.clone(),
+                source_revision,
+                inputs_sha256: crate::digest(&serde_json::to_vec(inputs)?),
+                input_count: inputs.len(),
+            })
+        } else {
+            if input.scope.is_some()
+                || input.workspace_id.is_some()
+                || input.source_revision.is_some()
+                || input.inputs.is_some()
+            {
+                return Err(invalid(
+                    "execution v1 cannot claim snapshot or collection scope",
+                ));
+            }
+            None
+        };
+        // A collection is replaced, never appended indefinitely. Hash the pair
+        // rather than concatenate user strings, and keep legacy keys disjoint.
+        let provider = if input.v == 2 {
+            format!(
+                "execution-v2:{}",
+                crate::digest(&serde_json::to_vec(&(&input.producer, &input.scope,))?)
+            )
+        } else {
+            format!("execution:{}", input.producer)
+        };
         let digest = crate::digest(bytes);
         let execution = Execution {
             artifact_sha256: digest.clone(),
@@ -162,9 +252,17 @@ impl Engine {
             exit_code: input.exit_code,
             duration_ms: input.duration_ms,
             test: input.test,
+            freshness: if snapshot.is_some() {
+                ExecutionFreshness::WorkspaceRevision
+            } else {
+                ExecutionFreshness::EndpointOnly
+            },
+            producer: Some(input.producer),
+            scope: input.scope,
+            snapshot,
         };
         let bundle = GraphBundle {
-            provider: format!("execution:{}", input.producer),
+            provider,
             revision: digest,
             edges: input
                 .observations
@@ -177,13 +275,14 @@ impl Engine {
                 })
                 .collect(),
         };
-        self.import_graph_execution(&bundle, Some(&execution))
+        self.import_graph_execution(&bundle, Some(&execution), input.inputs.as_deref())
     }
 
     fn import_graph_execution(
         &self,
         bundle: &GraphBundle,
         execution: Option<&Execution>,
+        inputs: Option<&[ExecutionSource]>,
     ) -> FResult<usize> {
         if bundle.provider.trim().is_empty() || bundle.provider.len() > 128 {
             return Err(invalid("invalid provider"));
@@ -198,6 +297,63 @@ impl Engine {
         let mut encoded = BTreeSet::new();
         {
             let sources = tx.open_table(SOURCES)?;
+            // Validate the complete supplied manifest in the same transaction as
+            // replacement, including empty observations. The revision receipt is
+            // conservative: any admitted-source edit invalidates every run edge,
+            // even an edit to a source absent from its explicit manifest. Retain
+            // only a small receipt per edge instead of copying a large manifest.
+            if let Some(execution) = execution {
+                let mut admitted = BTreeMap::new();
+                if let Some(snapshot) = &execution.snapshot {
+                    if self.workspace_id().as_deref() != Some(snapshot.workspace_id.as_str())
+                        || read_counter(&tx.open_table(META)?, "source_revision")?
+                            != snapshot.source_revision
+                    {
+                        return Err(invalid("stale execution source snapshot"));
+                    }
+                    for source in inputs.ok_or_else(|| invalid("missing execution inputs"))? {
+                        validate_path(&source.path)?;
+                        if admitted
+                            .insert(source.path.as_str(), source.sha256.as_str())
+                            .is_some()
+                        {
+                            return Err(invalid("duplicate execution input"));
+                        }
+                        let meta = sources
+                            .get(source.path.as_str())?
+                            .ok_or_else(|| invalid("execution input is absent"))?;
+                        let meta: SourceMeta = crate::store::decode(meta.value(), "source")?;
+                        if source.sha256 != meta.hash {
+                            return Err(invalid("stale execution input"));
+                        }
+                    }
+                    for endpoint in std::iter::once(&execution.test)
+                        .chain(bundle.edges.iter().flat_map(|edge| [&edge.from, &edge.to]))
+                    {
+                        if admitted.get(endpoint.path.as_str()).copied()
+                            != Some(endpoint.hash.as_str())
+                        {
+                            return Err(invalid(
+                                "execution endpoint is absent from its input manifest",
+                            ));
+                        }
+                    }
+                }
+                // A completed empty observation set may replace this collection,
+                // but its observing test must still be a valid current endpoint.
+                validate_path(&execution.test.path)?;
+                let meta = sources
+                    .get(execution.test.path.as_str())?
+                    .ok_or_else(|| invalid("execution test is absent"))?;
+                let meta: SourceMeta = crate::store::decode(meta.value(), "source")?;
+                if execution.test.line == 0
+                    || execution.test.line > meta.lines
+                    || execution.test.symbol.len() > 1024
+                    || execution.test.hash != meta.hash
+                {
+                    return Err(invalid("invalid or stale execution test"));
+                }
+            }
             for edge in &bundle.edges {
                 if !(["calls", "references", "imports", "contains", "depends_on"]
                     .contains(&edge.kind.as_str())
@@ -282,6 +438,8 @@ impl Engine {
         let tx = self.db.begin_read()?;
         let sources = tx.open_table(SOURCES)?;
         let edges = tx.open_multimap_table(if reverse { IN } else { OUT })?;
+        let source_revision = read_counter(&tx.open_table(META)?, "source_revision")?;
+        let workspace_id = self.workspace_id();
         let mut frontier = VecDeque::from([(seed.to_owned(), 0)]);
         let mut visited = BTreeSet::from([seed.to_owned()]);
         let mut emitted = BTreeSet::new();
@@ -304,7 +462,11 @@ impl Engine {
                 result.examined_edges += 1;
                 let raw = row?;
                 let stored = decode_stored(raw.value())?;
-                let mut fresh = true;
+                let mut fresh = execution_current(
+                    stored.execution.as_ref(),
+                    workspace_id.as_deref(),
+                    source_revision,
+                );
                 for endpoint in [&stored.edge.from, &stored.edge.to]
                     .into_iter()
                     .chain(stored.execution.as_ref().map(|e| &e.test))
@@ -346,6 +508,24 @@ impl Engine {
     }
 }
 
+fn execution_current(
+    execution: Option<&Execution>,
+    workspace_id: Option<&str>,
+    revision: u64,
+) -> bool {
+    match execution {
+        None => true,
+        Some(execution) => match (&execution.freshness, &execution.snapshot) {
+            (ExecutionFreshness::EndpointOnly, None) => true,
+            (ExecutionFreshness::WorkspaceRevision, Some(snapshot)) => {
+                workspace_id == Some(snapshot.workspace_id.as_str())
+                    && revision == snapshot.source_revision
+            }
+            _ => false,
+        },
+    }
+}
+
 pub struct ObservedEvidence {
     pub observation: GraphEvidence,
     pub from: SourceHandle,
@@ -366,6 +546,7 @@ impl Engine {
         let mut seen = BTreeSet::new();
         let mut examined = 0;
         let wid = self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?;
+        let source_revision = read_counter(&tx.open_table(META)?, "source_revision")?;
         let endpoint = |e: &Endpoint| -> FResult<Option<SourceHandle>> {
             let Some((meta, body)) = crate::boundary::source_in(tx, &e.path)? else {
                 return Ok(None);
@@ -405,7 +586,9 @@ impl Engine {
                     let Some(execution) = &stored.execution else {
                         continue;
                     };
-                    if stored.edge.evidence != "observed_by_producer" {
+                    if stored.edge.evidence != "observed_by_producer"
+                        || !execution_current(Some(execution), Some(&wid), source_revision)
+                    {
                         continue;
                     }
                     let (Some(from), Some(to), Some(test)) = (

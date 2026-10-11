@@ -224,6 +224,8 @@ pub struct LabelEntry {
 /// revalidates it against the current source, like any lexical candidate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitLocation {
+    #[serde(default)]
+    pub kind: crate::neural::cache::CardKind,
     pub path: String,
     pub start: u64,
     pub end: u64,
@@ -1089,6 +1091,80 @@ mod tests {
     }
 
     #[cfg(feature = "semantic")]
+    #[test]
+    fn invalid_direct_publication_preserves_the_previous_readable_generation() {
+        use crate::neural::cache::CardKind;
+        let scratch = tempfile::tempdir().unwrap();
+        let store = Dir::open_path(scratch.path()).unwrap();
+        let mut identity = identity(128);
+        identity.recipe = "cards-v1+kinds1+units5:512+test".into();
+        let control = Control::unbounded();
+        let scope = GenerationScope {
+            source_revision: 1,
+            complete: true,
+        };
+        let valid = entries(128);
+        build_generation(&store, &identity, &valid, scope, &control).unwrap();
+        let manifest = generation_dir(scratch.path(), &identity.digest).join(MANIFEST_FILE);
+        let original = std::fs::read(&manifest).unwrap();
+        let unit = valid[0].units[0].clone();
+        let mut later = unit.clone();
+        later.path = "z.txt".into();
+        let mut empty_path = unit.clone();
+        empty_path.path.clear();
+        let mut empty_range = unit.clone();
+        empty_range.end = empty_range.start;
+        let mut invalid_hash = unit.clone();
+        invalid_hash.source_sha256 = "invalid".into();
+        let mut wrong_role = unit.clone();
+        wrong_role.kind = CardKind::Body;
+        let mut unknown_role = unit.clone();
+        unknown_role.kind = CardKind::Unknown;
+        for units in [
+            vec![later.clone(), unit.clone()],
+            vec![unit.clone(), unit.clone()],
+            Vec::new(),
+            vec![empty_path],
+            vec![empty_range],
+            vec![invalid_hash],
+            vec![wrong_role],
+            vec![unknown_role],
+        ] {
+            let mut invalid = entries(128);
+            invalid[0].units = units;
+            let error = build_generation(&store, &identity, &invalid, scope, &control).unwrap_err();
+            assert_eq!(error.code(), "cache_corrupt");
+            assert_eq!(std::fs::read(&manifest).unwrap(), original);
+            validate_generation(&store, &identity.digest, &identity.recipe, 128).unwrap();
+        }
+        let mut invalid = entries(128);
+        invalid[0].input_key = "invalid".into();
+        assert_eq!(
+            build_generation(&store, &identity, &invalid, scope, &control)
+                .unwrap_err()
+                .code(),
+            "cache_corrupt"
+        );
+        assert_eq!(std::fs::read(&manifest).unwrap(), original);
+        // A subsequent valid multi-location publication remains readable.
+        let mut replacement = entries(128);
+        replacement[0].units.push(later);
+        let scope = GenerationScope {
+            source_revision: 2,
+            complete: true,
+        };
+        build_generation(&store, &identity, &replacement, scope, &control).unwrap();
+        let published =
+            validate_generation(&store, &identity.digest, &identity.recipe, 128).unwrap();
+        assert_eq!(published.manifest.source_revision, 2);
+        assert_eq!(published.manifest.count, replacement.len());
+        assert_eq!(
+            *published.labels[&replacement[0].input_key],
+            replacement[0].units
+        );
+    }
+
+    #[cfg(feature = "semantic")]
     fn identity(dimensions: usize) -> Prepared {
         Prepared {
             digest: "d1".repeat(32),
@@ -1104,6 +1180,7 @@ mod tests {
                 input_key: format!("{:064x}", i),
                 vector: vec![i as f32 / 10.0 + 0.1; dimensions],
                 units: vec![UnitLocation {
+                    kind: crate::neural::cache::CardKind::Address,
                     path: format!("f{i}.txt"),
                     start: 0,
                     end: 5,

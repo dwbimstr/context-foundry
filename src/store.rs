@@ -141,7 +141,8 @@ pub(crate) const TIE_GROUP: usize = 4;
 pub(crate) const GROUP_FILES: usize = DOOR_FILES / TIE_GROUP;
 /// Approximate doors examine at most this many delivery units.
 const DOOR_WINDOW: usize = 256;
-/// The META value naming the current search index format. `"5"` (001 T008,
+/// The META value naming the current search index format. `"6"` adds source-level
+/// call-name postings from the existing parse, without changing units. `"5"` (001 T008,
 /// context-v2 § City map › Languages) gives 15 more languages units,
 /// addresses and import keys and parses every source on the `tree-sitter`
 /// 0.26 runtime under a work budget; `"4"` (001 T007,
@@ -149,9 +150,12 @@ const DOOR_WINDOW: usize = 256;
 /// and added `role`, `name_case_hash`, `addr_hash`, `name_start`/`name_end`
 /// and `imports`; `"3"` added the unit's own start (its head) and the
 /// leading-run unit ranges (§ Unit forest).
-/// 009 card partitions name it in their recipe, so a unit change
-/// re-partitions them.
-pub(crate) const SEARCH_SCHEMA: &str = "5";
+/// Semantic partitions independently name SOURCE_UNIT_SCHEMA; changing only
+/// these derived postings does not refit or re-embed model inputs.
+pub(crate) const SEARCH_SCHEMA: &str = "6";
+/// Search-only posting changes do not change source units or model inputs.
+/// Keep semantic partition recipes bound to the unit grammar, independently.
+pub(crate) const SOURCE_UNIT_SCHEMA: &str = "5";
 const SEARCH_SCHEMA_REASON: &str =
     "search_schema: search index format changed; run `foundry repair-index`";
 
@@ -543,8 +547,8 @@ pub struct CandidateCounters {
     pub stale: u64,
     /// Hits skipped by the per-file cap.
     pub capped: u64,
-    /// A candidate window filled: search tier 1 at 64, tier 2 at 256, or a
-    /// context's doors window (context-v2 § Doors).
+    /// A candidate examination window filled: lexical tiers, context doors,
+    /// or bounded semantic provenance/discovery/refinement work.
     pub candidates_full: bool,
     /// More hits survived materialization than the requested limit.
     pub truncated: bool,
@@ -886,6 +890,8 @@ struct Fields {
     name_start: Field,
     name_end: Field,
     imports: Field,
+    call_name: Field,
+    call_coverage: Field,
 }
 
 struct SearchHandles {
@@ -1162,6 +1168,8 @@ fn search_schema() -> Schema {
     schema.add_u64_field("name_start", STORED);
     schema.add_u64_field("name_end", STORED);
     schema.add_text_field("imports", STRING);
+    schema.add_text_field("call_name", STRING);
+    schema.add_text_field("call_coverage", STRING | STORED);
     schema.build()
 }
 
@@ -1193,6 +1201,8 @@ fn fields_of(schema: &Schema) -> Fields {
         name_start: field("name_start"),
         name_end: field("name_end"),
         imports: field("imports"),
+        call_name: field("call_name"),
+        call_coverage: field("call_coverage"),
     }
 }
 
@@ -1995,6 +2005,12 @@ fn search_documents(
     let path_segments = crate::syntax::path_segments(path);
     let index = crate::syntax::index(body, lang)?;
     let imports = index.imports;
+    let call_names = index.call_names;
+    let call_coverage = if parsing == Parsing::Unparsed {
+        "incomplete"
+    } else {
+        index.call_coverage
+    };
     Ok(index
         .documents
         .into_iter()
@@ -2028,6 +2044,10 @@ fn search_documents(
                 out.add_text(fields.lang, lang.tag());
             }
             if position == 0 {
+                out.add_text(fields.call_coverage, call_coverage);
+                for name in &call_names {
+                    out.add_text(fields.call_name, name);
+                }
                 for key in &imports {
                     out.add_text(fields.imports, key);
                 }
@@ -4942,6 +4962,62 @@ impl Engine {
         }
     }
 
+    /// Candidate source paths across the admitted search index. Only the first
+    /// document of each source has these exact syntax-name postings, so comments
+    /// and repeated calls within a file cannot drown out other files. This reads
+    /// at most nine stored index documents and no source bodies. Final source
+    /// hash/AST validation belongs to the task's final read snapshot.
+    pub(crate) fn task_call_sources(
+        &self,
+        names: &[String],
+        control: &crate::Control,
+    ) -> FResult<(Vec<SourceHandle>, bool)> {
+        control.check()?;
+        if names.is_empty() {
+            return Ok((Vec::new(), false));
+        }
+        let handles = self.require_search()?;
+        let fields = &handles.fields;
+        let searcher = handles.reader.searcher();
+        let clauses: Vec<Box<dyn Query>> = names
+            .iter()
+            .take(4)
+            .map(|name| {
+                Box::new(TermQuery::new(
+                    Term::from_field_text(fields.call_name, name),
+                    IndexRecordOption::Basic,
+                )) as Box<dyn Query>
+            })
+            .collect();
+        let window = searcher.search(
+            &BooleanQuery::union(clauses),
+            &TopDocs::with_limit(9).order_by_u64_field("key_hash", tantivy::Order::Asc),
+        )?;
+        control.check()?;
+        let mut limited = names.len() > 4 || window.len() > 8;
+        let workspace_id = self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?;
+        let mut sources = Vec::new();
+        for (_, address) in window.into_iter().take(8) {
+            control.check()?;
+            let doc: TantivyDocument = searcher.doc(address)?;
+            let invalid =
+                || FoundryError::CorruptStore("invalid call-source search document".into());
+            let text = |field| doc.get_first(field).and_then(|value| value.as_str());
+            let path = text(fields.path).ok_or_else(invalid)?;
+            let hash = text(fields.hash).ok_or_else(invalid)?;
+            limited |= text(fields.call_coverage) != Some("complete");
+            sources.push(SourceHandle {
+                workspace_id: workspace_id.clone(),
+                path: path.to_owned(),
+                sha256: hash.to_owned(),
+                // This is an index identity receipt, never a requested body span.
+                start: 0,
+                end: 0,
+            });
+        }
+        Ok((sources, limited))
+    }
+
     /// Whether this store defines `name` exactly as written, under tier 1's
     /// restriction (`path` as the search's path filter): the group-3
     /// admission probe of context-v2 § Anchors and qualifiers, which a
@@ -5582,12 +5658,74 @@ impl Engine {
             windows,
         } = self.collect_two_tier(query, path, control, selection)?;
 
+        // Bound ordinary provenance once, before discovery or final-read
+        // materialization. Shared vector labels can name arbitrarily many
+        // sources; output caps alone do not bound that metadata expansion.
+        let mut ordinary = dense
+            .bounded_units(filter.as_deref(), 4096, control)
+            .map_err(|error| FoundryError::Semantic {
+                code: error.code,
+                message: error.detail,
+            })?;
+        if let Some(trace) = control.trace() {
+            trace.record(
+                serde_json::json!({"stage":"dense_provenance", "available":ordinary.available,
+                "examined":ordinary.items.len(), "limit":4096, "truncated":ordinary.truncated}),
+            );
+        }
+
+        // A coarse hit discovers a file, not its answer passage. Reuse the
+        // query vector to localize within a bounded union of discovered files.
+        // This reads published vectors only; missing refinement is coverage
+        // debt for the explicit preparation owner, never query-time inference.
+        let mut refinement_paths = std::collections::BTreeSet::new();
+        let mut refinement_limited = false;
+        let refined = if prose && dense.has_overviews() && !dense.file_overviews_only() {
+            let mut examined = 0;
+            for (_, unit) in &ordinary.items {
+                control.check()?;
+                if refinement_paths.len() == 64 {
+                    break;
+                }
+                examined += 1;
+                refinement_paths.insert(unit.path.clone());
+            }
+            if let Some(trace) = control.trace() {
+                trace.record(
+                    serde_json::json!({"stage":"refinement_discovery", "examined":examined,
+                    "files":refinement_paths.len(), "truncated":examined < ordinary.items.len()}),
+                );
+            }
+            refinement_limited |= examined < ordinary.items.len();
+            for candidate in first.iter().chain(&second).take(16) {
+                refinement_paths.insert(candidate.path.clone());
+            }
+            match dense.refine(self, &refinement_paths, control) {
+                Ok(refinement) => {
+                    refinement_limited |= refinement.stats.truncated;
+                    if let Some(trace) = control.trace() {
+                        trace.record(serde_json::json!({"stage":"refinement", "outcome":"scored", "method":"published_body_exact", "work":refinement.stats}));
+                    }
+                    refinement.hits
+                }
+                Err(error) => {
+                    if let Some(trace) = control.trace() {
+                        trace.record(serde_json::json!({"stage":"refinement", "outcome":"unavailable", "reason":error.code}));
+                    }
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        control.check()?;
+
         // Final read: every candidate is validated here, before placement.
         let tx = self.db.begin_read()?;
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
         let mut counters = CandidateCounters {
-            candidates_full,
+            candidates_full: candidates_full || ordinary.truncated || refinement_limited,
             ..CandidateCounters::default()
         };
         let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
@@ -5649,42 +5787,64 @@ impl Engine {
         }
         // Dense locations in similarity order: the path restriction first,
         // then freshness.
-        let mut placed: Vec<((String, u64, u64), bool)> = Vec::new();
-        for (rank, hit) in dense.hits.iter().enumerate() {
-            for location in dense.units(hit) {
-                let trace_location = |outcome: &str| {
-                    if let Some(trace) = control.trace() {
-                        trace.record(serde_json::json!({
+        let mut placed = Vec::new();
+        let refined_count = refined.len();
+        let mut eligible_refined = 0;
+        // Preserve similarity order after fair admission, using only the
+        // ordinary locations already admitted and the exact refined joins.
+        ordinary.items.sort_by_key(|(rank, _)| *rank);
+        let refined_locations = refined.iter().enumerate().flat_map(|(rank, refined)| {
+            refined
+                .locations
+                .iter()
+                .copied()
+                .map(move |location| (rank, &refined.hit, location, true))
+        });
+        let ordinary_locations = ordinary
+            .items
+            .iter()
+            .map(|(rank, location)| (refined_count + rank, &dense.hits[*rank], *location, false));
+        for (rank, hit, location, is_refined) in refined_locations.chain(ordinary_locations) {
+            control.check()?;
+            let trace_location = |outcome: &str| {
+                if let Some(trace) = control.trace() {
+                    trace.record(serde_json::json!({
                             "stage": "selection", "origin": "dense", "rank": rank,
                             "distance": hit.distance, "input_key": dense.input_key(hit), "outcome": outcome,
+                            "representation": location.kind, "refined":is_refined,
                             "unit": {"workspace_id": workspace_id, "path": location.path,
                                 "sha256": location.source_sha256, "start": location.start,
                                 "end": location.end},
                         }));
-                    }
-                };
-                if filter
-                    .as_deref()
-                    .is_some_and(|filter| !within_filter(&location.path, filter))
-                {
-                    trace_location("path_filter");
-                    continue;
                 }
-                load(&mut current, &location.path)?;
-                let current_location =
-                    current[location.path.as_str()]
-                        .as_ref()
-                        .is_some_and(|meta| {
-                            meta.hash == location.source_sha256 && location.end <= meta.bytes as u64
-                        });
-                if !current_location {
-                    trace_location("stale");
-                    counters.stale += 1;
-                    continue;
-                }
-                trace_location("eligible");
-                placed.push(((location.path.clone(), location.start, location.end), true));
+            };
+            if filter
+                .as_deref()
+                .is_some_and(|filter| !within_filter(&location.path, filter))
+            {
+                trace_location("path_filter");
+                continue;
             }
+            load(&mut current, &location.path)?;
+            let current_location = current[location.path.as_str()]
+                .as_ref()
+                .is_some_and(|meta| {
+                    meta.hash == location.source_sha256
+                        && location.end <= meta.bytes as u64
+                        && (location.kind != crate::neural::cache::CardKind::File
+                            || (location.start == 0 && location.end == meta.bytes as u64))
+                });
+            if !current_location {
+                trace_location("stale");
+                counters.stale += 1;
+                continue;
+            }
+            trace_location("eligible");
+            eligible_refined += usize::from(is_refined);
+            placed.push((
+                (location.path.clone(), location.start, location.end),
+                Some(location.kind),
+            ));
         }
         let freshness = self.freshness_in(&tx)?;
         let word = dense.coverage_at(freshness.source_revision);
@@ -5697,14 +5857,22 @@ impl Engine {
         // existing placement. No new candidate or output slots are allocated.
         if prose && (word == "partial" || dense.file_overviews_only()) {
             let mut dense_order = std::mem::take(&mut placed).into_iter();
-            let mut lexical_order = lexical.iter().map(|c| (c.selection_unit(prose), false));
+            let mut lexical_order = lexical.iter().map(|c| (c.selection_unit(prose), None));
             loop {
                 let (lexical, dense) = (lexical_order.next(), dense_order.next());
                 if lexical.is_none() && dense.is_none() {
                     break;
                 }
-                placed.extend(lexical);
-                placed.extend(dense);
+                // Independently embedded body passages precede broad lexical
+                // documents. Without refinement the prior coarse ordering is
+                // unchanged, including its coverage/fallback behavior.
+                if eligible_refined > 0 {
+                    placed.extend(dense);
+                    placed.extend(lexical);
+                } else {
+                    placed.extend(lexical);
+                    placed.extend(dense);
+                }
             }
             if let Some(trace) = control.trace() {
                 let policy = if dense.file_overviews_only() {
@@ -5712,13 +5880,13 @@ impl Engine {
                 } else {
                     "partial_prose_interleave_v1"
                 };
-                trace.record(serde_json::json!({"stage":"placement_policy","policy":policy,"lexical_first":true}));
+                trace.record(serde_json::json!({"stage":"placement_policy","policy":policy,"lexical_first":eligible_refined == 0,"refined_hits":refined_count,"eligible_refined_locations":eligible_refined,"refinement_files":refinement_paths.len()}));
             }
         } else {
             placed.extend(
                 lexical
                     .iter()
-                    .map(|candidate| (candidate.selection_unit(prose), false)),
+                    .map(|candidate| (candidate.selection_unit(prose), None)),
             );
         }
         // The candidate carrying each lexical unit: its first (best-ranked)
@@ -5738,12 +5906,12 @@ impl Engine {
         let mut seen = std::collections::BTreeSet::new();
         let mut per_file: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
-        let mut kept: Vec<(&(String, u64, u64), bool)> = Vec::new();
-        for (rank, (unit, from_dense)) in placed.iter().enumerate() {
+        let mut kept = Vec::new();
+        for (rank, (unit, kind)) in placed.iter().enumerate() {
             let trace_placement = |outcome: &str| {
                 if let Some(trace) = control.trace() {
                     trace.record(serde_json::json!({
-                        "stage": "placement", "origin": if *from_dense { "dense" } else { "lexical" },
+                        "stage": "placement", "origin": if kind.is_some() { "dense" } else { "lexical" },
                         "rank": rank, "outcome": outcome,
                         "unit": {"workspace_id": workspace_id, "path": unit.0,
                             "sha256": current.get(&unit.0).and_then(|m| m.as_ref()).map(|m| &m.hash),
@@ -5768,12 +5936,14 @@ impl Engine {
                 continue;
             }
             trace_placement("kept");
-            kept.push((unit, *from_dense));
+            kept.push((unit, *kind));
         }
         let mut items = Vec::with_capacity(kept.len());
         let mut delivered = std::collections::BTreeSet::new();
-        for (rank, (unit, from_dense)) in kept.into_iter().enumerate() {
+        for (rank, (unit, kind)) in kept.into_iter().enumerate() {
             control.check()?;
+            let from_dense = kind.is_some();
+            let exact_body = kind == Some(crate::neural::cache::CardKind::Body);
             let (unit_path, unit_start, unit_end) = unit;
             let Some(Some(meta)) = current.get(unit_path) else {
                 continue;
@@ -5784,12 +5954,17 @@ impl Engine {
             }
             let body = &verified[unit_path].body;
             let candidate = if from_dense {
+                // An exact unit match may contribute its label and support.
+                // A scored Body still renders its own unchanged byte range.
                 by_unit.get(unit)
             } else {
                 by_document.get(unit)
             }
             .copied();
             let mut item = match candidate {
+                Some(candidate) if exact_body => {
+                    ranked_item(candidate, rank, &workspace_id, &meta.hash, body, &wanted)?
+                }
                 Some(candidate) => ranked_context_item(
                     candidate,
                     rank,
@@ -5811,15 +5986,15 @@ impl Engine {
                             "candidate unit outside {unit_path}"
                         )));
                     }
-                    let (from, to, focused) = if prose && dense.has_overviews() && to - from > 1536
-                    {
-                        prose_passage(&body[from..to], &wanted)
-                            .map_or((from, to, false), |(start, end)| {
-                                (from + start, from + end, true)
-                            })
-                    } else {
-                        (from, to, false)
-                    };
+                    let (from, to, focused) =
+                        if prose && !exact_body && dense.has_overviews() && to - from > 1536 {
+                            prose_passage(&body[from..to], &wanted)
+                                .map_or((from, to, false), |(start, end)| {
+                                    (from + start, from + end, true)
+                                })
+                        } else {
+                            (from, to, false)
+                        };
                     let text = &body[from..to];
                     let newlines = |bytes: &[u8]| bytes.iter().filter(|&&b| b == b'\n').count();
                     let start_line = newlines(&body.as_bytes()[..from]) as u64 + 1;
@@ -5871,7 +6046,8 @@ impl Engine {
                             "start":unit_start,"end":unit_end},
                         "excerpt":item.handle,
                         "local_query_focus":focused,
-                        "passage_independently_embedded":focused.then_some(false),
+                        "representation":kind,
+                        "passage_independently_embedded":exact_body,
                     }));
                 }
             } else if let Some(candidate) = candidate {

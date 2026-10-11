@@ -10,7 +10,10 @@
 //! request path decides that before any model call); the candidate assembly
 //! normally places the window's units first, in similarity order, ahead of the
 //! lexical candidates (`Engine::search_candidates_semantic`). Nothing here
-//! reranks, rewrites the query or calls a second model. A failure at any
+//! rewrites the query or calls a second model. Opt-in hierarchy localization
+//! exactly scores a bounded set of published body vectors from discovered files,
+//! reusing that query vector and retaining only current point-joined locations.
+//! A failure at any
 //! step is a NAMED fallback ([`Fallback`]) for the baseline path; it never
 //! fails the response.
 use crate::control::Control;
@@ -102,6 +105,9 @@ pub struct DenseHit {
 pub struct DenseWindow {
     pub hits: Vec<DenseHit>,
     generation: Arc<DenseIndex>,
+    /// Reused only for bounded exact scoring of already published body
+    /// vectors. Refinement never embeds source or starts preparation in a read.
+    vector: Vec<f32>,
     pub(crate) areas: Vec<crate::store::RecordCandidate>,
 }
 
@@ -114,6 +120,146 @@ impl std::fmt::Debug for DenseWindow {
 }
 
 impl DenseWindow {
+    /// Localize coarse files by scoring a bounded working set of their published
+    /// body inputs. Selected partition point reads identify keys; only this
+    /// generation's matching locations and resident vectors can supply evidence.
+    /// No graph traversal, source inference, or corpus-wide metadata walk occurs.
+    pub(crate) fn refine(
+        &self,
+        engine: &Engine,
+        paths: &std::collections::BTreeSet<String>,
+        control: &Control,
+    ) -> Result<Refinement<'_>, Fallback> {
+        use std::collections::{BTreeSet, VecDeque};
+        const MAX_PATHS: usize = 80;
+        const MAX_ROW_BYTES: usize = 512 * 1024;
+        const MAX_MAPPING_BYTES: usize = 8 * 1024 * 1024;
+        const MAX_UNITS: usize = 32_768;
+        const MAX_VECTORS: usize = 4096;
+
+        control.check()?;
+        let page = super::cache::MappingPage::new(engine, control)?;
+        let mut stats = RefinementStats {
+            truncated: paths.len() > MAX_PATHS,
+            ..Default::default()
+        };
+        let mut queues = Vec::new();
+        // References retain only provenance that passed this request's point
+        // join. A shared vector key never admits other generation locations.
+        let mut joined: std::collections::BTreeMap<usize, Vec<&UnitLocation>> =
+            std::collections::BTreeMap::new();
+        for path in paths.iter().take(MAX_PATHS) {
+            control.check()?;
+            stats.paths += 1;
+            let bytes = page.partition_bytes(path)?;
+            if bytes > MAX_ROW_BYTES || bytes > MAX_MAPPING_BYTES - stats.mapping_bytes {
+                stats.truncated = true;
+                stats.mapping_rows_skipped += 1;
+                continue;
+            }
+            stats.mapping_bytes += bytes;
+            let Some(record) = page.partition(
+                path,
+                &self.generation.identity.digest,
+                &self.generation.identity.recipe,
+                control,
+            )?
+            else {
+                continue;
+            };
+            let mut queue = VecDeque::new();
+            let mut seen = BTreeSet::new();
+            for unit in &record.units {
+                control.check()?;
+                if stats.units_considered == MAX_UNITS {
+                    stats.truncated = true;
+                    break;
+                }
+                stats.units_considered += 1;
+                if unit.kind != super::cache::CardKind::Body {
+                    continue;
+                }
+                // Location vectors are produced in (path,start,end) order. A
+                // failed point join is never replaced with a cache-only vector.
+                // The full tuple, role and hash are checked after the lookup.
+                let published = self
+                    .generation
+                    .labels
+                    .get(&unit.input_key)
+                    .and_then(|locations| {
+                        locations
+                            .binary_search_by(|location| {
+                                (location.path.as_str(), location.start, location.end).cmp(&(
+                                    path.as_str(),
+                                    unit.start as u64,
+                                    unit.end as u64,
+                                ))
+                            })
+                            .ok()
+                            .and_then(|position| locations.get(position))
+                    })
+                    .filter(|location| {
+                        location.kind == super::cache::CardKind::Body
+                            && location.source_sha256 == record.source_hash
+                    });
+                let Some(location) = published else {
+                    stats.unpublished_units += 1;
+                    continue;
+                };
+                let Some(label) = self.generation.label_for_key(&unit.input_key) else {
+                    return Err(Fallback::new(
+                        "index_unavailable",
+                        "published body has no resident vector",
+                    ));
+                };
+                joined.entry(label).or_default().push(location);
+                stats.joined_locations += 1;
+                if seen.insert(label) {
+                    queue.push_back(label);
+                }
+            }
+            if !queue.is_empty() {
+                queues.push(queue);
+            }
+            if stats.units_considered == MAX_UNITS {
+                stats.truncated |= stats.paths < paths.len();
+                break;
+            }
+        }
+        drop(page);
+
+        let (labels, truncated) = refinement_working_set(queues, MAX_VECTORS, control)?;
+        stats.truncated |= truncated;
+        let mut hits = Vec::with_capacity(labels.len());
+        let mut scratch = vec![0.0f32; self.generation.dimensions];
+        for label in labels {
+            control.check()?;
+            hits.push(
+                self.generation
+                    .score_label(&self.vector, label, &mut scratch)?,
+            );
+        }
+        stats.vectors_scored = hits.len();
+        hits.sort_by(|a, b| {
+            a.distance.total_cmp(&b.distance).then_with(|| {
+                self.generation
+                    .input_key(a.label)
+                    .cmp(self.generation.input_key(b.label))
+            })
+        });
+        hits.truncate(DENSE_WINDOW);
+        let hits = hits
+            .into_iter()
+            .map(|hit| {
+                let locations = joined.remove(&hit.label).unwrap_or_default();
+                stats.retained_locations += locations.len();
+                RefinedHit { hit, locations }
+            })
+            .collect();
+        control.check()?;
+        Ok(Refinement { hits, stats })
+    }
+
     /// These opt-in recipes can map a small extractive input to a whole file
     /// or parent. Context may focus their source locally; this does not mean
     /// the resulting passage received its own embedding or similarity score.
@@ -136,6 +282,26 @@ impl DenseWindow {
         &self.generation.labels[self.input_key(hit)]
     }
 
+    /// Admit at most `limit` ordinary provenance locations fairly across the
+    /// bounded hit window. Filter lookup is logarithmic in each sorted map;
+    /// duplicate provenance cannot force a corpus-wide expansion before caps.
+    pub(crate) fn bounded_units(
+        &self,
+        filter: Option<&str>,
+        limit: usize,
+        control: &Control,
+    ) -> Result<DenseLocations<'_>, Fallback> {
+        let units = self
+            .hits
+            .iter()
+            .take(DENSE_WINDOW)
+            .map(|hit| self.units(hit))
+            .collect();
+        let mut locations = bounded_unit_locations(units, filter, limit, control)?;
+        locations.truncated |= self.hits.len() > DENSE_WINDOW;
+        Ok(locations)
+    }
+
     /// The source revision a COMPLETE generation was published at; `None`
     /// for a generation that covers only part of the eligible units. The
     /// coverage word is `ready` only when this equals the request's revision.
@@ -156,6 +322,122 @@ impl DenseWindow {
             "partial"
         }
     }
+}
+
+/// Deterministic fair admission, with no more than `limit` distinct vector keys.
+/// Duplicate provenance consumes neither a scoring slot nor another file's turn.
+fn refinement_working_set(
+    mut queues: Vec<std::collections::VecDeque<usize>>,
+    limit: usize,
+    control: &Control,
+) -> Result<(Vec<usize>, bool), Fallback> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut labels = Vec::new();
+    loop {
+        let mut progressed = false;
+        for queue in &mut queues {
+            control.check()?;
+            while let Some(label) = queue.pop_front() {
+                control.check()?;
+                if !seen.insert(label) {
+                    continue;
+                }
+                if labels.len() == limit {
+                    return Ok((labels, true));
+                }
+                labels.push(label);
+                progressed = true;
+                break;
+            }
+        }
+        if !progressed {
+            return Ok((labels, false));
+        }
+    }
+}
+
+pub(crate) struct RefinedHit<'a> {
+    pub hit: DenseHit,
+    /// Only the exact locations admitted by the bounded current-partition join.
+    pub locations: Vec<&'a UnitLocation>,
+}
+
+pub(crate) struct Refinement<'a> {
+    pub hits: Vec<RefinedHit<'a>>,
+    pub stats: RefinementStats,
+}
+
+pub(crate) struct DenseLocations<'a> {
+    /// Fair admission order; the caller may restore hit order for placement.
+    pub items: Vec<(usize, &'a UnitLocation)>,
+    pub available: usize,
+    pub truncated: bool,
+}
+
+fn bounded_unit_locations<'a>(
+    units: Vec<&'a [UnitLocation]>,
+    filter: Option<&str>,
+    limit: usize,
+    control: &Control,
+) -> Result<DenseLocations<'a>, Fallback> {
+    control.check()?;
+    let subtree = filter.map(|path| (format!("{path}/"), format!("{path}0")));
+    let mut available = 0usize;
+    let mut cursors = Vec::with_capacity(units.len());
+    for units in units {
+        control.check()?;
+        let (exact, children) = if let Some(path) = filter {
+            // Exact path and component-boundary subtree are disjoint ranges:
+            // e.g. a-b and a.rs can sort between a and a/child.
+            let exact_from = units.partition_point(|unit| unit.path.as_str() < path);
+            let exact_to = units.partition_point(|unit| unit.path.as_str() <= path);
+            let (lower, upper) = subtree.as_ref().expect("filter subtree bounds");
+            let child_from = units.partition_point(|unit| unit.path.as_str() < lower.as_str());
+            let child_to = units.partition_point(|unit| unit.path.as_str() < upper.as_str());
+            (&units[exact_from..exact_to], &units[child_from..child_to])
+        } else {
+            (units, &units[..0])
+        };
+        available = available
+            .saturating_add(exact.len())
+            .saturating_add(children.len());
+        cursors.push(exact.iter().chain(children));
+    }
+    let mut items = Vec::with_capacity(limit.min(available));
+    while items.len() < limit {
+        let mut progressed = false;
+        for (rank, cursor) in cursors.iter_mut().enumerate() {
+            control.check()?;
+            if let Some(location) = cursor.next() {
+                items.push((rank, location));
+                progressed = true;
+                if items.len() == limit {
+                    break;
+                }
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+    Ok(DenseLocations {
+        truncated: items.len() < available,
+        items,
+        available,
+    })
+}
+
+#[derive(Default, serde::Serialize)]
+pub(crate) struct RefinementStats {
+    paths: usize,
+    mapping_bytes: usize,
+    mapping_rows_skipped: usize,
+    units_considered: usize,
+    unpublished_units: usize,
+    joined_locations: usize,
+    retained_locations: usize,
+    vectors_scored: usize,
+    pub(crate) truncated: bool,
 }
 
 /// A validated, loaded dense index. Availability came from VALIDATION
@@ -313,6 +595,76 @@ impl DenseIndex {
         }
     }
 
+    fn label_for_key(&self, key: &str) -> Option<usize> {
+        let mut offset = 0;
+        for segment in &self.segments {
+            if let Ok(ordinal) = segment
+                .keys
+                .binary_search_by(|stored| stored.as_str().cmp(key))
+            {
+                return Some(offset + ordinal);
+            }
+            offset += segment.keys.len();
+        }
+        None
+    }
+
+    fn score_label(
+        &self,
+        query: &[f32],
+        label: usize,
+        scratch: &mut [f32],
+    ) -> Result<DenseHit, Fallback> {
+        if query.len() != self.dimensions || scratch.len() != self.dimensions {
+            return Err(Fallback::new(
+                "index_geometry",
+                "refinement vector dimensions disagree",
+            ));
+        }
+        let mut ordinal = label;
+        for segment in &self.segments {
+            if ordinal >= segment.keys.len() {
+                ordinal -= segment.keys.len();
+                continue;
+            }
+            let count = segment.index.get(ordinal as u64, scratch).map_err(|e| {
+                Fallback::new("index_unavailable", format!("usearch vector lookup: {e}"))
+            })?;
+            if count != 1 {
+                return Err(Fallback::new(
+                    "index_unavailable",
+                    "published body vector is missing",
+                ));
+            }
+            // USearch stores f16 vectors. Account for quantization's small norm
+            // change instead of assuming the restored f32 values have norm 1.
+            let (mut dot, mut query_norm, mut body_norm) = (0.0f64, 0.0f64, 0.0f64);
+            for (&a, &b) in query.iter().zip(scratch.iter()) {
+                let (a, b) = (f64::from(a), f64::from(b));
+                dot += a * b;
+                query_norm += a * a;
+                body_norm += b * b;
+            }
+            if !dot.is_finite()
+                || !query_norm.is_finite()
+                || !body_norm.is_finite()
+                || query_norm <= 0.0
+                || body_norm <= 0.0
+            {
+                return Err(Fallback::new(
+                    "index_geometry",
+                    "refinement vector is nonfinite or zero",
+                ));
+            }
+            let distance = (1.0 - dot / (query_norm * body_norm).sqrt()).clamp(0.0, 2.0) as f32;
+            return Ok(DenseHit { label, distance });
+        }
+        Err(Fallback::new(
+            "index_unavailable",
+            "refinement label is outside generation membership",
+        ))
+    }
+
     /// At most two searches and 2*k candidates. Filtering happens INSIDE ANN
     /// selection, so retired base entries cannot consume the candidate window.
     pub fn search(&self, vector: &[f32], k: usize) -> Result<Vec<DenseHit>, Fallback> {
@@ -339,7 +691,8 @@ impl DenseIndex {
                     segment
                         .keys
                         .get(key as usize)
-                        .is_some_and(|key| self.labels.contains_key(key))
+                        .and_then(|key| self.labels.get(key))
+                        .is_some_and(|units| !units.is_empty())
                 })
                 .map_err(|e| Fallback::new("index_unavailable", format!("usearch search: {e}")))?;
             hits.extend(matches.keys.iter().zip(&matches.distances).filter_map(
@@ -347,7 +700,7 @@ impl DenseIndex {
                     segment
                         .keys
                         .get(key as usize)
-                        .filter(|key| self.labels.contains_key(*key))
+                        .filter(|key| self.labels.get(*key).is_some_and(|units| !units.is_empty()))
                         .map(|_| DenseHit {
                             label: offset + key as usize,
                             distance,
@@ -1044,6 +1397,7 @@ impl QueryRuntime {
         Ok(DenseWindow {
             hits,
             generation,
+            vector,
             areas,
         })
     }
@@ -1065,6 +1419,104 @@ mod tests {
     use super::*;
     use crate::neural::provider::FunctionDescriptor;
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn refinement_working_set_is_fair_deduplicated_bounded_and_cancellable() {
+        use std::collections::VecDeque;
+        let queues: Vec<VecDeque<_>> = (0..80)
+            .map(|path| (0..100).map(|ordinal| path * 100 + ordinal).collect())
+            .collect();
+        let (labels, truncated) =
+            refinement_working_set(queues, 4096, &Control::unbounded()).unwrap();
+        assert_eq!(labels.len(), 4096);
+        assert!(truncated);
+        assert_eq!(
+            labels
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            4096
+        );
+        let mut counts = [0usize; 80];
+        for label in labels {
+            counts[label / 100] += 1;
+        }
+        assert!(counts.iter().all(|&count| count == 51 || count == 52));
+        let shared = vec![VecDeque::from([1, 2, 3]), VecDeque::from([1, 2, 4])];
+        assert_eq!(
+            refinement_working_set(shared.clone(), 4, &Control::unbounded()).unwrap(),
+            (vec![1, 2, 3, 4], false)
+        );
+        assert_eq!(
+            refinement_working_set(shared, 3, &Control::unbounded()).unwrap(),
+            (vec![1, 2, 3], true)
+        );
+        assert!(
+            refinement_working_set(vec![VecDeque::from([1])], 4096, &Control::cancelled()).is_err()
+        );
+        assert_eq!(
+            refinement_working_set(vec![VecDeque::new(); 80], 4096, &Control::unbounded()).unwrap(),
+            (vec![], false)
+        );
+    }
+
+    #[test]
+    fn ordinary_provenance_is_bounded_fair_filtered_and_cancellable() {
+        let location = |path: String| UnitLocation {
+            kind: super::super::cache::CardKind::Body,
+            path,
+            start: 0,
+            end: 8,
+            source_sha256: "ab".repeat(32),
+        };
+        let shared: Vec<_> = (0..10_000)
+            .map(|i| location(format!("src/mirror_{i:05}.rs")))
+            .collect();
+        let independent = vec![
+            location("src/independent_a.rs".into()),
+            location("src/independent_b.rs".into()),
+        ];
+        let bounded = bounded_unit_locations(
+            vec![&shared, &independent],
+            None,
+            4096,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert_eq!(bounded.available, 10_002);
+        assert_eq!(bounded.items.len(), 4096);
+        assert!(bounded.truncated);
+        assert_eq!(
+            bounded.items.iter().filter(|(rank, _)| *rank == 1).count(),
+            2
+        );
+        assert_eq!(bounded.items[1].1.path, "src/independent_a.rs");
+        let filtered = bounded_unit_locations(
+            vec![&shared],
+            Some("src/mirror_09999.rs"),
+            4096,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert_eq!(filtered.items.len(), 1);
+        assert_eq!(filtered.items[0].1.path, "src/mirror_09999.rs");
+        assert!(!filtered.truncated);
+        let paths: Vec<_> = ["a", "a-b", "a.rs", "a/x", "a/x/z", "ab", "b"]
+            .into_iter()
+            .map(|path| location(path.into()))
+            .collect();
+        let filtered =
+            bounded_unit_locations(vec![&paths], Some("a"), 4096, &Control::unbounded()).unwrap();
+        assert_eq!(
+            filtered
+                .items
+                .iter()
+                .map(|(_, unit)| unit.path.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "a/x", "a/x/z"]
+        );
+        assert!(bounded_unit_locations(vec![&shared], None, 4096, &Control::cancelled()).is_err());
+    }
 
     fn unit_vector() -> Vec<f32> {
         let mut vector = vec![0f32; crate::testkit::FIXTURE_DIMENSIONS as usize];

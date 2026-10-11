@@ -413,14 +413,24 @@ pricing and shorter failed responses cannot establish monetary or amortized bene
 ## Explicit execution evidence
 
 `foundry --store STORE import-execution ARTIFACT.json` imports a strict completed
-producer report; it never runs its command. The v1 schema and bounds live in
-[005](../specs/005-graph-evidence-lifecycle/spec.md). Positive runtime `calls` and
-line `covers` observations retain the exact artifact digest, producer/run/test
-identity and source hashes. They are labeled producer observations, not static
-compiler facts or proof of exhaustive coverage. The ordinary graph command exposes
-them; task composition emits `task-execution` only with all required source bodies.
-A source/test change immediately makes its observation ineligible. Use an explicit
-collector for the chosen runtime; automatic test execution during indexing is absent.
+producer report; it never runs its command. The v1/v2 schemas and bounds live in
+[005](../specs/005-graph-evidence-lifecycle/spec.md). V2 adds a stable collection
+`scope`, the indexed `workspace_id` / `source_revision` captured before execution,
+and an `inputs` array of admitted path/SHA-256 pairs. Import validates every input
+and caller/target/test endpoint atomically. Collections from one producer coexist;
+reimport or an empty completed report replaces only the named scope. The receipt
+keeps the exact artifact digest, producer/run/test/scope, input digest/count and
+snapshot identity. A nonzero completed exit is retained without claiming test success.
+
+V2 is labeled `freshness: workspace_revision`: any accepted indexed-source change
+invalidates the run, even an unrelated third-file edit. Reverting the bytes does not
+revive an old revision. V1 stays importable with `freshness: endpoint_only`, checking
+caller/target/test hashes and replacing the entire producer bundle. Both are producer
+observations, not execution attestation or proof of exhaustive coverage. The importer
+cannot establish manifest completeness, external runtime dependencies or filesystem
+changes not yet indexed. The ordinary graph command exposes observations; task
+composition emits `task-execution` only with all required endpoint bodies. Use an
+explicit collector for the chosen runtime; indexing never runs tests automatically.
 
 Fresh explicit requirement source links can join an observed target line. The execution
 row lists the matching task entry IDs as `explicit_source_link_overlap`; it still says
@@ -1275,6 +1285,21 @@ observed execution is an explicit import, never a side effect of indexing.
 Compiler-reference composition also cites exact Rust/Python call syntax and Rust test
 attributes when available. These remain references with unverified runtime calls and
 unobserved test execution; an attributed test is not proof of requirement coverage.
-The extra source spans must fit alongside the definition/reference pair. See the
-[Linux diagnostic results](validation.md) for scope, negative retrieval/host findings,
-fixture scale and real CPU embedding limits.
+The extra source spans must fit alongside the definition/reference pair.
+
+Without a compiler artifact, up to four resolved anchor names query exact call-name
+postings across admitted indexed sources. The planner selects at most eight matching
+files, then verifies their current hashes and call syntax in the final snapshot; it
+can find callers outside the initial lexical window without scanning repository bodies.
+A ninth hit detects a limited window. The report retains indexed candidate/stale counts
+and limitations; there is no continuation through all remaining matches. Supported
+Rust, Python, Go and JavaScript/TypeScript/TSX names remain unresolved, and source
+recipe coverage does not establish runtime completeness. Task-word Rust test discovery
+still searches only selected files. Dynamic dispatch, aliases, wrappers and unsupported
+languages can hide relevant evidence. At most 32 candidate spans, 32 KiB per span and
+the existing exact delivery allowance apply.
+
+Existing search schema 5 needs `foundry --store STORE repair-index` for schema 6 call
+postings. The semantic source-unit recipe remains version 5; a search-only repair does
+not itself require re-embedding. See the [Linux diagnostic results](validation.md) for
+executed checks, negative retrieval/host findings, fixture scale and real CPU limits.

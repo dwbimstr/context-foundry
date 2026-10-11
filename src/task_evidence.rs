@@ -33,6 +33,9 @@ pub struct Plan {
     pub compiler_skipped_seeds: usize,
     pub syntax_candidates: usize,
     pub syntax_skipped_paths: usize,
+    pub syntax_index_candidates: usize,
+    pub syntax_index_stale: usize,
+    pub syntax_index_limited: bool,
     pub local_test_candidates: usize,
     pub(crate) reference_uses: BTreeMap<String, reference::Use>,
     pub roots: Vec<String>,
@@ -70,6 +73,9 @@ impl Plan {
             primary.compiler_skipped_seeds += other.compiler_skipped_seeds;
             primary.syntax_candidates += other.syntax_candidates;
             primary.syntax_skipped_paths += other.syntax_skipped_paths;
+            primary.syntax_index_candidates += other.syntax_index_candidates;
+            primary.syntax_index_stale += other.syntax_index_stale;
+            primary.syntax_index_limited |= other.syntax_index_limited;
             primary.local_test_candidates += other.local_test_candidates;
             primary.discovery_limited |= other.discovery_limited;
         }
@@ -124,7 +130,7 @@ impl Plan {
             (facet,json!({"state":if bodies>0 {"source_candidates_delivered"} else if addresses>0 {"addresses_only"} else if candidates>0 {"omitted_budget"} else {"missing"},"bodies":bodies,"addresses":addresses,"candidates":candidates}))
         }).collect();
         let mut resolution = BTreeMap::<&str, usize>::new();
-        let syntax = json!({"kind":"call_name_candidates","resolution":"unresolved","runtime_call":"unverified","available":self.syntax_candidates,"skipped_paths":self.syntax_skipped_paths,"local_tests":{"available":self.local_test_candidates,"basis":"same_file_task_terms","coverage":"not_established"}});
+        let syntax = json!({"kind":"call_name_candidates","resolution":"unresolved","runtime_call":"unverified","available":self.syntax_candidates,"skipped_paths":self.syntax_skipped_paths,"discovery":{"scope":"admitted_source_call_postings","candidates":self.syntax_index_candidates,"stale":self.syntax_index_stale,"limited":self.syntax_index_limited,"coverage":"syntax_recipe_only_not_complete_evidence"},"local_tests":{"available":self.local_test_candidates,"basis":"same_file_task_terms","coverage":"not_established"}});
         if let Some(b) = &self.boundaries {
             for r in &b.relations {
                 *resolution.entry(r.resolution).or_default() += 1;
@@ -250,6 +256,9 @@ impl Engine {
             compiler_skipped_seeds: 0,
             syntax_candidates: 0,
             syntax_skipped_paths: 0,
+            syntax_index_candidates: 0,
+            syntax_index_stale: 0,
+            syntax_index_limited: false,
             local_test_candidates: 0,
             reference_uses: BTreeMap::new(),
             roots: vec![self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?],
@@ -286,6 +295,34 @@ impl Engine {
             })
             .take(4)
             .collect();
+        // Canonical spelling comes from the already materialized declaration,
+        // not the query's casing. Query postings before the final snapshot; both
+        // the definition and candidate source identity are rechecked below.
+        let syntax_names: Vec<String> = context
+            .batch
+            .anchors
+            .iter()
+            .filter(|anchor| anchor.resolved())
+            .take(4)
+            .filter_map(|anchor| {
+                let entry = anchor.entries.first()?;
+                let handle = entry.handle.as_ref()?;
+                let (start, end) = entry.resolver?.name;
+                let start = usize::try_from(start.checked_sub(handle.start)?).ok()?;
+                let end = usize::try_from(end.checked_sub(handle.start)?).ok()?;
+                entry.forms.iter().find_map(|form| match form {
+                    RenderedForm::Verbatim(body) => body.get(start..end).map(str::to_owned),
+                    _ => None,
+                })
+            })
+            .collect();
+        let (indexed_call_sources, call_window_limited) =
+            self.task_call_sources(&syntax_names, control)?;
+        plan.syntax_index_candidates = indexed_call_sources.len();
+        plan.syntax_index_limited = call_window_limited
+            || syntax_names.len() < syntax_seeds.len()
+            || context.batch.freshness.pending_sources > 0;
+        plan.discovery_limited |= plan.syntax_index_limited;
         let mut candidates = Vec::new();
         // Outlines describe a file; their handle is not a request for its entire
         // body. Promoting them to source spans swallows the selected functions
@@ -526,29 +563,6 @@ impl Engine {
                 plan.discovery_limited = true;
             }
         }
-        let paths: Vec<_> = candidates
-            .iter()
-            .map(|candidate| candidate.handle.path.clone())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let (observed, limited) = self.execution_evidence_in(&tx, &paths, control)?;
-        plan.discovery_limited |= limited;
-        for evidence in &observed {
-            for (handle, facet) in [
-                (&evidence.from, "consumers"),
-                (&evidence.to, "implementation"),
-                (&evidence.test, "verification"),
-            ] {
-                plan.discovery_limited |= !add(
-                    &mut candidates,
-                    handle.clone(),
-                    facet,
-                    "producer_execution_observation",
-                );
-            }
-        }
-        plan.observed = observed;
         let mut reference_sources = BTreeMap::new();
         for seed in compiler_seeds {
             control.check()?;
@@ -638,9 +652,10 @@ impl Engine {
             }
             plan.compiler.push(found);
         }
-        // Use only already admitted seed/candidate files. Reuse compiler parses;
-        // no repository scan, execution or inferred import resolution is needed.
-        // Names and source bodies must both survive the final read snapshot.
+        // Indexed call postings extend discovery across the admitted source set.
+        // Hydrate at most eight files, reusing compiler parses. No source scan,
+        // execution or inferred import resolution is needed. All identities and
+        // call syntax must survive this final snapshot.
         let mut names = BTreeSet::new();
         let mut paths = Vec::new();
         for seed in syntax_seeds {
@@ -657,6 +672,27 @@ impl Engine {
             }
         }
         if !names.is_empty() {
+            let seed_paths = std::mem::take(&mut paths);
+            for indexed in indexed_call_sources {
+                let meta: Option<SourceMeta> = sources
+                    .get(indexed.path.as_str())?
+                    .map(|row| crate::store::decode(row.value(), "source"))
+                    .transpose()?;
+                if meta.is_some_and(|meta| meta.hash == indexed.sha256) {
+                    if !paths.contains(&indexed.path) {
+                        paths.push(indexed.path);
+                    }
+                } else {
+                    plan.syntax_index_stale += 1;
+                    plan.syntax_index_limited = true;
+                    plan.discovery_limited = true;
+                }
+            }
+            for path in seed_paths {
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+            }
             let mut test_words = BTreeSet::new();
             for text in std::iter::once(query).chain(goals.iter().take(4).map(|e| e.text.as_str()))
             {
@@ -754,6 +790,32 @@ impl Engine {
                 }
             }
         }
+        // Compiler and syntax discovery can introduce the only source path
+        // indexed by an execution observation. Query once after that frontier is
+        // assembled, preserving the existing 8-path/128-row/16-observation caps.
+        let paths: Vec<_> = candidates
+            .iter()
+            .map(|candidate| candidate.handle.path.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let (observed, limited) = self.execution_evidence_in(&tx, &paths, control)?;
+        plan.discovery_limited |= limited;
+        for evidence in &observed {
+            for (handle, facet) in [
+                (&evidence.from, "consumers"),
+                (&evidence.to, "implementation"),
+                (&evidence.test, "verification"),
+            ] {
+                plan.discovery_limited |= !add(
+                    &mut candidates,
+                    handle.clone(),
+                    facet,
+                    "producer_execution_observation",
+                );
+            }
+        }
+        plan.observed = observed;
         let memory = tx.open_table(crate::memory::MEMORY)?;
         let mut hits = Vec::new();
         for hit in context.hits {
@@ -836,6 +898,8 @@ impl Engine {
             plan.support.push(c.support.clone());
         }
         let freshness = self.freshness_in(&tx)?;
+        plan.syntax_index_limited |= freshness.pending_sources > 0;
+        plan.discovery_limited |= plan.syntax_index_limited;
         if freshness.source_revision != context.batch.freshness.source_revision
             && context.batch.semantic.is_some()
         {

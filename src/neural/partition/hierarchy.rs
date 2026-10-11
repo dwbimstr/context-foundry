@@ -81,6 +81,7 @@ enum Content {
 
 #[derive(Clone, Debug)]
 pub struct Span {
+    kind: crate::neural::cache::CardKind,
     start: usize,
     end: usize,
     key: String,
@@ -104,6 +105,7 @@ pub fn card(
                 ));
             }
             Card {
+                kind: span.kind,
                 start: span.start,
                 end: span.end,
                 input_key: provider::input_key(recipe.function_digest, &rendered),
@@ -217,6 +219,11 @@ fn overview(
         ));
     }
     Ok(Span {
+        kind: if kind == "file" {
+            crate::neural::cache::CardKind::File
+        } else {
+            crate::neural::cache::CardKind::Parent
+        },
         start,
         end,
         key: provider::input_key(recipe.function_digest, &rendered),
@@ -322,6 +329,7 @@ pub fn file_plan(
     let prefix = "hierarchy-v1 file\nextractive overview (may omit source):\n";
     if let Some(text) = complete_text(source, prefix, recipe, counter)? {
         return Ok(vec![Span {
+            kind: crate::neural::cache::CardKind::File,
             start: 0,
             end: source.len(),
             key: provider::input_key(
@@ -354,6 +362,7 @@ pub fn plan(
     let mut spans = Vec::new();
     body::visit(source, lang, recipe, parent_tokens, tokens, |body, card| {
         spans.push(Span {
+            kind: card.kind,
             start: card.start,
             end: card.end,
             key: card.input_key,

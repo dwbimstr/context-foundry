@@ -6893,3 +6893,73 @@ fn task_evidence_delivers_compiler_references_only_with_both_current_spans() {
     assert!(!packed.text.contains("task-reference:"));
     assert!(packed.text.contains("\"coverage\":\"stale\""));
 }
+
+#[test]
+fn execution_lookup_includes_paths_discovered_only_by_compiler_references() {
+    use context_foundry::{Strategy, store::ContextOptions, task_context};
+    let mut world = World::with_sources(&[
+        ("src/lib.rs", LIB),
+        ("src/other.rs", OTHER),
+        ("tests/observed.rs", "#[test]\nfn observed() { run(); }\n"),
+    ]);
+    world
+        .engine
+        .as_mut()
+        .unwrap()
+        .refresh(&Control::unbounded())
+        .unwrap();
+    // Leave the caller's lexical projection stale. Only the fresh compiler
+    // reference can discover this source in the composition below.
+    let caller = format!("#[test]\n{OTHER}");
+    world.set_source("src/other.rs", &caller);
+    let scoped = artifact(vec![
+        doc("src/lib.rs", vec![occ(&[0, 7, 12], ALPHA, DEF)]),
+        doc("src/other.rs", vec![occ(&[2, 11, 16], ALPHA, REF)]),
+    ]);
+    world.import_ok(RA, "execution-frontier", &scoped);
+    let engine = world.engine();
+    let endpoint = |path: &str, line| json!({"path":path,"line":line,"symbol":"reported","hash":engine.source(path).unwrap().unwrap().hash});
+    let receipt = json!({"v":2,"producer":"synthetic-trace","scope":"observed","run":"one",
+        "command":["fixture-not-executed"],"completed":true,"exit_code":0,"duration_ms":1,
+        "workspace_id":engine.workspace_id().unwrap(),"source_revision":engine.source_revision().unwrap(),
+        "inputs":(["src/lib.rs","src/other.rs","tests/observed.rs"].into_iter().map(|p|json!({"path":p,"sha256":engine.source(p).unwrap().unwrap().hash})).collect::<Vec<_>>()),
+        "test":endpoint("tests/observed.rs",2),"observations":[{"from":endpoint("tests/observed.rs",2),"to":endpoint("src/other.rs",3),"kind":"covers","count":1}]});
+    engine
+        .import_execution(&serde_json::to_vec(&receipt).unwrap())
+        .unwrap();
+    let wid = engine.workspace_id().unwrap();
+    engine.task_context(&task_context::parse(json!({"workspace_id":wid,"task_id":"frontier","command":{"op":"create","title":"Preserve behavior"}})).unwrap(), &Control::unbounded()).unwrap();
+    let context = engine
+        .context_candidates_with(
+            "alpha",
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &wid,
+                    task_id: "frontier",
+                    expected_revision: 1,
+                }),
+                compose_evidence: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let packed = response::pack_enriched_context(
+        &context,
+        None,
+        response::Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    let observations: Vec<Value> = packed
+        .text
+        .lines()
+        .filter_map(|line| line.strip_prefix("task-execution: "))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(observations.len(), 1, "{}", packed.text);
+    let target =
+        context_foundry::store::HandleRef::parse(observations[0]["to"].as_str().unwrap()).unwrap();
+    assert_eq!(target.path, "src/other.rs");
+}

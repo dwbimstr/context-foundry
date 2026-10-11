@@ -26,11 +26,18 @@ pub(super) fn encode(overlay: &Overlay) -> FResult<Vec<u8>> {
             .collect::<Vec<_>>(),
     )?)
 }
-fn valid_units(units: &[UnitLocation]) -> bool {
+pub(super) fn valid_units(units: &[UnitLocation], recipe: &str) -> bool {
     !units.is_empty()
-        && units
-            .iter()
-            .all(|u| !u.path.is_empty() && u.start < u.end && is_hex64(&u.source_sha256))
+        && units.windows(2).all(|pair| {
+            (&pair[0].path, pair[0].start, pair[0].end)
+                < (&pair[1].path, pair[1].start, pair[1].end)
+        })
+        && units.iter().all(|u| {
+            !u.path.is_empty()
+                && u.start < u.end
+                && is_hex64(&u.source_sha256)
+                && u.kind.valid_for(recipe)
+        })
 }
 
 pub(super) fn read(
@@ -79,7 +86,7 @@ pub(super) fn read(
                 if entry.label != ordinal as u64
                     || !is_hex64(&entry.input_key)
                     || previous.as_ref().is_some_and(|p| p >= &entry.input_key)
-                    || !valid_units(&entry.units)
+                    || !valid_units(&entry.units, &manifest.recipe_id)
                 {
                     return Err(unavailable("label map locations or ordinals are malformed"));
                 }
@@ -110,7 +117,10 @@ pub(super) fn read(
                 let mut overlay = Overlay::new();
                 for change in changes {
                     if !is_hex64(&change.key)
-                        || change.units.as_ref().is_some_and(|u| !valid_units(u))
+                        || change
+                            .units
+                            .as_ref()
+                            .is_some_and(|u| !valid_units(u, &manifest.recipe_id))
                     {
                         return Err(unavailable("location overlay is malformed"));
                     }

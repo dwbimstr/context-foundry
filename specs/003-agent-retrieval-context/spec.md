@@ -964,14 +964,27 @@ relationship is emitted. Dynamic dispatch and semantic constraint conflicts rema
 
 T009 source discovery continuation (2026-10-11): composition no longer requires a
 compiler artifact to discover useful caller/test candidates. Up to four resolved
-query anchors supply names; their defining source hashes must still match in the
-final snapshot. The planner inspects at most eight already selected source files,
-reusing bounded parses from compiler-reference processing. Rust, Python, Go and
-JavaScript/TypeScript calls with the same terminal name can supply at most 32
-enclosing source spans. They are **unresolved name candidates**, including possible
-shadowing or unrelated receivers; they create no graph edges. String literals,
-function values and arguments passed to another call are not calls to that name.
-Go `_test.go` paths join the existing test-path heuristic.
+query anchors supply exact canonical names; their defining source hashes must still
+match in the final snapshot. Ingestion collects terminal call names during the existing
+source parse and places distinct exact-name postings on each file's first search
+document. The lookup reaches all admitted indexed sources, including files absent
+from the initial lexical candidate window; it performs no query-time repository scan.
+A four-name union selects at most eight matching source identities, ordered by the
+existing key hash, plus a ninth hit to detect a limited window. The lookup reads no
+source bodies. The final transaction rechecks both definition and candidate hashes,
+prioritizes those indexed sources, and checks call syntax in at most eight selected
+files, reusing bounded parses from compiler-reference processing. Stale identities
+are discarded. There is no pagination of the remaining matches.
+
+Rust, Python, Go and JavaScript/TypeScript/TSX calls with the same terminal name can
+supply at most 32 enclosing source spans. They are **unresolved name candidates**,
+including possible shadowing, aliases, overloads or unrelated receivers; they create
+no graph edges. String literals, function values and arguments passed to another
+call are not calls to that name. Go `_test.go` paths join the existing test-path
+heuristic. Each source indexes at most 4,096 distinct names of at most 1,024 bytes;
+parse limits, recovered syntax and posting limits leave its recipe coverage incomplete.
+Unsupported languages have no call-name recipe. `call_coverage: complete` describes
+only this supported syntax recipe, never complete caller or runtime coverage.
 
 Rust assertion expression macros (`assert`, `assert_eq`, `assert_ne` and their
 `debug_` variants) also expose name-plus-parentheses candidates inside their token
@@ -983,12 +996,20 @@ call relationship. Query/goal text is capped at 1,024 bytes per entry and 64
 distinct non-stopword terms. Existing 1 MiB parse, parser-work, 32 KiB span,
 32-source-unit and final delivery limits remain.
 
-The compact and verbose reports expose the syntactic candidate counts, skipped
-parse paths, unresolved names and unverified execution. Final delivered facets
-still depend on the exact bodies that fit the budget. Compiler relationships and
-imported execution observations retain their stronger, separate provenance.
-Unsupported languages, dynamic dispatch, indirect wrapper coverage and requirement
-satisfaction remain open; local test selection is discovery, not observed coverage.
+The compact and verbose reports expose syntactic candidate counts, skipped parse
+paths, indexed candidates, stale indexed identities and the limited-window flag.
+`syntax.discovery.scope` is `admitted_source_call_postings`; its coverage is
+`syntax_recipe_only_not_complete_evidence`. Selected incomplete recipes, a ninth
+match, missing canonical names and pending index work make the index discovery limit
+visible. An unsupported source with no matching posting need not appear in that
+window: even an unlimited result is not an absence or completeness proof. Final
+delivered facets still depend on exact bodies that fit the budget. Compiler
+relationships and imported execution observations keep separate provenance.
+Dynamic dispatch, indirect wrappers, unsupported languages, broader framework behavior
+and requirement satisfaction remain open. Task-word test selection still searches
+only selected files; it is discovery, not observed coverage. Search schema 6 requires
+explicit derived-index repair; source-unit schema 5 is independent of these postings
+(see [001](../001-source-state-recovery/contracts/context-v2.md#call-name-postings--2026-10-11)).
 
 An opt-in free-form OMP parser calibration now complements the scripted host integration
 and earlier fixed-choice model tests: two initial-context arms, one attempt each,
@@ -1003,10 +1024,14 @@ The public T003 fixture is not held out. See the current Linux continuation in
 
 
 T009 observed evidence continuation (2026-10-11): explicit completed execution artifacts
-from 005 now supply bounded runtime neighbors. The final snapshot verifies caller,
-target and test source identities; an observation is emitted as `task-execution` only
-when all three source spans are actually delivered. Budget omission is visible in
-execution accounting. Static reference syntax retains `runtime_call: unverified` and
+from 005 now supply bounded runtime neighbors. Lookup runs once after compiler and
+syntax discovery, so those discovered paths can seed it. It examines at most eight
+source paths and 128 graph rows and retains at most 16 observations; static rows and
+duplicates also consume the examination limit. The final snapshot verifies caller,
+target and test identities and, for v2, the exact indexed workspace/revision. V1 stays
+explicitly endpoint-only. An observation is emitted as `task-execution` only when all
+three source spans are actually delivered. Budget omission is visible in execution
+accounting. Static reference syntax retains `runtime_call: unverified` and
 `test_execution: not_observed`; importing observations does not rewrite those facts.
 Producer-reported execution is not complete test coverage, attestation or task success.
 The explicit Python runtime fixture and task packing/staleness checks are recorded in

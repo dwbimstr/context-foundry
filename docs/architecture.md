@@ -764,3 +764,24 @@ computes coverage from the actual packed forms under one allowance. Caller asser
 syntactic relationships, source bodies and derived claims stay distinguishable.
 Missing/ambiguous evidence and discovery limits remain visible. No new worker, scheduler,
 model call, host-control claim or learned routing policy is introduced.
+
+Source ingestion also collects distinct terminal call names in its existing parse.
+The first search document per source owns the exact postings and syntax-recipe coverage.
+Task composition queries up to four canonical anchor names across the admitted index,
+reads at most nine posting documents, and selects at most eight source files for final
+hash and AST checks. It reuses compiler parses and obeys the existing span/output budget;
+it does not scan all repository bodies per query. Search schema 6 requires explicit
+`repair-index`; source-unit schema 5 remains a separate semantic-recipe dependency.
+The fixed window has no pagination. Unsupported syntax and dynamic resolution remain
+open, and these candidates cannot establish complete callers or executed tests.
+
+Execution v2 stays in the existing graph-bundle owner. An explicit producer collection
+`(producer, scope)` carries a manifest validated atomically against the indexed source
+snapshot. Reads require its exact workspace/revision plus caller/target/test identities;
+any accepted source change conservatively invalidates that run. Legacy v1 receipts are
+explicitly endpoint-only. The importer neither executes nor attests the producer, and
+cannot detect unindexed filesystem changes or establish complete runtime inputs.
+Task execution lookup follows compiler/syntax discovery and remains bounded to eight
+paths, 128 examined graph rows and 16 observations. All three endpoint bodies must fit
+before delivery. See [005](../specs/005-graph-evidence-lifecycle/spec.md) for replacement,
+freshness and provenance details.

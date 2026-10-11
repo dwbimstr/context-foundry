@@ -135,6 +135,27 @@ mod llama {
                  containing {COMMIT})"
             );
         };
+        let simd = std::env::var_os("CARGO_FEATURE_EMBED_WORKER_AVX512_BF16").is_some();
+        if simd {
+            assert_eq!(
+                std::env::var("CARGO_CFG_TARGET_OS").as_deref(),
+                Ok("linux"),
+                "embed-worker-avx512-bf16 requires Linux"
+            );
+            assert_eq!(
+                std::env::var("CARGO_CFG_TARGET_ARCH").as_deref(),
+                Ok("x86_64"),
+                "embed-worker-avx512-bf16 requires x86_64"
+            );
+            assert!(
+                std::env::var_os("CARGO_FEATURE_GENERATE_WORKER").is_none(),
+                "build the SIMD embedding worker separately from generation"
+            );
+        }
+        println!(
+            "cargo:rustc-env=FOUNDRY_LLAMA_CPU_VARIANT={}",
+            if simd { "avx512-bf16-v1" } else { "baseline" }
+        );
         let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
         let source = out.join("llama.cpp");
         let build = out.join("llama.cpp-build");
@@ -372,6 +393,10 @@ mod llama {
             format!("-DLLAMA_BUILD_COMMIT={}", &COMMIT[..8]).into(),
         ];
         configure.extend(CMAKE_FLAGS.iter().map(OsString::from));
+        if std::env::var_os("CARGO_FEATURE_EMBED_WORKER_AVX512_BF16").is_some() {
+            // Fixed target capabilities, never build-host-dependent -march=native.
+            configure.extend(["-DGGML_AVX512=ON", "-DGGML_AVX512_BF16=ON"].map(OsString::from));
+        }
         if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
             configure.extend([
                 format!("-DCMAKE_OSX_ARCHITECTURES={arch}").into(),

@@ -724,7 +724,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    #[ignore = "native macOS host CPU observation and pressure acceptance"]
+    #[ignore = "native macOS host CPU observation"]
     fn native_macos_cpu_observation() {
         let before = cpu_sample().expect("native CPU sample");
         std::thread::sleep(Duration::from_millis(250));
@@ -732,6 +732,149 @@ mod tests {
         assert!(after.percent_since(&before).is_some());
         assert!(!after.cpus.is_empty());
         assert!(after.groups.is_empty(), "Darwin has no Linux cgroup claim");
+    }
+
+    /// Native admission acceptance, without models: actual host CPU ticks and
+    /// free VM pages, both reservation lanes, foreground admission during CPU
+    /// pressure, and recovery. Reservations do not allocate model memory; this
+    /// does not certify worker lifetime, Metal allocations or model throughput.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "native macOS: needs an idle host, briefly loads every logical CPU"]
+    fn native_macos_cpu_pressure_pauses_and_resumes_both_lanes() {
+        use std::sync::atomic::AtomicBool;
+
+        const MIB: u64 = 1024 * 1024;
+        const SEMANTIC: u64 = 16 * MIB;
+        const GENERATION: u64 = 32 * MIB;
+        const PAUSE: u8 = 60;
+        const RESUME: u8 = 30;
+
+        // No sampler injection, cached timestamp edits or synthetic counters.
+        let resources = Resources::new(Config {
+            resident_bytes: SEMANTIC + GENERATION,
+            reserve_bytes: 16 * MIB,
+            resume_margin_bytes: 8 * MIB,
+            background_cpu: Some(CpuConfig {
+                pause_percent: PAUSE,
+                resume_percent: RESUME,
+            }),
+        })
+        .unwrap();
+        let mut semantic = resources.reserve(Lane::Semantic, SEMANTIC).unwrap();
+        let generation = resources.reserve(Lane::Generation, GENERATION).unwrap();
+        assert_eq!(resources.background(), Err(Deferred::CpuUnavailable));
+        let unknown = resources.status();
+        assert!(unknown["background_cpu"]["busy_percent"].is_null());
+        assert_eq!(unknown["reason"], "model_cpu_observation_unavailable");
+        assert_eq!(unknown["background_cpu"]["scope"], "macos_host_cpu_ticks");
+        eprintln!("NATIVE-MACOS-CPU phase=initial status={unknown}");
+
+        fn wait_for(resources: &Resources, phase: &str, pressured: bool) -> serde_json::Value {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                std::thread::sleep(Duration::from_millis(1100));
+                let decision = resources.background();
+                let status = resources.status();
+                eprintln!("NATIVE-MACOS-CPU phase={phase} status={status}");
+                assert_eq!(status["reserved_semantic_bytes"], SEMANTIC);
+                assert_eq!(status["reserved_generation_bytes"], GENERATION);
+                assert!(
+                    matches!(
+                        decision,
+                        Ok(()) | Err(Deferred::CpuPressure | Deferred::CpuUnavailable)
+                    ),
+                    "native memory observation/admission failed: {decision:?}"
+                );
+                let percent = status["background_cpu"]["busy_percent"].as_u64();
+                if if pressured {
+                    decision == Err(Deferred::CpuPressure)
+                        && percent.is_some_and(|percent| percent >= u64::from(PAUSE))
+                } else {
+                    decision.is_ok() && percent.is_some_and(|percent| percent <= u64::from(RESUME))
+                } {
+                    assert_eq!(status["background_cpu"]["pressure"], pressured);
+                    return status;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "native CPU phase {phase} did not reach its threshold: {status}"
+                );
+            }
+        }
+
+        wait_for(&resources, "idle", false);
+        let cpus = cpu_sample().expect("native CPU topology").cpus.len();
+        assert!(
+            (1..=128).contains(&cpus),
+            "bounded load requires 1..=128 CPUs"
+        );
+
+        // The guard stops and joins every thread even after an assertion panic;
+        // each thread also has a fixed deadline if the test stops making progress.
+        struct CpuLoad {
+            stop: Arc<AtomicBool>,
+            threads: Vec<std::thread::JoinHandle<()>>,
+        }
+        impl Drop for CpuLoad {
+            fn drop(&mut self) {
+                self.stop.store(true, Ordering::Relaxed);
+                for thread in self.threads.drain(..) {
+                    let _ = thread.join();
+                }
+            }
+        }
+        let mut load = CpuLoad {
+            stop: Arc::new(AtomicBool::new(false)),
+            threads: Vec::new(),
+        };
+        let load_deadline = Instant::now() + Duration::from_secs(20);
+        for cpu in 0..cpus {
+            let stop = load.stop.clone();
+            load.threads.push(
+                std::thread::Builder::new()
+                    .name(format!("native-cpu-pressure-{cpu}"))
+                    .spawn(move || {
+                        let mut value = cpu as u64 + 1;
+                        while !stop.load(Ordering::Relaxed) && Instant::now() < load_deadline {
+                            for _ in 0..4096 {
+                                value = std::hint::black_box(
+                                    value.wrapping_mul(1664525).wrapping_add(1013904223),
+                                );
+                            }
+                        }
+                    })
+                    .expect("start bounded native CPU load"),
+            );
+        }
+        eprintln!("NATIVE-MACOS-CPU load_threads={cpus} pause={PAUSE} resume={RESUME}");
+        wait_for(&resources, "loaded", true);
+        assert!(load.threads.iter().all(|thread| !thread.is_finished()));
+        assert!(
+            resources.memory_background().is_ok(),
+            "CPU pressure retains idle residency"
+        );
+
+        // Foreground semantic acquisition uses reserve without background's CPU
+        // gate; generation keeps its reservation while the semantic lane reloads.
+        drop(semantic);
+        semantic = resources.reserve(Lane::Semantic, SEMANTIC).unwrap();
+        assert_eq!(resources.background(), Err(Deferred::CpuPressure));
+        assert_eq!(resources.status()["reserved_generation_bytes"], GENERATION);
+        assert!(matches!(
+            resources.reserve(Lane::Generation, 1),
+            Err(Deferred::Budget)
+        ));
+        drop(load);
+
+        let resumed = wait_for(&resources, "recovered", false);
+        assert!(resumed["reason"].is_null());
+        drop(semantic);
+        drop(generation);
+        let released = resources.status();
+        assert_eq!(released["reserved_semantic_bytes"], 0);
+        assert_eq!(released["reserved_generation_bytes"], 0);
+        eprintln!("NATIVE-MACOS-CPU phase=released status={released}");
     }
     fn config() -> Config {
         Config {
