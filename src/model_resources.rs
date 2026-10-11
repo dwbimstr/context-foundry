@@ -7,6 +7,19 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+// Stable libSystem Mach interfaces. libc 0.2.189 omits port deallocation and
+// deprecates its host/task wrappers; mach_task_self() is a C macro over this
+// exported task-port variable, not a callable symbol.
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn mach_host_self() -> libc::mach_port_t;
+    static mut mach_task_self_: libc::mach_port_t;
+    fn mach_port_deallocate(
+        task: libc::mach_port_t,
+        name: libc::mach_port_t,
+    ) -> libc::kern_return_t;
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -386,7 +399,7 @@ fn cpu_sample() -> Option<CpuSample> {
         if !(1..=4096).contains(&cpus) {
             return None;
         }
-        let host = libc::mach_host_self();
+        let host = mach_host_self();
         let mut stats: libc::host_cpu_load_info = std::mem::zeroed();
         let mut count = libc::HOST_CPU_LOAD_INFO_COUNT;
         let result = libc::host_statistics(
@@ -395,7 +408,7 @@ fn cpu_sample() -> Option<CpuSample> {
             &mut stats as *mut _ as *mut libc::integer_t,
             &mut count,
         );
-        libc::mach_port_deallocate(libc::mach_task_self(), host);
+        mach_port_deallocate(mach_task_self_, host);
         if result != libc::KERN_SUCCESS || count != libc::HOST_CPU_LOAD_INFO_COUNT {
             return None;
         }
@@ -683,7 +696,7 @@ fn available_memory() -> Option<u64> {
     // Conservative immediately free pages. Do not promise that inactive or
     // compressed pages can be reclaimed. Unified GPU allocations affect this too.
     unsafe {
-        let host = libc::mach_host_self();
+        let host = mach_host_self();
         let mut stats: libc::vm_statistics64 = std::mem::zeroed();
         let mut count = libc::HOST_VM_INFO64_COUNT;
         let result = libc::host_statistics64(
@@ -692,7 +705,7 @@ fn available_memory() -> Option<u64> {
             &mut stats as *mut _ as *mut libc::integer_t,
             &mut count,
         );
-        libc::mach_port_deallocate(libc::mach_task_self(), host);
+        mach_port_deallocate(mach_task_self_, host);
         let page = libc::sysconf(libc::_SC_PAGESIZE);
         if result != libc::KERN_SUCCESS || count != libc::HOST_VM_INFO64_COUNT || page <= 0 {
             return None;
