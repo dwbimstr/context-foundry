@@ -227,6 +227,11 @@ mod llama {
                 println!("cargo:rustc-link-arg-bin={bin}={}", archive.display());
             }
             if metal {
+                // Rust's -nodefaultlibs omits Clang builtins used by @available
+                // in the static Metal archive (__isPlatformVersionAtLeast).
+                // The active target Clang driver selects its own runtime;
+                // never hardcode an Xcode/SDK path or affect non-model binaries.
+                println!("cargo:rustc-link-arg-bin={bin}=-fapple-link-rtlib");
                 for framework in ["Metal", "MetalKit", "Foundation", "Accelerate"] {
                     println!("cargo:rustc-link-arg-bin={bin}=-Wl,-framework,{framework}");
                 }
