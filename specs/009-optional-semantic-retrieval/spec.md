@@ -45,10 +45,13 @@ path/subtree lookup. The same admitted locations supply discovery and delivery.
 Refined labels precede the original 64 before the existing per-file and
 output candidate limits. Final source hashes and ranges are checked in one read
 snapshot. Materialization retains exact scored body
-spans instead of substituting lexical excerpts. A partial hierarchy interleaves body
-hits first only when a refined location survives that final check; otherwise coarse
-ordering stays unchanged. File-only profiles do not perform a body search. No source
-inference, preparation, extra model call, output allowance or automatic refinement
+spans instead of substituting lexical excerpts. Experimental hierarchy/body prose
+placement interleaves dense and lexical candidates at both partial and complete
+coverage. A hierarchy puts body hits first only when a refined location survives
+that final check; otherwise lexical candidates go first. Coverage remains a
+freshness/availability report, not a relevance preference. File-only profiles do not
+perform a body search. No source inference, preparation, extra model call, output
+allowance or automatic refinement
 job is introduced by reading. Examination limits also surface as `candidates:full`
 in ordinary responses. Exact lexical matches retain their labels without replacing
 the independently scored body bytes. Traces distinguish representation role,
@@ -70,6 +73,28 @@ render their exact source spans through ordinary ANN delivery, but cannot consum
 hierarchy's independently scored Body refinement quota. Body-only serving retains
 its existing ordering; default address and unknown-language behavior are unchanged.
 This corrects role eligibility, not the model's relevance scores or output budgets.
+
+Owner-localization experiment, 2026-10-11: the hierarchy/prose branch preserves
+source scopes from its existing first 16 lexical documents and bounded dense
+provenance. A lexical scope requires an indexed `fn`/`method` kind, current source
+hash, and valid full-unit/head/document coordinates. It is not a truncated display
+label or the focused document range. A dense Parent scope must join the exact
+current Parent input-key/range/hash tuple; File, Body and container-fragment hits
+supply file discovery only. All proof checks use the same selected mapping snapshot.
+Duplicate scopes coalesce; nested scopes narrow to their leaves as the declared
+experimental ranking tradeoff, while disjoint scopes remain a union. A body is
+eligible only when its entire independently scored span fits one retained scope;
+intersecting bytes are never clipped or joined across owners. Incompatible partial
+overlap, no valid current owner, or no published body contained in the owner falls
+back to the existing bounded file refinement, with the reason recorded. The same
+point-read, vector, per-file, final-hash and output bounds apply; no query/source
+inference, model input, recipe change, extra delivery slot or inferred type-to-impl
+association is added. Default/address serving is unchanged. Per-path
+`refinement_scope` traces disclose requested/valid/stale/invalid scopes, narrowing,
+effective ranges and fallback; aggregate work records filtered locations. The
+`current_owner_narrowing_v1` trace policy identifies this candidate for comparison
+with role-only binaries on the identical complete prepared store and token budget.
+This variant does not claim that source ownership proves passage relevance.
 
 CLI lifecycle correction, 2026-10-11: the per-command semantic slot now waits
 for the existing runtime shutdown before leaving scope, on success or error. Closing
@@ -667,6 +692,20 @@ only for queries without an anchor, ahead of the lexical ones. Do not add a mode
 reranker endpoint, second candidate journal or reranker configuration in this scope.
 The owned policy under 013 (frozen off, 2026-10-07) chose graph expansion; its
 confidence is not a passage relevance score and must never reorder source candidates.
+
+Experimental hierarchy/body amendment: anchorless prose under the existing
+behavior-context opt-in uses deterministic alternating dense/lexical lanes whether
+coverage is partial or complete. The dense lane precedes the lexical lane only when
+at least one independently scored refined Body survives the final source check;
+otherwise lexical goes first. Each lane retains its existing order. The same
+first-placement merge, four-per-file quota and candidate/output limits apply after
+interleaving; this reserves neither extra slots nor guaranteed lexical delivery.
+Trace `body_prose_interleave_v1` records coverage separately from the policy. This
+amends T004 placement only for these experimental representations. Ordinary/default
+search, anchored requests and address-card recipes keep their existing behavior;
+the existing partial/address and file-overview rules are unchanged. The boundary
+regression holds source/candidate tuples fixed while coverage becomes complete and
+checks equal placement. Real fixed-query ablations remain separate quality evidence.
 
 A learned reranker is a future option only after a fixed example shows that a required
 passage is present in the bounded candidate set, but ordering loses it before packing.
@@ -1347,8 +1386,10 @@ from bounded trace attribution. Rank/packing work remains open.
 The representative partial-index probe subsequently exposed dense-subset dominance.
 The same opt-in now interleaves lexical/dense placement, lexical first, only for
 anchorless prose with partial coverage at the final read's source revision. Existing
-caps and freshness checks still apply. Complete coverage, explicit symbols and
-ordinary search preserve T004 placement. This amends the experimental context rule
+caps and freshness checks still apply. The later hierarchy/body amendment above
+extends this experimental admission to complete coverage for independent passage
+representations; complete address-card coverage, explicit symbols and ordinary search
+preserve T004 placement. This amends the experimental context rule
 linked above; it is not a new provider, corpus scan or default promotion.
 
 Inspection of the public Rust losses also found three relevant rank-2 callables

@@ -119,6 +119,133 @@ impl std::fmt::Debug for DenseWindow {
     }
 }
 
+/// A discovery scope, not a new source candidate or an inherited body score.
+/// Lexical owners use the indexed unit kind/hash/geometry, never its display
+/// label. Parent scopes must join their exact current partition tuple below.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OwnerScope<'a> {
+    pub source_hash: &'a str,
+    pub start: u64,
+    pub end: u64,
+    pub proof: OwnerProof<'a>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum OwnerProof<'a> {
+    Callable {
+        kind: &'a str,
+        head: u64,
+        document: (u64, u64),
+    },
+    Parent {
+        input_key: &'a str,
+    },
+}
+
+#[derive(Default)]
+struct OwnerRanges {
+    ranges: Vec<(u64, u64)>,
+    valid: usize,
+    stale: usize,
+    invalid: usize,
+    narrowed: usize,
+    conflict: bool,
+}
+
+impl OwnerRanges {
+    /// Valid nested ranges reduce to leaves, which are disjoint and sorted.
+    /// A Body must fit whole; clipping would change the independently scored
+    /// evidence, and overlap alone could import a neighboring function.
+    fn contains(&self, start: u64, end: u64) -> bool {
+        self.ranges
+            .partition_point(|&(from, _)| from <= start)
+            .checked_sub(1)
+            .is_some_and(|index| end <= self.ranges[index].1)
+    }
+}
+
+fn refinement_scopes(
+    scopes: &[OwnerScope<'_>],
+    source_hash: &str,
+    source_len: usize,
+    parents: &std::collections::BTreeSet<(u64, u64, &str)>,
+    control: &Control,
+) -> Result<OwnerRanges, Fallback> {
+    control.check()?;
+    let mut result = OwnerRanges::default();
+    for scope in scopes {
+        control.check()?;
+        if scope.source_hash != source_hash {
+            result.stale += 1;
+            continue;
+        }
+        let geometry = scope.start < scope.end && scope.end <= source_len as u64;
+        let proven = match scope.proof {
+            OwnerProof::Callable {
+                kind,
+                head,
+                document: (from, to),
+            } => {
+                matches!(kind, "fn" | "method")
+                    && scope.start <= head
+                    && head < scope.end
+                    && scope.start <= from
+                    && from < to
+                    && to <= scope.end
+            }
+            OwnerProof::Parent { input_key } => {
+                parents.contains(&(scope.start, scope.end, input_key))
+            }
+        };
+        if !geometry || !proven {
+            result.invalid += 1;
+            continue;
+        }
+        result.valid += 1;
+        result.ranges.push((scope.start, scope.end));
+    }
+    result
+        .ranges
+        .sort_unstable_by_key(|&(start, end)| (start, std::cmp::Reverse(end)));
+    result.ranges.dedup();
+    // Same-source syntax scopes form a forest. Non-nested overlap is not a
+    // proven owner relationship: retain the old file fallback for that path.
+    let mut ends = Vec::new();
+    for &(start, end) in &result.ranges {
+        control.check()?;
+        while ends.last().is_some_and(|&through| through <= start) {
+            ends.pop();
+        }
+        if ends.last().is_some_and(|&through| end > through) {
+            result.conflict = true;
+            break;
+        }
+        ends.push(end);
+    }
+    if result.conflict {
+        result.ranges.clear();
+        return Ok(result);
+    }
+    // Declared experimental tradeoff: a current narrower owner localizes a
+    // broader discovered scope. Disjoint owners remain a union; no min/max
+    // envelope is allowed to admit the source between them.
+    let mut narrowed = Vec::with_capacity(result.ranges.len());
+    for (index, &range) in result.ranges.iter().enumerate() {
+        control.check()?;
+        if result
+            .ranges
+            .get(index + 1)
+            .is_some_and(|&next| next.1 <= range.1)
+        {
+            result.narrowed += 1;
+        } else {
+            narrowed.push(range);
+        }
+    }
+    result.ranges = narrowed;
+    Ok(result)
+}
+
 impl DenseWindow {
     /// Localize coarse files by scoring a bounded working set of their published
     /// body inputs. Selected partition point reads identify keys; only this
@@ -128,6 +255,7 @@ impl DenseWindow {
         &self,
         engine: &Engine,
         paths: &std::collections::BTreeSet<String>,
+        scopes: &std::collections::BTreeMap<String, Vec<OwnerScope<'_>>>,
         control: &Control,
     ) -> Result<Refinement<'_>, Fallback> {
         use std::collections::{BTreeSet, VecDeque};
@@ -158,7 +286,7 @@ impl DenseWindow {
                 continue;
             }
             stats.mapping_bytes += bytes;
-            let Some(record) = page.partition(
+            let Some((record, source_len)) = page.partition_with_source_len(
                 path,
                 &self.generation.identity.digest,
                 &self.generation.identity.recipe,
@@ -167,8 +295,8 @@ impl DenseWindow {
             else {
                 continue;
             };
-            let mut queue = VecDeque::new();
-            let mut seen = BTreeSet::new();
+            let mut file_bodies = Vec::new();
+            let mut parents = BTreeSet::new();
             for unit in &record.units {
                 control.check()?;
                 if stats.units_considered == MAX_UNITS {
@@ -176,6 +304,9 @@ impl DenseWindow {
                     break;
                 }
                 stats.units_considered += 1;
+                if unit.kind == super::cache::CardKind::Parent {
+                    parents.insert((unit.start as u64, unit.end as u64, unit.input_key.as_str()));
+                }
                 if unit.kind != super::cache::CardKind::Body {
                     continue;
                 }
@@ -212,8 +343,61 @@ impl DenseWindow {
                         "published body has no resident vector",
                     ));
                 };
-                joined.entry(label).or_default().push(location);
+                file_bodies.push((label, location));
                 stats.joined_locations += 1;
+            }
+            let requested = scopes.get(path).map_or(&[][..], Vec::as_slice);
+            let owners = refinement_scopes(
+                requested,
+                &record.source_hash,
+                source_len,
+                &parents,
+                control,
+            )?;
+            stats.owner_scopes += requested.len();
+            stats.owner_scopes_valid += owners.valid;
+            stats.owner_scopes_stale += owners.stale;
+            stats.owner_scopes_invalid += owners.invalid;
+            stats.owner_scopes_narrowed += owners.narrowed;
+            stats.owner_scope_conflicts += usize::from(owners.conflict);
+            let mut has_scoped_body = false;
+            for &(_, location) in &file_bodies {
+                control.check()?;
+                has_scoped_body |= owners.contains(location.start, location.end);
+            }
+            let fallback = if owners.conflict {
+                Some("incompatible_scopes")
+            } else if owners.ranges.is_empty() {
+                Some("no_current_owner")
+            } else if !has_scoped_body {
+                Some("no_published_body_in_owner")
+            } else {
+                None
+            };
+            if fallback.is_some() {
+                stats.owner_fallback_paths += 1;
+            } else {
+                stats.owner_scoped_paths += 1;
+            }
+            if let Some(trace) = control.trace() {
+                trace.record(serde_json::json!({
+                    "stage":"refinement_scope", "policy":"current_owner_narrowing_v1",
+                    "path":path, "sha256":record.source_hash,
+                    "requested":requested.len(), "valid":owners.valid,
+                    "stale":owners.stale, "invalid":owners.invalid,
+                    "narrowed":owners.narrowed, "conflict":owners.conflict,
+                    "ranges":owners.ranges, "fallback":fallback,
+                }));
+            }
+            let mut queue = VecDeque::new();
+            let mut seen = BTreeSet::new();
+            for (label, location) in file_bodies {
+                control.check()?;
+                if fallback.is_none() && !owners.contains(location.start, location.end) {
+                    stats.owner_filtered_locations += 1;
+                    continue;
+                }
+                joined.entry(label).or_default().push(location);
                 if seen.insert(label) {
                     queue.push_back(label);
                 }
@@ -257,6 +441,13 @@ impl DenseWindow {
     /// the resulting passage received its own embedding or similarity score.
     pub(crate) fn has_overviews(&self) -> bool {
         self.file_overviews_only() || self.generation.identity.recipe.starts_with("hierarchy-v1+")
+    }
+
+    /// Independent passage representations keep hybrid admission even after
+    /// preparation completes; coverage is availability, not relevance.
+    pub(crate) fn has_body_representations(&self) -> bool {
+        let recipe = &self.generation.identity.recipe;
+        recipe.starts_with("body-v1+") || recipe.starts_with("hierarchy-v1+")
     }
 
     pub(crate) fn file_overviews_only(&self) -> bool {
@@ -473,6 +664,15 @@ pub(crate) struct RefinementStats {
     units_considered: usize,
     unpublished_units: usize,
     joined_locations: usize,
+    owner_scopes: usize,
+    owner_scopes_valid: usize,
+    owner_scopes_stale: usize,
+    owner_scopes_invalid: usize,
+    owner_scopes_narrowed: usize,
+    owner_scope_conflicts: usize,
+    owner_scoped_paths: usize,
+    owner_fallback_paths: usize,
+    owner_filtered_locations: usize,
     retained_locations: usize,
     vectors_scored: usize,
     labels_examined: usize,
@@ -1461,6 +1661,150 @@ mod tests {
     use super::*;
     use crate::neural::provider::FunctionDescriptor;
     use std::sync::atomic::AtomicBool;
+
+    fn callable_owner(start: u64, end: u64) -> OwnerScope<'static> {
+        OwnerScope {
+            source_hash: "current",
+            start,
+            end,
+            proof: OwnerProof::Callable {
+                kind: "fn",
+                head: start,
+                document: (start, end),
+            },
+        }
+    }
+
+    #[test]
+    fn owners_narrow_nested_discoveries_but_preserve_disjoint_scopes_and_exact_bodies() {
+        let scopes = [
+            OwnerScope {
+                source_hash: "current",
+                start: 0,
+                end: 200,
+                proof: OwnerProof::Parent {
+                    input_key: "published_parent",
+                },
+            },
+            callable_owner(10, 60),
+            callable_owner(100, 150),
+            callable_owner(10, 60),
+        ];
+        let parents = [(0, 200, "published_parent")].into();
+        let result =
+            refinement_scopes(&scopes, "current", 300, &parents, &Control::unbounded()).unwrap();
+        assert_eq!(result.ranges, [(10, 60), (100, 150)]);
+        assert_eq!(result.valid, 4);
+        assert_eq!(result.narrowed, 1);
+        assert!(result.contains(10, 60));
+        assert!(result.contains(110, 130));
+        assert!(!result.contains(60, 100), "the gap is not an owner");
+        assert!(
+            !result.contains(0, 30),
+            "overlap cannot clip an embedded body"
+        );
+        assert!(
+            !result.contains(50, 110),
+            "two owners cannot combine into a new span"
+        );
+        let reversed: Vec<_> = scopes.into_iter().rev().collect();
+        let replay =
+            refinement_scopes(&reversed, "current", 300, &parents, &Control::unbounded()).unwrap();
+        assert_eq!(replay.ranges, result.ranges);
+    }
+
+    #[test]
+    fn stale_malformed_and_unpublished_owner_proofs_cannot_narrow_refinement() {
+        let scopes = [
+            OwnerScope {
+                source_hash: "old",
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                start: 70,
+                end: 60,
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                end: 301,
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                proof: OwnerProof::Callable {
+                    kind: "section",
+                    head: 10,
+                    document: (10, 60),
+                },
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                proof: OwnerProof::Callable {
+                    kind: "method",
+                    head: 61,
+                    document: (10, 60),
+                },
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                proof: OwnerProof::Callable {
+                    kind: "fn",
+                    head: 10,
+                    document: (10, 70),
+                },
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                proof: OwnerProof::Parent {
+                    input_key: "wrong_key",
+                },
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                proof: OwnerProof::Parent {
+                    input_key: "published_parent",
+                },
+                ..callable_owner(10, 59)
+            },
+        ];
+        let parents = [(10, 60, "published_parent")].into();
+        let result =
+            refinement_scopes(&scopes, "current", 300, &parents, &Control::unbounded()).unwrap();
+        assert!(
+            result.ranges.is_empty(),
+            "the old bounded file fallback remains available"
+        );
+        assert_eq!(result.stale, 1);
+        assert_eq!(result.invalid, 7);
+        assert_eq!(result.valid, 0);
+        let parent = OwnerScope {
+            proof: OwnerProof::Parent {
+                input_key: "published_parent",
+            },
+            ..callable_owner(10, 60)
+        };
+        assert_eq!(
+            refinement_scopes(&[parent], "current", 300, &parents, &Control::unbounded())
+                .unwrap()
+                .ranges,
+            [(10, 60)]
+        );
+        assert!(refinement_scopes(&[], "current", 300, &parents, &Control::cancelled()).is_err());
+    }
+
+    #[test]
+    fn overlapping_nonnested_owner_claims_fall_back_instead_of_widening() {
+        let scopes = [callable_owner(10, 80), callable_owner(60, 100)];
+        let result = refinement_scopes(
+            &scopes,
+            "current",
+            300,
+            &Default::default(),
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert!(result.conflict);
+        assert!(result.ranges.is_empty());
+    }
 
     #[test]
     fn refinement_working_set_is_fair_deduplicated_bounded_and_cancellable() {

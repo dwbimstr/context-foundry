@@ -673,8 +673,22 @@ impl MappingPage {
         path: &str,
         digest: &str,
         recipe: &str,
-        _control: &Control,
+        control: &Control,
     ) -> FResult<Option<PartitionRecord>> {
+        Ok(self
+            .partition_with_source_len(path, digest, recipe, control)?
+            .map(|(record, _)| record))
+    }
+
+    /// Current mapping and source length from the same point-read snapshot.
+    /// Query owner ranges must fit this source, not a stale lexical document.
+    pub(crate) fn partition_with_source_len(
+        &self,
+        path: &str,
+        digest: &str,
+        recipe: &str,
+        _control: &Control,
+    ) -> FResult<Option<(PartitionRecord, usize)>> {
         let Some(raw) = self.sources.get(path)? else {
             return Ok(None);
         };
@@ -685,7 +699,9 @@ impl MappingPage {
             .get(path)?
             .map(|v| decode(v.value(), "semantic partition"))
             .transpose()?;
-        Ok(record.filter(|r| partition_is_current(r, &meta, recipe, digest)))
+        Ok(record
+            .filter(|r| partition_is_current(r, &meta, recipe, digest))
+            .map(|record| (record, meta.bytes)))
     }
     pub(crate) fn cached(&self, key: &str, digest: &str) -> FResult<bool> {
         Ok(self

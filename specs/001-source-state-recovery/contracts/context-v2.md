@@ -601,15 +601,20 @@ line (clipped to the original unit), preserving indentation. This exposes its
 declaration and implementation start rather than only long introductory examples. Body matches keep their focused window. Its handle names the
 actual contiguous excerpt range and its label says `excerpt`; omitted documentation
 is not claimed as delivered.
-Complete semantic coverage retains dense precedence. For experimental anchorless
-prose with partial semantic coverage at the final read's source revision, lexical
-and dense candidates alternate, lexical first, before ordinary deduplication and
-caps. This keeps an unprepared repository region eligible for early delivery while
-the small prepared subset remains usable. Explicit anchors and ordinary search keep
-dense precedence. All dense source ranges remain unchanged. Tracing adds bounded
-`lexical_intent` and partial `placement_policy` events; no expected-answer labels enter
-selection. It changes no source index, vector recipe or cache identity. Development
-regressions and public repository comparisons do not establish held-out G2 acceptance.
+Experimental anchorless prose with hierarchy/body representations alternates dense
+and lexical candidates at both partial and complete coverage, before ordinary
+first-placement deduplication, per-file caps and candidate limits. Dense goes first
+only when a refined Body survives the final source check; otherwise lexical goes
+first. Coverage describes availability and freshness, not relevance. The existing
+partial/address and file-overview rules still alternate lexical first; complete
+address-card coverage retains dense precedence. Explicit anchors and ordinary/default
+search keep their existing behavior. All independently scored body ranges remain
+unchanged. Bounded `placement_policy` traces name `body_prose_interleave_v1` for
+hierarchy/body and report coverage separately; `lexical_intent` remains available.
+This reserves no extra candidates or output tokens, and does not guarantee delivery
+of every lexical hit. No expected-answer labels enter selection. It changes no source
+index, vector recipe or cache identity. Development regressions and public repository
+comparisons do not establish held-out G2 acceptance.
 
 ### Hit materialization
 
@@ -1081,8 +1086,9 @@ keeps today's ordering and packing rules, with two changes: its tier 1 sees one
 document per definition (§ Definitions and addresses), and when it requests doors it
 gets `doors:none` and search packing instead of graph expansion (§ Doors). When 009
 T004 is accepted and a semantic profile is enabled, its placement (dense candidates
-first, then lexical) overrides these rules for anchor-less queries only. `search` orders
-anchored locator lines by the resolver; `retrieve` is unchanged.
+first, then lexical) overrides these rules for anchor-less queries only, except for
+experimental prose admission described above. `search` orders anchored locator lines
+by the resolver; `retrieve` is unchanged.
 
 #### Experimental behavioral support — 001 T010, 2026-10-09
 

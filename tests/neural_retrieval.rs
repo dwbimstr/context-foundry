@@ -6928,7 +6928,7 @@ fn container_role_upgrade_reuses_vectors_and_republishes_exact_roles() {
 #[test]
 fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
     use context_foundry::neural::{cache::CardKind, partition::Representation};
-    use context_foundry::store::ContextOptions;
+    use context_foundry::store::{ContextOptions, RenderedForm};
     let path = "src/refund_containers.rs";
     let source: String = (0..12)
         .map(|i| {
@@ -6998,24 +6998,44 @@ fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
             },
         )
         .unwrap();
-    let selected: Vec<_> = result
+    let events = trace.snapshot();
+    // Refinement has four Body slots; final placement shares the existing
+    // four file slots with the interleaved lexical lane. Outlines are separate.
+    let ranked: Vec<_> = result
         .batch
         .items
         .iter()
-        .filter_map(|item| item.handle.as_ref())
-        .filter(|handle| handle.path == path && bodies.contains(&(handle.start, handle.end)))
+        .filter(|item| {
+            item.handle
+                .as_ref()
+                .is_some_and(|handle| handle.path == path)
+                && !matches!(item.forms.first(), Some(RenderedForm::Outline(_)))
+        })
         .collect();
-    assert_eq!(
-        selected.len(),
-        4,
-        "all four file slots can carry implementation bodies"
-    );
-    assert!(
-        selected
-            .iter()
-            .all(|handle| !fragments.contains(&(handle.start, handle.end)))
-    );
-    let events = trace.snapshot();
+    assert_eq!(ranked.len(), 4);
+    assert!(ranked.iter().any(|item| item.semantic.is_some()));
+    assert!(ranked.iter().any(|item| item.semantic.is_none()));
+    for item in ranked {
+        let handle = item.handle.as_ref().unwrap();
+        assert_eq!(handle.sha256, partition.source_hash);
+        assert_eq!(
+            item.forms[0],
+            RenderedForm::Verbatim(source[handle.start as usize..handle.end as usize].into())
+        );
+        if item.semantic.is_some() {
+            assert!(bodies.contains(&(handle.start, handle.end)));
+            assert!(!fragments.contains(&(handle.start, handle.end)));
+        } else {
+            assert!(
+                events["events"].as_array().unwrap().iter().any(|event| {
+                    event["stage"] == "materialization"
+                        && event["origin"] == "lexical"
+                        && event["excerpt"] == serde_json::to_value(handle).unwrap()
+                }),
+                "the other file slots retain current lexical evidence: {events}"
+            );
+        }
+    }
     let refined: Vec<_> = events["events"]
         .as_array()
         .unwrap()
@@ -7023,15 +7043,16 @@ fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
         .filter(|event| {
             event["stage"] == "selection"
                 && event["refined"] == true
+                && event["outcome"] == "eligible"
                 && event["unit"]["path"] == path
         })
         .collect();
     assert_eq!(refined.len(), 4);
-    assert!(
-        refined
-            .iter()
-            .all(|event| event["representation"] == "body")
-    );
+    assert!(refined.iter().all(|event| event["representation"] == "body"
+        && bodies.contains(&(
+            event["unit"]["start"].as_u64().unwrap(),
+            event["unit"]["end"].as_u64().unwrap(),
+        ))));
     let packed = response::pack_enriched_context(
         &result,
         None,
@@ -7047,6 +7068,735 @@ fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
     let before = corpus.probe.document_calls();
     assert_eq!(corpus.prepare().document_calls, 0);
     assert_eq!(corpus.probe.document_calls(), before);
+}
+
+#[test]
+fn experimental_body_placement_survives_real_partial_to_complete_publication() {
+    use context_foundry::neural::{cache::CardKind, partition::Representation};
+    use context_foundry::store::ContextOptions;
+
+    let query = "quasar zephyr lantern";
+    let lexical_path = "src/target_reconciliation.rs";
+    let noise_paths: BTreeSet<_> = (0..40)
+        .map(|n| format!("src/ordinary_inventory_{n:02}.rs"))
+        .collect();
+    let mut extra: Vec<_> = noise_paths
+        .iter()
+        .enumerate()
+        .map(|(n, path)| {
+            (
+                path.clone(),
+                format!("fn ordinary_inventory_{n}() {{ record_serial({n}); }}\n"),
+            )
+        })
+        .collect();
+    extra.push((
+        lexical_path.into(),
+        "fn target_reconciliation() {\n    // quasar zephyr lantern\n    preserve_transaction();\n}\n"
+            .into(),
+    ));
+
+    for representation in [
+        Representation::Body { parent_tokens: 0 },
+        Representation::Hierarchy { parent_tokens: 0 },
+        Representation::Address,
+    ] {
+        let address = representation == Representation::Address;
+        let hierarchy = matches!(representation, Representation::Hierarchy { .. });
+        let retained_kind = if address {
+            CardKind::Address
+        } else {
+            CardKind::Body
+        };
+        let mut corpus = Corpus::unprepared(&extra);
+        select_body_recipe(&mut corpus, 512, 0, None);
+        Arc::make_mut(&mut corpus.profile).representation = representation;
+        corpus.profile.validate().unwrap();
+        std::fs::write(
+            &corpus.profile_path,
+            serde_json::to_vec(&*corpus.profile).unwrap(),
+        )
+        .unwrap();
+        assert!(!corpus.prepare().partial);
+        let digest = corpus.digest();
+        let recipe = corpus.profile.recipe_id();
+        let original = corpus
+            .engine()
+            .semantic_current_mapping(&Corpus::control(), &digest, &recipe)
+            .unwrap();
+        assert!(original.scope.complete);
+        for path in &noise_paths {
+            assert_eq!(
+                original
+                    .units
+                    .values()
+                    .flat_map(|units| units.iter())
+                    .filter(|unit| { unit.path == *path && unit.kind == retained_kind })
+                    .count(),
+                1,
+                "one complete small callable per dense file: {representation:?} {path}"
+            );
+        }
+
+        // This is a placement regression, not an embedding-quality or ANN
+        // repeatability claim. Control scores while preserving all real
+        // prepared input keys, source hashes, roles and exact byte spans.
+        let query_vector = concept_vector(&provider::render(&corpus.profile.query_template, query));
+        let opposite: Vec<_> = query_vector.iter().map(|value| -*value).collect();
+        let entries: Vec<_> = original
+            .units
+            .iter()
+            .map(|(key, locations)| {
+                let noise = locations
+                    .iter()
+                    .any(|unit| noise_paths.contains(&unit.path) && unit.kind == retained_kind);
+                (
+                    key.clone(),
+                    if noise {
+                        query_vector.clone()
+                    } else {
+                        opposite.clone()
+                    },
+                )
+            })
+            .collect();
+        corpus
+            .engine()
+            .semantic_cache_commit(&entries, &digest, DIMENSIONS, DEFAULT_CACHE_CAP_BYTES)
+            .unwrap();
+
+        // The new source has no query terms and cannot enter the retained
+        // ordinary window or the first16 lexical discovery documents. Its
+        // missing partition changes actual coverage, not existing candidates.
+        let late_path = "src/late_checkpoint.rs";
+        let late_source = "fn late_checkpoint() { remember_checkpoint(711); }\n";
+        assert!(
+            corpus
+                .engine()
+                .replace_source(late_path, late_source)
+                .unwrap()
+        );
+        corpus.engine_mut().refresh(&Corpus::control()).unwrap();
+        let revision = corpus.engine().source_revision().unwrap();
+        assert_eq!(revision, original.scope.source_revision + 1);
+        let rebuilt = corpus
+            .engine()
+            .semantic_rebuild_index(&Corpus::control())
+            .unwrap();
+        assert!(rebuilt.rebuilt && rebuilt.reason.is_none(), "{rebuilt:?}");
+        let partial = corpus
+            .engine()
+            .semantic_current_mapping(&Corpus::control(), &digest, &recipe)
+            .unwrap();
+        assert!(!partial.scope.complete);
+        assert_eq!(partial.scope.source_revision, revision);
+        assert_eq!(partial.units, original.units);
+        let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+        let published = index::validate_generation_with(
+            &store,
+            &digest,
+            &recipe,
+            DIMENSIONS,
+            &Corpus::control(),
+        )
+        .unwrap();
+        assert_eq!(published.manifest.coverage, index::COVERAGE_PARTIAL);
+        assert_eq!(published.manifest.source_revision, revision);
+        let hashes: Vec<_> = extra
+            .iter()
+            .map(|(path, _)| {
+                (
+                    path.clone(),
+                    corpus.engine().source(path).unwrap().unwrap().hash,
+                )
+            })
+            .collect();
+
+        let queries_before = corpus.probe.query_calls();
+        let runtime = Arc::new(corpus.runtime());
+        let slot: SemanticSlot = Some(Ok(Arc::clone(&runtime)));
+        let mut identities = Vec::new();
+        let mut experimental_orders = Vec::new();
+        let mut default_orders = Vec::new();
+        for complete in [false, true] {
+            if complete {
+                let inputs_before = corpus.probe.document_inputs();
+                let report = corpus.prepare();
+                assert!(!report.partial && report.index_published, "{report:?}");
+                let current = corpus
+                    .engine()
+                    .semantic_current_mapping(&Corpus::control(), &digest, &recipe)
+                    .unwrap();
+                assert!(current.scope.complete);
+                assert_eq!(current.scope.source_revision, revision);
+                for (key, locations) in &original.units {
+                    assert_eq!(current.units.get(key), Some(locations));
+                }
+                let new_keys: BTreeSet<_> = current
+                    .units
+                    .keys()
+                    .filter(|key| !original.units.contains_key(*key))
+                    .collect();
+                assert!(!new_keys.is_empty());
+                assert!(new_keys.iter().all(|key| {
+                    current.units[*key]
+                        .iter()
+                        .all(|unit| unit.path == late_path)
+                }));
+                assert_eq!(report.embedded_units, new_keys.len() as u64);
+                assert_eq!(
+                    corpus.probe.document_inputs() - inputs_before,
+                    new_keys.len() as u64
+                );
+                assert!(report.document_calls > 0);
+                let published = index::validate_generation_with(
+                    &store,
+                    &digest,
+                    &recipe,
+                    DIMENSIONS,
+                    &Corpus::control(),
+                )
+                .unwrap();
+                assert_eq!(published.manifest.coverage, index::COVERAGE_COMPLETE);
+                assert_eq!(published.manifest.source_revision, revision);
+            }
+            let documents_before = corpus.probe.document_calls();
+            assert_eq!(corpus.engine().source_revision().unwrap(), revision);
+            for (path, hash) in &hashes {
+                assert_eq!(&corpus.engine().source(path).unwrap().unwrap().hash, hash);
+            }
+            let mut window = runtime
+                .window(
+                    corpus.engine(),
+                    query,
+                    Instant::now() + Duration::from_secs(30),
+                    &Corpus::control(),
+                )
+                .unwrap();
+            let coverage = if complete { "ready" } else { "partial" };
+            assert_eq!(window.coverage_at(revision), coverage);
+            assert_eq!(window.complete_at(), complete.then_some(revision));
+
+            // Hold the original 40 candidate inputs/locations fixed across
+            // two real immutable publications. Numeric ANN label IDs may
+            // change on rebuild; input identity and scores must not change.
+            let mut retained: Vec<_> = window
+                .hits
+                .iter()
+                .filter(|hit| {
+                    window
+                        .units(hit)
+                        .iter()
+                        .any(|unit| noise_paths.contains(&unit.path) && unit.kind == retained_kind)
+                })
+                .cloned()
+                .collect();
+            retained.sort_by(|left, right| {
+                window.units(left)[0]
+                    .path
+                    .cmp(&window.units(right)[0].path)
+                    .then_with(|| window.input_key(left).cmp(window.input_key(right)))
+            });
+            assert_eq!(retained.len(), 40, "{representation:?} {coverage}");
+            assert!(retained.iter().all(|hit| {
+                let locations = window.units(hit);
+                locations.len() == 1
+                    && locations[0].kind == retained_kind
+                    && noise_paths.contains(&locations[0].path)
+            }));
+            window.hits = retained;
+            identities.push(
+                window
+                    .hits
+                    .iter()
+                    .map(|hit| {
+                        (
+                            window.input_key(hit).to_owned(),
+                            hit.distance.to_bits(),
+                            window.units(hit).to_vec(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            );
+
+            for experimental in [false, true] {
+                let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+                let result = corpus
+                    .engine()
+                    .context_candidates_with(
+                        query,
+                        Strategy::Search,
+                        &Corpus::control().with_trace(Some(trace.clone())),
+                        &ContextOptions {
+                            dense: Some(&window),
+                            experimental_behavior: experimental,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(result.batch.semantic.as_deref(), Some(coverage));
+                assert_eq!(result.batch.freshness.source_revision, revision);
+                let order: Vec<_> = result
+                    .batch
+                    .items
+                    .iter()
+                    .filter_map(|item| {
+                        item.handle.as_ref().map(|handle| {
+                            (
+                                handle.path.clone(),
+                                handle.start,
+                                handle.end,
+                                handle.sha256.clone(),
+                                item.semantic.is_some(),
+                            )
+                        })
+                    })
+                    .collect();
+                assert_eq!(order.len(), 32, "the candidate bound remains unchanged");
+                if !address {
+                    for (path, start, end, hash, semantic) in &order {
+                        if *semantic {
+                            assert!(
+                                original.units.values().flat_map(|units| units.iter()).any(
+                                    |unit| {
+                                        unit.kind == CardKind::Body
+                                            && unit.path == *path
+                                            && unit.start == *start
+                                            && unit.end == *end
+                                            && unit.source_sha256 == *hash
+                                    }
+                                ),
+                                "delivered semantic evidence preserves its scored span"
+                            );
+                        }
+                    }
+                }
+                let lexical_position = order.iter().position(|item| item.0 == lexical_path);
+                let preserved = experimental && (!address || !complete);
+                assert_eq!(
+                    lexical_position,
+                    preserved.then_some(usize::from(hierarchy)),
+                    "{representation:?} {coverage} experimental={experimental}"
+                );
+                assert!(!order.iter().any(|item| item.0 == late_path));
+                let snapshot = trace.snapshot();
+                let policies: Vec<_> = snapshot["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|event| event["stage"] == "placement_policy")
+                    .collect();
+                if experimental && (!address || !complete) {
+                    assert_eq!(policies.len(), 1, "{snapshot}");
+                    assert_eq!(
+                        policies[0]["policy"],
+                        if address {
+                            "partial_prose_interleave_v1"
+                        } else {
+                            "body_prose_interleave_v1"
+                        }
+                    );
+                    assert_eq!(policies[0]["coverage"], coverage);
+                    assert_eq!(policies[0]["lexical_first"], !hierarchy);
+                    assert_eq!(
+                        policies[0]["eligible_refined_locations"].as_u64().unwrap() > 0,
+                        hierarchy
+                    );
+                } else {
+                    assert!(policies.is_empty(), "{snapshot}");
+                }
+                let packed = response::pack_enriched_context(
+                    &result,
+                    None,
+                    Budget::request(BUDGET),
+                    &response::stdout_bytes,
+                )
+                .unwrap();
+                assert!(packed.tokens <= BUDGET);
+                let parsed = parse_v2(&packed.text).unwrap();
+                assert_eq!(
+                    item_of(&parsed, lexical_path).is_some(),
+                    preserved,
+                    "{representation:?} {coverage} experimental={experimental}: {}",
+                    packed.text
+                );
+                for item in parsed.items.iter().filter(|item| !item.handle.is_empty()) {
+                    let (path, start, end) = span_of(&item.handle);
+                    assert!(start < end);
+                    assert!(
+                        order
+                            .iter()
+                            .any(|unit| unit.0 == path && unit.1 == start && unit.2 == end)
+                    );
+                }
+                if experimental {
+                    experimental_orders.push(order);
+                } else {
+                    default_orders.push(order);
+                }
+            }
+
+            // The production owner still bypasses query inference for an
+            // anchored identifier, regardless of coverage or experimental mode.
+            let anchored_calls = corpus.probe.query_calls();
+            let options = ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            };
+            let anchored = mcp::context_primary_with_options(
+                &slot,
+                corpus.engine(),
+                "target_reconciliation",
+                Strategy::Search,
+                &Corpus::control(),
+                options,
+            )
+            .unwrap();
+            let lexical = mcp::context_primary_with_options(
+                &None,
+                corpus.engine(),
+                "target_reconciliation",
+                Strategy::Search,
+                &Corpus::control(),
+                options,
+            )
+            .unwrap();
+            let pack = |result: &context_foundry::memory::MemoryContext| {
+                response::pack_enriched_context(
+                    result,
+                    None,
+                    Budget::request(BUDGET),
+                    &response::stdout_bytes,
+                )
+                .unwrap()
+            };
+            let anchored = pack(&anchored);
+            assert!(anchored.tokens <= BUDGET);
+            assert_eq!(anchored.text, pack(&lexical).text);
+            let anchored = parse_v2(&anchored.text).unwrap();
+            assert!(item_of(&anchored, lexical_path).is_some());
+            assert!(anchored.items.iter().all(|item| !item.semantic));
+            assert_eq!(corpus.probe.query_calls(), anchored_calls);
+            assert_eq!(corpus.probe.document_calls(), documents_before);
+        }
+        assert_eq!(
+            identities[0], identities[1],
+            "candidate geometry/scores changed"
+        );
+        assert_eq!(
+            default_orders[0], default_orders[1],
+            "default placement changed"
+        );
+        if !address {
+            assert_eq!(
+                experimental_orders[0], experimental_orders[1],
+                "coverage alone must not change Body/Hierarchy candidate ordering"
+            );
+        }
+        assert_eq!(corpus.probe.query_calls() - queries_before, 2);
+        runtime.shutdown();
+    }
+}
+
+#[test]
+fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discovery() {
+    use context_foundry::neural::{cache::CardKind, partition::Representation};
+    use context_foundry::store::{ContextOptions, RenderedForm};
+    use context_foundry::syntax::{self, Lang, UnitKind};
+
+    let path = "src/owner_scope.rs";
+    let query = "quasar zephyr balance";
+    let lines: String = (0..400)
+        .map(|n| format!("    let carried_{n} = balance + {n};\n"))
+        .collect();
+    let target = format!(
+        "fn reconcile_order() {{\n    // quasar zephyr balance\n{lines}    preserve_transaction();\n}}\n"
+    );
+    let siblings: String = (0..8)
+        .map(|n| format!("    fn unrelated_{n}() {{ unrelated_action({n}); }}\n"))
+        .collect();
+    let source = format!("{target}impl Neighbors {{\n{siblings}}}\n");
+    let owner = syntax::units(&source, Lang::Rust)
+        .into_iter()
+        .find(|unit| unit.kind == UnitKind::Fn && unit.start == 0)
+        .expect("the lexical match belongs to a complete callable");
+    assert!(owner.end - owner.start > 8192);
+    let owner_range = owner.start as u64..owner.end as u64;
+    let mut corpus = Corpus::unprepared(&[(path.into(), source.clone())]);
+    select_body_recipe(&mut corpus, 512, 0, None);
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 0 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert!(!corpus.prepare().partial);
+    let partition = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    let owned: BTreeSet<_> = partition
+        .units
+        .iter()
+        .filter(|unit| {
+            unit.kind == CardKind::Body && owner.start <= unit.start && unit.end <= owner.end
+        })
+        .map(|unit| (unit.start as u64, unit.end as u64))
+        .collect();
+    assert!(
+        owned.len() > 4,
+        "the callable has several exact body windows"
+    );
+    let preferred: BTreeSet<_> = owned.iter().rev().take(4).copied().collect();
+    assert!(preferred.iter().all(|(start, _)| *start > 8192));
+    assert!(
+        partition
+            .units
+            .iter()
+            .filter(|unit| unit.kind == CardKind::Body && unit.start >= owner.end)
+            .count()
+            >= 8,
+        "the same file has enough siblings to exhaust its four slots"
+    );
+
+    // Controlled fixture vectors make every sibling strictly closer than
+    // every owned Body. Within the callable, its last four windows win, well
+    // beyond the first lexical document that contains the query words. This
+    // tests full-unit owner admission, not embedding quality.
+    // All keys, roles and source spans remain those produced by preparation.
+    let query_vector = concept_vector(&provider::render(&corpus.profile.query_template, query));
+    let opposite: Vec<_> = query_vector.iter().map(|value| -*value).collect();
+    assert_eq!(
+        query_vector[0], 0.0,
+        "the query has no first-dimension concept"
+    );
+    let mut tail_vector = opposite.clone();
+    tail_vector[0] = 1.0;
+    let norm = tail_vector
+        .iter()
+        .map(|value| value * value)
+        .sum::<f32>()
+        .sqrt();
+    tail_vector.iter_mut().for_each(|value| *value /= norm);
+    let entries: Vec<_> = partition
+        .units
+        .iter()
+        .map(|unit| {
+            (
+                unit.input_key.clone(),
+                if unit.kind == CardKind::Body
+                    && owned.contains(&(unit.start as u64, unit.end as u64))
+                {
+                    if preferred.contains(&(unit.start as u64, unit.end as u64)) {
+                        tail_vector.clone()
+                    } else {
+                        opposite.clone()
+                    }
+                } else {
+                    query_vector.clone()
+                },
+            )
+        })
+        .collect();
+    corpus
+        .engine()
+        .semantic_cache_commit(
+            &entries,
+            &corpus.digest(),
+            DIMENSIONS,
+            DEFAULT_CACHE_CAP_BYTES,
+        )
+        .unwrap();
+    let rebuilt = corpus
+        .engine()
+        .semantic_rebuild_index(&Corpus::control())
+        .unwrap();
+    assert!(rebuilt.rebuilt && rebuilt.reason.is_none(), "{rebuilt:?}");
+    let documents_before = corpus.probe.document_calls();
+    let queries_before = corpus.probe.query_calls();
+    let runtime = corpus.runtime();
+    let mut window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let original_hits = window.hits.clone();
+    for discovery_kind in [CardKind::File, CardKind::Body, CardKind::ContainerFragment] {
+        // Tiny Body/fragment hits discover the file but cannot claim ownership
+        // of its refinement. The current lexical callable remains the owner.
+        window.hits = original_hits
+            .iter()
+            .filter(|hit| {
+                window.units(hit).iter().any(|unit| {
+                    unit.path == path
+                        && unit.kind == discovery_kind
+                        && (discovery_kind == CardKind::File
+                            || (unit.start >= owner_range.end && unit.end - unit.start < 128))
+                })
+            })
+            .take(1)
+            .cloned()
+            .collect();
+        assert!(
+            !window.hits.is_empty(),
+            "missing {discovery_kind:?} discovery"
+        );
+        let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+        let result = corpus
+            .engine()
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Corpus::control().with_trace(Some(trace.clone())),
+                &ContextOptions {
+                    dense: Some(&window),
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let events = trace.snapshot();
+        assert!(
+            events["events"].as_array().unwrap().iter().any(|event| {
+                event["stage"] == "selection"
+                    && event["origin"] == "lexical"
+                    && event["outcome"] == "eligible"
+                    && event["unit"]["path"] == path
+                    && event["unit"]["start"] == owner_range.start
+                    && event["unit"]["end"] == owner_range.end
+                    && event["document"]["end"]
+                        .as_u64()
+                        .is_some_and(|end| end < preferred.first().unwrap().0)
+            }),
+            "the current lexical document preserves its larger callable: {events}"
+        );
+        let scope = events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| event["stage"] == "refinement_scope" && event["path"] == path)
+            .expect("the owner decision is auditable");
+        assert_eq!(scope["policy"], "current_owner_narrowing_v1");
+        assert!(scope["fallback"].is_null());
+        assert_eq!(
+            scope["ranges"],
+            serde_json::json!([[owner_range.start, owner_range.end]])
+        );
+        let work = &events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| event["stage"] == "refinement" && event["outcome"] == "scored")
+            .unwrap()["work"];
+        assert_eq!(work["owner_scoped_paths"], 1);
+        assert!(work["owner_filtered_locations"].as_u64().unwrap() >= 8);
+        assert!(work["units_considered"].as_u64().unwrap() <= 32_768);
+        assert!(work["vectors_scored"].as_u64().unwrap() <= 4096);
+        assert!(work["retained_locations"].as_u64().unwrap() <= 80 * 4);
+        let refined: Vec<_> = events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                event["stage"] == "selection"
+                    && event["refined"] == true
+                    && event["outcome"] == "eligible"
+                    && event["unit"]["path"] == path
+            })
+            .collect();
+        assert_eq!(refined.len(), 4, "{discovery_kind:?}: {events}");
+        assert!(
+            refined.iter().all(|event| {
+                event["representation"] == "body"
+                    && preferred.contains(&(
+                        event["unit"]["start"].as_u64().unwrap(),
+                        event["unit"]["end"].as_u64().unwrap(),
+                    ))
+            }),
+            "a sibling must not consume an owned refinement slot: {events}"
+        );
+        // Context appends a separate whole-file outline after the ranked
+        // units. It is not a fifth independently scored refinement passage.
+        let (outlines, delivered): (Vec<_>, Vec<_>) = result
+            .batch
+            .items
+            .iter()
+            .filter(|item| {
+                item.handle
+                    .as_ref()
+                    .is_some_and(|handle| handle.path == path)
+            })
+            .partition(|item| matches!(item.forms.first(), Some(RenderedForm::Outline(_))));
+        assert_eq!(outlines.len(), 1, "{discovery_kind:?}");
+        let outline = outlines[0];
+        assert!(outline.semantic.is_none());
+        let handle = outline.handle.as_ref().unwrap();
+        assert_eq!((handle.start, handle.end), (0, source.len() as u64));
+        assert_eq!(handle.sha256, partition.source_hash);
+        assert!(
+            outline
+                .forms
+                .iter()
+                .all(|form| matches!(form, RenderedForm::Outline(_) | RenderedForm::OutlineMin(_)))
+        );
+        assert_eq!(delivered.len(), 4, "{discovery_kind:?}");
+        assert!(delivered.iter().any(|item| item.semantic.is_some()));
+        assert!(delivered.iter().any(|item| item.semantic.is_none()));
+        let mut lexical_spans = BTreeSet::new();
+        for item in delivered {
+            let handle = item.handle.as_ref().unwrap();
+            if item.semantic.is_some() {
+                assert!(preferred.contains(&(handle.start, handle.end)));
+            } else {
+                assert!(owner_range.start <= handle.start && handle.end <= owner_range.end);
+                assert!(
+                    events["events"].as_array().unwrap().iter().any(|event| {
+                        event["stage"] == "materialization"
+                            && event["origin"] == "lexical"
+                            && event["unit"]["start"] == owner_range.start
+                            && event["unit"]["end"] == owner_range.end
+                            && event["excerpt"] == serde_json::to_value(handle).unwrap()
+                    }),
+                    "lexical slots must retain the current callable's exact excerpt: {events}"
+                );
+                lexical_spans.insert((handle.start, handle.end));
+            }
+            assert_eq!(handle.sha256, partition.source_hash);
+            assert_eq!(
+                item.forms[0],
+                RenderedForm::Verbatim(source[handle.start as usize..handle.end as usize].into())
+            );
+        }
+        let packed = response::pack_enriched_context(
+            &result,
+            None,
+            Budget::request(BUDGET),
+            &response::stdout_bytes,
+        )
+        .unwrap();
+        assert!(packed.tokens <= BUDGET);
+        let parsed = parse_v2(&packed.text).unwrap();
+        let mut packed_bodies = 0;
+        for item in parsed.items.iter().filter(|item| !item.handle.is_empty()) {
+            let (item_path, start, end) = span_of(&item.handle);
+            if item_path != path {
+                continue;
+            }
+            if item.form.as_deref() == Some("outline") {
+                assert!(!item.semantic);
+                assert_eq!((start, end), (0, source.len() as u64));
+            } else if item.semantic {
+                packed_bodies += 1;
+                assert!(preferred.contains(&(start, end)));
+            } else {
+                assert!(lexical_spans.contains(&(start, end)));
+            }
+        }
+        assert!(packed_bodies > 0, "{discovery_kind:?}: {}", packed.text);
+    }
+    assert_eq!(corpus.probe.query_calls(), queries_before + 1);
+    assert_eq!(corpus.probe.document_calls(), documents_before);
 }
 
 #[test]

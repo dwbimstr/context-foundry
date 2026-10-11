@@ -5698,14 +5698,55 @@ impl Engine {
                 );
             }
             refinement_limited |= examined < ordinary.items.len();
+            use crate::neural::query::{OwnerProof, OwnerScope};
+            let mut refinement_scopes =
+                std::collections::BTreeMap::<String, Vec<OwnerScope<'_>>>::new();
             for candidate in first.iter().chain(&second).take(16) {
+                control.check()?;
                 refinement_paths.insert(candidate.path.clone());
+                if matches!(candidate.kind.as_str(), "fn" | "method") {
+                    refinement_scopes
+                        .entry(candidate.path.clone())
+                        .or_default()
+                        .push(OwnerScope {
+                            source_hash: &candidate.hash,
+                            start: candidate.unit_start,
+                            end: candidate.unit_end,
+                            proof: OwnerProof::Callable {
+                                kind: &candidate.kind,
+                                head: candidate.unit_head,
+                                document: (candidate.start, candidate.end),
+                            },
+                        });
+                }
             }
-            match dense.refine(self, &refinement_paths, control) {
+            // Discovery keeps its original first64 dense files and first16
+            // lexical documents. Collect Parent scopes from the same bounded
+            // provenance window, including already admitted files after64.
+            // Body/File/ContainerFragment ranges cannot invent an owner.
+            for (rank, unit) in &ordinary.items {
+                control.check()?;
+                if unit.kind == crate::neural::cache::CardKind::Parent
+                    && refinement_paths.contains(&unit.path)
+                {
+                    refinement_scopes
+                        .entry(unit.path.clone())
+                        .or_default()
+                        .push(OwnerScope {
+                            source_hash: &unit.source_sha256,
+                            start: unit.start,
+                            end: unit.end,
+                            proof: OwnerProof::Parent {
+                                input_key: dense.input_key(&dense.hits[*rank]),
+                            },
+                        });
+                }
+            }
+            match dense.refine(self, &refinement_paths, &refinement_scopes, control) {
                 Ok(refinement) => {
                     refinement_limited |= refinement.stats.truncated;
                     if let Some(trace) = control.trace() {
-                        trace.record(serde_json::json!({"stage":"refinement", "outcome":"scored", "method":"published_body_exact", "work":refinement.stats}));
+                        trace.record(serde_json::json!({"stage":"refinement", "outcome":"scored", "method":"published_body_exact", "localization":"current_owner_narrowing_v1", "work":refinement.stats}));
                     }
                     refinement.hits
                 }
@@ -5849,14 +5890,17 @@ impl Engine {
         }
         let freshness = self.freshness_in(&tx)?;
         let word = dense.coverage_at(freshness.source_revision);
-        // A small prepared subset must not consume all early prose slots while
-        // the rest of the current repository is available only lexically. This
-        // opt-in admission uses this SAME final read's coverage and freshness.
-        // A complete file-overview recipe is still coarse: full file coverage
-        // does not make its extracts more precise than lexical source matches.
-        // Complete body/address coverage, anchors and ordinary search keep their
-        // existing placement. No new candidate or output slots are allocated.
-        if prose && (word == "partial" || dense.file_overviews_only()) {
+        // Coverage reports availability, not whether dense relevance outranks
+        // lexical evidence. Experimental body/hierarchy placement uses the same
+        // bounded hybrid order before and after preparation completes. Keep the
+        // existing partial/address and coarse-only admission rules; complete
+        // address coverage and ordinary search retain their placement.
+        // Freshness was checked above; no candidate/output slots are added.
+        if prose
+            && (word == "partial"
+                || dense.file_overviews_only()
+                || dense.has_body_representations())
+        {
             let mut dense_order = std::mem::take(&mut placed).into_iter();
             let mut lexical_order = lexical.iter().map(|c| (c.selection_unit(prose), None));
             loop {
@@ -5865,8 +5909,8 @@ impl Engine {
                     break;
                 }
                 // Independently embedded body passages precede broad lexical
-                // documents. Without refinement the prior coarse ordering is
-                // unchanged, including its coverage/fallback behavior.
+                // documents. Without eligible refinement, lexical evidence
+                // goes first. Neither choice depends on coverage completeness.
                 if eligible_refined > 0 {
                     placed.extend(dense);
                     placed.extend(lexical);
@@ -5876,12 +5920,14 @@ impl Engine {
                 }
             }
             if let Some(trace) = control.trace() {
-                let policy = if dense.file_overviews_only() {
+                let policy = if dense.has_body_representations() {
+                    "body_prose_interleave_v1"
+                } else if dense.file_overviews_only() {
                     "coarse_prose_interleave_v1"
                 } else {
                     "partial_prose_interleave_v1"
                 };
-                trace.record(serde_json::json!({"stage":"placement_policy","policy":policy,"lexical_first":eligible_refined == 0,"refined_hits":refined_count,"eligible_refined_locations":eligible_refined,"refinement_files":refinement_paths.len()}));
+                trace.record(serde_json::json!({"stage":"placement_policy","policy":policy,"coverage":word,"lexical_first":eligible_refined == 0,"refined_hits":refined_count,"eligible_refined_locations":eligible_refined,"refinement_files":refinement_paths.len()}));
             }
         } else {
             placed.extend(

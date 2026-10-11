@@ -28,6 +28,30 @@ baseline and role-only reports remain in `foundry-hierarchy-complete-01/` and
 the shared 16 MiB hierarchy resume cache, freshness/eviction, CLI/MCP pending work,
 file-first publication and zero-call replay; larger-scale throughput is still open.
 
+The separate owner-scope comparison also delivers **1/8**. The third fixed
+comparison keeps hybrid placement independent of coverage and restores the displaced
+lexical answer, reaching **2/8**; it does not establish the required general repair.
+All three preserve every current input key/span and perform zero migration/replay
+embedding calls. Owner proofs and lexical relevance must survive subsequent ranking:
+traces still show global/per-file cuts and packing losses. These completed reports
+are in `foundry-hierarchy-ownerscope-01/` and `foundry-hierarchy-fusion-01/`.
+The combined focused run passes 252 library, 93 semantic-retrieval, two attribution
+and four watcher tests, including the unchanged 6,000-file deadline. All-target
+Clippy and formatting pass. Default retrieval remains unchanged.
+
+Actual [native run 38176235770](https://github.com/dwbimstr/context-foundry/actions/runs/38176235770)
+on macOS 15 arm64 passes Metal embedding at 8,192 tokens, owned generation,
+worker cleanup and 128-file preparation/publication with zero-call replay.
+CPU/Metal comparison across five identical inputs passes with minimum cosine
+0.9999949405. The device is Apple Paravirtual Metal, not a physical-Mac performance
+receipt. The run still **fails native CPU-pressure acceptance**: its initial idle
+prerequisite never reaches 30%; raw causes need further observation. No threshold
+was relaxed. Calibration performs 128 calls / 30,726 tokens in 744.804 provider
+seconds (41.254 tokens/second). This rejects the proposed full-corpus Mac runtime
+budget; it is not 67,663-source acceptance. Generation records actual GPU allocation
+and successful initial/change/restart/revert behavior. Signed installed-package,
+combined residency and global GPU-pressure acceptance remain separate.
+
 The full default Ubuntu job at `bc10986` passes (1,131 tests). The corresponding
 Mac job passes 1,231 tests and fails one: the 6,000-source watcher reaches 5,806
 sources at its unchanged 180-second reconciliation deadline. This is retained as
