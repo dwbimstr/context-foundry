@@ -26,6 +26,16 @@ on:
         type: boolean
         required: false
         default: false
+      full_scale:
+        description: After calibration, run all 67663 admitted sources with real Metal inference and verification
+        type: boolean
+        required: false
+        default: false
+      full_scale_budget_seconds:
+        description: Full bootstrap wall budget, plus separate 600-second verification (1200 through 10800)
+        type: string
+        required: false
+        default: '7200'
 permissions:
   contents: read
 concurrency:
@@ -35,7 +45,7 @@ jobs:
   native:
     # Fixed arm64 image; architecture alone does not establish Metal access.
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 240
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -51,10 +61,17 @@ jobs:
         shell: bash
         env:
           CF_NATIVE_SCALE_CALIBRATION: ${{ github.event_name == 'workflow_dispatch' && inputs.scale_calibration && 'true' || 'false' }}
+          CF_NATIVE_FULL_SCALE: ${{ github.event_name == 'workflow_dispatch' && inputs.full_scale && 'true' || 'false' }}
+          CF_NATIVE_FULL_SCALE_SECONDS: ${{ inputs.full_scale_budget_seconds || '7200' }}
         run: |
           set -euo pipefail
           args=(--out "$RUNNER_TEMP/native-macos-results"
-                --work "$RUNNER_TEMP/native-macos-work" --generation)
+                --work "$RUNNER_TEMP/native-macos-work")
+          if [[ "$CF_NATIVE_FULL_SCALE" == "true" ]]; then
+            args+=(--full-scale --full-scale-budget-seconds "$CF_NATIVE_FULL_SCALE_SECONDS")
+          else
+            args+=(--generation)
+          fi
           if [[ "$CF_NATIVE_SCALE_CALIBRATION" == "true" ]]; then
             args+=(--scale-calibration)
           fi
@@ -67,3 +84,5 @@ jobs:
           path: ${{ runner.temp }}/native-macos-results/
           if-no-files-found: error
           retention-days: 14
+          compression-level: 3
+          include-hidden-files: true

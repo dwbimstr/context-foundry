@@ -14,6 +14,8 @@ import os
 from pathlib import Path
 import platform
 import re
+import resource
+import ctypes
 import shutil
 import signal
 import subprocess
@@ -179,6 +181,744 @@ def scale_sample(archives, corpus, output):
         target.write("\n")
 
 
+class NativeFullCommandError(RuntimeError):
+    def __init__(self, message, receipt):
+        super().__init__(message)
+        self.receipt = receipt
+
+
+class NativeFullCommand:
+    """Run sequential phases. Caller validates report semantics and partial results.
+
+    run(kind, command, timeout, require_worker=None, forbid_worker=False,
+        expect_json=True, allowed_exit_codes=(0,)) returns JSON or raw text.
+    Receipts are also available through .last_receipt and .receipts.
+    """
+    DISK_RESERVE = 512 * 1024**2
+    OUTPUT_LIMIT = 16 * 1024**2
+    INTERRUPT_GRACE = 60
+
+    def __init__(self, out, scratch):
+        self.out, self.scratch = Path(out), Path(scratch)
+        if not self.out.is_absolute() or not self.scratch.is_absolute():
+            raise ValueError("out and scratch must be absolute paths")
+        self.out.mkdir(parents=True, exist_ok=True)
+        if not self.scratch.is_dir():
+            raise ValueError("scratch must already exist")
+        self.receipts, self.last_receipt = [], None
+        self.counter = 0
+
+    class _Usage(ctypes.Structure):
+        # Darwin rusage_info_v0, matching libc's public RUSAGE_INFO_V0 ABI.
+        _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [
+            (field, ctypes.c_uint64) for field in (
+                "user_time", "system_time", "pkg_idle_wkups", "interrupt_wkups",
+                "pageins", "wired_size", "resident_size", "phys_footprint",
+                "proc_start_abstime", "proc_exit_abstime")]
+
+    _native_library = None
+
+    @classmethod
+    def _native_memory(cls, pid):
+        if cls._native_library is None:
+            cls._native_library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            cls._native_library.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+            cls._native_library.proc_pid_rusage.restype = ctypes.c_int
+        if ctypes.sizeof(cls._Usage) != 96:
+            raise RuntimeError("unexpected Darwin rusage_info_v0 size")
+        usage = cls._Usage()
+        if cls._native_library.proc_pid_rusage(pid, 0, ctypes.byref(usage)) != 0:
+            raise OSError(ctypes.get_errno(), "proc_pid_rusage")
+        if usage.resident_size == 0 or usage.phys_footprint == 0:
+            raise OSError("native process memory observation is empty")
+        return {"rss_bytes": int(usage.resident_size), "physical_footprint_bytes": int(usage.phys_footprint)}
+
+    def _sample_resources(self, root, descendants, resources, elapsed):
+        free = {"output": shutil.disk_usage(self.out).free, "scratch": shutil.disk_usage(self.scratch).free}
+        for key, value in free.items():
+            resources["minimum_disk_free_bytes"][key] = min(resources["minimum_disk_free_bytes"].get(key, value), value)
+        resources["last_disk_free_bytes"] = free
+        resources["polls"] += 1
+        targets = [("driver", os.getpid())]
+        if root is not None:
+            targets.append(("cli", root["pid"]))
+        targets.extend(("worker", state["pid"]) for state in descendants if self._worker(state))
+        observed = []
+        for role, pid in targets:
+            totals = resources[role]
+            try:
+                memory = self._native_memory(pid)
+                totals["samples"] += 1
+                totals["sampled_peak_rss_bytes"] = max(totals["sampled_peak_rss_bytes"], memory["rss_bytes"])
+                totals["sampled_peak_physical_footprint_bytes"] = max(totals["sampled_peak_physical_footprint_bytes"], memory["physical_footprint_bytes"])
+                observed.append({"role": role, "pid": pid, **memory})
+            except OSError as error:
+                # A process may disappear between the owned identity snapshot and
+                # sampling. Count all misses; never replace unknown with zero.
+                totals["missed_samples"] += 1
+                if len(resources["sample_errors"]) < 8:
+                    resources["sample_errors"].append({"role": role, "pid": pid, "error": str(error)})
+        return {"elapsed_seconds": round(elapsed, 3), "disk_free_bytes": free, "processes": observed}
+
+    @staticmethod
+    def _parse_ps(text):
+        states = {}
+        for line in text.splitlines():
+            fields = line.split(None, 7)
+            if len(fields) != 8:
+                raise RuntimeError("cannot parse Darwin process identity: " + line)
+            pid, parent = int(fields[0]), int(fields[1])
+            if pid in states:
+                raise RuntimeError("duplicate PID in process snapshot")
+            states[pid] = {"pid": pid, "parent": parent,
+                           "started": " ".join(fields[2:7]), "command": fields[7]}
+        return states
+
+    @classmethod
+    def _snapshot(cls, pid=None):
+        command = ["/bin/ps"] + (["-p", str(pid)] if pid is not None else ["-ax"])
+        command += ["-o", "pid=,ppid=,lstart=,comm="]
+        env = dict(os.environ, LC_ALL="C")
+        result = subprocess.run(command, capture_output=True, text=True,
+                                timeout=5, env=env)
+        # Darwin ps returns 1 for a requested PID that no longer exists.
+        if pid is not None and result.returncode == 1 and not result.stdout.strip():
+            return {}
+        if result.returncode != 0:
+            raise RuntimeError("process observation failed: " + result.stderr.strip())
+        return cls._parse_ps(result.stdout)
+
+    @staticmethod
+    def _matches(saved, live):
+        return live is not None and saved["pid"] == live["pid"] and saved["started"] == live["started"]
+
+    @staticmethod
+    def _worker(state):
+        return Path(state["command"]).name == "foundry-embed"
+
+    @classmethod
+    def _observe(cls, process, root, known):
+        states = cls._snapshot()
+        direct = states.get(process.pid)
+        if root is None and direct is not None:
+            if direct["parent"] != os.getpid():
+                raise RuntimeError("direct child ownership could not be established")
+            root = dict(direct)
+        if root is not None and direct is not None and not cls._matches(root, direct):
+            raise RuntimeError("direct child PID identity changed")
+        owners = {saved["pid"] for saved in known.values()
+                  if cls._matches(saved, states.get(saved["pid"]))}
+        if root is not None and cls._matches(root, direct):
+            owners.add(process.pid)
+        while True:
+            children = {pid for pid, state in states.items()
+                        if state["parent"] in owners and pid not in owners}
+            if not children:
+                break
+            for pid in children:
+                state = states[pid]
+                known[(pid, state["started"])] = dict(state)
+            owners.update(children)
+        live = [dict(states[saved["pid"]]) for saved in known.values()
+                if cls._matches(saved, states.get(saved["pid"]))]
+        return root, live
+
+    @classmethod
+    def _signal_known(cls, known, sig, errors):
+        for saved in list(known.values()):
+            try:
+                live = cls._snapshot(saved["pid"]).get(saved["pid"])
+                if cls._matches(saved, live):
+                    # No group signaling: every target has its own identity check.
+                    os.kill(saved["pid"], sig)
+            except ProcessLookupError:
+                pass
+            except Exception as error:
+                errors.append("owned PID signal observation: " + str(error))
+
+    @staticmethod
+    def _signal_direct(process, sig, errors):
+        # Popen exclusively owns this child and polls before sending a signal.
+        try:
+            if process.poll() is None:
+                process.send_signal(sig)
+        except ProcessLookupError:
+            pass
+        except Exception as error:
+            errors.append("direct child signal: " + str(error))
+
+    @classmethod
+    def _cleanup(cls, process, root, known, errors):
+        remaining = None
+        for sig, grace in ((signal.SIGTERM, 10), (signal.SIGKILL, 10)):
+            cls._signal_known(known, sig, errors)
+            cls._signal_direct(process, sig, errors)
+            deadline = time.monotonic() + grace
+            while time.monotonic() < deadline:
+                try:
+                    root, remaining = cls._observe(process, root, known)
+                except Exception as error:
+                    errors.append("cleanup observation: " + str(error))
+                    remaining = None
+                    break
+                if process.poll() is not None and not remaining:
+                    break
+                time.sleep(0.1)
+            if process.poll() is not None and remaining == []:
+                break
+        # A broken ps/helper must never bypass direct-owner termination/reaping.
+        if process.poll() is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            except Exception as error:
+                errors.append("direct child kill fallback: " + str(error))
+        try:
+            process.wait(timeout=10)
+        except Exception as error:
+            errors.append("direct child wait fallback: " + str(error))
+        try:
+            root, remaining = cls._observe(process, root, known)
+        except Exception as error:
+            errors.append("final cleanup observation: " + str(error))
+            remaining = None
+        return root, remaining
+
+    def _save(self, path, receipt):
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(json.dumps(receipt, indent=2) + "\n")
+        temporary.replace(path)
+
+    def run(self, kind, command, timeout, require_worker=None, forbid_worker=False,
+            expect_json=True, allowed_exit_codes=(0,)):
+        if sys.platform != "darwin":
+            raise RuntimeError("NativeFullCommand requires Darwin process identities")
+        if not re.fullmatch(r"[a-zA-Z0-9_-]+", kind) or timeout <= 0:
+            raise ValueError("invalid phase kind or timeout")
+        if require_worker and forbid_worker:
+            raise ValueError("worker cannot be both required and forbidden")
+        command = [os.fspath(part) for part in command]
+        if not command:
+            raise ValueError("empty command")
+        while True:
+            prefix = self.out / f"{self.counter:03d}-{kind}"
+            self.counter += 1
+            if not any(self.out.glob(prefix.name + ".*")):
+                break
+        stdout_path = Path(str(prefix) + (".stdout.json" if expect_json else ".stdout.txt"))
+        stderr_path = Path(str(prefix) + ".stderr.log")
+        receipt_path = Path(str(prefix) + ".receipt.json")
+        resource_path = Path(str(prefix) + ".resources.jsonl")
+        resources = {"source": "Darwin proc_pid_rusage RUSAGE_INFO_V0 plus shutil.disk_usage",
+                     "scope": "owned CLI and observed workers, plus this driver; 0.1s target poll; sampled maxima are lower bounds on true peaks, not GPU/global memory",
+                     "identity_scope": "ps PID/lstart identities have one-second resolution",
+                     "polls": 0, "minimum_disk_free_bytes": {}, "last_disk_free_bytes": {}, "sample_errors": []}
+        for role in ("driver", "cli", "worker"):
+            resources[role] = {"samples": 0, "missed_samples": 0, "sampled_peak_rss_bytes": 0,
+                               "sampled_peak_physical_footprint_bytes": 0}
+        receipt = {"v": 1, "kind": kind, "command": command, "timeout_seconds": timeout,
+                   "stdout": str(stdout_path), "stderr": str(stderr_path),
+                   "receipt": str(receipt_path), "scratch": str(self.scratch),
+                   "resources": resources, "resource_samples": str(resource_path),
+                   "status": "running", "exit_code": None, "usage_complete": False,
+                   "document_calls": None, "input_tokens": None,
+                   "unreported_document_calls": None, "unreported_input_tokens": None}
+        self.last_receipt = receipt
+        self.receipts.append(receipt)
+        self._save(receipt_path, receipt)
+        started = time.monotonic()
+        before = resource.getrusage(resource.RUSAGE_CHILDREN)
+        process, root, known, remaining = None, None, {}, None
+        interrupted, stop_reason, stop_at = [], None, None
+        errors, failure, forced_cleanup = [], None, False
+        natural_exit, report, raw = False, None, None
+        previous_handlers = {}
+
+        def signal_request(signum, _frame):
+            interrupted.append(signum)
+
+        try:
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                previous_handlers[signum] = signal.signal(signum, signal_request)
+            if min(shutil.disk_usage(self.out).free, shutil.disk_usage(self.scratch).free) < self.DISK_RESERVE:
+                raise RuntimeError("less than 512 MiB free before phase")
+            # Fail before launching the phase when the native API itself is unavailable.
+            self._native_memory(os.getpid())
+            with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr, resource_path.open("x") as samples:
+                next_resource_log = 0.0
+                process = subprocess.Popen(command, stdout=stdout, stderr=stderr, start_new_session=True)
+                receipt["pid"] = process.pid
+                self._save(receipt_path, receipt)
+                while True:
+                    root, remaining = self._observe(process, root, known)
+                    now = time.monotonic()
+                    sample = self._sample_resources(root, remaining, resources, now - started)
+                    if now - started >= next_resource_log:
+                        sample["sampled_peaks_so_far"] = {role: dict(resources[role]) for role in ("driver", "cli", "worker")}
+                        samples.write(json.dumps(sample) + "\n")
+                        samples.flush()
+                        next_resource_log = now - started + 1.0
+                    free = min(sample["disk_free_bytes"].values())
+                    if stop_reason is None:
+                        if interrupted:
+                            stop_reason = "operator_cancelled"
+                        elif free < self.DISK_RESERVE:
+                            stop_reason = "disk_reserve"
+                        elif now - started >= timeout:
+                            stop_reason = "command_deadline"
+                        if stop_reason is not None:
+                            stop_at = now
+                            self._signal_direct(process, signal.SIGINT, errors)
+                    code = process.poll()
+                    if code is not None and not remaining:
+                        natural_exit = stop_reason is None
+                        break
+                    if code is not None and stop_reason is None:
+                        raise RuntimeError("normal direct-child exit left observed descendants alive")
+                    if len(interrupted) > 1:
+                        raise RuntimeError("repeated operator signal; finishing owned-process cleanup")
+                    if stop_at is not None and now - stop_at >= self.INTERRUPT_GRACE:
+                        raise RuntimeError("phase did not finish during 60-second SIGINT grace")
+                    time.sleep(0.1)
+                process.wait(timeout=10)
+            if stop_reason is not None:
+                raise RuntimeError("phase stopped: " + stop_reason)
+            if errors:
+                raise RuntimeError("process signaling/observation error")
+        except BaseException as error:
+            failure = f"{type(error).__name__}: {error}"
+        finally:
+            if process is not None:
+                try:
+                    root, remaining = self._observe(process, root, known)
+                except Exception as error:
+                    errors.append("final ownership observation: " + str(error))
+                    remaining = None
+                if process.poll() is None or remaining != []:
+                    forced_cleanup = True
+                    try:
+                        root, remaining = self._cleanup(process, root, known, errors)
+                    except BaseException as error:
+                        errors.append("cleanup helper failure: " + str(error))
+                        remaining = None
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
+                        except Exception as kill_error:
+                            errors.append("direct kill fallback: " + str(kill_error))
+                        try:
+                            process.wait(timeout=10)
+                        except Exception as wait_error:
+                            errors.append("direct wait fallback: " + str(wait_error))
+                else:
+                    try:
+                        process.wait(timeout=10)
+                    except Exception as error:
+                        errors.append("direct child final wait: " + str(error))
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
+            after = resource.getrusage(resource.RUSAGE_CHILDREN)
+            workers = [state for state in known.values() if self._worker(state)]
+            if stdout_path.exists():
+                try:
+                    if stdout_path.stat().st_size > self.OUTPUT_LIMIT:
+                        raise RuntimeError("phase stdout exceeds 16 MiB receipt bound")
+                    raw = stdout_path.read_text()
+                    report = json.loads(raw) if expect_json else raw
+                    if expect_json and not isinstance(report, dict):
+                        raise RuntimeError("CLI JSON report must be an object")
+                except Exception as error:
+                    errors.append("output decoding: " + str(error))
+            calls = report.get("document_calls") if isinstance(report, dict) else None
+            tokens = report.get("input_tokens") if isinstance(report, dict) else None
+            auto_required = type(calls) is int and calls > 0
+            required = auto_required if require_worker is None else require_worker
+            code = process.returncode if process is not None else None
+            if required and not workers:
+                errors.append("model calls/phase require an independently observed worker")
+            if required and resources["worker"]["samples"] == 0:
+                errors.append("model phase has no native worker memory sample")
+            if required and resources["cli"]["samples"] == 0:
+                errors.append("model phase has no native parent CLI memory sample")
+            if forbid_worker and workers:
+                errors.append("phase forbids any observed worker")
+            if code not in allowed_exit_codes:
+                errors.append("unexpected command exit code: " + str(code))
+            if process is not None and root is None:
+                errors.append("direct child PID/start identity was not observed")
+            if remaining != [] and process is not None:
+                errors.append("owned descendant absence could not be established")
+            if forced_cleanup:
+                errors.append("normal lifecycle acceptance requires no forced cleanup")
+            if report is None:
+                errors.append("no complete command output report")
+            scratch_remaining = sorted(path.name for path in self.scratch.glob("w-*"))
+            if scratch_remaining:
+                errors.append("worker scratch was not naturally reclaimed")
+            complete_usage = (failure is None and not errors and type(calls) is int and calls >= 0
+                              and type(tokens) is int and tokens >= 0)
+            receipt.update({"status": "passed" if failure is None and not errors else "failed",
+                            "exit_code": code, "elapsed_seconds": time.monotonic() - started,
+                            "user_seconds": after.ru_utime - before.ru_utime,
+                            "system_seconds": after.ru_stime - before.ru_stime,
+                            "cpu_accounting_scope": "cumulative children delta includes ps observers",
+                            "max_rss_bytes_cumulative_children": after.ru_maxrss,
+                            "stop_reason": stop_reason, "signals_requested": interrupted,
+                            "failure": failure, "errors": errors, "root_identity": root,
+                            "observed_descendants": list(known.values()),
+                            "observed_workers": workers, "natural_exit": natural_exit,
+                            "forced_cleanup": forced_cleanup,
+                            "owned_processes_remaining_after_cleanup": remaining,
+                            "observed_workers_absent_after_normal_cli_exit": bool(workers) and natural_exit and not forced_cleanup and remaining == [],
+                            "scratch_runs_remaining": scratch_remaining,
+                            "lifecycle_scope": "observed PID/start absence after direct CLI wait; no Darwin subreaper attribution",
+                            "usage_complete": complete_usage,
+                            "document_calls": calls if type(calls) is int else None,
+                            "input_tokens": tokens if type(tokens) is int else None,
+                            "unreported_document_calls": 0 if complete_usage else None,
+                            "unreported_input_tokens": 0 if complete_usage else None,
+                            "report": report if isinstance(report, dict) else None})
+            self._save(receipt_path, receipt)
+        if receipt["status"] != "passed":
+            raise NativeFullCommandError(failure or "; ".join(errors), receipt)
+        return report
+
+
+FULL_MANIFEST_SHA = "f3748bda2b6ea83ba249e43525d7631262cc5e8eddc0526e6e75f7726b48df63"
+FULL_RECIPE = "overview-v1+overview3+kinds1+units5:512+tokenizers 0.23.2 onig"
+
+
+def full_corpus(archives, corpus, manifest_path):
+    """Export every regular member, including normal upstream ignore controls."""
+    corpus.mkdir()
+    rows = []
+    for project, _, _, expected in SCALE_PROJECTS:
+        archive = archives / (project + ".tar.gz")
+        if sha256(archive) != expected:
+            raise RuntimeError("full corpus archive checksum mismatch: " + project)
+        with tarfile.open(archive, "r:gz") as source:
+            for member in source:
+                if not member.isfile():
+                    continue
+                parts = Path(member.name).parts
+                if len(parts) < 2 or member.name.startswith("/") or ".." in parts:
+                    raise RuntimeError("invalid full corpus archive member")
+                relative = Path(project, *parts[1:])
+                data = source.extractfile(member).read()
+                destination = corpus / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with destination.open("xb") as output:
+                    output.write(data)
+                rows.append([relative.as_posix(), len(data), hashlib.sha256(data).hexdigest()])
+    rows.sort()
+    encoded = (json.dumps({"files": rows}, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
+    if (len(rows), sum(row[1] for row in rows), hashlib.sha256(encoded).hexdigest()) != (
+            69565, 324780308, FULL_MANIFEST_SHA):
+        raise RuntimeError("full corpus population differs from the pinned Rust/Go manifest")
+    with manifest_path.open("xb") as output:
+        output.write(encoded)
+    return rows
+
+
+def verify_full_corpus(corpus, rows):
+    expected = {row[0] for row in rows}
+    actual = {path.relative_to(corpus).as_posix() for path in corpus.rglob("*")
+              if path.is_file() and not path.is_symlink()}
+    if actual != expected:
+        raise RuntimeError("full corpus regular-file set changed")
+    for relative, size, expected_sha in rows:
+        path = corpus / relative
+        if path.is_symlink() or path.stat().st_size != size or sha256(path) != expected_sha:
+            raise RuntimeError("full corpus bytes changed: " + relative)
+
+
+def native_full_scale(root, work, out, native_profile, calibration, bootstrap_seconds, env, cargo, stage):
+    """Ordinary CLI phases; private artifacts retain every report and accepted store."""
+    full = out / "full-scale"
+    full.mkdir()
+    full_work = work / "full-scale"
+    full_work.mkdir()
+    state = {"v": 1, "status": "running", "complete": False,
+             "scope": "all 67663 admitted pinned Rust/Go sources, overview-only real Metal inference",
+             "bootstrap_budget_seconds": bootstrap_seconds, "verification_budget_seconds": 600,
+             "manifest_sha256": FULL_MANIFEST_SHA, "recipe_id": FULL_RECIPE,
+             "phase_reports": [], "usage_complete": True,
+             "not_accepted": ["full body coverage", "retrieval/task quality", "peak/global GPU pressure", "signed installed package"]}
+    began = time.monotonic()
+
+    def save_full():
+        state["elapsed_seconds"] = round(time.monotonic() - began, 3)
+        temporary = full / "result.json.tmp"
+        temporary.write_text(json.dumps(state, indent=2) + "\n")
+        temporary.replace(full / "result.json")
+
+    def require(ok, reason):
+        if not ok:
+            raise RuntimeError(reason)
+
+    def check_index(report, changed):
+        require(report["scan_complete"] and not report["partial"] and report["failures"] == 0
+                and report["pending_sources"] == 0 and not report["deletions_deferred"]
+                and report["deleted"] == 0 and report["reason_code"] is None,
+                "full corpus indexing incomplete")
+        require(report["changed"] == changed and report["changed"] + report["unchanged"] == 67663,
+                "unexpected admitted or changed source population")
+
+    def check_prepare(report, complete=False):
+        require(report["recipe_id"] == FULL_RECIPE and report["dimensions"] == 768
+                and report["cache_cap_bytes"] == 512 * 1024**2, "full preparation identity changed")
+        require(report["provider_code"] is None and report["corrupt_cache_rows"] == 0
+                and report["embedded_areas"] == report["area_vectors"] == 0,
+                "full preparation provider/cache/area failure")
+        deadline_reason = (f"publication was cut off by the {report['budget_seconds']}s budget; "
+                           "the vectors stay cached and the index is not published")
+        deadline = (report["partial"] and report["reason_code"] == "budget_exhausted"
+                    and not report["index_published"] and report["index_reason"] == deadline_reason)
+        require(report["reason_code"] in (None, "budget_exhausted")
+                and (deadline or (report["index_published"] and report["index_reason"] is None)),
+                "unexpected preparation stop or publication failure")
+        coverage = report["coverage"]
+        require((coverage is not None and coverage["sources"] == 67663) or deadline,
+                "missing full corpus coverage")
+        if complete:
+            require(not report["partial"] and report["reason_code"] is None
+                    and coverage["unpartitioned_sources"] == 0
+                    and coverage["eligible_units"] == coverage["cached_current_units"]
+                    == coverage["searchable_current_units"] == 67585, "full overview coverage incomplete")
+
+    def check_audit(report, expected_orphans=0):
+        require(report["sources"] == 67663 and report["partition_coverage"] == "complete"
+                and report["unpartitioned_sources"] == report["missing_units"] == 0
+                and report["eligible_units"] == report["cached_current_units"]
+                == report["searchable_current_units"] == 67585, "current full overview audit incomplete")
+        require(report["index"]["available"] and report["index"]["reason"] is None
+                and report["cache"]["corrupt_entries"] == report["cache"]["legacy_entries"] == 0
+                and report["cache"]["orphan_entries"] == expected_orphans, "full overview audit integrity failure")
+
+    runner = None
+    try:
+        save_full()
+        state["disk_bytes_before_full_setup"] = dict(zip(("total", "used", "free"), shutil.disk_usage(work)))
+        save_full()
+        require(state["disk_bytes_before_full_setup"]["free"] >= 5 * 1024**3,
+                "full scale needs at least 5 GiB free after native setup/calibration")
+        require(calibration["status"] == "passed" and calibration["document_calls"] == 128
+                and calibration["worker_stopped_and_reaped"] and calibration["unchanged_document_calls"] == 0,
+                "successful real native calibration and cleanup required")
+        provider_seconds = calibration["provider_ns"] / 1e9
+        token_rate = calibration["input_tokens"] / provider_seconds
+        state["calibration_projection"] = {
+            "provider_tokens_per_second": token_rate,
+            "provider_seconds_for_upper_token_bound": 15857818 / token_rate,
+            "nonprovider_allowance_seconds": 900,
+            "scope": "unweighted 128-code-file sample estimate; not a bound or full-population acceptance"}
+        save_full()
+        require(15857818 / token_rate + 900 <= bootstrap_seconds,
+                "measured Metal calibration does not support the declared full bootstrap budget; keep partial evidence and use the CPU route")
+        require(stage("full-scale-cli-build", cargo + ["build", "--locked", "--bin", "foundry"], 1800),
+                "native full scale CLI build failed")
+        cli = full / "foundry"
+        shutil.copy2(work / "target/debug/foundry", cli)
+        corpus = full_work / "corpus"
+        rows = full_corpus(work / "scale-calibration", corpus, full / "manifest.json")
+        verify_full_corpus(corpus, rows)
+        bundle = full / "FoundryEmbed.app"
+        shutil.copytree(Path(native_profile["worker"]["bundle"]), bundle, symlinks=True)
+        require(stage("full-scale-copied-bundle", ["/usr/bin/codesign", "--verify", "--strict", bundle], 60),
+                "relocated development bundle signature failed verification")
+        profile = json.loads(json.dumps(native_profile))
+        scratch = Path(native_profile["worker"]["scratch_root"]) / "full-scale"
+        scratch.mkdir(mode=0o700)
+        profile.update(name="native-full-gemma2-bf16-overview-512", representation={"kind": "overview-v1"},
+                       card_tokens=512, batch=1, cpu={"threads": 2, "seconds": 86400})
+        profile["worker"].update(bundle=str(bundle), scratch_root=str(scratch))
+        require(profile["descriptor"]["adapter_revision"] == 4 and profile["descriptor"]["dimensions"] == 768
+                and profile["memory_ceiling_bytes"] == 4 * 1024**3,
+                "full scale requires the calibrated Metal4 function and 4 GiB guard")
+        require(sha256(bundle / "Contents/MacOS/foundry-embed") == profile["worker"]["executable_sha256"],
+                "copied signed worker bytes changed")
+        profile_path = full / "profile.json"
+        profile_path.write_text(json.dumps(profile, indent=2) + "\n")
+        store = full / "store"
+        require(not store.exists(), "full scale requires a fresh store; no imported CPU/sample vectors")
+        require(shutil.disk_usage(full).free >= int(2.75 * 1024**3), "insufficient fresh-store disk headroom")
+        state.update(binary_sha256=sha256(cli), profile_sha256=sha256(profile_path),
+                     worker_sha256=profile["worker"]["executable_sha256"],
+                     descriptor=profile["descriptor"], corpus_directory=str(corpus), store_directory=str(store),
+                     native_resource_scope={"worker_threads": 2, "worker_threads_source": "native worker default",
+                                            "cpu_profile_applies": False, "cpu_seconds_enforced": None,
+                                            "wall_enforcement": "CLI control plus monitored command deadlines",
+                                            "memory_ceiling_bytes": profile["memory_ceiling_bytes"],
+                                            "memory_enforcement": "supervised native physical footprint; not global GPU headroom"},
+                     disk_free_before_bootstrap=shutil.disk_usage(full).free,
+                     source_archives=[{"project": project, "revision": revision, "url": url, "sha256": digest}
+                                      for project, revision, url, digest in SCALE_PROJECTS])
+        runner = NativeFullCommand(full / "commands", scratch)
+        base = [str(cli), "--store", str(store)]
+        bootstrap_started = time.monotonic()
+        bootstrap_deadline = bootstrap_started + bootstrap_seconds
+        state["bootstrap_started_unix"] = time.time()
+        save_full()
+        indexed = runner.run("index", base + ["index", str(corpus)], min(900, bootstrap_seconds))
+        check_index(indexed, 67663)
+        runs = []
+        while True:
+            remaining = bootstrap_deadline - time.monotonic()
+            require(remaining > 30, "declared full bootstrap wall budget exhausted; accepted store retained")
+            seconds = min(1800, int(remaining))
+            prepared = runner.run("prepare", base + ["semantic", "prepare", "--profile", str(profile_path),
+                                  "--budget-seconds", str(seconds), "--development-isolation", "--cache-cap", "536870912"],
+                                  seconds + 60, allowed_exit_codes=(0, 1))
+            check_prepare(prepared)
+            runs.append(prepared)
+            state["phase_reports"].append(runner.last_receipt)
+            state["document_calls_accounted"] = sum(row["document_calls"] for row in runs)
+            state["document_inputs_accounted"] = sum(row["embedded_units"] for row in runs)
+            state["input_tokens_accounted"] = sum(row["input_tokens"] for row in runs)
+            save_full()
+            if not prepared["partial"]:
+                break
+        check_prepare(prepared, complete=True)
+        state["bootstrap_elapsed_seconds"] = time.monotonic() - bootstrap_started
+        require(time.monotonic() <= bootstrap_deadline,
+                "full bootstrap exceeded its declared wall budget; accepted coverage and reports retained")
+        verification_deadline = time.monotonic() + 600
+
+        def verify(kind, arguments, seconds=180, **kwargs):
+            remaining = verification_deadline - time.monotonic()
+            require(remaining > 0, "full verification wall budget exhausted; completion not claimed")
+            return runner.run(kind, base + arguments, min(seconds, remaining), **kwargs)
+
+        audited = verify("audit", ["semantic", "status", "--audit"])
+        check_audit(audited)
+        count = audited["cache"]["entries"]
+        require(60735 <= count <= 65959 and state["document_inputs_accounted"] == count
+                and state["document_calls_accounted"] == count
+                and 14651529 <= state["input_tokens_accounted"] <= 15857818,
+                "actual complete inference contradicts pinned fitting/accounting bounds")
+        replay = verify("unchanged-replay", ["semantic", "prepare", "--profile", str(profile_path),
+                        "--budget-seconds", "180", "--development-isolation", "--cache-cap", "536870912"],
+                        forbid_worker=True)
+        check_prepare(replay, complete=True)
+        require(replay["provider_state"] is None and all(replay[key] == 0 for key in
+                ["document_calls", "input_tokens", "embedded_units", "partitioned_sources"]), "unchanged replay did work")
+        generation_path = store / "semantic" / prepared["function_digest"] / "generation.json"
+        generation = json.loads(generation_path.read_text())
+        require(generation["coverage"] == "complete" and generation["recipe_id"] == FULL_RECIPE
+                and generation["function_digest"] == prepared["function_digest"]
+                and generation["count"] == count == audited["index"]["entries"]
+                and generation["source_revision"] == audited["source_revision"], "published generation identity mismatch")
+        (full / "published-generation-before-churn.json").write_text(json.dumps(generation, indent=2) + "\n")
+        state["initial_complete_overview_verified"] = True
+        state["initial_complete_distinct_vectors"] = count
+        save_full()
+        trace = full / "serving-trace"
+        delivered = verify("serve", ["context", "how are goroutines scheduled for concurrent work", "--strategy", "search",
+                           "--tokens", "1024", "--semantic-profile", str(profile_path), "--development-isolation",
+                           "--experimental-behavior-context", "--retrieval-trace-dir", str(trace)], require_worker=True, expect_json=False)
+        records = [json.loads(path.read_text()) for path in trace.glob("*.json")]
+        require(len(records) == 1 and not records[0]["trace"]["truncated"]
+                and records[0]["outcome"]["status"] == "success"
+                and records[0]["outcome"]["tokens"] <= 1024
+                and any(event.get("stage") == "semantic" and event.get("decision", {}).get("state") == "dense"
+                        and event["decision"]["hits"] > 0 for event in records[0]["trace"]["events"]),
+                "serving did not execute real dense retrieval")
+        handle = re.search(r"[^\s`]+#[0-9]+-[0-9]+@[0-9a-f]{32}\.[0-9a-f]{16}", delivered)
+        require(handle is not None, "serving delivered no current source handle")
+        verify("retrieve", ["retrieve", "--handle", handle.group(0), "--tokens", "1024"],
+               forbid_worker=True, expect_json=False)
+        changed_path = corpus / "go/README.md"
+        original = changed_path.read_bytes()
+        old_title = b"# The Go Programming Language"
+        require(original.startswith(old_title), "changed-input fixture source identity differs")
+        changed = original.replace(old_title, b"# The Go Programming Language: Native Overview Change", 1)
+        state["churn"] = {"path": "go/README.md", "original_sha256": hashlib.sha256(original).hexdigest(),
+                          "changed_sha256": hashlib.sha256(changed).hexdigest(), "restored_file": False,
+                          "restored_store": False}
+        save_full()
+        try:
+            changed_path.write_bytes(changed)
+            check_index(verify("changed-index", ["index", str(corpus)]), 1)
+            stale = verify("changed-status", ["semantic", "status", "--audit"])
+            require(stale["sources"] == 67663 and stale["unpartitioned_sources"] == 1
+                    and stale["searchable_current_units"] == 67584,
+                    "changed source was not immediately excluded from current semantic coverage")
+            changed_report = verify("changed-prepare", ["semantic", "prepare", "--profile", str(profile_path),
+                                    "--budget-seconds", "120", "--development-isolation", "--cache-cap", "536870912"],
+                                    require_worker=True)
+            check_prepare(changed_report, complete=True)
+            require(changed_report["embedded_units"] == changed_report["document_calls"] == 1
+                    and changed_report["partitioned_sources"] == 1, "one changed overview did not infer exactly one input")
+            state["churn"]["changed_document_calls"] = 1
+        finally:
+            changed_path.write_bytes(original)
+            state["churn"]["restored_file"] = True
+            save_full()
+        check_index(verify("revert-index", ["index", str(corpus)]), 1)
+        reverted = verify("revert-prepare", ["semantic", "prepare", "--profile", str(profile_path),
+                          "--budget-seconds", "120", "--development-isolation", "--cache-cap", "536870912"],
+                          forbid_worker=True)
+        check_prepare(reverted, complete=True)
+        require(reverted["document_calls"] == reverted["embedded_units"] == reverted["input_tokens"] == 0
+                and reverted["provider_state"] is None and reverted["partitioned_sources"] == 1,
+                "revert failed to reuse the original cached overview")
+        final_audit = verify("final-audit", ["semantic", "status", "--audit"])
+        check_audit(final_audit, expected_orphans=1)
+        require(final_audit["index"]["entries"] == count and final_audit["cache"]["entries"] == count + 1,
+                "final generation/cache changed beyond the one intentional orphan")
+        verify_full_corpus(corpus, rows)
+        require(time.monotonic() <= verification_deadline, "final corpus verification exceeded its wall budget")
+        final_generation = json.loads(generation_path.read_text())
+        require(final_generation["coverage"] == "complete" and final_generation["count"] == count
+                and final_generation["source_revision"] == final_audit["source_revision"],
+                "final reverted generation is not current")
+        (full / "published-generation-final.json").write_text(json.dumps(final_generation, indent=2) + "\n")
+        state["churn"].update(restored_store=True, reverted_document_calls=0, retained_orphan_vectors=1)
+        observed_worker_peak = max(receipt["resources"]["worker"]["sampled_peak_physical_footprint_bytes"]
+                                   for receipt in runner.receipts)
+        require(0 < observed_worker_peak <= profile["memory_ceiling_bytes"],
+                "sampled worker footprint exceeded the profile guard or was not observed")
+        state.update(status="passed", complete=True, admitted_sources=67663, file_locations=67585,
+                     sources_without_cards=78, distinct_vectors=count, function_digest=prepared["function_digest"],
+                     unchanged_document_calls=0, real_dense_serving=True, real_source_retrieve=True,
+                     generation_sha256=sha256(generation_path), disk_free_final=shutil.disk_usage(full).free)
+        return state
+    except BaseException as error:
+        state.update(status="partial_or_failed", complete=False, reason=str(error))
+        if runner is not None:
+            state["usage_complete"] = all(receipt.get("usage_complete", False) for receipt in runner.receipts
+                                          if receipt["kind"] in ("prepare", "unchanged-replay", "changed-prepare", "revert-prepare"))
+        raise
+    finally:
+        if runner is not None:
+            state["command_receipts"] = runner.receipts
+            observed_resources = [receipt["resources"] for receipt in runner.receipts]
+            state["sampled_resources"] = {
+                "scope": "per-command native samples, including loading; true peaks and global/GPU pressure remain unknown",
+                "minimum_disk_free_bytes": min((min(row["minimum_disk_free_bytes"].values()) for row in observed_resources
+                                                if row["minimum_disk_free_bytes"]), default=None),
+                "processes": {role: {
+                    "samples": sum(row[role]["samples"] for row in observed_resources),
+                    "missed_samples": sum(row[role]["missed_samples"] for row in observed_resources),
+                    "sampled_peak_rss_bytes": max((row[role]["sampled_peak_rss_bytes"] for row in observed_resources), default=None),
+                    "sampled_peak_physical_footprint_bytes": max((row[role]["sampled_peak_physical_footprint_bytes"] for row in observed_resources), default=None)
+                } for role in ("driver", "cli", "worker")}}
+            document_phases = [receipt for receipt in runner.receipts if receipt["kind"] in
+                               ("prepare", "unchanged-replay", "changed-prepare", "revert-prepare")]
+            state["usage_complete"] = all(receipt.get("usage_complete", False) for receipt in document_phases)
+            state["all_document_phases_calls_accounted"] = sum(receipt.get("document_calls") or 0 for receipt in document_phases)
+            state["all_document_phases_tokens_accounted"] = sum(receipt.get("input_tokens") or 0 for receipt in document_phases)
+            state["unreported_document_calls"] = 0 if state["usage_complete"] else None
+            state["unreported_document_tokens"] = 0 if state["usage_complete"] else None
+            state["serving_accounting"] = {
+                "context_invocations": sum(receipt["kind"] == "serve" for receipt in runner.receipts),
+                "query_calls": None, "query_input_tokens": None,
+                "scope": "CLI dense trace and worker lifetime verified; this CLI boundary exposes no per-query model-call/token counter"}
+        save_full()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
@@ -187,7 +927,15 @@ def main():
                         help="also run bounded owned Qwen 0.5B Metal generation after embedding cleanup")
     parser.add_argument("--scale-calibration", action="store_true",
                         help="after selected native checks, measure 128 fixed public Rust/Go overview inputs in a fresh store")
+    parser.add_argument("--full-scale", action="store_true",
+                        help="after real 128-input calibration, run all pinned Rust/Go overview inputs and verification in a fresh store")
+    parser.add_argument("--full-scale-budget-seconds", type=int, default=7200,
+                        help="full corpus bootstrap wall budget, excluding native setup and the separate 600-second verification budget")
     args = parser.parse_args()
+    if not 1200 <= args.full_scale_budget_seconds <= 10800:
+        parser.error("full-scale-budget-seconds must be 1200..10800")
+    if args.full_scale:
+        args.scale_calibration = True
     root = Path(__file__).resolve().parents[1]
     out, work = args.out.resolve(), args.work.resolve()
     for path in (out, work):
@@ -531,6 +1279,12 @@ def main():
                 "next_decision": "review actual inputs, tokens, provider and command time, observed memory, and disk before declaring a separate full-corpus wall budget",
                 "not_established": ["67663-source completion", "weighted full-corpus throughput", "true peak or global GPU headroom"],
             }
+        if args.full_scale:
+            full_receipt = native_full_scale(root, work, out, profile, calibration_receipt,
+                                             args.full_scale_budget_seconds, env, cargo, stage)
+            result["full_scale"] = {"status": full_receipt["status"], "complete": full_receipt["complete"],
+                                    "receipt": "full-scale/result.json"}
+            result["scope"] += "; full pinned Rust/Go overview inference, replay, serving and one edit/revert sanity"
         if not cpu_ok:
             result.update(status="failed", reason="selected model and lifecycle checks passed; native CPU policy acceptance remains failed; see retained CPU stage logs")
             return 1

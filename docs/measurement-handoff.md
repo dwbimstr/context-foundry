@@ -180,6 +180,70 @@ any separate full-corpus wall budget. This calibration does not establish comple
 or retrieval/task quality; any scale projection remains an explicitly labeled
 estimate until the full receipts exist.
 
+**Explicit native full-corpus attempt.** A manual dispatch may set `full_scale:true`
+and `full_scale_budget_seconds:7200`, or use the existing runner directly:
+
+```sh
+python3 scripts/native-macos-acceptance.py \
+  --out /absolute/new-native-results --work /absolute/new-native-work \
+  --full-scale --full-scale-budget-seconds 7200
+```
+
+This first runs native setup and the real 128-input calibration. It refuses full
+bootstrap if that sample's token-rate projection plus 900 seconds of non-provider
+allowance exceeds the declared bootstrap budget. That projection is an unweighted
+sample estimate, not a population bound; the full command deadline remains binding.
+The 240-minute workflow cap includes setup, compilation, downloads, calibration,
+full bootstrap, its separate 600-second verification budget, cleanup and artifact
+upload. Generation acceptance is omitted from this explicit full-scale invocation.
+Push-triggered jobs never select it.
+
+The runner restores **every regular member** of the same pinned public archives,
+preserves upstream ignore controls, and verifies the canonical manifest below.
+Ordinary indexing must admit exactly 67,663 sources. It reuses the verified signed
+Metal revision-4 bundle and weights with a fresh store and scratch subdirectory,
+512-token overviews, batch one, the native worker's default two CPU threads and the
+existing 4 GiB worker footprint guard. The profile carries `cpu.seconds:86400` for
+explicit provenance, but these CPU controls apply only on Linux: they establish no
+native CPU-time quota. The Mac run is bounded by CLI control and monitored wall
+deadlines. It imports no CPU or calibration vectors.
+The free-space gates require 5 GiB after native setup/calibration and at least
+2.75 GiB after the full corpus/CLI/bundle are staged; every phase stops below a
+512 MiB reserve. These gates are not measured peak disk or whole-process RAM claims.
+
+Ordinary CLI phases record stdout, stderr, elapsed time, partial counters and
+observed worker PID/start identities. Preparation counters include every retained
+phase, including failed reports; missing counters remain unknown. During every CLI
+phase, a 0.1-second target poll samples parent/worker RSS and physical footprint via
+native `proc_pid_rusage`, records exact available disk bytes, and retains one raw
+sample per second plus per-phase sampled maxima/minimum disk. Observations cover
+the driver separately; they are lower bounds on true process peaks and do not
+measure global/GPU memory. PID/start observation uses `ps` start times at one-second
+resolution. Model phases require at least one native CLI and worker memory sample.
+Serving explicitly enables prose admission and records
+one context invocation and its dense decision, but this CLI exposes no per-query
+model-call or input-token counter. Normal exits require observed descendants to
+be absent and scratch reclaimed; unchanged replay must observe no worker. Forced
+cleanup, absent reports or a deadline remain failures/partial evidence, with unknown
+unreported usage. Full completion additionally requires current cache/mapping/ANN
+audits, a zero-call unchanged replay, real dense context serving and retrieval of a
+current source handle. One temporary Go README title edit must invalidate its old
+location, infer exactly one new overview, then reuse the original vector with zero
+calls on revert. The original corpus bytes are rechecked. The changed vector remains
+an explicitly counted orphan; it is not purged to manufacture clean accounting.
+
+The `full-scale/` artifact includes every phase receipt, the accepted store, canonical
+manifest, frozen profile/CLI and signed worker bundle, including on failure. Public
+weights, the source tree and build directories are excluded. A hosted runner's
+disappearance loses no uploaded cache checkpoint, but a missing upload must never be
+called resumable evidence. To continue a retained store manually, restore the same
+canonical corpus, model and scratch paths recorded by its profile/result, reverify
+the archived identities, restore executable permissions on the CLI and bundle worker,
+and use ordinary CLI preparation against that store with
+a newly declared budget; do not invoke this fresh-store runner on an existing store.
+A complete overview receipt establishes file-view inference only. Body coverage,
+retrieval/task quality and wider native release acceptance remain separate.
+
 **Portable complete-overview reproduction (Linux).** The following uses ordinary
 CLI operations and operator-controlled phases; it adds no second preparation owner
 or tracked orchestration framework. Keep binaries, profiles, archives, corpus,
