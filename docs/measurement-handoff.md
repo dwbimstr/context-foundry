@@ -127,6 +127,59 @@ requires no unpartitioned sources, missing inputs or unpublished
 current locations, followed by real serving and changed-input checks. A completed
 file scan or fitting inventory alone cannot close semantic scale acceptance.
 
+**Opt-in native scale calibration.** After the ordinary embedding receipt and
+cleanup (and generation cleanup when `--generation` is selected),
+`scripts/native-macos-acceptance.py --out /absolute/new-results --work
+/absolute/new-work --scale-calibration` can measure 128 public overview inputs.
+The flag is off by default. Push-triggered jobs leave calibration disabled; a
+manual workflow dispatch can select the boolean `scale_calibration` input.
+Neither setting requests a full-corpus run. The script downloads the same checksum-pinned Rust 1.90.0 and
+Go 1.25.0 archives below and records each selected path, source SHA-256 and byte
+size. Selection fixes 16 files in each source-size quartile of each project by
+SHA-256 rank of `native-scale-v1` + NUL + relative path. It includes only nonblank
+UTF-8 `.rs`/`.go` files from 64 bytes through 2 MiB, excluding hidden paths,
+`target`, `node_modules` and normal private-key-marker exclusions. Its fixed
+128-file manifest is 670,355 source bytes. This deliberately spans project and
+source-size groups. This is a `.rs`/`.go` **archive sample**, distinct from the
+full admitted-source population: upstream `.gitignore` and other ignore controls
+are not extracted with the selected files, and membership of these 128 paths in
+the full 67,663-source admitted set is unverified. Ordinary indexing checks only
+the isolated sample. It is neither population-weighted nor representative of all
+admitted file kinds. No expected labels guide selection.
+
+Calibration uses `overview-v1`, `card_tokens:512`, `batch:1`, the same verified
+Metal revision 4 descriptor, 8,192-token geometry and signed development bundle,
+and a fresh source tree/store/cache with a separate private scratch subdirectory.
+The cache cap is **512 MiB (536,870,912 bytes)** for preparation and replay, matching
+the full-scale configuration; this is a storage limit, not a memory allocation.
+The canonical function digest stays unchanged when only the recipe/card limit or
+batch changes; it must remain distinct from CPU revisions 3 and 5. No vectors are
+imported. The ignored `native_scale` integration test uses ordinary production
+indexing, fitting and preparation with a recording wrapper around the actual
+supervised worker. It requires exactly 128 distinct fitted inputs, 128 successful
+calls, complete publication, and zero model calls on unchanged replay. It retains
+source-to-input keys, complete fitted token IDs and SHA-256 of their concatenated
+little-endian u32 bytes; the wrapper verifies those hashes against actual calls.
+Per-call JSONL is flushed as work completes, including a failed call when one
+returns an error. Preparation has a 1,200-second budget with the normal publication
+reserve; prior partial records are never promoted to completion.
+
+The receipt separates provider-call nanoseconds, acquisition time, preparation
+wall time and total harness time; script stages include download/build/test wall
+time separately. The harness independently fits inputs before preparation for its
+identity audit; its concrete-worker test seam repeats artifact verification to
+expose the owned PID, so startup and total harness cost are not an unmodified CLI
+benchmark. It measures native `ri_phys_footprint` immediately before and
+after every successful call. The maximum of those 256 observations is **not** a
+continuous or loading peak, GPU allocation, or global GPU headroom. The production
+4 GiB footprint guard remains active. Model teardown and an independent observed
+process-identity cleanup check precede success. Review these actual measurements,
+input lengths, publication/replay results and disk availability before selecting
+any separate full-corpus wall budget. This calibration does not establish complete
+67,663-source preparation, its end-to-end throughput, simultaneous model residency,
+or retrieval/task quality; any scale projection remains an explicitly labeled
+estimate until the full receipts exist.
+
 **Portable complete-overview reproduction (Linux).** The following uses ordinary
 CLI operations and operator-controlled phases; it adds no second preparation owner
 or tracked orchestration framework. Keep binaries, profiles, archives, corpus,

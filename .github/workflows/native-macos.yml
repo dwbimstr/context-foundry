@@ -17,8 +17,15 @@ on:
       - 'src/neural/**'
       - 'tests/embed_worker.rs'
       - 'tests/embedding_parity.rs'
+      - 'tests/native_scale.rs'
       - 'tests/knowledge.rs'
   workflow_dispatch:
+    inputs:
+      scale_calibration:
+        description: Measure 128 fixed public overview inputs after native acceptance
+        type: boolean
+        required: false
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -42,11 +49,16 @@ jobs:
         run: rustup toolchain install 1.90.0 --profile minimal
       - name: Record native CPU, actual Metal and owned worker acceptance
         shell: bash
+        env:
+          CF_NATIVE_SCALE_CALIBRATION: ${{ github.event_name == 'workflow_dispatch' && inputs.scale_calibration && 'true' || 'false' }}
         run: |
           set -euo pipefail
-          python3 scripts/native-macos-acceptance.py \
-            --out "$RUNNER_TEMP/native-macos-results" \
-            --work "$RUNNER_TEMP/native-macos-work" --generation
+          args=(--out "$RUNNER_TEMP/native-macos-results"
+                --work "$RUNNER_TEMP/native-macos-work" --generation)
+          if [[ "$CF_NATIVE_SCALE_CALIBRATION" == "true" ]]; then
+            args+=(--scale-calibration)
+          fi
+          python3 scripts/native-macos-acceptance.py "${args[@]}"
       - name: Preserve results even when GPU acceptance is blocked or fails
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

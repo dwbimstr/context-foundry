@@ -3,7 +3,7 @@
 
 Run from a checkout with Rust 1.90.0, Python 3, CMake and Xcode/Metal tools:
   python3 scripts/native-macos-acceptance.py --out /absolute/new-results \
-      --work /absolute/new-work [--generation]
+      --work /absolute/new-work [--generation] [--scale-calibration]
 Upload only --out, including on failure. Work contains public pinned weights and
 build outputs. No credentials, private corpus or model-quality claims are needed.
 """
@@ -18,6 +18,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tarfile
 import time
 
 
@@ -28,6 +29,15 @@ GGUF_SHA = "68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216"
 TOKENIZER_SHA = "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4"
 GENERATION_REV = "ebb2015119c907b064c512bf053e945850b5875f"
 GENERATION_FILE = "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"
+SCALE_SAMPLE_SHA = "76b510031972d619b01c0f767b5c0d66c6da4899ff8628c62ff9943a7b1b7a26"
+SCALE_PROJECTS = [
+    ("rust", "1159e78c4747b02ef996e55082b704c09b970588",
+     "https://codeload.github.com/rust-lang/rust/tar.gz/1159e78c4747b02ef996e55082b704c09b970588",
+     "8dc476ed3ccd405304236e3ee737b365b49168f1cfebd4da537ee0b4380e96bf"),
+    ("go", "6e676ab2b809d46623acb5988248d95d1eb7939c",
+     "https://codeload.github.com/golang/go/tar.gz/refs/tags/go1.25.0",
+     "7e5813e23f221dc193dec557379fe22607baa6fc2e321a1b8e39b658848a5f5f"),
+]
 GENERATION_SHA = "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32"
 FIXTURES = [
     "owner_death_on_liveness_pipe_eof_ends_the_worker",
@@ -92,12 +102,91 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def scale_sample(archives, corpus, output):
+    """128 fixed public code files, stratified by project and byte-size quartile.
+
+    This is a diagnostic sample, not a population-weighted corpus estimate.
+    No model, expected answer or relevance label participates in selection.
+    """
+    rows = []
+    for project, revision, url, archive_sha in SCALE_PROJECTS:
+        archive = archives / (project + ".tar.gz")
+        if sha256(archive) != archive_sha:
+            raise RuntimeError("scale archive checksum mismatch: " + project)
+        candidates = []
+        with tarfile.open(archive, "r:gz") as source:
+            for member in source:
+                if not member.isfile() or not 64 <= member.size <= 2 * 1024**2:
+                    continue
+                parts = Path(member.name).parts
+                if len(parts) < 2 or member.name.startswith("/") or ".." in parts:
+                    raise RuntimeError("invalid archive member")
+                relative = Path(project, *parts[1:]).as_posix()
+                if any(part.startswith(".") or part in ("target", "node_modules") for part in parts[1:]):
+                    continue
+                if not relative.endswith(".rs" if project == "rust" else ".go"):
+                    continue
+                data = source.extractfile(member).read()
+                try:
+                    body = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+                if ("\0" in body or not body.strip()
+                        or ("-----BEGIN " + "PRIVATE KEY-----") in body
+                        or ("-----BEGIN " + "RSA PRIVATE KEY-----") in body):
+                    continue
+                candidates.append({"path": relative, "bytes": len(data),
+                                   "sha256": hashlib.sha256(data).hexdigest()})
+        candidates.sort(key=lambda row: (row["bytes"], row["path"]))
+        for quartile in range(4):
+            group = candidates[quartile * len(candidates) // 4:(quartile + 1) * len(candidates) // 4]
+            group.sort(key=lambda row: hashlib.sha256(("native-scale-v1\0" + row["path"]).encode()).hexdigest())
+            if len(group) < 16:
+                raise RuntimeError("scale sample stratum incomplete")
+            rows.extend(row | {"size_quartile": quartile + 1} for row in group[:16])
+    rows.sort(key=lambda row: row["path"])
+    encoded = (json.dumps(rows, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
+    if len(rows) != 128 or hashlib.sha256(encoded).hexdigest() != SCALE_SAMPLE_SHA:
+        raise RuntimeError("fixed scale sample identity mismatch")
+    selected = {row["path"]: row for row in rows}
+    corpus.mkdir()
+    for project, _, _, _ in SCALE_PROJECTS:
+        with tarfile.open(archives / (project + ".tar.gz"), "r:gz") as source:
+            for member in source:
+                if not member.isfile():
+                    continue
+                relative = Path(project, *Path(member.name).parts[1:]).as_posix()
+                if relative not in selected:
+                    continue
+                data = source.extractfile(member).read()
+                row = selected[relative]
+                if len(data) != row["bytes"] or hashlib.sha256(data).hexdigest() != row["sha256"]:
+                    raise RuntimeError("selected source identity changed")
+                destination = corpus / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with destination.open("xb") as target:
+                    target.write(data)
+    manifest = {
+        "v": 1, "files": rows, "sample_files_sha256": SCALE_SAMPLE_SHA,
+        "selection": "16 lowest SHA256(native-scale-v1\\0 + relative path) per byte-size quartile per project; 64 Rust .rs and 64 Go .go regular UTF-8 nonblank files, 64 bytes through 2 MiB; ties sort by path; skip hidden/target/node_modules paths and normal private-key-marker exclusions",
+        "sample_sha256_encoding": "sorted files array, compact ensure_ascii JSON plus LF",
+        "projects": [{"project": project, "commit": revision, "url": url, "archive_sha256": checksum}
+                     for project, revision, url, checksum in SCALE_PROJECTS],
+        "scope": "source-size-stratified .rs/.go archive sample; upstream ignore controls are not extracted; membership in the full 67663 admitted-source population is unverified; not a population-weighted estimate",
+    }
+    with output.open("x") as target:
+        json.dump(manifest, target, indent=2)
+        target.write("\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--generation", action="store_true",
                         help="also run bounded owned Qwen 0.5B Metal generation after embedding cleanup")
+    parser.add_argument("--scale-calibration", action="store_true",
+                        help="after selected native checks, measure 128 fixed public Rust/Go overview inputs in a fresh store")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     out, work = args.out.resolve(), args.work.resolve()
@@ -254,13 +343,21 @@ def main():
         cpu_ok = True
         for name in ("native_macos_cpu_observation", "native_macos_cpu_pressure_pauses_and_resumes_both_lanes"):
             cpu_ok = test("model_resources::tests::" + name, ["--lib"], True) and cpu_ok
+        # CPU policy tests keep their own acceptance result. A busy host may
+        # lack their idle prerequisite; preserve that failure while independently
+        # collecting model evidence behind the held-file and lifecycle gates.
+        result["cpu_policy_acceptance"] = "passed" if cpu_ok else "failed"
+        if not cpu_ok:
+            result["not_accepted"].append("native CPU policy acceptance")
+        save()
+        readiness_ok = True
         for name in (
             "held_gguf_check_uses_the_open_file_and_keeps_its_descriptor",
             "held_gguf_check_refuses_split_and_malformed_files_without_closing_owner",
         ):
-            cpu_ok = test("neural::worker_runtime::tests::" + name, ["--lib"]) and cpu_ok
+            readiness_ok = test("neural::worker_runtime::tests::" + name, ["--lib"]) and readiness_ok
         for name in FIXTURES:
-            cpu_ok = test(name, ["--test", "embed_worker"]) and cpu_ok
+            readiness_ok = test(name, ["--test", "embed_worker"]) and readiness_ok
 
         # Actual compute dispatch, not a CPU architecture or display enumeration.
         probe = work / "metal-probe.swift"
@@ -268,9 +365,9 @@ def main():
         metal_ok = stage("metal-probe", ["/usr/bin/xcrun", "swift", "-module-cache-path", work / "swift-cache", probe, out / "metal-probe.json"], 120)
         if not metal_ok:
             blocked = (out / "metal-probe.json").exists() and json.loads((out / "metal-probe.json").read_text()).get("status") == "blocked"
-            result.update(status="blocked" if blocked and cpu_ok else "failed", reason="Metal compute probe did not pass; models were not downloaded")
+            result.update(status="blocked" if blocked and cpu_ok and readiness_ok else "failed", reason="Metal compute probe did not pass; models were not downloaded")
             return 2 if result["status"] == "blocked" else 1
-        require(cpu_ok, "CPU admission, held-model validation or native synthetic lifecycle failed; models were not downloaded")
+        require(readiness_ok, "held-model validation or native synthetic lifecycle failed; models were not downloaded")
         require(shutil.disk_usage(work).free >= 5 * 1024**3, "less than 5 GiB free for native backend and artifacts")
 
         model = work / "models"
@@ -323,6 +420,8 @@ def main():
         require(len(evidence["vectors"]) == 5 and any(len(ids) == 8192 for ids in evidence["input_ids"]), "receipt workload incomplete")
 
         cleanup("foundry-embed", scratch=scratch)
+        result["model_acceptance"] = "embedding_passed"
+        save()
         if args.generation:
             # Separate acquisitions, after embedding teardown. This is a small
             # generation fixture, not a combined-model or large-context claim.
@@ -374,9 +473,67 @@ def main():
                 require(report["complete"] and report["calls"] == worker["launches"] == worker["calls"] == worker["verified_bytes"] == worker["peak_memory_bytes"] == worker["peak_gpu_bytes"] == 0 and worker["pid"] is None, "generation replay acquired model resources")
             require(generated["restored"]["reused_cached"] == 1 and generated["http_calls"] == 0, "generation restart/revert or owned-provider mismatch")
             cleanup("foundry-generate", minimum=2)
+            result["model_acceptance"] = "embedding_and_generation_passed"
             result["scope"] += "; owned Metal generation, change and current/restart/revert reuse"
             result["not_accepted"].remove("generation worker")
             result["not_accepted"].extend(["generation prose correctness or coding-task benefit", "all generation operations on GPU", "combined embedding and generation pressure", "native generator owner-death and adversarial isolation"])
+        if args.scale_calibration:
+            # Every preceding owner has been reaped. Reuse only the verified
+            # model/backend/bundle, never a store or any CPU/Metal cache rows.
+            calibration = work / "scale-calibration"
+            calibration.mkdir()
+            calibration_out = out / "scale-calibration"
+            calibration_out.mkdir()
+            require(shutil.disk_usage(work).free >= 2 * 1024**3,
+                    "less than 2 GiB free for bounded calibration artifacts")
+            for project, _, url, _ in SCALE_PROJECTS:
+                require(stage("scale-download-" + project,
+                              ["curl", "--fail", "--location", "--proto", "=https", "--proto-redir", "=https",
+                               "--retry", "3", "--max-time", "600", "--output", calibration / (project + ".tar.gz"), url], 650),
+                        "scale corpus archive download failed")
+            scale_sample(calibration, calibration / "corpus", calibration_out / "sample.json")
+            scale_profile = json.loads(json.dumps(profile))
+            scale_profile.update(name="native-scale-gemma2-bf16-overview-512", card_tokens=512, batch=1,
+                                 representation={"kind": "overview-v1"})
+            # The signed bundle already grants the enclosing private scratch root.
+            scale_scratch = scratch / "scale-calibration"
+            scale_scratch.mkdir(mode=0o700)
+            scale_profile["worker"]["scratch_root"] = str(scale_scratch)
+            scale_profile_path = calibration_out / "profile.json"
+            scale_profile_path.write_text(json.dumps(scale_profile, indent=2) + "\n")
+            observed_workers.clear()
+            require(test("real_metal_overview_scale_calibration", ["--test", "native_scale"], True,
+                         {"FOUNDRY_SCALE_PROFILE": str(scale_profile_path),
+                          "FOUNDRY_SCALE_CORPUS": str(calibration / "corpus"),
+                          "FOUNDRY_SCALE_STORE": str(calibration / "store"),
+                          "FOUNDRY_SCALE_OUT": str(calibration_out)}, observe="foundry-embed"),
+                    "bounded native scale calibration failed; retain partial call evidence")
+            calibration_receipt = json.loads((calibration_out / "receipt.json").read_text())
+            require((calibration_receipt["status"], calibration_receipt["os"], calibration_receipt["arch"])
+                    == ("passed", "macos", "aarch64"), "scale calibration platform mismatch")
+            require(calibration_receipt["worker_sha256"] == profile["worker"]["executable_sha256"]
+                    and calibration_receipt["descriptor"] == profile["descriptor"],
+                    "scale calibration function identity mismatch")
+            require(calibration_receipt["document_calls"] == calibration_receipt["distinct_inputs"] == 128
+                    and calibration_receipt["input_tokens"] > 0 and calibration_receipt["provider_ns"] > 0
+                    and calibration_receipt["worker_stopped_and_reaped"]
+                    and calibration_receipt["unchanged_document_calls"] == 0,
+                    "scale calibration accounting incomplete")
+            require(calibration_receipt["cache_cap_bytes"] == 512 * 1024**2,
+                    "scale calibration cache limit mismatch")
+            require(calibration_receipt["sample_manifest_sha256"] == sha256(calibration_out / "sample.json"),
+                    "scale sample receipt mismatch")
+            cleanup("foundry-embed", scratch=scale_scratch)
+            result["scope"] += "; fixed 128-input public overview calibration and unchanged replay"
+            result["scale_measurement_gate"] = {
+                "status": "measured_sample_only", "receipt": "scale-calibration/receipt.json",
+                "full_scale_authorized_or_completed": False,
+                "next_decision": "review actual inputs, tokens, provider and command time, observed memory, and disk before declaring a separate full-corpus wall budget",
+                "not_established": ["67663-source completion", "weighted full-corpus throughput", "true peak or global GPU headroom"],
+            }
+        if not cpu_ok:
+            result.update(status="failed", reason="selected model and lifecycle checks passed; native CPU policy acceptance remains failed; see retained CPU stage logs")
+            return 1
         result.update(status="passed", reason="all selected native checks passed; broader acceptance remains open")
         return 0
     except Exception as error:
