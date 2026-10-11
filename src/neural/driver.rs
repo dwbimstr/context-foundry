@@ -434,6 +434,7 @@ struct Run<'a> {
     unpublished: u64,
     /// Entries of the last generation this run published.
     published: u64,
+    publish_overview_boundary: bool,
 }
 
 impl<'a> Run<'a> {
@@ -466,6 +467,7 @@ impl<'a> Run<'a> {
             digest,
             unpublished: 0,
             published: 0,
+            publish_overview_boundary: false,
         }
     }
 
@@ -521,7 +523,8 @@ impl<'a> Run<'a> {
         loop {
             let revision = hold(self.owner, |engine| engine.source_revision())?;
             let mut frontier = Frontier {
-                order: prepare::SourceOrder::new(&[])?,
+                order: prepare::SourceOrder::new(&[])?
+                    .for_representation(self.runtime.profile.representation),
                 walk: None,
                 active_cursor: None,
                 wave_inputs: 0,
@@ -584,11 +587,12 @@ impl<'a> Run<'a> {
                 continue;
             }
             let mut frontier = Frontier {
-                order: if work.requires_reconcile() {
+                order: (if work.requires_reconcile() {
                     prepare::SourceOrder::new(&[])?
                 } else {
                     prepare::SourceOrder::changed(work.paths().iter().map(|(path, _)| path.clone()))
-                },
+                })
+                .for_representation(self.runtime.profile.representation),
                 walk: None,
                 active_cursor: None,
                 wave_inputs: 0,
@@ -711,7 +715,14 @@ impl<'a> Run<'a> {
             }
             if !end && batch.len() < self.preparation.batch_limit(Instant::now(), full) {
                 let room = full - batch.len();
-                match self.fill(frontier, &mut batch, room, &[])? {
+                let selected = self.fill(frontier, &mut batch, room, &[])?;
+                if self.publish_overview_boundary && batch.is_empty() {
+                    if let Some(stop) = self.publish()? {
+                        return Ok(Some(stop));
+                    }
+                    self.publish_overview_boundary = false;
+                }
+                match selected {
                     Selected::Full => {}
                     Selected::End => end = true,
                     Selected::Yield => continue,
@@ -745,6 +756,12 @@ impl<'a> Run<'a> {
             if let Some(stop) = self.requested_stop() {
                 return Ok(Selected::Halted(stop));
             }
+            // Drain the last file-view inputs, including foreground-sized
+            // leftovers, before prefetching any refinement. Publication cannot
+            // race ahead of those still uncommitted inputs.
+            if self.publish_overview_boundary {
+                return Ok(Selected::Full);
+            }
             {
                 let state = self.preparation.lock();
                 if !frontier.changed_only
@@ -771,9 +788,15 @@ impl<'a> Run<'a> {
                     return Ok(Selected::Yield);
                 }
                 waves += 1;
+                let overview_phase = frontier.order.overview_first();
                 let Some(mut cursor) = frontier.order.next() else {
                     return Ok(Selected::End);
                 };
+                if overview_phase && !frontier.order.overview_first() {
+                    self.publish_overview_boundary = true;
+                    frontier.order.advance(cursor, false);
+                    return Ok(Selected::Full);
+                }
                 let resumed = cursor.resume_before.take();
                 let before = resumed.clone().unwrap_or_else(|| cursor.after.clone());
                 let (progress, retained) = if resumed.is_some() {
@@ -792,6 +815,7 @@ impl<'a> Run<'a> {
                         Walk::wave(cursor.scope.clone(), before.clone(), cursor.after.clone())
                             .with_retained(retained);
                     walk.exact = cursor.exact;
+                    walk.overview_first = frontier.order.overview_first();
                     frontier.walk = Some(walk);
                     cursor.resume_before = Some(before);
                     frontier.active_cursor = Some(cursor);
@@ -1023,8 +1047,13 @@ impl<'a> Run<'a> {
         if let Some(error) = prefetch_error {
             return Err(error);
         }
-        if source_inputs && self.unpublished >= self.published.max(1) {
-            return self.publish();
+        let file_views_drained = self.publish_overview_boundary && batch.is_empty();
+        if source_inputs && (file_views_drained || self.unpublished >= self.published.max(1)) {
+            let stop = self.publish()?;
+            if file_views_drained && stop.is_none() {
+                self.publish_overview_boundary = false;
+            }
+            return Ok(stop);
         }
         Ok(None)
     }
@@ -1048,7 +1077,8 @@ impl<'a> Run<'a> {
                 super::area::cached(engine, profile, &area)
             })? {
                 let mut frontier = Frontier {
-                    order: prepare::SourceOrder::new(&[])?,
+                    order: prepare::SourceOrder::new(&[])?
+                        .for_representation(self.runtime.profile.representation),
                     walk: None,
                     active_cursor: None,
                     wave_inputs: 0,

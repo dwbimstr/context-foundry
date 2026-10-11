@@ -962,6 +962,34 @@ is `unverified` and `test_execution` is `not_observed`. Attributes do not establ
 execution or requirement coverage; existing test-path classification remains heuristic. Definition, reference and additional syntax bodies must all fit before the
 relationship is emitted. Dynamic dispatch and semantic constraint conflicts remain open.
 
+T009 source discovery continuation (2026-10-11): composition no longer requires a
+compiler artifact to discover useful caller/test candidates. Up to four resolved
+query anchors supply names; their defining source hashes must still match in the
+final snapshot. The planner inspects at most eight already selected source files,
+reusing bounded parses from compiler-reference processing. Rust, Python, Go and
+JavaScript/TypeScript calls with the same terminal name can supply at most 32
+enclosing source spans. They are **unresolved name candidates**, including possible
+shadowing or unrelated receivers; they create no graph edges. String literals,
+function values and arguments passed to another call are not calls to that name.
+Go `_test.go` paths join the existing test-path heuristic.
+
+Rust assertion expression macros (`assert`, `assert_eq`, `assert_ne` and their
+`debug_` variants) also expose name-plus-parentheses candidates inside their token
+trees. Arbitrary macro DSLs remain unsupported. Attributed Rust tests can supply
+their whole bounded source span. Because a test often calls a public wrapper,
+up to four attributed tests matching distinct task words can also be discovered
+in the selected files. This second basis is `same_file_test_task_terms`, not a
+call relationship. Query/goal text is capped at 1,024 bytes per entry and 64
+distinct non-stopword terms. Existing 1 MiB parse, parser-work, 32 KiB span,
+32-source-unit and final delivery limits remain.
+
+The compact and verbose reports expose the syntactic candidate counts, skipped
+parse paths, unresolved names and unverified execution. Final delivered facets
+still depend on the exact bodies that fit the budget. Compiler relationships and
+imported execution observations retain their stronger, separate provenance.
+Unsupported languages, dynamic dispatch, indirect wrapper coverage and requirement
+satisfaction remain open; local test selection is discovery, not observed coverage.
+
 An opt-in free-form OMP parser calibration now complements the scripted host integration
 and earlier fixed-choice model tests: two initial-context arms, one attempt each,
 permission to edit files, an external immutable checker and gateway receipts including

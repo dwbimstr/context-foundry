@@ -104,6 +104,83 @@ fn report(text: &str) -> Value {
     )
     .unwrap()
 }
+
+#[test]
+fn composition_discovers_unresolved_calls_and_attributed_tests_without_compiler_data() {
+    let mut e = fixture();
+    let body = "fn repair_value(v: u8) -> u8 { v }\n\nfn consume_value() { repair_value(3); }\n\n#[test]\nfn checks_value() { assert_eq!(repair_value(4), 4); }\n\nfn text_only() { let s = \"repair_value(9)\"; let f = repair_value; }\n";
+    e.engine.replace_source("lib.rs", body).unwrap();
+    e.engine.refresh(&Control::unbounded()).unwrap();
+    let context = |engine: &Engine| {
+        engine
+            .context_candidates_with(
+                "`REPAIR_VALUE`",
+                Strategy::Auto,
+                &Control::unbounded(),
+                &ContextOptions {
+                    task: Some(task_context::Scope {
+                        workspace_id: &e.wid,
+                        task_id: "contract",
+                        expected_revision: e.revision,
+                    }),
+                    compose_evidence: true,
+                    compact_evidence: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let c = context(&e.engine);
+    let render = |c: &context_foundry::memory::MemoryContext, tokens| {
+        response::pack_enriched_context(c, None, Budget::request(tokens), &response::stdout_bytes)
+            .unwrap()
+    };
+    let packed = render(&c, 2048);
+    let r = report(&packed.text);
+    assert_eq!(r["syntax"]["resolution"], "unresolved");
+    assert_eq!(r["syntax"]["runtime_call"], "unverified");
+    // Known assertion expression macros can identify an unresolved call too.
+    assert_eq!(r["syntax"]["available"], 2);
+    assert_eq!(r["facets"]["consumers"], "source_candidates_delivered");
+    assert!(packed.text.contains("fn consume_value()"));
+    assert_eq!(r["compiler"]["delivered"], 0);
+    assert_eq!(r["execution"]["delivered"], 0);
+    assert_eq!(r["complete"], false);
+    let changed = body.replace(
+        "assert_eq!(repair_value(4), 4);",
+        "let actual = repair_value(4); assert_eq!(actual, 4);",
+    );
+    e.engine.replace_source("lib.rs", &changed).unwrap();
+    e.engine.refresh(&Control::unbounded()).unwrap();
+    let c = context(&e.engine);
+    let packed = render(&c, 2048);
+    let r = report(&packed.text);
+    assert_eq!(r["syntax"]["available"], 2);
+    assert_eq!(r["facets"]["verification"], "source_candidates_delivered");
+    assert!(packed.text.contains("#[test]\nfn checks_value"));
+    for item in c
+        .batch
+        .items
+        .iter()
+        .filter(|item| item.handle.as_ref().is_some_and(|h| h.path == "lib.rs"))
+    {
+        assert_eq!(
+            item.handle.as_ref().unwrap().sha256,
+            context_foundry::digest(changed.as_bytes())
+        );
+    }
+    for tokens in [1024, 1536] {
+        let small = render(&c, tokens);
+        assert!(small.tokens <= tokens);
+        assert_eq!(report(&small.text)["complete"], false);
+    }
+    e.engine.delete_source("lib.rs").unwrap();
+    e.engine.refresh(&Control::unbounded()).unwrap();
+    assert_eq!(
+        report(&render(&context(&e.engine), 2048).text)["syntax"]["available"],
+        0
+    );
+}
 #[test]
 fn observed_execution_requires_fresh_proof_and_all_delivered_endpoints() {
     let mut e = fixture();

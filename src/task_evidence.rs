@@ -31,6 +31,9 @@ pub struct Plan {
     /// An execution overlap is traceability, never proof of requirement success.
     pub(crate) requirement_links: Vec<(String, SourceHandle)>,
     pub compiler_skipped_seeds: usize,
+    pub syntax_candidates: usize,
+    pub syntax_skipped_paths: usize,
+    pub local_test_candidates: usize,
     pub(crate) reference_uses: BTreeMap<String, reference::Use>,
     pub roots: Vec<String>,
 }
@@ -65,6 +68,9 @@ impl Plan {
             primary.requirement_links.extend(other.requirement_links);
             primary.reference_uses.extend(other.reference_uses);
             primary.compiler_skipped_seeds += other.compiler_skipped_seeds;
+            primary.syntax_candidates += other.syntax_candidates;
+            primary.syntax_skipped_paths += other.syntax_skipped_paths;
+            primary.local_test_candidates += other.local_test_candidates;
             primary.discovery_limited |= other.discovery_limited;
         }
         primary.support = merged
@@ -118,6 +124,7 @@ impl Plan {
             (facet,json!({"state":if bodies>0 {"source_candidates_delivered"} else if addresses>0 {"addresses_only"} else if candidates>0 {"omitted_budget"} else {"missing"},"bodies":bodies,"addresses":addresses,"candidates":candidates}))
         }).collect();
         let mut resolution = BTreeMap::<&str, usize>::new();
+        let syntax = json!({"kind":"call_name_candidates","resolution":"unresolved","runtime_call":"unverified","available":self.syntax_candidates,"skipped_paths":self.syntax_skipped_paths,"local_tests":{"available":self.local_test_candidates,"basis":"same_file_task_terms","coverage":"not_established"}});
         if let Some(b) = &self.boundaries {
             for r in &b.relations {
                 *resolution.entry(r.resolution).or_default() += 1;
@@ -130,7 +137,7 @@ impl Plan {
                 "discovery":{"queried_entries":self.queried_entries,"unqueried_entries":self.unqueried_entries,"stale_links":self.stale_links,"limited":self.discovery_limited},
                 "boundary":{"requested":self.boundary_requested,"available":self.boundaries.as_ref().map_or(0,|b|b.relations.len()),"delivered":relationship_count,"resolution":resolution,"incomplete_paths":self.boundaries.as_ref().map(|b|&b.incomplete_paths),"truncated":self.boundaries.as_ref().is_some_and(|b|b.truncated)},
                 "compiler":{"kind":"references","delivered":compiler_count,"skipped_seeds":self.compiler_skipped_seeds,"windows":self.compiler.iter().map(|c|json!({"coverage":c.coverage,"references":c.items.len(),"stale":c.stale,"limited":c.candidates_full||c.more||c.definitions_truncated})).collect::<Vec<_>>()},
-                "derived_briefs":brief_count,"verification":if observed_count > 0 {"producer_execution_observations_delivered"} else {"test_candidates_only_not_executed"},
+                "syntax":syntax,"derived_briefs":brief_count,"verification":if observed_count > 0 {"producer_execution_observations_delivered"} else {"test_candidates_only_not_executed"},
                 "execution":{"available":self.observed.len(),"delivered":observed_count,"complete_coverage":false,"attestation":"producer_report_only"},
                 "sources":included.iter().enumerate().map(|(n,&(i,f))|json!({"item":n+1,"representation":if f==0{"body"}else{"address"},"facets":self.support[i].facets,"via":self.support[i].via})).collect::<Vec<_>>()});
         }
@@ -139,7 +146,7 @@ impl Plan {
             "constraints":{"caller_assertions":self.constraints,"verified":false,"conflicts":"not_evaluated"},"facets":facets,
             "discovery":{"queried_entries":self.queried_entries,"unqueried_entries":self.unqueried_entries,"stale_links":self.stale_links,"limited":self.discovery_limited},
             "boundary":{"available_relationships":self.boundaries.as_ref().map_or(0,|b|b.relations.len()),"delivered_relationships":relationship_count,"state":if self.boundaries.is_some(){"configured"}else if self.boundary_requested{"no_fresh_seeds"}else{"not_requested"},"resolution":resolution,"incomplete_paths":self.boundaries.as_ref().map(|b|&b.incomplete_paths),"truncated":self.boundaries.as_ref().is_some_and(|b|b.truncated)},
-            "verification":if observed_count > 0 {"producer_execution_observations_delivered"} else {"test_candidates_only_not_executed"},
+            "syntax":syntax,"verification":if observed_count > 0 {"producer_execution_observations_delivered"} else {"test_candidates_only_not_executed"},
             "execution":{"available":self.observed.len(),"delivered":observed_count,"complete_coverage":false,"attestation":"producer_report_only"},
             "compiler_relationships":{"kind":"references","skipped_seeds":self.compiler_skipped_seeds,"delivered":compiler_count,"windows":self.compiler.iter().map(|c|json!({"workspace_id":c.freshness.workspace_id,"producer":c.producer,"coverage":c.coverage,"target":c.target,"references":c.items.len(),"examined":c.examined,"stale":c.stale,"limited":c.candidates_full||c.more||c.definitions_truncated})).collect::<Vec<_>>()},
             "sources":included.iter().map(|&(i,f)|json!({"handle":items[i].handle.as_ref().map(SourceHandle::to_v2),"representation":if f==0{"body"}else{"address"},"facets":self.support[i].facets,"via":self.support[i].via})).collect::<Vec<_>>()})
@@ -151,6 +158,7 @@ fn test_path(path: &str) -> bool {
             || p == "test"
             || p.starts_with("test_")
             || p.ends_with("_test.py")
+            || p.ends_with("_test.go")
             || p.contains(".test.")
             || p.contains(".spec.")
     })
@@ -240,6 +248,9 @@ impl Engine {
             observed: vec![],
             requirement_links: vec![],
             compiler_skipped_seeds: 0,
+            syntax_candidates: 0,
+            syntax_skipped_paths: 0,
+            local_test_candidates: 0,
             reference_uses: BTreeMap::new(),
             roots: vec![self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?],
             boundaries: None,
@@ -259,6 +270,22 @@ impl Engine {
         plain.boundary_config = None;
         plain.briefs = false;
         let mut context = self.context_candidates_with(query, strategy, control, &plain)?;
+        let syntax_seeds: Vec<_> = context
+            .batch
+            .anchors
+            .iter()
+            .filter(|anchor| anchor.resolved())
+            .filter_map(|anchor| {
+                let entry = anchor.entries.first()?;
+                let (start, end) = entry.resolver?.name;
+                Some(SourceHandle {
+                    start,
+                    end,
+                    ..entry.handle.clone()?
+                })
+            })
+            .take(4)
+            .collect();
         let mut candidates = Vec::new();
         // Outlines describe a file; their handle is not a request for its entire
         // body. Promoting them to source spans swallows the selected functions
@@ -610,6 +637,122 @@ impl Engine {
                 );
             }
             plan.compiler.push(found);
+        }
+        // Use only already admitted seed/candidate files. Reuse compiler parses;
+        // no repository scan, execution or inferred import resolution is needed.
+        // Names and source bodies must both survive the final read snapshot.
+        let mut names = BTreeSet::new();
+        let mut paths = Vec::new();
+        for seed in syntax_seeds {
+            let Some((meta, body)) = crate::boundary::source_in(&tx, &seed.path)? else {
+                continue;
+            };
+            if meta.hash == seed.sha256
+                && let Some(name) = body.get(seed.start as usize..seed.end as usize)
+            {
+                names.insert(name.to_owned());
+                if !paths.contains(&seed.path) {
+                    paths.push(seed.path);
+                }
+            }
+        }
+        if !names.is_empty() {
+            let mut test_words = BTreeSet::new();
+            for text in std::iter::once(query).chain(goals.iter().take(4).map(|e| e.text.as_str()))
+            {
+                let mut end = text.len().min(1024);
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                plan.discovery_limited |= end < text.len();
+                let text = &text[..end];
+                for (start, end) in crate::syntax::code_subtokens(text) {
+                    let word = text[start..end].to_lowercase();
+                    if word.len() > 2 && !crate::store::prose_stopword(&word) {
+                        if test_words.len() < 64 {
+                            test_words.insert(word);
+                        } else {
+                            plan.discovery_limited |= !test_words.contains(&word);
+                        }
+                    }
+                }
+            }
+            for candidate in &candidates {
+                if !paths.contains(&candidate.handle.path) {
+                    paths.push(candidate.handle.path.clone());
+                }
+            }
+            plan.discovery_limited |= paths.len() > 8;
+            for path in paths.into_iter().take(8) {
+                control.check()?;
+                if !reference_sources.contains_key(&path) {
+                    let parsed =
+                        crate::boundary::source_in(&tx, &path)?.and_then(|(meta, body)| {
+                            let tree = crate::syntax::parse_reference_source(&path, &body)?;
+                            Some((meta.hash, body, tree))
+                        });
+                    reference_sources.insert(path.clone(), parsed);
+                }
+                let Some((hash, body, tree)) = &reference_sources[&path] else {
+                    plan.syntax_skipped_paths += 1;
+                    continue;
+                };
+                let source = SourceHandle {
+                    workspace_id: wid.clone(),
+                    path: path.clone(),
+                    sha256: hash.clone(),
+                    start: 0,
+                    end: body.len() as u64,
+                };
+                let (found, limited) = reference::candidates(
+                    tree,
+                    body,
+                    &source,
+                    &names,
+                    MAX_ITEMS - plan.syntax_candidates,
+                    control,
+                )?;
+                plan.discovery_limited |= limited;
+                plan.syntax_candidates += found.len();
+                for (handle, attributed_test) in found {
+                    let facet = if attributed_test || test_path(&path) {
+                        "verification"
+                    } else {
+                        "consumers"
+                    };
+                    plan.discovery_limited |= !add(
+                        &mut candidates,
+                        handle,
+                        facet,
+                        if attributed_test {
+                            "syntactic_test_call_name"
+                        } else {
+                            "syntactic_call_name"
+                        },
+                    );
+                }
+                if plan.local_test_candidates < 4 {
+                    let (tests, limited) =
+                        reference::related_tests(tree, body, &source, &test_words, control)?;
+                    plan.discovery_limited |=
+                        limited || tests.len() > 4 - plan.local_test_candidates;
+                    for handle in tests.into_iter().take(4 - plan.local_test_candidates) {
+                        plan.local_test_candidates += 1;
+                        plan.discovery_limited |= !add(
+                            &mut candidates,
+                            handle,
+                            "verification",
+                            "same_file_test_task_terms",
+                        );
+                    }
+                } else {
+                    plan.discovery_limited = true;
+                }
+                if plan.syntax_candidates == MAX_ITEMS {
+                    plan.discovery_limited = true;
+                    break;
+                }
+            }
         }
         let memory = tx.open_table(crate::memory::MEMORY)?;
         let mut hits = Vec::new();

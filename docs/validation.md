@@ -1,5 +1,104 @@
 # Validation
 
+## Initial file coverage and task evidence — 2026-10-11
+
+Continued from `57b4ff5` on `experimental/context-ecosystem`. Private artifacts:
+`/workspace/.context-foundry-tools/validation-runs/realistic-delivery-v10/`.
+
+**Task evidence.** Composition discovers unresolved call-name candidates in up to
+eight already selected Rust, Python, Go and JavaScript/TypeScript files. Rust test
+attributes, supported assertion macros and up to four tests matching task terms
+add bounded verification candidates. Canonical definition spelling comes from the
+final source snapshot, including when the query uses different capitalization.
+Source edits/deletion invalidate the old evidence; exact spans and the existing
+delivery allowance remain. These candidates create no compiler edges or observed
+coverage. The real upstream percent-decoder context now delivers both consumer and
+verification bodies under the same 2,048-token allowance; its earlier context
+reported both facets missing.
+
+**Preparation.** An exhaustive body-v1 trial on the unchanged pinned Foundry
+snapshot stops within its 900-second command budget: 665 vectors / 269,121 tokens,
+32 partitioned sources, 242 unpartitioned, 819,042 ms wall time and 805,269 ms in
+provider calls. The command reserves 90 seconds for publication. Seven eligible
+queries use actual dense serving and the anchor bypasses the model; delivery stays
+2/8. This partial run does not evaluate complete body-vector retrieval. Short
+compilation/tests overlapped preparation, so its timing is not an isolated throughput
+comparison. Raw failures and traces remain in `body-preparation.json` and
+`foundry-body-semantic/report.json`.
+
+The resulting code repair makes hierarchy preparation visit one representation
+spanning each selected file before body refinement, in both CLI and resident paths.
+Publication separates those phases, including cached inputs and foreground-sized
+leftovers. Existing recipe IDs, exact-input reuse, change scope, quotas and source
+freshness remain. A new cold real-model hierarchy run, batch one, publishes initial
+views for **all 274 admitted files**, observed and source-hash/range verified by
+**288,795 ms**. Its published manifest correctly remains partial: the full hierarchy
+contains **14,453 representation locations**; identical inputs share vectors. This
+observation is an upper bound on when broad coverage was available, not the exact
+first-publication timestamp. The saved manifest already
+has 548 vectors, including subsequent refinement. See `hierarchy-first-views.json`
+and its immutable manifest/location snapshots. The bounded run finishes in 378,819 ms,
+with 783 vectors / 277,320 input tokens, 784 searchable locations and every source
+partitioned. First searchable publication takes 12,053 ms. These are small-repository
+results; all body vectors are not prepared. Fitting every hierarchy partition and
+exhaustive refinement still cost work; automatic selective refinement is not implemented.
+The same eight frozen questions still deliver **2/8** after this preparation:
+seven eligible queries use actual dense serving without fallback, and the anchored
+query skips the worker (`foundry-hierarchy-semantic/report.json`). The real CLI
+snapshot predates the final resident prefetch-drain correction; the resident path
+is verified separately with an instrumented provider, not claimed as a native run.
+
+**Host outcome.** A new pinned Qwen2.5-Coder-7B Q4_K_M/OMP 18.6.0 pair uses the same
+upstream percent-encoding 2.3.2 seeded regression, external checker, 18 public tests,
+2,048-token context allowance, 768-token response limit and one attempt per arm.
+Prompt caching is enabled and reset between arms. Both arms return fenced JSON
+resembling tool calls, execute no edits and fail the external checker. Complete
+gateway usage is 8,171/4,016 input and 102/170 output tokens; cached input is zero.
+Measured task times are 264,321/129,288 ms, including 0/636 ms preparation. These are
+failed-attempt costs, **not completion savings**. The different model is a new recipe,
+not a causal comparison with earlier 4B trials. Model acquisition is recorded
+separately; energy and amortized total cost remain unknown. No text-shaped command
+is promoted to an executable tool call.
+
+**Rejected retrieval trial.** Weak query-only inflection alternatives preserve all
+prior delivered spans but add none: Foundry 2/8, Rust 3/6 and 5/8, Go 5/8. The scoring
+change was removed. The original questions, hashes and budgets remain unchanged.
+
+**Attribution correction.** Lexical materialization traces now include the indexed
+document range as well as its enclosing function and delivered excerpt. The diagnostic
+previously blamed an excerpt when another fragment of the same function had been
+selected. It now checks the actual document at selection/materialization; missing
+coordinates leave the cause unknown. Final lexical comparisons retain every previous
+delivery: Foundry 2/8, Rust 3/6 and 5/8, Go 5/8 (`retrieval-final-*/report.json`).
+Foundry question 3 is now correctly attributed to the candidate limit. No label,
+budget or old raw report was changed. The native reports above predate this correction
+and retain their original loss classifications.
+
+**CLI worker ownership.** The final process inspection found normal CLI embedding
+workers orphaned as zombies after command exit. Dropping the last runtime reference
+closed the job channel but did not join its provider thread. The per-command slot now
+waits for existing shutdown on success/error, allowing the supervisor to reap the
+child before exit. MCP's owner shutdown and provider grace remain. A blocking-provider
+test exercises both return paths. The real Linux worker then passes both a dense
+context command and an intentional missing-task error: each observed child PID/start
+identity is absent when its parent returns, and successful delivery is byte-identical
+to the preceding dense result. See `cli-reaping-v3-report.json` (12,447/11,474 ms).
+Two earlier monitoring attempts failed because this kernel omits per-thread `children`
+files; their records are retained and establish no reaping result. The corrected
+monitor reads PPID and process identity from `/proc` instead. Cleanup can outlast the
+query read deadline, under the existing supervisor grace.
+
+**Checks.** Focused library, core, MCP, multi-root, response, task-evidence, neural
+retrieval and attribution suites pass, including source freshness, exact budget
+accounting, restart reuse and initial-view publication before any body call. The
+resident test includes foreground-sized leftovers; no duplicate model inputs are
+submitted. Gateway completion-cost accounting also passes. Clippy with warnings denied,
+the no-default-features library build, formatting and documentation links pass.
+
+Full representative model inference, general retrieval quality, reliable host-task
+completion/economics and native macOS/Metal/GPU acceptance remain open. The first
+file-view pass is useful progressive coverage, not full retrieval acceptance.
+
 ## Named re-exports and current fitting — 2026-10-11
 
 Continued from `b54ab8a` on `experimental/context-ecosystem`. Private artifacts:

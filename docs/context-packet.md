@@ -25,6 +25,20 @@ The normal Linux embedding worker includes the 8,192-token pooled-output repair.
 
 Current evidence and limits:
 
+The latest [file coverage/task continuation](validation.md#initial-file-coverage-and-task-evidence--2026-10-11)
+adds unresolved Rust/Python/Go/JavaScript/TypeScript call candidates and attributed
+Rust tests within existing composition budgets. Hierarchy preparation now publishes
+an initial representation of every selected file before refining bodies, preserving
+cache identity, changed-path scope and resident foreground limits. A cold real-model
+run publishes initial views for all 274 admitted Foundry files; 783 vectors cover
+784 of 14,453 representation locations at its stop. This is progressive coverage,
+not completed body inference; dense retrieval remains 2/8. Lexical attribution now
+checks selected document ranges before blaming excerpt construction. The 7B upstream host pair executes no edits and fails
+both external checks; lower failed-attempt usage establishes no savings. Artifacts
+are under `validation-runs/realistic-delivery-v10/` in the private tools directory.
+CLI semantic slots now wait for worker cleanup before returning on success/error;
+both paths pass with the real Linux worker, and successful delivery stays identical.
+
 The latest [re-export/fitting continuation](validation.md#named-re-exports-and-current-fitting--2026-10-11)
 supports named router re-exports in configured Python modules with every hop cited.
 Boundary scopes now use `python-http-v7` and require republication. Acronym prose
@@ -91,7 +105,7 @@ candidate; native macOS CPU acceptance, global GPU headroom and useful generated
 memory outcomes also remain open. 013 stays frozen off. Nothing is released or
 promoted to a new default.
 
-[Current validation](validation.md#named-re-exports-and-current-fitting--2026-10-11)
+[Current validation](validation.md#initial-file-coverage-and-task-evidence--2026-10-11)
 records raw artifact locations, frozen identities, failures and checks. Current files
 are outside Git under `/workspace/.context-foundry-tools/validation-runs/`, with the
 prior corpus, profiles, reports and transcripts in `quality-scale-economics-v5`.

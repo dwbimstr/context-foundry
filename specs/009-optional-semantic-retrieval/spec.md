@@ -1,5 +1,33 @@
 # 009 — Neural context that becomes useful and stays prepared
 
+CLI lifecycle correction, 2026-10-11: the per-command semantic slot now waits
+for the existing runtime shutdown before leaving scope, on success or error. Closing
+the job channel alone detached the provider thread, allowing CLI exit to interrupt
+worker reaping. The guard joins that thread; the supervisor retains its existing
+TERM/KILL/reap contract and grace. This cleanup may outlast the query read deadline.
+Resident MCP continues to use its explicit owner shutdown. Skipped/failed acquisition
+still starts no worker, and no model or result-format change is introduced.
+
+Hierarchy scheduling continuation, 2026-10-11: CLI and resident preparation now
+visit the first representation of every selected source before refining body and
+parent inputs. Hierarchy's existing preorder puts a representation spanning the
+whole file first (a complete body or parent may share that range for a short file). A second
+cursor pass then consumes all remaining uncached inputs. Both passes preserve
+priority/background fairness and changed-path scope; updating priorities updates
+the pending refinement pass too. No new cache, index, schema or input recipe is
+introduced. Cursors contain no source bodies or token arrays. Accepted and in-flight
+keys retain ordinary deduplication, and restart/revert reuse remains exact.
+
+The transition publishes accepted file views before body refinement, including
+cache-only mapping changes. Resident prefetch stops at that boundary and drains all
+initial inputs, including foreground-sized leftovers, before publishing and admitting
+refinement. The hierarchy index remains **partial** until every eligible body,
+parent and file input is covered; completing the first pass never claims full
+retrieval or completed inference. Partitions still fit all hierarchy inputs, and
+the second pass still has the full model obligation. This improves delivery order;
+automatic query-driven selective body preparation remains open. Address, body-only
+and overview-only preparation keep their existing order.
+
 Evidence-delivery continuation, 2026-10-11: experimental prose context can focus
 long overview/hierarchy candidates to an exact source passage of at most 1,536
 bytes. Dense-only passages maximize distinct query concepts across adjacent lines,
@@ -2023,6 +2051,14 @@ disable the model after lexical selection classifies the request as prose. The f
 Foundry/Rust scores remain 2/8, 3/6 and 5/8, preserving every delivered span. Eight
 new Go questions on the mixed corpus improve from 0/8 to 1/8. These are bounded
 evidence repairs, not general acceptance.
+
+Attribution correction (2026-10-11): lexical materialization events now retain the
+indexed document's coordinates as well as the enclosing unit and actual excerpt.
+The diagnostic requires the expected span to lie in the selected document before
+attributing an excerpt loss. A different fragment of the same long function is not
+evidence that the expected bytes reached that stage. Selection events use their
+document coordinates too; missing older coordinates leave the cause unknown.
+Answer labels, delivery checks and earlier raw reports remain unchanged.
 
 `representative_corpus_workload_inventory` uses a pinned 60–80k public file manifest,
 source admission and current hashes, the production body fitter and real tokenizer to

@@ -173,6 +173,9 @@ struct Probe {
     document_inputs: Arc<AtomicU64>,
     document_tokens: Arc<AtomicU64>,
     document_batches: Arc<Mutex<Vec<Vec<usize>>>>,
+    document_keys: Arc<Mutex<Vec<String>>>,
+    publication_path: Arc<Mutex<Option<PathBuf>>>,
+    publication_before_call: Arc<Mutex<Vec<(u64, u64)>>>,
     query_calls: Arc<AtomicU64>,
     queries: Arc<Mutex<Vec<String>>>,
     mode: Arc<Mutex<QueryMode>>,
@@ -220,6 +223,24 @@ impl EmbeddingProvider for ConceptProvider {
         _control: &Control,
     ) -> Result<Vec<Vec<f32>>, ProviderError> {
         provider::check_document_batch(batch, self.descriptor.input_limits())?;
+        if let Some(path) = self.probe.publication_path.lock().unwrap().as_ref() {
+            let count = std::fs::read(path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .and_then(|manifest| manifest["count"].as_u64())
+                .unwrap_or(0);
+            self.probe
+                .publication_before_call
+                .lock()
+                .unwrap()
+                .push((self.probe.document_inputs(), count));
+        }
+        let digest = self.descriptor.digest();
+        self.probe.document_keys.lock().unwrap().extend(
+            batch
+                .iter()
+                .map(|input| provider::input_key(&digest, &model_input(&input.ids))),
+        );
         self.probe
             .document_batches
             .lock()
@@ -6599,6 +6620,105 @@ fn overview_bootstrap_bounds_inputs_and_reuses_them_during_hierarchy_expansion()
             .values()
             .all(|locations| locations.iter().all(|location| location.path != path))
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hierarchy_cli_and_resident_bootstrap_cover_files_before_body_inference() {
+    use context_foundry::neural::partition::Representation;
+    let extra: Vec<_> = (0..21)
+        .map(|n| {
+            (
+                format!("first/{n:02}.rs"),
+                (0..30)
+                    .map(|i| {
+                        format!("/// Evidence {n} {i}.\nfn action_{n}_{i}() {{ perform({i}); }}\n")
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    for resident in [false, true] {
+        let mut corpus = Corpus::unprepared(&extra);
+        select_body_recipe(&mut corpus, 512, 64, None);
+        Arc::make_mut(&mut corpus.profile).representation =
+            Representation::Hierarchy { parent_tokens: 64 };
+        std::fs::write(
+            &corpus.profile_path,
+            serde_json::to_vec(&*corpus.profile).unwrap(),
+        )
+        .unwrap();
+        *corpus.probe.publication_path.lock().unwrap() =
+            Some(index::generation_dir(&corpus.store, &corpus.digest()).join(index::MANIFEST_FILE));
+        if resident {
+            let served = corpus
+                .serve_stdio(Some(corpus.held(&Hold::default())))
+                .await;
+            served.prepare().await;
+            let state = served.stopped().await;
+            assert_eq!(state["unpartitioned_sources"], 0, "{state}");
+            assert_eq!(state["missing_units"], 0, "{state}");
+            served.close().await;
+            corpus.reopen().await;
+        } else {
+            assert!(!corpus.prepare().partial);
+        }
+        let mapping = corpus
+            .engine()
+            .semantic_current_mapping(
+                &Control::unbounded(),
+                &corpus.digest(),
+                &corpus.profile.recipe_id(),
+            )
+            .unwrap();
+        let paths: BTreeSet<_> = mapping
+            .units
+            .values()
+            .flat_map(|locations| locations.iter())
+            .map(|unit| unit.path.clone())
+            .collect();
+        let first: BTreeSet<_> = paths
+            .iter()
+            .map(|path| {
+                corpus
+                    .engine()
+                    .semantic_partition(path)
+                    .unwrap()
+                    .unwrap()
+                    .units[0]
+                    .input_key
+                    .clone()
+            })
+            .collect();
+        let keys = corpus.probe.document_keys.lock().unwrap().clone();
+        assert_eq!(
+            keys[..first.len()].iter().cloned().collect::<BTreeSet<_>>(),
+            first,
+            "resident={resident}: no body input may displace the first view of a later file"
+        );
+        assert!(keys.len() > first.len());
+        assert_eq!(
+            corpus
+                .probe
+                .publication_before_call
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(before, _)| *before == first.len() as u64)
+                .copied(),
+            Some((first.len() as u64, first.len() as u64)),
+            "resident={resident}: publish every initial view before admitting any body refinement"
+        );
+        assert_eq!(
+            keys.len(),
+            keys.iter().collect::<BTreeSet<_>>().len(),
+            "phase changes cannot resubmit accepted or in-flight keys"
+        );
+        assert_eq!(
+            corpus.prepare().document_calls,
+            0,
+            "unchanged restart retains both phases"
+        );
+    }
 }
 
 #[test]

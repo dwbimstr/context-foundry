@@ -241,7 +241,7 @@ pub fn validate_priority_paths(paths: &[String]) -> FResult<()> {
     Ok(())
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct SourceCursor {
     pub exact: bool,
     pub scope: Option<String>,
@@ -252,12 +252,16 @@ pub(crate) struct SourceCursor {
     pub resume_before: Option<Option<String>>,
 }
 
-/// At most sixteen priority cursors and one ordinary cursor. Alternate one wave
-/// of each; priority scopes rotate so neither an area nor the background starves.
+/// At most sixteen priority cursors and one ordinary cursor per pass. Hierarchy
+/// keeps one additional copy for refinement, with no retained bodies/vectors.
+/// Alternate priority/background waves so neither starves.
+#[derive(Clone)]
 pub(crate) struct SourceOrder {
     priority: VecDeque<SourceCursor>,
     background: Option<SourceCursor>,
     priority_turn: bool,
+    overview_first: bool,
+    refinement: Option<Box<SourceOrder>>,
 }
 impl SourceOrder {
     pub(crate) fn changed(paths: impl Iterator<Item = String>) -> Self {
@@ -272,11 +276,29 @@ impl SourceOrder {
                 .collect(),
             background: None,
             priority_turn: true,
+            overview_first: false,
+            refinement: None,
         }
     }
     pub(crate) fn prioritize(&mut self, paths: &[String]) -> FResult<()> {
         self.priority = Self::new(paths)?.priority;
+        if let Some(refinement) = &mut self.refinement {
+            refinement.prioritize(paths)?;
+        }
         Ok(())
+    }
+    /// Hierarchy partitions already begin with a whole-file representation.
+    /// Visit that input in every selected source before draining body inputs.
+    /// Only cursors are copied; accepted work remains in the ordinary cache.
+    pub(crate) fn for_representation(mut self, representation: partition::Representation) -> Self {
+        if matches!(representation, partition::Representation::Hierarchy { .. }) {
+            self.refinement = Some(Box::new(self.clone()));
+            self.overview_first = true;
+        }
+        self
+    }
+    pub(crate) fn overview_first(&self) -> bool {
+        self.overview_first
     }
     pub(crate) fn new(paths: &[String]) -> FResult<Self> {
         validate_priority_paths(paths)?;
@@ -298,9 +320,16 @@ impl SourceOrder {
                 .collect(),
             background: Some(SourceCursor::default()),
             priority_turn: true,
+            overview_first: false,
+            refinement: None,
         })
     }
     pub(crate) fn next(&mut self) -> Option<SourceCursor> {
+        if !self.waiting()
+            && let Some(refinement) = self.refinement.take()
+        {
+            *self = *refinement;
+        }
         if (self.priority_turn || self.background.is_none()) && !self.priority.is_empty() {
             self.priority_turn = false;
             self.priority.pop_front()
@@ -915,12 +944,24 @@ fn inner(
     let mut published = report.index_entries;
     snapshot_progress(report, options.started);
     let mut unpublished = 0u64;
-    let mut order = SourceOrder::new(options.priority_paths)?;
+    let mut order =
+        SourceOrder::new(options.priority_paths)?.for_representation(profile.representation);
+    let mut overview_phase = order.overview_first();
     let mut stop: Option<Stop> = None;
     'waves: while let Some(mut cursor) = order.next() {
         if let Some(halted) = halt(control, budget) {
             stop = Some(halted);
             break;
+        }
+        if overview_phase && !order.overview_first() {
+            if let Some(halted) = publish(engine, control, budget, report)? {
+                stop = Some(halted);
+                break;
+            }
+            published = report.index_entries;
+            unpublished = 0;
+            overview_phase = false;
+            snapshot_progress(report, options.started);
         }
         let resumed = cursor.resume_before.take();
         let before = resumed.clone().unwrap_or_else(|| cursor.after.clone());
@@ -961,6 +1002,7 @@ fn inner(
             let mut walk = Walk::wave(cursor.scope.clone(), before.clone(), cursor.after.clone())
                 .with_retained(retained);
             walk.exact = cursor.exact;
+            walk.overview_first = order.overview_first();
             let mut pending = Batch::default();
             let mut end = false;
             let mut wave_inputs = 0;
@@ -1384,6 +1426,7 @@ pub(crate) enum Selected {
 #[derive(Default)]
 pub(crate) struct Walk {
     pub(crate) exact: bool,
+    pub(crate) overview_first: bool,
     after: Option<String>,
     scope: Option<String>,
     through: Option<String>,
@@ -1958,7 +2001,13 @@ impl Steps<'_> {
                 {
                     let mut wanted = Vec::new();
                     let mut full_at = None;
-                    for (index, unit) in record.units.iter().enumerate().skip(first) {
+                    let remaining = if walk.overview_first {
+                        1usize.saturating_sub(first)
+                    } else {
+                        usize::MAX
+                    };
+                    for (index, unit) in record.units.iter().enumerate().skip(first).take(remaining)
+                    {
                         report.eligible_units += 1;
                         if walk.seen.contains(&unit.input_key) {
                             // Identical rendered inputs share this run's result.
@@ -2114,6 +2163,114 @@ mod tests {
         ))
         .unwrap();
         (dir, engine, profile)
+    }
+
+    #[test]
+    fn hierarchy_visits_one_whole_file_input_per_source_before_refining() {
+        let (_dir, engine, mut profile) = partition_fixture();
+        for n in 0..12 {
+            engine
+                .replace_source(
+                    &format!("note{n:02}.md"),
+                    &format!(
+                        "# Different note {n}\n{}",
+                        "Repeated useful detail.\n".repeat(150)
+                    ),
+                )
+                .unwrap();
+        }
+        profile.representation = partition::Representation::Hierarchy { parent_tokens: 64 };
+        profile.card_tokens = 512;
+        let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+        let digest = profile.descriptor.digest();
+        let recipe = profile.recipe_id();
+        let cards = Cards {
+            tokenizer: &tokenizer,
+            profile: &profile,
+            function_digest: &digest,
+        };
+        for range in [0..8, 8..12] {
+            let sources = range
+                .map(|n| {
+                    let path = format!("note{n:02}.md");
+                    let hash = engine.source(&path).unwrap().unwrap().hash;
+                    engine.semantic_partition_source(&path, &hash).unwrap()
+                })
+                .collect();
+            for partition in cards
+                .prepare_partitions(sources, &recipe, &Control::unbounded())
+                .unwrap()
+            {
+                engine.semantic_accept_partition(partition).unwrap();
+            }
+        }
+        let steps = Steps {
+            engine: &engine,
+            cards,
+            recipe: &recipe,
+        };
+        let mut walk = Walk {
+            overview_first: true,
+            ..Default::default()
+        };
+        let mut selected = Vec::new();
+        let mut report = PrepareReport::default();
+        loop {
+            let mut selection = Selection::default();
+            let result = steps
+                .select_batch(&mut walk, &mut selection, 1, 2, &mut report, &mut || None)
+                .unwrap();
+            for source in selection.sources {
+                assert_eq!(source.wanted.len(), 1);
+                assert_eq!(source.wanted[0].0, 0);
+                let unit = &source.wanted[0].1;
+                assert_eq!(
+                    (unit.start, unit.end),
+                    (
+                        0,
+                        engine.source(&source.source.path).unwrap().unwrap().bytes
+                    )
+                );
+                selected.push(source.source.path.clone());
+            }
+            if matches!(result, Selected::End) {
+                break;
+            }
+        }
+        assert_eq!(
+            selected,
+            (0..12)
+                .map(|n| format!("note{n:02}.md"))
+                .collect::<Vec<_>>()
+        );
+        let mut refinement = Walk::default();
+        let mut remaining = Selection::default();
+        steps
+            .select_batch(
+                &mut refinement,
+                &mut remaining,
+                64,
+                usize::MAX,
+                &mut report,
+                &mut || None,
+            )
+            .unwrap();
+        assert!(
+            remaining.sources[0].wanted.len() > 1,
+            "ordinary refinement still includes bodies"
+        );
+        let mut order = SourceOrder::new(&[])
+            .unwrap()
+            .for_representation(profile.representation);
+        assert!(order.overview_first());
+        let cursor = order.next().unwrap();
+        order.advance(cursor, true);
+        assert!(order.next().is_some());
+        assert!(!order.overview_first());
+        assert!(
+            order.next().is_none(),
+            "exactly two passes, no repeated body loop"
+        );
     }
 
     fn inputs(engine: &Engine, count: usize) -> Vec<cache::PartitionSource> {

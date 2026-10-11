@@ -3130,6 +3130,7 @@ impl Candidate {
                 "stage":"materialization", "origin":"lexical", "rank":item.rank,
                 "unit":{"workspace_id":handle.workspace_id,"path":self.path,"sha256":handle.sha256,
                     "start":self.unit_start,"end":self.unit_end},
+                "document":{"start":self.start,"end":self.end},
                 "excerpt":handle,
             }));
         }
@@ -3316,7 +3317,7 @@ fn ranked_context_item(
     Ok(item)
 }
 
-fn prose_stopword(word: &str) -> bool {
+pub(crate) fn prose_stopword(word: &str) -> bool {
     [
         "a", "an", "and", "are", "as", "at", "be", "by", "can", "could", "do", "does", "for",
         "from", "how", "in", "into", "is", "it", "of", "on", "or", "should", "that", "the",

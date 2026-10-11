@@ -13,6 +13,31 @@ fn covers(unit: &Value, expected: &SourceHandle) -> bool {
         && unit["end"].as_u64().is_some_and(|n| n >= expected.end)
 }
 
+// A lexical unit can be a long function with many indexed documents. Selecting
+// one document does not establish that every byte of its enclosing unit reached
+// excerpt construction. Dense locations and placement events already name their
+// actual selected ranges. Older lexical traces without document ranges cannot
+// establish this boundary and remain unknown.
+fn selected_covers(event: &Value, expected: &SourceHandle) -> bool {
+    if !covers(&event["unit"], expected) {
+        return false;
+    }
+    if event["origin"] == "lexical"
+        && matches!(
+            event["stage"].as_str(),
+            Some("selection" | "materialization")
+        )
+    {
+        return event["document"]["start"]
+            .as_u64()
+            .is_some_and(|start| start <= expected.start)
+            && event["document"]["end"]
+                .as_u64()
+                .is_some_and(|end| end >= expected.end);
+    }
+    true
+}
+
 fn attribute(record: &Value, query: &str, expected: &SourceHandle) -> Value {
     let unknown = |reason: &str| json!({"result":"unknown","reason":reason});
     if record["version"] != 1
@@ -87,7 +112,7 @@ fn attribute(record: &Value, query: &str, expected: &SourceHandle) -> Value {
     }
     let materialized: Vec<_> = events
         .iter()
-        .filter(|e| e["stage"] == "materialization" && covers(&e["unit"], expected))
+        .filter(|e| e["stage"] == "materialization" && selected_covers(e, expected))
         .collect();
     if !materialized.is_empty() {
         if materialized.iter().all(|e| {
@@ -110,7 +135,7 @@ fn attribute(record: &Value, query: &str, expected: &SourceHandle) -> Value {
     }
     let seen: Vec<_> = events
         .iter()
-        .filter(|e| covers(&e["unit"], expected))
+        .filter(|e| selected_covers(e, expected))
         .collect();
     // A deduplicated copy is not a lost unit. Multiple competing observed
     // causes remain unknown; absence from a bounded window proves no cause.
@@ -146,8 +171,9 @@ fn attribution_distinguishes_excerpt_selection_from_missing_discovery() {
     std::fs::create_dir(&root).unwrap();
     let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
     let body = format!(
-        "pub fn process() {{\n    retain_expected_records();\n{}    restore_catalog();\n}}\n",
-        "    ordinary_step();\n".repeat(500)
+        "pub fn process() {{\n    retain_expected_records();\n{}    restore_catalog();\n{}    restore_late();\n}}\n",
+        "    ordinary_step();\n".repeat(100),
+        "    ordinary_step();\n".repeat(400)
     );
     engine.replace_source("lib.rs", &body).unwrap();
     engine.refresh(&Control::unbounded()).unwrap();
@@ -181,6 +207,24 @@ fn attribution_distinguishes_excerpt_selection_from_missing_discovery() {
     .unwrap();
     let r = record(&trace, &packed.text);
     assert_eq!(attribute(&r, query, &expected)["stage"], "evidence_window");
+    let start = body.find("restore_late").unwrap() as u64;
+    let outside = SourceHandle {
+        start,
+        end: start + "restore_late".len() as u64,
+        ..expected.clone()
+    };
+    assert_eq!(
+        attribute(&r, query, &outside)["reason"],
+        "expected_span_not_observed_in_bounded_candidate_window",
+        "a selected function is not evidence that its unselected documents were materialized"
+    );
+    let mut legacy = r.clone();
+    for event in legacy["trace"]["events"].as_array_mut().unwrap() {
+        if event["stage"] == "materialization" {
+            event.as_object_mut().unwrap().remove("document");
+        }
+    }
+    assert_eq!(attribute(&legacy, query, &expected)["result"], "unknown");
     let mut incomplete = r.clone();
     for event in incomplete["trace"]["events"].as_array_mut().unwrap() {
         if event["stage"] == "materialization" {

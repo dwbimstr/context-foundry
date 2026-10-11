@@ -246,7 +246,7 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
     assert!(
         !public_check
             || (["parser", "percent_decode"].contains(&scenario.as_str())
-                && backend == "qwen3-4b-instruct-2507")
+                && ["qwen3-4b-instruct-2507", "qwen-coder-7b"].contains(&backend.as_str()))
     );
     let percent = scenario == "percent_decode";
     // Whole upstream source can take over two minutes to prefill on this CPU;

@@ -1,5 +1,14 @@
 # Workflows worth building
 
+Latest continuation, 2026-10-11: hierarchy preparation publishes an initial view of
+each selected source before exhaustive body refinement. A cold real-model check
+publishes views for all 274 admitted Foundry files while correctly retaining partial
+coverage; dense delivery remains 2/8. CLI commands now wait for worker reaping on
+success/error, checked with the real Linux worker. Task composition now discovers bounded unresolved callers and attributed
+test candidates without compiler artifacts. The new 7B host pair still fails its
+external checker. General retrieval, full representative inference, task benefits and
+native hardware acceptance remain open. See [current validation](../docs/validation.md#initial-file-coverage-and-task-evidence--2026-10-11).
+
 The next continuation adds named configured router re-exports with whole-proof task
 delivery and singular/plural acronym alternatives that share one query score. The
 current overview fitter covers all 67,663 admitted representative sources across

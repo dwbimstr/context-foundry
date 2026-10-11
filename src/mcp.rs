@@ -3982,6 +3982,29 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
     semantic_slot_reserved(launch, None)
 }
 
+/// A command owns its runtime until the provider thread has stopped and reaped
+/// its worker. Dropping the last Arc alone only closes the job channel; the CLI
+/// could exit before that detached thread finishes, leaving an orphaned child.
+/// MCP keeps its existing explicit asynchronous owner-shutdown path.
+pub(crate) struct CliSemanticSlot(SemanticSlot);
+
+impl std::ops::Deref for CliSemanticSlot {
+    type Target = SemanticSlot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for CliSemanticSlot {
+    fn drop(&mut self) {
+        #[cfg(feature = "semantic")]
+        if let Some(Ok(runtime)) = &self.0 {
+            runtime.shutdown();
+        }
+    }
+}
+
 /// A single CLI request can establish that it needs no model before opening
 /// artifacts or reserving/loading a worker. Resident MCP startup is unchanged.
 /// This shares the actual request's anchor/prose predicate; it is not a second
@@ -3993,17 +4016,17 @@ pub(crate) fn cli_semantic_slot(
     path: Option<&str>,
     prose: bool,
     control: &Control,
-) -> FResult<SemanticSlot> {
+) -> FResult<CliSemanticSlot> {
     #[cfg(feature = "semantic")]
     if launch.is_some() && semantic_anchored(engine, query, path, control, None, prose) {
         if let Some(trace) = control.trace() {
             trace.record(serde_json::json!({"stage":"semantic_startup", "state":"skipped", "reason":"anchor_or_baseline_error"}));
         }
-        return Ok(None);
+        return Ok(CliSemanticSlot(None));
     }
     #[cfg(not(feature = "semantic"))]
     let _ = (engine, query, path, prose, control);
-    semantic_slot(launch)
+    semantic_slot(launch).map(CliSemanticSlot)
 }
 
 fn semantic_slot_reserved(
@@ -4572,6 +4595,78 @@ fn admit_stdio_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn cli_slot_waits_for_provider_cleanup_on_success_and_error() {
+        use crate::neural::{provider, query::QueryRuntime};
+        use std::sync::mpsc;
+        struct Cleanup {
+            descriptor: provider::FunctionDescriptor,
+            entered: mpsc::Sender<()>,
+            release: mpsc::Receiver<()>,
+        }
+        impl provider::EmbeddingProvider for Cleanup {
+            fn descriptor(&self) -> &provider::FunctionDescriptor {
+                &self.descriptor
+            }
+            fn embed_documents(
+                &mut self,
+                _batch: &[provider::TokenizedInput],
+                _control: &Control,
+            ) -> Result<Vec<Vec<f32>>, provider::ProviderError> {
+                unreachable!("cleanup needs no inference")
+            }
+            fn embed_query(
+                &mut self,
+                _input: &provider::TokenizedInput,
+                _deadline: Instant,
+            ) -> Result<Vec<f32>, provider::ProviderError> {
+                unreachable!("cleanup needs no inference")
+            }
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                self.entered.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+        }
+        for fail in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = crate::testkit::write_semantic_profile(dir.path(), "cleanup", |_| {});
+            let profile = Arc::new(crate::neural::profile::SemanticProfile::load(&path).unwrap());
+            let (entered_tx, entered) = mpsc::channel();
+            let (release, release_rx) = mpsc::channel();
+            let provider = Cleanup {
+                descriptor: profile.descriptor.clone(),
+                entered: entered_tx,
+                release: release_rx,
+            };
+            let runtime = Arc::new(
+                QueryRuntime::start(profile, Box::new(move || Ok(Box::new(provider)))).unwrap(),
+            );
+            let (done_tx, done) = mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let result = (|| -> Result<(), ()> {
+                    let _slot = CliSemanticSlot(Some(Ok(runtime)));
+                    if fail {
+                        return Err(());
+                    }
+                    Ok(())
+                })();
+                done_tx.send(result).unwrap();
+            });
+            entered.recv_timeout(Duration::from_secs(10)).unwrap();
+            let before_cleanup = done.recv_timeout(Duration::from_millis(50));
+            release.send(()).unwrap();
+            assert_eq!(before_cleanup, Err(mpsc::RecvTimeoutError::Timeout));
+            assert_eq!(
+                done.recv_timeout(Duration::from_secs(10)).unwrap(),
+                if fail { Err(()) } else { Ok(()) }
+            );
+            worker.join().unwrap();
+        }
+    }
 
     #[cfg(all(feature = "semantic", feature = "test-faults"))]
     #[test]
