@@ -156,15 +156,31 @@ fn real_native_embedding_receipt() {
             .to_vec(),
     })
     .collect();
+    let timing = |stage: &str, start: Instant, sequences: usize, tokens: usize| {
+        println!(
+            "NATIVE-EMBED-TIMING {}",
+            serde_json::json!({
+                "stage": stage,
+                "elapsed_ms": start.elapsed().as_millis(),
+                "sequences": sequences,
+                "input_tokens": tokens,
+                "scope": "owned_provider_call_wall_time_not_end_to_end_scale_throughput",
+            })
+        );
+    };
+    let acquire_started = Instant::now();
     let mut provider = supervisor::acquire_until(&profile, true, &control).unwrap();
+    timing("acquire", acquire_started, 0, 0);
     let mut vectors = Vec::new();
     for input in &inputs {
+        let call_started = Instant::now();
         vectors.push(
             provider
                 .embed_documents(std::slice::from_ref(input), &control)
                 .unwrap()
                 .remove(0),
         );
+        timing("single", call_started, 1, input.ids.len());
     }
     let receipt = |inputs: &[TokenizedInput], vectors| Receipt {
         v: 1,
@@ -177,23 +193,34 @@ fn real_native_embedding_receipt() {
         elapsed_ms: started.elapsed().as_millis() as u64,
     };
     let singles = receipt(&inputs, vectors.clone());
+    let batch_started = Instant::now();
     let batched = receipt(
         &inputs,
         provider.embed_documents(&inputs, &control).unwrap(),
     );
+    timing(
+        "batch",
+        batch_started,
+        inputs.len(),
+        inputs.iter().map(|input| input.ids.len()).sum(),
+    );
     compare(&singles, &batched).unwrap();
     let mut full = inputs[0].clone();
     full.ids.resize(8192, full.ids[1]);
+    let full_started = Instant::now();
     vectors.push(
         provider
             .embed_documents(std::slice::from_ref(&full), &control)
             .unwrap()
             .remove(0),
     );
+    timing("full_window", full_started, 1, full.ids.len());
     inputs.push(full);
     let result = receipt(&inputs, vectors);
     compare(&result, &result).unwrap();
+    let shutdown_started = Instant::now();
     drop(provider);
+    timing("shutdown", shutdown_started, 0, 0);
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

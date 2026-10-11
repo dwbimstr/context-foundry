@@ -254,6 +254,11 @@ def main():
         cpu_ok = True
         for name in ("native_macos_cpu_observation", "native_macos_cpu_pressure_pauses_and_resumes_both_lanes"):
             cpu_ok = test("model_resources::tests::" + name, ["--lib"], True) and cpu_ok
+        for name in (
+            "held_gguf_check_uses_the_open_file_and_keeps_its_descriptor",
+            "held_gguf_check_refuses_split_and_malformed_files_without_closing_owner",
+        ):
+            cpu_ok = test("neural::worker_runtime::tests::" + name, ["--lib"]) and cpu_ok
         for name in FIXTURES:
             cpu_ok = test(name, ["--test", "embed_worker"]) and cpu_ok
 
@@ -265,7 +270,7 @@ def main():
             blocked = (out / "metal-probe.json").exists() and json.loads((out / "metal-probe.json").read_text()).get("status") == "blocked"
             result.update(status="blocked" if blocked and cpu_ok else "failed", reason="Metal compute probe did not pass; models were not downloaded")
             return 2 if result["status"] == "blocked" else 1
-        require(cpu_ok, "CPU admission or native synthetic lifecycle failed; models were not downloaded")
+        require(cpu_ok, "CPU admission, held-model validation or native synthetic lifecycle failed; models were not downloaded")
         require(shutil.disk_usage(work).free >= 5 * 1024**3, "less than 5 GiB free for native backend and artifacts")
 
         model = work / "models"

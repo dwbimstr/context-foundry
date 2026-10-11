@@ -132,9 +132,35 @@ const SPLIT_COUNT: &str = "split.count";
 /// any `split.count` other than one u16 of at most 1, and any header it
 /// cannot read to its last pair. Only a single-file GGUF is supported.
 pub fn refuse_split_gguf(path: &Path) -> Result<(), String> {
+    let shown = path.display().to_string();
+    let file = std::fs::File::open(path).map_err(|e| format!("{shown}: {e}"))?;
+    refuse_split_gguf_file(file, &shown)
+}
+
+/// Check the held, verified descriptor without reopening a pathname. The caller
+/// retains ownership; a successful check resets its shared file offset for the
+/// model loader. This works when an App Sandbox denies /dev/fd path opens.
+#[cfg(unix)]
+pub fn refuse_split_gguf_fd(fd: std::os::fd::RawFd) -> Result<(), String> {
+    use std::os::fd::FromRawFd;
+    let shown = format!("verified GGUF fd {fd}");
+    if fd < 3 {
+        return Err(format!(
+            "{shown}: an inherited model descriptor is required"
+        ));
+    }
+    let duplicate = unsafe { libc::dup(fd) };
+    if duplicate < 0 {
+        return Err(format!("{shown}: {}", std::io::Error::last_os_error()));
+    }
+    // SAFETY: dup returned a new owned descriptor; dropping this File cannot
+    // close the caller's descriptor, even when parsing fails.
+    let file = unsafe { std::fs::File::from_raw_fd(duplicate) };
+    refuse_split_gguf_file(file, &shown)
+}
+
+fn refuse_split_gguf_file(mut file: std::fs::File, shown: &str) -> Result<(), String> {
     use std::io::{Seek, SeekFrom};
-    let shown = path.display();
-    let mut file = std::fs::File::open(path).map_err(|e| format!("{shown}: {e}"))?;
     file.seek(SeekFrom::Start(0))
         .map_err(|e| format!("{shown}: {e}"))?;
     let left = file.metadata().map_err(|e| format!("{shown}: {e}"))?.len();
@@ -189,8 +215,8 @@ pub fn refuse_split_gguf(path: &Path) -> Result<(), String> {
         }
         header.skip_values(kind, count).map_err(read)?;
     }
-    // /dev/fd may duplicate the inherited file description, including its
-    // offset. Leave the verified descriptor at the beginning for llama.cpp.
+    // Descriptor duplicates share an offset. Leave the verified descriptor
+    // at the beginning for llama.cpp.
     header
         .reader
         .into_inner()
@@ -1459,6 +1485,58 @@ mod tests {
         let path = dir.path().join("model.gguf");
         std::fs::write(&path, bytes).unwrap();
         refuse_split_gguf(&path)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn held_gguf_check_uses_the_open_file_and_keeps_its_descriptor() {
+        use std::io::{Read, Seek, SeekFrom};
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model.gguf");
+        std::fs::write(&path, header(3, &[])).unwrap();
+        let mut held = std::fs::File::open(&path).unwrap();
+        held.seek(SeekFrom::Start(7)).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        // A replacement is a different, unverified object: the held file is
+        // still the valid single-file GGUF despite this split-model pathname.
+        std::fs::write(
+            &path,
+            header(
+                3,
+                &[(SPLIT_COUNT, GGUF_UINT16, 2u16.to_le_bytes().to_vec())],
+            ),
+        )
+        .unwrap();
+        assert!(refuse_split_gguf(&path).is_err());
+        refuse_split_gguf_fd(held.as_raw_fd()).unwrap();
+        assert_eq!(held.stream_position().unwrap(), 0);
+        let mut magic = [0; 4];
+        held.read_exact(&mut magic).unwrap();
+        assert_eq!(&magic, b"GGUF");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn held_gguf_check_refuses_split_and_malformed_files_without_closing_owner() {
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model.gguf");
+        for bytes in [
+            header(
+                3,
+                &[(SPLIT_COUNT, GGUF_UINT16, 2u16.to_le_bytes().to_vec())],
+            ),
+            b"GGUF".to_vec(),
+        ] {
+            std::fs::write(&path, &bytes).unwrap();
+            let held = std::fs::File::open(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            assert!(refuse_split_gguf_fd(held.as_raw_fd()).is_err());
+            assert_eq!(held.metadata().unwrap().len(), bytes.len() as u64);
+        }
+        assert!(refuse_split_gguf_fd(-1).is_err());
+        assert!(refuse_split_gguf_fd(0).is_err());
     }
 
     /// A vocabulary-like string array, a float array and scalars before the

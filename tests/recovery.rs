@@ -124,12 +124,37 @@ fn child_fault(stage: &str) -> ! {
                 std::fs::write(ws.join(path), V2).unwrap();
             }
             engine.refresh(&Control::unbounded()).unwrap();
-            let point = if stage == "source_batch_before" {
-                names::SOURCE_BATCH_BEFORE_COMMIT
-            } else {
-                names::SOURCE_AFTER_COMMIT
-            };
-            fault::arm(point, 0, Action::Abort);
+            // Read-ahead commits the ready prefix, which need not contain all
+            // four files. Record the exact transaction membership at its named
+            // boundaries instead of making worker scheduling an assertion.
+            let paths = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+            let observed = std::rc::Rc::clone(&paths);
+            fault::arm(
+                names::SOURCE_BEFORE_COMMIT,
+                0,
+                Action::Call(Box::new(move |ctx| {
+                    observed.borrow_mut().push(ctx.detail.to_owned());
+                })),
+            );
+            let before_commit = stage == "source_batch_before";
+            let batch_record = work.join("batch-paths.json");
+            fault::arm(
+                names::SOURCE_BATCH_BEFORE_COMMIT,
+                0,
+                Action::Call(Box::new(move |ctx| {
+                    let paths = paths.borrow();
+                    let count = ctx.detail.parse::<usize>().unwrap();
+                    assert!((1..=4).contains(&count));
+                    assert_eq!(count, paths.len());
+                    std::fs::write(&batch_record, serde_json::to_vec(&*paths).unwrap()).unwrap();
+                    if before_commit {
+                        std::process::abort();
+                    }
+                })),
+            );
+            if !before_commit {
+                fault::arm(names::SOURCE_AFTER_COMMIT, 0, Action::Abort);
+            }
             let _ = engine.index(&ws, &Control::unbounded());
         }
         "ingest_after_early_publication" => {
@@ -750,20 +775,38 @@ fn global_arming_fires_on_worker_threads_for_spawned_processes() {
 fn source_batch_crashes_preserve_whole_commit_and_replay() {
     for (stage, committed) in [("source_batch_before", false), ("source_batch_after", true)] {
         let work = crash_at(stage);
-        let mut engine = Engine::open_existing(&work.path().join("store")).unwrap();
+        let batch_paths: Vec<String> =
+            serde_json::from_slice(&std::fs::read(work.path().join("batch-paths.json")).unwrap())
+                .unwrap();
+        assert!((1..=4).contains(&batch_paths.len()));
         assert_eq!(
-            engine.source_revision().unwrap(),
-            if committed { 8 } else { 4 }
+            batch_paths
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            batch_paths.len(),
+            "the recorded transaction must contain distinct sources"
         );
-        assert_eq!(engine.pending().unwrap(), if committed { 4 } else { 0 });
-        for n in 0..4 {
+        let fixture_paths: Vec<_> = (0..4).map(|n| format!("batch{n}.rs")).collect();
+        assert!(batch_paths.iter().all(|path| fixture_paths.contains(path)));
+        let committed_count = if committed {
+            batch_paths.len() as u64
+        } else {
+            0
+        };
+        let mut engine = Engine::open_existing(&work.path().join("store")).unwrap();
+        assert_eq!(engine.source_revision().unwrap(), 4 + committed_count);
+        assert_eq!(engine.pending().unwrap(), committed_count);
+        for path in &fixture_paths {
+            let body = if committed && batch_paths.contains(path) {
+                V2
+            } else {
+                V1
+            };
             assert_eq!(
-                engine
-                    .source(&format!("batch{n}.rs"))
-                    .unwrap()
-                    .unwrap()
-                    .hash,
-                digest(if committed { V2 } else { V1 }.as_bytes())
+                engine.source(path).unwrap().unwrap().hash,
+                digest(body.as_bytes()),
+                "source {path} must match recorded transaction membership"
             );
         }
         let report = engine
@@ -771,7 +814,7 @@ fn source_batch_crashes_preserve_whole_commit_and_replay() {
             .unwrap();
         assert_eq!(
             (report.changed, report.unchanged),
-            if committed { (0, 4) } else { (4, 0) }
+            (4 - committed_count, committed_count)
         );
         assert!(!report.partial);
         assert_eq!(engine.source_revision().unwrap(), 8);

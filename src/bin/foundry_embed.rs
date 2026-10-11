@@ -100,20 +100,10 @@ fn real_run(engine: &mut context_foundry::neural::worker_runtime::Engine) -> i32
         engine.fail_load("descriptor_unsupported", &message);
         return 1;
     }
-    #[cfg(target_os = "macos")]
-    let gguf = engine
-        .args
-        .model_fd
-        .map(|fd| std::path::PathBuf::from(format!("/dev/fd/{fd}")))
-        .unwrap_or_else(|| engine.args.model_dir.join(&engine.args.expected.gguf));
-    #[cfg(target_os = "macos")]
-    let loaded = llama::Embedder::load(&gguf, &engine.args.expected);
-    #[cfg(target_os = "linux")]
-    let loaded = llama::Embedder::load_fd(
-        engine.args.model_fd.unwrap(),
-        &engine.args.expected,
-        engine.args.cpu.threads,
-    );
+    let loaded = match engine.args.model_fd {
+        Some(fd) => llama::Embedder::load_fd(fd, &engine.args.expected, engine.args.cpu.threads),
+        None => Err("verified GGUF descriptor is required".into()),
+    };
     let mut embedder = match loaded {
         Ok(embedder) => embedder,
         Err(message) => {
@@ -142,16 +132,8 @@ mod llama {
         DocumentLimits, FunctionDescriptor, LLAMA_CPP_COMMIT, TokenizedInput,
     };
     use context_foundry::neural::worker_runtime::mark_phase;
-    #[cfg(target_os = "macos")]
-    use context_foundry::neural::worker_runtime::refuse_split_gguf;
-    #[cfg(target_os = "macos")]
-    use std::ffi::CString;
     use std::ffi::{CStr, c_char, c_void};
     use std::io::Write as _;
-    #[cfg(target_os = "macos")]
-    use std::os::unix::ffi::OsStrExt as _;
-    #[cfg(target_os = "macos")]
-    use std::path::Path;
     use std::ptr::NonNull;
     use std::sync::Once;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -310,31 +292,6 @@ mod llama {
     }
 
     impl Embedder {
-        #[cfg(target_os = "macos")]
-        pub fn load(path: &Path, descriptor: &FunctionDescriptor) -> Result<Self, String> {
-            init_backend();
-            if !unsafe { ffi::llama_supports_gpu_offload() } {
-                return Err("this llama.cpp build cannot offload to a GPU (Metal)".into());
-            }
-            if !path.is_file() {
-                return Err(format!("{} is not a file", path.display()));
-            }
-            // Before llama.cpp opens anything: a split GGUF would make it
-            // open shards outside the verified inventory.
-            refuse_split_gguf(path)?;
-            let c_path = CString::new(path.as_os_str().as_bytes())
-                .map_err(|_| format!("{} contains a NUL byte", path.display()))?;
-            let mut model_params = unsafe { ffi::llama_model_default_params() };
-            model_params.n_gpu_layers = -1; // every layer (and the output) on the GPU
-            model_params.progress_callback = None;
-            let model = NonNull::new(unsafe {
-                ffi::llama_model_load_from_file(c_path.as_ptr(), model_params)
-            })
-            .ok_or_else(|| format!("llama.cpp could not load {}", path.display()))?;
-            Self::from_model(model, descriptor, 2)
-        }
-
-        #[cfg(target_os = "linux")]
         pub fn load_fd(
             fd: i32,
             descriptor: &FunctionDescriptor,
@@ -343,6 +300,16 @@ mod llama {
             #[cfg(all(target_arch = "x86_64", feature = "embed-worker-avx512-bf16"))]
             check_cpu_capabilities()?;
             init_backend();
+            #[cfg(target_os = "macos")]
+            {
+                if !unsafe { ffi::llama_supports_gpu_offload() } {
+                    return Err("this llama.cpp build cannot offload to a GPU (Metal)".into());
+                }
+                // App Sandbox may refuse opening /dev/fd/N even for a held
+                // descriptor. Validate and load that descriptor directly;
+                // neither operation may fall back to an unverified pathname.
+                context_foundry::neural::worker_runtime::refuse_split_gguf_fd(fd)?;
+            }
             let fd = unsafe { libc::dup(fd) };
             if fd < 0 {
                 return Err(std::io::Error::last_os_error().to_string());
@@ -357,12 +324,12 @@ mod llama {
                 return Err("cannot open verified GGUF stream".into());
             }
             let mut params = unsafe { ffi::llama_model_default_params() };
-            params.n_gpu_layers = 0;
+            params.n_gpu_layers = if cfg!(target_os = "macos") { -1 } else { 0 };
             params.progress_callback = None;
             let model = unsafe { ffi::llama_model_load_from_file_ptr(stream.cast(), params) };
             unsafe { libc::fclose(stream) };
             Self::from_model(
-                NonNull::new(model).ok_or("CPU model load failed")?,
+                NonNull::new(model).ok_or("native model load failed")?,
                 descriptor,
                 threads,
             )
