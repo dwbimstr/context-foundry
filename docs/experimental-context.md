@@ -1295,11 +1295,18 @@ A ninth hit detects a limited window. The report retains indexed candidate/stale
 and limitations; there is no continuation through all remaining matches. Supported
 Rust, Python, Go and JavaScript/TypeScript/TSX names remain unresolved, and source
 recipe coverage does not establish runtime completeness. Task-word Rust test discovery
-still searches only selected files. Dynamic dispatch, aliases, wrappers and unsupported
-languages can hide relevant evidence. At most 32 candidate spans, 32 KiB per span and
-the existing exact delivery allowance apply.
+still searches only selected files. Explicit ASCII Python module-level
+`from module import original as alias` declarations can also expose subsequent bare
+alias calls, with conservative refusal after any other identifier use of that alias.
+Wildcard imports, non-ASCII identifiers and collector overflow disable that enrichment.
+The `task-syntax` alias candidate receipt requires the fresh defining unit, import and
+actual call bodies to fit together; it remains unresolved with unverified execution.
+Dynamic dispatch, indirect aliases, wrappers and unsupported languages can still hide
+relevant evidence. At most 32 candidate spans, 32 KiB per span and the existing exact
+delivery allowance apply; each alias candidate charges both import and call spans.
 
-Existing search schema 5 needs `foundry --store STORE repair-index` for schema 6 call
-postings. The semantic source-unit recipe remains version 5; a search-only repair does
+Existing search schemas 5 and 6 need `foundry --store STORE repair-index` for schema 7
+call postings. Schema 6 has the same fields but lacks canonical import-alias names.
+The semantic source-unit recipe remains version 5; a search-only repair does
 not itself require re-embedding. See the [Linux diagnostic results](validation.md) for
 executed checks, negative retrieval/host findings, fixture scale and real CPU limits.

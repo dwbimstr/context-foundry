@@ -888,8 +888,11 @@ Every later change to what a search document contains bumps the schema again.
 
 ### Call-name postings — 2026-10-11
 
-The current derived search schema is `"6"`. Each source's first search document adds
-`call_name` (multi-valued exact `STRING`) and `call_coverage` (`STRING`, stored).
+The current derived search schema is `"7"`. Schema `"6"` introduced `call_name`
+(multi-valued exact `STRING`) and `call_coverage` (`STRING`, stored) on each source's
+first search document; `"7"` also includes supported Python import-alias names in
+those same postings. A field-compatible schema-6 index lacks these alias postings
+and must pass through the explicit version repair gate.
 The existing ingestion parse collects distinct terminal call names for the supported
 Rust, Python, Go and JavaScript/TypeScript/TSX recipes. Comments and repeated calls
 cannot occupy extra source slots. No source is enrolled, executed or parsed a second
@@ -899,11 +902,23 @@ existing 1 MiB source and deterministic `2^25` parser-work limits. Coverage valu
 `complete`, `incomplete` or `unsupported` for the syntax recipe, not runtime behavior.
 Rust assertion token-tree ancestry is bounded at 32; arbitrary macro DSLs are unsupported.
 
-A schema-5 index reports `repair_required` until the explicit command
+Python's narrow alias recipe accepts an explicit module-level
+`from module import original as alias` only when a bare `alias(...)` call follows
+its declaration and no other identifier role uses that alias. Its original spelling
+joins the existing exact call postings. Any other role conservatively refuses that
+alias, including assignments, parameters, duplicate/nested imports, value references
+and attribute names. Wildcard imports, non-ASCII identifiers (which Python normalizes
+with NFKC), and bookkeeping overflow disable alias enrichment for that source and
+mark recipe coverage incomplete. The existing ingestion walk retains at most 128
+alias declarations, including repeats, plus 4,096 ordinary identifier spellings and
+4,096 bare-call spellings of at most 1,024 bytes. This is syntax candidate discovery;
+it neither resolves runtime binding nor follows indirect aliases or dynamic mutation.
+
+A schema-5 or schema-6 index reports `repair_required` until the explicit command
 `foundry --store STORE repair-index` rebuilds derived documents from authoritative
 sources. This does not upgrade the authoritative store schema or discard sources,
 memories or tasks. `SOURCE_UNIT_SCHEMA` remains independently `"5"`; semantic
-partition recipes use that version, not search schema 6. Search-only posting changes
+partition recipes use that version, not search schema 7. Search-only posting changes
 do not change model inputs or independently invalidate their partitions. Other
 representation-recipe changes, such as the explicit `+kinds1` component, retain their
 own invalidation rules. The bounded consumer and final identity/AST checks are in

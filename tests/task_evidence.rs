@@ -1371,3 +1371,295 @@ fn indexed_call_source_window_exposes_omitted_matching_files() {
     assert_eq!(evidence.syntax_index_candidates, 8);
     assert!(evidence.syntax_index_limited && evidence.discovery_limited);
 }
+
+fn python_alias_fixture() -> Env {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let definition = "def refund(amount):\n    return amount * 2\n";
+    // Keep the import and call over 32 KiB apart without thousands of leading
+    // comment lines, which exhaust Python's bounded external-scanner work.
+    let caller = format!(
+        "from service import refund as credit\n# {}\ndef customer():\n    return credit(4)\n",
+        "intervening source ".repeat(2300)
+    );
+    assert!(caller.find("credit(4)").unwrap() > 32 * 1024);
+    let indexed =
+        context_foundry::syntax::index(&caller, Some(context_foundry::syntax::Lang::Python))
+            .expect("alias fixture must finish within the bounded Python parse");
+    assert_eq!(indexed.call_coverage, "complete");
+    assert!(indexed.call_names.iter().any(|name| name == "refund"));
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    for (path, body) in [("service.py", definition), ("consumer.py", caller.as_str())] {
+        engine.replace_source(path, body).unwrap();
+        std::fs::write(root.join(path), body).unwrap();
+    }
+    for i in 0..32 {
+        engine
+            .replace_source(
+                &format!("mention_{i}.py"),
+                &format!(
+                    "def mention_{i}():\n    # {}\n    pass\n",
+                    "refund ".repeat(80)
+                ),
+            )
+            .unwrap();
+    }
+    engine.refresh(&Control::unbounded()).unwrap();
+    let wid = engine.workspace_id().unwrap();
+    let revision = task(
+        &engine,
+        json!({"op":"create","title":"Preserve customer behavior"}),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    Env {
+        dir,
+        engine,
+        revision,
+        wid,
+    }
+}
+
+fn compose_python_alias(e: &Env) -> context_foundry::memory::MemoryContext {
+    e.engine
+        .context_candidates_with(
+            "`refund`",
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &e.wid,
+                    task_id: "contract",
+                    expected_revision: e.revision,
+                }),
+                compose_evidence: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+}
+
+#[test]
+fn python_alias_discovery_crosses_the_lexical_window_and_delivers_only_a_whole_fresh_proof() {
+    let mut e = python_alias_fixture();
+    let ordinary = e
+        .engine
+        .context_candidates("`refund`", Strategy::Search, &Control::unbounded())
+        .unwrap();
+    assert!(
+        !ordinary
+            .items
+            .iter()
+            .filter(|item| item.tier != context_foundry::store::TIER_OUTLINE)
+            .take(8)
+            .any(|item| item
+                .handle
+                .as_ref()
+                .is_some_and(|h| h.path == "consumer.py")),
+        "fixture caller must be outside the initial eight sources"
+    );
+    let context = compose_python_alias(&e);
+    assert_eq!(
+        context.evidence.as_ref().unwrap().syntax_index_candidates,
+        1
+    );
+    let mut delivered = 0;
+    for compact in [false, true] {
+        let mut context = compose_python_alias(&e);
+        context.evidence.as_mut().unwrap().compact = compact;
+        for tokens in [1500, 2500, 4000, 12000] {
+            let Ok(packed) = response::pack_enriched_context(
+                &context,
+                None,
+                Budget::request(tokens),
+                &response::stdout_bytes,
+            ) else {
+                continue;
+            };
+            let r = report(&packed.text);
+            assert_eq!(r["syntax"]["resolution"], "unresolved");
+            for line in packed
+                .text
+                .lines()
+                .filter_map(|l| l.strip_prefix("task-syntax: "))
+            {
+                let receipt: Value = serde_json::from_str(line).unwrap();
+                assert_eq!(receipt["kind"], "import_alias_call_candidate");
+                assert_eq!(receipt["resolution"], "unresolved");
+                assert_eq!(receipt["runtime_call"], "unverified");
+                assert_eq!(receipt["name"], "refund");
+                assert_eq!(receipt["alias"], "credit");
+                assert!(packed.text.contains("from service import refund as credit"));
+                assert!(packed.text.contains("return credit(4)"));
+                assert!(packed.text.contains("return amount * 2"));
+                if !compact {
+                    for key in ["definition", "import", "call"] {
+                        let wanted = context_foundry::store::HandleRef::parse(
+                            receipt[key].as_str().unwrap(),
+                        )
+                        .unwrap();
+                        assert!(r["sources"].as_array().unwrap().iter().any(|s| {
+                            let h = context_foundry::store::HandleRef::parse(
+                                s["handle"].as_str().unwrap(),
+                            )
+                            .unwrap();
+                            s["representation"] == "body"
+                                && h.ws16 == wanted.ws16
+                                && h.path == wanted.path
+                                && h.sha32 == wanted.sha32
+                                && h.start <= wanted.start
+                                && h.end >= wanted.end
+                        }));
+                    }
+                }
+                delivered += 1;
+            }
+            assert!(packed.tokens <= tokens);
+        }
+    }
+    assert!(delivered > 0);
+    // Missing definition, import or actual call bodies must each suppress the
+    // receipt even at a generous budget. Remaining source candidates may fit.
+    for omit in ["definition", "import", "call"] {
+        let mut context = compose_python_alias(&e);
+        let packed = response::pack_enriched_context(
+            &context,
+            None,
+            Budget::request(12000),
+            &response::stdout_bytes,
+        )
+        .unwrap();
+        let receipt: Value = serde_json::from_str(
+            packed
+                .text
+                .lines()
+                .find_map(|l| l.strip_prefix("task-syntax: "))
+                .unwrap(),
+        )
+        .unwrap();
+        let wanted =
+            context_foundry::store::HandleRef::parse(receipt[omit].as_str().unwrap()).unwrap();
+        for item in &mut context.batch.items {
+            if item.handle.as_ref().is_some_and(|h| {
+                h.path == wanted.path && h.start <= wanted.start && h.end >= wanted.end
+            }) {
+                item.forms[0] =
+                    context_foundry::store::RenderedForm::Verbatim("omitted ".repeat(20000));
+            }
+        }
+        let packed = response::pack_enriched_context(
+            &context,
+            None,
+            Budget::request(12000),
+            &response::stdout_bytes,
+        )
+        .unwrap();
+        assert!(!packed.text.contains("task-syntax:"), "{omit}");
+    }
+    fault::arm(
+        names::TASK_EVIDENCE_BEFORE_FINAL,
+        0,
+        Action::Call(Box::new(|ctx| {
+            ctx.engine
+                .unwrap()
+                .replace_source(
+                    "consumer.py",
+                    "from service import refund as credit\ncredit = replacement\ncredit(4)\n",
+                )
+                .unwrap();
+        })),
+    );
+    let changed = compose_python_alias(&e);
+    fault::disarm_all();
+    assert_eq!(changed.evidence.as_ref().unwrap().syntax_index_stale, 1);
+    let packed = response::pack_enriched_context(
+        &changed,
+        None,
+        Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(!packed.text.contains("task-syntax:"));
+    e.engine.refresh(&Control::unbounded()).unwrap();
+    assert_eq!(
+        compose_python_alias(&e)
+            .evidence
+            .as_ref()
+            .unwrap()
+            .syntax_index_candidates,
+        0
+    );
+    // Restoring the caller and reopening the derived index preserves discovery.
+    let caller = std::fs::read_to_string(e.dir.path().join("root/consumer.py")).unwrap();
+    e.engine.replace_source("consumer.py", &caller).unwrap();
+    e.engine.refresh(&Control::unbounded()).unwrap();
+    drop(e.engine);
+    e.engine = Engine::open_existing(&e.dir.path().join("store")).unwrap();
+    assert_eq!(
+        compose_python_alias(&e)
+            .evidence
+            .as_ref()
+            .unwrap()
+            .syntax_index_candidates,
+        1
+    );
+    fault::arm(
+        names::TASK_EVIDENCE_BEFORE_FINAL,
+        0,
+        Action::Call(Box::new(|ctx| {
+            ctx.engine
+                .unwrap()
+                .replace_source("service.py", "def replacement(amount): return amount\n")
+                .unwrap();
+        })),
+    );
+    let changed_definition = compose_python_alias(&e);
+    fault::disarm_all();
+    let packed = response::pack_enriched_context(
+        &changed_definition,
+        None,
+        Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(!packed.text.contains("task-syntax:"));
+}
+
+#[test]
+#[ignore = "explicit CPython alias fixture; indexing never runs workspace code"]
+fn real_cpython_explicit_import_alias_agrees_with_the_unresolved_source_candidate() {
+    let e = python_alias_fixture();
+    let output = Command::new("python3").args([
+        "-I", "-B", "-c",
+        "import sys; sys.path.insert(0, sys.argv[1]); import consumer, service; assert consumer.credit is service.refund; assert consumer.customer() == 8; print('CPython explicit import alias: 8')",
+    ]).arg(e.dir.path().join("root")).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "CPython explicit import alias: 8"
+    );
+    let packed = response::pack_enriched_context(
+        &compose_python_alias(&e),
+        None,
+        Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    let receipt: Value = serde_json::from_str(
+        packed
+            .text
+            .lines()
+            .find_map(|l| l.strip_prefix("task-syntax: "))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt["resolution"], "unresolved");
+    assert_eq!(receipt["runtime_call"], "unverified");
+    assert!(!packed.text.contains("task-execution:"));
+}

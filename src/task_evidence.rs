@@ -38,6 +38,7 @@ pub struct Plan {
     pub syntax_index_limited: bool,
     pub local_test_candidates: usize,
     pub(crate) reference_uses: BTreeMap<String, reference::Use>,
+    pub(crate) import_alias_calls: Vec<(SourceHandle, reference::ImportAliasCall)>,
     pub roots: Vec<String>,
 }
 impl Plan {
@@ -70,6 +71,7 @@ impl Plan {
             primary.observed.extend(other.observed);
             primary.requirement_links.extend(other.requirement_links);
             primary.reference_uses.extend(other.reference_uses);
+            primary.import_alias_calls.extend(other.import_alias_calls);
             primary.compiler_skipped_seeds += other.compiler_skipped_seeds;
             primary.syntax_candidates += other.syntax_candidates;
             primary.syntax_skipped_paths += other.syntax_skipped_paths;
@@ -130,7 +132,10 @@ impl Plan {
             (facet,json!({"state":if bodies>0 {"source_candidates_delivered"} else if addresses>0 {"addresses_only"} else if candidates>0 {"omitted_budget"} else {"missing"},"bodies":bodies,"addresses":addresses,"candidates":candidates}))
         }).collect();
         let mut resolution = BTreeMap::<&str, usize>::new();
-        let syntax = json!({"kind":"call_name_candidates","resolution":"unresolved","runtime_call":"unverified","available":self.syntax_candidates,"skipped_paths":self.syntax_skipped_paths,"discovery":{"scope":"admitted_source_call_postings","candidates":self.syntax_index_candidates,"stale":self.syntax_index_stale,"limited":self.syntax_index_limited,"coverage":"syntax_recipe_only_not_complete_evidence"},"local_tests":{"available":self.local_test_candidates,"basis":"same_file_task_terms","coverage":"not_established"}});
+        let mut syntax = json!({"kind":"call_name_candidates","resolution":"unresolved","runtime_call":"unverified","available":self.syntax_candidates,"skipped_paths":self.syntax_skipped_paths,"discovery":{"scope":"admitted_source_call_postings","candidates":self.syntax_index_candidates,"stale":self.syntax_index_stale,"limited":self.syntax_index_limited,"coverage":"syntax_recipe_only_not_complete_evidence"},"local_tests":{"available":self.local_test_candidates,"basis":"same_file_task_terms","coverage":"not_established"}});
+        if !self.import_alias_calls.is_empty() {
+            syntax["import_aliases"] = json!({"available":self.import_alias_calls.len(),"basis":"explicit_module_from_import","resolution":"unresolved"});
+        }
         if let Some(b) = &self.boundaries {
             for r in &b.relations {
                 *resolution.entry(r.resolution).or_default() += 1;
@@ -261,6 +266,7 @@ impl Engine {
             syntax_index_limited: false,
             local_test_candidates: 0,
             reference_uses: BTreeMap::new(),
+            import_alias_calls: Vec::new(),
             roots: vec![self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?],
             boundaries: None,
             boundary_requested: options.boundary_config.is_some(),
@@ -287,11 +293,15 @@ impl Engine {
             .filter_map(|anchor| {
                 let entry = anchor.entries.first()?;
                 let (start, end) = entry.resolver?.name;
-                Some(SourceHandle {
-                    start,
-                    end,
-                    ..entry.handle.clone()?
-                })
+                let definition = entry.handle.clone()?;
+                Some((
+                    SourceHandle {
+                        start,
+                        end,
+                        ..definition.clone()
+                    },
+                    definition,
+                ))
             })
             .take(4)
             .collect();
@@ -657,8 +667,9 @@ impl Engine {
         // execution or inferred import resolution is needed. All identities and
         // call syntax must survive this final snapshot.
         let mut names = BTreeSet::new();
+        let mut definitions = BTreeMap::new();
         let mut paths = Vec::new();
-        for seed in syntax_seeds {
+        for (seed, definition) in syntax_seeds {
             let Some((meta, body)) = crate::boundary::source_in(&tx, &seed.path)? else {
                 continue;
             };
@@ -666,6 +677,7 @@ impl Engine {
                 && let Some(name) = body.get(seed.start as usize..seed.end as usize)
             {
                 names.insert(name.to_owned());
+                definitions.insert(name.to_owned(), definition);
                 if !paths.contains(&seed.path) {
                     paths.push(seed.path);
                 }
@@ -749,23 +761,44 @@ impl Engine {
                     control,
                 )?;
                 plan.discovery_limited |= limited;
-                plan.syntax_candidates += found.len();
-                for (handle, attributed_test) in found {
-                    let facet = if attributed_test || test_path(&path) {
+                plan.syntax_candidates += found
+                    .iter()
+                    .map(|c| 1 + usize::from(c.alias.is_some()))
+                    .sum::<usize>();
+                for candidate in found {
+                    let facet = if candidate.attributed_test || test_path(&path) {
                         "verification"
                     } else {
                         "consumers"
                     };
                     plan.discovery_limited |= !add(
                         &mut candidates,
-                        handle,
+                        candidate.handle,
                         facet,
-                        if attributed_test {
+                        if candidate.alias.is_some() {
+                            "syntactic_import_alias_call_name"
+                        } else if candidate.attributed_test {
                             "syntactic_test_call_name"
                         } else {
                             "syntactic_call_name"
                         },
                     );
+                    if let Some(alias) = candidate.alias {
+                        let definition = definitions[&alias.name].clone();
+                        plan.discovery_limited |= !add(
+                            &mut candidates,
+                            alias.declaration.clone(),
+                            facet,
+                            "syntactic_import_alias_declaration",
+                        );
+                        plan.discovery_limited |= !add(
+                            &mut candidates,
+                            definition.clone(),
+                            "implementation",
+                            "syntactic_import_alias_anchor",
+                        );
+                        plan.import_alias_calls.push((definition, alias));
+                    }
                 }
                 if plan.local_test_candidates < 4 {
                     let (tests, limited) =

@@ -2112,6 +2112,26 @@ fn pack_task_evidence(
         })), vec![observed.from.clone(), observed.to.clone(), observed.test.clone()], false));
     }
     let observed_end = tail.len();
+    for (definition, alias) in &plan.import_alias_calls {
+        tail.push((
+            format!(
+                "task-syntax: {}\n",
+                serde_json::json!({
+                    "evidence":"syntactic","kind":"import_alias_call_candidate",
+                    "resolution":"unresolved","runtime_call":"unverified",
+                    "name":alias.name,"alias":alias.alias,
+                    "definition":definition.to_v2(),
+                    "import":alias.declaration.to_v2(),"call":alias.call.to_v2()
+                })
+            ),
+            vec![
+                definition.clone(),
+                alias.declaration.clone(),
+                alias.call.clone(),
+            ],
+            false,
+        ));
+    }
     for b in &context.briefs {
         let p = HandleRef::parse(&b.brief.cited_spans[0])?;
         let Some(h) = items.iter().filter_map(|i| i.handle.as_ref()).find(|h| {

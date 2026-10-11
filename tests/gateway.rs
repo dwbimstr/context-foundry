@@ -2606,6 +2606,134 @@ fn the_launcher_routes_omp_through_a_fresh_profile_and_cleans_up() {
 }
 
 #[test]
+fn the_launcher_body_reads_uses_a_private_owned_overlay() {
+    for replaced in [false, true] {
+        let launcher = Launcher::new();
+        let config = launcher.config("body-run");
+        let key = launcher.key_file(&format!("{KEY_CANARY}\n"));
+        let out = launcher.work.path().join("body-out");
+        let omp = launcher.fake_omp(&out, "body-run", "body", 0);
+        let overlay = launcher
+            .profile_dir("body")
+            .join("agent/foundry-body-reads.yml");
+        let mut inspect = String::from(
+            "body=\"$HOME/.omp/profiles/body/agent/foundry-body-reads.yml\"\ncp \"$body\" \"$out/body.yml\"\nls -l \"$body\" > \"$out/body-mode\"\n",
+        );
+        if replaced {
+            // Keep the original inode alive elsewhere; cleanup owns only that
+            // inode and must leave a newly created file at its old name alone.
+            inspect.push_str(
+                "mv \"$body\" \"$out/original-body.yml\"\nprintf 'owner replacement\\n' > \"$body\"\n",
+            );
+        }
+        inspect.push_str("exit 0\n");
+        let script = std::fs::read_to_string(&omp).unwrap();
+        std::fs::write(&omp, script.replace("exit 0\n", &inspect)).unwrap();
+        let output = launcher.launch(
+            BIN,
+            &[
+                "--config",
+                path_str(&config),
+                "--key-file",
+                path_str(&key),
+                "--profile",
+                "body",
+                "--body-reads",
+                "--omp",
+                path_str(&omp),
+            ],
+            None,
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let argv = std::fs::read_to_string(out.join("argv")).unwrap();
+        assert_eq!(
+            argv.lines().collect::<Vec<_>>(),
+            [
+                "--profile",
+                "body",
+                "--model",
+                "zai/glm-5.3-flash",
+                "--thinking",
+                "max",
+                "--config",
+                path_str(&overlay),
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(out.join("body.yml")).unwrap(),
+            "read:\n  summarize:\n    enabled: false\n"
+        );
+        assert!(
+            std::fs::read_to_string(out.join("body-mode"))
+                .unwrap()
+                .starts_with("-rw-------"),
+            "the generated overlay is owner-private"
+        );
+        if replaced {
+            assert_eq!(
+                std::fs::read_to_string(&overlay).unwrap(),
+                "owner replacement\n"
+            );
+        } else {
+            assert!(!overlay.exists(), "the generated overlay is cleaned up");
+        }
+        assert!(
+            !launcher
+                .profile_dir("body")
+                .join("agent/models.yml")
+                .exists()
+        );
+        assert!(
+            launcher
+                .profile_dir("body")
+                .join("agent/session.jsonl")
+                .exists()
+        );
+        assert!(!launcher.run_dir("body-run").join("token").exists());
+        let host_env = std::fs::read_to_string(out.join("env")).unwrap();
+        assert!(!host_env.contains(KEY_CANARY));
+        assert!(!env_map(&host_env).contains_key(KEY_ENV));
+        launcher.assert_global_state_untouched();
+    }
+}
+
+#[test]
+fn the_launcher_body_reads_still_refuses_arbitrary_host_configuration() {
+    let launcher = Launcher::new();
+    let config = launcher.config("body-refusal");
+    let key = launcher.key_file(&format!("{KEY_CANARY}\n"));
+    let out = launcher.work.path().join("refused-out");
+    let omp = launcher.fake_omp(&out, "body-refusal", "refused", 0);
+    let output = launcher.launch(
+        BIN,
+        &[
+            "--config",
+            path_str(&config),
+            "--key-file",
+            path_str(&key),
+            "--profile",
+            "refused",
+            "--body-reads",
+            "--omp",
+            path_str(&omp),
+            "--",
+            "--config=owner.yml",
+        ],
+        None,
+    );
+    assert!(!output.status.success());
+    assert_eq!(error_code(&output), "invalid_argument");
+    assert!(!launcher.profile_dir("refused").exists());
+    assert!(!launcher.run_dir("body-refusal").exists());
+    assert!(!out.exists());
+    launcher.assert_global_state_untouched();
+}
+
+#[test]
 fn the_launcher_exits_with_omps_status() {
     let launcher = Launcher::new();
     let config = launcher.config("run7");
@@ -3914,16 +4042,43 @@ async fn real_omp_applies_live_view_on_resumed_tool_history() {
     let cwd = dir.path().join("workspace");
     let agent = dir.path().join("omp/agent");
     let sessions = dir.path().join("sessions");
-    for path in [&cwd, &agent, &sessions] {
+    let summary_sessions = dir.path().join("summary-sessions");
+    for path in [&cwd, &agent, &sessions, &summary_sessions] {
         std::fs::create_dir_all(path).unwrap();
     }
-    std::fs::write(
-        cwd.join("hello.txt"),
-        "Sandbox observation: keep the required behavior.\n".repeat(200),
-    )
-    .unwrap();
+    // The body exceeds OMP 18.6.0's default 100-line unfolding ceiling.
+    // Its marker must disappear in a structural summary and survive a plain
+    // read. Keep the same source for both paths, below ordinary read limits.
+    const BODY_MARKER: &str =
+        "Sandbox observation: keep the required behavior. BODY_ONLY_OMP_READ_8d91";
+    let mut source = String::from(
+        "pub fn fixture_observation() -> &'static str {\n    let mut checksum = 0usize;\n",
+    );
+    for number in 0..128 {
+        source.push_str(&format!(
+            "    checksum = checksum.wrapping_add({number});\n"
+        ));
+    }
+    source.push_str(&format!("    let _ = checksum;\n    {BODY_MARKER:?}\n}}\n"));
+    std::fs::write(cwd.join("hello.rs"), source).unwrap();
+    let read_config = dir.path().join("verbatim-read.yml");
+    std::fs::write(&read_config, "read:\n  summarize:\n    enabled: false\n").unwrap();
     let upstream = FakeUpstream::start().await;
-    upstream.queue(Reply::sse("",vec![data_event(&json!({"id":"fixture-call","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_9","type":"function","function":{"name":"read","arguments":"{\"path\":\"hello.txt\"}"}}]}}]})),data_event(&json!({"id":"fixture-call","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":usage_object(20,10,None)})),done_event()]));
+    let read_reply = || {
+        Reply::sse(
+            "",
+            vec![
+                data_event(
+                    &json!({"id":"fixture-call","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_9","type":"function","function":{"name":"read","arguments":"{\"path\":\"hello.rs\"}"}}]}}]}),
+                ),
+                data_event(
+                    &json!({"id":"fixture-call","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":usage_object(20,10,None)}),
+                ),
+                done_event(),
+            ],
+        )
+    };
+    upstream.queue(read_reply());
     upstream.queue(Reply::sse("", simple_stream()));
     let mut gateway = Gateway::start(
         dir.path(),
@@ -3933,7 +4088,7 @@ async fn real_omp_applies_live_view_on_resumed_tool_history() {
             ..Default::default()
         },
     );
-    let run = |gateway: &Gateway, resume: Option<&Path>| {
+    let run = |gateway: &Gateway, resume: Option<&Path>, plain_read: bool| {
         std::fs::write(
             agent.join("models.yml"),
             gateway.ready["omp_models_yml"].as_str().unwrap(),
@@ -3974,7 +4129,11 @@ async fn real_omp_applies_live_view_on_resumed_tool_history() {
                 "yolo",
             ])
             .arg("--session-dir")
-            .arg(&sessions)
+            .arg(if plain_read {
+                &sessions
+            } else {
+                &summary_sessions
+            })
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("PI_CONFIG_DIR", config_dir)
@@ -3983,16 +4142,19 @@ async fn real_omp_applies_live_view_on_resumed_tool_history() {
             .current_dir(&cwd)
             .stdin(Stdio::null())
             .kill_on_drop(true);
+        if plain_read {
+            cmd.arg("--config").arg(&read_config);
+        }
         if let Some(path) = resume {
             cmd.arg("--resume")
                 .arg(path)
                 .arg("Continue preserving the requested behavior.");
         } else {
-            cmd.arg("Read hello.txt, then stop.");
+            cmd.arg("Read hello.rs, then stop.");
         }
         cmd
     };
-    let output = tokio::time::timeout(Duration::from_secs(60), run(&gateway, None).output())
+    let output = tokio::time::timeout(Duration::from_secs(60), run(&gateway, None, true).output())
         .await
         .unwrap()
         .unwrap();
@@ -4019,6 +4181,10 @@ async fn real_omp_applies_live_view_on_resumed_tool_history() {
         .find(|m| m["role"] == "tool")
         .unwrap();
     let original = tool["content"].as_str().unwrap();
+    assert!(
+        original.contains(BODY_MARKER),
+        "the configured read must deliver the actual Rust body to the provider"
+    );
     let packet = export_view(dir.path(), original, tool["tool_call_id"].as_str().unwrap());
     let owner = TaskOwner::start(dir.path(), 0).await;
     let anchor: Value = serde_json::from_slice(&std::fs::read(&packet).unwrap()).unwrap();
@@ -4053,7 +4219,7 @@ async fn real_omp_applies_live_view_on_resumed_tool_history() {
     );
     let output = tokio::time::timeout(
         Duration::from_secs(60),
-        run(&gateway, Some(&files[0])).output(),
+        run(&gateway, Some(&files[0]), true).output(),
     )
     .await
     .unwrap()
@@ -4142,6 +4308,51 @@ async fn real_omp_applies_live_view_on_resumed_tool_history() {
         serde_json::to_string(application).unwrap()
     );
     gateway.terminate().assert_no_secrets();
+
+    // Negative control: the same installed host, default workflow, read call
+    // and source, without the supported read-summary override. A separate
+    // session/upstream keeps the original live-view assertions unchanged.
+    let summary_upstream = FakeUpstream::start().await;
+    summary_upstream.queue(read_reply());
+    summary_upstream.queue(Reply::sse("", simple_stream()));
+    let mut summary_gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(summary_upstream.port),
+            log_bytes: Some(1_048_576),
+            run_name: Some("summary-control"),
+            ..Default::default()
+        },
+    );
+    let output = tokio::time::timeout(
+        Duration::from_secs(60),
+        run(&summary_gateway, None, false).output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "OMP summary control: {}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(summary_upstream.count(), 2);
+    summary_gateway.wait_receipts(2).await;
+    let continuation: Value = serde_json::from_slice(&summary_upstream.received()[1].body).unwrap();
+    let summarized = continuation["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .unwrap()["content"]
+        .as_str()
+        .unwrap();
+    assert!(
+        summarized.contains("fixture_observation") && !summarized.contains(BODY_MARKER),
+        "the default read must expose the signature while eliding its body marker"
+    );
+    summary_gateway.terminate().assert_no_secrets();
 }
 
 struct TaskOwner {

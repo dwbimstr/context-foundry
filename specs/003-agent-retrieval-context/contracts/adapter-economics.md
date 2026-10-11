@@ -558,16 +558,34 @@ not promise savings merely from installing a forwarding hop.
 
 **Commands.** `src/gateway.rs` and `src/gateway_launch.rs` are unix-only.
 - `foundry gateway --config FILE` is the foreground server.
-- `foundry gateway-omp --config FILE --key-file FILE --profile NAME [--thinking low|high|max] [--omp PATH] [-- OMP_ARGS]`
+- `foundry gateway-omp --config FILE --key-file FILE --profile NAME [--thinking low|high|max] [--body-reads] [--omp PATH] [-- OMP_ARGS]`
   is the launcher.
   - `--thinking` defaults to `max`, the catalog default. It is always passed
     explicitly, so OMP never runs `auto` and its judge side requests.
+  - `--body-reads` explicitly disables OMP 18.6.0's automatic structural summaries
+    for bare code reads using its supported `read.summarize.enabled: false` setting.
+    Ordinary OMP pagination and read limits remain (300 lines by default); this is
+    not a full-file or successful-repair guarantee. Without the flag, host defaults
+    remain. The launcher exclusively creates a 0600 fixed YAML overlay in its fresh
+    profile, verifies its bytes and file identity, and passes that path internally
+    through OMP's `--config`. Arbitrary trailing `--config` remains refused; the
+    overlay contains no model, provider, credential or extension setting. Cleanup
+    removes only the created inode, preserving a replacement file and session evidence.
   - `run_dir`'s parent must exist; a failed startup removes only the directory it
     created.
   - Test-only overrides exist only under the `test-faults` feature:
     `FOUNDRY_GATEWAY_TEST_UPSTREAM` (plain-http loopback upstream),
     `FOUNDRY_GATEWAY_TEST_IDLE_MS` and `FOUNDRY_GATEWAY_TEST_DEADLINE_MS`. Release
     builds read none of them.
+
+The read option follows OMP **18.6.0**: `src/tools/settings.ts::cfgReadSummarizeEnabled`,
+`src/cli/flag-tables.ts`'s `--config`, and `src/config/settings.ts`'s explicit overlay
+loader. The existing ignored `tests/gateway.rs::real_omp_applies_live_view_on_resumed_tool_history`
+checks the pinned default consumer prompt and contrasts body reads with a default
+summary control at the actual request boundary. OMP's `src/prompts/tools/read.md`
+still describes bare code as “declarations only” even with the setting disabled;
+the launcher does not rewrite that upstream guidance. These checks establish read
+availability and request behavior, not repair success or provider savings.
 
 **Local refusals and gateway errors.** Every row but the last refuses before any
 upstream send. Each carries a bounded `{"error":{"code","message"}}` body.
@@ -632,7 +650,7 @@ of 500 and above, 408 and 429.
 Directed means sent by another process: `si_pid != 0` on macOS, `si_code <= 0` on
 Linux. A terminal Ctrl-C already reaches OMP through the shared foreground process
 group, so it is not forwarded a second time. After OMP exits, the launcher stops the
-gateway and removes only the generated `models.yml`, then exits with OMP's status.
+gateway and removes only its generated configuration files, then exits with OMP's status.
 
 `session_full` is verified at unit level; the process cannot lower the 10,000 cap.
 

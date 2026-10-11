@@ -691,6 +691,21 @@ fn cgroup_headroom(mut available: u64, mount: &Path, current: &Path) -> Option<u
     }
     None
 }
+/// HOST_VM_INFO64 replies contain a versioned prefix measured in integer_t
+/// words. Only the first natural_t, free_count, is required here; a kernel need
+/// not populate the newer trailing fields present in our libc binding.
+#[cfg(any(target_os = "macos", test))]
+fn darwin_free_bytes(
+    free_pages: u32,
+    returned_words: u32,
+    capacity_words: u32,
+    page_bytes: i64,
+) -> Option<u64> {
+    if !(1..=capacity_words).contains(&returned_words) || page_bytes <= 0 {
+        return None;
+    }
+    u64::from(free_pages).checked_mul(page_bytes as u64)
+}
 #[cfg(target_os = "macos")]
 fn available_memory() -> Option<u64> {
     // Conservative immediately free pages. Do not promise that inactive or
@@ -707,10 +722,10 @@ fn available_memory() -> Option<u64> {
         );
         mach_port_deallocate(mach_task_self_, host);
         let page = libc::sysconf(libc::_SC_PAGESIZE);
-        if result != libc::KERN_SUCCESS || count != libc::HOST_VM_INFO64_COUNT || page <= 0 {
+        if result != libc::KERN_SUCCESS {
             return None;
         }
-        u64::from(stats.free_count).checked_mul(page as u64)
+        darwin_free_bytes(stats.free_count, count, libc::HOST_VM_INFO64_COUNT, page)
     }
 }
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -735,10 +750,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn darwin_memory_accepts_older_kernel_prefixes_and_rejects_invalid_counts() {
+        // Historical HOST_VM_INFO64 revisions returned 24 or 38 integer words.
+        // A newer binding's larger input capacity must not change that result.
+        for words in [24, 38, 128] {
+            assert_eq!(darwin_free_bytes(7, words, 128, 16384), Some(114688));
+        }
+        assert_eq!(darwin_free_bytes(0, 38, 128, 16384), Some(0));
+        assert_eq!(darwin_free_bytes(7, 0, 128, 16384), None);
+        assert_eq!(darwin_free_bytes(7, 129, 128, 16384), None);
+        assert_eq!(darwin_free_bytes(7, 38, 128, 0), None);
+        assert_eq!(darwin_free_bytes(7, 38, 128, -1), None);
+        assert_eq!(darwin_free_bytes(u32::MAX, 38, 128, i64::MAX), None);
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "native macOS host CPU observation"]
     fn native_macos_cpu_observation() {
+        let free_bytes = available_memory().expect("native free-memory observation");
+        eprintln!("NATIVE-MACOS-MEMORY free_bytes={free_bytes}");
         let before = cpu_sample().expect("native CPU sample");
         std::thread::sleep(Duration::from_millis(250));
         let after = cpu_sample().expect("second native CPU sample");

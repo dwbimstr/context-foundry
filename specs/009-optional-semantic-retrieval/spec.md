@@ -19,7 +19,8 @@ recipe, and cannot claim independent body evidence. Exact rendered input keys re
 unchanged, so current cached vectors are reused during metadata upgrades. Acceptance,
 currentness and generation decoding reject roles incompatible with the recipe; file
 locations span the whole source. Metadata verification caches include the recipe.
-Source-unit schema 5 is independent of derived search schema 6.
+Source-unit schema 5 is independent of derived search schema 7; the schema-6 to -7
+import-alias posting repair does not change semantic input recipes.
 
 Experimental prose retrieval with hierarchy vectors reuses its one query embedding
 to localize independently embedded bodies within up to 64 dense-selected source paths

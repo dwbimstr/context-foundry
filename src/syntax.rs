@@ -435,7 +435,7 @@ pub fn documents(source: &str, lang: Option<Lang>) -> Vec<Document> {
 pub struct SourceIndex {
     pub documents: Vec<Document>,
     pub imports: Vec<String>,
-    /// Exact terminal names from this source's call syntax, never resolution.
+    /// Exact terminal and supported explicit import-alias call names, never resolution.
     pub call_names: Vec<String>,
     /// Coverage of the supported syntax recipe only, never runtime coverage.
     pub call_coverage: &'static str,
@@ -1038,6 +1038,153 @@ pub(crate) fn call_name<'t>(
     }
 }
 
+/// A deliberately conservative Python alias recipe, shared by ingestion and
+/// final-snapshot candidate discovery. This does not resolve Python bindings.
+#[derive(Clone, Debug)]
+pub(crate) struct PythonImportAlias {
+    pub name: String,
+    pub declaration: (usize, usize),
+}
+
+#[derive(Default)]
+struct PythonImportAliases {
+    aliases: std::collections::BTreeMap<String, Option<PythonImportAlias>>,
+    declarations: std::collections::BTreeSet<(usize, usize)>,
+    other_names: std::collections::BTreeSet<String>,
+    calls: std::collections::BTreeMap<String, usize>,
+    limited: bool,
+}
+
+impl PythonImportAliases {
+    fn observe(&mut self, node: tree_sitter::Node, ancestors: &[tree_sitter::Node], body: &str) {
+        if self.limited {
+            return;
+        }
+        let parent = ancestors.last().copied();
+        if node.kind() == "wildcard_import" {
+            // A star import can introduce a conflicting name without spelling it.
+            self.limited = true;
+            return;
+        }
+        if node.kind() == "aliased_import"
+            && let Some(import) = parent.filter(|p| p.kind() == "import_from_statement")
+            && ancestors
+                .iter()
+                .rev()
+                .nth(1)
+                .is_some_and(|p| p.kind() == "module")
+            && let Some(name) = node.child_by_field_name("name")
+            && let Some(alias) = node.child_by_field_name("alias")
+        {
+            let original = &body[name.byte_range()];
+            let bound = &body[alias.byte_range()];
+            if original.contains('.') || original == bound {
+                return;
+            }
+            if self.declarations.len() == 128
+                || original.len() > 1024
+                || bound.len() > 1024
+                || !original.is_ascii()
+                || !bound.is_ascii()
+            {
+                self.limited = true;
+                return;
+            }
+            self.declarations
+                .insert((alias.start_byte(), alias.end_byte()));
+            self.aliases
+                .entry(bound.to_owned())
+                .and_modify(|old| *old = None)
+                .or_insert_with(|| {
+                    Some(PythonImportAlias {
+                        name: original.to_owned(),
+                        declaration: (import.start_byte(), import.end_byte()),
+                    })
+                });
+        }
+        if node.kind() != "identifier"
+            || self
+                .declarations
+                .contains(&(node.start_byte(), node.end_byte()))
+        {
+            return;
+        }
+        let name = &body[node.byte_range()];
+        if name.len() > 1024 || !name.is_ascii() {
+            // Python applies NFKC to identifiers. Refuse this narrow recipe
+            // rather than miss an equivalent Unicode shadowing spelling.
+            self.limited = true;
+            return;
+        }
+        let direct_call = parent
+            .is_some_and(|p| p.kind() == "call" && p.child_by_field_name("function") == Some(node));
+        if direct_call {
+            if self.calls.len() == 4096 && !self.calls.contains_key(name) {
+                self.limited = true;
+            } else {
+                self.calls.insert(name.to_owned(), node.start_byte());
+            }
+        } else if self.other_names.len() == 4096 && !self.other_names.contains(name) {
+            self.limited = true;
+        } else {
+            // Any other use refuses the alias for the entire source. This
+            // catches every explicit binding role, including parameters,
+            // comprehensions, assignments and nested imports, at the cost of
+            // refusing harmless ordinary value references and attribute names.
+            self.other_names.insert(name.to_owned());
+        }
+    }
+
+    fn finish(self) -> (std::collections::BTreeMap<String, PythonImportAlias>, bool) {
+        if self.limited {
+            return (Default::default(), true);
+        }
+        let aliases = self
+            .aliases
+            .into_iter()
+            .filter_map(|(bound, alias)| {
+                let alias = alias?;
+                (!self.other_names.contains(&bound)
+                    && self
+                        .calls
+                        .get(&bound)
+                        .is_some_and(|at| *at >= alias.declaration.1))
+                .then_some((bound, alias))
+            })
+            .collect();
+        (aliases, false)
+    }
+}
+
+pub(crate) fn python_import_aliases(
+    tree: &tree_sitter::Tree,
+    body: &str,
+    control: &crate::Control,
+) -> crate::FResult<(std::collections::BTreeMap<String, PythonImportAlias>, bool)> {
+    let mut aliases = PythonImportAliases::default();
+    let mut cursor = tree.walk();
+    let mut ancestors = Vec::new();
+    let mut visited = 0usize;
+    loop {
+        visited += 1;
+        if visited.is_multiple_of(256) {
+            control.check()?;
+        }
+        let node = cursor.node();
+        aliases.observe(node, &ancestors, body);
+        if cursor.goto_first_child() {
+            ancestors.push(node);
+            continue;
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return Ok(aliases.finish());
+            }
+            ancestors.pop();
+        }
+    }
+}
+
 /// The unit candidates of one parse; for an outline, also the comment and
 /// declaration-only member ranges it needs, and for indexing the import keys.
 /// A source over a [`ScannerLimit`] is stopped before the parser runs.
@@ -1079,11 +1226,15 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
     let mut facts: Vec<Facts> = Vec::new();
     let mut runs: Vec<Vec<(tree_sitter::Node, Leading)>> = vec![Vec::new()];
     let mut previous_named = vec![None];
+    let mut python_aliases = PythonImportAliases::default();
     'walk: loop {
         let node = cursor.node();
         // Units, members and imports are named nodes; keyword tokens such
         // as F#'s `namespace` or Haskell's `import` share their kind names.
         if node.is_named() {
+            if collect_calls && lang == Lang::Python {
+                python_aliases.observe(node, &ancestors, source);
+            }
             // A Rust declaration-only item is a unit and stays a mandatory
             // outline member, so outlines keep its lines as before.
             let at = Walk {
@@ -1168,6 +1319,19 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
         }
     }
     close_statement_forms(bytes, &mut out);
+    if collect_calls && lang == Lang::Python {
+        let (aliases, limited) = python_aliases.finish();
+        if limited {
+            extras.call_coverage = Some("incomplete");
+        }
+        for alias in aliases.into_values() {
+            if extras.call_names.len() == 4096 && !extras.call_names.contains(&alias.name) {
+                extras.call_coverage = Some("incomplete");
+            } else {
+                extras.call_names.insert(alias.name);
+            }
+        }
+    }
     out
 }
 

@@ -141,8 +141,9 @@ pub(crate) const TIE_GROUP: usize = 4;
 pub(crate) const GROUP_FILES: usize = DOOR_FILES / TIE_GROUP;
 /// Approximate doors examine at most this many delivery units.
 const DOOR_WINDOW: usize = 256;
-/// The META value naming the current search index format. `"6"` adds source-level
-/// call-name postings from the existing parse, without changing units. `"5"` (001 T008,
+/// The META value naming the current search index format. `"7"` enriches the
+/// source-level call-name postings introduced in `"6"` with conservative Python
+/// explicit import-alias names, without changing units. `"5"` (001 T008,
 /// context-v2 § City map › Languages) gives 15 more languages units,
 /// addresses and import keys and parses every source on the `tree-sitter`
 /// 0.26 runtime under a work budget; `"4"` (001 T007,
@@ -152,7 +153,7 @@ const DOOR_WINDOW: usize = 256;
 /// leading-run unit ranges (§ Unit forest).
 /// Semantic partitions independently name SOURCE_UNIT_SCHEMA; changing only
 /// these derived postings does not refit or re-embed model inputs.
-pub(crate) const SEARCH_SCHEMA: &str = "6";
+pub(crate) const SEARCH_SCHEMA: &str = "7";
 /// Search-only posting changes do not change source units or model inputs.
 /// Keep semantic partition recipes bound to the unit grammar, independently.
 pub(crate) const SOURCE_UNIT_SCHEMA: &str = "5";

@@ -4370,3 +4370,71 @@ fn call_postings_share_index_parse_and_exclude_mentions_and_arbitrary_macro_dsl(
     assert_eq!(capped.call_names.len(), 4096);
     assert_eq!(capped.call_coverage, "incomplete");
 }
+
+#[test]
+fn python_explicit_import_alias_postings_require_an_unshadowed_bare_call() {
+    let positive = "from service import refund as credit\ndef customer():\n    return credit(4)\n";
+    let indexed = context_foundry::syntax::index(positive, Some(Lang::Python)).unwrap();
+    assert_eq!(indexed.call_names, ["credit", "refund"]);
+    assert_eq!(indexed.imports, ["credit"]);
+    assert_eq!(indexed.call_coverage, "complete");
+    let module = context_foundry::syntax::index(
+        "from service import refund as credit; credit(4)\n",
+        Some(Lang::Python),
+    )
+    .unwrap();
+    assert!(module.call_names.iter().any(|n| n == "refund"));
+    for suffix in [
+        "credit = replacement\ncredit(4)\n",
+        "ｃｒｅｄｉｔ = replacement\ncredit(4)\n",
+        "credit(4)\ncredit = replacement\n",
+        "def customer(credit):\n    credit(4)\n",
+        "from other import debit as credit\ncredit(4)\n",
+        "def customer():\n    from other import debit as credit\n    credit(4)\n",
+        "for credit in functions:\n    credit(4)\n",
+        "[credit(4) for credit in functions]\n",
+        "with manager() as credit:\n    credit(4)\n",
+        "try:\n    credit(4)\nexcept Error as credit:\n    pass\n",
+        "match value:\n    case credit:\n        credit(4)\n",
+        "(credit := replacement)\ncredit(4)\n",
+        "del credit\ncredit(4)\n",
+        "from other import *\ncredit(4)\n",
+        "obj.credit(4)\n",
+        "value = credit\ncredit(4)\n",
+        "# credit(4)\nvalue = 'credit(4)'\n",
+    ] {
+        let body = format!("from service import refund as credit\n{suffix}");
+        let indexed = context_foundry::syntax::index(&body, Some(Lang::Python)).unwrap();
+        assert!(
+            !indexed.call_names.iter().any(|n| n == "refund"),
+            "{suffix}"
+        );
+    }
+    for body in [
+        "credit = replacement\nfrom service import refund as credit\ncredit(4)\n",
+        "credit(4)\nfrom service import refund as credit\n",
+        "def customer():\n    from service import refund as credit\n    credit(4)\n",
+        "from service import refund as credit\nfrom service import refund as credit\ncredit(4)\n",
+    ] {
+        let indexed = context_foundry::syntax::index(body, Some(Lang::Python)).unwrap();
+        assert!(indexed.call_names.iter().any(|n| n == "credit"));
+        assert!(!indexed.call_names.iter().any(|n| n == "refund"), "{body}");
+    }
+    let overflow = format!(
+        "from service import refund as credit\ncredit(4)\n{}",
+        (0..4097)
+            .map(|i| format!("value_{i} = 0\n"))
+            .collect::<String>()
+    );
+    let indexed = context_foundry::syntax::index(&overflow, Some(Lang::Python)).unwrap();
+    assert_eq!(indexed.call_coverage, "incomplete");
+    assert!(indexed.call_names.iter().any(|n| n == "credit"));
+    assert!(!indexed.call_names.iter().any(|n| n == "refund"));
+    let repeated = format!(
+        "{}credit(4)\n",
+        "from service import refund as credit\n".repeat(129)
+    );
+    let indexed = context_foundry::syntax::index(&repeated, Some(Lang::Python)).unwrap();
+    assert_eq!(indexed.call_coverage, "incomplete");
+    assert!(!indexed.call_names.iter().any(|n| n == "refund"));
+}

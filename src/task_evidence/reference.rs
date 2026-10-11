@@ -92,6 +92,20 @@ fn classify_at(tree: &tree_sitter::Tree, body: &str, occurrence: &SourceHandle) 
     result
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ImportAliasCall {
+    pub name: String,
+    pub alias: String,
+    pub declaration: SourceHandle,
+    pub call: SourceHandle,
+}
+
+pub(crate) struct Candidate {
+    pub handle: SourceHandle,
+    pub attributed_test: bool,
+    pub alias: Option<ImportAliasCall>,
+}
+
 /// Inspect one admitted, bounded source for calls whose terminal name matches
 /// an explicitly resolved query anchor. This is candidate discovery only:
 /// shadowing, dispatch, imports and overloads remain unresolved. No graph edge
@@ -104,7 +118,14 @@ pub(crate) fn candidates(
     names: &BTreeSet<String>,
     limit: usize,
     control: &crate::Control,
-) -> crate::FResult<(Vec<(SourceHandle, bool)>, bool)> {
+) -> crate::FResult<(Vec<Candidate>, bool)> {
+    let (aliases, mut limited) =
+        if crate::syntax::Lang::from_path(&source.path) == Some(crate::syntax::Lang::Python) {
+            crate::syntax::python_import_aliases(tree, body, control)?
+        } else {
+            (Default::default(), false)
+        };
+    let mut spans = 0;
     let mut found = Vec::new();
     let mut seen = BTreeSet::new();
     let mut cursor = tree.walk();
@@ -117,8 +138,20 @@ pub(crate) fn candidates(
         let node = cursor.node();
         let assertion = assertion_call(node, body);
         let name = call_name(node, body);
+        let alias = name.and_then(|name| {
+            let alias = aliases.get(&body[name.byte_range()])?;
+            if alias.declaration.1 - alias.declaration.0 > super::MAX_SPAN_BYTES as usize {
+                limited = true;
+                return None;
+            }
+            (node.kind() == "call"
+                && node.child_by_field_name("function") == Some(name)
+                && node.start_byte() >= alias.declaration.1
+                && names.contains(&alias.name))
+            .then_some(alias)
+        });
         if let Some(name) = name
-            && names.contains(&body[name.byte_range()])
+            && (names.contains(&body[name.byte_range()]) || alias.is_some())
         {
             let occurrence = SourceHandle {
                 start: name.start_byte() as u64,
@@ -134,6 +167,16 @@ pub(crate) fn candidates(
                 });
             }
             if let Some(call) = usage.call {
+                let alias = alias.map(|alias| ImportAliasCall {
+                    name: alias.name.clone(),
+                    alias: body[name.byte_range()].to_owned(),
+                    declaration: SourceHandle {
+                        start: alias.declaration.0 as u64,
+                        end: alias.declaration.1 as u64,
+                        ..source.clone()
+                    },
+                    call: call.clone(),
+                });
                 let mut enclosing = node;
                 while let Some(parent) = enclosing.parent() {
                     enclosing = parent;
@@ -163,11 +206,23 @@ pub(crate) fn candidates(
                         call
                     }
                 });
-                if seen.insert((handle.start, handle.end)) {
-                    if found.len() == limit {
+                if seen.insert((
+                    handle.start,
+                    handle.end,
+                    alias
+                        .as_ref()
+                        .map(|a| (a.declaration.start, a.alias.clone())),
+                )) {
+                    let cost = 1 + usize::from(alias.is_some());
+                    if spans + cost > limit {
                         return Ok((found, true));
                     }
-                    found.push((handle, usage.test.is_some()));
+                    spans += cost;
+                    found.push(Candidate {
+                        handle,
+                        attributed_test: usage.test.is_some(),
+                        alias,
+                    });
                 }
             }
         }
@@ -176,7 +231,7 @@ pub(crate) fn candidates(
         }
         while !cursor.goto_next_sibling() {
             if !cursor.goto_parent() {
-                return Ok((found, false));
+                return Ok((found, limited));
             }
         }
     }
@@ -244,6 +299,103 @@ pub(crate) fn related_tests(
 mod tests {
     use super::*;
     #[test]
+    fn python_alias_candidates_cite_the_import_and_call_and_charge_both_spans() {
+        let body = "from service import refund as credit\ndef customer():\n    return credit(4)\n";
+        let tree = crate::syntax::parse_reference_source("consumer.py", body).unwrap();
+        let source = SourceHandle {
+            workspace_id: "w".into(),
+            path: "consumer.py".into(),
+            sha256: crate::digest(body.as_bytes()),
+            start: 0,
+            end: body.len() as u64,
+        };
+        let names = ["refund".to_owned()].into();
+        let (found, limited) = candidates(
+            &tree,
+            body,
+            &source,
+            &names,
+            2,
+            &crate::Control::unbounded(),
+        )
+        .unwrap();
+        assert!(!limited);
+        assert_eq!(found.len(), 1);
+        let alias = found[0].alias.as_ref().unwrap();
+        assert_eq!(alias.name, "refund");
+        assert_eq!(alias.alias, "credit");
+        assert_eq!(
+            &body[alias.declaration.start as usize..alias.declaration.end as usize],
+            "from service import refund as credit"
+        );
+        assert_eq!(
+            &body[alias.call.start as usize..alias.call.end as usize],
+            "credit(4)"
+        );
+        assert_eq!(alias.call.sha256, source.sha256);
+        let (found, limited) = candidates(
+            &tree,
+            body,
+            &source,
+            &names,
+            1,
+            &crate::Control::unbounded(),
+        )
+        .unwrap();
+        assert!(found.is_empty() && limited);
+        for suffix in [
+            "credit = replacement\ncredit(4)\n",
+            "def customer(credit):\n    credit(4)\n",
+            "from other import debit as credit\ncredit(4)\n",
+        ] {
+            let body = format!("from service import refund as credit\n{suffix}");
+            let tree = crate::syntax::parse_reference_source("consumer.py", &body).unwrap();
+            let (found, _) = candidates(
+                &tree,
+                &body,
+                &source,
+                &names,
+                8,
+                &crate::Control::unbounded(),
+            )
+            .unwrap();
+            assert!(found.is_empty(), "{suffix}");
+        }
+    }
+
+    #[test]
+    fn distinct_aliases_in_one_import_and_function_keep_distinct_proofs() {
+        let body = "from service import refund as credit, charge as debit\ndef customer():\n    credit(4)\n    debit(2)\n";
+        let tree = crate::syntax::parse_reference_source("consumer.py", body).unwrap();
+        let source = SourceHandle {
+            workspace_id: "w".into(),
+            path: "consumer.py".into(),
+            sha256: crate::digest(body.as_bytes()),
+            start: 0,
+            end: body.len() as u64,
+        };
+        let names = ["refund".to_owned(), "charge".to_owned()].into();
+        let (found, limited) = candidates(
+            &tree,
+            body,
+            &source,
+            &names,
+            4,
+            &crate::Control::unbounded(),
+        )
+        .unwrap();
+        assert!(!limited);
+        assert_eq!(found.len(), 2);
+        assert_eq!(
+            found
+                .iter()
+                .map(|c| c.alias.as_ref().unwrap().alias.as_str())
+                .collect::<Vec<_>>(),
+            ["credit", "debit"]
+        );
+    }
+
+    #[test]
     fn call_candidates_are_bounded_and_exclude_text_and_value_references() {
         for (path, body, expected) in [
             (
@@ -287,12 +439,14 @@ mod tests {
             .unwrap();
             assert_eq!(found.len(), expected, "{path}");
             assert!(!limited);
-            for (handle, test) in &found {
+            for candidate in &found {
+                let handle = &candidate.handle;
+                let test = candidate.attributed_test;
                 assert!(
                     body[handle.start as usize..handle.end as usize].contains("invoke_target()")
                 );
                 assert_eq!(handle.sha256, source.sha256);
-                if *test {
+                if test {
                     assert!(
                         body[handle.start as usize..handle.end as usize].starts_with("#[test]")
                     );
@@ -333,7 +487,7 @@ mod tests {
         .unwrap();
         assert!(!limited);
         assert_eq!(calls.len(), 1);
-        assert!(calls[0].1);
+        assert!(calls[0].attributed_test);
         let (tests, limited) = related_tests(
             &tree,
             body,

@@ -3,7 +3,7 @@
 
 Run from a checkout with Rust 1.90.0, Python 3, CMake and Xcode/Metal tools:
   python3 scripts/native-macos-acceptance.py --out /absolute/new-results \
-      --work /absolute/new-work
+      --work /absolute/new-work [--generation]
 Upload only --out, including on failure. Work contains public pinned weights and
 build outputs. No credentials, private corpus or model-quality claims are needed.
 """
@@ -26,6 +26,9 @@ GGUF_REV = "bfcd298762cc34d0357ece5ebdd31791a3a374d8"
 TOKENIZER_REV = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 GGUF_SHA = "68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216"
 TOKENIZER_SHA = "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4"
+GENERATION_REV = "ebb2015119c907b064c512bf053e945850b5875f"
+GENERATION_FILE = "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"
+GENERATION_SHA = "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32"
 FIXTURES = [
     "owner_death_on_liveness_pipe_eof_ends_the_worker",
     "owner_death_during_load_ends_the_worker",
@@ -93,6 +96,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--work", required=True, type=Path)
+    parser.add_argument("--generation", action="store_true",
+                        help="also run bounded owned Qwen 0.5B Metal generation after embedding cleanup")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     out, work = args.out.resolve(), args.work.resolve()
@@ -129,10 +134,10 @@ def main():
                 }
         return rows
 
-    def observe_workers(owner):
+    def observe_workers(owner, worker_name):
         rows = processes()
         for pid, row in rows.items():
-            if Path(row["command"]).name != "foundry-embed":
+            if Path(row["command"]).name != worker_name:
                 continue
             ancestor, visited = pid, set()
             while ancestor in rows and ancestor not in visited:
@@ -147,7 +152,7 @@ def main():
         temporary.write_text(json.dumps(result, indent=2) + "\n")
         temporary.replace(out / "result.json")
 
-    def stage(name, command, timeout=1800, test=False, extra_env=None, observe=False):
+    def stage(name, command, timeout=1800, test=False, extra_env=None, observe=None):
         item = {"name": name, "status": "running", "command": list(map(str, command))}
         result["stages"].append(item)
         save()
@@ -163,7 +168,7 @@ def main():
                     if observe:
                         deadline = time.monotonic() + timeout
                         while process.poll() is None:
-                            observe_workers(process.pid)
+                            observe_workers(process.pid, observe)
                             remaining = deadline - time.monotonic()
                             if remaining <= 0:
                                 raise subprocess.TimeoutExpired(item["command"], timeout)
@@ -196,13 +201,14 @@ def main():
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
             if observe:
-                item["observed_workers"] = list(observed_workers.values())
+                item["observed_workers"] = [row for row in observed_workers.values()
+                                            if Path(row["command"]).name == observe]
             item["elapsed_seconds"] = round(time.monotonic() - started, 3)
             save()
         print(f"Finished {name}: {item['status']}", flush=True)
         return item["status"] == "passed"
 
-    def test(name, target, ignored=False, extra_env=None, observe=False):
+    def test(name, target, ignored=False, extra_env=None, observe=None):
         command = cargo + ["test", "--locked", "--features", "test-faults"] + target + [name, "--", "--exact", "--nocapture", "--test-threads=1"]
         if ignored:
             command.append("--ignored")
@@ -211,6 +217,31 @@ def main():
     def require(ok, reason):
         if not ok:
             raise RuntimeError(reason)
+
+    def cleanup(worker_name, scratch=None, minimum=1):
+        # Only identities actually observed below this test's process tree count.
+        # A later absent process without prior observation never proves cleanup.
+        observed = {key: row for key, row in observed_workers.items()
+                    if Path(row["command"]).name == worker_name}
+        require(len(observed) >= minimum,
+                f"expected {minimum} observed {worker_name} workers; cleanup evidence unavailable")
+        deadline = time.monotonic() + 10
+        while True:
+            current = processes()
+            workers = [row for (pid, started), row in observed.items()
+                       if pid in current and current[pid]["started"] == started]
+            runs = sorted(path.name for path in scratch.glob("w-*")) if scratch else []
+            if not workers and not runs:
+                break
+            require(time.monotonic() < deadline,
+                    f"{worker_name} cleanup incomplete: workers={workers}, scratch={runs}")
+            time.sleep(0.1)
+        item = {"name": worker_name + "-cleanup", "status": "passed",
+                "observed_workers": list(observed.values()), "remaining_observed_workers": 0}
+        if scratch:
+            item["remaining_scratch_runs"] = 0
+        result["stages"].append(item)
+        save()
 
     try:
         save()
@@ -280,28 +311,67 @@ def main():
         receipt = out / "metal-receipt.json"
         require(test("real_native_embedding_receipt", ["--test", "embedding_parity"], True,
                      {"FOUNDRY_EMBED_PROFILE": str(profile_path), "FOUNDRY_EMBED_RECEIPT": str(receipt)},
-                     observe=True), "real Metal receipt failed")
+                     observe="foundry-embed"), "real Metal receipt failed")
         evidence = json.loads(receipt.read_text())
         require((evidence["os"], evidence["arch"], evidence["descriptor"]["adapter_revision"]) == ("macos", "aarch64", 4), "receipt backend identity mismatch")
         require(evidence["worker_sha256"] == profile["worker"]["executable_sha256"], "receipt executable mismatch")
         require(len(evidence["vectors"]) == 5 and any(len(ids) == 8192 for ids in evidence["input_ids"]), "receipt workload incomplete")
 
-        # Require a worker observed beneath this test's process tree, then
-        # check its PID/start identity and private scratch after provider drop.
-        # A basename-only ps entry is sufficient only with verified ancestry;
-        # absence without a prior observation can never pass cleanup.
-        require(bool(observed_workers), "real worker was never observed; cleanup evidence unavailable")
-        deadline = time.monotonic() + 10
-        while True:
-            current = processes()
-            workers = [row for (pid, started), row in observed_workers.items()
-                       if pid in current and current[pid]["started"] == started]
-            runs = sorted(path.name for path in scratch.glob("w-*"))
-            if not workers and not runs:
-                break
-            require(time.monotonic() < deadline, f"real worker cleanup incomplete: workers={workers}, scratch={runs}")
-            time.sleep(0.1)
-        result["stages"].append({"name": "real-worker-cleanup", "status": "passed", "observed_workers": list(observed_workers.values()), "remaining_observed_workers": 0, "remaining_scratch_runs": 0})
+        cleanup("foundry-embed", scratch=scratch)
+        if args.generation:
+            # Separate acquisitions, after embedding teardown. This is a small
+            # generation fixture, not a combined-model or large-context claim.
+            result["generation_budget"] = {
+                "model_revision": GENERATION_REV, "artifact_sha256": GENERATION_SHA,
+                "artifact_bytes": 491400064, "context_tokens": 4096,
+                "batch_tokens": 128, "threads": 2, "output_tokens": 512,
+                "memory_bytes": 2 * 1024**3, "memory_enforcement": "supervised_footprint",
+                "gpu_layers": 25, "gpu_allocation_bytes": 1024**3,
+                "gpu_reserve_bytes": 256 * 1024**2,
+                "cpu_seconds": 180, "load_seconds": 90, "call_seconds": 90,
+                "estimated_f16_kv_bytes": 48 * 1024**2,
+                "gpu_limit_scope": "monitored process allocation; not a hard quota or global free memory",
+            }
+            save()
+            generation_model = model / GENERATION_FILE
+            url = f"https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/{GENERATION_REV}/{GENERATION_FILE}"
+            require(stage("download-generation-gguf", ["curl", "--fail", "--location", "--proto", "=https", "--proto-redir", "=https", "--retry", "3", "--max-time", "600", "--output", generation_model, url], 650), "generation artifact download failed")
+            require(generation_model.stat().st_size == 491400064 and sha256(generation_model) == GENERATION_SHA, "generation artifact identity mismatch")
+            require(stage("generation-worker-build", cargo + ["build", "--locked", "--features", "generate-worker", "--bin", "foundry-generate"], 2700), "native generation build failed")
+            generation_bundle = work / "FoundryGenerate.app"
+            require(stage("generation-bundle", ["sh", root / "scripts/generate-worker-bundle.sh", work / "target/debug/foundry-generate", generation_bundle], 120), "generation development signing failed")
+            generation_executable = generation_bundle / "Contents/MacOS/foundry-generate"
+            generation_hash = sha256(generation_executable)
+            require(stage("generation-linked-libraries", ["otool", "-L", generation_executable], 30), "generation binary inspection failed")
+            generation_receipt = out / "generation-receipt.json"
+            require(test("local_real_metal_generation_accepts_a_cited_brief_and_reuses_it", ["--test", "knowledge"], True,
+                         {"FOUNDRY_GENERATION_SMOKE_WORKER": str(generation_executable),
+                          "FOUNDRY_GENERATION_SMOKE_GGUF": str(generation_model),
+                          "FOUNDRY_GENERATION_SMOKE_RECEIPT": str(generation_receipt)},
+                         observe="foundry-generate"), "real Metal generation lifecycle failed")
+            generated = json.loads(generation_receipt.read_text())
+            require((generated["status"], generated["os"], generated["arch"]) == ("passed", "macos", "aarch64"), "generation receipt platform mismatch")
+            require(generated["worker_sha256"] == generation_hash and generated["artifact_sha256"] == GENERATION_SHA, "generation receipt artifact identity mismatch")
+            config = generated["config"]
+            require(config["executable_sha256"] == generation_hash and config["llama_cpp"] == LLAMA, "generation receipt backend identity mismatch")
+            require(config["device"] == {"kind": "metal", "layers": 25, "allocation_bytes": 1024**3, "reserve_bytes": 256 * 1024**2}, "generation device budget mismatch")
+            require((config["memory_enforcement"], config["memory_bytes"], config["context_tokens"]) == ("supervised_footprint", 2 * 1024**3, 4096), "generation resource budget mismatch")
+            for name in ("initial", "changed"):
+                report = generated[name]
+                worker = report["local_worker"]
+                require(report["complete"] and report["calls"] == report["generated"] == worker["launches"] == worker["calls"] == 1, "generation call receipt incomplete")
+                require(report["usage_unknown_calls"] == 0 and report["observed_prompt_tokens"] > 0 and report["observed_completion_tokens"] > 0, "generation usage unavailable")
+                require(0 < worker["peak_gpu_bytes"] <= 1024**3 and 0 < worker["peak_memory_bytes"] <= 2 * 1024**3, "generation native resource observation unavailable or over budget")
+                require(worker["pid"] is None and worker["last_stop"] == "stopped" and worker["isolation"] == "macos-app-sandbox-development-v1", "generation teardown or isolation mismatch")
+            for name in ("current", "restored"):
+                report = generated[name]
+                worker = report["local_worker"]
+                require(report["complete"] and report["calls"] == worker["launches"] == worker["calls"] == worker["verified_bytes"] == worker["peak_memory_bytes"] == worker["peak_gpu_bytes"] == 0 and worker["pid"] is None, "generation replay acquired model resources")
+            require(generated["restored"]["reused_cached"] == 1 and generated["http_calls"] == 0, "generation restart/revert or owned-provider mismatch")
+            cleanup("foundry-generate", minimum=2)
+            result["scope"] += "; owned Metal generation, change and current/restart/revert reuse"
+            result["not_accepted"].remove("generation worker")
+            result["not_accepted"].extend(["generation prose correctness or coding-task benefit", "all generation operations on GPU", "combined embedding and generation pressure", "native generator owner-death and adversarial isolation"])
         result.update(status="passed", reason="all selected native checks passed; broader acceptance remains open")
         return 0
     except Exception as error:

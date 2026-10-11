@@ -770,9 +770,14 @@ The first search document per source owns the exact postings and syntax-recipe c
 Task composition queries up to four canonical anchor names across the admitted index,
 reads at most nine posting documents, and selects at most eight source files for final
 hash and AST checks. It reuses compiler parses and obeys the existing span/output budget;
-it does not scan all repository bodies per query. Search schema 6 requires explicit
-`repair-index`; source-unit schema 5 remains a separate semantic-recipe dependency.
-The fixed window has no pagination. Unsupported syntax and dynamic resolution remain
+it does not scan all repository bodies per query. Conservative Python module-level
+explicit from-import aliases enrich the same postings; shadowed, reassigned, escaped
+or duplicate aliases are refused. Wildcard imports, non-ASCII identifiers and bounded
+collector overflow suppress alias enrichment with incomplete coverage. The unresolved
+alias receipt requires fresh complete definition, import and call bodies to fit.
+Search schema 7 requires explicit `repair-index`, including from field-compatible
+schema 6 which lacks alias postings; source-unit schema 5 remains a separate
+semantic-recipe dependency. The fixed window has no pagination. Unsupported syntax and dynamic resolution remain
 open, and these candidates cannot establish complete callers or executed tests.
 
 Execution v2 stays in the existing graph-bundle owner. An explicit producer collection

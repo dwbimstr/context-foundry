@@ -5217,7 +5217,9 @@ fn call_posting_search_upgrade_requires_explicit_derived_repair_without_source_u
     let source_revision = engine.source_revision().unwrap();
     let source = engine.source("callee.rs").unwrap().unwrap().hash;
     drop(engine);
-    testkit::set_meta(store.path(), "search_schema", Some("5"));
+    // Schema 6 has the same fields but lacks canonical Python alias postings.
+    // Its recipe must be refused even when the Tantivy field schema still fits.
+    testkit::set_meta(store.path(), "search_schema", Some("6"));
     let engine = Engine::open_existing(store.path()).unwrap();
     assert_eq!(engine.status().unwrap().index_state, "repair_required");
     assert!(engine.search("callee", 8).is_err());
@@ -5227,7 +5229,7 @@ fn call_posting_search_upgrade_requires_explicit_derived_repair_without_source_u
     Engine::repair_index(store.path(), &Control::unbounded()).unwrap();
     assert_eq!(
         testkit::meta_value(store.path(), "search_schema").as_deref(),
-        Some("6")
+        Some("7")
     );
     let engine = Engine::open_existing(store.path()).unwrap();
     assert!(!engine.search("callee", 8).unwrap().hits.is_empty());

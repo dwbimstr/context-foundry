@@ -424,6 +424,12 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         .mode(0o700)
         .create(&output)
         .unwrap();
+    // Use the host's supported source-body reads instead of its independent
+    // declaration-only projection. This fixed overlay is identical for both arms.
+    let host_config = "read:\n  summarize:\n    enabled: false\n";
+    let host_config_path = output.join("host-config.yml");
+    std::fs::write(&host_config_path, host_config).unwrap();
+    let host_config_sha = context_foundry::digest(host_config.as_bytes());
     // Preserve the installed OMP engineering workflow. A custom --system-prompt
     // replaces that workflow; an explicit bundled template avoids discovery of
     // unrelated SYSTEM.md overrides while allowing scoped additive constraints.
@@ -695,6 +701,8 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
                 "--no-skills",
                 "--no-rules",
                 "--no-title",
+                "--config",
+                host_config_path.to_str().unwrap(),
                 "--system-prompt-template",
                 recorded_system_template.to_str().unwrap(),
                 "--append-system-prompt",
@@ -793,6 +801,7 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         rows.push(json!({"arm":arm,"host_success":host_success,"timeout":timed_out,"oracle_pass":checked,"protected_files_unchanged":preserved,"source_changed":changed,"verified_task":checked&&preserved,
             "receipt_accounting_complete":receipt_accounting_complete,"receipt_log_complete":receipt_log_complete,
             "public_check_command":public_command,
+            "host_config_sha256":host_config_sha,
             "system_template_sha256":system_template_sha,
             "system_append_sha256":context_foundry::digest(system_append.as_bytes()),
             "host_argv_sha256":context_foundry::digest(&host_argv),
@@ -807,7 +816,7 @@ async fn free_form_parser_repair_with_full_files_and_foundry_context() {
         )
         .unwrap();
     }
-    let report = json!({"version":3,"system_prompt_recipe":"omp_18_6_0_bundled_template_with_scope_append","scope":"public_single_task_free_form_host_calibration","scenario":scenario,"held_out":false,"host":"OMP 18.6.0","actual_backend":model,"model_sha256":model_sha,"source_scale":scale,"upstream_crate":percent.then_some("percent-encoding 2.3.2 seeded regression, archive 9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"),"tools":if public_check && percent {"read,edit,bash; replace mode; fuzzy=false"} else if public_check {"read,write,bash"} else if percent {"read,edit; replace mode; fuzzy=false"} else {"read,write"},"public_check_enabled":public_check,"backend_identity":"operator_launched_local_server_not_remote_attestation","transport_alias":"glm-5.3-flash","llama_cpp":"b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea","attempts_per_arm":1,"model_output_limit":output_limit,"model_context_window":context_window,"task_seconds":task_seconds,"request_idle_seconds":idle_seconds,"cost_boundary":"context preparation, gateway/host startup, all requests, teardown and oracle; common fixture setup, model acquisition/loading and energy excluded and separately recorded, never inferred from source tokens","completion_comparison":completion_comparison(&rows),"rows":rows});
+    let report = json!({"version":4,"system_prompt_recipe":"omp_18_6_0_bundled_template_with_scope_append_and_body_reads","scope":"public_single_task_free_form_host_calibration","scenario":scenario,"held_out":false,"host":"OMP 18.6.0","actual_backend":model,"model_sha256":model_sha,"source_scale":scale,"upstream_crate":percent.then_some("percent-encoding 2.3.2 seeded regression, archive 9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"),"tools":if public_check && percent {"read,edit,bash; replace mode; fuzzy=false"} else if public_check {"read,write,bash"} else if percent {"read,edit; replace mode; fuzzy=false"} else {"read,write"},"public_check_enabled":public_check,"backend_identity":"operator_launched_local_server_not_remote_attestation","transport_alias":"glm-5.3-flash","llama_cpp":"b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea","attempts_per_arm":1,"model_output_limit":output_limit,"model_context_window":context_window,"task_seconds":task_seconds,"request_idle_seconds":idle_seconds,"cost_boundary":"context preparation, gateway/host startup, all requests, teardown and oracle; common fixture setup, model acquisition/loading and energy excluded and separately recorded, never inferred from source tokens","completion_comparison":completion_comparison(&rows),"rows":rows});
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report).unwrap(),

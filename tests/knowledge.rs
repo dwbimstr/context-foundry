@@ -1991,32 +1991,106 @@ fn local_owner_death_stops_the_worker_and_leaves_generation_recoverable() {
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires an explicitly supplied real generation worker and GGUF; no model download in tests"]
 async fn local_real_cpu_generation_accepts_a_cited_brief_and_reuses_it() {
+    real_generation_lifecycle(
+        knowledge::local::Device::Cpu,
+        knowledge::local::MemoryEnforcement::HardAddressSpace,
+    )
+    .await;
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires a signed development generator, pinned Qwen 0.5B GGUF, Metal and an explicit new receipt path"]
+async fn local_real_metal_generation_accepts_a_cited_brief_and_reuses_it() {
+    assert!(
+        std::env::var_os("FOUNDRY_GENERATION_SMOKE_RECEIPT").is_some(),
+        "set FOUNDRY_GENERATION_SMOKE_RECEIPT to a new absolute path outside the checkout"
+    );
+    real_generation_lifecycle(
+        knowledge::local::Device::Metal {
+            // The pinned fixture has 24 repeating layers plus the output layer.
+            layers: 25,
+            allocation_bytes: 1024 * 1024 * 1024,
+            reserve_bytes: 256 * 1024 * 1024,
+        },
+        knowledge::local::MemoryEnforcement::SupervisedFootprint,
+    )
+    .await;
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn real_generation_lifecycle(
+    device: knowledge::local::Device,
+    memory_enforcement: knowledge::local::MemoryEnforcement,
+) {
+    use knowledge::local::{Config, Device, LLAMA_CPP};
+    let started = Instant::now();
+    let metal = matches!(device, Device::Metal { .. });
+    let label = if metal { "Metal" } else { "CPU" };
+    // Fail before loading weights if the explicitly selected output is unsafe.
+    // The receipt never replaces a file or writes inside this source checkout.
+    let mut receipt = std::env::var_os("FOUNDRY_GENERATION_SMOKE_RECEIPT").map(|path| {
+        let path = PathBuf::from(path);
+        assert!(path.is_absolute(), "receipt path must be absolute");
+        let parent = path.parent().unwrap().canonicalize().unwrap();
+        let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .unwrap();
+        assert!(
+            !parent.starts_with(checkout),
+            "receipt must stay outside the checkout"
+        );
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .unwrap()
+    });
     let server = Server::good();
     let mut env = Env::new(&server);
-    use_local(&mut env);
+    let executable: PathBuf = std::env::var_os("FOUNDRY_GENERATION_SMOKE_WORKER")
+        .expect("worker path")
+        .into();
+    let gguf: PathBuf = std::env::var_os("FOUNDRY_GENERATION_SMOKE_GGUF")
+        .expect("GGUF path")
+        .into();
+    let executable_sha256 = context_foundry::neural::profile::hash_regular_file(&executable)
+        .unwrap()
+        .0;
+    env.profile.artifact_sha256 = context_foundry::neural::profile::hash_regular_file(&gguf)
+        .unwrap()
+        .0;
+    if metal {
+        assert_eq!(
+            env.profile.artifact_sha256,
+            "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32",
+            "native acceptance uses the explicitly pinned small fixture"
+        );
+    }
+    env.profile.endpoint.clear();
+    env.profile.local = Some(Config {
+        development: true,
+        executable,
+        executable_sha256,
+        gguf,
+        llama_cpp: LLAMA_CPP.into(),
+        chat_template: "chatml".into(),
+        device,
+        context_tokens: 4096,
+        batch_tokens: 128,
+        threads: 2,
+        memory_bytes: 2 * 1024 * 1024 * 1024,
+        memory_enforcement,
+        cpu_seconds: 180,
+        load_seconds: 90,
+        idle_seconds: 1,
+    });
     env.profile.nodes.truncate(1);
     env.profile.nodes[0].sources.truncate(1);
     env.profile.instructions = "Summarize only what the function does. Write one short claim for purpose and one for behavior, each with citations [0] and identifiers []. Leave provides, consumes, constraints, tests and unknowns empty.".into();
     env.profile.model = "Qwen2.5-Coder-0.5B-Instruct-Q4_K_M-smoke".into();
     env.profile.call_seconds = 90;
-    let local = env.profile.local.as_mut().unwrap();
-    local.executable = std::env::var_os("FOUNDRY_GENERATION_SMOKE_WORKER")
-        .expect("worker path")
-        .into();
-    local.gguf = std::env::var_os("FOUNDRY_GENERATION_SMOKE_GGUF")
-        .expect("GGUF path")
-        .into();
-    local.executable_sha256 =
-        context_foundry::neural::profile::hash_regular_file(&local.executable)
-            .unwrap()
-            .0;
-    env.profile.artifact_sha256 = context_foundry::neural::profile::hash_regular_file(&local.gguf)
-        .unwrap()
-        .0;
-    local.memory_bytes = 2 * 1024 * 1024 * 1024;
-    local.threads = 2;
-    local.cpu_seconds = 180;
-    local.load_seconds = 90;
+    let initial_profile = env.profile.clone();
     let report = knowledge::prepare(
         env.engine.as_mut().unwrap(),
         &env.profile,
@@ -2030,11 +2104,11 @@ async fn local_real_cpu_generation_accepts_a_cited_brief_and_reuses_it() {
     .await
     .unwrap();
     eprintln!(
-        "real CPU generation: {}",
+        "real {label} generation: {}",
         serde_json::to_string(&report).unwrap()
     );
     assert!(report.complete, "{report:?}");
-    assert_eq!(report.generated, 1);
+    assert_eq!((report.calls, report.generated), (1, 1));
     assert!(report.observed_prompt_tokens > 0 && report.observed_completion_tokens > 0);
     assert_eq!(report.usage_unknown_calls, 0);
     assert_eq!(report.local_worker.as_ref().unwrap().launches, 1);
@@ -2066,11 +2140,11 @@ async fn local_real_cpu_generation_accepts_a_cited_brief_and_reuses_it() {
     .await
     .unwrap();
     eprintln!(
-        "real CPU changed generation: {}",
+        "real {label} changed generation: {}",
         serde_json::to_string(&changed).unwrap()
     );
     assert!(changed.complete, "{changed:?}");
-    assert_eq!(changed.generated, 1);
+    assert_eq!((changed.calls, changed.generated), (1, 1));
     assert_eq!(changed.usage_unknown_calls, 0);
     assert!(changed.observed_prompt_tokens > 0 && changed.observed_completion_tokens > 0);
     assert_eq!(
@@ -2082,11 +2156,83 @@ async fn local_real_cpu_generation_accepts_a_cited_brief_and_reuses_it() {
     env.profile.local.as_mut().unwrap().gguf = env.dir.path().join("absent-model.gguf");
     let restored = env.run(1).await;
     eprintln!(
-        "real CPU restart/revert: {}",
+        "real {label} restart/revert: {}",
         serde_json::to_string(&restored).unwrap()
     );
     assert!(restored.complete, "{restored:?}");
     assert_eq!((restored.calls, restored.reused_cached), (0, 1));
     assert_eq!(restored.local_worker.as_ref().unwrap().launches, 0);
     assert_eq!(server.calls(), 0);
+    for generated in [&report, &changed] {
+        let worker = generated.local_worker.as_ref().unwrap();
+        assert_eq!((worker.launches, worker.calls), (1, 1));
+        assert!(worker.verified_bytes > 0);
+        assert!(worker.peak_memory_bytes > 0);
+        assert!(worker.peak_memory_bytes <= 2 * 1024 * 1024 * 1024);
+        assert_eq!(
+            worker.pid, None,
+            "the supervisor must reap before returning"
+        );
+        assert_eq!(worker.last_stop.as_deref(), Some("stopped"));
+        assert_eq!(
+            worker.isolation.as_deref(),
+            Some(if metal {
+                "macos-app-sandbox-development-v1"
+            } else {
+                "linux-seccomp-fd-v1"
+            })
+        );
+        if metal {
+            // Explicit GPU selection plus observed allocation prevents a CPU-only
+            // smoke result from passing as native Metal acceptance. This does not
+            // assert that every llama.cpp operation executes on the GPU.
+            assert!(worker.peak_gpu_bytes > 0);
+            assert!(worker.peak_gpu_bytes <= 1024 * 1024 * 1024);
+        } else {
+            assert_eq!(worker.peak_gpu_bytes, 0);
+        }
+    }
+    for reused in [&replay, &restored] {
+        let worker = reused.local_worker.as_ref().unwrap();
+        assert_eq!(
+            (worker.launches, worker.calls, worker.verified_bytes),
+            (0, 0, 0)
+        );
+        assert_eq!(worker.pid, None);
+        assert_eq!((worker.peak_memory_bytes, worker.peak_gpu_bytes), (0, 0));
+    }
+    if let Some(file) = &mut receipt {
+        let evidence = json!({
+            "v": 1,
+            "status": "passed",
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "elapsed_seconds": started.elapsed().as_secs_f64(),
+            "scope": "owned generation, source change, current and restart/revert reuse",
+            "worker_sha256": initial_profile.local.as_ref().unwrap().executable_sha256,
+            "artifact_sha256": initial_profile.artifact_sha256,
+            "config": initial_profile.local,
+            "model": initial_profile.model,
+            "instructions": initial_profile.instructions,
+            "output_tokens": initial_profile.output_tokens,
+            "call_seconds": initial_profile.call_seconds,
+            "fixture_source_sha256": context_foundry::digest(A.as_bytes()),
+            "changed_source_sha256": context_foundry::digest(A.replace("remove(0)", "remove(1)").as_bytes()),
+            "initial": report,
+            "current": replay,
+            "changed": changed,
+            "restored": restored,
+            "http_calls": server.calls(),
+            "not_accepted": [
+                "generated prose correctness or coding-task benefit",
+                "all operations on GPU or performance comparison",
+                "combined-model pressure or global GPU headroom",
+                "owner-death or adversarial isolation acceptance",
+                "Developer ID signed installed package"
+            ]
+        });
+        serde_json::to_writer_pretty(&mut *file, &evidence).unwrap();
+        file.write_all(b"\n").unwrap();
+        file.sync_all().unwrap();
+    }
 }

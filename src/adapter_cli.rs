@@ -167,6 +167,9 @@ pub enum AdapterCommand {
         /// low|high|max. Explicit so OMP never runs `auto` judge side requests.
         #[arg(long, default_value = "max", value_parser = ["low", "high", "max"])]
         thinking: String,
+        /// Use ordinary paginated body reads instead of OMP's automatic code summaries.
+        #[arg(long)]
+        body_reads: bool,
         /// OMP executable; defaults to `omp` on PATH.
         #[arg(long)]
         omp: Option<PathBuf>,
@@ -536,6 +539,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             key_file,
             profile,
             thinking,
+            body_reads,
             omp,
             omp_args,
         } => {
@@ -547,6 +551,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                     key_file,
                     profile,
                     thinking,
+                    body_reads,
                     omp: omp.unwrap_or_else(|| PathBuf::from("omp")),
                     omp_args,
                 })?;
@@ -556,7 +561,9 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             }
             #[cfg(not(unix))]
             {
-                let _ = (config, key_file, profile, thinking, omp, omp_args);
+                let _ = (
+                    config, key_file, profile, thinking, body_reads, omp, omp_args,
+                );
                 return Err(FoundryError::PlatformUnsupported(
                     "the model gateway needs a unix host".into(),
                 )

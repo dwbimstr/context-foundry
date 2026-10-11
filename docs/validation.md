@@ -1,5 +1,61 @@
 # Validation
 
+## Realistic acceptance continuation — 2026-10-11
+
+Work continues on `experimental/context-ecosystem`; the open acceptance conditions
+are not closed by the checks below. Private receipts and executable identities are
+under `/workspace/.context-foundry-tools/validation-runs/realistic-delivery-v11/`.
+
+**Implementation.** Retrieval now distinguishes representation roles and scores
+current resident body vectors within bounded candidate files. A scored vector can
+deliver only the exact current locations that passed its partition/generation join.
+File-first hierarchy publication, unchanged-input cache keys, coarse excerpts and
+anchor startup avoidance remain. Call-name postings cover admitted source ingestion
+and expose unsupported/incomplete parsing; search schema 7 adds conservative Python
+import aliases without changing source-unit schema 5. Alias delivery requires fresh
+definition, import and call bodies together. Execution-v2 imports record a complete
+producer snapshot and suppress it after an indexed source revision changes; syntax
+candidates remain unresolved and are never labeled observed calls.
+
+**Linux checks.** The final focused set has 773 passing tests across the library and
+13 integration targets, plus a passing real CPython alias check. The new alias
+fixture initially exhausted Python's existing parser budget with 2,000 consecutive
+comments; it now explicitly verifies parsing and retains over 32 KiB between import
+and call. No parser limit or discovery/proof assertion was weakened. Installed OMP
+18.6.0 passes a differential read check: its default structural projection omits a
+body marker, while the supported body-read setting exposes it and preserves live-view
+synchronization and resumed history. `gateway-omp --body-reads` exposes that setting
+through a private fixed configuration; arbitrary host configuration remains refused.
+Clippy with warnings denied, the no-default-features library build, formatting and
+documentation links pass. See `focused-v11-acceptance.log`,
+`native-and-evidence-checks.log`, `real-cpython-alias.log` and `omp-body-read-check.log`.
+
+**Current negative host evidence.** The default-workflow Qwen3-4B pair reaches both
+900-second task limits. Full files makes no edit; composed context makes an
+uncompilable edit, then repeatedly receives outlines while asking for line ranges
+only in intent text. Known input/output is 65,628/187 versus 118,220/1,168 tokens,
+with one interrupted request of unknown usage in each arm. Protected files and public
+tests remain unchanged. The complete runner takes 1,819.714 seconds. These costs
+remain in historical accounting; no completion benefit is claimed. The next matched
+recipe uses the same supported body-read configuration for both arms, preserving the
+task, oracle, model, tools and limits.
+
+**Native execution.** GitHub-hosted macOS 15 arm64 has usable Metal: an actual compute
+kernel returns 42. Native CPU sampling and six worker lifecycle fixtures pass after
+fixing missing/deprecated Mach bindings. Native admission then exposes a separate
+VM-statistics revision mismatch: the code required the newest libc structure's exact
+word count. It now accepts a successful initialized prefix containing `free_count`.
+The corrected native run, full-window embedding comparison and owned Metal generation
+lifecycle are pending. Earlier claims that no macOS/GPU runner was available describe
+the previous environment state, not this continuation. Runs and retained failures:
+[first](https://github.com/dwbimstr/context-foundry/actions/runs/38169264424),
+[second](https://github.com/dwbimstr/context-foundry/actions/runs/38170097978).
+
+Full frozen retrieval, complete representative inference, verified completion
+economics and native model acceptance remain open until their actual runs finish.
+The [portable scale commands](measurement-handoff.md) reproduce the pinned corpus,
+preparation, complete publication audit and zero-call replay without private paths.
+
 ## Initial file coverage and task evidence — 2026-10-11
 
 Continued from `57b4ff5` on `experimental/context-ecosystem`. Private artifacts:

@@ -986,6 +986,26 @@ parse limits, recovered syntax and posting limits leave its recipe coverage inco
 Unsupported languages have no call-name recipe. `call_coverage: complete` describes
 only this supported syntax recipe, never complete caller or runtime coverage.
 
+A conservative ASCII Python recipe also discovers explicit module-level
+`from module import original as alias` declarations with subsequent bare alias calls.
+It refuses an alias used in any other identifier role, including shadowing, assignment,
+value references and duplicate/nested imports. Wildcard imports, non-ASCII identifiers
+(Python NFKC normalization) and collector overflow disable enrichment and mark the
+recipe incomplete. Ingestion reuses its existing walk; final-snapshot discovery reuses
+the parsed tree and the same bounded rules. The collector caps 128 declarations,
+including repeats, and 4,096 ordinary and bare-call spellings each. No extra table,
+parse, corpus scan or runtime execution is introduced.
+
+Each alias candidate charges its import and call spans to the same 32-span bound.
+An optional `syntax.import_aliases` report counts available candidates. A
+`task-syntax` receipt with `kind: import_alias_call_candidate` cites the canonical
+anchor's full defining unit, exact import declaration and actual call. Their fresh
+workspace/hash identities and all three complete bodies must survive final packing,
+including compact delivery, before that receipt is emitted. It remains
+`resolution: unresolved` and `runtime_call: unverified`; source availability and a
+lexical import do not establish runtime binding or execution. Indirect aliases and
+dynamic mutation remain outside the recipe.
+
 Rust assertion expression macros (`assert`, `assert_eq`, `assert_ne` and their
 `debug_` variants) also expose name-plus-parentheses candidates inside their token
 trees. Arbitrary macro DSLs remain unsupported. Attributed Rust tests can supply
@@ -1007,8 +1027,9 @@ delivered facets still depend on exact bodies that fit the budget. Compiler
 relationships and imported execution observations keep separate provenance.
 Dynamic dispatch, indirect wrappers, unsupported languages, broader framework behavior
 and requirement satisfaction remain open. Task-word test selection still searches
-only selected files; it is discovery, not observed coverage. Search schema 6 requires
-explicit derived-index repair; source-unit schema 5 is independent of these postings
+only selected files; it is discovery, not observed coverage. Search schema 7 requires
+explicit derived-index repair, including from schema 6 whose identical fields lack
+canonical import-alias postings; source-unit schema 5 is independent of these postings
 (see [001](../001-source-state-recovery/contracts/context-v2.md#call-name-postings--2026-10-11)).
 
 An opt-in free-form OMP parser calibration now complements the scripted host integration

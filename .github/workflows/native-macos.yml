@@ -6,14 +6,18 @@ on:
       - '.github/workflows/native-macos.yml'
       - 'scripts/native-macos-acceptance.py'
       - 'scripts/embed-worker-bundle.sh'
+      - 'scripts/generate-worker-bundle.sh'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'build.rs'
       - 'src/model_resources.rs'
       - 'src/bin/foundry_embed.rs'
+      - 'src/bin/foundry_generate.rs'
+      - 'src/knowledge/**'
       - 'src/neural/**'
       - 'tests/embed_worker.rs'
       - 'tests/embedding_parity.rs'
+      - 'tests/knowledge.rs'
   workflow_dispatch:
 permissions:
   contents: read
@@ -42,7 +46,7 @@ jobs:
           set -euo pipefail
           python3 scripts/native-macos-acceptance.py \
             --out "$RUNNER_TEMP/native-macos-results" \
-            --work "$RUNNER_TEMP/native-macos-work"
+            --work "$RUNNER_TEMP/native-macos-work" --generation
       - name: Preserve results even when GPU acceptance is blocked or fails
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
