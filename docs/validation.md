@@ -71,8 +71,13 @@ threads, then recovered samples of 31%, 35%, 35% and 27% at the unchanged 60%/30
 thresholds. The host is 96% idle just before the test. Metal embedding and owned
 generation pass in the same run. This is one passing run on Apple Paravirtual
 hardware; physical-device, global GPU and signed-package acceptance remain open.
-The 41.254 tokens/second calibration below ran with Spotlight enabled; whether
-indexing slowed it is unmeasured.
+The 41.254 tokens/second calibration below ran with Spotlight enabled.
+[38209502529](https://github.com/dwbimstr/context-foundry/actions/runs/38209502529) (`7e7176b`)
+repeats it with Spotlight stopped, using the same function digest, recipe and sample
+manifest: 128 calls / 30,726 tokens in 738.899 provider seconds (41.584
+tokens/second, +0.8%), with zero-call unchanged replay. Indexing was not the
+throughput limit, so the full-corpus Mac budget remains rejected. The same run
+passes CPU policy again (idle 14%, loaded 100%, recovered 3%).
 Calibration performs 128 calls / 30,726 tokens in 744.804 provider seconds
 (41.254 tokens/second). This rejects the proposed full-corpus Mac runtime budget;
 it is not 67,663-source acceptance. Generation records actual GPU allocation
