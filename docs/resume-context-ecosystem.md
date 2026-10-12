@@ -59,12 +59,17 @@ Do not launch the proposed full Mac batch-one run within a two/three-hour budget
 [Default Rust CI 38178644843](https://github.com/dwbimstr/context-foundry/actions/runs/38178644843)
 at `e7a1b59` **passed** on both Ubuntu and macOS (completed 22:32:49 UTC), including the
 Mac watcher test that failed at 5,806/6,000 files in the earlier `bc10986` run. That is
-one passing Mac run, not a repeated measurement. This run does not include `6ac60d8`.
+one passing Mac run, not a repeated measurement. It does not include `6ac60d8`;
+[CI 38205296934](https://github.com/dwbimstr/context-foundry/actions/runs/38205296934) at `1b5f0b1`
+covers that code and passes on Ubuntu (1,147 tests) and macOS (1,248 tests), watcher included.
 
 The native CPU-pressure test passed in native runs at `4dd9da9` and `4dab8e4`, with idle
 at 9%. It failed at `bc10986` and `f75f14c`, with idle at 84–100%. All four used the same
 runner image and stage order, and the commits between them touch neither the sampler
-nor the test. See [validation](validation.md#realistic-acceptance-continuation--2026-10-11).
+nor the test. Native run 38205301244 records process snapshots: Spotlight indexing
+the job's own build output occupies the host (idle 0–2%). The workflow now stops
+Spotlight on the ephemeral runner before building. See
+[validation](validation.md#realistic-acceptance-continuation--2026-10-11).
 
 ## Evidence and portable package
 
@@ -177,7 +182,8 @@ the memory of the checkpoint host, which affects two steps below:
    self CPU and bounded process-name snapshots in explicit tests only. Investigate
    the failed prerequisite without weakening policy. Separately, the committed driver now
    records bounded `top` snapshots, process names only, just before and after the
-   CPU-pressure test. The capsule patch is still unapplied.
+   CPU-pressure test. They identify Spotlight indexing as the busy host activity, and
+   the workflow now stops Spotlight on the runner. The capsule patch is still unapplied.
 
 Sealed identities (hash verification does not authorize inspecting labels):
 manifest `01a9ad47473c0b99f82bee5f2fabf67cf96c86134e9627c63bd50cb67d80d429`;

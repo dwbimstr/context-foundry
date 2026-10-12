@@ -1107,6 +1107,8 @@ def main():
         result["checkout_commit"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
         require(stage("host", ["/usr/sbin/sysctl", "hw.memsize", "hw.logicalcpu"], 60), "host observation failed")
         require(stage("rust", ["rustc", "+1.90.0", "-vV"], 60), "Rust 1.90.0 unavailable")
+        # Recorded, not changed: indexing can occupy the host the CPU test samples.
+        stage("spotlight-status", ["/usr/bin/mdutil", "-a", "-s"], 30)
         cpu_ok = True
         for name in ("native_macos_cpu_observation", "native_macos_cpu_pressure_pauses_and_resumes_both_lanes"):
             if name.startswith("native_macos_cpu_pressure"):

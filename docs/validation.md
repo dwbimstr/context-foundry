@@ -54,9 +54,19 @@ idle 9%, loaded 100% and recovered 2%. It failed in
 and 38176235770, where host CPU stayed at 84–100% for the whole 15-second idle
 window. All four runs used runner image `macos-15-arm64` 20260907.0337.1 and the
 same stage order. The commits between them change neither the sampler nor this
-test. The busy process is still unobserved, so neither the code nor the environment
-is established as the cause. The driver now records a bounded `top` snapshot of
-process names immediately before and after this test, outside its measured window.
+test. The driver now records a bounded `top` snapshot of process names just before
+and after this test, outside its measured window. In
+[38205301244](https://github.com/dwbimstr/context-foundry/actions/runs/38205301244) (`1b5f0b1`)
+the test fails again with idle samples of 81–100%. Both snapshots show Spotlight
+indexing: `mds_stores` at 45–50% and `mds` at 12–23%, plus six or seven
+`mdworker_shared` workers. Host idle is 0–2% at a load average of 15 on three CPUs,
+after the job has written about 8 GB. The test process does not appear among the 12
+busiest processes. The cause is therefore Spotlight indexing the job's own output,
+not the sampler or the policy. All model and lifecycle checks in that run pass.
+The workflow now stops Spotlight on the ephemeral runner before building, and the
+driver records `mdutil -a -s`, without changing a threshold; a run with that change
+is still required. The 41.254 tokens/second calibration below ran under the same
+runner configuration, and whether indexing slowed it is unmeasured.
 Calibration performs 128 calls / 30,726 tokens in 744.804 provider seconds
 (41.254 tokens/second). This rejects the proposed full-corpus Mac runtime budget;
 it is not 67,663-source acceptance. Generation records actual GPU allocation
@@ -72,6 +82,9 @@ separate ongoing checks. The next full default run,
 passes on both Ubuntu and macOS, including the unchanged Mac watcher deadline.
 That is one passing Mac run after the foreground-release change, not a repeated
 measurement. It does not cover `6ac60d8`, which was pushed under a `[skip ci]` head.
+[38205296934](https://github.com/dwbimstr/context-foundry/actions/runs/38205296934) at `1b5f0b1`
+(code at `6ac60d8`) passes on Ubuntu (1,147 tests) and macOS (1,248 tests), including
+the Mac watcher, which makes two consecutive passing Mac runs.
 A local Linux run of the checkpoint (code at `6ac60d8`) with Rust 1.90 in a cloud
 session passes fmt, all-target Clippy and 1,145 tests. Two gateway fault tests fail
 there only because the session runs as root, which bypasses their read-only
