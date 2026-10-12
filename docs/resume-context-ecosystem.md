@@ -9,13 +9,27 @@ Use the strongest available reasoning/coding model and inspect actual artifacts.
 
 ## Cloud continuation — 2026-10-12
 
-A Claude Code cloud session continued from branch HEAD `16d7f0a` on branch
-`claude/festive-cannon-ladw9u`; `experimental/context-ecosystem` was not moved. The
-environment setup and doctor pass, but the private archive was not reachable: no
-`CF_RESUME_URL` and no private release. Steps 2, 3, 4 and 6 below, and the capsule
-patch in step 7, therefore remain untouched. Step 5 is also blocked by the 16 GB host.
-That session closed step 1 and the native CPU-pressure investigation; the native-runner
-results are recorded below and in [validation](validation.md#realistic-acceptance-continuation--2026-10-11).
+A Claude Code cloud session continued from `16d7f0a` on branch
+`claude/festive-cannon-ladw9u` ([PR #11](https://github.com/dwbimstr/context-foundry/pull/11),
+based on `experimental/context-ecosystem`, which was not moved). It used public inputs
+only. GitHub Actions is now unavailable by owner decision, so a local
+`scripts/gates.sh` receipt replaces CI (see [CLAUDE.md](../CLAUDE.md)).
+
+- **Step 1** is closed.
+- **Step 2:**
+  - The frozen corpus is commit `ebf28f8`, and the lexical baseline reproduces (1/8,
+    and 2/8 experimental).
+  - The RRF candidate is implemented and tested as `9ccefcc`, then reverted by
+    `ef524b9` until it is measured.
+  - The dense measurement needs `avx512_bf16`, which the session's VM lost when it
+    restarted.
+- **Steps 3 and 4** also need public archives that the session's proxy refused.
+- **Step 7's** cause, Spotlight indexing, is fixed.
+
+Every remaining item is in [FOLLOWUP.md](../FOLLOWUP.md) with its blocker and resume
+commands: F9 for step 2's measurement, F10 and F11 for steps 3 and 4, F2 for step 5,
+F4 for step 6, and F7 and F8 for the native and capsule work. Results are in
+[validation](validation.md#cloud-continuation--2026-10-12).
 
 ## Code and working state
 
@@ -145,7 +159,7 @@ the memory of the checkpoint host, which affects two steps below:
 
 ## Resume in this order
 
-1. Verify branch/HEAD/clean status and fetch the final remote CI result. Restore
+1. Verify branch/HEAD/clean status and the latest local gates receipt (CI is unavailable). Restore
    prerequisites from [resume instructions](resume.md) and the environment setup;
    this machine uses Rust 1.90, four CPU quota, 32 GiB RAM, no swap. Run only one
    heavy local build/index/model experiment at a time. Do not include compilation

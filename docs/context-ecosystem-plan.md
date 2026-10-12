@@ -342,8 +342,8 @@ records observed outcomes. This inventory supersedes earlier progress summaries.
 
 | Area | Implemented and verified | Remaining work |
 | --- | --- | --- |
-| Retrieval | File-first hierarchy, current owner scopes, coarse excerpts/acronyms, structural-fragment roles, bounded independent body scoring and coverage-independent interleaving. Complete 274-source inference and zero-call replay. | Frozen delivery is **2/8**, after original complete/role-only/owner-scope arms reached 1/8. Fix ranking before destructive cuts, excerpt/packing losses and cross-owner continuation. The next RRF draft is incomplete and not applied. Preserve the excluded source in the eight-case denominator; unchanged admission permits at most 7/8. Sealed 48-question evaluation has not run; private G2/G1 remain unavailable. |
-| Indexing and scale | Incremental watcher, cache/ANN publication, bounded resume plans, initial file views before refinement; current overview fitting across 67,663 distinct admitted sources. | Actually complete real-model inference, audit/replay, serving and changed-input validation across that corpus. A batch-one/eight calibration and full Linux driver are prepared but unrun. Overview completion must remain separate from exhaustive bodies and sustained churn. |
+| Retrieval | File-first hierarchy, current owner scopes, coarse excerpts/acronyms, structural-fragment roles, bounded independent body scoring and coverage-independent interleaving. Complete 274-source inference and zero-call replay. | Frozen delivery is **2/8**, after original complete/role-only/owner-scope arms reached 1/8. Fix ranking before destructive cuts, excerpt/packing losses and cross-owner continuation. An independent document/body RRF candidate (`9ccefcc`) is implemented and tested but unmeasured; `ef524b9` reverts it until the revision-5 dense comparison runs ([FOLLOWUP](../FOLLOWUP.md) F9). Preserve the excluded source in the eight-case denominator; unchanged admission permits at most 7/8. Sealed 48-question evaluation has not run; private G2/G1 remain unavailable. |
+| Indexing and scale | Incremental watcher, cache/ANN publication, bounded resume plans, initial file views before refinement; current overview fitting across 67,663 distinct admitted sources. | Actually complete real-model inference, audit/replay, serving and changed-input validation across that corpus. A batch-one/eight calibration and full Linux driver are prepared but unrun; both need `avx512_bf16` and the pinned public archives ([FOLLOWUP](../FOLLOWUP.md) F10, F11). Overview completion must remain separate from exhaustive bodies and sustained churn. |
 | Representations and runtime | Independent body/parent/file/area vectors, exact-key reuse, production 8,192-token allocation correction, real CPU/Metal numerical parity. | Representation/long-context quality, selective refinement outcomes and larger-area requirements. Late chunking remains a conditional backend extension, not an implemented feature. |
 | Evidence | Current call-name postings, conservative Python aliases, whole router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks. | Broader collectors/frameworks, resolved cross-language callers and observed representative host outcomes. Unsupported or dynamic cases remain incomplete; syntax is not observed execution. |
 | Host integration and economics | OMP body reads, native tool transport, frozen/live task views, protected-history application and request/cost receipts. | Latest Qwen3-4B pair still fails both external oracles. Prepared 30B-A3B pair has not acquired weights or run. Demonstrate correct completion and total-cost benefit, including all failed/unknown attempts and bootstrap/maintenance. |
@@ -352,12 +352,18 @@ records observed outcomes. This inventory supersedes earlier progress summaries.
 | Generated knowledge and memory | Source-bound generation, changed/restart/revert reuse, explicit task state, selective review and promotion/forgetting. | Useful model/recipe selection, representative task/memory outcomes, unnecessary-intervention evaluation and amortized economics. Lifecycle correctness is not task benefit. |
 | Release and environment | Experimental branch commits and a private portable checkpoint preserve code, traces, caches, scripts and unfinished work. | Formal promotion/release gates and clean-host setup reproduction remain separate. No release or general completion claim is authorized by this checkpoint. |
 
-The next execution sequence is: inspect final pending CI; finish/test the narrow RRF
-candidate; calibrate scheduling batches; complete full Linux overview inference; run
-the stronger host pair; evaluate explicitly frozen candidates on the sealed questions;
-resolve native CPU observation and remaining device/package acceptance. Serialize
-heavy local jobs. Every run must retain failed/partial costs and exact identities.
-The owner paused before these new model experiments started.
+The next execution sequence, each step with its blocker and resume commands in
+[FOLLOWUP.md](../FOLLOWUP.md):
+1. Measure the RRF candidate on an `avx512_bf16` host (F9).
+2. Calibrate scheduling batches (F10).
+3. Complete full Linux overview inference (F11).
+4. Run the stronger host pair (F2).
+5. Evaluate explicitly frozen candidates on the sealed questions (F4).
+6. Finish the remaining physical-device and package acceptance (F7).
+
+The 2026-10-12 cloud session closed the CI check and the native CPU observation.
+Serialize heavy local jobs. Every run must retain failed/partial costs and exact
+identities. GitHub Actions is unavailable; local gates receipts replace CI.
 
 Frozen/deferred scope is not an active implementation queue: 013 learning remains
 off; 014 migration awaits a concrete task; 002/004/006/011/012/015 are superseded.
