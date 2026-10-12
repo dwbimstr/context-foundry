@@ -198,18 +198,14 @@ fn add(
     let mut first = items.len();
     // Repeat after each union: one new span can bridge several previous
     // discoveries. Merge their attribution as well as their source bytes.
-    loop {
-        let Some(i) = items.iter().position(|old| {
-            old.handle.workspace_id == handle.workspace_id
-                && old.handle.path == handle.path
-                && old.handle.sha256 == handle.sha256
-                && old.handle.start <= handle.end
-                && handle.start <= old.handle.end
-                && old.handle.end.max(handle.end) - old.handle.start.min(handle.start)
-                    <= MAX_SPAN_BYTES
-        }) else {
-            break;
-        };
+    while let Some(i) = items.iter().position(|old| {
+        old.handle.workspace_id == handle.workspace_id
+            && old.handle.path == handle.path
+            && old.handle.sha256 == handle.sha256
+            && old.handle.start <= handle.end
+            && handle.start <= old.handle.end
+            && old.handle.end.max(handle.end) - old.handle.start.min(handle.start) <= MAX_SPAN_BYTES
+    }) {
         let old = items.remove(i);
         first = first.min(i);
         handle.start = handle.start.min(old.handle.start);
