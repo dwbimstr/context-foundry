@@ -20,6 +20,7 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | --- | --- | --- | --- | --- | --- |
 | `d6903f7` | 0 | 101: three new lints | 101: 1,145 passed, only the 2 root-only failures | 0 | 0 |
 | `ef524b9` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `b432f46` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -27,9 +28,15 @@ Log SHA-256 digests:
 | --- | --- | --- | --- | --- |
 | `d6903f7` | `712708a6…` | `d37d829e…` | `437b9d06…` | `368e057b…` |
 | `ef524b9` | `fcc7dfca…` | `ea77740f…` | `0d73feed…` | `243e2afe…` |
+| `b432f46` | `38c4c123…` | `276e988f…` | `b0f11c35…` | `45f25865…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
-`d6903f7`'s because `ef524b9` reverts the RRF candidate.
+`d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
+tree. It applies Dependabot updates #10, #8 and #7 to this line (see
+[dependencies](dependencies.md)); `sha2` 0.11 (#6) was left out because it fails to
+compile. Each update was also checked alone on Rust 1.90. With `bindgen` 0.73 both
+llama.cpp workers build, and the regenerated bindings differ only in 20 opaque handle
+types losing `Copy`/`Clone`.
 
 `72c4319` fixes the three Clippy 1.97 lints (`byte_char_slices`, a manual `Option::zip`,
 `while_let_loop`) without changing behavior. `f491821` fixes a regression from
