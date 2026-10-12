@@ -64,9 +64,15 @@ after the job has written about 8 GB. The test process does not appear among the
 busiest processes. The cause is therefore Spotlight indexing the job's own output,
 not the sampler or the policy. All model and lifecycle checks in that run pass.
 The workflow now stops Spotlight on the ephemeral runner before building, and the
-driver records `mdutil -a -s`, without changing a threshold; a run with that change
-is still required. The 41.254 tokens/second calibration below ran under the same
-runner configuration, and whether indexing slowed it is unmeasured.
+driver records `mdutil -a -s`, without changing a threshold. With that change,
+[38207948408](https://github.com/dwbimstr/context-foundry/actions/runs/38207948408) (`e0a1458`)
+passes the whole native job for the first time: idle 2%, loaded 100% with three
+threads, then recovered samples of 31%, 35%, 35% and 27% at the unchanged 60%/30%
+thresholds. The host is 96% idle just before the test. Metal embedding and owned
+generation pass in the same run. This is one passing run on Apple Paravirtual
+hardware; physical-device, global GPU and signed-package acceptance remain open.
+The 41.254 tokens/second calibration below ran with Spotlight enabled; whether
+indexing slowed it is unmeasured.
 Calibration performs 128 calls / 30,726 tokens in 744.804 provider seconds
 (41.254 tokens/second). This rejects the proposed full-corpus Mac runtime budget;
 it is not 67,663-source acceptance. Generation records actual GPU allocation

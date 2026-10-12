@@ -68,7 +68,9 @@ at 9%. It failed at `bc10986` and `f75f14c`, with idle at 84–100%. All four us
 runner image and stage order, and the commits between them touch neither the sampler
 nor the test. Native run 38205301244 records process snapshots: Spotlight indexing
 the job's own build output occupies the host (idle 0–2%). The workflow now stops
-Spotlight on the ephemeral runner before building. See
+Spotlight on the ephemeral runner before building, and
+[native run 38207948408](https://github.com/dwbimstr/context-foundry/actions/runs/38207948408)
+passes the whole native job at unchanged thresholds (idle 2%, recovered 27%). See
 [validation](validation.md#realistic-acceptance-continuation--2026-10-11).
 
 ## Evidence and portable package
