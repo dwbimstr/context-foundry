@@ -88,6 +88,27 @@ absolute corpus paths to preserve source/store identity; do not casually rewrite
 profiles or claim cache equivalence across different worker descriptors/hardware.
 The archive is private handoff material, not a Git/release artifact.
 
+## Claude Code cloud environment
+
+The cloud environment for continuing this work is versioned in `scripts/cloud`:
+
+| File | Use |
+| --- | --- |
+| [`setup.sh`](../scripts/cloud/setup.sh) | The environment's setup script. It installs Rust 1.90, libclang/CMake, the pinned llama.cpp object store, the pinned public models and 013 files, OMP/Bun, and the locked Cargo dependencies. |
+| [`environment.env`](../scripts/cloud/environment.env) | The environment variables. They hold paths only; there are no secrets. |
+| [`allowed-domains.txt`](../scripts/cloud/allowed-domains.txt) | Hosts added under Custom network access, alongside the default package managers. |
+| [`doctor.sh`](../scripts/cloud/doctor.sh) | Checks a session: host limits, `avx512_bf16`, toolchains and pinned inputs. |
+| [`fetch-resume.sh`](../scripts/cloud/fetch-resume.sh) | Downloads and verifies the private archive and prints its `RESTORE.md`. It takes the archive from a private GitHub release attached to the session, or from an HTTPS URL. |
+
+An Anthropic-hosted VM has about 4 vCPUs, 16 GB RAM and 30 GB of disk. That is half
+the memory of the checkpoint host, which affects two steps below:
+
+- Step 5's 18.6 GB Qwen3-Coder-30B-A3B pair cannot run in this environment. It needs
+  a larger host.
+- Steps 3 and 4 need `avx512_bf16` to run the same SIMD revision-5 function.
+
+[`CLAUDE.md`](../CLAUDE.md) gives cloud agents the session rules.
+
 ## Resume in this order
 
 1. Verify branch/HEAD/clean status and fetch the final remote CI result. Restore
