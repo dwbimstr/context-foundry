@@ -8,7 +8,7 @@
 // a separate `sleep` process holds the liveness pipe open, so killing this
 // process exercises the kqueue owner-exit path alone. `--notices DIR` is the
 // real worker's packaging flag with `worker_runtime::FAKE_NOTICE` as text.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn main() {
     use context_foundry::neural::worker_runtime::{self, FAKE_VOCAB, Hooks, WorkerArgs};
     use std::io::Write;
@@ -50,6 +50,39 @@ fn main() {
     args.hooks = hooks;
     let code = worker_runtime::serve(args, |engine| {
         let hooks = engine.args.hooks.clone();
+        #[cfg(target_os = "linux")]
+        if hooks.isolation_probe {
+            let file = unsafe { libc::open(c"/etc/hosts".as_ptr(), libc::O_RDONLY) };
+            let socket = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+            let process = unsafe { libc::fork() };
+            if process == 0 {
+                unsafe { libc::_exit(1) };
+            }
+            if file >= 0 || socket >= 0 || process >= 0 {
+                engine.fail_load(
+                    "isolation_failed",
+                    "file, network or process creation admitted",
+                );
+                return 1;
+            }
+            let mut affinity = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
+            let mut limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            let affinity_ok = unsafe {
+                libc::sched_getaffinity(0, std::mem::size_of_val(&affinity), &mut affinity)
+            } == 0
+                && unsafe { libc::CPU_COUNT(&affinity) } as u32 <= engine.args.cpu.threads;
+            let memory_ok = unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut limit) } == 0
+                && limit.rlim_max == engine.args.memory_bytes;
+            let cpu_ok = unsafe { libc::getrlimit(libc::RLIMIT_CPU, &mut limit) } == 0
+                && limit.rlim_max == engine.args.cpu.seconds;
+            if !(affinity_ok && memory_ok && cpu_ok) {
+                engine.fail_load("isolation_failed", "resource limits differ from admission");
+                return 1;
+            }
+        }
         let expected = &engine.args.expected;
         if *expected != worker_runtime::fake_descriptor_with(expected.dimensions) {
             engine.fail_load(
@@ -133,7 +166,7 @@ fn main() {
     std::process::exit(code);
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn main() {
     eprintln!("foundry-embed-fake: the worker supervisor targets macOS");
     std::process::exit(78);

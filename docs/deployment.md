@@ -154,6 +154,7 @@ cannot be advertised as an isolated production worker.
 | Policy inference | Pinned ModernBERT/tokenizer/head assets read-only, bounded admitted state/question/options via private IPC | Bounded reply; no repository traversal, home, live store, credentials, network or child execution |
 | Policy training | Frozen permitted input/label/group files and exact base assets read-only | New private output/scratch; no ambient source access, live store, home or network |
 | Embedding | Pinned model/tokenizer/loader assets and explicit input batch | Private scratch and bounded vectors; no ambient root discovery, store writes or downloads |
+| Experimental local generation | Hash-pinned worker/GGUF, read-only model descriptor and bounded selected source text through private pipes | Strict brief JSON; Linux descriptor-only seccomp profile denies path opens, network, process creation/exec; macOS development App Sandbox remains hardware-unverified |
 | Explicit compiler production | Immutable admitted source/config snapshot and pinned toolchain/dependencies | Private build/artifact scratch; no live workspace mutation or network; build scripts/proc macros execute only within this separately authorized profile |
 
 The policy rows describe the clarified ModernBERT plus decision-head target, not a
@@ -231,6 +232,14 @@ the development profile, which works as follows:
   frameworks and runs no Python. It verifies the artifact inventory and adapter claims
   before loading the GGUF, then embeds each call's cards (or one query) as sequences
   of one llama.cpp evaluation, cut to the descriptor's dimension and renormalized.
+- **Explicit geometry (experimental T009).** Descriptor v2 optionally carries
+  `geometry: {v:1,input_tokens,batch_tokens,sequences}` with adapter revision 2.
+  Omission preserves adapter revision 1 and the old 2,048-token limits/digest.
+  The worker checks explicit per-input capacity against GGUF training context and
+  verifies actual context, per-sequence, batch, microbatch and sequence capacities
+  before Ready. IPC byte caps remain unchanged. Existing model profiles are not
+  enlarged automatically; see [body/parent profile settings](experimental-context.md#model-aware-bodyparent-chunking).
+  Long-context Metal execution/parity remains unverified in the Linux sandbox.
 - **Resources.** Process count is `hard`. Memory is `supervised`: the supervisor
   polls the physical footprint every 250 ms against the profile's ceiling (3 GiB by
   default), and a breach stops the worker with `resource_limit`.
@@ -626,3 +635,103 @@ These are focused integration checks owned by existing tasks and the
 [release checklist](release.md); no new all-roadmap measurement gate. Package/signing/
 VM compatibility and the library choices remain unexecuted proof obligations. Explicit
 publication authorization and destination are still required to upload any artifact.
+
+
+## Experimental schema 12
+
+The experimental context branch uses schema 12 for a disposable publication lookup
+and bounded changed-input frontier. It preserves schema 11 source/config-bound
+relationship scopes and key postings, schema 10 generated-knowledge completion caching
+and lineage, schema 9 independent semantic/knowledge obligations, schema 8 briefs
+and schema 7 task state. Existing schemas 1–11 require explicit
+`foundry --store STORE upgrade-store --to 12`; initialization and ordinary open do not
+upgrade. Preserve a closed-store backup before upgrading an existing store. Older
+binaries refuse schema 12; rollback requires the backup or a compatible binary.
+Upgrade preserves source, graph, memory, task, semantic and learning tables. No
+source scanning, provider call or automatic generation is part of the upgrade.
+See the [experimental workflow](experimental-context.md#source-bound-derived-briefs)
+for import and retrieval; `repair-index` rebuilds brief search documents from the
+same authoritative store.
+
+Continuous semantic maintenance is separately explicit: start MCP with
+`--semantic-profile FILE --semantic-maintain` and existing isolation/cache settings,
+or call `index {"semantic":"maintain"}` on an owner already serving a profile.
+Add `--watch` to accept filesystem edits automatically. The mode is not inferred
+from prior state on restart; watching alone loads no model. Pause through
+`index {"semantic":"pause"}`. Provider/resource failures retain pending work and
+require explicit resume. Ordinary status reads a publication observation; use
+`semantic status --audit` or MCP `status {"semantic_audit":true}` for integrity/census.
+
+Semantic generation format v5 remains derived data under schema 12: existing vector-cache
+rows and partitions remain reusable. Older generation formats are refused by name;
+explicit preparation or `repair-index` republishes them from cache. Small edits publish
+one bounded ANN delta and a separate bounded location overlay. Location compaction
+retains unchanged ANN files. Immutable membership is stored outside the small manifest.
+The manifest switches after referenced files are durable. MCP retries transient publication
+failures three times with visible bounded backoff, then pauses with pending work; provider
+failures retain the explicit-resume behavior above. No automatic download is added.
+
+An open owner retains a bounded affected-location view and at most two verified,
+resident ANN segments. Source/partition/cache commits refresh affected mappings;
+unchanged segments skip hashing and restoration during publication/serving refresh.
+Metadata receipts also reuse decoded membership and location bases. An additive META
+revision advances transactionally with source/partition/cache changes, including in
+lexical-only builds. A clean restart verifies the generation and reuses matching
+publication coverage without a mapping scan. Changed-input restart resumes a matching
+transactional lookup and reads affected partitions/cache keys, including cache-only changes and partial coverage. Overflow,
+identity changes, unmatched/interrupted checkpoints and explicit repair rebuild the
+lookup. File-verification receipts never survive restart.
+Warm queries check owner/profile/manifest identity; refresh rechecks file versions.
+Explicit audits always validate independently. Cold verification and compaction remain
+corpus-sized. Generation v5 remains unchanged by the knowledge feature; the latter
+was introduced by schema 10 and is preserved by the schema-12 upgrade.
+
+Selective knowledge preparation uses an explicitly configured HTTP or owned local provider and source
+scope under exclusive CLI ownership or the existing MCP owner. Current inputs skip
+body reads and provider calls; exact historical completions can be reused after a revert. Its bounded transactional
+cache is separate from the embedding cache and explicit project memory. See
+[configuration, accounting and limits](experimental-context.md#selective-knowledge-generation).
+No model is downloaded. HTTP starts no local model and owns its own runtime resources;
+MCP continuous scheduling and shared client admission are explicit:
+`mcp --knowledge-profile FILE --knowledge-maintain [--watch]`. Profiles alone do not
+generate. See [maintenance controls and limits](experimental-context.md#continuous-knowledge-maintenance).
+No further schema migration is needed. The local option and its boundaries follow.
+
+## Experimental owned generation controls
+
+`generate-worker` builds the separately linked Rust/llama.cpp decoder. It is an explicit
+development capability, not part of the installed production package. The core checks
+worker/GGUF SHA-256 pins, passes only the model snapshot and private IPC/liveness descriptors,
+clears ambient environment, and loads no model for current/cached nodes. The worker has
+no live store or repository descriptor. Linux executes an unlinked executable snapshot;
+macOS rechecks the signed bundle executable path immediately before launch. The latter
+does not provide descriptor-execution atomicity against a same-user concurrent replacement.
+
+| Control | Linux CPU | macOS CPU / Metal development |
+| --- | --- | --- |
+| Isolation | `linux-seccomp-fd-v1`, x86_64/aarch64 allowlist, `no_new_privs`; no path opens, sockets, external process access, exec or fork after initialization | Existing App Sandbox entitlement required; network denial checked at startup; minimal ad-hoc bundle script supplied; native acceptance unexecuted here |
+| CPU | Backend thread counts plus hard inherited CPU affinity, nice 10; hard all-thread worker-lifetime `RLIMIT_CPU` | Backend thread counts and hard lifetime `RLIMIT_CPU`; no hard affinity claim |
+| RAM | Hard `RLIMIT_AS`, plus parent RSS observation; includes mapped model and virtual allocations | Parent physical-footprint monitoring with 20 ms checks while active; supervised termination, not a hard allocation quota |
+| GPU | Refuses Metal/CUDA; CPU model/context offload disabled | Explicit Metal device/layers; 20 ms process-allocation monitor during load/inference, allocation ceiling and reserve under recommended working-set size; no global VRAM or hard GPU quota |
+| Descendants / artifacts | Seccomp denies process creation/exec, grants only in-process threads; zero core/file-size limits | Non-root only, hard zero `RLIMIT_NPROC`/core limits; App Sandbox bundle required |
+| Wall time / cancellation | Parent bounds load and call wall time; kill/reap before release | Same parent supervision |
+| Owner death | Parent-death signal, parent identity check and private liveness pipe | Existing kqueue/liveness watcher |
+| Idle residency | Unload after configured idle interval and at budget wait; reuse verified file-backed snapshots | Same model policy; signed executable path is reverified on launch |
+
+The CPU allowlist is installed before loading the GGUF and applies to later threads.
+The pinned loader uses `FILE*`; Linux needs no filesystem exception for model paths and
+does not require delegated cgroups or Landlock. Missing native enforcement refuses with
+`knowledge_isolation_unavailable`; there is no unrestricted fallback. Snapshots consume
+temporary storage/page cache in addition to worker memory. Caps are per worker, not an
+aggregate limit including the owner, resident embedding model, other users or host GPU load.
+Sampling can observe a breach after allocation and is explicitly weaker than a hard quota.
+The optional [shared memory admission policy](experimental-context.md#shared-model-memory-admission)
+reserves the combined embedding/generation ceilings and checks observed headroom before
+background work. It unloads idle generation under pressure. This is an owner-local admission
+bound, not a replacement for native enforcement or a quota on total machine consumption.
+
+`scripts/generate-worker-bundle.sh` creates only the macOS development App Sandbox bundle
+and prints its signed executable hash. It does not notarize, install or establish GPU,
+filesystem, process or owner-death acceptance. Use the [profile/build instructions](experimental-context.md#owned-local-generation)
+and [executed Linux evidence](validation.md#owned-local-generation-and-resource-controls).
+Production distribution and macOS negative/hardware tests remain required follow-up work.

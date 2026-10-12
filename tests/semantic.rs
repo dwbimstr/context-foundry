@@ -2846,7 +2846,12 @@ fn a_v3_store_upgrades_to_v4_in_one_transaction_preserving_every_other_feature()
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap_err();
     fault::disarm_all();
     assert_eq!(testkit::schema_marker(&store), "3");
     assert_eq!(testkit::snapshot(&store), before);
@@ -2855,8 +2860,16 @@ fn a_v3_store_upgrades_to_v4_in_one_transaction_preserving_every_other_feature()
     assert_eq!(error.code(), "unsupported_mode");
     assert_eq!(testkit::snapshot(&store), before);
 
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap();
-    assert_eq!(testkit::schema_marker(&store), "6");
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
+    assert_eq!(
+        testkit::schema_marker(&store),
+        context_foundry::SCHEMA_VERSION.to_string()
+    );
     let after = testkit::snapshot(&store);
     // The v3 steps ran for a v1/v2 store only: pending keys are not
     // re-prefixed and the memory counter is not reset.
@@ -2887,14 +2900,22 @@ fn a_v3_store_upgrades_to_v4_in_one_transaction_preserving_every_other_feature()
         assert!(after[table].is_empty(), "{table} starts empty");
     }
     // Re-running is a no-op, the store opens, and imports now work.
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
     assert_eq!(testkit::snapshot(&store), after);
     let engine = Engine::open_existing(&store).unwrap();
-    assert_eq!(engine.status().unwrap().schema, 6);
+    assert_eq!(
+        engine.status().unwrap().schema,
+        context_foundry::SCHEMA_VERSION
+    );
     assert!(engine.compiler_producers().unwrap().is_empty());
     drop(engine);
     // A newer-than-supported schema is refused by this reader and changes nothing.
-    testkit::set_meta(&store, "schema", Some("7"));
+    testkit::set_meta(&store, "schema", Some("999"));
     let frozen = testkit::snapshot(&store);
     assert_eq!(
         Engine::open_existing(&store).unwrap_err().code(),
@@ -2918,11 +2939,24 @@ fn a_v1_and_a_v2_store_upgrade_straight_to_v5_in_one_transaction() {
             0,
             Action::Fail("injected".into()),
         );
-        Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
+        Engine::upgrade_store(
+            &store,
+            context_foundry::SCHEMA_VERSION,
+            &Control::unbounded(),
+        )
+        .unwrap_err();
         fault::disarm_all();
         assert_eq!(testkit::snapshot(&store), before, "{name}: wholly old");
-        Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap();
-        assert_eq!(testkit::schema_marker(&store), "6");
+        Engine::upgrade_store(
+            &store,
+            context_foundry::SCHEMA_VERSION,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert_eq!(
+            testkit::schema_marker(&store),
+            context_foundry::SCHEMA_VERSION.to_string()
+        );
         let after = testkit::snapshot(&store);
         for table in [
             "sources",
@@ -6684,4 +6718,248 @@ fn the_references_refusal_floor_covers_a_maximum_length_path() {
         "the outcome-free hint {} is below the real minimum {minimum_tokens}",
         response::references_refusal_floor()
     );
+}
+
+#[test]
+fn task_evidence_delivers_compiler_references_only_with_both_current_spans() {
+    use context_foundry::{Strategy, store::ContextOptions, task_context};
+    let mut world = toy();
+    world
+        .engine
+        .as_mut()
+        .unwrap()
+        .refresh(&Control::unbounded())
+        .unwrap();
+    world.set_source("src/other.rs", &format!("#[test]\n{OTHER}"));
+    let scoped = artifact(vec![
+        doc(
+            "src/lib.rs",
+            vec![
+                occ(&[0, 7, 12], ALPHA, DEF),
+                occ(&[2, 4, 9], ALPHA, REF),
+                occ(&[3, 4, 9], ALPHA, REF),
+            ],
+        ),
+        doc("src/other.rs", vec![occ(&[2, 11, 16], ALPHA, REF)]),
+    ]);
+    world.import_ok(RA, "task-coverage", &scoped);
+    let wid = world.engine().workspace_id().unwrap();
+    let task = |command| {
+        world
+            .engine()
+            .task_context(
+                &task_context::parse(
+                    json!({"workspace_id":wid,"task_id":"alpha-task","command":command}),
+                )
+                .unwrap(),
+                &Control::unbounded(),
+            )
+            .unwrap()
+    };
+    task(json!({"op":"create","title":"Preserve alpha consumers"}));
+    task(
+        json!({"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"goal","kind":"requirement","text":"Preserve alpha behavior","author":"operator","provenance":"fixture","source_links":[]}}]}),
+    );
+    let compose = || {
+        world
+            .engine()
+            .context_candidates_with(
+                "alpha",
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    task: Some(task_context::Scope {
+                        workspace_id: &wid,
+                        task_id: "alpha-task",
+                        expected_revision: 2,
+                    }),
+                    compose_evidence: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let context = compose();
+    let packed = response::pack_enriched_context(
+        &context,
+        None,
+        response::Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    let references: Vec<Value> = packed
+        .text
+        .lines()
+        .filter_map(|l| l.strip_prefix("task-reference: "))
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert!(!references.is_empty(), "{}", packed.text);
+    for r in &references {
+        assert_eq!(r["kind"], "references");
+        assert_eq!(r["producer"], RA);
+        assert_eq!(r["target"], "unique");
+        assert!(r["syntax"]["call"].is_string());
+        assert_eq!(r["syntax"]["runtime_call"], "unverified");
+        for key in ["definition", "reference"] {
+            let handle =
+                context_foundry::store::HandleRef::parse(r[key].as_str().unwrap()).unwrap();
+            assert!(
+                context
+                    .batch
+                    .items
+                    .iter()
+                    .any(
+                        |item| item.handle.as_ref().is_some_and(|h| h.path == handle.path
+                            && h.sha256.starts_with(&handle.sha32)
+                            && h.start <= handle.start
+                            && h.end >= handle.end)
+                    ),
+                "{r}"
+            );
+        }
+    }
+    assert!(
+        references
+            .iter()
+            .any(|r| r["syntax"]["test_attribute"].is_string())
+    );
+    assert!(packed.text.contains("compiler_reference_test_attribute"));
+    for tokens in [1000, 1800, 2500, 4000, 12000] {
+        let Ok(packed) = response::pack_enriched_context(
+            &context,
+            None,
+            response::Budget::request(tokens),
+            &response::stdout_bytes,
+        ) else {
+            continue;
+        };
+        let report: Value = serde_json::from_str(
+            packed
+                .text
+                .lines()
+                .find_map(|l| l.strip_prefix("task-evidence: "))
+                .unwrap(),
+        )
+        .unwrap();
+        let references: Vec<Value> = packed
+            .text
+            .lines()
+            .filter_map(|l| l.strip_prefix("task-reference: "))
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(
+            report["compiler_relationships"]["delivered"],
+            references.len()
+        );
+        for reference in references {
+            for cited in [
+                reference["definition"].as_str(),
+                reference["reference"].as_str(),
+                reference["syntax"]["call"].as_str(),
+                reference["syntax"]["test_attribute"].as_str(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let wanted = context_foundry::store::HandleRef::parse(cited).unwrap();
+                assert!(
+                    report["sources"].as_array().unwrap().iter().any(|s| {
+                        let h =
+                            context_foundry::store::HandleRef::parse(s["handle"].as_str().unwrap())
+                                .unwrap();
+                        s["representation"] == "body"
+                            && h.ws16 == wanted.ws16
+                            && h.path == wanted.path
+                            && h.sha32 == wanted.sha32
+                            && h.start <= wanted.start
+                            && h.end >= wanted.end
+                    }),
+                    "a compiler line requires both delivered bodies: {}",
+                    packed.text
+                );
+            }
+        }
+        assert!(packed.tokens <= tokens);
+    }
+    world.set_source("src/other.rs", "pub fn gamma() {}\n");
+    let stale = compose();
+    let packed = response::pack_enriched_context(
+        &stale,
+        None,
+        response::Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(!packed.text.contains("task-reference:"));
+    assert!(packed.text.contains("\"coverage\":\"stale\""));
+}
+
+#[test]
+fn execution_lookup_includes_paths_discovered_only_by_compiler_references() {
+    use context_foundry::{Strategy, store::ContextOptions, task_context};
+    let mut world = World::with_sources(&[
+        ("src/lib.rs", LIB),
+        ("src/other.rs", OTHER),
+        ("tests/observed.rs", "#[test]\nfn observed() { run(); }\n"),
+    ]);
+    world
+        .engine
+        .as_mut()
+        .unwrap()
+        .refresh(&Control::unbounded())
+        .unwrap();
+    // Leave the caller's lexical projection stale. Only the fresh compiler
+    // reference can discover this source in the composition below.
+    let caller = format!("#[test]\n{OTHER}");
+    world.set_source("src/other.rs", &caller);
+    let scoped = artifact(vec![
+        doc("src/lib.rs", vec![occ(&[0, 7, 12], ALPHA, DEF)]),
+        doc("src/other.rs", vec![occ(&[2, 11, 16], ALPHA, REF)]),
+    ]);
+    world.import_ok(RA, "execution-frontier", &scoped);
+    let engine = world.engine();
+    let endpoint = |path: &str, line| json!({"path":path,"line":line,"symbol":"reported","hash":engine.source(path).unwrap().unwrap().hash});
+    let receipt = json!({"v":2,"producer":"synthetic-trace","scope":"observed","run":"one",
+        "command":["fixture-not-executed"],"completed":true,"exit_code":0,"duration_ms":1,
+        "workspace_id":engine.workspace_id().unwrap(),"source_revision":engine.source_revision().unwrap(),
+        "inputs":(["src/lib.rs","src/other.rs","tests/observed.rs"].into_iter().map(|p|json!({"path":p,"sha256":engine.source(p).unwrap().unwrap().hash})).collect::<Vec<_>>()),
+        "test":endpoint("tests/observed.rs",2),"observations":[{"from":endpoint("tests/observed.rs",2),"to":endpoint("src/other.rs",3),"kind":"covers","count":1}]});
+    engine
+        .import_execution(&serde_json::to_vec(&receipt).unwrap())
+        .unwrap();
+    let wid = engine.workspace_id().unwrap();
+    engine.task_context(&task_context::parse(json!({"workspace_id":wid,"task_id":"frontier","command":{"op":"create","title":"Preserve behavior"}})).unwrap(), &Control::unbounded()).unwrap();
+    let context = engine
+        .context_candidates_with(
+            "alpha",
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &wid,
+                    task_id: "frontier",
+                    expected_revision: 1,
+                }),
+                compose_evidence: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let packed = response::pack_enriched_context(
+        &context,
+        None,
+        response::Budget::request(12000),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    let observations: Vec<Value> = packed
+        .text
+        .lines()
+        .filter_map(|line| line.strip_prefix("task-execution: "))
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(observations.len(), 1, "{}", packed.text);
+    let target =
+        context_foundry::store::HandleRef::parse(observations[0]["to"].as_str().unwrap()).unwrap();
+    assert_eq!(target.path, "src/other.rs");
 }

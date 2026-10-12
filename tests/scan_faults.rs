@@ -1,14 +1,427 @@
 //! Reconciliation under named faults: root/file/ancestor/FIFO replacement,
 //! deterministic unreadable-file injection, interruption, and page bounds.
 use context_foundry::fault::{self, Action, Ctx, names};
+use context_foundry::ingest::pipeline_hooks::{self, Event as ReadEvent};
 use context_foundry::learning::Feedback;
+use context_foundry::store::index_hooks::{self, Event as IndexEvent, Hooks};
 use context_foundry::testkit::{self, Fixture, knowledge, new_fixture, snapshot};
 use context_foundry::{Control, Engine, FoundryError, Strategy, digest};
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
+
+#[test]
+fn buffered_reads_revalidate_edits_replacements_and_exclusions_before_acceptance() {
+    for mutation in ["edit", "replace", "symlink", "remove", "excluded"] {
+        let mut race = race();
+        let file = race.fx.root.join("pkg/file.rs");
+        if mutation == "excluded" {
+            fs::write(&file, b"binary\0bytes").unwrap();
+        }
+        let outside = race.outside.clone();
+        fault::arm(
+            names::SCAN_AFTER_READ,
+            0,
+            Action::Call(Box::new(move |_| match mutation {
+                "edit" | "excluded" => fs::write(&file, "changed after read\n").unwrap(),
+                "replace" => {
+                    let replacement = outside.join("replacement.rs");
+                    fs::write(&replacement, "replacement after read\n").unwrap();
+                    fs::rename(replacement, &file).unwrap();
+                }
+                "symlink" => {
+                    fs::remove_file(&file).unwrap();
+                    symlink(outside.join("file.rs"), &file).unwrap();
+                }
+                "remove" => fs::remove_file(&file).unwrap(),
+                _ => unreachable!(),
+            })),
+        );
+        let root = race.fx.root.clone();
+        let report = race.fx.engine.index(&root, &Control::unbounded()).unwrap();
+        fault::disarm_all();
+        assert_eq!(report.failures, 1, "{mutation}: {report:?}");
+        let code = if mutation == "symlink" {
+            "unsafe_source_path"
+        } else {
+            "source_changed"
+        };
+        assert!(
+            report.failure_samples[0].contains(code),
+            "{mutation}: {report:?}"
+        );
+        assert!(report.partial && report.deletions_deferred && !report.scan_complete);
+        assert_eq!((report.changed, report.deleted, report.excluded), (0, 0, 0));
+        race.assert_preserved();
+
+        let file = root.join("pkg/file.rs");
+        let _ = fs::remove_file(&file);
+        fs::write(&file, "stable final version\n").unwrap();
+        let resumed = race.fx.engine.index(&root, &Control::unbounded()).unwrap();
+        assert!(!resumed.partial, "{resumed:?}");
+        assert_eq!(resumed.changed, 1);
+        assert_eq!(
+            race.fx.engine.source("pkg/file.rs").unwrap().unwrap().hash,
+            digest(b"stable final version\n")
+        );
+    }
+}
+
+#[test]
+fn sensitive_filename_exclusion_rechecks_identity_before_deleting_accepted_state() {
+    let mut fx = new_fixture();
+    fx.engine
+        .replace_source("id_rsa", "previous accepted text\n")
+        .unwrap();
+    fs::write(fx.root.join("id_rsa"), "excluded private bytes\n").unwrap();
+    let victim = fx.root.join("id_rsa");
+    let replacement = fx.dir.path().join("replacement");
+    fs::write(&replacement, "replacement bytes\n").unwrap();
+    fault::arm(
+        names::SCAN_AFTER_READ,
+        0,
+        Action::Call(Box::new(move |_| {
+            fs::rename(&replacement, &victim).unwrap();
+        })),
+    );
+    let root = fx.root.clone();
+    let report = fx.engine.index(&root, &Control::unbounded()).unwrap();
+    fault::disarm_all();
+    assert_eq!(
+        (report.deleted, report.excluded, report.failures),
+        (0, 0, 1)
+    );
+    assert!(report.failure_samples[0].contains("source_changed"));
+    assert_eq!(
+        fx.engine.source("id_rsa").unwrap().unwrap().hash,
+        digest(b"previous accepted text\n")
+    );
+    let resumed = fx.engine.index(&root, &Control::unbounded()).unwrap();
+    assert_eq!(
+        (resumed.deleted, resumed.excluded, resumed.failures),
+        (1, 1, 0)
+    );
+    assert!(fx.engine.source("id_rsa").unwrap().is_none());
+}
+
+#[test]
+fn early_lexical_publication_survives_cancellation_and_reopen_without_premature_sweep() {
+    let mut fx = new_fixture();
+    fx.engine
+        .replace_source("retired.rs", "fn retired() {}\n")
+        .unwrap();
+    fx.engine.refresh(&Control::unbounded()).unwrap();
+    for i in 0..257 {
+        fs::write(
+            fx.root.join(format!("file{i}.rs")),
+            format!("// earlypublicationmarker\nfn probe{i}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    fault::arm(
+        names::INDEX_AFTER_SEARCH_COMMIT,
+        0,
+        Action::Call(Box::new(|ctx| {
+            let engine = ctx.engine.unwrap();
+            let status = engine.status().unwrap();
+            assert_eq!(
+                status.source_count, 129,
+                "publish before all 257 sources are committed"
+            );
+            assert_eq!(status.scan_state, "incomplete");
+            assert!(
+                !engine
+                    .search("earlypublicationmarker", 5)
+                    .unwrap()
+                    .hits
+                    .is_empty()
+            );
+            ctx.control.unwrap().cancel();
+        })),
+    );
+    let root = fx.root.clone();
+    let report = fx.engine.index(&root, &Control::unbounded()).unwrap();
+    fault::disarm_all();
+    assert_eq!(
+        (report.changed, report.unchanged, report.deleted),
+        (128, 0, 0)
+    );
+    assert_eq!(report.pending_sources, 128);
+    assert_eq!(report.reason_code, Some("cancelled"));
+    assert!(report.partial && report.deletions_deferred && !report.scan_complete);
+    assert!(fx.engine.source("retired.rs").unwrap().is_some());
+    let (_dir, store, root) = fx.close();
+    let mut engine = Engine::open_existing(&store).unwrap();
+    assert!(
+        !engine
+            .search("earlypublicationmarker", 5)
+            .unwrap()
+            .hits
+            .is_empty()
+    );
+    let resumed = engine.index(&root, &Control::unbounded()).unwrap();
+    assert_eq!(
+        (resumed.changed, resumed.unchanged, resumed.deleted),
+        (129, 128, 1)
+    );
+    assert!(!resumed.partial && resumed.scan_complete, "{resumed:?}");
+    assert_eq!(resumed.pending_sources, 0);
+    assert_eq!(engine.status().unwrap().source_count, 257);
+    assert!(engine.source("retired.rs").unwrap().is_none());
+}
+
+#[test]
+fn read_worker_panic_preserves_accepted_source_and_pool_recovers() {
+    let mut race = race();
+    fs::write(race.fx.root.join("good.rs"), "fn good() {}\n").unwrap();
+    pipeline_hooks::install(Some(Arc::new(|event| {
+        if matches!(event, ReadEvent::Reading("pkg/file.rs")) {
+            panic!("injected read worker failure");
+        }
+    })));
+    let root = race.fx.root.clone();
+    let report = race.fx.engine.index(&root, &Control::unbounded()).unwrap();
+    pipeline_hooks::install(None);
+    assert_eq!((report.changed, report.failures), (1, 1));
+    assert!(report.failure_samples[0].contains("read_failed: an ingestion worker panicked"));
+    assert!(report.partial && report.deletions_deferred);
+    race.assert_preserved();
+    let resumed = race.fx.engine.index(&root, &Control::unbounded()).unwrap();
+    assert!(!resumed.partial, "{resumed:?}");
+    assert_eq!((resumed.changed, resumed.unchanged), (1, 1));
+}
+
+#[test]
+fn reads_overlap_ordered_commits_with_bounded_results_and_shared_lexical_workers() {
+    #[derive(Default)]
+    struct Observed {
+        enumerated: Vec<String>,
+        ready: Vec<String>,
+        committed: Vec<String>,
+        read_threads: HashSet<std::thread::ThreadId>,
+        index_threads: HashSet<std::thread::ThreadId>,
+        max_queued: usize,
+        second_waiting: bool,
+        timed_out: bool,
+    }
+    let mut fx = new_fixture();
+    for i in 0..260 {
+        fs::write(
+            fx.root.join(format!("file{i}.rs")),
+            format!("fn probe{i}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    let state = Arc::new((Mutex::new(Observed::default()), Condvar::new()));
+    let enumeration = state.clone();
+    fault::arm(
+        names::SCAN_BEFORE_OPEN,
+        0,
+        Action::Call(Box::new(move |ctx| {
+            enumeration
+                .0
+                .lock()
+                .unwrap()
+                .enumerated
+                .push(ctx.detail.to_owned());
+        })),
+    );
+    let commits = state.clone();
+    fault::arm(
+        names::SOURCE_AFTER_COMMIT,
+        0,
+        Action::Call(Box::new(move |ctx| {
+            let mut observed = commits.0.lock().unwrap();
+            if observed.committed.is_empty() {
+                assert!(observed.second_waiting);
+                assert!(!observed.ready.contains(&observed.enumerated[1]));
+            }
+            observed.committed.push(ctx.detail.to_owned());
+            commits.1.notify_all();
+        })),
+    );
+    let reads = state.clone();
+    pipeline_hooks::install(Some(Arc::new(move |event| {
+        let mut observed = reads.0.lock().unwrap();
+        match event {
+            ReadEvent::Reading(_) => {
+                observed.read_threads.insert(std::thread::current().id());
+            }
+            ReadEvent::Queued(count) => observed.max_queued = observed.max_queued.max(*count),
+            ReadEvent::Ready(path) => {
+                let position = observed.enumerated.iter().position(|p| p == path).unwrap();
+                // Hold the first result until another finishes, and the second
+                // until the writer commits the first. A third worker releases
+                // the first: this proves read/read and read/writer overlap.
+                if position < 2 {
+                    if position == 1 {
+                        observed.second_waiting = true;
+                        reads.1.notify_all();
+                    }
+                    let (guard, timeout) = reads
+                        .1
+                        .wait_timeout_while(observed, Duration::from_secs(10), |o| {
+                            if position == 0 {
+                                o.ready.is_empty() || !o.second_waiting
+                            } else {
+                                o.committed.is_empty()
+                            }
+                        })
+                        .unwrap();
+                    observed = guard;
+                    observed.timed_out |= timeout.timed_out();
+                }
+                observed.ready.push((*path).to_owned());
+                reads.1.notify_all();
+            }
+        }
+    })));
+    let builds = state.clone();
+    index_hooks::install(Hooks {
+        threads: Some(3),
+        observer: Some(Arc::new(move |event| {
+            if matches!(event, IndexEvent::Build(_)) {
+                builds
+                    .0
+                    .lock()
+                    .unwrap()
+                    .index_threads
+                    .insert(std::thread::current().id());
+            }
+        })),
+        ..Hooks::default()
+    });
+    let root = fx.root.clone();
+    let report = fx.engine.index(&root, &Control::unbounded()).unwrap();
+    fault::disarm_all();
+    pipeline_hooks::install(None);
+    index_hooks::clear();
+    assert!(!report.partial, "{report:?}");
+    assert_eq!(report.changed, 260);
+    let observed = state.0.lock().unwrap();
+    assert!(!observed.timed_out, "read/commit overlap barrier timed out");
+    assert_eq!(
+        observed.max_queued, 8,
+        "active and completed results share eight slots"
+    );
+    assert_eq!(observed.committed, observed.enumerated);
+    assert_ne!(observed.ready[0], observed.enumerated[0]);
+    assert_eq!(observed.read_threads.len(), 3);
+    assert!(!observed.index_threads.is_empty());
+    assert!(observed.index_threads.is_subset(&observed.read_threads));
+}
+
+#[test]
+fn lexical_pool_is_reused_across_pages_and_refresh_calls() {
+    let mut fx = new_fixture();
+    for i in 0..260 {
+        fx.engine
+            .replace_source(&format!("file{i}.rs"), "fn probe() {}\n")
+            .unwrap();
+    }
+    let ids = Arc::new(Mutex::new(Vec::new()));
+    let builds = ids.clone();
+    index_hooks::install(Hooks {
+        threads: Some(1),
+        observer: Some(Arc::new(move |event| {
+            if matches!(event, IndexEvent::Build(_)) {
+                builds.lock().unwrap().push(std::thread::current().id());
+            }
+        })),
+        ..Hooks::default()
+    });
+    assert_eq!(fx.engine.refresh(&Control::unbounded()).unwrap(), (260, 0));
+    fx.engine
+        .replace_source("file0.rs", "fn changed() {}\n")
+        .unwrap();
+    assert_eq!(fx.engine.refresh(&Control::unbounded()).unwrap(), (1, 0));
+    index_hooks::clear();
+    let ids = ids.lock().unwrap();
+    assert_eq!(ids.len(), 261);
+    assert!(
+        ids.iter().all(|id| *id == ids[0]),
+        "same OS thread across pages and calls"
+    );
+}
+
+#[test]
+fn parse_failures_from_early_pages_and_final_drain_are_counted_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut fx = new_fixture();
+    for i in 0..260 {
+        fs::write(fx.root.join(format!("file{i}.rs")), "fn probe() {}\n").unwrap();
+    }
+    let builds = AtomicUsize::new(0);
+    index_hooks::install(Hooks {
+        observer: Some(Arc::new(move |event| {
+            if matches!(event, IndexEvent::Build(_))
+                && matches!(builds.fetch_add(1, Ordering::SeqCst), 0 | 128 | 256)
+            {
+                panic!("injected parse panic across publication pages");
+            }
+        })),
+        ..Hooks::default()
+    });
+    let root = fx.root.clone();
+    let report = fx.engine.index(&root, &Control::unbounded()).unwrap();
+    index_hooks::clear();
+    assert_eq!((report.changed, report.failures), (260, 3));
+    assert_eq!(report.failure_samples.len(), 3);
+    assert!(report.scan_complete && report.partial && !report.deletions_deferred);
+    assert_eq!(fx.engine.status().unwrap().parse_failures, Some(3));
+    let repeated = fx.engine.index(&root, &Control::unbounded()).unwrap();
+    assert_eq!((repeated.unchanged, repeated.failures), (260, 0));
+    assert!(!repeated.partial);
+}
+
+#[test]
+fn serial_and_parallel_ingestion_produce_equal_sources_and_search_documents() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    fs::create_dir(&root).unwrap();
+    for i in 0..260 {
+        fs::write(
+            root.join(format!("file{i}.rs")),
+            format!("fn probe{i}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    fs::write(root.join("empty.rs"), "").unwrap();
+    fs::write(root.join("binary.dat"), b"not\0source").unwrap();
+    let mut outcomes = Vec::new();
+    for threads in [1, 8] {
+        let store = dir.path().join(format!("store{threads}"));
+        let mut engine = Engine::initialize(&store, &root).unwrap();
+        let documents = Arc::new(Mutex::new(Vec::new()));
+        let added = documents.clone();
+        index_hooks::install(Hooks {
+            threads: Some(threads),
+            observer: Some(Arc::new(move |event| {
+                if let IndexEvent::Add(document) = event {
+                    added.lock().unwrap().push((*document).to_owned());
+                }
+            })),
+            ..Hooks::default()
+        });
+        let report = engine.index(&root, &Control::unbounded()).unwrap();
+        index_hooks::clear();
+        assert!(!report.partial, "{report:?}");
+        assert_eq!(
+            (report.changed, report.excluded, report.pending_sources),
+            (261, 1, 0)
+        );
+        drop(engine);
+        let mut documents = documents.lock().unwrap().clone();
+        documents.sort();
+        outcomes.push((knowledge(&snapshot(&store)), documents));
+    }
+    assert_eq!(outcomes[0], outcomes[1]);
+}
 
 fn feedback(task: &str) -> Feedback {
     Feedback {

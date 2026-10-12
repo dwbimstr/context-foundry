@@ -220,7 +220,9 @@ segments appear only when not at their default:
 10. `candidates:full` when a candidate window filled: search tier 1's 64 slots with
     definitions left over, tier 2 at 256, an exact-doors references window (256
     records, 64 files) or its exact-name resolution, or the approximate-doors window of
-    256 units;
+    256 units, or a bounded semantic provenance, file-discovery or refinement
+    examination window. Semantic working limits do not increase `omitted` or
+    `capped`: their unexamined locations were not materialized delivery items;
 11. (removed by 005 T004) `graph:<state>` reported path-seeded graph expansion; an
     anchored context reports `doors:<state>` instead (§ Anchored context);
 12. `examined:<n>`: `foundry references` only, always present. Counts the graph records
@@ -565,6 +567,55 @@ a window filled: tier 1's 64 slots with definitions left over, or tier 2 at 256.
 may legitimately change when index statistics change (refresh, repair); determinism
 holds per index state.
 
+#### Experimental anchorless prose selection — 009 T005, 2026-10-10
+
+With `experimental_behavior` enabled for search-context requests, an anchorless
+plain-language query uses tier 2 without promoting incidental exact-definition runs
+to tier 1. Eligibility requires at least three whitespace-separated words, each
+alphabetic (including hyphen-separated alphabetic compounds) after trimming trailing
+`?`, `.`, `,` or `:`. A capitalized group-3 candidate inside an unmarked compound
+does not alone turn prose into a symbol request; marked and shaped names still do.
+Queries starting with
+`where`, `find`, `locate`, `show` or `who` retain the baseline. Explicit code/path
+syntax, admitted anchors (including global multi-root anchors), graph strategy and
+policy-routed auto strategy retain their existing selection. Default context and the
+ordinary `search` operation are unchanged.
+
+Cause: many definitions named ordinary words such as `read` can occupy all 32 context
+slots ahead of a body matching the complete behavioral query. The candidate removes
+common English stop words from the prose query clauses and divides the existing
+256-document window into two disjoint 128-document windows: programming units and
+sections/blocks/unparsed text. Their ranked results alternate, code first. Each
+window uses distinct non-stopword subtoken coverage (at most 64 terms). Adjacent
+query terms within 16 indexed positions add a combined bonus below half a term;
+repetition, identifier frequency and rare single terms cannot outweigh an additional
+covered term. This reuses the positional body index. Either window filling reports
+candidate pressure. This protects
+implementation discovery from a documentation-only candidate window without raising
+the total bound. The four-per-file cap, final-read freshness and response budget
+remain. A lexical unit longer than 1,536 bytes delivers an exact, UTF-8-safe excerpt
+around the best matching line of its indexed document, with at most three preceding
+lines. If a callable's (`fn`/`method`) best line is in leading documentation and this
+window would exclude its declaration head, take up to 1,536 bytes from that head
+line (clipped to the original unit), preserving indentation. This exposes its
+declaration and implementation start rather than only long introductory examples. Body matches keep their focused window. Its handle names the
+actual contiguous excerpt range and its label says `excerpt`; omitted documentation
+is not claimed as delivered.
+Experimental anchorless prose with hierarchy/body representations alternates dense
+and lexical candidates at both partial and complete coverage, before ordinary
+first-placement deduplication, per-file caps and candidate limits. Dense goes first
+only when a refined Body survives the final source check; otherwise lexical goes
+first. Coverage describes availability and freshness, not relevance. The existing
+partial/address and file-overview rules still alternate lexical first; complete
+address-card coverage retains dense precedence. Explicit anchors and ordinary/default
+search keep their existing behavior. All independently scored body ranges remain
+unchanged. Bounded `placement_policy` traces name `body_prose_interleave_v1` for
+hierarchy/body and report coverage separately; `lexical_intent` remains available.
+This reserves no extra candidates or output tokens, and does not guarantee delivery
+of every lexical hit. No expected-answer labels enter selection. It changes no source
+index, vector recipe or cache identity. Development regressions and public repository
+comparisons do not establish held-out G2 acceptance.
+
 ### Hit materialization
 
 Merge candidates sharing a delivery unit, keeping the best-ranked. At most 4 hits per
@@ -840,6 +891,44 @@ version gate (001 T007); when 005 T004 is accepted, § Doors replaces the path-s
 graph expansion and the graph keyword routing of § Context candidates and routing.
 Every later change to what a search document contains bumps the schema again.
 
+### Call-name postings — 2026-10-11
+
+The current derived search schema is `"7"`. Schema `"6"` introduced `call_name`
+(multi-valued exact `STRING`) and `call_coverage` (`STRING`, stored) on each source's
+first search document; `"7"` also includes supported Python import-alias names in
+those same postings. A field-compatible schema-6 index lacks these alias postings
+and must pass through the explicit version repair gate.
+The existing ingestion parse collects distinct terminal call names for the supported
+Rust, Python, Go and JavaScript/TypeScript/TSX recipes. Comments and repeated calls
+cannot occupy extra source slots. No source is enrolled, executed or parsed a second
+time to build these fields; no new store table or background owner is introduced.
+At most 4,096 distinct names of at most 1,024 bytes are retained per source, under the
+existing 1 MiB source and deterministic `2^25` parser-work limits. Coverage values are
+`complete`, `incomplete` or `unsupported` for the syntax recipe, not runtime behavior.
+Rust assertion token-tree ancestry is bounded at 32; arbitrary macro DSLs are unsupported.
+
+Python's narrow alias recipe accepts an explicit module-level
+`from module import original as alias` only when a bare `alias(...)` call follows
+its declaration and no other identifier role uses that alias. Its original spelling
+joins the existing exact call postings. Any other role conservatively refuses that
+alias, including assignments, parameters, duplicate/nested imports, value references
+and attribute names. Wildcard imports, non-ASCII identifiers (which Python normalizes
+with NFKC), and bookkeeping overflow disable alias enrichment for that source and
+mark recipe coverage incomplete. The existing ingestion walk retains at most 128
+alias declarations, including repeats, plus 4,096 ordinary identifier spellings and
+4,096 bare-call spellings of at most 1,024 bytes. This is syntax candidate discovery;
+it neither resolves runtime binding nor follows indirect aliases or dynamic mutation.
+
+A schema-5 or schema-6 index reports `repair_required` until the explicit command
+`foundry --store STORE repair-index` rebuilds derived documents from authoritative
+sources. This does not upgrade the authoritative store schema or discard sources,
+memories or tasks. `SOURCE_UNIT_SCHEMA` remains independently `"5"`; semantic
+partition recipes use that version, not search schema 7. Search-only posting changes
+do not change model inputs or independently invalidate their partitions. Other
+representation-recipe changes, such as the explicit `+kinds1` component, retain their
+own invalidation rules. The bounded consumer and final identity/AST checks are in
+[003 T009](../../003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task).
+
 ### Roles
 
 Every source path has one role, decided by the first matching rule on its
@@ -997,8 +1086,47 @@ keeps today's ordering and packing rules, with two changes: its tier 1 sees one
 document per definition (§ Definitions and addresses), and when it requests doors it
 gets `doors:none` and search packing instead of graph expansion (§ Doors). When 009
 T004 is accepted and a semantic profile is enabled, its placement (dense candidates
-first, then lexical) overrides these rules for anchor-less queries only. `search` orders
-anchored locator lines by the resolver; `retrieve` is unchanged.
+first, then lexical) overrides these rules for anchor-less queries only, except for
+experimental prose admission described above. `search` orders anchored locator lines
+by the resolver; `retrieve` is unchanged.
+
+#### Experimental behavioral support — 001 T010, 2026-10-09
+
+The owner authorized this candidate for implementation; it is **off by default**
+until T010 and 003 T006 pass their measurement gates. Enable it explicitly with
+`context --experimental-behavior-context` or the same flag at MCP owner startup.
+The MCP tool schema and ordinary response wire do not change.
+
+The first candidate repairs packing only. It does not expand candidate windows,
+change the four-per-file cap, invoke an embedding model for anchors, or change
+anchorless retrieval. It recognizes the ASCII-insensitive prefixes `how does`,
+`how do`, `how is`, `why does`, `explain how`, and `describe how`, followed by a
+space, only when the query has exactly one resolved type anchor (`struct`, `class`,
+`interface`, `enum`, `trait`) and the selected strategy is search. Locator words
+`find`, `locate`, `defined`, `definition`, `definitions`, unknown wording, ambiguous
+or multiple anchors and graph/door requests retain the existing selection.
+
+The existing, already capped candidates may supply methods whose syntax address
+extends the type's address with `::` or `.`, in the same workspace, source path and
+source hash. The verbatim method must contain at least one meaningful query subtoken
+after removal of the anchor's name and the fixed function-word list in
+`store::behavior_terms`. This is lexical/syntactic support, not a compiler relationship
+or a claim that all necessary evidence has been found. Revalidate both owner and
+support in the ordinary final read; a changed owner cannot retarget the selection.
+
+With eligible support, place the resolved owner's address first, then at most four
+supporting units in their existing order through the verbatim/signature ladder.
+Keep the owner as an address, then place its directory lines; the behavioral answer
+uses its budget for the supporting implementation instead of repeating the type body.
+Wire order remains owner/directory/support; memory still fills only the remainder.
+All whole-response token/byte checks and omitted counts apply. When no support is
+eligible, use the unchanged anchored ladder. After a multi-root merge, support is
+allowed only if the global anchor remains uniquely resolved to that same workspace
+and source identity. No unit of another root may attach to it merely by name.
+
+This candidate does not solve missing methods, prior cap losses, cross-file behavior,
+unrecognized intent, or the 249 anchorless G2 misses. Its default stays off until
+those explicitly scoped retrieval and task-outcome gates are evaluated.
 
 ### Doors
 
@@ -1255,17 +1383,42 @@ definition gets an address:
 
 ### Parallel indexing
 
-Refresh builds the search documents of each page's pending sources on at most
-min(available parallelism, 8) threads, with at most 64 MiB of source bytes handed out
+Explicit ingestion keeps at most eight reads/results in flight, each bounded by
+the 2 MiB source limit plus one sentinel byte. Completed, unaccepted results keep
+their slots. Workers open no-follow relative to the held root, read, validate and
+hash; the owner accepts in walker order, grouping at most four supported files in
+one redb transaction (at most 8 MiB of bodies, inside the same eight read/result slots).
+Each changed source still advances the source revision and its independent derivation
+obligations. Counts advance only after the whole group commits; a pre-commit failure or
+cancellation preserves every previous version in that group. Earlier committed groups
+remain reusable. Exclusion deletions flush any preceding group and retain their single-file
+transaction. Read/identity failures preserve that file and prevent the unseen sweep.
+It rechecks the held root, held file and newly opened name before publication,
+including exclusion-driven deletion. Changed or unsafe reads preserve accepted
+versions and defer the unseen sweep. These are freshness checks, not an atomic
+filesystem snapshot; an edit after the final check needs later reconciliation.
+
+At each group boundary after 128 accepted candidates (at most 131), ingestion drains
+one pending lexical page; the final
+drain still finishes remaining work. Early pages retain the same commit/reload/ack
+order. Cancellation and process exit retain committed sources and search pages;
+unaccepted read-ahead is discarded and an incomplete scan cannot prove absence.
+Failures from early and final parse pages contribute to the same bounded report.
+Explicit MCP indexing still holds its existing engine slot; this does not introduce
+foreground concurrency during that call. The watcher's smaller steps are unchanged.
+
+Refresh builds the search documents of each page's pending sources on an Engine-owned
+Rayon pool, shared with ingestion, sized at creation to min(available parallelism, 8).
+It is reused across pages and calls, with at most 64 MiB of source bytes handed out
 and not yet consumed (a source is consumed when its documents are added; one source
 always fits). Each source has one outcome: its documents, or, when its parse panics
 or is stopped, a named scan failure and the plain-block documents of an unmapped
 source, whose first document carries the `kind` term `unparsed` (all are rendered and
 searched exactly as blocks); it is never dropped. The one writer adds documents in key
 order as their builds finish; after
-every thread has finished it commits and reloads, and only then are matching pending
+every page job has finished it commits and reloads, and only then are matching pending
 keys cleared, as before. Cancellation is checked at each hand-out and after the commit:
-it stops handing out work and waits for the threads; a page whose sources were all
+it stops handing out work and waits for the jobs; a page whose sources were all
 handed out may still be added and committed, and its pending keys then stay pending
 until a later refresh, whose replay converges. A refresh on 8 threads yields the same
 documents (field values, in key order) and the same store tables as on 1 thread;
@@ -1275,6 +1428,9 @@ them, so its work stays proportional to the failures, until each source is parse
 again: on its next change, or on `repair-index`, which rebuilds every source's
 documents. A source with no searchable text (empty or whitespace only) has no
 documents either way and is named only in the scan report of the refresh that hit it.
+Read payload and lexical hand-out limits are separate; neither includes parser,
+Tantivy, thread-stack or allocator overhead. No all-corpus body collection, new
+durable queue, schema change or model inference is introduced by this pipeline.
 
 ## Failure scope
 
@@ -1345,3 +1501,34 @@ must not create a store or start repair. Syntax, ranking, outline and multi-root
 checks are listed in 001 T005/T006 and 007 T001. These extend the owning tasks'
 focused cases; they are not a portfolio-wide validation stage, and no provider-cost or
 complete-recall claim follows.
+
+### Experimental task view in context — 008 T005 / 003 T008
+
+A context request that explicitly selects a primary task and expected revision adds
+one line immediately after the ordinary context header:
+
+```text
+task-view: {"sha256":"<digest>","view":{...}}
+```
+
+`view` is the complete selected active task view: workspace/task identities,
+revision, title, `boundary:"foundry_task_context"`, `host_application:"unknown"`, and
+attributed entries with immutable payload hashes, original/caller-summary labels,
+text and current source-link statuses. The digest is SHA-256 of the compact UTF-8
+JSON serialization of `view` (the pinned serde_json representation, sorted object
+keys). Caller text stays JSON-escaped; it cannot create a separate header or source
+item. The task line is mandatory and included in every packing/counting trial.
+
+The source/graph ladder, anchor selection and optional memory tail retain their
+existing order within the remaining allowance. Header `shown`/`omitted` count
+ordinary evidence items; they do not count task entries. A small budget refuses the
+response rather than hiding task evidence. If even the task line plus header cannot
+fit the maximum token/byte capacity, return `unsupported_mode` with an explicit
+fold/selection instruction. No task state is mutated by this refusal or by retrieval.
+
+Task revision and primary source-link freshness validate in the same final read as
+primary source evidence. The expected revision is checked again there even if an
+earlier preflight succeeded. Multi-root context includes the primary task once and
+retains per-root source snapshots. Without task selection, existing context-v2
+responses and default MCP schemas are unchanged. This remains delivery evidence,
+not host-request replacement or provider usage accounting.

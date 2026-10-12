@@ -1,5 +1,9 @@
-//! 009 derived semantic index: ONE validated USearch generation per profile
-//! digest under `<store>/semantic/<function digest>/` — the F16 index file,
+//! 009 derived semantic index: one validated generation per profile digest
+//! under `<store>/semantic/<function digest>/`: an immutable F16 base, one bounded
+//! F16 delta, and separate current locations. A v5 manifest atomically names
+//! content-addressed artifacts; retired base keys are filtered during ANN selection.
+//! The base is compacted only at bounded churn thresholds or explicit repair.
+//! Earlier formats used one F16 index file,
 //! its label map and a generation manifest naming both file hashes, the
 //! profile digest, the recipe and the cache entries it covers. Since v2 the
 //! label map also lists every unit location each label stood for, and the
@@ -29,7 +33,7 @@ use crate::error::FResult;
 use crate::error::FoundryError;
 use crate::neural::anchor::{Dir, conflict_or_io};
 #[cfg(feature = "semantic")]
-use crate::neural::cache::{self, CacheLookup, CacheProbe};
+use crate::neural::cache::{self, CacheLookup};
 use crate::neural::provider::SUPPORTED_DIMENSIONS;
 #[cfg(feature = "semantic")]
 use crate::store::Engine;
@@ -40,16 +44,30 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "semantic")]
 use std::time::Instant;
 
+#[cfg(feature = "semantic")]
+pub(crate) mod mapping;
+#[cfg(feature = "semantic")]
+pub(crate) mod publication;
+#[cfg(feature = "semantic")]
+pub(crate) use mapping::MappingWalk;
+
+pub(crate) mod locations;
+pub(crate) mod verification;
+pub use locations::Locations;
+
 pub const SEMANTIC_DIR: &str = "semantic";
 pub const INDEX_FILE: &str = "index.usearch";
 pub const LABELS_FILE: &str = "labels.json";
 pub const MANIFEST_FILE: &str = "generation.json";
 /// Layout version of the manifest and label map below. v2 (009 T002) added
 /// each label's unit locations and the coverage record serving needs; v3
-/// (009 T004) records the profile's own geometry. An older generation is
+/// (009 T004) records geometry; v4 (T008) separates immutable vector segments
+/// from current locations under one atomic manifest; v5 adds independent bounded
+/// location overlays, immutable membership and a transactional mapping revision.
+/// An older generation is
 /// unavailable by name until preparation republishes it from the cache
 /// (zero document calls).
-pub const GENERATION_VERSION: u32 = 3;
+pub const GENERATION_VERSION: u32 = 5;
 /// The scalar kind and metric of the derived index (D001 chosen values).
 pub const SCALAR_KIND: &str = "f16";
 pub const METRIC: &str = "cos";
@@ -57,6 +75,30 @@ pub const METRIC: &str = "cos";
 const MAX_META_BYTES: u64 = 256 * 1024 * 1024;
 /// An index file larger than this is refused before it is read into memory.
 const MAX_INDEX_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// Logical f32 payload retained while building a generation. This bounds
+/// scratch payloads, not allocator overhead or total process RSS.
+#[cfg(feature = "semantic")]
+const MAX_VECTOR_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+#[cfg(feature = "semantic")]
+fn within_publication_limit(bytes: u64, limit: u64, what: &str) -> FResult<()> {
+    if bytes > limit {
+        return Err(FoundryError::Semantic {
+            code: "resource_limit",
+            message: format!("publication {what} exceeds {limit} bytes; cached vectors stay"),
+        });
+    }
+    Ok(())
+}
+
+/// Conservative JSON size including worst-case string escapes and scalar
+/// fields; also bounds the keys/locations retained by the mapping walk.
+#[cfg(feature = "semantic")]
+fn location_bytes(path: &str, hash: &str) -> u64 {
+    (path.len() as u64 + hash.len() as u64)
+        .saturating_mul(6)
+        .saturating_add(160)
+}
 /// The manifest's coverage words.
 pub const COVERAGE_COMPLETE: &str = "complete";
 pub const COVERAGE_PARTIAL: &str = "partial";
@@ -74,16 +116,91 @@ pub struct GenerationManifest {
     pub count: usize,
     /// SHA-256 of the index file bytes.
     pub index_sha256: String,
+    /// Ordinals in the immutable base, including retired keys.
+    #[serde(skip)]
+    pub base_entries: std::sync::Arc<Vec<String>>,
+    #[serde(default)]
+    pub base_count: usize,
+    #[serde(default)]
+    pub members_sha256: String,
+    /// At most one bounded delta; ordinals are local to this segment.
+    pub delta: Option<DeltaManifest>,
     /// SHA-256 of the label-map bytes this manifest was written with.
     pub labels_sha256: String,
-    /// The UNIQUE cache entries (document input keys) this generation covers.
-    pub entries: Vec<String>,
+    /// One bounded replacement/tombstone overlay over the immutable location base.
+    pub locations_delta: Option<String>,
+    /// Absent when the mapping walk observed concurrent commits.
+    pub mapping_revision: Option<u64>,
+    pub coverage_stats: Option<crate::neural::cache::CoverageSnapshot>,
     /// The store source revision the label map's unit locations were read at.
     pub source_revision: u64,
     /// [`COVERAGE_COMPLETE`] when every admitted source had a current
     /// partition AND every eligible unit's vector is in this index at
     /// `source_revision`; otherwise [`COVERAGE_PARTIAL`].
     pub coverage: String,
+}
+
+/// Immutable delta membership. Locations belong to the generation, not a segment.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeltaManifest {
+    pub sha256: String,
+    pub entries: Vec<String>,
+}
+
+impl GenerationManifest {
+    /// Content-named files are published before the single manifest switch.
+    pub fn index_file(&self) -> String {
+        format!("ann-{}.usearch", self.index_sha256)
+    }
+    pub fn members_file(&self) -> String {
+        format!("members-{}.json", self.members_sha256)
+    }
+    pub fn location_delta_file(&self) -> Option<String> {
+        self.locations_delta
+            .as_ref()
+            .map(|hash| format!("location-delta-{hash}.json"))
+    }
+    pub fn mapping_id(&self) -> String {
+        format!(
+            "{}:{}",
+            self.labels_sha256,
+            self.locations_delta.as_deref().unwrap_or("")
+        )
+    }
+    pub fn metadata_files(&self) -> Vec<String> {
+        let mut files = vec![self.labels_file(), self.members_file()];
+        files.extend(self.location_delta_file());
+        files
+    }
+    pub fn labels_file(&self) -> String {
+        format!("locations-{}.json", self.labels_sha256)
+    }
+    pub fn delta_file(&self) -> Option<String> {
+        self.delta
+            .as_ref()
+            .map(|delta| format!("ann-{}.usearch", delta.sha256))
+    }
+}
+
+/// Hard bounds on both churn and delta build payload. A ratio threshold also
+/// compacts small bases before their overlays dominate them.
+pub const MAX_DELTA_ENTRIES: usize = 4096;
+pub const MAX_DELTA_BYTES: u64 = 32 * 1024 * 1024;
+pub fn churn_limit(base: usize) -> usize {
+    (base / 4).clamp(64, MAX_DELTA_ENTRIES)
+}
+
+/// Verified ANN segments to restore or reuse; no subsequent pathname resolution.
+pub struct IndexBuffers {
+    pub base: Segment,
+    pub delta: Option<Segment>,
+}
+
+/// Verified bytes, or a previously verified and restored immutable segment.
+pub enum Segment {
+    Bytes(Vec<u8>),
+    #[cfg(feature = "semantic")]
+    Resident(std::sync::Arc<usearch::Index>),
 }
 
 /// Label ↔ document-input key. Labels are ordinals over the SORTED unique key
@@ -107,6 +224,8 @@ pub struct LabelEntry {
 /// revalidates it against the current source, like any lexical candidate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitLocation {
+    #[serde(default)]
+    pub kind: crate::neural::cache::CardKind,
     pub path: String,
     pub start: u64,
     pub end: u64,
@@ -145,7 +264,9 @@ impl GenerationScope {
 /// current cached vector, the unit locations carrying it, and the scope.
 #[cfg(feature = "semantic")]
 pub struct CurrentMapping {
-    pub units: std::collections::BTreeMap<String, Vec<UnitLocation>>,
+    pub(crate) coverage: cache::CoverageSnapshot,
+    pub units: Locations,
+    pub(crate) mapping_revision: Option<u64>,
     pub scope: GenerationScope,
 }
 
@@ -154,15 +275,11 @@ impl CurrentMapping {
     /// True when `generation` publishes exactly this mapping and scope.
     pub(crate) fn published_by(&self, generation: &Generation) -> bool {
         let manifest = &generation.manifest;
-        manifest.source_revision == self.scope.source_revision
+        manifest.mapping_revision == self.mapping_revision
+            && manifest.source_revision == self.scope.source_revision
             && manifest.coverage == self.scope.coverage()
-            && generation.labels.labels.len() == self.units.len()
-            && generation
-                .labels
-                .labels
-                .iter()
-                .zip(&self.units)
-                .all(|(entry, (key, units))| &entry.input_key == key && &entry.units == units)
+            && generation.labels.len() == self.units.len()
+            && generation.labels == self.units
     }
 }
 
@@ -170,7 +287,13 @@ impl CurrentMapping {
 #[derive(Clone, Debug)]
 pub struct Generation {
     pub manifest: GenerationManifest,
-    pub labels: LabelMap,
+    pub labels: Locations,
+    #[cfg(feature = "semantic")]
+    pub(crate) location_base: Locations,
+    #[cfg(feature = "semantic")]
+    pub(crate) location_overlay: locations::Overlay,
+    #[cfg(feature = "semantic")]
+    pub(crate) receipt: std::sync::Arc<verification::ManifestReceipt>,
 }
 
 /// Why a generation did not validate: unavailable (a named reason) or the
@@ -245,8 +368,13 @@ pub(crate) fn open_generation_dir(
 }
 
 /// Streamed SHA-256 of an open file with a control checkpoint per MiB.
-fn hash_reader(file: &mut std::fs::File, control: &Control) -> Result<String, GenerationError> {
+fn hash_reader(
+    file: &mut std::fs::File,
+    control: &Control,
+    limit: u64,
+) -> Result<String, GenerationError> {
     let mut hasher = Sha256::new();
+    let mut total = 0u64;
     let mut buffer = vec![0u8; 1 << 20];
     loop {
         control.check().map_err(GenerationError::Interrupted)?;
@@ -255,6 +383,10 @@ fn hash_reader(file: &mut std::fs::File, control: &Control) -> Result<String, Ge
             .map_err(|e| unavailable(format!("index file unreadable: {e}")))?;
         if read == 0 {
             break;
+        }
+        total += read as u64;
+        if total > limit {
+            return Err(unavailable("index file exceeds its byte bound"));
         }
         hasher.update(&buffer[..read]);
     }
@@ -277,18 +409,24 @@ fn read_bounded(file: std::fs::File, what: &str) -> Result<Vec<u8>, GenerationEr
 
 /// Read the index file ONCE into memory, bounded, with a control
 /// checkpoint per MiB: the caller hashes and restores these same bytes.
-fn read_index(file: std::fs::File, control: &Control) -> Result<Vec<u8>, GenerationError> {
+fn read_index(
+    file: std::fs::File,
+    control: &Control,
+    limit: u64,
+    hash: bool,
+) -> Result<(Vec<u8>, Option<String>), GenerationError> {
     let len = file
         .metadata()
         .map_err(|e| unavailable(format!("index file unreadable: {e}")))?
         .len();
-    if len > MAX_INDEX_BYTES {
+    if len > limit {
         return Err(unavailable(format!(
-            "index file is {len} bytes, over the {MAX_INDEX_BYTES}-byte load bound"
+            "index file is {len} bytes, over the {limit}-byte load bound"
         )));
     }
+    let mut hasher = hash.then(Sha256::new);
     let mut bytes = Vec::with_capacity(len as usize);
-    let mut bounded = file.take(MAX_INDEX_BYTES + 1);
+    let mut bounded = file.take(limit + 1);
     let mut chunk = vec![0u8; 1 << 20];
     loop {
         control.check().map_err(GenerationError::Interrupted)?;
@@ -298,14 +436,21 @@ fn read_index(file: std::fs::File, control: &Control) -> Result<Vec<u8>, Generat
         if read == 0 {
             break;
         }
+        if bytes.len() as u64 + read as u64 > limit {
+            return Err(unavailable("index file exceeds its byte bound"));
+        }
+        if let Some(hasher) = &mut hasher {
+            hasher.update(&chunk[..read]);
+        }
         bytes.extend_from_slice(&chunk[..read]);
     }
-    if bytes.len() as u64 > MAX_INDEX_BYTES {
+    if bytes.len() as u64 > limit {
         return Err(unavailable(format!(
-            "index file exceeds the {MAX_INDEX_BYTES}-byte load bound"
+            "index file exceeds the {limit}-byte load bound"
         )));
     }
-    Ok(bytes)
+    control.check().map_err(GenerationError::Interrupted)?;
+    Ok((bytes, hasher.map(|h| format!("{:x}", h.finalize()))))
 }
 
 /// The format version alone, read before the full manifest is decoded so an
@@ -337,6 +482,7 @@ pub fn validate_generation_with(
         dimensions,
         control,
         false,
+        &mut verification::Cache::default(),
     )
     .map(|(generation, _)| generation)
 }
@@ -351,13 +497,41 @@ pub fn load_generation_with(
     recipe_id: &str,
     dimensions: usize,
     control: &Control,
-) -> Result<(Generation, Vec<u8>), GenerationError> {
-    let (generation, bytes) =
-        validate_inner(store, function_digest, recipe_id, dimensions, control, true)?;
+) -> Result<(Generation, IndexBuffers), GenerationError> {
+    let (generation, bytes) = validate_inner(
+        store,
+        function_digest,
+        recipe_id,
+        dimensions,
+        control,
+        true,
+        &mut verification::Cache::default(),
+    )?;
     Ok((
         generation,
         bytes.expect("a kept index read returns its bytes"),
     ))
+}
+
+/// Owner-local fast path. Explicit validation above deliberately has no receipts.
+#[cfg(feature = "semantic")]
+pub(crate) fn validate_cached(
+    store: &Dir,
+    identity: &Prepared,
+    control: &Control,
+    keep_index: bool,
+    cache: &std::sync::Mutex<verification::Cache>,
+) -> Result<(Generation, Option<IndexBuffers>), GenerationError> {
+    let mut cache = verification::lock(cache, control)?;
+    validate_inner(
+        store,
+        &identity.digest,
+        &identity.recipe,
+        identity.dimensions,
+        control,
+        keep_index,
+        &mut cache,
+    )
 }
 
 fn validate_inner(
@@ -367,7 +541,8 @@ fn validate_inner(
     dimensions: usize,
     control: &Control,
     keep_index: bool,
-) -> Result<(Generation, Option<Vec<u8>>), GenerationError> {
+    cache: &mut verification::Cache,
+) -> Result<(Generation, Option<IndexBuffers>), GenerationError> {
     control.check().map_err(GenerationError::Interrupted)?;
     let missing = || {
         unavailable(format!(
@@ -394,13 +569,11 @@ fn validate_inner(
             unavailable(format!("{what}: {e}"))
         }
     };
-    let labels_file = generation
-        .open_file(LABELS_FILE)
-        .map_err(|e| partial("label map", e))?;
-    let index_file = generation
-        .open_file(INDEX_FILE)
-        .map_err(|e| partial("index file", e))?;
+    let receipt = verification::ManifestReceipt::capture(&manifest_file, &generation)?;
     let manifest_bytes = read_bounded(manifest_file, "generation manifest")?;
+    if !receipt.unchanged() {
+        return Err(unavailable("generation manifest changed during read"));
+    }
     let version: FormatVersion = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| unavailable(format!("generation manifest cannot be decoded: {e}")))?;
     if version.v != GENERATION_VERSION {
@@ -410,7 +583,7 @@ fn validate_inner(
             version.v
         )));
     }
-    let manifest: GenerationManifest = serde_json::from_slice(&manifest_bytes)
+    let mut manifest: GenerationManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|e| unavailable(format!("generation manifest cannot be decoded: {e}")))?;
     if manifest.coverage != COVERAGE_COMPLETE && manifest.coverage != COVERAGE_PARTIAL {
         return Err(unavailable("generation coverage record is malformed"));
@@ -436,50 +609,103 @@ fn validate_inner(
             manifest.dimensions, manifest.metric, manifest.scalar
         )));
     }
-    let labels_bytes = read_bounded(labels_file, "label map")?;
-    if crate::digest(&labels_bytes) != manifest.labels_sha256 {
-        return Err(unavailable("label map does not match the manifest hash"));
-    }
-    let index_bytes = if keep_index {
-        let bytes = read_index(index_file, control)?;
-        if crate::digest(&bytes) != manifest.index_sha256 {
-            return Err(unavailable("index file does not match the manifest hash"));
+    validate_membership(&manifest)?;
+    let index_file = generation
+        .open_file(manifest.index_file())
+        .map_err(|e| partial("index file", e))?;
+    let delta_file = manifest
+        .delta_file()
+        .map(|name| {
+            generation
+                .open_file(name)
+                .map_err(|e| partial("delta file", e))
+        })
+        .transpose()?;
+    cache.prepare(&generation, &manifest)?;
+    let (labels, _location_base, _location_overlay) =
+        locations::read(&generation, &mut manifest, cache, control)?;
+    validate_membership(&manifest)?;
+    let base = cache.verify(
+        index_file,
+        &manifest.index_sha256,
+        MAX_INDEX_BYTES,
+        keep_index,
+        control,
+    )?;
+    let delta = match (delta_file, &manifest.delta) {
+        (Some(file), Some(delta)) => {
+            cache.verify(file, &delta.sha256, MAX_DELTA_BYTES, keep_index, control)?
         }
-        Some(bytes)
-    } else {
-        let mut index_file = index_file;
-        if hash_reader(&mut index_file, control)? != manifest.index_sha256 {
-            return Err(unavailable("index file does not match the manifest hash"));
-        }
-        None
+        _ => None,
     };
-    let labels: LabelMap = serde_json::from_slice(&labels_bytes)
-        .map_err(|e| unavailable(format!("label map cannot be decoded: {e}")))?;
-    if labels.labels.len() != manifest.count || manifest.entries.len() != manifest.count {
-        return Err(unavailable("generation counts disagree with the label map"));
-    }
-    for (ordinal, entry) in labels.labels.iter().enumerate() {
-        if entry.label != ordinal as u64 {
-            return Err(unavailable("label map is not the sorted ordinal sequence"));
-        }
-        if manifest.entries.get(ordinal) != Some(&entry.input_key) {
-            return Err(unavailable("label map and manifest entries disagree"));
-        }
-        if entry.units.is_empty()
-            || entry.units.iter().any(|unit| {
-                unit.path.is_empty() || unit.start >= unit.end || !is_hex64(&unit.source_sha256)
-            })
-        {
-            return Err(unavailable("label map unit locations are malformed"));
-        }
-    }
+    let index_bytes = base.map(|base| IndexBuffers { base, delta });
     // The manifest binds the expected identity and geometry (dimensions,
     // metric and scalar kind, checked above), the coverage record and source
     // revision, to the index and label-map bytes through their SHA-256
     // digests. This is pair integrity for the trusted writer, not
     // authentication. The library's own dense header is checked where the
     // index is loaded for a query (009 T002), from the kept bytes.
-    Ok((Generation { manifest, labels }, index_bytes))
+    Ok((
+        Generation {
+            manifest,
+            labels,
+            #[cfg(feature = "semantic")]
+            location_base: _location_base,
+            #[cfg(feature = "semantic")]
+            location_overlay: _location_overlay,
+            #[cfg(feature = "semantic")]
+            receipt,
+        },
+        index_bytes,
+    ))
+}
+
+fn validate_membership(manifest: &GenerationManifest) -> Result<(), GenerationError> {
+    if !is_hex64(&manifest.index_sha256)
+        || !is_hex64(&manifest.members_sha256)
+        || !is_hex64(&manifest.labels_sha256)
+        || manifest
+            .locations_delta
+            .as_ref()
+            .is_some_and(|hash| !is_hex64(hash))
+        || (manifest.base_count as u64).saturating_mul(67) > MAX_META_BYTES
+    {
+        return Err(unavailable(
+            "generation membership or artifact hash is malformed",
+        ));
+    }
+    if let Some(delta) = &manifest.delta
+        && (!is_hex64(&delta.sha256)
+            || delta.entries.is_empty()
+            || !delta.entries.iter().all(|key| is_hex64(key))
+            || !delta.entries.windows(2).all(|pair| pair[0] < pair[1])
+            || delta.entries.len() > churn_limit(manifest.base_count)
+            || delta.entries.len() as u64 * manifest.dimensions as u64 * 4 > MAX_DELTA_BYTES
+            || delta
+                .entries
+                .iter()
+                .any(|key| manifest.base_entries.binary_search(key).is_ok()))
+    {
+        return Err(unavailable(
+            "delta membership is malformed or exceeds its bound",
+        ));
+    }
+    if let Some(stats) = &manifest.coverage_stats
+        && (stats.version != 1
+            || stats.source_revision != manifest.source_revision
+            || stats.function_digest != manifest.function_digest
+            || stats.recipe_id != manifest.recipe_id
+            || stats.index_entries != manifest.count as u64
+            || stats.unpartitioned_sources > stats.sources
+            || stats.cached_current_units > stats.eligible_units
+            || stats.searchable_current_units != stats.cached_current_units
+            || (manifest.coverage == COVERAGE_COMPLETE
+                && (stats.unpartitioned_sources != 0
+                    || stats.cached_current_units != stats.eligible_units)))
+    {
+        return Err(unavailable("generation coverage counters are malformed"));
+    }
+    Ok(())
 }
 
 /// [`validate_generation_with`] without a deadline; `Err` names why the
@@ -551,6 +777,20 @@ pub enum Publication {
     Current(usize),
     /// A new generation was built and published from the cache.
     Rebuilt(usize),
+    /// The base is reused; only the bounded delta is built.
+    Delta(usize),
+    /// No ANN bytes are rebuilt or rewritten.
+    Mapped(usize),
+}
+
+#[cfg(feature = "semantic")]
+impl Publication {
+    pub fn count(self) -> usize {
+        match self {
+            Self::Nothing => 0,
+            Self::Current(n) | Self::Rebuilt(n) | Self::Delta(n) | Self::Mapped(n) => n,
+        }
+    }
 }
 
 #[cfg(feature = "semantic")]
@@ -568,9 +808,9 @@ impl Engine {
         function_digest: &str,
         recipe_id: &str,
     ) -> FResult<CurrentMapping> {
-        let mut walk = MappingWalk::start(self, function_digest, recipe_id)?;
+        let mut walk = MappingWalk::audit(self, function_digest, recipe_id)?;
         while !walk.step(self, control, None)? {}
-        walk.finish(self)
+        walk.finish(self, control)
     }
 
     /// The recorded profile identity, if a profile this build serves was
@@ -603,161 +843,126 @@ impl Engine {
         })
     }
 
-    /// Build and publish `mapping` from the f32 cache (zero document calls).
-    /// A key whose cached row no longer decodes is excluded by name and
-    /// leaves the generation partial: its units are not searchable here.
+    /// Explicit repair always compacts from the authoritative cache.
     fn semantic_publish_mapping(
         &self,
         mapping: CurrentMapping,
         identity: &Prepared,
         control: &Control,
     ) -> FResult<usize> {
-        let mut scope = mapping.scope;
-        let mut keys = mapping.units.into_iter();
-        let mut entries: Vec<GenerationEntry> = Vec::with_capacity(keys.len());
+        self.publish_plan(publication::Plan::new(mapping, None), identity, control)
+            .map(|result| result.count())
+    }
+
+    fn publish_plan(
+        &self,
+        mut plan: publication::Plan,
+        identity: &Prepared,
+        control: &Control,
+    ) -> FResult<Publication> {
+        let mut entries = Vec::new();
+        let mut keys = plan.needed().into_iter();
         lookup_entries(
             self,
             &mut keys,
             identity,
-            &mut scope,
+            &mut plan.scope,
             &mut entries,
             control,
             None,
         )?;
         let store = self.semantic_anchor()?;
-        build_generation(&store, identity, &entries, scope, control)
+        let (staged, coverage, result) = plan.stage(&store, identity, &entries, control, &|| {})?;
+        self.semantic_publish_staged(staged, control)?;
+        self.semantic_record_coverage(coverage)?;
+        Ok(result)
     }
 
-    /// Publish pending committed coverage: when a validated generation
-    /// already covers exactly the cached current vectors nothing is rebuilt;
-    /// otherwise the generation is rebuilt from the cache. Zero inference,
-    /// bounded by `control` (the hash work and the rebuild checkpoint it).
+    /// Clean restart/replay can use an independently validated publication. The
+    /// revision includes cache/partition changes even without source changes.
+    pub(crate) fn semantic_generation_current(&self, generation: &Generation) -> FResult<bool> {
+        if generation.manifest.mapping_revision == Some(self.semantic_mapping_revision()?)
+            && generation.manifest.source_revision == self.source_revision()?
+            && let Some(coverage) = &generation.manifest.coverage_stats
+        {
+            self.semantic_record_coverage(coverage.clone())?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    pub(crate) fn semantic_remember_mapping(
+        &self,
+        id: String,
+        units: Locations,
+        directory: (u64, u64),
+        control: &Control,
+    ) -> FResult<()> {
+        let mut cache =
+            verification::lock(&self.semantic_segments, control).map_err(|e| match e {
+                GenerationError::Interrupted(error) => error,
+                GenerationError::Unavailable(message) => FoundryError::Semantic {
+                    code: "index_unavailable",
+                    message,
+                },
+            })?;
+        cache.remember_locations(directory, id, units);
+        Ok(())
+    }
+    pub(crate) fn semantic_publish_staged(
+        &self,
+        staged: Staged,
+        control: &Control,
+    ) -> FResult<usize> {
+        let snapshot = staged.snapshot.clone();
+        let directory = staged.directory_identity()?;
+        let count = staged.publish(control)?;
+        if let Some((id, units)) = snapshot {
+            self.semantic_remember_mapping(id, units, directory, control)?;
+        }
+        Ok(count)
+    }
+
+    /// Reuse immutable vectors and publish bounded vector/location changes.
     pub fn semantic_publish_pending(&self, control: &Control) -> FResult<Publication> {
         let Some(identity) = self.semantic_identity()? else {
             return Ok(Publication::Nothing);
         };
-        let wanted = self.semantic_current_mapping(control, &identity.digest, &identity.recipe)?;
-        if wanted.units.is_empty() {
+        let store = self.semantic_anchor()?;
+        let previous =
+            match validate_cached(&store, &identity, control, false, &self.semantic_segments) {
+                Ok((generation, _)) => Some(generation),
+                Err(GenerationError::Interrupted(error)) => return Err(error),
+                Err(_) => None,
+            };
+        if let Some(generation) = &previous
+            && self.semantic_generation_current(generation)?
+        {
+            return Ok(Publication::Current(generation.manifest.count));
+        }
+        let mut walk =
+            MappingWalk::resume(self, &identity.digest, &identity.recipe, previous.as_ref())?;
+        while !walk.step(self, control, None)? {}
+        let wanted = walk.finish(self, control)?;
+        if let Some(generation) = &previous
+            && wanted.published_by(generation)
+        {
+            let dir = open_generation_dir(&store, &identity.digest, false)?
+                .expect("validated generation");
+            self.semantic_remember_mapping(
+                generation.manifest.mapping_id(),
+                wanted.units,
+                dir.identity()?,
+                control,
+            )?;
+            self.semantic_record_coverage(wanted.coverage)?;
+            return Ok(Publication::Current(generation.manifest.count));
+        }
+        if previous.is_none() && wanted.units.is_empty() {
+            self.semantic_record_coverage(wanted.coverage)?;
             return Ok(Publication::Nothing);
         }
-        // Current means the same keys, unit locations, coverage AND source
-        // revision: an older format, a moved unit or a changed revision is
-        // republished from the cache.
-        match validate_generation_with(
-            &self.semantic_anchor()?,
-            &identity.digest,
-            &identity.recipe,
-            identity.dimensions,
-            control,
-        ) {
-            Ok(generation) if wanted.published_by(&generation) => {
-                return Ok(Publication::Current(generation.manifest.count));
-            }
-            Err(GenerationError::Interrupted(error)) => return Err(error),
-            _ => {}
-        }
-        let count = self.semantic_publish_mapping(wanted, &identity, control)?;
-        Ok(Publication::Rebuilt(count))
-    }
-}
-
-/// [`Engine::semantic_current_mapping`] read a page of sources at a time, so
-/// the MCP owner's preparation driver reads it in short engine-slot steps
-/// (009 T003, captain decision 2026-10-06). A source change between the
-/// steps leaves the mapping incomplete, exactly as one during a single walk
-/// does.
-#[cfg(feature = "semantic")]
-pub(crate) struct MappingWalk {
-    digest: String,
-    recipe: String,
-    source_revision: u64,
-    complete: bool,
-    units: std::collections::BTreeMap<String, Vec<UnitLocation>>,
-    /// One cache probe per distinct key: true when its vector is current.
-    probed: std::collections::HashMap<String, bool>,
-    after: Option<String>,
-}
-
-#[cfg(feature = "semantic")]
-impl MappingWalk {
-    pub(crate) fn start(engine: &Engine, function_digest: &str, recipe_id: &str) -> FResult<Self> {
-        Ok(Self {
-            digest: function_digest.to_owned(),
-            recipe: recipe_id.to_owned(),
-            source_revision: engine.source_revision()?,
-            complete: true,
-            units: std::collections::BTreeMap::new(),
-            probed: std::collections::HashMap::new(),
-            after: None,
-        })
-    }
-
-    /// Walk pages of sources until the walk ends (`true`), or until `until`
-    /// passed once a page was read (`false`: call again).
-    pub(crate) fn step(
-        &mut self,
-        engine: &Engine,
-        control: &Control,
-        until: Option<Instant>,
-    ) -> FResult<bool> {
-        loop {
-            control.check()?;
-            let page = cache::source_page(&engine.db, self.after.as_deref())?;
-            if page.is_empty() {
-                return Ok(true);
-            }
-            for (path, meta) in &page {
-                let Some(record) = engine.semantic_partition(path)?.filter(|record| {
-                    cache::partition_is_current(record, meta, &self.recipe, &self.digest)
-                }) else {
-                    self.complete = false;
-                    continue;
-                };
-                for unit in &record.units {
-                    let cached = match self.probed.get(&unit.input_key) {
-                        Some(&cached) => cached,
-                        None => {
-                            let cached = engine
-                                .semantic_cache_probe(&unit.input_key, &self.digest)?
-                                == CacheProbe::Current;
-                            self.probed.insert(unit.input_key.clone(), cached);
-                            cached
-                        }
-                    };
-                    if !cached {
-                        self.complete = false;
-                        continue;
-                    }
-                    self.units
-                        .entry(unit.input_key.clone())
-                        .or_default()
-                        .push(UnitLocation {
-                            path: path.clone(),
-                            start: unit.start as u64,
-                            end: unit.end as u64,
-                            source_sha256: record.source_hash.clone(),
-                        });
-                }
-            }
-            self.after = page.last().map(|(path, _)| path.clone());
-            if until.is_some_and(|until| Instant::now() >= until) {
-                return Ok(false);
-            }
-        }
-    }
-
-    /// The mapping and its scope. A source change during the paged walk
-    /// leaves a mixed mapping: its locations still revalidate per request,
-    /// but it is never complete.
-    pub(crate) fn finish(self, engine: &Engine) -> FResult<CurrentMapping> {
-        let complete = self.complete && engine.source_revision()? == self.source_revision;
-        Ok(CurrentMapping {
-            units: self.units,
-            scope: GenerationScope {
-                source_revision: self.source_revision,
-                complete,
-            },
-        })
+        self.publish_plan(publication::Plan::new(wanted, previous), &identity, control)
     }
 }
 
@@ -788,6 +993,10 @@ pub(crate) fn lookup_entries(
             control.check()?;
         }
         read += 1;
+        let bytes = (entries.len() as u64 + 1)
+            .saturating_mul(identity.dimensions as u64)
+            .saturating_mul(4);
+        within_publication_limit(bytes, MAX_VECTOR_BYTES, "vectors")?;
         match engine.semantic_cache_lookup(&input_key, &identity.digest, identity.dimensions)? {
             CacheLookup::Hit(vector) => entries.push(GenerationEntry {
                 input_key,
@@ -817,62 +1026,10 @@ fn io_error(what: &'static str) -> impl Fn(std::io::Error) -> FoundryError {
     move |e| conflict_or_io(e, what)
 }
 
-/// A generation built and written into its private build directory beside
-/// the published set, not yet published. Dropping it unpublished removes the
-/// build directory.
 #[cfg(feature = "semantic")]
-pub(crate) struct Staged {
-    generation: Dir,
-    build: Dir,
-    build_name: String,
-    count: usize,
-    pending: bool,
-}
+pub(crate) use publication::Staged;
 
-#[cfg(feature = "semantic")]
-impl Staged {
-    /// Publish the staged set: index file and label map first, the manifest
-    /// LAST — a crash mid-publication leaves a mismatched pair, which
-    /// validation refuses and the next rebuild repairs from cache.
-    /// Cancellation is honored up to the first rename; the three renames
-    /// are the publication itself and run to completion. The entry count.
-    pub(crate) fn publish(mut self, control: &Control) -> FResult<usize> {
-        control.check()?;
-        for (file, what) in [
-            (INDEX_FILE, "index file"),
-            (LABELS_FILE, "label map"),
-            (MANIFEST_FILE, "generation manifest"),
-        ] {
-            self.build
-                .rename_into(file, &self.generation, file)
-                .map_err(io_error(what))?;
-        }
-        self.pending = false;
-        self.generation
-            .remove_tree(&self.build_name)
-            .map_err(io_error("build directory"))?;
-        Ok(self.count)
-    }
-}
-
-#[cfg(feature = "semantic")]
-impl Drop for Staged {
-    fn drop(&mut self) {
-        if self.pending {
-            let _ = self.generation.remove_tree(&self.build_name);
-        }
-    }
-}
-
-/// Build one generation and write it, unpublished, into a private build
-/// directory beside the published set. `store` is a duplicate of the
-/// Engine's bound store-directory descriptor; `semantic/` and the digest
-/// directory are opened (or made with `mkdirat`) under it without following
-/// links; USearch serializes to a buffer and the bytes are written through
-/// the descriptor, so no library call resolves a pathname. Needs no engine:
-/// the MCP owner's driver runs it with the engine slot free and takes the
-/// slot only for [`Staged::publish`]. `built` runs once the index is built
-/// in memory, before it is serialized (the driver's test seam).
+/// Explicit full rebuild used by repair and boundary tests.
 #[cfg(feature = "semantic")]
 pub(crate) fn stage_generation(
     store: &Dir,
@@ -882,132 +1039,7 @@ pub(crate) fn stage_generation(
     control: &Control,
     built: &dyn Fn(),
 ) -> FResult<Staged> {
-    use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
-
-    let io = io_error;
-    let (function_digest, recipe_id, dimensions) =
-        (&identity.digest, &identity.recipe, identity.dimensions);
-    // Confine the destination before any work or write; keep the descriptors.
-    let generation = open_generation_dir(store, function_digest, true)?
-        .ok_or_else(|| FoundryError::RepairPathConflict("generation directory vanished".into()))?;
-    neural_fault!(PUBLISH_AFTER_CHECK, Some(control), function_digest)?;
-
-    // Deterministic generation: sorted unique keys, ordinal labels.
-    let mut sorted: Vec<&GenerationEntry> = entries.iter().collect();
-    sorted.sort_by(|a, b| a.input_key.cmp(&b.input_key));
-    let mut seen = std::collections::HashSet::new();
-    for entry in &sorted {
-        let key = &entry.input_key;
-        if !seen.insert(key.as_str()) {
-            return Err(FoundryError::Semantic {
-                code: "cache_corrupt",
-                message: format!("duplicate input key {key} in the generation input"),
-            });
-        }
-    }
-    let labels = LabelMap {
-        labels: sorted
-            .iter()
-            .enumerate()
-            .map(|(ordinal, entry)| LabelEntry {
-                label: ordinal as u64,
-                input_key: entry.input_key.clone(),
-                units: entry.units.clone(),
-            })
-            .collect(),
-    };
-    let options = IndexOptions {
-        dimensions,
-        metric: MetricKind::Cos,
-        quantization: ScalarKind::F16,
-        multi: false,
-        ..IndexOptions::default()
-    };
-    let unavailable_index = |what: &str, e: &dyn std::fmt::Display| FoundryError::Semantic {
-        code: "index_unavailable",
-        message: format!("usearch {what} failed: {e}"),
-    };
-    let index = Index::new(&options).map_err(|e| unavailable_index("index creation", &e))?;
-    index
-        .reserve(sorted.len().max(1))
-        .map_err(|e| unavailable_index("reserve", &e))?;
-    for (ordinal, entry) in sorted.iter().enumerate() {
-        let vector = &entry.vector;
-        if ordinal % 256 == 0 {
-            control.check()?;
-        }
-        if vector.len() != dimensions {
-            return Err(FoundryError::Semantic {
-                code: "provider_malformed",
-                message: format!("vector for entry {ordinal} has {} values", vector.len()),
-            });
-        }
-        index
-            .add(ordinal as u64, vector.as_slice())
-            .map_err(|e| unavailable_index("add", &e))?;
-    }
-    built();
-    // Serialize to memory: no library call touches a pathname.
-    let mut buffer = vec![0u8; index.serialized_length()];
-    index
-        .save_to_buffer(&mut buffer)
-        .map_err(|e| unavailable_index("serialization", &e))?;
-    let index_sha256 = crate::digest(&buffer);
-    let labels_bytes = serde_json::to_vec(&labels).map_err(FoundryError::from)?;
-    let manifest = GenerationManifest {
-        v: GENERATION_VERSION,
-        function_digest: function_digest.clone(),
-        recipe_id: recipe_id.clone(),
-        dimensions,
-        metric: METRIC.into(),
-        scalar: SCALAR_KIND.into(),
-        count: sorted.len(),
-        index_sha256,
-        labels_sha256: crate::digest(&labels_bytes),
-        entries: sorted.iter().map(|entry| entry.input_key.clone()).collect(),
-        source_revision: scope.source_revision,
-        coverage: scope.coverage().to_owned(),
-    };
-    let manifest_bytes = serde_json::to_vec(&manifest).map_err(FoundryError::from)?;
-    control.check()?;
-
-    let build_name = format!(".building-{}", std::process::id());
-    if generation
-        .kind_of(&build_name)
-        .map_err(io("build directory"))?
-        .is_some()
-    {
-        generation
-            .remove_tree(&build_name)
-            .map_err(io("build directory"))?;
-    }
-    generation
-        .create_dir(&build_name)
-        .map_err(io("build directory"))?;
-    let build = generation
-        .open_dir(&build_name)
-        .map_err(io("build directory"))?
-        .ok_or_else(|| FoundryError::RepairPathConflict("build directory vanished".into()))?;
-    let staged = Staged {
-        generation,
-        build,
-        build_name,
-        count: sorted.len(),
-        pending: true,
-    };
-    staged
-        .build
-        .write_new(INDEX_FILE, &buffer)
-        .map_err(io("index file"))?;
-    staged
-        .build
-        .write_new(LABELS_FILE, &labels_bytes)
-        .map_err(io("label map"))?;
-    staged
-        .build
-        .write_new(MANIFEST_FILE, &manifest_bytes)
-        .map_err(io("generation manifest"))?;
-    Ok(staged)
+    publication::full(store, identity, entries, scope, control, built)
 }
 
 #[cfg(test)]
@@ -1029,6 +1061,110 @@ mod tests {
     }
 
     #[cfg(feature = "semantic")]
+    #[test]
+    fn oversized_publication_preserves_the_previous_generation() {
+        let scratch = tempfile::tempdir().unwrap();
+        let store = Dir::open_path(scratch.path()).unwrap();
+        let identity = identity(128);
+        let scope = GenerationScope {
+            source_revision: 1,
+            complete: true,
+        };
+        let control = Control::unbounded();
+        let mut entries = entries(128);
+        build_generation(&store, &identity, &entries, scope, &control).unwrap();
+        let original = validate_generation(&store, &identity.digest, "r1", 128).unwrap();
+        // A direct builder caller can bypass admitted-path bounds. Refuse
+        // before cloning labels, allocating ANN storage or replacing files.
+        entries[0].units[0].path = "x".repeat((MAX_META_BYTES / 6) as usize);
+        let error = build_generation(&store, &identity, &entries, scope, &control).unwrap_err();
+        assert_eq!(error.code(), "resource_limit");
+        let retained = validate_generation(&store, &identity.digest, "r1", 128).unwrap();
+        assert_eq!(
+            retained.manifest.index_sha256,
+            original.manifest.index_sha256
+        );
+        assert_eq!(
+            retained.manifest.labels_sha256,
+            original.manifest.labels_sha256
+        );
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn invalid_direct_publication_preserves_the_previous_readable_generation() {
+        use crate::neural::cache::CardKind;
+        let scratch = tempfile::tempdir().unwrap();
+        let store = Dir::open_path(scratch.path()).unwrap();
+        let mut identity = identity(128);
+        identity.recipe = "cards-v1+kinds1+units5:512+test".into();
+        let control = Control::unbounded();
+        let scope = GenerationScope {
+            source_revision: 1,
+            complete: true,
+        };
+        let valid = entries(128);
+        build_generation(&store, &identity, &valid, scope, &control).unwrap();
+        let manifest = generation_dir(scratch.path(), &identity.digest).join(MANIFEST_FILE);
+        let original = std::fs::read(&manifest).unwrap();
+        let unit = valid[0].units[0].clone();
+        let mut later = unit.clone();
+        later.path = "z.txt".into();
+        let mut empty_path = unit.clone();
+        empty_path.path.clear();
+        let mut empty_range = unit.clone();
+        empty_range.end = empty_range.start;
+        let mut invalid_hash = unit.clone();
+        invalid_hash.source_sha256 = "invalid".into();
+        let mut wrong_role = unit.clone();
+        wrong_role.kind = CardKind::Body;
+        let mut unknown_role = unit.clone();
+        unknown_role.kind = CardKind::Unknown;
+        for units in [
+            vec![later.clone(), unit.clone()],
+            vec![unit.clone(), unit.clone()],
+            Vec::new(),
+            vec![empty_path],
+            vec![empty_range],
+            vec![invalid_hash],
+            vec![wrong_role],
+            vec![unknown_role],
+        ] {
+            let mut invalid = entries(128);
+            invalid[0].units = units;
+            let error = build_generation(&store, &identity, &invalid, scope, &control).unwrap_err();
+            assert_eq!(error.code(), "cache_corrupt");
+            assert_eq!(std::fs::read(&manifest).unwrap(), original);
+            validate_generation(&store, &identity.digest, &identity.recipe, 128).unwrap();
+        }
+        let mut invalid = entries(128);
+        invalid[0].input_key = "invalid".into();
+        assert_eq!(
+            build_generation(&store, &identity, &invalid, scope, &control)
+                .unwrap_err()
+                .code(),
+            "cache_corrupt"
+        );
+        assert_eq!(std::fs::read(&manifest).unwrap(), original);
+        // A subsequent valid multi-location publication remains readable.
+        let mut replacement = entries(128);
+        replacement[0].units.push(later);
+        let scope = GenerationScope {
+            source_revision: 2,
+            complete: true,
+        };
+        build_generation(&store, &identity, &replacement, scope, &control).unwrap();
+        let published =
+            validate_generation(&store, &identity.digest, &identity.recipe, 128).unwrap();
+        assert_eq!(published.manifest.source_revision, 2);
+        assert_eq!(published.manifest.count, replacement.len());
+        assert_eq!(
+            *published.labels[&replacement[0].input_key],
+            replacement[0].units
+        );
+    }
+
+    #[cfg(feature = "semantic")]
     fn identity(dimensions: usize) -> Prepared {
         Prepared {
             digest: "d1".repeat(32),
@@ -1044,6 +1180,7 @@ mod tests {
                 input_key: format!("{:064x}", i),
                 vector: vec![i as f32 / 10.0 + 0.1; dimensions],
                 units: vec![UnitLocation {
+                    kind: crate::neural::cache::CardKind::Address,
                     path: format!("f{i}.txt"),
                     start: 0,
                     end: 5,
@@ -1075,11 +1212,14 @@ mod tests {
         // The serving mapping and its scope are part of the validated set.
         assert_eq!(ok.manifest.source_revision, 7);
         assert_eq!(ok.manifest.coverage, COVERAGE_PARTIAL);
-        assert_eq!(ok.labels.labels[1].units, entries[1].units);
+        assert_eq!(*ok.labels[&entries[1].input_key], entries[1].units);
         // Serving restores exactly the bytes that matched the manifest.
         let (_, bytes) =
             load_generation_with(&store, digest, "r1", 768, &Control::unbounded()).unwrap();
-        assert_eq!(crate::digest(&bytes), ok.manifest.index_sha256);
+        let Segment::Bytes(base) = bytes.base else {
+            panic!("audit returns bytes")
+        };
+        assert_eq!(crate::digest(&base), ok.manifest.index_sha256);
         // A foreign function digest never serves.
         let err = validate_generation(&store, &"d2".repeat(32), "r1", 768).unwrap_err();
         assert!(err.contains("no generation manifest"), "{err}");
@@ -1088,11 +1228,11 @@ mod tests {
         assert!(err.contains("geometry"), "{err}");
         // Tampering with the index file breaks the hash pair.
         let dir = generation_dir(scratch.path(), digest);
-        let original = std::fs::read(dir.join(INDEX_FILE)).unwrap();
-        std::fs::write(dir.join(INDEX_FILE), b"tampered").unwrap();
+        let original = std::fs::read(dir.join(ok.manifest.index_file())).unwrap();
+        std::fs::write(dir.join(ok.manifest.index_file()), b"tampered").unwrap();
         let err = validate_generation(&store, digest, "r1", 768).unwrap_err();
         assert!(err.contains("does not match"), "{err}");
-        std::fs::write(dir.join(INDEX_FILE), original).unwrap();
+        std::fs::write(dir.join(ok.manifest.index_file()), original).unwrap();
         assert!(validate_generation(&store, digest, "r1", 768).is_ok());
         // A recipe change refuses the old generation.
         let err = validate_generation(&store, digest, "r2", 768).unwrap_err();
@@ -1108,7 +1248,7 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().file_name())
             .collect();
-        assert_eq!(leftovers.len(), 3, "{leftovers:?}");
+        assert_eq!(leftovers.len(), 4, "{leftovers:?}");
     }
 
     /// 009 T004: every supported Matryoshka dimension builds, records its
@@ -1142,7 +1282,10 @@ mod tests {
             )
             .unwrap();
             assert_eq!(generation.manifest.dimensions, dimensions);
-            let header = usearch::Index::metadata_from_buffer(&bytes).unwrap();
+            let Segment::Bytes(base) = bytes.base else {
+                panic!("audit returns bytes")
+            };
+            let header = usearch::Index::metadata_from_buffer(&base).unwrap();
             assert_eq!(header.dimensions, dimensions as u64);
             let other = if dimensions == 768 { 512 } else { 768 };
             assert!(validate_generation(&store, &identity.digest, "r1", other).is_err());
@@ -1177,6 +1320,6 @@ mod tests {
         value["v"] = 2.into();
         std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
         let err = validate_generation(&store, &identity.digest, "r1", 256).unwrap_err();
-        assert!(err.contains("format v2 is not v3"), "{err}");
+        assert!(err.contains("format v2 is not v5"), "{err}");
     }
 }

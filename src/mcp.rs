@@ -155,6 +155,8 @@ struct Refusal {
 }
 
 pub(crate) struct Shared {
+    trace_sink: Option<Arc<crate::retrieval_trace::TraceSink>>,
+    experimental_behavior_context: bool,
     /// One engine per admitted root behind ONE mutex: the single engine slot
     /// spans every root, so admission stays one-active/zero-queued across
     /// the whole owner. `None` where a reference could not be opened.
@@ -180,10 +182,19 @@ pub(crate) struct Shared {
     /// `--no-memory`: the `memory` tool is absent from the catalog and
     /// `include_memory:true` is refused. Disabling never touches records.
     no_memory: bool,
+    experimental_task_context: bool,
+    watch: Option<Arc<crate::watch::Watch>>,
+    #[cfg(feature = "semantic")]
+    semantic_turn: Mutex<Option<Instant>>,
+    #[cfg(feature = "semantic")]
+    source_steps: AtomicUsize,
     /// 009 T002: the owner's resident query runtime, or the named fallback
     /// word every request reports when it could not start. 009 T003: the
     /// same runtime embeds the preparation driver's document batches.
     semantic: SemanticSlot,
+    knowledge: Option<Arc<crate::knowledge::maintenance::Maintenance>>,
+    background_model: Arc<std::sync::atomic::AtomicBool>,
+    model_resources: Option<Arc<crate::model_resources::Resources>>,
     /// 009 T003: the owner's one background preparation driver (primary
     /// root only), started by `index {semantic: "prepare"}`, never at startup.
     #[cfg(feature = "semantic")]
@@ -218,12 +229,33 @@ enum SemanticPlan {
     Fallback(String),
 }
 
-/// The dense window for one request, under the request's own read deadline,
-/// or the named fallback. Never fails the request. A query with an anchor
+/// The shared admission predicate. A query with an anchor
 /// (the `anchors` a multi-root owner chose, else this store's own choice)
 /// never calls the model and is served exactly as without a profile (009
 /// T004 "Placement"); an error choosing them is left to the baseline call,
 /// which makes the same choice.
+#[cfg(feature = "semantic")]
+fn semantic_anchored(
+    engine: &Engine,
+    query: &str,
+    path: Option<&str>,
+    control: &Control,
+    anchors: Option<&[crate::store::AnchorCandidate]>,
+    prose: bool,
+) -> bool {
+    let anchored = |chosen: &[crate::store::AnchorCandidate]| {
+        chosen
+            .iter()
+            .any(|anchor| !prose || !crate::store::incidental_prose_anchor(query, anchor))
+    };
+    match anchors {
+        Some(chosen) => anchored(chosen),
+        None => crate::roots::select_anchors(&[engine], query, path, control)
+            .map_or(true, |chosen| anchored(&chosen)),
+    }
+}
+
+/// The dense window under the request's read deadline, or a named fallback.
 #[cfg(feature = "semantic")]
 fn plan_semantic(
     slot: &SemanticSlot,
@@ -232,16 +264,9 @@ fn plan_semantic(
     path: Option<&str>,
     control: &Control,
     anchors: Option<&[crate::store::AnchorCandidate]>,
+    prose: bool,
 ) -> SemanticPlan {
-    if slot.is_none() {
-        return SemanticPlan::Off;
-    }
-    let anchored = match anchors {
-        Some(chosen) => !chosen.is_empty(),
-        None => crate::roots::select_anchors(&[engine], query, path, control)
-            .map_or(true, |chosen| !chosen.is_empty()),
-    };
-    if anchored {
+    if slot.is_none() || semantic_anchored(engine, query, path, control, anchors, prose) {
         return SemanticPlan::Off;
     }
     match slot {
@@ -273,7 +298,7 @@ pub fn search_primary(
     anchors: Option<&[crate::store::AnchorCandidate]>,
 ) -> FResult<crate::store::CandidateBatch> {
     #[cfg(feature = "semantic")]
-    match plan_semantic(slot, engine, query, path, control, anchors) {
+    match plan_semantic(slot, engine, query, path, control, anchors, false) {
         SemanticPlan::Off => {}
         SemanticPlan::Dense(window) => {
             return engine
@@ -306,19 +331,76 @@ pub fn context_primary(
     memory: bool,
     anchors: Option<&[crate::store::AnchorCandidate]>,
 ) -> FResult<crate::memory::MemoryContext> {
+    context_primary_with_options(
+        slot,
+        engine,
+        query,
+        strategy,
+        control,
+        crate::store::ContextOptions {
+            memory,
+            policy,
+            anchors,
+            ..crate::store::ContextOptions::default()
+        },
+    )
+}
+
+/// The same production path with explicitly configured experimental packing.
+/// The default wrapper above remains available to existing library callers.
+pub fn context_primary_with_options(
+    slot: &SemanticSlot,
+    engine: &Engine,
+    query: &str,
+    strategy: Strategy,
+    control: &Control,
+    requested: crate::store::ContextOptions<'_>,
+) -> FResult<crate::memory::MemoryContext> {
+    if let Some(task) = requested.task {
+        engine.check_task_scope(task)?;
+    }
+    let policy = requested.policy.filter(|policy| policy.routes());
     #[cfg(feature = "semantic")]
-    let plan = plan_semantic(slot, engine, query, None, control, anchors);
+    let plan = plan_semantic(
+        slot,
+        engine,
+        query,
+        None,
+        control,
+        requested.anchors,
+        requested.experimental_behavior
+            && crate::store::prose_context_query(query, strategy, policy.is_some()),
+    );
+    #[cfg(feature = "semantic")]
+    if let Some(trace) = control.trace() {
+        let state = match &plan {
+            SemanticPlan::Off => serde_json::json!({"state":"off"}),
+            SemanticPlan::Dense(window) => {
+                serde_json::json!({"state":"dense", "hits":window.hits.len(), "complete_at":window.complete_at()})
+            }
+            SemanticPlan::Fallback(reason) => {
+                serde_json::json!({"state":"fallback", "reason":reason})
+            }
+        };
+        trace.record(serde_json::json!({"stage":"semantic", "query_sha256":crate::digest(query.as_bytes()), "decision":state}));
+    }
     #[cfg(not(feature = "semantic"))]
     let _ = slot;
     let options = crate::store::ContextOptions {
-        memory,
+        task: requested.task,
+        compose_evidence: requested.compose_evidence,
+        compact_evidence: requested.compact_evidence,
+        boundary_config: requested.boundary_config,
+        memory: requested.memory,
+        briefs: requested.briefs,
+        experimental_behavior: requested.experimental_behavior,
         #[cfg(feature = "semantic")]
         dense: match &plan {
             SemanticPlan::Dense(window) => Some(window),
             _ => None,
         },
-        policy: policy.filter(|policy| policy.routes()),
-        anchors,
+        policy,
+        anchors: requested.anchors,
     };
     #[cfg_attr(not(feature = "semantic"), allow(unused_mut))]
     let mut context = engine.context_candidates_with(query, strategy, control, &options)?;
@@ -522,6 +604,12 @@ impl Shared {
 
     fn cancel_active(&self) {
         self.shutdown.cancel();
+        if let Some(knowledge) = &self.knowledge {
+            knowledge.cancel();
+        }
+        if let Some(watch) = &self.watch {
+            watch.cancel();
+        }
     }
 
     /// A single-root owner (no references admitted), for in-crate tests.
@@ -529,6 +617,8 @@ impl Shared {
     fn single_root(engine: Engine, root: PathBuf, budget: BudgetConfig) -> Self {
         let workspace_id = engine.workspace_id().unwrap_or_default();
         Self {
+            trace_sink: None,
+            experimental_behavior_context: false,
             engines: Arc::new(Mutex::new(vec![Some(engine)])),
             meta: Arc::new(vec![RootMeta {
                 alias: "primary".to_owned(),
@@ -545,7 +635,16 @@ impl Shared {
             slot_hooks: SlotHooks::default(),
             shutdown: CancellationToken::new(),
             no_memory: false,
+            experimental_task_context: false,
+            watch: None,
+            #[cfg(feature = "semantic")]
+            semantic_turn: Mutex::new(None),
+            #[cfg(feature = "semantic")]
+            source_steps: AtomicUsize::new(0),
             semantic: SemanticSlot::default(),
+            knowledge: None,
+            background_model: Arc::default(),
+            model_resources: None,
             #[cfg(feature = "semantic")]
             preparation: Arc::default(),
             policy: Arc::new(crate::policy::Policy::off()),
@@ -585,6 +684,18 @@ impl Shared {
     async fn shut_down(&self) {
         self.cancel_active();
         self.wait_engine_idle(SHUTDOWN_ENGINE_WAIT).await;
+        if let Some(watch) = &self.watch {
+            let start = Instant::now();
+            while !watch.idle() && start.elapsed() <= SHUTDOWN_ENGINE_WAIT {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+        if let Some(knowledge) = &self.knowledge {
+            let start = Instant::now();
+            while !knowledge.idle() && start.elapsed() <= SHUTDOWN_ENGINE_WAIT {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
         self.wait_preparation_idle(SHUTDOWN_ENGINE_WAIT).await;
         #[cfg(feature = "semantic")]
         if let Some(Ok(runtime)) = &self.semantic {
@@ -607,7 +718,30 @@ impl Shared {
 /// waits for it ([`take_engine_slot`]).
 #[cfg(feature = "semantic")]
 impl crate::neural::driver::Owner for Shared {
+    fn try_model(&self) -> Option<crate::neural::work::ModelPermit> {
+        if self
+            .model_resources
+            .as_ref()
+            .is_some_and(|resources| resources.background().is_err())
+        {
+            return None;
+        }
+        crate::neural::work::ModelPermit::try_acquire(&self.background_model)
+    }
     fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
+        if self
+            .watch
+            .as_ref()
+            .is_some_and(|watch| watch.source_pending())
+        {
+            if self.source_steps.load(Ordering::SeqCst) < 8 {
+                return Ok(false);
+            }
+            *self
+                .semantic_turn
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
+        }
         if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
             return Ok(false);
         }
@@ -630,10 +764,120 @@ impl crate::neural::driver::Owner for Shared {
                 "the primary engine is not open"
             )));
         };
+        self.source_steps.store(0, Ordering::SeqCst);
+        *self
+            .semantic_turn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         step(engine);
         Ok(true)
     }
 
+    fn closing(&self) -> bool {
+        self.shutdown.is_cancelled()
+    }
+}
+
+impl crate::knowledge::maintenance::Owner for Shared {
+    fn try_step(&self, step: &mut dyn FnMut(&mut Engine)) -> FResult<bool> {
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        let mut engines = match self.engines.try_lock() {
+            Ok(engines) => SlotGuard::mark(engines, &self.slot_holder, SLOT_DRIVER),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(FoundryError::Internal(anyhow::anyhow!(
+                    "engine state was poisoned"
+                )));
+            }
+        };
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        step(engines[0].as_mut().expect("primary engine is open"));
+        Ok(true)
+    }
+    fn try_model(&self) -> FResult<Option<crate::knowledge::maintenance::Permit>> {
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0
+            || self
+                .watch
+                .as_ref()
+                .is_some_and(|watch| watch.source_pending())
+        {
+            return Ok(None);
+        }
+        let Some(model) = crate::neural::work::ModelPermit::try_acquire(&self.background_model)
+        else {
+            return Ok(None);
+        };
+        #[cfg(feature = "semantic")]
+        let runtime = if let Some(Ok(runtime)) = &self.semantic {
+            match runtime.admit_knowledge() {
+                Ok(permit) => Some(permit),
+                Err(crate::neural::provider::ProviderError::Busy) => return Ok(None),
+                Err(error) => {
+                    return Err(crate::knowledge::fail(
+                        "knowledge_admission",
+                        &error.to_string(),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        Ok(Some(crate::knowledge::maintenance::Permit {
+            _model: model,
+            #[cfg(feature = "semantic")]
+            _runtime: runtime,
+        }))
+    }
+    fn closing(&self) -> bool {
+        self.shutdown.is_cancelled()
+    }
+}
+
+/// Source maintenance uses the SAME slot and foreground admission as semantic
+/// preparation. Each callback is one file, walk entry, deletion or index page.
+impl crate::watch::Owner for Shared {
+    fn try_watch_step(&self, step: &mut dyn FnMut(&mut Engine)) -> FResult<bool> {
+        if self.shutdown.is_cancelled() {
+            return Ok(false);
+        }
+        #[cfg(feature = "semantic")]
+        if self
+            .semantic_turn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(100))
+        {
+            return Ok(false);
+        }
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        let mut engines = match self.engines.try_lock() {
+            Ok(engines) => SlotGuard::mark(engines, &self.slot_holder, SLOT_DRIVER),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(FoundryError::Internal(anyhow::anyhow!(
+                    "engine state was poisoned by an earlier panic"
+                )));
+            }
+        };
+        if self.shutdown.is_cancelled() || self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(false);
+        }
+        let engine = engines[0].as_mut().expect("primary engine is open");
+        #[cfg(feature = "semantic")]
+        let _ = self
+            .source_steps
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |steps| {
+                Some((steps + 1).min(8))
+            });
+        step(engine);
+        Ok(true)
+    }
     fn closing(&self) -> bool {
         self.shutdown.is_cancelled()
     }
@@ -765,6 +1009,29 @@ impl From<FoundryError> for OpError {
     }
 }
 
+/// Lives inside the blocking engine call, so errors, unwinding and a detached
+/// async waiter cannot release foreground priority before the call releases its
+/// engine guard. Only the final operation wakes contended source maintenance.
+struct InFlightEngine(Arc<Shared>);
+
+impl InFlightEngine {
+    fn new(shared: Arc<Shared>) -> Self {
+        shared.in_flight_engine.fetch_add(1, Ordering::SeqCst);
+        Self(shared)
+    }
+}
+
+impl Drop for InFlightEngine {
+    fn drop(&mut self) {
+        if self.0.in_flight_engine.fetch_sub(1, Ordering::SeqCst) == 1
+            && !self.0.shutdown.is_cancelled()
+            && let Some(watch) = &self.0.watch
+        {
+            watch.foreground_released();
+        }
+    }
+}
+
 /// Run one READ operation: the shared deadline and any cancellation are
 /// checked again after the library call returns, so an expired or cancelled
 /// read never returns success.
@@ -814,9 +1081,10 @@ where
         let shared = task_shared;
         let control = Control::with_deadline(deadline);
         register_hub.register(control.cancel_flag());
-        shared.in_flight_engine.fetch_add(1, Ordering::SeqCst);
+        let in_flight = InFlightEngine::new(Arc::clone(&shared));
         let slot_shared = Arc::clone(&shared);
         let joined = tokio::task::spawn_blocking(move || {
+            let _in_flight = in_flight;
             // Admission: zero queue behind another operation; the
             // preparation driver's short store step is waited for. The guard
             // (the one engine slot, spanning every root of this owner) is
@@ -832,8 +1100,8 @@ where
             out
         })
         .await;
-        // Counter and permit release strictly after the engine call returned.
-        shared.in_flight_engine.fetch_sub(1, Ordering::SeqCst);
+        // The blocking closure released its counter after its engine guard.
+        // The handler permit likewise lasts through the actual call.
         drop(guard);
         match joined {
             Ok(result) => result,
@@ -1326,6 +1594,62 @@ impl Clone for FoundryMcp {
 impl FoundryMcp {
     pub(crate) fn new(state: Arc<Shared>) -> Self {
         let mut tool_router = Self::tool_router();
+        if !state.experimental_task_context {
+            tool_router.remove_route("task_context");
+        }
+        if state.experimental_task_context {
+            let route = tool_router
+                .map
+                .get_mut("context")
+                .expect("context route exists");
+            let schema = Arc::make_mut(&mut route.attr.input_schema);
+            let properties = schema
+                .get_mut("properties")
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("context properties");
+            properties.insert("task_id".into(), serde_json::json!({"type":"string","minLength":1,"maxLength":128,"description":"Primary task ID; requires task_revision."}));
+            properties.insert("compose_evidence".into(), serde_json::json!({"type":"boolean","description":"Compose bounded evidence across selected admitted roots using the primary task; requires task_id and task_revision."}));
+            properties.insert("compact_evidence".into(), serde_json::json!({"type":"boolean","description":"Compact evidence accounting; requires compose_evidence. Source citations and task constraints are retained."}));
+            properties.insert("boundary_config".into(), serde_json::json!({"type":"string","description":"Indexed boundary configuration path; requires compose_evidence."}));
+            properties.insert("task_revision".into(), serde_json::json!({"type":"integer","minimum":1,"description":"Expected task revision; requires task_id."}));
+        }
+        if state.experimental_task_context {
+            let route = tool_router
+                .map
+                .get_mut("index")
+                .expect("index route exists");
+            let schema = Arc::make_mut(&mut route.attr.input_schema);
+            schema.get_mut("properties").and_then(serde_json::Value::as_object_mut).expect("index properties").insert("boundary".into(), serde_json::json!({"type":"object","additionalProperties":false,"required":["config"],"properties":{"maintain":{"type":"boolean","description":"Enable or pause one boundary configuration on the existing --watch owner."},"config":{"type":"string","maxLength":4096},"paths":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":4096}}}}));
+        }
+        if state.knowledge.is_some() {
+            for (tool, key, field) in [
+                (
+                    "index",
+                    "knowledge",
+                    serde_json::json!({"enum":["prepare","maintain","pause"]}),
+                ),
+                (
+                    "context",
+                    "include_briefs",
+                    serde_json::json!({"type":"boolean","description":"Include derived primary-root knowledge with exact source evidence."}),
+                ),
+            ] {
+                let route = tool_router.map.get_mut(tool).expect("tool exists");
+                if tool == "index" {
+                    route.attr.description = Some("Index an admitted root or control configured semantic/knowledge maintenance.".into());
+                    if let Some(annotations) = &mut route.attr.annotations {
+                        annotations.open_world_hint = Some(true);
+                        annotations.idempotent_hint = Some(false);
+                    }
+                }
+                let schema = Arc::make_mut(&mut route.attr.input_schema);
+                schema
+                    .get_mut("properties")
+                    .and_then(serde_json::Value::as_object_mut)
+                    .expect("properties")
+                    .insert(key.into(), field);
+            }
+        }
         if state.no_memory {
             tool_router.remove_route("memory");
         }
@@ -1347,7 +1671,7 @@ impl FoundryMcp {
 
     #[tool(
         name = "search",
-        description = "Use BEFORE grep/rg to find code in the indexed repo(s): one line per hit with a handle, line, symbol and matching text. Follow handles with retrieve. Indexed snapshot, not live disk.",
+        description = "Use BEFORE grep/rg for indexed code: one line per hit with handle, line, symbol and match. Follow handles with retrieve. Indexed snapshot, not live disk.",
         input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4096},"limit":{"type":"integer","minimum":1,"maximum":64,"default":10},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":1024},"path":{"type":"string","minLength":1},"roots":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":9,"uniqueItems":true}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -1431,7 +1755,7 @@ impl FoundryMcp {
 
     #[tool(
         name = "context",
-        description = "Use INSTEAD of exploratory file reads: one budgeted, cited bundle of the most relevant symbols (verbatim, or signatures when large), graph edges and file outlines.",
+        description = "Use INSTEAD of exploratory file reads: budgeted, cited symbols (verbatim or signatures when large), graph edges and outlines.",
         input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["query"],"properties":{"query":{"type":"string","minLength":1,"maxLength":4096},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":2048},"strategy":{"type":"string","enum":["auto","search","graph"],"default":"auto"},"roots":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":9,"uniqueItems":true},"include_memory":{"type":"boolean"}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -1442,9 +1766,97 @@ impl FoundryMcp {
     ) -> Result<CallToolResult, ErrorData> {
         if let Err(e) = unknown_fields(
             &arguments,
-            &["query", "tokens", "strategy", "roots", "include_memory"],
+            &[
+                "query",
+                "tokens",
+                "strategy",
+                "roots",
+                "include_memory",
+                "include_briefs",
+                "task_id",
+                "task_revision",
+                "compose_evidence",
+                "compact_evidence",
+                "boundary_config",
+            ],
         ) {
             return Ok(foundry_error_result(&e));
+        }
+        let compose_evidence = match arguments.get("compose_evidence") {
+            None => false,
+            Some(serde_json::Value::Bool(v)) => *v,
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "compose_evidence must be boolean",
+                    false,
+                ));
+            }
+        };
+        let compact_evidence = match arguments.get("compact_evidence") {
+            None => false,
+            Some(serde_json::Value::Bool(v)) if !*v || compose_evidence => *v,
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "compact_evidence must be boolean and requires compose_evidence",
+                    false,
+                ));
+            }
+        };
+        let boundary_config = match arguments.get("boundary_config") {
+            None => None,
+            Some(serde_json::Value::String(v)) if !v.is_empty() && v.len() <= 4096 => {
+                Some(v.clone())
+            }
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "boundary_config must be a bounded indexed path",
+                    false,
+                ));
+            }
+        };
+        if boundary_config.is_some() && !compose_evidence {
+            return Ok(error_result(
+                "invalid_argument",
+                "boundary_config requires compose_evidence",
+                false,
+            ));
+        }
+        let task = match (arguments.get("task_id"), arguments.get("task_revision")) {
+            (None, None) => None,
+            (Some(serde_json::Value::String(id)), Some(revision))
+                if !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                    && revision.as_u64().is_some_and(|r| r > 0) =>
+            {
+                Some((id.clone(), revision.as_u64().expect("validated revision")))
+            }
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "task_id and positive task_revision must be supplied together",
+                    false,
+                ));
+            }
+        };
+        if compose_evidence && task.is_none() {
+            return Ok(error_result(
+                "invalid_argument",
+                "compose_evidence requires task_id and task_revision",
+                false,
+            ));
+        }
+        if task.is_some() && !self.state.experimental_task_context {
+            return Ok(error_result(
+                "unsupported_mode",
+                "task-aware context requires --experimental-task-context",
+                false,
+            ));
         }
         let query = match required_str(&arguments, "query") {
             Ok(query) => query,
@@ -1481,6 +1893,24 @@ impl FoundryMcp {
                 ));
             }
         };
+        let include_briefs = match arguments.get("include_briefs") {
+            None => false,
+            Some(serde_json::Value::Bool(value)) => *value,
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "include_briefs must be boolean",
+                    false,
+                ));
+            }
+        };
+        if include_briefs && self.state.knowledge.is_none() {
+            return Ok(error_result(
+                "unsupported_mode",
+                "derived context requires --knowledge-profile",
+                false,
+            ));
+        }
         let include_memory = match arguments.get("include_memory") {
             None => false,
             Some(serde_json::Value::Bool(include)) => *include,
@@ -1512,54 +1942,76 @@ impl FoundryMcp {
         let query = query.to_owned();
         if self.state.meta.len() > 1 {
             return Ok(self
-                .context_roots(&ctx, tokens, query, strategy, roots, include_memory)
+                .context_roots(
+                    &ctx,
+                    tokens,
+                    query,
+                    strategy,
+                    roots,
+                    include_memory,
+                    task,
+                    include_briefs,
+                    compose_evidence,
+                    compact_evidence,
+                    boundary_config,
+                )
                 .await);
         }
+        let task_requested = task.is_some();
         let semantic = self.state.semantic.clone();
         let policy = Arc::clone(&self.state.policy);
+        let experimental_behavior = self.state.experimental_behavior_context;
         Ok(self
             .deliver(
                 &ctx,
                 tokens,
                 "context",
-                || response::refusal_floor("context", None),
+                move || {
+                    if task_requested {
+                        response::MAX_BUDGET_TOKENS
+                    } else {
+                        response::refusal_floor("context", None)
+                    }
+                },
                 move |engines, control, _budget| {
                     let engine = engines[0].as_ref().expect("the primary engine is open");
                     // 013 T003: a configured policy routes `auto`; without
                     // one this is exactly the baseline path.
                     let routed = policy.routes().then_some(&*policy);
-                    let (batch, hits) = if semantic_on(&semantic) || routed.is_some() {
-                        let combined = context_primary(
-                            &semantic,
-                            routed,
-                            engine,
-                            &query,
-                            strategy,
-                            control,
-                            include_memory,
-                            None,
-                        )?;
-                        (combined.batch, combined.hits)
-                    } else if include_memory {
-                        let combined =
-                            engine.context_candidates_memory(&query, strategy, control)?;
-                        (combined.batch, combined.hits)
-                    } else {
-                        (
-                            engine.context_candidates(&query, strategy, control)?,
-                            Vec::new(),
-                        )
-                    };
-                    Ok((batch, hits))
+                    let workspace_id = engine
+                        .workspace_id()
+                        .ok_or(FoundryError::WorkspaceUnbound)?;
+                    let task_scope =
+                        task.as_ref()
+                            .map(|(id, revision)| crate::task_context::Scope {
+                                workspace_id: &workspace_id,
+                                task_id: id,
+                                expected_revision: *revision,
+                            });
+                    let combined = context_primary_with_options(
+                        &semantic,
+                        engine,
+                        &query,
+                        strategy,
+                        control,
+                        crate::store::ContextOptions {
+                            task: task_scope,
+                            compose_evidence,
+                            compact_evidence,
+                            boundary_config: boundary_config.as_deref(),
+                            memory: include_memory,
+                            briefs: include_briefs,
+                            policy: routed,
+                            experimental_behavior,
+                            ..crate::store::ContextOptions::default()
+                        },
+                    )?;
+                    Ok(combined)
                 },
-                |outcome: &(crate::store::CandidateBatch, Vec<memory::MemoryHit>),
+                |outcome: &memory::MemoryContext,
                  budget: response::Budget,
                  boundary: response::ByteMeasure| {
-                    if outcome.1.is_empty() {
-                        response::pack_context(&outcome.0, budget, boundary)
-                    } else {
-                        response::pack_context_with_memory(&outcome.0, &outcome.1, budget, boundary)
-                    }
+                    response::pack_enriched_context(outcome, None, budget, boundary)
                 },
             )
             .await)
@@ -1567,7 +2019,7 @@ impl FoundryMcp {
 
     #[tool(
         name = "retrieve",
-        description = r#"Read exact indexed source for a handle. `lines` narrows to a line range; `view:"outline"` returns a skeleton with elided line ranges. Stale handles are rejected."#,
+        description = r#"Read exact indexed source by handle; stale handles rejected. `lines`: line range; `view:"outline"`: skeleton with elided line ranges."#,
         input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["handle"],"properties":{"handle":{"type":"string","maxLength":4200},"tokens":{"type":"integer","minimum":1,"maximum":32768,"default":2048},"lines":{"type":["string","array"],"pattern":"^[1-9][0-9]*(-[1-9][0-9]*)?$","items":{"type":"integer"}},"view":{"type":"string","enum":["text","outline"],"default":"text"}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
@@ -1689,8 +2141,8 @@ impl FoundryMcp {
 
     #[tool(
         name = "index",
-        description = "Re-index after edits: the bound repo, or an admitted reference root via `root`.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"},"scip":{"type":"object","additionalProperties":false,"required":["index_file","snapshot_file"],"properties":{"index_file":{"type":"string"},"snapshot_file":{"type":"string"}}},"semantic":{"enum":["prepare","pause"]}}}"#),
+        description = "Index an admitted root or control semantic preparation.",
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"timeout_ms":{"type":"integer","minimum":1,"maximum":1200000,"default":30000},"root":{"type":"string"},"scip":{"type":"object","additionalProperties":false,"required":["index_file","snapshot_file"],"properties":{"index_file":{"type":"string"},"snapshot_file":{"type":"string"}}},"semantic":{"enum":["prepare","maintain","pause"]},"priority_paths":{"type":"array","maxItems":16,"items":{"type":"string","maxLength":4096}}}}"#),
         // `index` writes only Foundry's own store for the bound root; it
         // never modifies workspace files, and re-indexing converges.
         annotations(read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
@@ -1700,15 +2152,150 @@ impl FoundryMcp {
         ctx: RequestContext<RoleServer>,
         arguments: JsonObject,
     ) -> Result<CallToolResult, ErrorData> {
-        if let Err(e) = unknown_fields(&arguments, &["timeout_ms", "root", "scip", "semantic"]) {
+        if let Err(e) = unknown_fields(
+            &arguments,
+            &[
+                "timeout_ms",
+                "root",
+                "scip",
+                "semantic",
+                "priority_paths",
+                "knowledge",
+                "boundary",
+            ],
+        ) {
             return Ok(foundry_error_result(&e));
+        }
+        if let Some(value) = arguments.get("boundary") {
+            if !self.state.experimental_task_context {
+                return Ok(error_result(
+                    "unsupported_mode",
+                    "boundary publication requires --experimental-task-context",
+                    false,
+                ));
+            }
+            if arguments
+                .keys()
+                .any(|k| !["boundary", "timeout_ms"].contains(&k.as_str()))
+            {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "boundary publication is a separate primary-store index operation",
+                    false,
+                ));
+            }
+            let request =
+                match serde_json::from_value::<crate::boundary::IndexRequest>(value.clone()) {
+                    Ok(r) => r,
+                    Err(_) => {
+                        return Ok(error_result(
+                            "invalid_argument",
+                            "boundary requires config and optional paths",
+                            false,
+                        ));
+                    }
+                };
+            let watch = self.state.watch.clone();
+            if request.maintain.is_some() && watch.is_none() {
+                return Ok(error_result(
+                    "unsupported_mode",
+                    "boundary maintenance requires --watch",
+                    false,
+                ));
+            }
+            if request.config.is_empty()
+                || request.config.len() > 4096
+                || request.maintain == Some(false) && !request.paths.is_empty()
+            {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "boundary config must be bounded; pause accepts no paths",
+                    false,
+                ));
+            }
+            let timeout_ms = match optional_u64(
+                &arguments,
+                "timeout_ms",
+                INDEX_TIMEOUT_MS,
+                INDEX_TIMEOUT_RANGE.0,
+                INDEX_TIMEOUT_RANGE.1,
+            ) {
+                Ok(v) => v,
+                Err(e) => return Ok(foundry_error_result(&e)),
+            };
+            let result = run_op(
+                &self.state,
+                Instant::now() + Duration::from_millis(timeout_ms),
+                Some(ctx.ct.clone()),
+                Self::admission_guard(&ctx),
+                false,
+                move |engines, control| {
+                    if request.maintain == Some(false) {
+                        watch
+                            .as_ref()
+                            .expect("validated watcher")
+                            .boundary_maintenance(request.config, false)?;
+                        return Ok(serde_json::json!({"boundary_maintenance":"paused"}));
+                    }
+                    let report = engines[0]
+                        .as_ref()
+                        .expect("primary store")
+                        .index_boundaries(&request.config, &request.paths, control)?;
+                    if request.maintain == Some(true) {
+                        watch
+                            .as_ref()
+                            .expect("validated watcher")
+                            .boundary_maintenance(request.config, true)?;
+                    }
+                    Ok(serde_json::to_value(report).expect("publication serializes"))
+                },
+            )
+            .await;
+            return Ok(match result {
+                Ok(report) => text_result(response::compact_json(
+                    &serde_json::to_value(report).expect("publication serializes"),
+                )),
+                Err(e) => foundry_error_result(&e),
+            });
+        }
+        if let Some(action) = arguments.get("knowledge") {
+            if arguments.len() != 1 {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "knowledge control cannot be combined with indexing or semantic arguments",
+                    false,
+                ));
+            }
+            let Some(knowledge) = &self.state.knowledge else {
+                return Ok(error_result(
+                    "unsupported_mode",
+                    "knowledge requires --knowledge-profile",
+                    false,
+                ));
+            };
+            match action.as_str() {
+                Some("prepare" | "maintain") => {
+                    if let Err(error) = knowledge.start(self.state.clone(), action == "maintain") {
+                        return Ok(foundry_error_result(&error));
+                    }
+                }
+                Some("pause") => knowledge.pause(),
+                _ => {
+                    return Ok(error_result(
+                        "invalid_argument",
+                        "knowledge must be prepare, maintain or pause",
+                        false,
+                    ));
+                }
+            }
+            return Ok(text_result(response::compact_json(&knowledge.status())));
         }
         // 009 T003: `semantic` starts/resumes or pauses the owner's
         // progressive preparation, and `index` then does ONLY that.
         match arguments.get("semantic") {
             None => {}
             Some(serde_json::Value::String(action))
-                if matches!(action.as_str(), "prepare" | "pause") =>
+                if matches!(action.as_str(), "prepare" | "maintain" | "pause") =>
             {
                 if arguments.contains_key("root") || arguments.contains_key("scip") {
                     return Ok(error_result(
@@ -1726,7 +2313,29 @@ impl FoundryMcp {
                 ) {
                     return Ok(foundry_error_result(&e));
                 }
-                return Ok(self.index_semantic(&ctx, action == "prepare").await);
+                let priorities = match arguments.get("priority_paths") {
+                    Some(value) if action != "pause" => {
+                        match serde_json::from_value::<Vec<String>>(value.clone()) {
+                            Ok(paths) => Some(paths),
+                            Err(_) => {
+                                return Ok(error_result(
+                                    "invalid_argument",
+                                    "priority_paths must be an array of relative paths",
+                                    false,
+                                ));
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        return Ok(error_result(
+                            "invalid_argument",
+                            "priority_paths requires semantic prepare or maintain",
+                            false,
+                        ));
+                    }
+                    None => None,
+                };
+                return Ok(self.index_semantic(&ctx, action, priorities).await);
             }
             Some(serde_json::Value::Null) => {
                 return Ok(error_result(
@@ -1738,10 +2347,17 @@ impl FoundryMcp {
             Some(_) => {
                 return Ok(error_result(
                     "invalid_argument",
-                    "argument `semantic` must be \"prepare\" or \"pause\"",
+                    "argument `semantic` must be prepare, maintain or pause",
                     false,
                 ));
             }
+        }
+        if arguments.contains_key("priority_paths") {
+            return Ok(error_result(
+                "invalid_argument",
+                "priority_paths requires semantic prepare",
+                false,
+            ));
         }
         // `root` re-indexes one admitted alias through its own store
         // (default `primary`), validated before dispatch: a root whose
@@ -2061,8 +2677,8 @@ impl FoundryMcp {
 
     #[tool(
         name = "status",
-        description = "Revision, pending work, index/scan state and coverage for each admitted root.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{}}"#),
+        description = "Progress and coverage for admitted roots; optional semantic audit.",
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"properties":{"semantic_audit":{"type":"boolean","default":false}}}"#),
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn status(
@@ -2070,22 +2686,28 @@ impl FoundryMcp {
         ctx: RequestContext<RoleServer>,
         arguments: JsonObject,
     ) -> Result<CallToolResult, ErrorData> {
-        if let Err(e) = unknown_fields(&arguments, &[]) {
+        if let Err(e) = unknown_fields(&arguments, &["semantic_audit"]) {
             return Ok(foundry_error_result(&e));
         }
-        if !arguments.is_empty() {
-            return Ok(error_result(
-                "invalid_argument",
-                "status takes no arguments",
-                false,
-            ));
-        }
+        let semantic_audit = match arguments.get("semantic_audit") {
+            None => false,
+            Some(serde_json::Value::Bool(audit)) => *audit,
+            _ => {
+                return Ok(error_result(
+                    "invalid_argument",
+                    "semantic_audit must be boolean",
+                    false,
+                ));
+            }
+        };
         let meta = Arc::clone(&self.state.meta);
         let multi = meta.len() > 1;
         // 009 T003: an owner serving a semantic profile adds the `semantic`
         // object (committed metadata plus its live driver state); without a
         // profile the status is unchanged.
         let semantic = self.state.semantic.clone();
+        let watch = self.state.watch.clone();
+        let knowledge = self.state.knowledge.clone();
         #[cfg(feature = "semantic")]
         let preparation = Arc::clone(&self.state.preparation);
         let mut outcome = match run_engine_op(
@@ -2105,15 +2727,26 @@ impl FoundryMcp {
                         Ok(runtime) => runtime.status_word(),
                         Err(word) => word.clone(),
                     };
-                    value["semantic"] = crate::neural::driver::status_object(
-                        primary,
-                        preparation.live(),
-                        &runtime,
-                        control,
-                    )?;
+                    value["semantic"] =
+                        (if semantic_audit {
+                            crate::neural::driver::status_audit_object
+                        } else {
+                            crate::neural::driver::status_object
+                        })(primary, preparation.live(), &runtime, control)?;
+                    if let Some(progress) = preparation.progress() {
+                        value["semantic"]["bootstrap"] = serde_json::to_value(progress)?;
+                    }
                 }
                 #[cfg(not(feature = "semantic"))]
-                let _ = (&semantic, control);
+                let _ = (&semantic, control, semantic_audit);
+                if let Some(knowledge) = &knowledge {
+                    let mut observed = primary.knowledge_status()?;
+                    observed["maintenance"] = knowledge.status();
+                    value["knowledge"] = observed;
+                }
+                if let Some(watch) = &watch {
+                    value["watch"] = watch.status(primary.pending()?);
+                }
                 if multi {
                     // 007: every admitted root, with nulls where a store
                     // could not be opened.
@@ -2153,7 +2786,62 @@ impl FoundryMcp {
         };
         // 013 T003: the policy state (no engine work).
         outcome["policy"] = self.state.policy.status();
+        if let Some(resources) = &self.state.model_resources {
+            outcome["model_resources"] = resources.status();
+        }
         Ok(text_result(response::compact_json(&outcome)))
+    }
+
+    #[tool(
+        name = "task_context",
+        description = "Experimental task state and recoverable views. Explicit scoped JSON commands; export uses CLI.",
+        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["workspace_id","task_id","command"],"properties":{"workspace_id":{"type":"string"},"task_id":{"type":"string"},"command":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["create","apply","inspect","peek","render","forget","advise","review","promote","search"]},"title":{"type":"string"},"expected_revision":{"type":"integer","minimum":0},"edits":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["add","select","pin","fold","expand","checkpoint","restore","dismiss"]},"entry":{"type":"object","additionalProperties":false,"required":["id","kind","text","author","provenance","source_links"],"properties":{"id":{"type":"string"},"kind":{"enum":["requirement","constraint","observation","hypothesis","decision","rejected_attempt","question","work","artifact"]},"text":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"source_links":{"type":"array","items":{"type":"string"}},"supersedes":{"type":["string","null"]},"action_key":{"type":["string","null"]}}},"entry_id":{"type":"string"},"selected":{"type":"boolean"},"pinned":{"type":"boolean"},"summary":{"type":"string"},"name":{"type":"string"}}},"minItems":1,"maxItems":32},"entry_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"bytes":{"type":"integer","minimum":4,"maximum":65536},"max_bytes":{"type":"integer","minimum":256,"maximum":1048576},"action_key":{"type":"string"},"paths":{"type":"array","maxItems":16,"items":{"type":"string"}},"finishing":{"type":"boolean"},"memory_id":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":32},"after_id":{"type":["string","null"]},"include_history":{"type":"boolean"}}}}}"#),
+        annotations(read_only_hint = false, open_world_hint = false)
+    )]
+    async fn task_context(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        arguments: JsonObject,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = match crate::task_context::parse(serde_json::Value::Object(arguments)) {
+            Ok(request) => request,
+            Err(e) => return Ok(foundry_error_result(&e)),
+        };
+        if self.state.no_memory
+            && matches!(
+                request.command,
+                crate::task_context::Command::Promote { .. }
+            )
+        {
+            return Ok(foundry_error_result(&FoundryError::UnsupportedMode(
+                "project memory is disabled on this owner".into(),
+            )));
+        }
+        if matches!(
+            request.command,
+            crate::task_context::Command::Export {}
+                | crate::task_context::Command::ExportHost { .. }
+        ) {
+            return Ok(foundry_error_result(&FoundryError::UnsupportedMode(
+                "task export uses CLI".into(),
+            )));
+        }
+        let read = matches!(
+            request.command,
+            crate::task_context::Command::Search { .. }
+                | crate::task_context::Command::Advise { .. }
+                | crate::task_context::Command::Review { .. }
+                | crate::task_context::Command::Inspect {}
+                | crate::task_context::Command::Peek { .. }
+                | crate::task_context::Command::Render { .. }
+        );
+        Ok(self
+            .memory_op(&ctx, read, move |engine, control| {
+                let result = engine.task_context(&request, control)?;
+                engine.drain_task_memory(&result);
+                Ok(result)
+            })
+            .await)
     }
 
     #[tool(
@@ -2300,7 +2988,8 @@ impl FoundryMcp {
     async fn index_semantic(
         &self,
         ctx: &RequestContext<RoleServer>,
-        prepare: bool,
+        action: &str,
+        priority_paths: Option<Vec<String>>,
     ) -> CallToolResult {
         #[cfg(feature = "semantic")]
         {
@@ -2323,9 +3012,14 @@ impl FoundryMcp {
                 }
             };
             let preparation = Arc::clone(&self.state.preparation);
-            if prepare {
+            if action != "pause" {
                 let owner: Arc<dyn crate::neural::driver::Owner> = self.state.clone();
-                if let Err(e) = preparation.prepare(owner, runtime) {
+                let result = if action == "maintain" {
+                    preparation.maintain(owner, runtime, priority_paths)
+                } else {
+                    preparation.prepare_with_priorities(owner, runtime, priority_paths)
+                };
+                if let Err(e) = result {
                     return foundry_error_result(&e);
                 }
             } else {
@@ -2357,7 +3051,7 @@ impl FoundryMcp {
         }
         #[cfg(not(feature = "semantic"))]
         {
-            let _ = (ctx, prepare);
+            let _ = (ctx, action, priority_paths);
             foundry_error_result(&refuse_unsupported_semantic())
         }
     }
@@ -2383,6 +3077,64 @@ impl FoundryMcp {
     /// emitted text block, the 256 KiB cap on the serialized result), a final
     /// deadline and cancellation check, and settlement by the counted tokens.
     async fn deliver<T, F, P, R>(
+        &self,
+        ctx: &RequestContext<RoleServer>,
+        tokens: u64,
+        what: &'static str,
+        floor: R,
+        run: F,
+        pack: P,
+    ) -> CallToolResult
+    where
+        F: FnOnce(&mut Vec<Option<Engine>>, &Control, usize) -> FResult<T> + Send + 'static,
+        T: Send + 'static,
+        P: Fn(&T, response::Budget, response::ByteMeasure) -> FResult<response::PackedText>,
+        R: FnOnce() -> usize,
+    {
+        let trace = self
+            .state
+            .trace_sink
+            .as_ref()
+            .map(|_| crate::retrieval_trace::RetrievalTrace::default());
+        if let Some(trace) = &trace {
+            trace.record(serde_json::json!({"stage":"request", "request_id":ctx.id,
+                "session_id":Shared::session_key(ctx), "requested_tokens":tokens}));
+        }
+        let run_trace = trace.clone();
+        let result = self
+            .deliver_inner(
+                ctx,
+                tokens,
+                what,
+                floor,
+                move |engines, control, budget| {
+                    let control = control
+                        .bounded_by(control.deadline().expect("delivery deadline"))
+                        .with_trace(run_trace);
+                    run(engines, &control, budget)
+                },
+                pack,
+            )
+            .await;
+        if let (Some(sink), Some(trace)) = (&self.state.trace_sink, trace) {
+            // This is the server's result, not a client/provider receipt. A write
+            // failure cannot change an already settled delivery allowance.
+            if sink
+                .save(
+                    what,
+                    &trace,
+                    serde_json::to_value(&result).unwrap_or(serde_json::Value::Null),
+                )
+                .is_err()
+            {
+                eprintln!("retrieval_trace_unavailable: run is incomplete");
+            }
+        }
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn deliver_inner<T, F, P, R>(
         &self,
         ctx: &RequestContext<RoleServer>,
         tokens: u64,
@@ -2617,6 +3369,7 @@ impl FoundryMcp {
     /// 007 combined context: same flow as [`Self::search_roots`] over
     /// `context_candidates`; graph items keep their seed root's alias and
     /// identity, freshness and graph evidence stay inside each root.
+    #[allow(clippy::too_many_arguments)]
     async fn context_roots(
         &self,
         ctx: &RequestContext<RoleServer>,
@@ -2625,6 +3378,11 @@ impl FoundryMcp {
         strategy: Strategy,
         selected: Option<Vec<String>>,
         include_memory: bool,
+        task: Option<(String, u64)>,
+        include_briefs: bool,
+        compose_evidence: bool,
+        compact_evidence: bool,
+        boundary_config: Option<String>,
     ) -> CallToolResult {
         let selection = match self.state.resolve_roots(selected.as_deref()) {
             Ok(selection) => selection,
@@ -2635,6 +3393,13 @@ impl FoundryMcp {
             .copied()
             .filter(|&index| self.state.meta[index].coverage.serves_search())
             .collect();
+        if (task.is_some() || include_briefs) && !serving.contains(&0) {
+            return error_result(
+                "unsupported_mode",
+                "task/derived context requires the primary root to be selected and serving",
+                false,
+            );
+        }
         if serving.is_empty() {
             // The refusal names every root the response would have listed:
             // all admitted roots when `roots` was omitted, the selected ones
@@ -2648,13 +3413,21 @@ impl FoundryMcp {
         let floor_labels = self.root_labels();
         let run_meta = Arc::clone(&meta);
         let pack_meta = Arc::clone(&meta);
+        let task_requested = task.is_some();
         let semantic = self.state.semantic.clone();
         let policy = Arc::clone(&self.state.policy);
+        let experimental_behavior = self.state.experimental_behavior_context;
         self.deliver(
             ctx,
             tokens,
             "context",
-            move || response::refusal_floor_roots("context", None, &floor_labels),
+            move || {
+                if task_requested {
+                    response::MAX_BUDGET_TOKENS
+                } else {
+                    response::refusal_floor_roots("context", None, &floor_labels)
+                }
+            },
             move |engines, control, _budget| {
                 // 008: memory lives only in the primary store, and only when
                 // the primary is selected AND serving. The primary's memory
@@ -2664,6 +3437,24 @@ impl FoundryMcp {
                 let primary_memory = include_memory && serving.contains(&0);
                 let mut hits: Vec<memory::MemoryHit> = Vec::new();
                 let hits_ref = &mut hits;
+                let mut task_view = None;
+                let mut briefs = Vec::new();
+                let mut evidence_plans = Vec::new();
+                let task_entries = if compose_evidence {
+                    use redb::ReadableDatabase;
+                    let primary = engines[0].as_ref().expect("primary store");
+                    let (id, revision) = task.as_ref().expect("validated composition task");
+                    primary.task_entries_in(
+                        &primary.db.begin_read()?,
+                        crate::task_context::Scope {
+                            workspace_id: &run_meta[0].workspace_id,
+                            task_id: id,
+                            expected_revision: *revision,
+                        },
+                    )?
+                } else {
+                    Vec::new()
+                };
                 let engines = &*engines;
                 // 005 T004: the first serving root's resolved doors request
                 // (a policy may have made it) governs every later root, so
@@ -2683,42 +3474,58 @@ impl FoundryMcp {
                             engine,
                             engines[0].as_ref().expect("the primary engine is open"),
                         );
+                        let task_scope =
+                            task.as_ref().filter(|_| is_primary).map(|(id, revision)| {
+                                crate::task_context::Scope {
+                                    workspace_id: &run_meta[0].workspace_id,
+                                    task_id: id,
+                                    expected_revision: *revision,
+                                }
+                            });
                         // 009 T002: semantic evidence belongs to the PRIMARY
                         // root's store only (the merged header says so); so
                         // does 013 T003 routing, whose state the primary
                         // store composes.
                         let routed = policy.routes().then_some(&*policy);
-                        let batch = if is_primary && (semantic_on(&semantic) || routed.is_some()) {
-                            let combined = context_primary(
-                                &semantic,
-                                routed,
-                                engine,
+                        let options = crate::store::ContextOptions {
+                            task: task_scope,
+                            compose_evidence,
+                            compact_evidence,
+                            boundary_config: boundary_config.as_deref().filter(|_| is_primary),
+                            memory: primary_memory && is_primary,
+                            briefs: include_briefs && is_primary,
+                            policy: routed.filter(|_| is_primary),
+                            anchors: Some(anchors),
+                            experimental_behavior,
+                            #[cfg(feature = "semantic")]
+                            dense: None,
+                        };
+                        let mut combined = if is_primary
+                            && (semantic_on(&semantic) || routed.is_some())
+                        {
+                            context_primary_with_options(
+                                &semantic, engine, &query, strategy, control, options,
+                            )?
+                        } else if compose_evidence && !is_primary {
+                            engine.compose_evidence_for_entries(
                                 &query,
                                 strategy,
                                 control,
-                                primary_memory,
-                                Some(anchors),
-                            )?;
-                            *hits_ref = combined.hits;
-                            combined.batch
+                                &options,
+                                &task_entries,
+                            )?
                         } else {
-                            // No catch-all for the primary's memory:
-                            // corruption fails the request (context-v2 §
-                            // Failure scope); an unavailable primary is
-                            // excluded by `serving` above and its coverage
-                            // stays in the header.
-                            let options = crate::store::ContextOptions {
-                                memory: primary_memory && is_primary,
-                                anchors: Some(anchors),
-                                ..crate::store::ContextOptions::default()
-                            };
-                            let combined = engine
-                                .context_candidates_with(&query, strategy, control, &options)?;
-                            if options.memory {
-                                *hits_ref = combined.hits;
-                            }
-                            combined.batch
+                            engine.context_candidates_with(&query, strategy, control, &options)?
                         };
+                        if is_primary {
+                            *hits_ref = combined.hits;
+                            task_view = combined.task_view;
+                            briefs = combined.briefs;
+                        }
+                        if let Some(plan) = combined.evidence.take() {
+                            evidence_plans.push(plan);
+                        }
+                        let batch = combined.batch;
                         decided.get_or_insert(if batch.doors.is_some() {
                             Strategy::Graph
                         } else {
@@ -2727,26 +3534,25 @@ impl FoundryMcp {
                         Ok(batch)
                     },
                 )?;
+                let batch = roots::merge_context(&batches);
+                let evidence = compose_evidence
+                    .then(|| crate::task_evidence::Plan::merge(evidence_plans, &batches, &batch));
                 Ok(MultiOutcome {
-                    served: (roots::merge_context(&batches), hits),
+                    served: memory::MemoryContext {
+                        evidence,
+                        batch,
+                        hits,
+                        task_view,
+                        briefs,
+                    },
                     root_facts: facts,
                 })
             },
-            move |outcome: &MultiOutcome<(
-                crate::store::CandidateBatch,
-                Vec<memory::MemoryHit>,
-            )>,
+            move |outcome: &MultiOutcome<memory::MemoryContext>,
                   budget: response::Budget,
                   boundary: response::ByteMeasure| {
                 let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
-                let (batch, hits) = &outcome.served;
-                if hits.is_empty() {
-                    response::pack_context_roots(batch, &headers, budget, boundary)
-                } else {
-                    response::pack_context_roots_with_memory(
-                        batch, &headers, hits, budget, boundary,
-                    )
-                }
+                response::pack_enriched_context(&outcome.served, Some(&headers), budget, boundary)
             },
         )
         .await
@@ -2877,17 +3683,22 @@ impl FoundryMcp {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for FoundryMcp {
-    /// 009 T003: every served tool call — search, context, retrieve,
-    /// index (its `semantic` prepare and pause included), status, memory,
-    /// references — is foreground activity for the preparation driver's
-    /// batch size, marked before the tool runs.
+    /// Foreground work bounds document batches. Status observation uses the
+    /// ordinary request slot but does not renew the 60-second batch throttle.
     async fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
         #[cfg(feature = "semantic")]
-        self.state.preparation.foreground();
+        if request.name != "status" {
+            self.state.preparation.foreground();
+        }
+        if request.name != "status"
+            && let Some(knowledge) = &self.state.knowledge
+        {
+            knowledge.foreground();
+        }
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         self.tool_router.call(tcc).await
     }
@@ -3114,6 +3925,10 @@ impl SessionManager for CappedSessionManager {
 }
 
 pub struct ServerOptions {
+    /// Explicit opt-in; a new private directory, never an existing run.
+    pub retrieval_trace_dir: Option<PathBuf>,
+    /// Default off until 001 T010's retrieval and real-host gates pass.
+    pub experimental_behavior_context: bool,
     pub store: PathBuf,
     pub root: PathBuf,
     /// `--reference ROOT=STORE` admissions (007), at most 8, validated and
@@ -3122,9 +3937,15 @@ pub struct ServerOptions {
     pub budget: BudgetConfig,
     /// Omit the `memory` tool and refuse `include_memory` (008); records stay.
     pub no_memory: bool,
+    /// Enable the experimental, explicitly scoped task-context tool.
+    pub experimental_task_context: bool,
+    /// Maintain the primary source snapshot from bounded filesystem hints.
+    pub watch: bool,
     /// 009 T002: the semantic profile this owner serves, if any. `None`
     /// keeps every response byte-identical to a build without semantics.
     pub semantic: Option<SemanticServing>,
+    pub knowledge: Option<crate::knowledge::maintenance::Serving>,
+    pub model_resources: Option<crate::model_resources::Config>,
     /// 013 T003: the policy config this owner serves, if any. `None` (or a
     /// disabled config) keeps every response byte-identical.
     pub policy: Option<crate::policy::PolicyServing>,
@@ -3133,6 +3954,8 @@ pub struct ServerOptions {
 /// The launch-time semantic configuration (`mcp --semantic-profile FILE
 /// [--development-isolation] [--semantic-cache-cap BYTES]`).
 pub struct SemanticServing {
+    /// Explicit continuous maintenance, resumed only by this launch option.
+    pub maintain: bool,
     pub profile: PathBuf,
     pub development: bool,
     /// The owner's preparation cache cap; `None` is the 2 GiB default.
@@ -3150,6 +3973,7 @@ impl SemanticServing {
             profile,
             development,
             cache_cap_bytes: None,
+            maintain: false,
             #[cfg(all(feature = "test-faults", feature = "semantic"))]
             provider: None,
         }
@@ -3162,6 +3986,7 @@ impl SemanticServing {
             profile,
             development: true,
             cache_cap_bytes: None,
+            maintain: false,
             provider: Some(make),
         }
     }
@@ -3181,6 +4006,60 @@ fn refuse_unsupported_semantic() -> FoundryError {
 /// failed start. `None` without a configured profile. Bounded by the
 /// profile's load timeout; nothing loads behind a query afterwards.
 pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
+    semantic_slot_reserved(launch, None)
+}
+
+/// A command owns its runtime until the provider thread has stopped and reaped
+/// its worker. Dropping the last Arc alone only closes the job channel; the CLI
+/// could exit before that detached thread finishes, leaving an orphaned child.
+/// MCP keeps its existing explicit asynchronous owner-shutdown path.
+pub(crate) struct CliSemanticSlot(SemanticSlot);
+
+impl std::ops::Deref for CliSemanticSlot {
+    type Target = SemanticSlot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for CliSemanticSlot {
+    fn drop(&mut self) {
+        #[cfg(feature = "semantic")]
+        if let Some(Ok(runtime)) = &self.0 {
+            runtime.shutdown();
+        }
+    }
+}
+
+/// A single CLI request can establish that it needs no model before opening
+/// artifacts or reserving/loading a worker. Resident MCP startup is unchanged.
+/// This shares the actual request's anchor/prose predicate; it is not a second
+/// routing heuristic. Query/index errors remain the baseline reader's concern.
+pub(crate) fn cli_semantic_slot(
+    launch: Option<SemanticServing>,
+    engine: &Engine,
+    query: &str,
+    path: Option<&str>,
+    prose: bool,
+    control: &Control,
+) -> FResult<CliSemanticSlot> {
+    #[cfg(feature = "semantic")]
+    if launch.is_some() && semantic_anchored(engine, query, path, control, None, prose) {
+        if let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({"stage":"semantic_startup", "state":"skipped", "reason":"anchor_or_baseline_error"}));
+        }
+        return Ok(CliSemanticSlot(None));
+    }
+    #[cfg(not(feature = "semantic"))]
+    let _ = (engine, query, path, prose, control);
+    semantic_slot(launch).map(CliSemanticSlot)
+}
+
+fn semantic_slot_reserved(
+    launch: Option<SemanticServing>,
+    resources: Option<&Arc<crate::model_resources::Resources>>,
+) -> FResult<SemanticSlot> {
     #[cfg(feature = "semantic")]
     {
         use crate::neural::query::{QueryRuntime, fallback_word};
@@ -3189,6 +4068,22 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
         };
         let fallback =
             |error: crate::neural::provider::ProviderError| fallback_word(&error.to_string());
+        let profile = match crate::neural::profile::SemanticProfile::load(&launch.profile) {
+            Ok(profile) => Arc::new(profile),
+            Err(error) => return Ok(Some(Err(fallback(error)))),
+        };
+        let reservation = match resources
+            .map(|resources| {
+                resources.reserve(
+                    crate::model_resources::Lane::Semantic,
+                    profile.memory_ceiling_bytes,
+                )
+            })
+            .transpose()
+        {
+            Ok(reservation) => reservation,
+            Err(reason) => return Ok(Some(Err(fallback_word(reason.code())))),
+        };
         let cap = launch.cache_cap_bytes;
         let capped = move |runtime: QueryRuntime| match cap {
             Some(bytes) => runtime.with_cache_cap(bytes),
@@ -3198,13 +4093,11 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
         if let Some(make) = launch.provider {
             // Tests only: the provider is built by the caller instead of the
             // supervised worker; everything else is the production path.
-            let started = crate::neural::profile::SemanticProfile::load(&launch.profile)
-                .map(Arc::new)
-                .and_then(|profile| QueryRuntime::start(profile, make));
+            let started = QueryRuntime::start_reserved(profile, make, reservation);
             return Ok(Some(started.map(capped).map(Arc::new).map_err(fallback)));
         }
         Ok(Some(
-            QueryRuntime::acquire(&launch.profile, launch.development)
+            QueryRuntime::acquire_profile(profile, launch.development, reservation)
                 .map(capped)
                 .map(Arc::new)
                 .map_err(fallback),
@@ -3212,6 +4105,7 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
     }
     #[cfg(not(feature = "semantic"))]
     {
+        let _ = resources;
         match launch {
             Some(_) => Err(refuse_unsupported_semantic()),
             None => Ok(None),
@@ -3229,9 +4123,32 @@ pub fn semantic_slot(launch: Option<SemanticServing>) -> FResult<SemanticSlot> {
 /// reference is opened exactly once; the outcome is its coverage for the
 /// whole session, with no retries, and another live owner is never stopped.
 fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResult<Arc<Shared>> {
+    let model_resources = options
+        .model_resources
+        .take()
+        .map(crate::model_resources::Resources::new)
+        .transpose()?;
     let admitted = roots::validate_admission(&options.root, &options.references)
         .map_err(|error| AdapterError::named(error.code(), error.message()))?;
     let primary = &admitted[0];
+    #[cfg(feature = "semantic")]
+    let maintain = options
+        .semantic
+        .as_ref()
+        .is_some_and(|launch| launch.maintain);
+    let knowledge_launch = options.knowledge.take();
+    let knowledge_maintain = knowledge_launch
+        .as_ref()
+        .is_some_and(|launch| launch.maintain);
+    let knowledge = knowledge_launch
+        .map(|launch| crate::knowledge::Profile::load(&launch.profile))
+        .transpose()?;
+    if knowledge
+        .as_ref()
+        .is_some_and(|profile| profile.workspace_id != primary.workspace_id)
+    {
+        return Err(FoundryError::WrongWorkspace.into());
+    }
     let semantic_launch = options.semantic.take();
     let policy_launch = options.policy.take();
     #[cfg(not(feature = "semantic"))]
@@ -3245,6 +4162,13 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
     if bound != primary.workspace_id {
         return Err(FoundryError::WrongWorkspace.into());
     }
+    let watch_reader = options
+        .watch
+        .then(|| crate::ingest::ChangeReader::new(&engine, &primary.root).map(Arc::new))
+        .transpose()?;
+    let watch = options
+        .watch
+        .then(|| crate::watch::Watch::new(primary.root.clone(), engine.directory().to_owned()));
     let primary_coverage = match engine.status() {
         Ok(status) if status.index_state == "repair_required" => Coverage::RepairRequired,
         Ok(_) => Coverage::Ok,
@@ -3269,9 +4193,9 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
     // 009 T002: ONE resident worker starts here, before serving, when a
     // semantic profile is configured; the owner never loads behind a query.
     // A refused or failed start is the named fallback every later request
-    // reports, with baseline results intact. 009 T003: startup never resumes
-    // preparation; only `index {semantic: "prepare"}` starts the driver.
-    let semantic = semantic_slot(semantic_launch)?;
+    // reports, with baseline results intact. Only explicit continuous mode
+    // starts preparation at launch; otherwise an index action is required.
+    let semantic = semantic_slot_reserved(semantic_launch, model_resources.as_ref())?;
     // 013 T003: the config is validated and its worker loaded HERE, once,
     // before serving (bounded by the load ceiling). An invalid config or a
     // failed start leaves the policy unavailable by name; baseline
@@ -3280,7 +4204,14 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         policy_launch,
         Some(&primary.workspace_id),
     ));
-    Ok(Arc::new(Shared {
+    let state = Arc::new(Shared {
+        experimental_behavior_context: options.experimental_behavior_context,
+        trace_sink: options
+            .retrieval_trace_dir
+            .as_deref()
+            .map(crate::retrieval_trace::TraceSink::create)
+            .transpose()?
+            .map(Arc::new),
         engines: Arc::new(Mutex::new(engines)),
         meta: Arc::new(meta),
         budget: options.budget,
@@ -3291,11 +4222,53 @@ fn open_owner(mut options: ServerOptions, shutdown: CancellationToken) -> AResul
         slot_hooks: SlotHooks::default(),
         shutdown,
         no_memory: options.no_memory,
+        experimental_task_context: options.experimental_task_context,
+        watch: watch.clone(),
+        #[cfg(feature = "semantic")]
+        semantic_turn: Mutex::new(None),
+        #[cfg(feature = "semantic")]
+        source_steps: AtomicUsize::new(0),
         semantic,
+        knowledge: knowledge
+            .map(|profile| {
+                crate::knowledge::maintenance::Maintenance::new(profile)
+                    .with_resources(model_resources.clone())
+            })
+            .map(Arc::new),
+        model_resources,
+        background_model: Arc::default(),
         #[cfg(feature = "semantic")]
         preparation: Arc::default(),
         policy,
-    }))
+    });
+    #[cfg(feature = "semantic")]
+    if maintain {
+        let runtime = match &state.semantic {
+            Some(Ok(runtime)) => Arc::clone(runtime),
+            _ => {
+                return Err(FoundryError::Semantic {
+                    code: "semantic_unavailable",
+                    message: "continuous maintenance requires an available semantic profile".into(),
+                }
+                .into());
+            }
+        };
+        state.preparation.maintain(state.clone(), runtime, None)?;
+    }
+    if let (Some(watch), Some(reader)) = (watch, watch_reader) {
+        watch.start(state.clone(), reader)?;
+    }
+    if knowledge_maintain
+        && let Err(error) = state
+            .knowledge
+            .as_ref()
+            .expect("configured profile")
+            .start(state.clone(), true)
+    {
+        state.cancel_active();
+        return Err(error.into());
+    }
+    Ok(state)
 }
 
 /// Open one reference store once; the outcome is that root's coverage for
@@ -3525,15 +4498,17 @@ pub async fn serve_http(options: ServerOptions, http: HttpOptions) -> AResult<Ht
                 Ok(value)
             }
         })?;
-    // 007 launch-time admission (refused before serving) and the one-time
-    // open of every root; the owner-level shutdown token is the HTTP one.
-    let state = open_owner(options, http.shutdown.clone())?;
+    // Bind before starting an owned watcher/runtime. A bind failure must not
+    // leave background work retaining a store whose HTTP owner never started.
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", http.port))
         .await
         .map_err(|e| FoundryError::InvalidArgument(format!("bind 127.0.0.1:{}: {e}", http.port)))?;
     let address = listener
         .local_addr()
         .map_err(|e| FoundryError::Internal(e.into()))?;
+    // 007 launch-time admission (refused before serving) and the one-time
+    // open of every root; the owner-level shutdown token is the HTTP one.
+    let state = open_owner(options, http.shutdown.clone())?;
     let mut inner_manager = LocalSessionManager::default();
     // `SessionConfig` is #[non_exhaustive]: start from the SDK default and
     // pin only the documented fields.
@@ -3647,6 +4622,135 @@ fn admit_stdio_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn cli_slot_waits_for_provider_cleanup_on_success_and_error() {
+        use crate::neural::{provider, query::QueryRuntime};
+        use std::sync::mpsc;
+        struct Cleanup {
+            descriptor: provider::FunctionDescriptor,
+            entered: mpsc::Sender<()>,
+            release: mpsc::Receiver<()>,
+        }
+        impl provider::EmbeddingProvider for Cleanup {
+            fn descriptor(&self) -> &provider::FunctionDescriptor {
+                &self.descriptor
+            }
+            fn embed_documents(
+                &mut self,
+                _batch: &[provider::TokenizedInput],
+                _control: &Control,
+            ) -> Result<Vec<Vec<f32>>, provider::ProviderError> {
+                unreachable!("cleanup needs no inference")
+            }
+            fn embed_query(
+                &mut self,
+                _input: &provider::TokenizedInput,
+                _deadline: Instant,
+            ) -> Result<Vec<f32>, provider::ProviderError> {
+                unreachable!("cleanup needs no inference")
+            }
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                self.entered.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(10)).unwrap();
+            }
+        }
+        for fail in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = crate::testkit::write_semantic_profile(dir.path(), "cleanup", |_| {});
+            let profile = Arc::new(crate::neural::profile::SemanticProfile::load(&path).unwrap());
+            let (entered_tx, entered) = mpsc::channel();
+            let (release, release_rx) = mpsc::channel();
+            let provider = Cleanup {
+                descriptor: profile.descriptor.clone(),
+                entered: entered_tx,
+                release: release_rx,
+            };
+            let runtime = Arc::new(
+                QueryRuntime::start(profile, Box::new(move || Ok(Box::new(provider)))).unwrap(),
+            );
+            let (done_tx, done) = mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let result = (|| -> Result<(), ()> {
+                    let _slot = CliSemanticSlot(Some(Ok(runtime)));
+                    if fail {
+                        return Err(());
+                    }
+                    Ok(())
+                })();
+                done_tx.send(result).unwrap();
+            });
+            entered.recv_timeout(Duration::from_secs(10)).unwrap();
+            let before_cleanup = done.recv_timeout(Duration::from_millis(50));
+            release.send(()).unwrap();
+            assert_eq!(before_cleanup, Err(mpsc::RecvTimeoutError::Timeout));
+            assert_eq!(
+                done.recv_timeout(Duration::from_secs(10)).unwrap(),
+                if fail { Err(()) } else { Ok(()) }
+            );
+            worker.join().unwrap();
+        }
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn cli_semantic_startup_uses_request_anchor_scope_before_acquiring_a_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+        engine
+            .replace_source("names.rs", "fn Named() {}\nfn Go() {}\n")
+            .unwrap();
+        engine.refresh(&Control::unbounded()).unwrap();
+        let profile = crate::testkit::write_semantic_profile(dir.path(), "preflight", |_| {});
+        let acquisitions = Arc::new(AtomicUsize::new(0));
+        for (query, path, prose, skip) in [
+            ("call Named", None, false, true),
+            ("call `missing`", None, false, true),
+            ("convert a Go string", None, true, false),
+            ("convert a Go string", None, false, true),
+            ("latent conceptual behavior", None, true, false),
+            ("call Named", Some("elsewhere"), false, false),
+        ] {
+            let before = acquisitions.load(Ordering::SeqCst);
+            let calls = acquisitions.clone();
+            let launch = SemanticServing::with_provider(
+                profile.clone(),
+                Box::new(move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Err(crate::neural::provider::ProviderError::Busy)
+                }),
+            );
+            let slot = cli_semantic_slot(
+                Some(launch),
+                &engine,
+                query,
+                path,
+                prose,
+                &Control::unbounded(),
+            )
+            .unwrap();
+            assert_eq!(slot.is_none(), skip, "{query}, {path:?}, {prose}");
+            assert_eq!(
+                acquisitions.load(Ordering::SeqCst) - before,
+                usize::from(!skip)
+            );
+        }
+        let skipped = cli_semantic_slot(
+            Some(SemanticServing::new(dir.path().join("absent.json"), true)),
+            &engine,
+            "`Named`",
+            None,
+            false,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert!(skipped.is_none(), "an unused profile is not opened");
+    }
 
     fn request_message(id: i64) -> RxJsonRpcMessage<RoleServer> {
         serde_json::from_value(
@@ -3958,6 +5062,219 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn foreground_waits_for_a_watch_step_and_blocks_further_source_work() {
+        use crate::watch::Owner;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+        let shared = Arc::new(Shared::single_root(engine, root, BudgetConfig::default()));
+        let (reached_tx, reached_rx) = tokio::sync::oneshot::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn({
+            let shared = shared.clone();
+            move || {
+                let mut reached_tx = Some(reached_tx);
+                shared
+                    .try_watch_step(&mut |engine| {
+                        reached_tx.take().unwrap().send(()).unwrap();
+                        go_rx.recv_timeout(Duration::from_secs(30)).unwrap();
+                        engine.replace_source("a.rs", "fn watched() {}\n").unwrap();
+                    })
+                    .unwrap()
+            }
+        });
+        reached_rx.await.unwrap();
+        let foreground = tokio::spawn({
+            let shared = shared.clone();
+            async move {
+                run_engine_op(
+                    &shared,
+                    Instant::now() + READ_DEADLINE,
+                    None,
+                    None,
+                    |engines, _| Ok(engines[0].as_ref().unwrap().status()?.source_count),
+                )
+                .await
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while shared.in_flight_engine.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline);
+            tokio::task::yield_now().await;
+        }
+        assert!(!foreground.is_finished());
+        assert!(
+            !shared
+                .try_watch_step(&mut |_| panic!("foreground must have priority"))
+                .unwrap()
+        );
+        go_tx.send(()).unwrap();
+        assert_eq!(foreground.await.unwrap().unwrap(), 1);
+        assert!(worker.join().unwrap());
+        assert!(shared.try_watch_step(&mut |_| {}).unwrap());
+    }
+
+    fn watched_owner(dir: &Path) -> (Arc<Shared>, Arc<crate::watch::Watch>) {
+        let root = dir.join("root");
+        let store = dir.join("store");
+        std::fs::create_dir(&root).unwrap();
+        let engine = Engine::initialize(&store, &root).unwrap();
+        let watch = crate::watch::Watch::new(root.clone(), store);
+        let mut shared = Shared::single_root(engine, root, BudgetConfig::default());
+        shared.watch = Some(Arc::clone(&watch));
+        (Arc::new(shared), watch)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn foreground_release_wakes_an_already_waiting_watch() {
+        use crate::watch::Owner;
+        let dir = tempfile::tempdir().unwrap();
+        let (shared, watch) = watched_owner(dir.path());
+        let before = watch.status(0);
+        let generation = watch.foreground_generation();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let foreground = tokio::spawn({
+            let shared = Arc::clone(&shared);
+            async move {
+                run_engine_op(
+                    &shared,
+                    Instant::now() + READ_DEADLINE,
+                    None,
+                    None,
+                    move |_, _| {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv_timeout(Duration::from_secs(15)).unwrap();
+                        Ok(())
+                    },
+                )
+                .await
+            }
+        });
+        entered_rx.await.unwrap();
+        assert!(
+            !shared
+                .try_watch_step(&mut |_| panic!("foreground owns the slot"))
+                .unwrap()
+        );
+        let (armed_tx, armed_rx) = std::sync::mpsc::channel();
+        watch.observe_contention_wait(armed_tx);
+        let waiter = std::thread::spawn({
+            let watch = Arc::clone(&watch);
+            move || watch.wait_after_contention(generation, Duration::from_secs(15))
+        });
+        armed_rx.recv_timeout(Duration::from_secs(15)).unwrap();
+        release_tx.send(()).unwrap();
+        foreground.await.unwrap().unwrap();
+        assert!(
+            !waiter.join().unwrap(),
+            "release must notify, not consume the retry timeout"
+        );
+        assert_eq!(shared.in_flight_engine.load(Ordering::SeqCst), 0);
+        assert!(shared.try_watch_step(&mut |_| {}).unwrap());
+        assert_eq!(watch.status(0), before, "a release creates no source work");
+    }
+
+    #[tokio::test]
+    async fn foreground_release_before_watch_wait_is_not_lost_and_only_last_release_wakes() {
+        use crate::watch::Owner;
+        let dir = tempfile::tempdir().unwrap();
+        let (shared, watch) = watched_owner(dir.path());
+        let before = watch.status(0);
+        let generation = watch.foreground_generation();
+        let other = InFlightEngine::new(Arc::clone(&shared));
+        assert!(
+            !shared
+                .try_watch_step(&mut |_| panic!("foreground is in flight"))
+                .unwrap()
+        );
+        let result: Result<(), OpError> = run_engine_op(
+            &shared,
+            Instant::now() + READ_DEADLINE,
+            None,
+            None,
+            |_, _| {
+                Err(FoundryError::InvalidArgument(
+                    "expected fixture error".into(),
+                ))
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(OpError::Core(FoundryError::InvalidArgument(_)))
+        ));
+        assert_eq!(shared.in_flight_engine.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            watch.foreground_generation(),
+            generation,
+            "another operation still owns priority"
+        );
+        assert!(
+            !shared
+                .try_watch_step(&mut |_| panic!("last foreground has not released"))
+                .unwrap()
+        );
+        drop(other);
+        assert_eq!(shared.in_flight_engine.load(Ordering::SeqCst), 0);
+        assert_ne!(watch.foreground_generation(), generation);
+        assert!(
+            !watch.wait_after_contention(generation, Duration::from_secs(15)),
+            "release before the wait must bypass sleeping"
+        );
+        assert!(shared.try_watch_step(&mut |_| {}).unwrap());
+        assert_eq!(
+            watch.status(0),
+            before,
+            "release does not enqueue a reconciliation"
+        );
+    }
+
+    #[tokio::test]
+    async fn foreground_unwind_releases_accounting_and_shutdown_never_resumes_watch() {
+        use crate::watch::Owner;
+        let dir = tempfile::tempdir().unwrap();
+        let (shared, watch) = watched_owner(dir.path());
+        let generation = watch.foreground_generation();
+        let result: Result<(), OpError> = run_engine_op(
+            &shared,
+            Instant::now() + READ_DEADLINE,
+            None,
+            None,
+            |_, _| panic!("expected engine-call unwind"),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(OpError::Core(FoundryError::Internal(_)))
+        ));
+        assert_eq!(shared.in_flight_engine.load(Ordering::SeqCst), 0);
+        assert_ne!(watch.foreground_generation(), generation);
+        assert_eq!(shared.slot_holder.load(Ordering::SeqCst), SLOT_FREE);
+
+        // Use a separate owner because the panic correctly poisoned the first
+        // engine mutex; shutdown must refuse even an otherwise healthy slot.
+        let closing_dir = tempfile::tempdir().unwrap();
+        let (closing, watch) = watched_owner(closing_dir.path());
+        let generation = watch.foreground_generation();
+        let operation = InFlightEngine::new(Arc::clone(&closing));
+        closing.shutdown.cancel();
+        drop(operation);
+        assert_eq!(closing.in_flight_engine.load(Ordering::SeqCst), 0);
+        assert_eq!(watch.foreground_generation(), generation);
+        assert!(
+            !closing
+                .try_watch_step(&mut |_| panic!("closed owner must not resume"))
+                .unwrap()
+        );
+        watch.cancel();
+        watch.foreground_released();
+        assert_eq!(watch.foreground_generation(), generation);
+        assert!(!watch.wait_after_contention(generation, Duration::from_secs(15)));
+    }
+
     /// Concurrent same-session reservations released together never reserve
     /// more than the allowance: each takes the minimum of its request and
     /// what remains in ONE critical section, the call that meets the
@@ -4093,6 +5410,137 @@ mod tests {
         );
         assert_eq!(cache_rows, 8, "{state:?}");
         assert_eq!(state.cache_cap_bytes, Some(8 * row), "{state:?}");
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn knowledge_and_semantic_maintenance_share_admission_without_losing_embedding_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        gate.open();
+        let shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let permit = crate::knowledge::maintenance::Owner::try_model(&*shared)
+            .unwrap()
+            .unwrap();
+        start_preparation(&shared).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            gate.entered(),
+            0,
+            "embedding must wait for generation admission"
+        );
+        assert!(
+            !shared.preparation.idle(),
+            "contention must retain the active embedding run"
+        );
+        drop(permit);
+        wait_idle(&shared);
+        let (state, rows) = stopped_state(&shared);
+        assert!(state.last_error.is_none(), "{state:?}");
+        assert_eq!(rows, 12);
+        shared.in_flight_engine.store(1, Ordering::SeqCst);
+        assert!(
+            crate::knowledge::maintenance::Owner::try_model(&*shared)
+                .unwrap()
+                .is_none()
+        );
+        shared.in_flight_engine.store(0, Ordering::SeqCst);
+        drop(
+            crate::knowledge::maintenance::Owner::try_model(&*shared)
+                .unwrap()
+                .unwrap(),
+        );
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn model_memory_reservation_precedes_embedding_load_and_lasts_through_provider_shutdown() {
+        use crate::model_resources::{Config, Lane, Resources};
+        let dir = tempfile::tempdir().unwrap();
+        let profile = crate::testkit::write_semantic_profile(dir.path(), "memory", |_| {});
+        let parsed = crate::neural::profile::SemanticProfile::load(&profile).unwrap();
+        let ceiling = parsed.memory_ceiling_bytes;
+        let memory = Arc::new(std::sync::atomic::AtomicU64::new(ceiling * 4));
+        let config = Config {
+            resident_bytes: ceiling,
+            reserve_bytes: 1,
+            resume_margin_bytes: 1,
+            background_cpu: None,
+        };
+        let resources = Resources::fixture(config, memory);
+        let held = resources.reserve(Lane::Generation, 1).unwrap();
+        let refused = semantic_slot_reserved(
+            Some(SemanticServing::with_provider(
+                profile.clone(),
+                Box::new(|| panic!("over-budget load must never start")),
+            )),
+            Some(&resources),
+        )
+        .unwrap();
+        assert!(matches!(refused, Some(Err(reason)) if reason == "fallback:model_memory_budget"));
+        drop(held);
+        let gate = Gate::default();
+        gate.open();
+        let slot = semantic_slot_reserved(
+            Some(SemanticServing::with_provider(
+                profile,
+                gate.maker(parsed.descriptor),
+            )),
+            Some(&resources),
+        )
+        .unwrap();
+        let Some(Ok(runtime)) = slot else {
+            panic!("admitted profile must start");
+        };
+        assert_eq!(resources.status()["reserved_semantic_bytes"], ceiling);
+        assert!(resources.reserve(Lane::Generation, 1).is_err());
+        runtime.shutdown();
+        assert!(gate.dropped());
+        assert_eq!(resources.status()["reserved_semantic_bytes"], 0);
+    }
+
+    #[cfg(all(feature = "semantic", feature = "test-faults"))]
+    #[test]
+    fn model_memory_pressure_defers_semantic_batches_but_serves_queries_and_resumes() {
+        use crate::model_resources::{Config, Resources};
+        let dir = tempfile::tempdir().unwrap();
+        let gate = Gate::default();
+        gate.open();
+        let mut shared = semantic_owner(dir.path(), |descriptor| gate.maker(descriptor));
+        let memory = Arc::new(std::sync::atomic::AtomicU64::new(99));
+        let resources = Resources::fixture(
+            Config {
+                resident_bytes: 1000,
+                reserve_bytes: 100,
+                resume_margin_bytes: 50,
+                background_cpu: None,
+            },
+            memory.clone(),
+        );
+        Arc::get_mut(&mut shared).unwrap().model_resources = Some(resources.clone());
+        start_preparation(&shared).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while resources.status()["reason"] != "model_memory_pressure" {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(gate.entered(), 0);
+        assert!(!shared.preparation.idle());
+        let runtime = shared.semantic.as_ref().unwrap().as_ref().unwrap();
+        assert!(
+            runtime
+                .embed("note", Instant::now() + Duration::from_secs(2))
+                .is_ok()
+        );
+        memory.store(149, Ordering::SeqCst);
+        resources.refresh();
+        assert!(crate::neural::driver::Owner::try_model(&*shared).is_none());
+        memory.store(150, Ordering::SeqCst);
+        resources.refresh();
+        wait_idle(&shared);
+        let (state, rows) = stopped_state(&shared);
+        assert!(state.last_error.is_none(), "{state:?}");
+        assert_eq!(rows, 12);
     }
 
     /// `index {semantic: "prepare"}` on the in-crate owner.
@@ -5014,10 +6462,16 @@ mod tests {
             let (input, output) = tokio::io::split(server_io);
             let server = tokio::spawn(serve_streams(
                 ServerOptions {
+                    model_resources: None,
+                    knowledge: None,
+                    retrieval_trace_dir: None,
+                    experimental_behavior_context: false,
                     store,
                     root,
                     references: Vec::new(),
                     no_memory: false,
+                    experimental_task_context: false,
+                    watch: false,
                     semantic: Some(semantic),
                     policy: None,
                     budget: BudgetConfig::default(),

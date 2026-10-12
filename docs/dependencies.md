@@ -10,7 +10,11 @@ The existing rows retain the `cargo metadata --locked` inventory from 2026-10-01
 The handed-off metadata inventory reports 13 added packages; no Cargo command,
 fetch or build was run for this documentation update.
 "dev" packages build tests only and are not linked into the shipped binary; rmcp and
-tokio add client/process features only for tests.
+tokio add client/process features only for tests. On 2026-10-12 the Dependabot
+updates #10, #8 and #7 were applied on the experimental line: libc, rmcp, tokio, uuid
+and the `toml` dev dependency (0.8 to 1.1) moved, plus hyper, usearch and want
+transitively. The declared licenses are unchanged. `sha2` stays at 0.10: 0.11
+changes the digest output type, which this crate formats with `{:x}` in 18 places.
 
 | Package | Locked version | Declared license | Use |
 | --- | --- | --- | --- |
@@ -20,16 +24,17 @@ tokio add client/process features only for tests.
 | futures-util | 0.3.34 | MIT OR Apache-2.0 | normal |
 | http | 1.5.0 | MIT OR Apache-2.0 | normal |
 | ignore | 0.4.33 | Unlicense OR MIT | normal |
-| libc | 0.2.189 | MIT OR Apache-2.0 | normal (held-root opens) |
+| imbl | 7.0.2 | MPL-2.0+ | normal (009 T008 persistent location snapshots; unmodified) |
+| libc | 0.2.190 | MIT OR Apache-2.0 | normal (held-root opens) |
 | pulldown-cmark | 0.13.4 | MIT | normal (Markdown sections; default features off) |
 | redb | 4.3.0 | MIT OR Apache-2.0 | normal |
-| rmcp | 3.5.0 | Apache-2.0 | normal (server, stdio, streamable HTTP server); dev adds client |
+| rmcp | 3.5.1 | Apache-2.0 | normal (server, stdio, streamable HTTP server); dev adds client |
 | serde | 1.0.229 | MIT OR Apache-2.0 | normal |
 | serde_json | 1.0.151 | MIT OR Apache-2.0 | normal |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | normal |
 | tantivy | 0.26.2 | MIT | normal |
 | tiktoken-rs | 0.12.1 | MIT | normal |
-| tokio | 1.53.1 | MIT | normal; dev adds process |
+| tokio | 1.53.2 | MIT | normal; dev adds process |
 | tokio-util | 0.7.19 | MIT | normal |
 | tree-sitter | 0.25.10 | MIT | normal (syntax runtime; third-party C) |
 | tree-sitter-c | 0.24.2 | MIT | normal (C grammar) |
@@ -41,10 +46,10 @@ tokio add client/process features only for tests.
 | tree-sitter-rust | 0.24.2 | MIT | normal (Rust grammar) |
 | tree-sitter-typescript | 0.23.2 | MIT | normal (TypeScript/TSX grammars) |
 | ureq | 3.4.2 | MIT OR Apache-2.0 | normal (legacy Laya protocol module) |
-| uuid | 1.26.1 | Apache-2.0 OR MIT | normal |
+| uuid | 1.27.0 | Apache-2.0 OR MIT | normal |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | dev |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | dev |
-| toml | 0.8.23 | MIT OR Apache-2.0 | dev |
+| toml | 1.1.8 | MIT OR Apache-2.0 | dev |
 
 ## Transitive additions for T005
 
@@ -114,7 +119,7 @@ The optional `embed-worker` feature (default off) builds `foundry-embed` on llam
 of its own at that commit). `build.rs` builds it from the pinned commit's tree with
 CMake and links it statically, with Apple's Metal, Accelerate and Foundation
 frameworks; packaging takes the license from the worker (`foundry-embed --notices`).
-The feature adds one optional build dependency, `bindgen` 0.72 (BSD-3-Clause), for the
+The feature adds one optional build dependency, `bindgen` 0.73 (BSD-3-Clause), for the
 C bindings; default and Rust 1.90 builds do not compile it. PyO3 and the MLX runtime
 closure are no longer product dependencies.
 
@@ -127,8 +132,8 @@ remains a separately licensed research reference. The product Cargo graph exclud
 LibTorch from default-feature builds. Its optional `learning-worker` and the separate
 [probe crate](../tools/feasibility/README.md) now pin experimental tch 0.26.0 with
 LibTorch 2.13.0; see the [compatibility review](review/tch-026.md).
-The probe also pins PyO3 0.29.2 and USearch 2.26.2 (plus the rmcp 3.5.0 version the
-product now uses); its lock is not the product lock. Contract 013 v4's accepted
+The probe also pins PyO3 0.29.2, USearch 2.26.2 and rmcp 3.5.0 (the product has
+since moved to rmcp 3.5.1 and USearch 2.26.4); its lock is not the product lock. Contract 013 v4's accepted
 baseline was tch 0.24.0/LibTorch 2.11.0; that acceptance does not transfer to this
 migration. USearch has a third-party native C++ core;
 this does not introduce first-party C++ code. Libkrun remains conditional.
@@ -141,3 +146,12 @@ above. It forwards and meters only; no provider token-counting implementation ex
 which is why `enforce` mode stays refused.
 
 Use `cargo metadata --locked` for the full transitive graph. `Cargo.lock` pins it.
+
+009 T008 pins `imbl` 7.0.2 for structurally shared ordered maps. The locked release
+requires Rust 1.85 and is built here with Rust 1.90. It adds `archery` 1.2.3,
+`imbl-sized-chunks` 0.2.0, `rand_xoshiro` 0.7.0, `bytemuck` 1.25.2,
+`safe_arch` 0.7.4 and `wide` 0.7.33. Source/design references and intentional differences
+are retained in [009 T008](../specs/009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work).
+The MPL license/notice and source-availability obligations apply to that upstream
+package when distributing; Foundry's own code remains MIT. No upstream source is
+modified or vendored.

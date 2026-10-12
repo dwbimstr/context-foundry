@@ -27,6 +27,8 @@ macro_rules! fault {
 pub mod adapter_cli;
 pub mod adapter_error;
 pub mod bootstrap;
+pub mod boundary;
+pub mod brief;
 pub mod cli;
 pub mod config;
 pub mod control;
@@ -40,20 +42,27 @@ pub mod gateway;
 pub mod gateway_launch;
 pub mod graph;
 pub mod ingest;
+pub mod knowledge;
 pub mod learning;
 pub mod mcp;
 pub mod memory;
+pub mod model_resources;
 pub mod neural;
 pub mod policy;
 pub mod receipts;
 pub mod response;
+pub mod retrieval_trace;
 pub mod roots;
 pub mod scip;
 pub mod store;
 pub mod syntax;
+pub mod task_context;
+pub mod task_evidence;
+pub mod task_host;
 #[cfg(feature = "test-faults")]
 pub mod testkit;
 pub mod usage;
+mod watch;
 
 pub use control::Control;
 pub use error::{FResult, FoundryError, PartialIndexCounts};

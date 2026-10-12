@@ -4309,3 +4309,132 @@ macro_rules! auto {
     );
     assert_tiles(source, Some(Lang::Rust));
 }
+
+#[test]
+fn call_postings_share_index_parse_and_exclude_mentions_and_arbitrary_macro_dsl() {
+    for (path, body) in [
+        (
+            "lib.rs",
+            "fn caller() { target_call(); target_call(); let value = mention_only; sink(value); let s = \"string_only()\"; dsl!(macro_only()); assert_eq!(assertion_call(), 1); }\n",
+        ),
+        (
+            "lib.py",
+            "def caller():\n    pkg.target_call()\n    pkg.target_call()\n    value = mention_only\n    sink(value)\n    s = 'string_only()'\n",
+        ),
+        (
+            "lib.ts",
+            "function caller() { pkg.target_call(); pkg.target_call(); const value = mention_only; sink(value); const s = 'string_only()'; }\n",
+        ),
+        (
+            "lib.go",
+            "package lib\nfunc caller() { pkg.target_call(); pkg.target_call(); value := mention_only; sink(value) }\n",
+        ),
+    ] {
+        let indexed = context_foundry::syntax::index(body, Lang::from_path(path)).unwrap();
+        assert_eq!(indexed.call_coverage, "complete", "{path}");
+        assert_eq!(
+            indexed
+                .call_names
+                .iter()
+                .filter(|n| *n == "target_call")
+                .count(),
+            1
+        );
+        assert!(indexed.call_names.iter().any(|n| n == "sink"));
+        for excluded in ["caller", "mention_only", "string_only", "macro_only"] {
+            assert!(
+                !indexed.call_names.iter().any(|n| n == excluded),
+                "{path}: {excluded}"
+            );
+        }
+        if path.ends_with("rs") {
+            assert!(indexed.call_names.iter().any(|n| n == "assertion_call"));
+        }
+    }
+    assert_eq!(
+        context_foundry::syntax::index("void call() { other(); }", Some(Lang::C))
+            .unwrap()
+            .call_coverage,
+        "unsupported"
+    );
+    let broken = context_foundry::syntax::index("fn (}", Some(Lang::Rust)).unwrap();
+    assert_eq!(broken.call_coverage, "incomplete");
+    assert!(broken.call_names.is_empty());
+    let big = format!(
+        "fn caller() {{\n{}\n}}",
+        (0..4097)
+            .map(|i| format!("unique_{i}();"))
+            .collect::<String>()
+    );
+    let capped = context_foundry::syntax::index(&big, Some(Lang::Rust)).unwrap();
+    assert_eq!(capped.call_names.len(), 4096);
+    assert_eq!(capped.call_coverage, "incomplete");
+}
+
+#[test]
+fn python_explicit_import_alias_postings_require_an_unshadowed_bare_call() {
+    let positive = "from service import refund as credit\ndef customer():\n    return credit(4)\n";
+    let indexed = context_foundry::syntax::index(positive, Some(Lang::Python)).unwrap();
+    assert_eq!(indexed.call_names, ["credit", "refund"]);
+    assert_eq!(indexed.imports, ["credit"]);
+    assert_eq!(indexed.call_coverage, "complete");
+    let module = context_foundry::syntax::index(
+        "from service import refund as credit; credit(4)\n",
+        Some(Lang::Python),
+    )
+    .unwrap();
+    assert!(module.call_names.iter().any(|n| n == "refund"));
+    for suffix in [
+        "credit = replacement\ncredit(4)\n",
+        "ｃｒｅｄｉｔ = replacement\ncredit(4)\n",
+        "credit(4)\ncredit = replacement\n",
+        "def customer(credit):\n    credit(4)\n",
+        "from other import debit as credit\ncredit(4)\n",
+        "def customer():\n    from other import debit as credit\n    credit(4)\n",
+        "for credit in functions:\n    credit(4)\n",
+        "[credit(4) for credit in functions]\n",
+        "with manager() as credit:\n    credit(4)\n",
+        "try:\n    credit(4)\nexcept Error as credit:\n    pass\n",
+        "match value:\n    case credit:\n        credit(4)\n",
+        "(credit := replacement)\ncredit(4)\n",
+        "del credit\ncredit(4)\n",
+        "from other import *\ncredit(4)\n",
+        "obj.credit(4)\n",
+        "value = credit\ncredit(4)\n",
+        "# credit(4)\nvalue = 'credit(4)'\n",
+    ] {
+        let body = format!("from service import refund as credit\n{suffix}");
+        let indexed = context_foundry::syntax::index(&body, Some(Lang::Python)).unwrap();
+        assert!(
+            !indexed.call_names.iter().any(|n| n == "refund"),
+            "{suffix}"
+        );
+    }
+    for body in [
+        "credit = replacement\nfrom service import refund as credit\ncredit(4)\n",
+        "credit(4)\nfrom service import refund as credit\n",
+        "def customer():\n    from service import refund as credit\n    credit(4)\n",
+        "from service import refund as credit\nfrom service import refund as credit\ncredit(4)\n",
+    ] {
+        let indexed = context_foundry::syntax::index(body, Some(Lang::Python)).unwrap();
+        assert!(indexed.call_names.iter().any(|n| n == "credit"));
+        assert!(!indexed.call_names.iter().any(|n| n == "refund"), "{body}");
+    }
+    let overflow = format!(
+        "from service import refund as credit\ncredit(4)\n{}",
+        (0..4097)
+            .map(|i| format!("value_{i} = 0\n"))
+            .collect::<String>()
+    );
+    let indexed = context_foundry::syntax::index(&overflow, Some(Lang::Python)).unwrap();
+    assert_eq!(indexed.call_coverage, "incomplete");
+    assert!(indexed.call_names.iter().any(|n| n == "credit"));
+    assert!(!indexed.call_names.iter().any(|n| n == "refund"));
+    let repeated = format!(
+        "{}credit(4)\n",
+        "from service import refund as credit\n".repeat(129)
+    );
+    let indexed = context_foundry::syntax::index(&repeated, Some(Lang::Python)).unwrap();
+    assert_eq!(indexed.call_coverage, "incomplete");
+    assert!(!indexed.call_names.iter().any(|n| n == "refund"));
+}

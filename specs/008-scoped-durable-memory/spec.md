@@ -61,7 +61,8 @@ Implementation decisions (2026-10-04, captain, after cross-lab review):
 Remember a project decision, retrieve it with attribution, correct it without losing
 another edit, export it and forget it. Source re-indexing and model failure cannot
 rewrite or delete it. No automatic transcripts, reflection, consolidation, decay or
-model-written records; no model reads or writes this table.
+autonomous model writes. Explicit task-decision promotion and tracked-copy forgetting
+are authorized by T004 below; model workers do not read or write this table.
 
 - **FR-001 / SC-001:** Create/update/read semantics and revision checks below survive
   restart and response retry. Conflicts and contradictory input do not mutate records.
@@ -217,3 +218,179 @@ writing with export instructions. No predecessor knowledge migration is included
 SC-001–SC-004 were verified on 2026-10-04 by the T001/T002 functional tests in
 `tests/memory.rs` and the cutover tests ([validation](../../docs/validation.md)). The
 limits are input contracts, not memory throughput or outcome-improvement measurements.
+
+### T003 — Experimental task state and recoverable working context
+
+Status: implemented locally on the experimental branch; sandbox validation recorded
+in [validation](../../docs/validation.md). The later T003 continuation verifies one explicit OMP application boundary; broader
+real-host interventions remain unexecuted.
+
+Authorized 2026-10-09: build and test on an experimental branch without waiting for
+external measurements. This amendment allows **explicit caller-written task records**;
+the project-memory table retains its existing contract. No automatic transcript
+capture, model certification, training, background worker or implicit root admission.
+
+Present failure: a compacted tool observation, rejected attempt or user constraint
+cannot currently be recovered after restart. Ordinary notes can retain text, but
+cannot atomically compare revisions, preserve original observations and restore a
+view together. Add one `task_context` table to the existing redb owner, with bounded
+JSON records containing immutable entries and editable views. One never-reset task
+revision counter prevents stale writes after forget/recreation. Schema 7 creates
+both atomically; upgrades are explicit and older binaries must refuse this store.
+This adds one migration and one record validator, without another index or queue.
+
+- `task-context` CLI accepts one JSON request on stdin. An optional MCP tool uses
+  the same engine operations; it is omitted unless explicitly enabled at launch.
+  Every request names `workspace_id` and `task_id`; the primary root owns the record.
+- `create` names a title. `apply` names `expected_revision` and a bounded sequence of
+  edits, all validated and committed together. `inspect` returns metadata and view;
+  `peek` returns a byte-bounded UTF-8 page of one exact original observation with
+  payload digest, offset and next offset. `render` returns the selected working view
+  within a complete serialized **byte** budget, or refuses without truncating protected
+  entries. It does not claim a provider token allowance or conversation replacement.
+- Entry kinds distinguish requirement, constraint, observation, hypothesis, decision,
+  rejected attempt, question, work and artifact. Author/provenance and optional exact
+  source handles accompany each entry. Entries are immutable; a new entry may
+  explicitly supersede an earlier one. Conflicting claims otherwise coexist.
+  Source links validate inside commit and report current indexed freshness on reads.
+- Edits add, select, pin, fold, expand, checkpoint and restore. Requirements and
+  constraints stay selected, pinned and expanded. A folded summary is explicitly a
+  caller claim; original bytes remain retrievable. Restoring a view never undoes tool
+  side effects, deletes later evidence, or revives superseded constraints.
+- Limits: 128 entries, 256 KiB text per entry, 2 MiB serialized task, 32 edits per
+  request, 16 named checkpoints, 128 live tasks, 1 MiB request and 64 KiB peek page.
+  Protected text has a 16 KiB entry limit. No automatic expiry; explicit forget removes
+  the record, all originals, summaries and checkpoints in one transaction. Old exports,
+  backups and host/provider copies remain outside logical deletion.
+- `export` returns one exact bounded task record. Task entries never enter source
+  search, project-memory search, feedback or training. No implicit promotion.
+- Verification: CLI and enabled MCP parity; restart with exact observation recovery;
+  failed multi-edit rollback, concurrent revision conflicts, protected-entry refusal,
+  UTF-8 paging, byte budget, source staleness, supersession/restore, export/forget,
+  revision nonreuse, schema preservation and pre/post commit fault recovery.
+
+Host application and quality/economics measurements remain pending acceptance
+evidence, not blockers to this sandbox implementation. 003 owns the delivery boundary.
+
+### T004 — Experimental grounded reminders and explicit promotion
+
+Status: exact-action and grounded path/finishing reminders are implemented locally on
+the experimental branch; semantic triggers and measured agent outcomes remain pending.
+
+Build the next stages in the same task record, with no model or background loop.
+`advise {action_key,max_bytes}` returns only active rejected attempts whose optional
+caller-supplied `action_key` exactly matches the proposed action. The key must include
+relevant tool, arguments and environment version; Foundry does not infer semantic
+equivalence or unchanged conditions. Advice carries the entry ID, payload hash and
+attribution. Unmatched, dismissed or oversized advice produces explicit silence.
+`dismiss {entry_id}` is a CAS edit acknowledging a reminder; dismissal survives restart
+and restoring a view. Read-only advice does not pretend the host consumed it. A caller
+that needs reminders again records a new failed attempt with a new identity.
+
+`promote {expected_revision,entry_id,memory_id,author,provenance}` explicitly copies
+one active decision into 008 project memory. It revalidates links, uses memory's field
+limits and commits the record, index replay key, task lineage and both revisions in
+one transaction. An existing memory ID conflicts. Attribution names the task, entry
+and original digest; the result is a caller claim, never verified success or training
+consent. At most one promotion per decision, at most 128 tracked copies per task.
+A task never reassigns a memory ID already present in its promotion lineage.
+
+Task forget atomically removes its originals, views, checkpoints and unchanged live
+promoted copies, queuing ordinary index deletions. A promoted record subsequently
+edited or recreated through `memory` makes task forget **refuse** without changing
+anything; explicitly resolve/forget that memory record first. A task decision cannot
+be superseded while its promoted copy remains live: explicitly correct/forget the
+project record first. These restrictions prevent silently leaving a stale derivative
+or deleting a separately edited record. Export includes promotion identities/revisions;
+project-memory export provides the exact promoted records. Logical deletion cannot
+erase prior exports, backups or host/provider copies.
+
+Tests must exercise silence, exact-match advice, persistent dismissal, promotion and
+indexed retrieval, revision collision, stale source refusal, correction/forget
+conflicts, and abrupt exit before/after promotion commit. Broader contradiction or
+constraint-violation detection and real-host benefit remain pending experiments.
+
+
+T004 grounded review continuation (2026-10-10): read-only
+`review {expected_revision,paths,finishing,max_bytes}` checks up to sixteen explicit
+paths against fresh links on active selected constraints/rejected attempts. Finishing
+also selects requirements, constraints, work and questions. It delivers at most eight
+complete attributed originals, with explicit silence, omitted/stale counts and
+`verified:false`. It does not infer an actual conflict, repeated action equivalence,
+completion or host consumption. Exact-action `advise` remains available.
+
+This uses the existing task record and source snapshot, without a new field/table,
+background loop or model call. Revision mismatches refuse. Existing rejection dismissal
+persists through restart/restore; work/question selection controls their review presence,
+and view restoration may select them again. Protected task entries cannot be hidden.
+Focused tests cover relevance, silence, stale sources, bounds, revision/path refusal
+and CLI restart behavior. Measured unnecessary interventions and verified host outcomes
+remain pending; source-linked reminders are not semantic contradiction reasoning.
+
+
+### T005 — Recover evidence by content and compose task-aware retrieval
+
+Status: implemented locally in the experimental branch. Sandbox verification and
+remaining host-outcome limits are recorded in [validation](../../docs/validation.md#task-aware-retrieval-and-recovery-search--2026-10-09).
+
+Authorized continuation on the experimental branch: connect retained task state to
+source retrieval. Current failure: `peek` needs a remembered entry ID, and separate
+`render` and `context` calls have independent snapshots and budgets. Add read-only
+search over one bounded task and select its view inside source retrieval's final
+read transaction. Reuse the existing table, revision, tokenizer and packing ladder;
+no new schema, index, worker or background capture. A separate task index would add
+replay and deletion machinery for at most 128 entries / 2 MiB per task.
+
+- `task-context` command `search` takes `expected_revision`, `query` (1..256 nonblank
+  bytes), `limit` (1..32), `max_bytes` (512..65536), optional `after_id` and
+  `include_history` (default false). It searches original text, including folded and
+  deselected entries. Matching is literal UTF-8 with ASCII case folding; it does not
+  infer semantic equivalence. Sort by entry ID, return one first-match excerpt per
+  entry with original byte offsets/digest, attribution and source-link freshness.
+  A cursor is valid only against the same requested task revision; active entries
+  are the default. Byte-limited pages identify continuation or refuse if no hit fits.
+- Source `context` optionally names a task ID and expected revision together. The
+  task belongs to the primary store. Task revision, immutable entry bytes, current
+  view, supersession and source-link statuses validate in the **same final read** as
+  that root's source/graph/project-memory evidence. Missing/forgotten/stale-revision
+  task state fails the request rather than silently dropping its constraints.
+- Every selected active entry is mandatory, with its current original/summary
+  representation and attribution. Requirements and constraints remain expanded.
+  A `task-view:` JSON line carries the view plus its SHA-256; the hash binds the exact
+  canonical serialized view, including freshness. It identifies delivered content,
+  not host consumption or verified truth. No stored state is edited by retrieval.
+- The ordinary source ladder consumes the remaining shared token/byte allowance.
+  Every packing trial counts the task line too. Source items may be omitted visibly;
+  task entries cannot be silently omitted or newly folded. A view too large to fit
+  requires an explicit fold/selection edit. Optional project memory retains normal
+  source-first packing after the mandatory task view.
+- Multi-root queries retain per-root snapshots; only the primary task state is
+  included, once. Selecting a task requires the primary to be selected and serving.
+  Reference-root text is never interpreted as primary task state. No global snapshot
+  or cross-root admission is implied.
+- Verify folded/deselected observation discovery and UTF-8 exact recovery after
+  restart; pagination/conflicts/forget; final-read task change and source staleness;
+  protected entries and exact token/serialized-byte caps under anchored, unanchored
+  and multi-root retrieval. Keep default source-context responses byte-identical.
+
+#### T003 exported host application continuation — 2026-10-10
+
+Implement an explicit frozen `export_host` packet from one revision's complete
+selected view, binding one selected folded observation to its original hash and
+host tool_call_id. Protected entries retain the existing mandatory-original rules.
+The existing Rust gateway applies it under the [adapter contract](../003-agent-retrieval-context/contracts/adapter-economics.md#experimental-exported-task-view-application--2026-10-10).
+This avoids a new host extension runtime or store-owning service. Retained originals
+support expand/re-export/restart; packets and host history remain caller-owned and
+must be deleted separately after forgetting a task. Ordinary MCP application remains
+unknown. The following continuation implements live synchronization; broader
+host-region selection remains pending.
+
+### Live host continuation — 2026-10-10
+
+003's [live synchronization contract](../003-agent-retrieval-context/contracts/adapter-economics.md#live-owner-synchronization--2026-10-10)
+now consumes this owner's existing atomic `render` read over authenticated loopback MCP.
+Task edits require no file projection or second store owner. The gateway pins an
+explicit exported binding, resolves the current selected view for each request and
+refuses a revoked/unavailable binding. Folding stays caller-authored, original history
+stays recoverable, and a concurrent edit after resolution is outside that snapshot.
+Multiple host regions, automatic selection and real-provider task outcomes remain open.

@@ -271,6 +271,8 @@ impl RootHeader {
 
 /// Header facts that do not depend on packing; `line` adds the budget and counts.
 struct HeaderV2<'a> {
+    /// Mandatory experimental task-view line, counted in every packing trial.
+    task_view: Option<&'a str>,
     op: &'static str,
     /// The per-root segments of a multi-root owner (007). When present they
     /// replace the single-root `r<rev>`/`scan:`/`pending:` segments; each
@@ -305,6 +307,21 @@ struct HeaderV2<'a> {
 }
 
 impl HeaderV2<'_> {
+    fn check_task_capacity(
+        &self,
+        omitted: usize,
+        limited_by: BudgetLimiter,
+        boundary: ByteMeasure,
+    ) -> FResult<()> {
+        if self.task_view.is_some() {
+            let minimum = self.line(MAX_BUDGET_TOKENS, limited_by, 0, omitted);
+            if boundary(&minimum) > BYTE_CAP || count_tokens(&minimum) > MAX_BUDGET_TOKENS {
+                return Err(FoundryError::UnsupportedMode("selected task view and context header exceed delivery capacity; explicitly fold or deselect entries".into()));
+            }
+        }
+        Ok(())
+    }
+
     /// Segments in contract order joined by ` · `; optional segments appear
     /// only when not at their default.
     fn line(
@@ -368,6 +385,9 @@ impl HeaderV2<'_> {
         }
         let mut line = segments.join(" · ");
         line.push('\n');
+        if let Some(task) = self.task_view {
+            line.push_str(task);
+        }
         line
     }
 }
@@ -574,6 +594,7 @@ fn refusal_floor_impl(
 ) -> usize {
     let longest = u64::MAX;
     let header = HeaderV2 {
+        task_view: None,
         op,
         roots,
         revision: longest,
@@ -624,12 +645,13 @@ fn refusal_floor_impl(
 /// priority — counted in `shown` but never in `omitted`.
 fn pack(
     items: &[Vec<String>],
-    tail: &[String],
+    tail: (&[String], &[(usize, usize)]),
     header: &HeaderV2,
     budget: Budget,
     byte_cap: usize,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    let (tail, required) = tail;
     let render = |included: &[(usize, usize)],
                   tail_kept: &[usize],
                   omitted: usize,
@@ -650,6 +672,7 @@ fn pack(
         text
     };
     let fits = |text: &str| boundary(text) <= byte_cap && count_tokens(text) <= budget.tokens;
+    header.check_task_capacity(items.len(), budget.limited_by, boundary)?;
     let mut included: Vec<(usize, usize)> = Vec::new();
     let mut omitted = 0usize;
     for (index, forms) in items.iter().enumerate() {
@@ -699,6 +722,11 @@ fn pack(
     // a time; a line that does not fit is skipped, never traded for a source
     // item and never counted as omitted.
     for index in 0..tail.len() {
+        if required.iter().any(|&(tail_index, source_index)| {
+            tail_index == index && !included.iter().any(|&(i, _)| i == source_index)
+        }) {
+            continue;
+        }
         if !tail_kept.contains(&index) {
             let mut trial = tail_kept.clone();
             trial.push(index);
@@ -762,6 +790,7 @@ fn pack_retrieve_impl(
         .map_err(|e| FoundryError::Internal(anyhow::anyhow!("span is not UTF-8: {e}")))?;
     let f = &out.freshness;
     let header = HeaderV2 {
+        task_view: None,
         op: "retrieve",
         roots,
         revision: f.source_revision,
@@ -851,6 +880,7 @@ fn pack_retrieve_outline_impl(
 ) -> FResult<PackedText> {
     let f = &out.freshness;
     let header = HeaderV2 {
+        task_view: None,
         op: "retrieve",
         roots,
         revision: f.source_revision,
@@ -935,7 +965,7 @@ pub fn pack_context(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_impl(batch, None, &[], budget, boundary)
+    pack_context_impl(batch, None, &[], None, budget, boundary)
 }
 
 /// [`pack_context`] with 008 memory included: after the ladder places the
@@ -949,7 +979,7 @@ pub fn pack_context_with_memory(
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
     let tail: Vec<String> = hits.iter().map(memory_line).collect();
-    pack_context_impl(batch, None, &tail, budget, boundary)
+    pack_context_impl(batch, None, &tail, None, budget, boundary)
 }
 
 /// The multi-root form of [`pack_context`]: the batch is the 007 merge of
@@ -962,7 +992,7 @@ pub fn pack_context_roots(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_impl(batch, Some(roots), &[], budget, boundary)
+    pack_context_impl(batch, Some(roots), &[], None, budget, boundary)
 }
 
 /// [`pack_context_roots`] with 008 memory from the primary root.
@@ -974,7 +1004,94 @@ pub fn pack_context_roots_with_memory(
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
     let tail: Vec<String> = hits.iter().map(memory_line).collect();
-    pack_context_impl(batch, Some(roots), &tail, budget, boundary)
+    pack_context_impl(batch, Some(roots), &tail, None, budget, boundary)
+}
+
+/// Compose a selected task view with ordinary source/graph/project-memory
+/// context. The mandatory view is inside every render/count, never appended
+/// after packing or charged against a separate allowance.
+pub fn pack_task_context(
+    batch: &CandidateBatch,
+    roots: Option<&[RootHeader]>,
+    hits: &[crate::memory::MemoryHit],
+    task_view: Option<&crate::task_context::ContextView>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let tail: Vec<String> = hits.iter().map(memory_line).collect();
+    pack_task_tail(batch, roots, (&tail, &[]), task_view, budget, boundary)
+}
+
+/// Source-first delivery with derived orientation in the same allowance.
+pub fn pack_enriched_context(
+    context: &crate::memory::MemoryContext,
+    roots: Option<&[RootHeader]>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    if context.evidence.is_some() {
+        return pack_task_evidence(context, roots, budget, boundary);
+    }
+    let mut tail: Vec<String> = context
+        .briefs
+        .iter()
+        .map(|brief| serde_json::to_string(brief).map(|json| format!("brief: {json}\n")))
+        .collect::<Result<_, _>>()?;
+    let required: Vec<(usize, usize)> = context
+        .briefs
+        .iter()
+        .enumerate()
+        .map(|(i, brief)| {
+            let source = context
+                .batch
+                .items
+                .iter()
+                .position(|item| {
+                    item.handle
+                        .as_ref()
+                        .is_some_and(|handle| handle.to_v2() == brief.brief.cited_spans[0])
+                })
+                .unwrap_or(usize::MAX);
+            (i, source)
+        })
+        .collect();
+    tail.extend(context.hits.iter().map(memory_line));
+    pack_task_tail(
+        &context.batch,
+        roots,
+        (&tail, &required),
+        context.task_view.as_ref(),
+        budget,
+        boundary,
+    )
+}
+
+fn pack_task_tail(
+    batch: &CandidateBatch,
+    roots: Option<&[RootHeader]>,
+    tail: (&[String], &[(usize, usize)]),
+    task_view: Option<&crate::task_context::ContextView>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    if let Some(task) = task_view {
+        // Even the view alone cannot fit; no larger token allowance can
+        // repair a byte refusal. Preserve the view and require an explicit edit.
+        if boundary(&task.line) >= BYTE_CAP || count_tokens(&task.line) >= MAX_BUDGET_TOKENS {
+            return Err(FoundryError::UnsupportedMode(
+                "selected task view exceeds delivery capacity; explicitly fold or deselect entries"
+                    .into(),
+            ));
+        }
+    }
+    pack_context_guarded(
+        batch,
+        roots,
+        tail,
+        task_view.map(|v| v.line.as_str()),
+        budget,
+        boundary,
+    )
 }
 
 /// A resolved anchor lists at most this many of its other definitions as
@@ -992,6 +1109,7 @@ fn context_header<'a>(
 ) -> HeaderV2<'a> {
     let f = &batch.freshness;
     HeaderV2 {
+        task_view: None,
         op: "context",
         roots,
         revision: f.source_revision,
@@ -1013,14 +1131,27 @@ fn pack_context_impl(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
     tail: &[String],
+    task_view: Option<&str>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    pack_context_guarded(batch, roots, (tail, &[]), task_view, budget, boundary)
+}
+
+fn pack_context_guarded(
+    batch: &CandidateBatch,
+    roots: Option<&[RootHeader]>,
+    tail: (&[String], &[(usize, usize)]),
+    task_view: Option<&str>,
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
     if batch.anchored() {
-        return pack_anchored(batch, roots, tail, budget, boundary);
+        return pack_anchored(batch, roots, tail.0, task_view, budget, boundary);
     }
     let items: Vec<Vec<String>> = batch.items.iter().map(ranked_forms).collect();
-    let header = context_header(batch, roots, None, false);
+    let mut header = context_header(batch, roots, None, false);
+    header.task_view = task_view;
     pack(&items, tail, &header, budget, BYTE_CAP, boundary)
 }
 
@@ -1109,16 +1240,49 @@ fn group_slots(group: &DoorGroup) -> Vec<Slot> {
 /// group with it. Otherwise the door lines of § Doors, when the context
 /// requested doors and they were built: each placed when it fits, then the
 /// `⋯ <m> more files` line when it fits (navigation, not an item). Nothing
-/// else is packed: every other candidate is counted in `omitted:<n>`.
+/// else is packed by default: every other candidate is counted in `omitted:<n>`.
+/// Experimental behavioral support keeps the resolved owner's address and packs
+/// its selected methods before spending on directory lines (001 T010).
 /// Opt-in 008 memory lines then fill the remaining budget under their
 /// existing rule.
+fn behavior_support_items(batch: &CandidateBatch) -> Vec<&RankedItem> {
+    // 001 T010's opt-in support survives a multi-root merge only when its
+    // owner is still the single resolved anchor. Never attach a local root's
+    // methods to an ambiguous or differently resolved global name.
+    let support_owner = (batch.anchors.len() == 1 && batch.anchors[0].resolved())
+        .then(|| {
+            batch.anchors[0]
+                .entries
+                .first()
+                .and_then(|i| i.handle.as_ref())
+        })
+        .flatten();
+    batch
+        .items
+        .iter()
+        .filter(|item| {
+            item.tier == crate::store::TIER_BEHAVIOR
+                && support_owner.is_some_and(|owner| {
+                    item.handle.as_ref().is_some_and(|handle| {
+                        handle.workspace_id == owner.workspace_id
+                            && handle.path == owner.path
+                            && handle.sha256 == owner.sha256
+                    })
+                })
+        })
+        .take(4)
+        .collect()
+}
+
 fn pack_anchored(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
     tail: &[String],
+    task_view: Option<&str>,
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    let support = behavior_support_items(batch);
     enum Plan {
         Resolved {
             first: usize,
@@ -1201,6 +1365,16 @@ fn pack_anchored(
     }
     // The door lines (context-v2 § Doors), after every anchor's entries,
     // unless they are the entries' own groups.
+    let support_start = slots.len();
+    for item in support {
+        if let Some(handle) = &item.handle
+            && selected.insert(handle.to_v2())
+        {
+            slots.push(Slot::ladder(item));
+        }
+    }
+    let support_slots = support_start..slots.len();
+    let behavior = !support_slots.is_empty();
     let doors = doors.filter(|doors| doors.state != DoorState::Each);
     let group = doors.and_then(|doors| doors.groups.first());
     let door_slots = slots.len();
@@ -1227,7 +1401,9 @@ fn pack_anchored(
                 .is_none_or(|handle| !selected.contains(&handle.to_v2()))
         })
         .count();
-    let header = context_header(batch, roots, defs, true);
+    let mut header = context_header(batch, roots, defs, true);
+    header.task_view = task_view;
+    header.check_task_capacity(outside + slots.len(), budget.limited_by, boundary)?;
     let render =
         |slots: &[Slot], dropped: usize, more: bool, tail_kept: &[usize], at_budget, limited_by| {
             let shown = slots.iter().filter(|slot| slot.chosen.is_some()).count();
@@ -1297,11 +1473,17 @@ fn pack_anchored(
                 group,
                 directory,
             } => {
-                let ladder: Vec<usize> = (0..slots[*first].forms.len()).collect();
+                let ladder: Vec<usize> = if behavior {
+                    slots[*first].address.into_iter().collect()
+                } else {
+                    (0..slots[*first].forms.len()).collect()
+                };
                 place(&mut slots, *first, &ladder, &mut dropped);
                 place_group(&mut slots, *first, group, &mut dropped);
-                for index in directory.clone() {
-                    place(&mut slots, index, &[0], &mut dropped);
+                if !behavior {
+                    for index in directory.clone() {
+                        place(&mut slots, index, &[0], &mut dropped);
+                    }
                 }
             }
             Plan::Ambiguous(entries) => {
@@ -1338,6 +1520,19 @@ fn pack_anchored(
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+    for index in support_slots {
+        let ladder: Vec<usize> = (0..slots[index].forms.len()).collect();
+        place(&mut slots, index, &ladder, &mut dropped);
+    }
+    if behavior {
+        for plan in &plans {
+            if let Plan::Resolved { directory, .. } = plan {
+                for index in directory.clone() {
+                    place(&mut slots, index, &[0], &mut dropped);
                 }
             }
         }
@@ -1471,6 +1666,7 @@ fn pack_search_impl(
         })
         .collect();
     let header = HeaderV2 {
+        task_view: None,
         op: "search",
         roots,
         revision: outcome.source_revision,
@@ -1486,7 +1682,7 @@ fn pack_search_impl(
         doors: None,
         anchored: false,
     };
-    pack(&items, &[], &header, budget, BYTE_CAP, boundary)
+    pack(&items, (&[], &[]), &header, budget, BYTE_CAP, boundary)
 }
 
 /// 008 memory search: the v2 header exactly as `search` builds it (from the
@@ -1505,6 +1701,7 @@ pub fn pack_memory_search(
         .collect();
     let f = &outcome.freshness;
     let header = HeaderV2 {
+        task_view: None,
         op: "memory",
         roots: None,
         revision: f.source_revision,
@@ -1520,7 +1717,7 @@ pub fn pack_memory_search(
         doors: None,
         anchored: false,
     };
-    pack(&items, &[], &header, budget, BYTE_CAP, boundary)
+    pack(&items, (&[], &[]), &header, budget, BYTE_CAP, boundary)
 }
 
 /// One compact memory line (008): `mem:<id>@r<revision> <author>:
@@ -1776,4 +1973,253 @@ fn pack_references_impl(
 /// even that is refused by the packer itself with its real minimum.
 pub fn references_refusal_floor() -> usize {
     MAX_BUDGET_TOKENS
+}
+
+/// Boundary metadata and endpoint evidence consume the same final allowance.
+pub fn pack_boundaries(
+    report: &crate::boundary::Relations,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let mut report = report.clone();
+    let total = report.relations.len();
+    loop {
+        let text = format!("{}\n", serde_json::to_string(&report)?);
+        if count_tokens(&text) <= budget.tokens && boundary(&text) <= BYTE_CAP {
+            return Ok(PackedText {
+                tokens: count_tokens(&text),
+                omitted: total - report.relations.len(),
+                truncated: report.truncated,
+                text,
+            });
+        }
+        if report.relations.pop().is_none() {
+            if boundary(&text) > BYTE_CAP {
+                return Err(FoundryError::UnsupportedMode(
+                    "boundary scope metadata exceeds delivery byte capacity".into(),
+                ));
+            }
+            return Err(FoundryError::BudgetTooSmall {
+                minimum_tokens: count_tokens(&text),
+            });
+        }
+        report.truncated = true;
+    }
+}
+
+fn pack_task_evidence(
+    context: &crate::memory::MemoryContext,
+    roots: Option<&[RootHeader]>,
+    budget: Budget,
+    boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    let plan = context.evidence.as_ref().expect("composition plan");
+    let items = &context.batch.items;
+    let forms: Vec<Vec<String>> = items.iter().map(ranked_forms).collect();
+    let mut header = context_header(&context.batch, roots, None, false);
+    header.task_view = context.task_view.as_ref().map(|v| v.line.as_str());
+    header.check_task_capacity(items.len(), budget.limited_by, boundary)?;
+    let covers = |selected: &[(usize, usize)], wanted: &SourceHandle| {
+        selected.iter().any(|&(i, f)| {
+            f == 0
+                && items[i].handle.as_ref().is_some_and(|h| {
+                    h.workspace_id == wanted.workspace_id
+                        && h.sha256 == wanted.sha256
+                        && h.path == wanted.path
+                        && h.start <= wanted.start
+                        && h.end >= wanted.end
+                })
+        })
+    };
+    let mut tail = Vec::<(String, Vec<SourceHandle>, bool)>::new();
+    if let Some(b) = &plan.boundaries {
+        for r in &b.relations {
+            let consumer = r.consumer.evidence.handle(&b.workspace_id);
+            let providers: Vec<_> = r
+                .providers
+                .iter()
+                .map(|p| p.evidence.handle(&b.workspace_id))
+                .collect();
+            let dependencies: Vec<_> = r
+                .providers
+                .iter()
+                .flat_map(|p| &p.dependencies)
+                .map(|s| s.handle(&b.workspace_id))
+                .collect();
+            let config = b.config.handle(&b.workspace_id);
+            let line = format!(
+                "task-relationship: {}\n",
+                serde_json::json!({"recipe":b.recipe,"evidence":"syntactic","kind":r.kind,"resolution":r.resolution,"key":r.consumer.key,"consumer":consumer.to_v2(),"providers":providers.iter().map(SourceHandle::to_v2).collect::<Vec<_>>(),"dependencies":dependencies.iter().map(SourceHandle::to_v2).collect::<Vec<_>>(),"config":config.to_v2()})
+            );
+            let mut required = vec![consumer, config];
+            required.extend(providers);
+            required.extend(dependencies);
+            tail.push((line, required, false));
+        }
+    }
+    let relationship_count = tail.len();
+    for window in &plan.compiler {
+        if window.target != Some(crate::graph::TargetResolution::Unique) {
+            continue;
+        }
+        let Some(d) = window.definitions.first() else {
+            continue;
+        };
+        let definition = SourceHandle {
+            workspace_id: window.freshness.workspace_id.clone(),
+            path: d.path.clone(),
+            sha256: d.sha256.clone(),
+            start: d.start,
+            end: d.end,
+        };
+        for r in &window.items {
+            let Some(edge) = &r.edge_id else {
+                continue;
+            };
+            let occurrence = SourceHandle {
+                start: r.start,
+                end: r.end,
+                ..r.unit.clone()
+            };
+            let usage = plan
+                .reference_uses
+                .get(&crate::task_evidence::reference::key(r));
+            let call = usage.and_then(|u| u.call.as_ref());
+            let test = usage.and_then(|u| u.test.as_ref());
+            let line = format!(
+                "task-reference: {}\n",
+                serde_json::json!({"evidence":"compiler","kind":"references",
+                "producer":window.producer,"snapshot":window.snapshot,"edge_id":edge,"occurrence_id":r.occurrence_id,
+                "definition":definition.to_v2(),"reference":occurrence.to_v2(),"target":"unique",
+                "syntax":{"call":call.map(SourceHandle::to_v2),"test_attribute":test.map(SourceHandle::to_v2),"runtime_call":"unverified","test_execution":"not_observed"}})
+            );
+            if !tail.iter().any(|(existing, _, _)| existing == &line) {
+                let mut required = vec![definition.clone(), occurrence];
+                required.extend(call.cloned());
+                required.extend(test.cloned());
+                tail.push((line, required, false));
+            }
+        }
+    }
+    let compiler_end = tail.len();
+    for observed in &plan.observed {
+        tail.push((format!("task-execution: {}\n", serde_json::json!({
+            "evidence":"observed_by_producer","kind":observed.observation.edge.kind,
+            "provider":observed.observation.provider,"execution":observed.observation.execution,
+            "from":observed.from.to_v2(),"to":observed.to.to_v2(),"test":observed.test.to_v2(),
+            "requirements":{"ids":plan.observed_requirements(observed),"basis":"explicit_source_link_overlap","satisfied":"not_established"},
+            "complete_coverage":false
+        })), vec![observed.from.clone(), observed.to.clone(), observed.test.clone()], false));
+    }
+    let observed_end = tail.len();
+    for (definition, alias) in &plan.import_alias_calls {
+        tail.push((
+            format!(
+                "task-syntax: {}\n",
+                serde_json::json!({
+                    "evidence":"syntactic","kind":"import_alias_call_candidate",
+                    "resolution":"unresolved","runtime_call":"unverified",
+                    "name":alias.name,"alias":alias.alias,
+                    "definition":definition.to_v2(),
+                    "import":alias.declaration.to_v2(),"call":alias.call.to_v2()
+                })
+            ),
+            vec![
+                definition.clone(),
+                alias.declaration.clone(),
+                alias.call.clone(),
+            ],
+            false,
+        ));
+    }
+    for b in &context.briefs {
+        let p = HandleRef::parse(&b.brief.cited_spans[0])?;
+        let Some(h) = items.iter().filter_map(|i| i.handle.as_ref()).find(|h| {
+            h.workspace_id.starts_with(&p.ws16)
+                && h.path == p.path
+                && h.sha256.starts_with(&p.sha32)
+                && h.start <= p.start
+                && h.end >= p.end
+        }) else {
+            continue;
+        };
+        tail.push((
+            format!("brief: {}\n", serde_json::to_string(b)?),
+            vec![SourceHandle {
+                start: p.start,
+                end: p.end,
+                ..h.clone()
+            }],
+            true,
+        ));
+    }
+    tail.extend(context.hits.iter().map(|h| (memory_line(h), vec![], false)));
+    let render = |selected: &[(usize, usize)], kept: &[usize], tokens, limiter| {
+        let mut text = header.line(
+            tokens,
+            limiter,
+            selected.len() + kept.len(),
+            items.len() - selected.len(),
+        );
+        text.push_str(&format!(
+            "task-evidence: {}\n",
+            plan.report(
+                items,
+                selected,
+                kept.iter().filter(|&&i| tail[i].2).count(),
+                kept.iter().filter(|&&i| i < relationship_count).count(),
+                kept.iter()
+                    .filter(|&&i| i >= relationship_count && i < compiler_end)
+                    .count(),
+                kept.iter()
+                    .filter(|&&i| i >= compiler_end && i < observed_end)
+                    .count()
+            )
+        ));
+        for &(i, f) in selected {
+            text.push_str(&forms[i][f]);
+        }
+        for &i in kept {
+            text.push_str(&tail[i].0);
+        }
+        text
+    };
+    let fits = |text: &str| count_tokens(text) <= budget.tokens && boundary(text) <= BYTE_CAP;
+    let base = render(&[], &[], MAX_BUDGET_TOKENS, budget.limited_by);
+    if boundary(&base) > BYTE_CAP || count_tokens(&base) > MAX_BUDGET_TOKENS {
+        return Err(FoundryError::UnsupportedMode("selected task and evidence metadata exceed delivery capacity; explicitly fold or deselect task entries".into()));
+    }
+    let mut selected = Vec::new();
+    for (i, forms) in forms.iter().enumerate() {
+        for f in 0..forms.len() {
+            selected.push((i, f));
+            if fits(&render(&selected, &[], budget.tokens, budget.limited_by)) {
+                break;
+            }
+            selected.pop();
+        }
+    }
+    while !fits(&render(&selected, &[], budget.tokens, budget.limited_by)) {
+        if selected.pop().is_none() {
+            return Err(too_small(budget.tokens, &|t, l| render(&[], &[], t, l)));
+        }
+    }
+    let mut kept = Vec::new();
+    for (i, (_, required, _)) in tail.iter().enumerate() {
+        if !required.iter().all(|h| covers(&selected, h)) {
+            continue;
+        }
+        kept.push(i);
+        if !fits(&render(&selected, &kept, budget.tokens, budget.limited_by)) {
+            kept.pop();
+        }
+    }
+    let text = render(&selected, &kept, budget.tokens, budget.limited_by);
+    let omitted = items.len() - selected.len();
+    Ok(PackedText {
+        tokens: count_tokens(&text),
+        text,
+        omitted,
+        truncated: omitted > 0 || selected.iter().any(|&(_, f)| f > 0) || plan.discovery_limited,
+    })
 }

@@ -22,6 +22,24 @@ pub mod names {
             pub const $ident: &str = concat!("ctxfoundry-fault/", $name);
         };
     }
+    point!(WATCH_BEFORE_OPEN, "watch.before_open");
+    point!(WATCH_AFTER_READ, "watch.after_read");
+    point!(KNOWLEDGE_INPUT, "knowledge.input");
+    point!(KNOWLEDGE_BEFORE_CALL, "knowledge.before_call");
+    point!(BRIEF_BEFORE_ADMISSION, "brief.before_admission");
+    point!(BRIEF_BEFORE_COMMIT, "brief.before_commit");
+    point!(BRIEF_AFTER_COMMIT, "brief.after_commit");
+    point!(
+        BRIEF_BEFORE_FINAL_VALIDATION,
+        "brief.before_final_validation"
+    );
+    point!(BOUNDARY_BEFORE_ADMISSION, "boundary.before_admission");
+    point!(BOUNDARY_BEFORE_COMMIT, "boundary.before_commit");
+    point!(BOUNDARY_AFTER_COMMIT, "boundary.after_commit");
+    point!(TASK_EVIDENCE_BEFORE_FINAL, "task_evidence.before_final");
+    point!(TASK_BEFORE_COMMIT, "task.before_commit");
+    point!(TASK_AFTER_COMMIT, "task.after_commit");
+    point!(SOURCE_BATCH_BEFORE_COMMIT, "source.batch_before_commit");
     point!(SOURCE_BEFORE_COMMIT, "source.before_commit");
     point!(SOURCE_AFTER_COMMIT, "source.after_commit");
     point!(INDEX_AFTER_SEARCH_COMMIT, "index.after_search_commit");
@@ -29,6 +47,7 @@ pub mod names {
     point!(SCAN_AFTER_ROOT_OPEN, "scan.after_root_open");
     point!(SCAN_BEFORE_WALK, "scan.before_walk");
     point!(SCAN_BEFORE_OPEN, "scan.before_open");
+    point!(SCAN_AFTER_READ, "scan.after_read");
     point!(SWEEP_PAGE, "sweep.page");
     point!(SEEN_FLUSH, "scan.seen_flush");
     point!(REPAIR_AFTER_MARKER, "repair.after_marker");
@@ -140,6 +159,12 @@ pub enum GlobalAction {
     Cancel,
     Fail(String),
     Delay(std::time::Duration),
+    /// Hold one workspace at a boundary until its real operation is cancelled.
+    /// Other workspaces and fault points remain serviceable.
+    AwaitCancellation {
+        workspace_id: String,
+        timeout: std::time::Duration,
+    },
 }
 
 struct GlobalArmed {
@@ -166,6 +191,10 @@ pub fn arm_global(name: &str, skip: usize, action: GlobalAction) {
             action,
         },
     );
+}
+
+pub fn disarm_global(name: &str) {
+    armed_global().lock().unwrap().remove(name);
 }
 
 pub fn disarm_all() {
@@ -256,7 +285,9 @@ fn hit_global(name: &str, ctx: &Ctx<'_>) -> FResult<()> {
     if index < state.skip {
         return Ok(());
     }
-    match state.action.clone() {
+    let action = state.action.clone();
+    drop(global);
+    match action {
         GlobalAction::Abort => std::process::abort(),
         GlobalAction::Fail(message) => Err(FoundryError::Internal(anyhow::anyhow!(message))),
         GlobalAction::Cancel => {
@@ -267,6 +298,25 @@ fn hit_global(name: &str, ctx: &Ctx<'_>) -> FResult<()> {
         }
         GlobalAction::Delay(duration) => {
             std::thread::sleep(duration);
+            Ok(())
+        }
+        GlobalAction::AwaitCancellation {
+            workspace_id,
+            timeout,
+        } => {
+            if ctx.engine.and_then(Engine::workspace_id).as_deref() != Some(&workspace_id) {
+                return Ok(());
+            }
+            let control = ctx.control.expect("cancellable operation boundary");
+            let deadline = std::time::Instant::now() + timeout;
+            while !control.is_cancelled() {
+                if std::time::Instant::now() >= deadline {
+                    return Err(FoundryError::Internal(anyhow::anyhow!(
+                        "fault boundary never cancelled"
+                    )));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
             Ok(())
         }
     }

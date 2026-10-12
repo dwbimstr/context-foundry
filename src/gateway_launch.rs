@@ -1,13 +1,13 @@
 //! `foundry gateway-omp` (003 T004): the supported OMP launcher. It owns a
-//! fresh, non-default OMP profile whose only configuration is this run's
-//! loopback gateway, verifies the routed setup before launching OMP, and
+//! fresh, non-default OMP profile containing this run's loopback gateway
+//! and an optional fixed body-read overlay, verifies them before launching OMP, and
 //! passes no upstream credential route to the host. A failed launch never
 //! falls back to a direct upstream route.
 //!
 //! OMP 18.6.0 exposes no query for a profile's effective `baseUrl`
 //! (`omp models --json` omits it), so the pre-launch verification is
 //! structural: the fresh profile must hold exactly the generated
-//! `models.yml`, the token file must hold this run's token, and an
+//! configuration files, the token file must hold this run's token, and an
 //! authenticated `/health` must answer. A silently dropped registry override
 //! fails closed: the fresh profile carries no auth and OMP's environment
 //! carries no upstream credential, so a direct request has nothing to send.
@@ -38,9 +38,14 @@ pub struct Options {
     pub profile: String,
     /// `low|high|max`; explicit so OMP never runs `auto` judge side requests.
     pub thinking: String,
+    /// OMP's supported read setting only; never an arbitrary host config.
+    pub body_reads: bool,
     pub omp: PathBuf,
     pub omp_args: Vec<String>,
 }
+
+const BODY_READS_FILE: &str = "foundry-body-reads.yml";
+const BODY_READS_CONFIG: &[u8] = b"read:\n  summarize:\n    enabled: false\n";
 
 fn invalid(message: &str) -> AdapterError {
     AdapterError::named("invalid_argument", message)
@@ -282,12 +287,14 @@ impl GatewayChild {
 }
 
 /// Everything this launch created and must undo on every exit path: the
-/// gateway, the generated `models.yml`, and the directories it made (removed
+/// gateway, generated configuration files, and the directories it made (removed
 /// only while empty, so OMP's session files are never touched).
 struct LaunchGuard {
     gateway: Option<GatewayChild>,
     profile_dir: Option<PathBuf>,
     models_yml: Option<PathBuf>,
+    /// Keep the created inode open so cleanup cannot remove a replacement file.
+    body_reads_yml: Option<(PathBuf, std::fs::File)>,
 }
 
 impl Drop for LaunchGuard {
@@ -297,6 +304,11 @@ impl Drop for LaunchGuard {
         if let Some(gateway) = self.gateway.as_mut() {
             gateway.stop();
         }
+        if let Some((path, file)) = &self.body_reads_yml
+            && same_file(path, file)
+        {
+            let _ = std::fs::remove_file(path);
+        }
         if let Some(models_yml) = &self.models_yml {
             let _ = std::fs::remove_file(models_yml);
         }
@@ -305,6 +317,16 @@ impl Drop for LaunchGuard {
             let _ = std::fs::remove_dir(profile_dir);
         }
     }
+}
+
+fn same_file(path: &Path, file: &std::fs::File) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    std::fs::symlink_metadata(path)
+        .ok()
+        .zip(file.metadata().ok())
+        .is_some_and(|(named, held)| {
+            named.is_file() && named.dev() == held.dev() && named.ino() == held.ino()
+        })
 }
 
 /// The allowlisted child environment: nothing ambient, no inherited
@@ -387,11 +409,16 @@ fn write_models_yml(path: &Path, text: &[u8]) -> AResult<()> {
         .map_err(|e| unavailable(format!("cannot write models.yml: {e}")))
 }
 
-/// The profile tree must hold exactly the generated file: the profile was
+/// The profile tree must hold exactly the generated files: the profile was
 /// refused if it existed, so anything else means a race or a misdirected
 /// write. A corrupt or missing GENERATED profile is `profile_invalid`,
 /// distinct from the gateway being unavailable.
-fn verify_profile(profile_dir: &Path, models_yml: &Path, expected: &[u8]) -> AResult<()> {
+fn verify_profile(
+    profile_dir: &Path,
+    models_yml: &Path,
+    expected: &[u8],
+    body_reads_yml: Option<&(PathBuf, std::fs::File)>,
+) -> AResult<()> {
     let invalid = |message: &str| AdapterError::named("profile_invalid", message);
     let on_disk = std::fs::read(models_yml)
         .map_err(|e| invalid(&format!("cannot re-read models.yml: {e}")))?;
@@ -410,9 +437,22 @@ fn verify_profile(profile_dir: &Path, models_yml: &Path, expected: &[u8]) -> ARe
             })
             .collect()
     };
-    if names(profile_dir)? != ["agent"] || names(&profile_dir.join("agent"))? != ["models.yml"] {
+    let mut expected_names = vec!["models.yml"];
+    if let Some((path, file)) = body_reads_yml {
+        if !same_file(path, file) || std::fs::read(path).ok().as_deref() != Some(BODY_READS_CONFIG)
+        {
+            return Err(invalid(
+                "the generated body-read configuration is missing, replaced or changed",
+            ));
+        }
+        expected_names.push(BODY_READS_FILE);
+    }
+    expected_names.sort_unstable();
+    let mut agent_names = names(&profile_dir.join("agent"))?;
+    agent_names.sort_unstable();
+    if names(profile_dir)? != ["agent"] || agent_names != expected_names {
         return Err(invalid(
-            "the fresh profile must contain only the generated models.yml",
+            "the fresh profile must contain only the generated launcher configuration",
         ));
     }
     Ok(())
@@ -498,6 +538,7 @@ pub fn run(options: &Options) -> AResult<i32> {
         gateway: None,
         profile_dir: None,
         models_yml: None,
+        body_reads_yml: None,
     };
 
     // The gateway gets a minimal environment: the upstream key reaches this
@@ -516,6 +557,11 @@ pub fn run(options: &Options) -> AResult<i32> {
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .process_group(0);
+    if let Some(owner) = &config.task_view_owner {
+        let token = std::env::var(&owner.token_env)
+            .map_err(|_| invalid("task_view_owner credential environment variable is absent"))?;
+        command.env(&owner.token_env, token);
+    }
     #[cfg(feature = "test-faults")]
     {
         // Test overrides (fake upstream, short timeouts) travel to the
@@ -543,7 +589,7 @@ pub fn run(options: &Options) -> AResult<i32> {
         .map(PathBuf::from)
         .ok_or_else(|| unavailable("the gateway ready line lacks token_file"))?;
 
-    // The generated profile: only its own models.yml, owner-private. Each
+    // The generated profile: only its own fixed configuration, owner-private. Each
     // exclusive creation is registered with the cleanup guard BEFORE the
     // next fallible step, so a partial profile never outlives the launch.
     create_profiles_root(&profiles_root)?;
@@ -582,7 +628,32 @@ pub fn run(options: &Options) -> AResult<i32> {
             let _ = std::fs::write(&models_yml, b"corrupt\n");
         }
     }
-    verify_profile(&profile_dir, &models_yml, printed_yml.as_bytes())?;
+    if options.body_reads {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        let path = profile_dir.join("agent").join(BODY_READS_FILE);
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| unavailable(format!("cannot create body-read configuration: {e}")))?;
+        // Register the inode before writing, so every later refusal cleans up
+        // this generated file and never a replacement at the same pathname.
+        guard.body_reads_yml = Some((path, file));
+        guard
+            .body_reads_yml
+            .as_mut()
+            .expect("created body-read configuration")
+            .1
+            .write_all(BODY_READS_CONFIG)
+            .map_err(|e| unavailable(format!("cannot write body-read configuration: {e}")))?;
+    }
+    verify_profile(
+        &profile_dir,
+        &models_yml,
+        printed_yml.as_bytes(),
+        guard.body_reads_yml.as_ref(),
+    )?;
 
     #[cfg(feature = "test-faults")]
     {
@@ -623,26 +694,29 @@ pub fn run(options: &Options) -> AResult<i32> {
         &format!("zai/{MODEL_ID}"),
         "--thinking",
         options.thinking.as_str(),
-    ])
-    .args(&options.omp_args)
-    .env_clear()
-    .envs(env_allowlist(&[
-        "PATH",
-        "HOME",
-        "TMPDIR",
-        "TERM",
-        "COLORTERM",
-        "LANG",
-        "LC_ALL",
-        "USER",
-        "LOGNAME",
-        "SHELL",
-    ]))
-    .env(TOKEN_ENV, &token)
-    .env("PI_NO_TITLE", "1")
-    .stdin(Stdio::inherit())
-    .stdout(Stdio::inherit())
-    .stderr(Stdio::inherit());
+    ]);
+    if let Some((path, _)) = &guard.body_reads_yml {
+        omp.arg("--config").arg(path);
+    }
+    omp.args(&options.omp_args)
+        .env_clear()
+        .envs(env_allowlist(&[
+            "PATH",
+            "HOME",
+            "TMPDIR",
+            "TERM",
+            "COLORTERM",
+            "LANG",
+            "LC_ALL",
+            "USER",
+            "LOGNAME",
+            "SHELL",
+        ]))
+        .env(TOKEN_ENV, &token)
+        .env("PI_NO_TITLE", "1")
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
     let mut omp = omp
         .spawn()
         .map_err(|e| AdapterError::runtime("omp_unavailable", format!("cannot spawn OMP: {e}")))?;
@@ -668,7 +742,7 @@ pub fn run(options: &Options) -> AResult<i32> {
     };
     OMP_PID.store(0, Ordering::SeqCst);
     // OMP is stopped; dropping the guard stops the gateway and removes only
-    // the generated models.yml (the gateway removes its own token). Session
+    // generated configuration (the gateway removes its own token). Session
     // files and receipts stay.
     drop(guard);
     Ok(status

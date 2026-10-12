@@ -62,18 +62,40 @@ pub fn write_notices(dir: &Path, license: &str) -> i32 {
     0
 }
 
-/// Refuse a descriptor that claims a recipe other than the one the real
-/// worker implements: the adapter revision, the llama.cpp commit, and an
-/// inventory naming the GGUF and the core's tokenizer (each therefore
-/// hash-verified before load). Pooling, output and dimension are checked by
-/// [`FunctionDescriptor::validate`]. Checked by the supervisor before launch
-/// and by the worker itself before the model loads.
+/// A binary may serve exactly its compiled numerical recipe, even when another
+/// recipe is supported by the supervisor. Never relabel an existing cache.
+pub fn check_embedding_worker_revision(requested: u32, compiled: u32) -> Result<(), String> {
+    if requested != compiled {
+        return Err(format!(
+            "this embedding worker requires adapter revision {compiled}, received {requested}"
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse a descriptor outside the real workers' supported recipes: adapter
+/// revision, pinned llama.cpp commit and hash-verified GGUF/tokenizer inventory.
+/// Pooling, output and dimensions are checked by [`FunctionDescriptor::validate`].
+/// The supervisor and worker both check before model loading; the binary also
+/// requires its exact compiled revision.
 pub fn check_real_descriptor(descriptor: &FunctionDescriptor) -> Result<(), String> {
     descriptor.validate()?;
-    if descriptor.adapter_revision != REAL_ADAPTER_REVISION {
+    let revision = if descriptor.geometry.is_some() {
+        super::provider::GEOMETRY_ADAPTER_REVISION
+    } else {
+        REAL_ADAPTER_REVISION
+    };
+    if ![
+        revision,
+        super::provider::CPU_ADAPTER_REVISION,
+        super::provider::METAL_ADAPTER_REVISION,
+        super::provider::CPU_AVX512_BF16_ADAPTER_REVISION,
+    ]
+    .contains(&descriptor.adapter_revision)
+    {
         return Err(format!(
-            "descriptor claims adapter_revision {}, but the real adapter implements \
-             {REAL_ADAPTER_REVISION}",
+            "descriptor claims adapter_revision {}; supported identities are legacy \
+             {revision}, pooled CPU 3, pooled Metal 4 and AVX-512 BF16 CPU 5 (the binary checks its variant)",
             descriptor.adapter_revision
         ));
     }
@@ -110,8 +132,37 @@ const SPLIT_COUNT: &str = "split.count";
 /// any `split.count` other than one u16 of at most 1, and any header it
 /// cannot read to its last pair. Only a single-file GGUF is supported.
 pub fn refuse_split_gguf(path: &Path) -> Result<(), String> {
-    let shown = path.display();
+    let shown = path.display().to_string();
     let file = std::fs::File::open(path).map_err(|e| format!("{shown}: {e}"))?;
+    refuse_split_gguf_file(file, &shown)
+}
+
+/// Check the held, verified descriptor without reopening a pathname. The caller
+/// retains ownership; a successful check resets its shared file offset for the
+/// model loader. This works when an App Sandbox denies /dev/fd path opens.
+#[cfg(unix)]
+pub fn refuse_split_gguf_fd(fd: std::os::fd::RawFd) -> Result<(), String> {
+    use std::os::fd::FromRawFd;
+    let shown = format!("verified GGUF fd {fd}");
+    if fd < 3 {
+        return Err(format!(
+            "{shown}: an inherited model descriptor is required"
+        ));
+    }
+    let duplicate = unsafe { libc::dup(fd) };
+    if duplicate < 0 {
+        return Err(format!("{shown}: {}", std::io::Error::last_os_error()));
+    }
+    // SAFETY: dup returned a new owned descriptor; dropping this File cannot
+    // close the caller's descriptor, even when parsing fails.
+    let file = unsafe { std::fs::File::from_raw_fd(duplicate) };
+    refuse_split_gguf_file(file, &shown)
+}
+
+fn refuse_split_gguf_file(mut file: std::fs::File, shown: &str) -> Result<(), String> {
+    use std::io::{Seek, SeekFrom};
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| format!("{shown}: {e}"))?;
     let left = file.metadata().map_err(|e| format!("{shown}: {e}"))?.len();
     let mut header = GgufHeader {
         reader: io::BufReader::new(file),
@@ -164,6 +215,13 @@ pub fn refuse_split_gguf(path: &Path) -> Result<(), String> {
         }
         header.skip_values(kind, count).map_err(read)?;
     }
+    // Descriptor duplicates share an offset. Leave the verified descriptor
+    // at the beginning for llama.cpp.
+    header
+        .reader
+        .into_inner()
+        .seek(SeekFrom::Start(0))
+        .map_err(|e| format!("{shown}: {e}"))?;
     Ok(())
 }
 
@@ -241,6 +299,11 @@ pub struct WorkerArgs {
     pub liveness_fd: i32,
     pub expected: FunctionDescriptor,
     pub model_dir: PathBuf,
+    /// The supervisor's verified GGUF descriptor. The loader uses this held
+    /// file instead of resolving a model pathname after verification.
+    pub model_fd: Option<i32>,
+    pub memory_bytes: u64,
+    pub cpu: super::profile::CpuLimits,
     /// Test hooks, armed only by `foundry-embed-fake`.
     #[cfg(feature = "test-faults")]
     pub hooks: Hooks,
@@ -254,6 +317,9 @@ impl WorkerArgs {
         let mut liveness_fd = None;
         let mut descriptor: Option<FunctionDescriptor> = None;
         let mut model_dir = None;
+        let mut model_fd = None;
+        let mut memory_bytes = super::profile::DEFAULT_MEMORY_CEILING_BYTES;
+        let mut cpu = super::profile::CpuLimits::default();
         let mut rest = Vec::new();
         let mut raw = args.into_iter().peekable();
         while let Some(flag) = raw.next() {
@@ -283,9 +349,34 @@ impl WorkerArgs {
                     );
                 }
                 "--model-dir" => model_dir = Some(PathBuf::from(value("--model-dir")?)),
+                "--model-fd" => {
+                    let fd: i32 = value("--model-fd")?
+                        .parse()
+                        .map_err(|_| "--model-fd needs an FD")?;
+                    if fd < 3 {
+                        return Err("--model-fd must be an inherited file descriptor".into());
+                    }
+                    model_fd = Some(fd);
+                }
+                "--memory-bytes" => {
+                    memory_bytes = value("--memory-bytes")?
+                        .parse()
+                        .map_err(|_| "invalid memory bytes")?
+                }
+                "--cpu-threads" => {
+                    cpu.threads = value("--cpu-threads")?
+                        .parse()
+                        .map_err(|_| "invalid CPU threads")?
+                }
+                "--cpu-seconds" => {
+                    cpu.seconds = value("--cpu-seconds")?
+                        .parse()
+                        .map_err(|_| "invalid CPU seconds")?
+                }
                 other => rest.push(other.to_string()),
             }
         }
+        cpu.validate()?;
         let expected = descriptor.ok_or("--descriptor is required")?;
         expected
             .validate()
@@ -296,6 +387,9 @@ impl WorkerArgs {
                 liveness_fd: liveness_fd.ok_or("--liveness-fd is required")?,
                 expected,
                 model_dir: model_dir.ok_or("--model-dir is required")?,
+                model_fd,
+                memory_bytes,
+                cpu,
                 #[cfg(feature = "test-faults")]
                 hooks: Hooks::default(),
             },
@@ -310,6 +404,8 @@ impl WorkerArgs {
 #[cfg(feature = "test-faults")]
 #[derive(Clone, Debug, Default)]
 pub struct Hooks {
+    /// Verify Linux restrictions inside the same runtime before readiness.
+    pub isolation_probe: bool,
     /// Hold the admission slot sleeping this many milliseconds per call.
     pub slow_ms: u64,
     /// Sleep this many milliseconds before reporting `ready`.
@@ -383,6 +479,7 @@ impl Hooks {
         };
         while i < rest.len() {
             match rest[i].as_str() {
+                "--isolation-probe" => hooks.isolation_probe = true,
                 "--slow-ms" => {
                     hooks.slow_ms = value(&mut i, "--slow-ms", rest)?
                         .parse()
@@ -485,6 +582,7 @@ pub fn fake_descriptor_with(dimensions: u32) -> FunctionDescriptor {
         output: "f32".into(),
         adapter_revision: REAL_ADAPTER_REVISION,
         document_template: "doc: {text}".into(),
+        geometry: None,
     }
 }
 
@@ -788,6 +886,22 @@ pub fn serve(args: WorkerArgs, run: impl FnOnce(&mut Engine) -> i32) -> i32 {
         );
         return CONFIG_EXIT;
     }
+    #[cfg(target_os = "linux")]
+    {
+        let Some(fd) = args.model_fd.filter(|fd| *fd != args.liveness_fd) else {
+            eprintln!("a distinct inherited read-only model descriptor is required");
+            return CONFIG_EXIT;
+        };
+        if let Err(error) = crate::knowledge::local::resources::install_cpu(
+            args.cpu.threads,
+            args.memory_bytes,
+            args.cpu.seconds,
+            fd,
+        ) {
+            eprintln!("cannot enforce embedding worker isolation: {error}");
+            return WATCHER_EXIT;
+        }
+    }
     match arm_owner_death_watcher(args.owner_pid, args.liveness_fd) {
         Ok(Armed::Watching) => {}
         // The owner died between the parent check and the registration:
@@ -818,6 +932,7 @@ pub fn serve(args: WorkerArgs, run: impl FnOnce(&mut Engine) -> i32) -> i32 {
     });
     let (tx, rx) = mpsc::channel::<Job>();
     let digest = args.expected.digest();
+    let input_limits = args.expected.input_limits();
 
     // Dedicated reader thread: stays responsive during inference, refuses a
     // second embed with `busy` and never queues.
@@ -898,7 +1013,13 @@ pub fn serve(args: WorkerArgs, run: impl FnOnce(&mut Engine) -> i32) -> i32 {
                                     continue;
                                 }
                                 let vocab = shared.vocab.load(Ordering::SeqCst);
-                                match protocol::decode_ids(purpose, &lengths, &payload, vocab) {
+                                match protocol::decode_ids_with_limits(
+                                    purpose,
+                                    &lengths,
+                                    &payload,
+                                    vocab,
+                                    input_limits,
+                                ) {
                                     Ok(inputs) => {
                                         if tx
                                             .send(Job {
@@ -985,7 +1106,15 @@ pub enum Armed {
     OwnerGone,
 }
 
+#[cfg(target_os = "linux")]
+pub fn arm_owner_death_watcher(owner_pid: u32, liveness_fd: i32) -> Result<Armed, String> {
+    crate::knowledge::local::runtime::arm_owner(owner_pid, liveness_fd)
+        .map(|()| Armed::Watching)
+        .map_err(|e| e.to_string())
+}
+
 /// What one kqueue event says about the owner.
+#[cfg(target_os = "macos")]
 enum Verdict {
     /// The owner is gone: the process must end.
     Gone,
@@ -999,6 +1128,7 @@ enum Verdict {
 /// loop, so a notification retrieved while arming can never be lost:
 /// `NOTE_EXIT` on the owner PID, an owner that no longer exists (`ESRCH`),
 /// or end-of-file on the liveness pipe.
+#[cfg(target_os = "macos")]
 fn classify_event(event: &libc::kevent, owner_pid: u32, liveness_fd: i32) -> Verdict {
     if event.flags & libc::EV_ERROR != 0 {
         let errno = event.data as i32;
@@ -1042,6 +1172,7 @@ fn classify_event(event: &libc::kevent, owner_pid: u32, liveness_fd: i32) -> Ver
 /// model or any lock and sits in `kevent` only; on either signal it calls
 /// `_exit`. Events already pending at registration are handled here, with
 /// the watcher loop's own classification, before the thread starts.
+#[cfg(target_os = "macos")]
 pub fn arm_owner_death_watcher(owner_pid: u32, liveness_fd: i32) -> Result<Armed, String> {
     let kq = unsafe { libc::kqueue() };
     if kq < 0 {
@@ -1309,6 +1440,25 @@ pub fn allocate_touching(mib: usize) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn embedding_variants_refuse_other_cache_namespaces() {
+        for compiled in [3, 4, 5] {
+            for requested in [1, 2, 3, 4, 5, 6] {
+                assert_eq!(
+                    check_embedding_worker_revision(requested, compiled).is_ok(),
+                    requested == compiled
+                );
+            }
+        }
+        let baseline = fake_descriptor();
+        let mut simd = baseline.clone();
+        simd.adapter_revision = super::super::provider::CPU_AVX512_BF16_ADAPTER_REVISION;
+        assert!(check_real_descriptor(&simd).is_ok());
+        assert_ne!(baseline.digest(), simd.digest());
+        simd.adapter_revision = 6;
+        assert!(check_real_descriptor(&simd).is_err());
+    }
+
     /// A GGUF string: its u64 length, then its bytes.
     fn string(text: &str) -> Vec<u8> {
         let mut bytes = (text.len() as u64).to_le_bytes().to_vec();
@@ -1335,6 +1485,58 @@ mod tests {
         let path = dir.path().join("model.gguf");
         std::fs::write(&path, bytes).unwrap();
         refuse_split_gguf(&path)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn held_gguf_check_uses_the_open_file_and_keeps_its_descriptor() {
+        use std::io::{Read, Seek, SeekFrom};
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model.gguf");
+        std::fs::write(&path, header(3, &[])).unwrap();
+        let mut held = std::fs::File::open(&path).unwrap();
+        held.seek(SeekFrom::Start(7)).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        // A replacement is a different, unverified object: the held file is
+        // still the valid single-file GGUF despite this split-model pathname.
+        std::fs::write(
+            &path,
+            header(
+                3,
+                &[(SPLIT_COUNT, GGUF_UINT16, 2u16.to_le_bytes().to_vec())],
+            ),
+        )
+        .unwrap();
+        assert!(refuse_split_gguf(&path).is_err());
+        refuse_split_gguf_fd(held.as_raw_fd()).unwrap();
+        assert_eq!(held.stream_position().unwrap(), 0);
+        let mut magic = [0; 4];
+        held.read_exact(&mut magic).unwrap();
+        assert_eq!(&magic, b"GGUF");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn held_gguf_check_refuses_split_and_malformed_files_without_closing_owner() {
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model.gguf");
+        for bytes in [
+            header(
+                3,
+                &[(SPLIT_COUNT, GGUF_UINT16, 2u16.to_le_bytes().to_vec())],
+            ),
+            b"GGUF".to_vec(),
+        ] {
+            std::fs::write(&path, &bytes).unwrap();
+            let held = std::fs::File::open(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            assert!(refuse_split_gguf_fd(held.as_raw_fd()).is_err());
+            assert_eq!(held.metadata().unwrap().len(), bytes.len() as u64);
+        }
+        assert!(refuse_split_gguf_fd(-1).is_err());
+        assert!(refuse_split_gguf_fd(0).is_err());
     }
 
     /// A vocabulary-like string array, a float array and scalars before the

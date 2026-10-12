@@ -62,6 +62,7 @@ macro_rules! status_fault {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SemanticStatus {
+    pub bootstrap: Option<cache::BootstrapProgress>,
     pub workspace_id: Option<String>,
     pub source_revision: u64,
     pub profile: Option<ProfileIdentity>,
@@ -172,14 +173,7 @@ impl Engine {
         };
         let indexed: HashSet<&str> = generation
             .as_ref()
-            .map(|generation| {
-                generation
-                    .manifest
-                    .entries
-                    .iter()
-                    .map(String::as_str)
-                    .collect()
-            })
+            .map(|generation| generation.labels.keys().map(String::as_str).collect())
             .unwrap_or_default();
         let mut after: Option<String> = None;
         loop {
@@ -261,6 +255,7 @@ impl Engine {
                 .map(|state| state.state.clone())
                 .unwrap_or_else(|| "stopped".into()),
             last_error: state.as_ref().and_then(|state| state.last_error.clone()),
+            bootstrap: state.as_ref().and_then(|state| state.bootstrap.clone()),
             sources,
             unpartitioned_sources: unpartitioned,
             partition_coverage,
@@ -289,5 +284,56 @@ impl Engine {
                 reason: index_reason,
             },
         })
+    }
+}
+
+impl Engine {
+    /// Constant-size committed progress observation. No generation hashing,
+    /// partition walk, source body reads or cache census; audit remains explicit.
+    pub fn semantic_progress(&self, control: &Control) -> FResult<serde_json::Value> {
+        control.check()?;
+        let row = self
+            .semantic_state()?
+            .unwrap_or_else(cache::SemanticState::stopped);
+        let revision = self.source_revision()?;
+        let sources = cache::source_count(&self.db)?;
+        let observed = row.coverage.as_ref();
+        let current = observed.filter(|snapshot| {
+            snapshot.version == 1
+                && snapshot.source_revision == revision
+                && Some(&snapshot.function_digest) == row.function_digest.as_ref()
+                && Some(&snapshot.recipe_id) == row.recipe_id.as_ref()
+        });
+        let known = row.cache_accounting_version == Some(1);
+        let provider = row.provider.as_ref();
+        let mut value = serde_json::json!({
+            "snapshot_version": 1,
+            "coverage_basis": "last_recorded_publication",
+            "coverage_observation": if current.is_some() { "current" } else if observed.is_some() { "stale" } else { "unknown" },
+            "last_observed": observed,
+            "workspace_id": self.workspace_id(),
+            "source_revision": revision,
+            "sources": sources,
+            "profile": row.profile_name.as_ref().map(|name| serde_json::json!({"name": name, "function_digest": row.function_digest, "recipe_id": row.recipe_id, "dimensions": row.dimensions})),
+            "state": row.state, "last_error": row.last_error,
+            "bootstrap": row.bootstrap, "committed_units": row.committed_units,
+            "provider": { "state": provider.map_or("unknown", |p| p.state.as_str()), "code": provider.and_then(|p| p.code.as_ref()), "observed_at_unix": provider.map(|p| p.observed_at_unix), "profile": provider.map(|p| &p.profile) },
+            "unpartitioned_sources": current.map(|s| s.unpartitioned_sources),
+            "partition_coverage": current.map_or("unknown", |s| if s.unpartitioned_sources == 0 { "complete" } else { "partial" }),
+            "corpus": current.map_or("unknown", |s| if s.unpartitioned_sources > 0 { "unknown" } else if s.eligible_units == 0 { "empty" } else { "nonempty" }),
+            "eligible_units": current.map(|s| s.eligible_units),
+            "cached_current_units": current.map(|s| s.cached_current_units),
+            "searchable_current_units": current.map(|s| s.searchable_current_units),
+            "missing_units": current.map(|s| s.eligible_units.saturating_sub(s.cached_current_units)),
+            "cache": { "entries": if known { row.cache_entries } else { None }, "bytes": known.then_some(row.cache_bytes), "cap_bytes": row.cache_cap_bytes.unwrap_or(DEFAULT_CACHE_CAP_BYTES), "accounting": if known { "committed" } else { "reconciliation_required" }, "corrupt_entries": null, "orphan_entries": null, "legacy_entries": null },
+            "index": { "available": null, "entries": current.map(|s| s.index_entries), "validation": "not_checked", "reason": "use semantic status --audit for on-disk validation" },
+            "pending": self.derivation_pending(crate::neural::work::Lane::Semantic)?,
+        });
+        // No current observation can claim zero unknown work as ready.
+        if current.is_none() {
+            value["index"]["entries"] = serde_json::Value::Null;
+        }
+        control.check()?;
+        Ok(value)
     }
 }

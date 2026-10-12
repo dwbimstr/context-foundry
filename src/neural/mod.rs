@@ -28,6 +28,8 @@ pub mod fault_names {
     point!(PURGE_AFTER_PLAN, "semantic.purge_after_plan");
     // Publication: the semantic root and generation directory are open;
     // nothing has been written yet.
+    point!(PUBLISH_BEFORE_MANIFEST, "semantic.publish_before_manifest");
+    point!(PUBLISH_AFTER_MANIFEST, "semantic.publish_after_manifest");
     point!(PUBLISH_AFTER_CHECK, "semantic.publish_after_check");
     // Serving load: the index bytes were read once and matched the manifest;
     // the USearch header check and restore from those bytes come next.
@@ -36,7 +38,22 @@ pub mod fault_names {
     // the detail is the worker's scratch root.
     point!(FOOTPRINT_MEASURE, "supervisor.footprint_measure");
     // Every read of one stored partition row (tests count them).
+    point!(
+        MAPPING_CHECKPOINT_BEFORE_COMMIT,
+        "semantic.mapping_checkpoint_before_commit"
+    );
+    point!(MAPPING_READ_SNAPSHOT, "semantic.mapping_read_snapshot");
+    point!(MAPPING_FULL_PAGE, "semantic.mapping_full_page");
+    point!(MAPPING_CACHE_PROBE, "semantic.mapping_cache_probe");
+    point!(METADATA_READ, "semantic.metadata_read");
+    point!(LOCATION_WRITE, "semantic.location_write");
+    point!(LOCATION_COMPARE, "semantic.location_compare");
+    point!(SEGMENT_HASH, "semantic.segment_hash");
+    point!(SEGMENT_RESTORE, "semantic.segment_restore");
     point!(PARTITION_READ, "semantic.partition_read");
+    point!(CACHE_RECONCILE, "semantic.cache_reconcile");
+    point!(ARTIFACT_HASH, "semantic.artifact_hash");
+    point!(CARD_SEGMENT, "semantic.card_segment");
     // 009 T003 admission: a document admission has begun (before its one
     // decision under the admission lock); a foreground query has registered
     // (before it claims the model slot); either path has claimed the slot
@@ -78,12 +95,15 @@ macro_rules! neural_fault {
 }
 
 pub mod anchor;
+#[cfg(feature = "semantic")]
+pub(crate) mod area;
 pub mod cache;
 #[cfg(feature = "semantic")]
 pub mod driver;
 #[cfg(all(feature = "test-faults", feature = "semantic"))]
 pub mod fake;
 pub mod index;
+pub(crate) mod mapping_store;
 pub mod partition;
 #[cfg(feature = "semantic")]
 pub mod prepare;
@@ -95,9 +115,11 @@ pub mod provider;
 #[cfg(feature = "semantic")]
 pub mod query;
 pub mod status;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod supervisor;
 #[cfg(feature = "semantic")]
 pub mod tokenize;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod worker_runtime;
+
+pub mod work;

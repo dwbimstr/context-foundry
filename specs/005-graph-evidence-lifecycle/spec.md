@@ -480,3 +480,246 @@ expanded the wrong symbols.
 All three SCs were executed and passed: SC-001 and SC-002 on 2026-10-04, and SC-003 on
 2026-10-05 in one measured run with no failed criterion (validation). A failed scale run
 would not have blocked an already accepted smaller CLI or agent release.
+
+### T005 — Connect repository behavior across process boundaries
+
+Selected 2026-10-09; first experimental producer implemented 2026-10-10. A compiler reference graph does not capture all
+service/configuration dependencies. Start with one supported producer for declared
+routes/contracts and literal consumers inside an admitted repository. Normalize
+versioned API/topic keys with an explicit recipe, retain evidence spans at both ends,
+and publish exact, ambiguous and unresolved joins distinctly. A string used for
+logging alone is not a call. Source/dependency changes invalidate the affected joins.
+
+010 may propose additional links for dynamic behavior, but these stay derived claims;
+they cannot become compiler evidence because an endpoint name appears in source.
+Retrieval preserves the hop's kind, producer, source hashes and uncertainty. Bound
+traversal and make publication proportional to changed regions where supported.
+Cross-repository graph admission remains outside this slice.
+
+Verify one multi-service contract-change fixture with implementation, consumer,
+configuration and tests, including ambiguous providers and an unsupported dynamic
+consumer. Prakarana `3143213d` spec 063 is a draft reference, not implemented-loader
+evidence; `spine_tree.cpp` currently rolls up derived provides/consumes vocabulary.
+Its spec 058 and `setu_engine.cpp` inform the publication-cost question. Those sources
+were inspected, not executed; the ecosystem plan retains the full pin and differences.
+
+
+#### T005 implementation — 2026-10-10
+
+[`boundary.rs`](../../src/boundary.rs) initially implemented `python-http-v1`: module-level
+FastAPI app declarations, static `@app.get/post/put/patch/delete/head/options` routes
+and direct imported `requests`/`httpx` calls. An **indexed** JSON configuration
+assigns provider files and canonical HTTP origins to service IDs and admits consumer
+files. The key is `(service ID, uppercase method, path)`: API version path components
+and case are retained; URL query/fragment are excluded, with URL-parser path
+normalization on consumers. This is syntactic key agreement, not runtime call proof.
+Template routes, dynamic URLs, unknown origins, escaped/shadowed bindings, parse
+failures and unsupported provider constructs prevent unsupported certainty. A logging
+string alone produces no call. The parser retains existing Python scanner limits and
+deterministic work limits; indexing never imports or executes workspace Python.
+
+**Parameterized-route continuation:** `python-http-v2` also accepts whole-segment
+default string parameters, such as `/v2/items/{item_id}`, joined against literal
+consumer URLs. A unique match is `route_template`, distinctly syntactic. Empty
+segments do not match parameters; trailing slashes, methods, service IDs and literal
+segments must agree. Converters (`{id:int}`, `{tail:path}`), mixed segments and
+duplicate parameter names remain unsupported/incomplete. Overlapping literal and
+parameter routes remain ambiguous: declaration order and runtime precedence are not
+inferred. No dynamic URL evaluation or arbitrary framework support is claimed.
+
+The same key-posting table adds service/method buckets to discover literal consumers
+from a template provider seed; point-read scope/fact, posting and result bounds remain.
+No pair materialization or corpus scan is added. Recipe identity invalidates old scopes
+until explicit or enabled watcher republication; source hashes alone cannot reuse v1
+extraction. Changed-scope publication removes both exact and method postings atomically.
+Fixtures verify discovery from either end, overlap, empty segments, unsupported
+converters, restart and delivery through task composition. The separate fixed-patch
+comparison uses a parameterized service/consumer contract with a behavioral oracle.
+
+Both occurrence and enclosing context spans retain full source hashes. Configuration
+is also cited and hashed. Results distinguish `exact_key`, `ambiguous`, `unresolved`,
+`unsupported` and `incomplete`. Every configured provider scope must be current and
+complete before uniqueness or absence is claimed. A changed/deleted source or config
+invalidates affected evidence immediately on indexed-source acceptance; unrelated
+services remain eligible. Discovery is only within the declared static recipe.
+
+Schema 11 adds two ordinary redb tables: per-config/file scope replacement and key
+postings. Manual bundles replace a whole producer; compiler scopes would falsely
+classify this evidence and invalidate it on unrelated revisions. These two indexes
+avoid those semantics and avoid materializing provider×consumer pairs. Parsing occurs
+outside the write transaction; dependency and prior-scope identity checks precede one
+atomic publication. Unchanged files skip source reconstruction/parsing/writes. Explicit
+changed paths parse only those files; configuration edits retire removed scopes.
+Reads account for at most 64 configured scope rows, then bounded key postings, rather
+than scan repository mappings. This is a bounded selected-set metadata read, not a
+claim of constant total work. Limits: 16 services, 64 distinct Python paths, 64 KiB
+config, 1 MiB parse input, 128 facts/file, 8 traversal seeds, 512 postings and 64
+relations with at most 16 provider candidates each. Caps/incomplete scopes are visible.
+
+CLI `boundary index/relations` and opt-in MCP `index {boundary:{config,paths}}` publish
+or consume this index. T009 consumes it inside the final evidence snapshot. An owner
+started with `--watch --experimental-task-context` can explicitly enable one config
+through `index {boundary:{config,maintain:true}}`; `maintain:false` pauses it. Watching
+alone does not enable extraction. The existing source-watcher thread advances one
+configured file per turn, yields source work, skips unchanged hashes and reconciles the
+bounded selected set on a newer source revision. No extra worker, table or durable
+schedule is needed: restart requires explicit re-enablement and checks the whole admitted
+set. Status reports pending paths, parse/reuse counts and errors. Invalid configuration
+never blocks source acceptance; a newer revision or explicit re-enable retries it.
+This closes the manual-only maintenance gap while retaining immediate stale suppression.
+Dynamic/cross-repository joins, other frameworks, parameterized routes and broker
+contracts remain outside this producer. No generated claim becomes a compiler fact.
+
+[`tests/boundary.rs`](../../tests/boundary.rs) covers replay, changed-file publication,
+stale source/config dependencies, ambiguity, unsupported calls, logging strings,
+shadowing, scanner limits, interrupted transactions, process death before/after commit,
+restart, explicit schema upgrade and bounded CLI output. The two-service contract
+fixture in [`tests/task_evidence.rs`](../../tests/task_evidence.rs) supplies the
+implementation/consumer/configuration/test composition. See [usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
+and [validation](../../docs/validation.md#boundary-relationships-and-task-evidence--2026-10-10).
+
+
+T005 typed/mounted continuation (2026-10-10): `python-http-v3` admits built-in
+whole-segment `str`, `int`, `float`, `uuid` and terminal `path` converters, retaining
+overlap ambiguity. UUID separators may each be absent; the pinned runtime reference
+is installed Starlette 1.6.0 `starlette.convertors.CONVERTOR_TYPES` and
+`starlette.routing.compile_path`, consumed by FastAPI 0.141.1. The separately invoked
+`real_fastapi_converter_and_mount_fixture_matches_published_evidence` checks actual
+HTTP fixture matches; ordinary tests require no Python framework installation.
+Percent-encoded consumers, custom converters, mixed segments and nonterminal `path`
+remain unsupported instead of producing false absence/uniqueness.
+
+Same-file, module-level `APIRouter` construction and one direct `app.include_router`
+after route declarations compose literal constructor/registration prefixes. Additional
+constructor/mount options, dynamic/cross-file/nested/early/multiple mounts make coverage
+incomplete. Registration order is checked without quadratic node traversal. The router
+assignment and mount call are source-hashed dependency spans in the existing scope
+row. They invalidate with that source and must be delivered for task relationships.
+No new table or workspace execution is introduced. Old recipe rows decode but cannot
+serve as current evidence until explicit or enabled watcher republication. Other
+frameworks/brokers and cross-file import resolution remain pending concrete producers.
+
+
+T005 imported/nested continuation (2026-10-10): `python-http-v4` composes up to
+eight same-file router links and direct `from module import router [as alias]`
+mounts onto a module-level app. Module paths resolve only among explicitly configured
+provider `.py` files of the same service; relative imports are supported. Each router
+declaration, import and registration is a hashed source dependency. Registration must
+follow child registration because FastAPI copies routes at inclusion. Cycles, ambiguous
+packages, re-exports, escaped/shadowed aliases, dynamic/early/multiple registrations and
+longer chains leave coverage incomplete. This is static configured-module evidence,
+not Python runtime import resolution or executed application behavior.
+
+Dependent scopes retain the bounded service input identities in their existing rows.
+An importer edit immediately suppresses stale dependent scopes. Publication expands to
+the affected configured service (at most 64 files), rechecks every dependency before
+commit, and reuses unchanged scopes. Query validation reads each configured source's
+metadata once in the same transaction. Task composition requires all dependency bodies
+to fit. No new store table or workspace execution is introduced. The opt-in synthetic
+FastAPI consumer test executes a real cross-file nested-router request; broader
+frameworks/brokers and imports through router re-exports remain pending.
+
+
+T005 Flask and execution continuation (2026-10-11): `python-http-v5` adds imported
+Flask/Blueprint constructor aliases, module-level apps, literal route/method declarations
+and directly registered same-file Blueprints. Registration `url_prefix` overrides the
+Blueprint prefix, matching Flask. HEAD/OPTIONS and the default static route are included;
+static-route declaration is not proof that a file exists. String/int route parameters
+are supported; unsupported converters, options, shadowing/escape, factories, nested or
+cross-file Blueprints and unknown mutations keep scope incomplete. Old v4 rows need
+republication. The explicit Flask 3.1.2 runtime fixture confirms selected behavior;
+this remains syntactic producer evidence, not an executed-call claim.
+
+`foundry --store STORE import-execution ARTIFACT.json` separately imports producer
+observations into the existing replaceable graph-bundle owner. Both strict artifact
+versions contain `producer`, `run`, `command`, `completed: true`, `exit_code`,
+`duration_ms`, `test` (an ordinary graph endpoint), and `observations`
+(`from`, `to`, `kind`, `count`). Only positive `calls`/`covers` observations are
+accepted; edges represent observed presence, not exported frequency or coverage
+percentages. Bounds are 4 MiB, 16,384 observations, 32 command arguments / 4,096
+aggregate argument bytes, 100 producer bytes and 128 run bytes. The artifact
+SHA-256 identifies the exact imported bytes. No command is run by the importer or
+indexer. A completed run may have a nonzero exit code; its observations do not
+claim that its tests passed.
+
+V2 requires `v: 2`, a nonblank `scope` of at most 128 bytes, `workspace_id`,
+`source_revision`, and `inputs: [{"path": "...", "sha256": "..."}]` with
+1–16,384 distinct admitted paths. The collector captures the indexed workspace
+revision and source identities before execution and reports its relevant source
+inputs. Import checks the workspace/revision, every supplied input hash and all
+caller/target/test endpoint hashes and lines in the same write transaction as
+replacement. Every endpoint must belong to the manifest. Invalid input preserves
+the prior collection. The test endpoint is checked even for an empty observation set.
+
+The replaceable collection is `(producer, scope)`: two tests from one producer can
+coexist, reimport replaces just that scope, and a valid completed empty set clears
+just that scope. V2 uses a namespace separate from legacy bundles. Each edge retains
+the producer/scope and a bounded snapshot receipt containing the workspace/revision,
+input-array digest and input count; it does not repeat the full manifest. Graph and
+task reads label this `freshness: workspace_revision` and require the current
+workspace/revision plus caller/target/test identities. Any accepted indexed-source
+change invalidates the entire run, including an edit to a third source outside the
+manifest. Reverting that edit does not revive the old revision. This deliberately
+conservative rule does not selectively preserve runs after unrelated source edits.
+
+Legacy `v: 1` remains importable and replaces the whole producer bundle. Its explicit
+`freshness: endpoint_only` checks caller/target/test identities; it cannot claim
+snapshot or collection scope. Existing v1 rows retain this weaker interpretation.
+The authoritative store schema remains unchanged; older executables that reject the
+new receipt fields cannot consume these rows and must not be used as a downgrade.
+
+Evidence is `observed_by_producer`, not compiler resolution or execution attestation.
+The importer validates the supplied manifest; it cannot establish that the producer
+listed every runtime input. Indexed revisions do not detect filesystem changes not
+yet accepted into the store, external dependencies, runtime configuration or an
+unreported execution. Neither version proves unobserved paths absent, exhaustive
+suite execution, requirement satisfaction or current suite success. Task composition
+includes observations only with all caller/target/test spans under its ordinary
+budget. The explicit CPython fixture captures a dynamic `getattr` call and executed
+lines while excluding an unexecuted error branch. Regressions cover two collection
+scopes, atomic rejection, third-source invalidation and restart. Broader collectors,
+frameworks/brokers, cross-language identity and test-to-requirement coverage remain open.
+
+
+T005 package and observed-framework continuation (2026-10-11):
+`python-http-v6` resolves a direct router definition in either an explicitly
+configured `module.py` or `package/__init__.py`, including `from . import router`.
+Competing configured module/package layouts, re-exports, cycles and escaped aliases
+remain incomplete. Existing service-wide hashes protect package dependencies before
+publication and on reads; old recipe rows require republication. No Python import
+execution or path search is introduced. Tests live in
+[`boundary.rs`](../../tests/boundary.rs), including an explicitly executed FastAPI
+package fixture. The execution-import fixture now also exercises a real Flask request
+that dynamically selects a callback, retains observed test-line evidence, excludes an
+unexecuted branch, and invalidates v2 observations after an intermediate route source
+changes even though the observed caller, target and test remain unchanged. After a
+fresh collection, an observing-test edit also invalidates the observations after
+restart. The collector captures the indexed snapshot before explicit execution and
+checks its fixture files again afterward. These generated fixtures validate the import
+contract, not a deployed general-purpose collector or test-to-requirement inference. Broader frameworks/brokers, re-exports,
+async/background trace attribution and cross-language identity remain open.
+
+The 2026-10-11 task-composition continuation maps explicit fresh requirement links to
+observed target source lines, with task entry IDs attached to the existing bounded
+execution proof. It adds no graph truth or execution behavior. A positive overlap is
+traceability only; satisfaction and complete coverage remain unestablished. Broader
+collectors/frameworks and runtime identity remain open under T005.
+
+T005 named re-export continuation (2026-10-11): `python-http-v7` follows explicit
+module-level `from module import name [as alias]` chains to a configured router
+definition, including package initializers. Every hop must resolve unambiguously
+inside the same configured service; traversal cannot exceed its 64-file admission.
+The published provider cites each import hop, the router declaration and the app
+registration. Existing service-wide input hashes govern stale suppression, restart,
+changed-path republication and the final commit check. No table, source admission,
+Python execution or runtime-resolution claim is added.
+
+A forwarding module containing only these imports, comments and simple string
+literals need not construct an app itself. Other module code cannot use that
+exemption. Unsupported/star/conditional imports, cycles, competing layouts,
+duplicate/shadowed/escaped aliases and multiple mounts remain incomplete. Old recipe
+rows need explicit or already-enabled watcher republication. Tests cover two-hop
+aliases, edits/reverts/deletion/restart, refusal cases and whole-proof task packing;
+an explicitly invoked real FastAPI fixture confirms a request through a package
+re-export. Broader import forms, frameworks, dynamic collectors and cross-language
+evidence remain open.

@@ -13,7 +13,7 @@ clap = { version = "4", features = ["derive"] }
 ignore = "0.4"
 libc = "0.2"
 redb = "4.3"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 # `float_roundtrip` (013 T002): an exported f64 parses back to the same bits,
 # so calibrated probabilities are identical after export and reload.
 serde_json = { version = "1", features = ["float_roundtrip"] }
@@ -62,8 +62,10 @@ protobuf = "=3.7.2"
 # 003 adapter: real MCP SDK (rmcp 3.5.0, feasibility-proven on Rust 1.90) and
 # the async/HTTP runtime it mounts on. The bounded codec rides tokio-util;
 # axum hosts the SDK's tower service at /mcp.
-rmcp = { version = "=3.5.0", features = [
+rmcp = { version = "=3.5.1", features = [
     "server",
+    "client",
+    "transport-streamable-http-client-reqwest",
     "transport-io",
     "transport-streamable-http-server",
 ] }
@@ -95,13 +97,18 @@ bytes = "1"
 # the pinned artifact's tokenizer.json and the USearch F16 index. Default on;
 # `--no-default-features` builds the lexical-only core.
 tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
-usearch = { version = "=2.26.2", optional = true }
+usearch = { version = "=2.26.4", optional = true }
+# Persistent location snapshots share unchanged tree nodes across publications (009 T008).
+imbl = "=7.0.2"
+# Bounded reusable CPU pools for ingestion/indexing and semantic preparation.
+rayon = "=1.12.0"
 # 013 T002 learning worker only (`learning-worker`): LibTorch through tch,
 # experimental 0.26.0/LibTorch 2.13.0 pairing (docs/review/tch-026.md).
 # Historical D001 acceptance was 0.24.0/2.11.0. The default build never links it. `LIBTORCH` names
 # the LibTorch tree at build time; build.rs records its lib directory as
 # the rpath of every linked target, so nothing depends on DYLD_LIBRARY_PATH.
 tch = { version = "=0.26.0", optional = true }
+notify = "8.2.0"
 
 [features]
 default = ["semantic"]
@@ -112,13 +119,21 @@ semantic = ["dep:tokenizers", "dep:usearch"]
 # bindgen and links the static archives into that binary alone; `foundry`
 # and the default build never touch llama.cpp.
 embed-worker = ["dep:bindgen"]
+# Opt-in Linux x86_64 AVX-512 BF16 worker; separate adapter identity and runtime
+# capability refusal. The portable CPU worker remains the default.
+embed-worker-avx512-bf16 = ["embed-worker"]
+# Compatibility alias for the original diagnostic build. The corrected runtime
+# is now part of embed-worker; adapter revisions distinguish CPU and Metal.
+embed-worker-pooled-diagnostic = ["embed-worker"]
+# Owned generation links the same pinned llama.cpp into foundry-generate only.
+generate-worker = ["dep:bindgen"]
 learning-worker = ["dep:tch"]
 # Named deterministic fault points for recovery tests. Never enabled by
 # default; release builds contain no hook code or fault-name strings.
 test-faults = []
 
 [build-dependencies]
-bindgen = { version = "0.72", optional = true }
+bindgen = { version = "0.73", optional = true }
 
 [dev-dependencies]
 # Self dev-dependency: `cargo test` builds the crate with its fault points.
@@ -127,12 +142,12 @@ libc = "0.2"
 tempfile = "3"
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream"] }
 # Parses the printed Codex configuration for real.
-toml = "0.8"
+toml = "1.1"
 # Raw emitted-bytes capture for exact-accounting tests.
 serde_json = { version = "1", features = ["raw_value"] }
 # Real SDK client + child-process transport are test-only: production code
 # serves, it never connects.
-rmcp = { version = "=3.5.0", features = [
+rmcp = { version = "=3.5.1", features = [
     "client",
     "transport-child-process",
     "transport-streamable-http-client-reqwest",
@@ -156,6 +171,16 @@ required-features = ["embed-worker"]
 [[bin]]
 name = "foundry-embed-fake"
 path = "src/bin/foundry_embed_fake.rs"
+required-features = ["test-faults"]
+
+[[bin]]
+name = "foundry-generate"
+path = "src/bin/foundry_generate.rs"
+required-features = ["generate-worker"]
+
+[[bin]]
+name = "foundry-generate-fake"
+path = "src/bin/foundry_generate_fake.rs"
 required-features = ["test-faults"]
 
 [[bin]]

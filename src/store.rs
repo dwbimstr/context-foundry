@@ -2,6 +2,7 @@
 //! (Tantivy). One owner per store; explicit initialization, explicit schema
 //! upgrade and explicit repair. Reads never mutate authoritative state.
 use crate::Strategy;
+use crate::brief::BRIEFS;
 use crate::error::{FResult, FoundryError};
 use crate::graph;
 use crate::memory::{MEMORY, MemoryRecord, memory_pending_key, source_pending_key};
@@ -15,7 +16,9 @@ use std::cmp::Reverse;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use tantivy::collector::{Count, TopDocs};
-use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery};
+use tantivy::query::{
+    BooleanQuery, BoostQuery, ConstScoreQuery, Occur, PhraseQuery, Query, TermQuery,
+};
 use tantivy::schema::{
     FAST, Field, IndexRecordOption, STORED, STRING, Schema, TextFieldIndexing, TextOptions, Value,
 };
@@ -32,7 +35,7 @@ pub(crate) const META: TableDefinition<&str, &str> = TableDefinition::new("meta"
 pub(crate) const SEEN: TableDefinition<&str, &str> = TableDefinition::new("scan_seen");
 pub(crate) const FEEDBACK: TableDefinition<&str, &str> = TableDefinition::new("feedback");
 
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 12;
 const MAX_SOURCE_BYTES: usize = 2 * 1024 * 1024;
 const PAGE: usize = 128;
 /// Refresh builds a page's search documents on at most this many threads,
@@ -124,7 +127,7 @@ pub const MAX_ANCHORS: usize = 4;
 /// lines (context-v2 § Anchored context).
 pub const ANCHOR_LIST: usize = 16;
 /// At most this many hits per file survive materialization.
-const PER_FILE_CAP: usize = 4;
+pub(crate) const PER_FILE_CAP: usize = 4;
 /// Context draws at most this many delivery units from the ranking.
 const CONTEXT_UNITS: usize = 32;
 /// Context adds at most this many file outlines.
@@ -138,7 +141,9 @@ pub(crate) const TIE_GROUP: usize = 4;
 pub(crate) const GROUP_FILES: usize = DOOR_FILES / TIE_GROUP;
 /// Approximate doors examine at most this many delivery units.
 const DOOR_WINDOW: usize = 256;
-/// The META value naming the current search index format. `"5"` (001 T008,
+/// The META value naming the current search index format. `"7"` enriches the
+/// source-level call-name postings introduced in `"6"` with conservative Python
+/// explicit import-alias names, without changing units. `"5"` (001 T008,
 /// context-v2 § City map › Languages) gives 15 more languages units,
 /// addresses and import keys and parses every source on the `tree-sitter`
 /// 0.26 runtime under a work budget; `"4"` (001 T007,
@@ -146,9 +151,12 @@ const DOOR_WINDOW: usize = 256;
 /// and added `role`, `name_case_hash`, `addr_hash`, `name_start`/`name_end`
 /// and `imports`; `"3"` added the unit's own start (its head) and the
 /// leading-run unit ranges (§ Unit forest).
-/// 009 card partitions name it in their recipe, so a unit change
-/// re-partitions them.
-pub(crate) const SEARCH_SCHEMA: &str = "5";
+/// Semantic partitions independently name SOURCE_UNIT_SCHEMA; changing only
+/// these derived postings does not refit or re-embed model inputs.
+pub(crate) const SEARCH_SCHEMA: &str = "7";
+/// Search-only posting changes do not change source units or model inputs.
+/// Keep semantic partition recipes bound to the unit grammar, independently.
+pub(crate) const SOURCE_UNIT_SCHEMA: &str = "5";
 const SEARCH_SCHEMA_REASON: &str =
     "search_schema: search index format changed; run `foundry repair-index`";
 
@@ -457,6 +465,9 @@ pub enum RenderedForm {
 
 /// Ranking tiers: exact definitions (1), lexical hits (2), file outlines.
 pub const TIER_OUTLINE: u8 = 4;
+/// Experimental behavioral support: existing lexical candidates owned by the
+/// uniquely resolved type. Selected only by 001 T010's opt-in context policy.
+pub const TIER_BEHAVIOR: u8 = 3;
 
 /// One ranked, already revalidated candidate (context-v2 § Candidate seam).
 /// `handle` keeps the full identities of the source item;
@@ -537,8 +548,8 @@ pub struct CandidateCounters {
     pub stale: u64,
     /// Hits skipped by the per-file cap.
     pub capped: u64,
-    /// A candidate window filled: search tier 1 at 64, tier 2 at 256, or a
-    /// context's doors window (context-v2 § Doors).
+    /// A candidate examination window filled: lexical tiers, context doors,
+    /// or bounded semantic provenance/discovery/refinement work.
     pub candidates_full: bool,
     /// More hits survived materialization than the requested limit.
     pub truncated: bool,
@@ -880,6 +891,8 @@ struct Fields {
     name_start: Field,
     name_end: Field,
     imports: Field,
+    call_name: Field,
+    call_coverage: Field,
 }
 
 struct SearchHandles {
@@ -899,12 +912,43 @@ pub struct Engine {
     /// The parse panics of the current drain, acknowledged page by page; the
     /// index run that drained them names each as a scan failure.
     parse_panics: ParseFailures,
+    /// Shared ingestion/lexical CPU workers; lazy and retained across refreshes.
+    index_pool: Option<std::sync::Arc<rayon::ThreadPool>>,
+    /// Disposable verification/residency and affected-location views for this owner.
+    #[cfg(feature = "semantic")]
+    pub(crate) semantic_segments:
+        std::sync::Arc<std::sync::Mutex<crate::neural::index::verification::Cache>>,
+    #[cfg(feature = "semantic")]
+    pub(crate) semantic_mapping: std::sync::Mutex<crate::neural::index::mapping::Journal>,
+    /// Source-commit notification; redb owns durable work.
+    pub(crate) semantic_wake: std::sync::Arc<crate::neural::work::Wake>,
     /// The store directory, held as a descriptor opened (`O_DIRECTORY |
     /// O_NOFOLLOW`) exactly once at bind time and kept for the Engine's
     /// life. Semantic purge, publication and validation duplicate it (see
     /// [`crate::neural::anchor`]) and never resolve the store pathname
     /// again, so a substituted ancestor cannot redirect them.
     pub(crate) semantic_dir: crate::neural::anchor::Dir,
+}
+
+/// Immutable, checked source bytes and their digest, computed away from the
+/// writer. Private fields prevent a caller from supplying a mismatched hash.
+pub(crate) struct PreparedSource {
+    path: String,
+    body: String,
+    hash: String,
+}
+
+impl PreparedSource {
+    pub(crate) fn new(path: String, body: String) -> FResult<Self> {
+        validate_path(&path)?;
+        if body.len() > MAX_SOURCE_BYTES {
+            return Err(FoundryError::InvalidArgument(
+                "source exceeds 2 MiB limit".into(),
+            ));
+        }
+        let hash = crate::digest(body.as_bytes());
+        Ok(Self { path, body, hash })
+    }
 }
 
 impl std::fmt::Debug for Engine {
@@ -1125,6 +1169,8 @@ fn search_schema() -> Schema {
     schema.add_u64_field("name_start", STORED);
     schema.add_u64_field("name_end", STORED);
     schema.add_text_field("imports", STRING);
+    schema.add_text_field("call_name", STRING);
+    schema.add_text_field("call_coverage", STRING | STORED);
     schema.build()
 }
 
@@ -1156,6 +1202,8 @@ fn fields_of(schema: &Schema) -> Fields {
         name_start: field("name_start"),
         name_end: field("name_end"),
         imports: field("imports"),
+        call_name: field("call_name"),
+        call_coverage: field("call_coverage"),
     }
 }
 
@@ -1449,6 +1497,36 @@ impl QueryAnchors {
     }
 }
 
+/// One derived record search candidate before live-row validation (the
+/// document's id and the revision it was indexed at).
+#[derive(Clone)]
+pub(crate) struct RecordCandidate {
+    pub id: String,
+    pub revision: u64,
+}
+
+/// The derived record candidates of one query, collected before the final
+/// read: whether the 256-document selection window filled, and the (id,
+/// indexed revision) pairs it produced.
+pub(crate) struct RecordPlan {
+    pub window_full: bool,
+    pub candidates: Vec<RecordCandidate>,
+}
+#[cfg(feature = "semantic")]
+impl RecordPlan {
+    pub(crate) fn prepend(&mut self, candidates: impl IntoIterator<Item = RecordCandidate>) {
+        let mut ids = std::collections::BTreeSet::new();
+        let mut merged: Vec<_> = candidates
+            .into_iter()
+            .chain(std::mem::take(&mut self.candidates))
+            .filter(|candidate| ids.insert(candidate.id.clone()))
+            .collect();
+        self.window_full |= merged.len() > 256;
+        merged.truncate(256);
+        self.candidates = merged;
+    }
+}
+
 /// What a context request adds to its query and strategy
 /// ([`Engine::context_candidates_with`]): 008 memory, the 009 T002 dense
 /// window, a configured 013 policy routing an `auto` strategy, and the
@@ -1456,11 +1534,99 @@ impl QueryAnchors {
 /// chooses them from this store's index).
 #[derive(Clone, Copy, Default)]
 pub struct ContextOptions<'a> {
+    pub compose_evidence: bool,
+    pub compact_evidence: bool,
+    pub boundary_config: Option<&'a str>,
+    pub task: Option<crate::task_context::Scope<'a>>,
     pub memory: bool,
+    pub briefs: bool,
+    pub experimental_behavior: bool,
     #[cfg(feature = "semantic")]
     pub dense: Option<&'a crate::neural::query::DenseWindow>,
     pub policy: Option<&'a crate::policy::Policy>,
     pub anchors: Option<&'a [AnchorCandidate]>,
+}
+
+/// Conservative, bounded intent recognition. Unknown wording, locator and
+/// relationship requests keep the baseline. No model or language guess is used.
+fn behavior_terms(
+    query: &str,
+    anchors: &[AnchorWindow],
+) -> Option<std::collections::BTreeSet<String>> {
+    let lower = query.trim().to_ascii_lowercase();
+    if ![
+        "how does ",
+        "how do ",
+        "how is ",
+        "why does ",
+        "explain how ",
+        "describe how ",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+        || anchors.len() != 1
+        || !anchors[0].resolved()
+    {
+        return None;
+    }
+    let anchor = anchors[0].entries.first()?;
+    let (kind, name) = anchor.label.split_once(' ')?;
+    if !["struct", "class", "interface", "enum", "trait"].contains(&kind) {
+        return None;
+    }
+    let words = analyzed_terms(crate::syntax::code_subtokens, query);
+    if words.iter().any(|word| {
+        ["find", "locate", "defined", "definition", "definitions"].contains(&word.as_str())
+    }) {
+        return None;
+    }
+    let names = analyzed_terms(crate::syntax::code_subtokens, name);
+    let terms: std::collections::BTreeSet<_> = words
+        .into_iter()
+        .filter(|word| {
+            !names.contains(word)
+                && ![
+                    "how", "does", "do", "is", "why", "explain", "describe", "the", "a", "an",
+                    "it", "its", "and", "or", "to", "of", "in", "on", "with", "for", "when",
+                    "before", "after", "first", "that", "this", "handle", "handles",
+                ]
+                .contains(&word.as_str())
+        })
+        .collect();
+    (!terms.is_empty()).then_some(terms)
+}
+
+fn behavior_supports(
+    anchor: &RankedItem,
+    item: &RankedItem,
+    terms: &std::collections::BTreeSet<String>,
+) -> bool {
+    let (Some(owner), Some(unit)) = (&anchor.handle, &item.handle) else {
+        return false;
+    };
+    if owner.workspace_id != unit.workspace_id
+        || owner.path != unit.path
+        || owner.sha256 != unit.sha256
+        || owner == unit
+    {
+        return false;
+    }
+    let (Some((_, name)), Some((kind, method))) =
+        (anchor.label.split_once(' '), item.label.split_once(' '))
+    else {
+        return false;
+    };
+    if !["fn", "method", "function"].contains(&kind)
+        || !(method.starts_with(&format!("{name}::")) || method.starts_with(&format!("{name}.")))
+    {
+        return false;
+    }
+    item.forms.iter().any(|form| match form {
+        RenderedForm::Verbatim(body) => analyzed_terms(crate::syntax::code_subtokens, body)
+            .iter()
+            .any(|word| terms.contains(word)),
+        _ => false,
+    })
 }
 
 /// The query's tokens for path detection: whitespace- and backtick-separated
@@ -1720,6 +1886,13 @@ fn tier_restricted(fields: &Fields, dir: Option<&str>, query: Box<dyn Query>) ->
             )) as Box<dyn Query>,
         ),
     ];
+    clauses.push((
+        Occur::MustNot,
+        Box::new(TermQuery::new(
+            Term::from_field_text(fields.kind, "brief"),
+            IndexRecordOption::Basic,
+        )),
+    ));
     if let Some(dir) = dir {
         clauses.push((
             Occur::Must,
@@ -1833,6 +2006,12 @@ fn search_documents(
     let path_segments = crate::syntax::path_segments(path);
     let index = crate::syntax::index(body, lang)?;
     let imports = index.imports;
+    let call_names = index.call_names;
+    let call_coverage = if parsing == Parsing::Unparsed {
+        "incomplete"
+    } else {
+        index.call_coverage
+    };
     Ok(index
         .documents
         .into_iter()
@@ -1866,6 +2045,10 @@ fn search_documents(
                 out.add_text(fields.lang, lang.tag());
             }
             if position == 0 {
+                out.add_text(fields.call_coverage, call_coverage);
+                for name in &call_names {
+                    out.add_text(fields.call_name, name);
+                }
                 for key in &imports {
                     out.add_text(fields.imports, key);
                 }
@@ -2037,7 +2220,7 @@ impl IndexHooks {
     }
 }
 
-/// The build threads of one page: min(available parallelism, 8).
+/// The reusable ingestion/build pool: min(available parallelism, 8).
 fn index_threads(hooks: &IndexHooks) -> usize {
     hooks
         .threads()
@@ -2047,6 +2230,32 @@ fn index_threads(hooks: &IndexHooks) -> usize {
                 .min(MAX_INDEX_THREADS)
         })
         .max(1)
+}
+
+fn index_pool(
+    slot: &mut Option<std::sync::Arc<rayon::ThreadPool>>,
+    hooks: &IndexHooks,
+) -> FResult<std::sync::Arc<rayon::ThreadPool>> {
+    let count = index_threads(hooks);
+    if slot
+        .as_ref()
+        .is_none_or(|pool| hooks.threads().is_some() && pool.current_num_threads() != count)
+    {
+        *slot = Some(std::sync::Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(count)
+                .thread_name(|index| format!("foundry-index-{index}"))
+                .build()
+                .map_err(|error| {
+                    FoundryError::Internal(anyhow::anyhow!(
+                        "cannot start indexing workers: {error}"
+                    ))
+                })?,
+        ));
+    }
+    Ok(std::sync::Arc::clone(
+        slot.as_ref().expect("pool initialized"),
+    ))
 }
 
 /// One source handed out to a build thread: its page position and its
@@ -2080,7 +2289,7 @@ struct HandOutState {
     closed: bool,
     /// A build thread unwound outside its panic boundary: the writer never
     /// waits for a build it can no longer get.
-    broken: bool,
+    broken: Option<String>,
 }
 
 /// The hand-out between the calling thread and the build threads of one
@@ -2139,9 +2348,9 @@ impl HandOut {
             if let Some(outcome) = state.built.remove(&position) {
                 return Ok(Some(outcome));
             }
-            if state.broken {
+            if let Some(message) = &state.broken {
                 return Err(FoundryError::Internal(anyhow::anyhow!(
-                    "an index build thread failed"
+                    "an index build thread failed: {message}"
                 )));
             }
             if !wait {
@@ -2164,23 +2373,6 @@ impl HandOut {
     }
 }
 
-/// Marks the hand-out broken when its build thread unwinds outside the
-/// parse panic boundary, so the writer never waits for it.
-struct BuildThread<'a>(&'a HandOut);
-
-impl Drop for BuildThread<'_> {
-    fn drop(&mut self) {
-        if std::thread::panicking() {
-            let mut state = self.0.lock();
-            state.broken = true;
-            state.closed = true;
-            drop(state);
-            self.0.finished.notify_all();
-            self.0.work.notify_all();
-        }
-    }
-}
-
 /// Closes the hand-out when dropped, an unwind of the writer included, so no
 /// build thread waits for work that never comes and the scope can finish.
 struct Closing<'a>(&'a HandOut);
@@ -2196,8 +2388,8 @@ impl Drop for Closing<'_> {
 /// the one writer, on this thread, adds every key's documents in key order
 /// as they become ready. At most [`HANDOUT_BYTES`] of source bytes are handed
 /// out and not yet consumed — a source's bytes are consumed once the writer
-/// has added its documents. Every build thread has finished when this
-/// returns, and nothing is committed here.
+/// has added its documents. Every page job has finished when this returns;
+/// pool threads remain available for later pages. Nothing is committed here.
 ///
 /// The control is checked before each hand-out: a cancellation or deadline
 /// seen there, or any failure, stops the hand-out and returns the error with
@@ -2207,31 +2399,37 @@ impl Drop for Closing<'_> {
 /// its parse boundary fails the page by name. Returns the parse panics of
 /// the page by position.
 #[allow(clippy::too_many_arguments)]
-fn index_page<S, C, M>(
+fn index_page<S, C, M, B>(
     writer: &mut IndexWriter,
     fields: &Fields,
     pending: &[(String, String)],
     sources: &S,
     stored: &C,
     memory: &M,
+    briefs: &B,
     control: &crate::Control,
     hooks: &IndexHooks,
+    pool: Option<&rayon::ThreadPool>,
 ) -> FResult<Vec<(usize, String)>>
 where
     S: ReadableTable<&'static str, &'static str>,
     C: ReadableTable<&'static str, &'static str>,
     M: ReadableTable<&'static str, &'static str>,
+    B: ReadableTable<&'static str, &'static str>,
 {
     let jobs = pending
         .iter()
         .filter(|(key, _)| key.starts_with("source:"))
         .count();
-    let threads = index_threads(hooks).min(jobs);
+    let threads = pool
+        .map_or(0, rayon::ThreadPool::current_num_threads)
+        .min(jobs);
     let queue = HandOut::default();
     let mut page = PageWriter {
         writer,
         fields,
         memory,
+        briefs,
         pending,
         queue: &queue,
         control,
@@ -2241,48 +2439,52 @@ where
         next: 0,
         panics: Vec::new(),
     };
-    std::thread::scope(|scope| {
-        let _closing = Closing(&queue);
-        let mut workers = Vec::with_capacity(threads);
-        let mut started = Ok(());
-        for _ in 0..threads {
-            let queue = &queue;
-            match std::thread::Builder::new()
-                .name("foundry-index".into())
-                .spawn_scoped(scope, move || build_thread(queue, fields, hooks))
-            {
-                Ok(worker) => workers.push(worker),
-                Err(error) => {
-                    started = Err(FoundryError::from(error));
-                    break;
-                }
+    let indexed = if let Some(pool) = pool {
+        pool.in_place_scope(|scope| {
+            let _closing = Closing(&queue);
+            for _ in 0..threads {
+                let queue = &queue;
+                scope.spawn(move |_| {
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        build_thread(queue, fields, hooks);
+                    }));
+                    if let Err(payload) = outcome {
+                        let mut state = queue.lock();
+                        state.broken = Some(panic_message(&*payload));
+                        state.closed = true;
+                        state.jobs.clear();
+                        drop(state);
+                        queue.finished.notify_all();
+                        queue.work.notify_all();
+                    }
+                });
             }
-        }
-        let indexed = started.and_then(|()| page.hand_out(sources, stored));
-        // Stop handing out. After a failure or cancellation the work no
-        // thread has taken is dropped; each thread finishes its current
-        // source and exits. Every one is joined here, so a panic outside
-        // its parse boundary is this page's named failure, not an unwind.
-        queue.close();
-        let mut joined = Ok(());
-        for worker in workers {
-            if let Err(payload) = worker.join() {
-                joined = Err(FoundryError::Internal(anyhow::anyhow!(
-                    "an index build thread panicked: {}",
-                    panic_message(&*payload)
-                )));
-            }
-        }
-        joined.and(indexed)
-    })?;
+            let indexed = page.hand_out(sources, stored);
+            // Stop handing out. After a failure or cancellation the work no
+            // job has taken is dropped; each job finishes its current source
+            // and returns to the retained pool. The scope joins every job,
+            // including a panic outside its parse boundary.
+            queue.close();
+            indexed
+        })
+    } else {
+        page.hand_out(sources, stored)
+    };
+    if let Some(message) = &queue.lock().broken {
+        return Err(FoundryError::Internal(anyhow::anyhow!(
+            "an index build thread panicked: {message}"
+        )));
+    }
+    indexed?;
     Ok(page.panics)
 }
 
 /// The page's one writer, on the calling thread.
-struct PageWriter<'a, M> {
+struct PageWriter<'a, M, B> {
     writer: &'a mut IndexWriter,
     fields: &'a Fields,
     memory: &'a M,
+    briefs: &'a B,
     pending: &'a [(String, String)],
     queue: &'a HandOut,
     control: &'a crate::Control,
@@ -2297,7 +2499,9 @@ struct PageWriter<'a, M> {
     panics: Vec<(usize, String)>,
 }
 
-impl<M: ReadableTable<&'static str, &'static str>> PageWriter<'_, M> {
+impl<M: ReadableTable<&'static str, &'static str>, B: ReadableTable<&'static str, &'static str>>
+    PageWriter<'_, M, B>
+{
     /// Hand out the page's existing sources in key order, adding finished
     /// ones in key order as it goes, then add the rest.
     fn hand_out<S, C>(&mut self, sources: &S, stored: &C) -> FResult<()>
@@ -2419,6 +2623,20 @@ impl<M: ReadableTable<&'static str, &'static str>> PageWriter<'_, M> {
                     self.add_document(document)?;
                 }
             }
+        } else if let Some(id) = key.strip_prefix("brief:") {
+            self.writer
+                .delete_term(Term::from_field_text(self.fields.key, key));
+            if let Some(raw) = self.briefs.get(id)?
+                && let Ok(record) = crate::brief::decode_row(id, raw.value())
+            {
+                self.add_document(record_document(
+                    self.fields,
+                    "brief",
+                    id,
+                    record.revision,
+                    &record.brief.searchable_text(),
+                ))?;
+            }
         }
         Ok(())
     }
@@ -2440,7 +2658,6 @@ impl<M: ReadableTable<&'static str, &'static str>> PageWriter<'_, M> {
 /// source's bytes is dropped once the documents exist; the bytes stay
 /// charged until the writer adds those documents.
 fn build_thread(queue: &HandOut, fields: &Fields, hooks: &IndexHooks) {
-    let _unwinding = BuildThread(queue);
     while let Some(job) = queue.take() {
         let outcome = build_source(fields, &job, hooks);
         index_event!(hooks, index_hooks::Event::Built(&job.path));
@@ -2575,7 +2792,17 @@ pub(crate) fn validate_link_span(tx: &WriteTransaction, bound: &str, handle: &st
 /// it — and memory documents carry no `def_name`, so definition matching
 /// stays source-only even before the kind filter excludes them.
 fn memory_document(fields: &Fields, id: &str, revision: u64, text: &str) -> TantivyDocument {
-    let key = memory_pending_key(id);
+    record_document(fields, "memory", id, revision, text)
+}
+
+fn record_document(
+    fields: &Fields,
+    kind: &str,
+    id: &str,
+    revision: u64,
+    text: &str,
+) -> TantivyDocument {
+    let key = format!("{kind}:{id}");
     let mut out = TantivyDocument::default();
     out.add_u64(fields.key_hash, hash64(&key));
     out.add_text(fields.key, &key);
@@ -2590,7 +2817,7 @@ fn memory_document(fields: &Fields, id: &str, revision: u64, text: &str) -> Tant
     ] {
         out.add_u64(field, 0);
     }
-    out.add_text(fields.kind, "memory");
+    out.add_text(fields.kind, kind);
     out.add_u64(fields.role, path_role(""));
     out.add_text(fields.name, id);
     out.add_text(fields.ident, text);
@@ -2767,13 +2994,113 @@ fn best_line_index(text: &str, wanted: &std::collections::BTreeSet<String>) -> u
     best.1
 }
 
+/// A bounded passage containing the most distinct query concepts, then their
+/// tightest occurrence span. Count each concept once: repeated boilerplate must
+/// not outrank evidence spread over adjacent lines. Offsets always cite source.
+#[cfg(feature = "semantic")]
+fn prose_passage(
+    text: &str,
+    wanted: &std::collections::BTreeSet<String>,
+) -> Option<(usize, usize)> {
+    const BYTES: usize = 1536;
+    let words: std::collections::BTreeMap<_, _> = wanted
+        .iter()
+        .filter(|word| !prose_stopword(word))
+        .take(64)
+        .enumerate()
+        .map(|(id, word)| (word.as_str(), id))
+        .collect();
+    if words.is_empty() {
+        return None;
+    }
+    let hits: Vec<_> = crate::syntax::code_subtokens(text)
+        .into_iter()
+        .filter_map(|(start, end)| {
+            words
+                .get(text[start..end].to_lowercase().as_str())
+                .map(|&id| (start, end, id))
+        })
+        .collect();
+    let mut counts = [0usize; 64];
+    let (mut right, mut distinct) = (0, 0);
+    let mut best = None;
+    for left in 0..hits.len() {
+        while right < hits.len() && hits[right].1 - hits[left].0 <= BYTES {
+            let count = &mut counts[hits[right].2];
+            distinct += usize::from(*count == 0);
+            *count += 1;
+            right += 1;
+        }
+        if right == left {
+            // A single pathological identifier cannot fit the passage.
+            right += 1;
+            continue;
+        }
+        let (start, end) = (hits[left].0, hits[right - 1].1);
+        let key = (distinct, Reverse(end - start), Reverse(start));
+        if best.is_none_or(|(previous, _, _)| key > previous) {
+            best = Some((key, start, end));
+        }
+        counts[hits[left].2] -= 1;
+        distinct -= usize::from(counts[hits[left].2] == 0);
+    }
+    let (_, start, end) = best?;
+    // Include a little leading context, provided it cannot displace a match.
+    let line = text[..start].rfind('\n').map_or(0, |at| at + 1);
+    let before = text[..line]
+        .match_indices('\n')
+        .rev()
+        .nth(3)
+        .map_or(0, |(at, _)| at + 1);
+    let mut from = if start - before <= 256 { before } else { line };
+    if end - from > BYTES {
+        from = start;
+    }
+    let mut to = (from + BYTES).min(text.len());
+    while !text.is_char_boundary(to) {
+        to -= 1;
+    }
+    if let Some(newline) = text[from..to].rfind('\n')
+        && from + newline + 1 >= end
+    {
+        to = from + newline + 1;
+    }
+    Some((from, to))
+}
+
+#[cfg(all(test, feature = "semantic"))]
+mod passage_tests {
+    use super::*;
+
+    #[test]
+    fn dense_passages_join_adjacent_concepts_without_rewarding_repetition() {
+        let wanted = ["refund", "cancelled", "payments"].map(String::from).into();
+        let text = format!(
+            "{}{}fn settle() {{\n    refund();\n    cancelled();\n    payments();\n}}\n{}",
+            "refund ".repeat(400),
+            "\n// ordinary setup\n".repeat(100),
+            "🦀".repeat(600)
+        );
+        let (start, end) = prose_passage(&text, &wanted).unwrap();
+        assert!(end - start <= 1536);
+        let passage = &text[start..end];
+        for needle in ["fn settle", "refund();", "cancelled();", "payments();"] {
+            assert!(passage.contains(needle), "{passage}");
+        }
+        assert_eq!(prose_passage("only unrelated source", &wanted), None);
+        assert_eq!(prose_passage(&text, &["the".into()].into()), None);
+    }
+}
+
 /// One search document selected by a tier, before revalidation.
+#[derive(Clone)]
 struct Candidate {
     tier: u8,
     score: Score,
     path: String,
     hash: String,
     start: u64,
+    end: u64,
     unit_start: u64,
     /// The delivery unit's own start, after its leading run: a tier-1 hit's
     /// best line.
@@ -2790,6 +3117,73 @@ impl Candidate {
     /// The delivery unit's identity within this store.
     fn unit(&self) -> (String, u64, u64) {
         (self.path.clone(), self.unit_start, self.unit_end)
+    }
+
+    fn selection_unit(&self, prose: bool) -> (String, u64, u64) {
+        if prose && self.tier == 2 && self.unit_end.saturating_sub(self.unit_start) > 1536 {
+            (
+                self.path.clone(),
+                self.start.max(self.unit_start),
+                self.end.min(self.unit_end),
+            )
+        } else {
+            self.unit()
+        }
+    }
+
+    fn trace(&self, control: &crate::Control, workspace: &str, rank: usize, outcome: &str) {
+        if let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({
+                "stage": "selection", "origin": "lexical", "tier": self.tier,
+                "rank": rank, "outcome": outcome, "label": self.qname,
+                "document": {"start": self.start, "end": self.end},
+                "unit": {"workspace_id": workspace, "path": self.path,
+                    "sha256": self.hash, "start": self.unit_start, "end": self.unit_end},
+            }));
+        }
+    }
+
+    fn trace_materialization(&self, control: &crate::Control, item: &RankedItem) {
+        if let Some(trace) = control.trace()
+            && let Some(handle) = &item.handle
+        {
+            trace.record(serde_json::json!({
+                "stage":"materialization", "origin":"lexical", "rank":item.rank,
+                "unit":{"workspace_id":handle.workspace_id,"path":self.path,"sha256":handle.sha256,
+                    "start":self.unit_start,"end":self.unit_end},
+                "document":{"start":self.start,"end":self.end},
+                "excerpt":handle,
+            }));
+        }
+    }
+}
+
+/// A long unit may contain several independently useful matches. Keep at most
+/// two disjoint documents in experimental prose context, within the existing
+/// candidate, per-file and delivery budgets. Anchored retrieval is unchanged.
+#[derive(Default)]
+struct LexicalSelection {
+    spans: std::collections::BTreeMap<(String, u64, u64), Vec<(u64, u64)>>,
+}
+
+impl LexicalSelection {
+    fn insert(&mut self, candidate: &Candidate, prose: bool) -> Result<(), &'static str> {
+        let unit = candidate.unit();
+        let (_, start, end) = candidate.selection_unit(prose);
+        let limit = if (start, end) == (unit.1, unit.2) {
+            1
+        } else {
+            2
+        };
+        let spans = self.spans.entry(unit).or_default();
+        if spans.iter().any(|&(s, e)| start < e && s < end) {
+            return Err("duplicate");
+        }
+        if spans.len() >= limit {
+            return Err("unit_window_cap");
+        }
+        spans.push((start, end));
+        Ok(())
     }
 }
 
@@ -2865,6 +3259,95 @@ fn ranked_item(
     })
 }
 
+/// Keep the matching indexed document of a long lexical unit, with exact source
+/// coordinates. A prefix of a function is not a substitute for its matching body.
+#[allow(clippy::too_many_arguments)]
+fn ranked_context_item(
+    candidate: &Candidate,
+    rank: usize,
+    workspace_id: &str,
+    sha256: &str,
+    body: &str,
+    wanted: &std::collections::BTreeSet<String>,
+    prose: bool,
+) -> FResult<RankedItem> {
+    if !prose || candidate.unit_end - candidate.unit_start <= 1536 {
+        return ranked_item(candidate, rank, workspace_id, sha256, body, wanted);
+    }
+    let start = candidate.start.max(candidate.unit_start) as usize;
+    let end = candidate.end.min(candidate.unit_end) as usize;
+    let text = body
+        .get(start..end)
+        .ok_or_else(|| FoundryError::CorruptStore("lexical document outside source".into()))?;
+    let wanted: std::collections::BTreeSet<_> = wanted
+        .iter()
+        .filter(|w| !prose_stopword(w))
+        .cloned()
+        .collect();
+    let best = best_line_index(text, &wanted) as usize;
+    let lines: Vec<_> = text.split_inclusive('\n').collect();
+    let before: usize = lines
+        .iter()
+        .take(best.saturating_sub(3))
+        .map(|s| s.len())
+        .sum();
+    let focus: usize = lines.iter().take(best).map(|s| s.len()).sum();
+    let mut from = before;
+    if focus.saturating_sub(from) > 512 {
+        from = focus;
+    }
+    // Long introductory docs can match well while leaving the callable itself
+    // entirely outside the excerpt. In that case expose its declaration and
+    // implementation start. Matches within the body retain their focused window.
+    let head = candidate.unit_head as usize;
+    let (start, text, from, focus) = if matches!(candidate.kind.as_str(), "fn" | "method")
+        && start + focus < head
+        && head >= start + (from + 1536).min(text.len())
+    {
+        let start = body
+            .get(..head)
+            .ok_or_else(|| FoundryError::CorruptStore("callable head outside source".into()))?
+            .rfind('\n')
+            .map_or(0, |at| at + 1)
+            .max(candidate.unit_start as usize);
+        let text = body
+            .get(start..candidate.unit_end as usize)
+            .ok_or_else(|| FoundryError::CorruptStore("callable head outside source".into()))?;
+        (start, text, 0, head - start)
+    } else {
+        (start, text, from, focus)
+    };
+    let mut to = (from + 1536).min(text.len());
+    while !text.is_char_boundary(to) {
+        to -= 1;
+    }
+    if let Some(newline) = text[from..to].rfind('\n')
+        && from + newline >= focus
+    {
+        to = from + newline + 1;
+    }
+    if from >= to {
+        return ranked_item(candidate, rank, workspace_id, sha256, body, &wanted);
+    }
+    let mut excerpt = candidate.clone();
+    excerpt.unit_start = (start + from) as u64;
+    excerpt.unit_end = (start + to) as u64;
+    excerpt.unit_head = excerpt.unit_start;
+    let mut item = ranked_item(&excerpt, rank, workspace_id, sha256, body, &wanted)?;
+    item.label = format!("excerpt {}", item.label);
+    Ok(item)
+}
+
+pub(crate) fn prose_stopword(word: &str) -> bool {
+    [
+        "a", "an", "and", "are", "as", "at", "be", "by", "can", "could", "do", "does", "for",
+        "from", "how", "in", "into", "is", "it", "of", "on", "or", "should", "that", "the",
+        "their", "this", "to", "was", "when", "where", "which", "while", "with", "without",
+        "would",
+    ]
+    .contains(&word.to_ascii_lowercase().as_str())
+}
+
 /// One anchor's resolver window within tier 1: the anchor, its definition
 /// count and its range of [`TwoTier::first`], in window order.
 struct WindowSlice {
@@ -2874,8 +3357,247 @@ struct WindowSlice {
     range: std::ops::Range<usize>,
 }
 
+/// Context-only intent. Ordinary search retains exact-definition precedence.
+#[derive(Clone, Copy, Default)]
+struct SearchSelection<'a> {
+    anchors: Option<&'a [AnchorCandidate]>,
+    prose: bool,
+}
+
+/// Deliberately narrow: explicit code, paths and locator requests retain the
+/// baseline. Anchor admission is checked separately over the indexed roots.
+fn prose_query(query: &str) -> bool {
+    let words: Vec<_> = query.split_whitespace().collect();
+    words.len() >= 3
+        && !["where", "find", "locate", "show", "who"]
+            .contains(&words[0].to_ascii_lowercase().as_str())
+        && words.iter().all(|word| {
+            let word = word.trim_end_matches(['?', '.', ',', ':']);
+            word.split('-')
+                .all(|part| !part.is_empty() && part.chars().all(char::is_alphabetic))
+        })
+}
+
+/// Shared by lexical selection and semantic admission. An active policy owns
+/// auto routing; explicit graph requests retain their ordinary anchor rules.
+pub(crate) fn prose_context_query(query: &str, strategy: Strategy, has_policy: bool) -> bool {
+    prose_query(query)
+        && match strategy {
+            Strategy::Search => true,
+            Strategy::Auto => {
+                !has_policy && response::strategy_for_query(query) == Strategy::Search
+            }
+            Strategy::Graph => false,
+        }
+}
+
+/// Unmarked prose compounds and language qualifiers (e.g. "a Go string")
+/// should not resolve to an unrelated capitalized function. Explicit call/name
+/// requests and marked/shaped identifiers retain ordinary anchor precedence.
+/// A qualifier never filters admitted roots. Experimental prose ranking may
+/// prefer its language, while retaining documentation and other-language hits.
+pub(crate) fn incidental_prose_anchor(query: &str, anchor: &AnchorCandidate) -> bool {
+    if anchor.group != 3 {
+        return false;
+    }
+    let before = query.get(..anchor.position).unwrap_or_default();
+    let after = anchor
+        .position
+        .checked_add(anchor.text.len())
+        .and_then(|end| query.get(end..))
+        .unwrap_or_default();
+    if before.ends_with('-') || after.starts_with('-') {
+        return true;
+    }
+    if ![
+        "Go",
+        "Rust",
+        "Python",
+        "Java",
+        "Javascript",
+        "Typescript",
+        "JavaScript",
+        "TypeScript",
+        "Ruby",
+        "Swift",
+        "Kotlin",
+        "Unicode",
+    ]
+    .contains(&anchor.text.as_str())
+        || before.split_whitespace().any(|word| {
+            ["call", "invoke", "named", "symbol", "function", "method"]
+                .contains(&word.to_ascii_lowercase().as_str())
+        })
+    {
+        return false;
+    }
+    after.split_whitespace().next().is_some_and(|word| {
+        [
+            "string",
+            "slice",
+            "map",
+            "array",
+            "boolean",
+            "bytes",
+            "channel",
+            "code",
+            "source",
+            "package",
+            "module",
+            "path",
+            "reader",
+            "whitespace",
+            "character",
+            "characters",
+            "text",
+        ]
+        .contains(&word.trim_end_matches(['?', '.', ',', ':']))
+    })
+}
+
+/// Only an unambiguous, explicitly capitalized language followed by a source
+/// noun supplies a preference. Ordinary English ("go through"), symbol calls,
+/// and cross-language questions do not. This uses query text, never corpus labels.
+fn prose_language(query: &str) -> Option<&'static str> {
+    let words: Vec<_> = query.split_whitespace().collect();
+    if words.iter().any(|word| {
+        ["call", "invoke", "named", "symbol", "function", "method"]
+            .contains(&word.to_ascii_lowercase().as_str())
+    }) {
+        return None;
+    }
+    let mut language = None;
+    for pair in words.windows(2) {
+        let candidate = match pair[0] {
+            "Go" => "go",
+            "Rust" => "rust",
+            "Python" => "python",
+            "Java" => "java",
+            "Javascript" | "JavaScript" => "javascript",
+            "Typescript" | "TypeScript" => "typescript",
+            "Ruby" => "ruby",
+            "Swift" => "swift",
+            "Kotlin" => "kotlin",
+            _ => continue,
+        };
+        if ![
+            "string", "slice", "map", "array", "boolean", "bytes", "channel", "code", "source",
+            "package", "module", "path", "reader",
+        ]
+        .contains(&pair[1].trim_end_matches(['?', '.', ',', ':']))
+        {
+            continue;
+        }
+        if language.is_some_and(|old| old != candidate) {
+            return None;
+        }
+        language = Some(candidate);
+    }
+    language
+}
+
+/// Query-only prose normalization; stored identifiers and explicit code requests
+/// retain their original tokenizer and schema.
+fn prose_concepts(query: &str) -> Vec<Vec<String>> {
+    query
+        .split_whitespace()
+        .flat_map(|word| {
+            let word = word.trim_end_matches(['?', '.', ',', ':']);
+            // CamelCase analysis splits "CPUs" as "CP"/"Us". In prose an
+            // uppercase acronym followed only by plural s names the acronym;
+            // ordinary/explicit identifier requests retain the indexed analysis.
+            if let Some(stem) = word
+                .strip_suffix('s')
+                .filter(|stem| stem.len() >= 2 && stem.bytes().all(|b| b.is_ascii_uppercase()))
+            {
+                // Both cpu and cpus occur in ordinary source. They express
+                // one query concept, not two separately rewarded matches.
+                return vec![vec![stem.to_ascii_lowercase(), word.to_ascii_lowercase()]];
+            }
+            analyzed_terms(crate::syntax::code_subtokens, word)
+                .into_iter()
+                .map(|word| vec![word])
+                .collect()
+        })
+        .collect()
+}
+
+fn prose_terms(query: &str) -> Vec<String> {
+    prose_concepts(query).into_iter().flatten().collect()
+}
+
+/// Distinct concept coverage dominates frequency/rarity for prose. Adjacent
+/// concepts within 16 positions break ties, with a total bonus below one term.
+/// This uses the existing positional index; no expansion corpus or extra scan.
+fn prose_lexical(query: &str, body: Field) -> Box<dyn Query> {
+    let mut words: Vec<Vec<String>> = Vec::new();
+    let language = prose_language(query);
+    for concept in prose_concepts(query) {
+        // A requested language is a metadata preference, not a required
+        // behavioral concept. Rewarding its incidental appearance in long
+        // comments can bury the implementation whose comments omit it.
+        if language == Some(concept[0].as_str()) || prose_stopword(&concept[0]) {
+            continue;
+        }
+        if let Some(previous) = words
+            .iter_mut()
+            .find(|previous| concept.iter().any(|word| previous.contains(word)))
+        {
+            for word in concept {
+                if !previous.contains(&word) {
+                    previous.push(word);
+                }
+            }
+            continue;
+        }
+        words.push(concept);
+        if words.len() == 64 {
+            break;
+        }
+    }
+    let mut clauses: Vec<Box<dyn Query>> = words
+        .iter()
+        .map(|concept| {
+            Box::new(ConstScoreQuery::new(
+                Box::new(BooleanQuery::union(
+                    concept
+                        .iter()
+                        .map(|word| {
+                            Box::new(TermQuery::new(
+                                Term::from_field_text(body, word),
+                                IndexRecordOption::Basic,
+                            )) as Box<dyn Query>
+                        })
+                        .collect(),
+                )),
+                1.0,
+            )) as Box<dyn Query>
+        })
+        .collect();
+    let bonus = 0.5 / words.len().max(1) as f32;
+    for pair in words.windows(2) {
+        let mut phrases = Vec::new();
+        for left in &pair[0] {
+            for right in &pair[1] {
+                let mut phrase = PhraseQuery::new(vec![
+                    Term::from_field_text(body, left),
+                    Term::from_field_text(body, right),
+                ]);
+                phrase.set_slop(16);
+                phrases.push(Box::new(phrase) as Box<dyn Query>);
+            }
+        }
+        clauses.push(Box::new(ConstScoreQuery::new(
+            Box::new(BooleanQuery::union(phrases)),
+            bonus,
+        )));
+    }
+    Box::new(BooleanQuery::union(clauses))
+}
+
 /// The two-tier collection of one query, before revalidation.
 struct TwoTier {
+    prose: bool,
     first: Vec<Candidate>,
     second: Vec<Candidate>,
     /// A tier window filled.
@@ -3055,11 +3777,17 @@ fn initialize_tables(tx: &WriteTransaction) -> FResult<()> {
     tx.open_table(CHUNKS)?;
     tx.open_table(PENDING)?;
     tx.open_table(MEMORY)?;
+    tx.open_table(crate::task_context::TASKS)?;
+    tx.open_table(BRIEFS)?;
     tx.open_table(FEEDBACK)?;
     tx.open_table(SEEN)?;
     crate::graph::init(tx)?;
+    crate::boundary::init(tx)?;
     crate::graph::init_compiler(tx)?;
     crate::neural::cache::init_tables(tx)?;
+    crate::neural::work::init(tx)?;
+    crate::neural::mapping_store::init(tx)?;
+    crate::knowledge::cache::init(tx)?;
     crate::learning::init_tables(tx)?;
     Ok(())
 }
@@ -3119,6 +3847,8 @@ impl Engine {
             meta.insert("scan_id", "0")?;
             meta.insert("scan_status", "never")?;
             meta.insert("memory_revision", "0")?;
+            meta.insert("task_revision", "0")?;
+            meta.insert("brief_revision", "0")?;
             meta.insert("search_schema", SEARCH_SCHEMA)?;
             let root_str = root.to_str().ok_or_else(|| {
                 FoundryError::InvalidArgument("workspace path is not UTF-8".into())
@@ -3149,7 +3879,13 @@ impl Engine {
             workspace_id,
             schema: SCHEMA_VERSION,
             parse_panics: ParseFailures::default(),
+            index_pool: None,
             semantic_dir,
+            #[cfg(feature = "semantic")]
+            semantic_segments: Default::default(),
+            #[cfg(feature = "semantic")]
+            semantic_mapping: Default::default(),
+            semantic_wake: Default::default(),
         })
     }
 
@@ -3166,15 +3902,15 @@ impl Engine {
     /// never upgrades schema. Derived-index trouble degrades search to
     /// `repair_required`; authoritative reads stay available.
     pub fn open_existing(store_dir: &Path) -> FResult<Self> {
-        Self::open_with(store_dir, true)
+        Self::open_with(store_dir, true, false)
     }
 
     /// Authoritative-only open used by repair: no Tantivy construction first.
     pub(crate) fn open_authoritative(store_dir: &Path) -> FResult<Self> {
-        Self::open_with(store_dir, false)
+        Self::open_with(store_dir, false, false)
     }
 
-    fn open_with(store_dir: &Path, construct_search: bool) -> FResult<Self> {
+    fn open_with(store_dir: &Path, construct_search: bool, repair_mapping: bool) -> FResult<Self> {
         let db_path = store_dir.join("knowledge.redb");
         if !db_path.is_file() {
             return Err(FoundryError::StoreNotFound);
@@ -3191,12 +3927,12 @@ impl Engine {
                 ));
             };
             match version.value() {
-                "1" | "2" | "3" | "4" | "5" => {
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "10" | "11" => {
                     return Err(FoundryError::UpgradeRequired {
                         found: version.value().to_owned(),
                     });
                 }
-                "6" => 6u32,
+                "12" => 12u32,
                 other => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: other.to_owned(),
@@ -3204,8 +3940,8 @@ impl Engine {
                 }
             }
         };
-        // Confirm the schema-6 tables exist; missing authoritative tables in
-        // a schema-6 store are corruption, not something an open recreates.
+        // Confirm the schema-12 tables exist; missing authoritative tables in
+        // a schema-12 store are corruption, not something an open recreates.
         {
             let tx = db.begin_read()?;
             tx.open_table(SEEN).map_err(|e| {
@@ -3219,9 +3955,28 @@ impl Engine {
                 .map_err(|e| FoundryError::CorruptStore(format!("pending table: {e}")))?;
             tx.open_table(MEMORY)
                 .map_err(|e| FoundryError::CorruptStore(format!("memory table: {e}")))?;
+            tx.open_table(crate::task_context::TASKS)
+                .map_err(|e| FoundryError::CorruptStore(format!("task_context table: {e}")))?;
+            read_counter(&tx.open_table(META)?, "task_revision")?;
+            tx.open_table(BRIEFS)
+                .map_err(|e| FoundryError::CorruptStore(format!("source_briefs table: {e}")))?;
+            read_counter(&tx.open_table(META)?, "brief_revision")?;
             crate::graph::check_compiler_tables(&tx)?;
+            crate::boundary::check(&tx)?;
             crate::neural::cache::check_tables(&db)?;
+            crate::neural::work::check(&db)?;
+            if !repair_mapping {
+                crate::neural::mapping_store::check(&tx)?;
+            }
+            crate::knowledge::cache::check(&db)?;
             crate::learning::check_tables(&db)?;
+        }
+        if repair_mapping {
+            // Only explicit repair replaces this disposable lookup. Ordinary
+            // authoritative reads and migrations never silently repair it.
+            let tx = db.begin_write()?;
+            crate::neural::mapping_store::purge(&tx)?;
+            tx.commit()?;
         }
         let (workspace, workspace_id) = Self::read_binding(&db)?;
         let marker = Self::read_marker(&db)?;
@@ -3264,7 +4019,13 @@ impl Engine {
             workspace_id,
             schema,
             parse_panics: ParseFailures::default(),
+            index_pool: None,
             semantic_dir,
+            #[cfg(feature = "semantic")]
+            semantic_segments: Default::default(),
+            #[cfg(feature = "semantic")]
+            semantic_mapping: Default::default(),
+            semantic_wake: Default::default(),
         })
     }
 
@@ -3279,20 +4040,12 @@ impl Engine {
         }
     }
 
-    /// Explicit v1..=v5 -> v6 transaction under exclusive ownership. A
-    /// v1 store first receives the v2 steps, a v1|v2 store the v3 steps, a
-    /// v1|v2|v3 store the v4 steps, a v1..=v4 store the v5 steps, then every
-    /// store the v6 steps; all run in ONE write transaction. The v3 steps create the memory table and
-    /// its never-reset revision counter and migrate every pending key to the
-    /// typed form (`source:<path>`); the v4 steps (005) create the empty
-    /// compiler-fact tables; the v5 steps (009) create the empty semantic
-    /// tables (partitions, vector cache, state); the v6 steps (013) create
-    /// the empty learning tables (v4 feedback rows, group history, published
-    /// dataset lineage). `schema
-    /// = "6"` is published last. Every earlier table, legacy feedback
-    /// included, is preserved, so an interrupted upgrade leaves the store
-    /// wholly old or wholly v6. Only the current version is
-    /// a target; this is a clean cutover.
+    /// Explicit v1..=v11 -> v12 transaction under exclusive ownership. The
+    /// cumulative steps preserve source, memory, graph, semantic and learning
+    /// data. Version 8 adds source_briefs and its never-reset brief_revision.
+    /// Version 10 adds atomic knowledge completion caching and brief lineage.
+    /// Publish the schema last; interrupted upgrades remain wholly old or new.
+    /// Only the current version is a target. Older readers must refuse it.
     pub fn upgrade_store(store_dir: &Path, to: u32, control: &crate::Control) -> FResult<()> {
         if to != SCHEMA_VERSION {
             return Err(FoundryError::UnsupportedMode(format!(
@@ -3314,12 +4067,18 @@ impl Engine {
                         "store has no schema marker".into(),
                     ));
                 }
-                Some(v) if v.value() == "6" => return Ok(()), // already upgraded
+                Some(v) if v.value() == "12" => return Ok(()), // already upgraded
                 Some(v) if v.value() == "1" => 1u32,
                 Some(v) if v.value() == "2" => 2u32,
                 Some(v) if v.value() == "3" => 3u32,
                 Some(v) if v.value() == "4" => 4u32,
                 Some(v) if v.value() == "5" => 5u32,
+                Some(v) if v.value() == "6" => 6u32,
+                Some(v) if v.value() == "7" => 7u32,
+                Some(v) if v.value() == "8" => 8u32,
+                Some(v) if v.value() == "9" => 9u32,
+                Some(v) if v.value() == "10" => 10u32,
+                Some(v) if v.value() == "11" => 11u32,
                 Some(v) => {
                     return Err(FoundryError::UnsupportedSchema {
                         found: v.value().to_owned(),
@@ -3390,6 +4149,18 @@ impl Engine {
             if from < 6 {
                 crate::learning::init_tables(&tx)?;
             }
+            if from < 7 {
+                tx.open_table(crate::task_context::TASKS)?;
+                meta.insert("task_revision", "0")?;
+            }
+            if from < 8 {
+                tx.open_table(BRIEFS)?;
+                meta.insert("brief_revision", "0")?;
+            }
+            crate::neural::work::init(&tx)?;
+            crate::neural::mapping_store::init(&tx)?;
+            crate::knowledge::cache::init(&tx)?;
+            crate::boundary::init(&tx)?;
             // Publish the schema last inside the same transaction.
             meta.insert("schema", SCHEMA_VERSION.to_string().as_str())?;
         }
@@ -3549,6 +4320,11 @@ impl Engine {
     /// Begin a scan: checked scan-id increment and `running` status, before
     /// any tree mutation.
     pub(crate) fn begin_scan(&self) -> FResult<u64> {
+        self.begin_scan_kind(true)
+    }
+
+    /// Scoped watcher walks share seen IDs but do not claim a whole-root scan.
+    pub(crate) fn begin_scan_kind(&self, full: bool) -> FResult<u64> {
         let tx = self.db.begin_write()?;
         let scan_id = {
             let mut meta = tx.open_table(META)?;
@@ -3559,11 +4335,17 @@ impl Engine {
                 .checked_add(1)
                 .ok_or(FoundryError::ScanIdExhausted)?;
             meta.insert("scan_id", next.to_string().as_str())?;
-            meta.insert("scan_status", "running")?;
+            if full {
+                meta.insert("scan_status", "running")?;
+            }
             next
         };
         tx.commit()?;
         Ok(scan_id)
+    }
+
+    pub(crate) fn current_scan_id(&self) -> FResult<u64> {
+        read_counter(&self.db.begin_read()?.open_table(META)?, "scan_id")
     }
 
     pub(crate) fn finish_scan(&self, complete: bool) -> FResult<()> {
@@ -3605,72 +4387,118 @@ impl Engine {
         scan_id: u64,
         control: &crate::Control,
     ) -> FResult<(u64, bool)> {
-        let mut deleted = 0u64;
-        let mut after: Option<String> = None;
+        let mut deleted = 0;
+        let mut after = None;
         loop {
             if control.check().is_err() {
                 return Ok((deleted, true));
             }
-            let page: Vec<String> = {
-                let tx = self.db.begin_read()?;
-                let sources = tx.open_table(SOURCES)?;
-                let rows = match &after {
-                    None => sources.range::<&str>(..)?,
-                    Some(key) => {
-                        sources.range::<&str>((Bound::Excluded(key.as_str()), Bound::Unbounded))?
-                    }
-                };
-                rows.take(PAGE)
-                    .map(|row| row.map(|(k, _)| k.value().to_owned()))
-                    .collect::<Result<Vec<String>, redb::StorageError>>()
-                    .map_err(FoundryError::from)?
-            };
-            if page.is_empty() {
+            let (count, next) = self.sweep_unseen_page(scan_id, None, after.as_deref(), control)?;
+            deleted += count;
+            let Some(next) = next else {
                 return Ok((deleted, false));
-            }
-            // A cancel armed here lets this page commit and stops before the next.
-            fault!(
-                SWEEP_PAGE,
-                Some(self),
-                Some(control),
-                &page.len().to_string()
-            )?;
-            let mut retired = 0u64;
-            let tx = self.db.begin_write()?;
+            };
+            after = Some(next);
+        }
+    }
+
+    /// One bounded deletion transaction, optionally restricted to one path/subtree.
+    /// The caller must have completed its walk without failures before the first page.
+    pub(crate) fn sweep_unseen_page(
+        &self,
+        scan_id: u64,
+        scope: Option<&str>,
+        after: Option<&str>,
+        _control: &crate::Control,
+    ) -> FResult<(u64, Option<String>)> {
+        let page: Vec<String> = {
+            let tx = self.db.begin_read()?;
+            let sources = tx.open_table(SOURCES)?;
+            let mut page = Vec::new();
+            let prefix = scope.map(|path| format!("{path}/"));
+            if after.is_none()
+                && let Some(path) = scope
+                && sources.get(path)?.is_some()
             {
-                let mut sources = tx.open_table(SOURCES)?;
-                let mut stored = tx.open_table(CHUNKS)?;
-                let mut pending = tx.open_table(PENDING)?;
-                let mut seen = tx.open_table(SEEN)?;
-                let mut meta = tx.open_table(META)?;
-                for path in &page {
-                    let seen_now = seen
-                        .get(path.as_str())?
-                        .and_then(|v| v.value().parse::<u64>().ok());
-                    if seen_now != Some(scan_id)
-                        && let Some(old) = sources.remove(path.as_str())?
-                    {
-                        let old: SourceMeta = decode(old.value(), "source")?;
-                        for i in 0..old.chunks {
-                            stored.remove(chunk_key(path, i).as_str())?;
-                        }
-                        pending.insert(source_pending_key(path).as_str(), "deleted")?;
-                        seen.remove(path.as_str())?;
-                        retired += 1;
-                    }
+                page.push(path.to_owned());
+            }
+            let start = match (after, prefix.as_deref()) {
+                (Some(key), Some(prefix)) if key < prefix => Bound::Included(prefix),
+                (Some(key), _) => Bound::Excluded(key),
+                (None, Some(prefix)) => Bound::Included(prefix),
+                (None, None) => Bound::Unbounded,
+            };
+            for row in sources
+                .range::<&str>((start, Bound::Unbounded))?
+                .take(PAGE - page.len())
+            {
+                let (key, _) = row?;
+                if prefix
+                    .as_deref()
+                    .is_some_and(|p| !key.value().starts_with(p))
+                {
+                    break;
                 }
-                if retired > 0 {
-                    let revision = read_counter(&meta, "source_revision")?;
-                    let next = revision
+                page.push(key.value().to_owned());
+            }
+            page
+        };
+        if page.is_empty() {
+            return Ok((0, None));
+        }
+        fault!(
+            SWEEP_PAGE,
+            Some(self),
+            Some(_control),
+            &page.len().to_string()
+        )?;
+        let mut retired = 0u64;
+        let mut changed_paths = Vec::new();
+        let tx = self.db.begin_write()?;
+        {
+            let mut sources = tx.open_table(SOURCES)?;
+            let mut stored = tx.open_table(CHUNKS)?;
+            let mut pending = tx.open_table(PENDING)?;
+            let mut seen = tx.open_table(SEEN)?;
+            let mut meta = tx.open_table(META)?;
+            for path in &page {
+                let seen_now = seen
+                    .get(path.as_str())?
+                    .and_then(|v| v.value().parse::<u64>().ok());
+                if seen_now != Some(scan_id)
+                    && let Some(old) = sources.remove(path.as_str())?
+                {
+                    let old: SourceMeta = decode(old.value(), "source")?;
+                    for i in 0..old.chunks {
+                        stored.remove(chunk_key(path, i).as_str())?;
+                    }
+                    pending.insert(source_pending_key(path).as_str(), "deleted")?;
+                    seen.remove(path.as_str())?;
+                    retired += 1;
+                    changed_paths.push(path.as_str());
+                    let revision = read_counter(&meta, "source_revision")?
                         .checked_add(retired)
                         .ok_or(FoundryError::RevisionExhausted)?;
-                    meta.insert("source_revision", next.to_string().as_str())?;
+                    crate::neural::work::changed(&tx, path, None, revision)?;
                 }
             }
-            tx.commit()?;
-            deleted += retired;
-            after = page.last().cloned();
+            if retired > 0 {
+                let revision = read_counter(&meta, "source_revision")?;
+                let next = revision
+                    .checked_add(retired)
+                    .ok_or(FoundryError::RevisionExhausted)?;
+                meta.insert("source_revision", next.to_string().as_str())?;
+            }
         }
+        if changed_paths.is_empty() {
+            tx.commit()?;
+        } else {
+            self.semantic_commit(tx, changed_paths, std::iter::empty(), false)?;
+        }
+        if retired > 0 {
+            self.semantic_wake.notify();
+        }
+        Ok((retired, page.last().cloned()))
     }
 
     /// All authoritative source/chunk changes, pending index work and the
@@ -3683,8 +4511,55 @@ impl Engine {
             ));
         }
         let hash = crate::digest(content.as_bytes());
-        let pieces = chunks(path, &hash, content);
+        self.replace_source_with_hash(path, content, &hash)
+    }
+
+    /// Ordered, atomic ingestion batch. No partial success within a batch; source
+    /// revisions still advance once per changed path. The watcher uses singles.
+    pub(crate) fn replace_prepared_sources(
+        &self,
+        sources: &[PreparedSource],
+        control: &crate::Control,
+    ) -> FResult<usize> {
+        if sources.len() > 4 {
+            return Err(FoundryError::InvalidArgument(
+                "source commit batch exceeds four files".into(),
+            ));
+        }
+        control.check()?;
         let tx = self.db.begin_write()?;
+        let mut changed = Vec::new();
+        for source in sources {
+            control.check()?;
+            if Self::stage_source(&tx, &source.path, &source.body, &source.hash)? {
+                changed.push(source.path.as_str());
+            }
+        }
+        if changed.is_empty() {
+            return Ok(0);
+        }
+        #[cfg(feature = "test-faults")]
+        for path in &changed {
+            fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
+        }
+        fault!(
+            SOURCE_BATCH_BEFORE_COMMIT,
+            Some(self),
+            Some(control),
+            &changed.len().to_string()
+        )?;
+        control.check()?;
+        let count = changed.len();
+        self.semantic_commit(tx, changed.iter().copied(), std::iter::empty(), false)?;
+        self.semantic_wake.notify();
+        #[cfg(feature = "test-faults")]
+        for path in &changed {
+            fault!(SOURCE_AFTER_COMMIT, Some(self), None, path)?;
+        }
+        Ok(count)
+    }
+
+    fn stage_source(tx: &WriteTransaction, path: &str, content: &str, hash: &str) -> FResult<bool> {
         {
             let mut sources = tx.open_table(SOURCES)?;
             let old = match sources.get(path)? {
@@ -3694,6 +4569,7 @@ impl Engine {
             if old.as_ref().is_some_and(|old| old.hash == hash) {
                 return Ok(false);
             }
+            let pieces = chunks(path, hash, content);
             let mut stored = tx.open_table(CHUNKS)?;
             if let Some(old) = &old {
                 for i in 0..old.chunks {
@@ -3709,7 +4585,7 @@ impl Engine {
             sources.insert(
                 path,
                 serde_json::to_string(&SourceMeta {
-                    hash: hash.clone(),
+                    hash: hash.to_owned(),
                     chunks: pieces.len(),
                     bytes: content.len(),
                     lines: content.lines().count(),
@@ -3717,12 +4593,22 @@ impl Engine {
                 .as_str(),
             )?;
             tx.open_table(PENDING)?
-                .insert(source_pending_key(path).as_str(), hash.as_str())?;
-            bump_revision(&tx, 1)?;
+                .insert(source_pending_key(path).as_str(), hash)?;
+            bump_revision(tx, 1)?;
+            crate::neural::work::changed(tx, path, Some(hash), revision_in(tx)?)?;
+        }
+        Ok(true)
+    }
+
+    fn replace_source_with_hash(&self, path: &str, content: &str, hash: &str) -> FResult<bool> {
+        let tx = self.db.begin_write()?;
+        if !Self::stage_source(&tx, path, content, hash)? {
+            return Ok(false);
         }
         // A failure here drops the transaction: prior source bytes stay intact.
         fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
-        tx.commit()?;
+        self.semantic_commit(tx, [path], std::iter::empty(), false)?;
+        self.semantic_wake.notify();
         fault!(SOURCE_AFTER_COMMIT, Some(self), None, path)?;
         Ok(true)
     }
@@ -3746,9 +4632,11 @@ impl Engine {
             tx.open_table(PENDING)?
                 .insert(source_pending_key(path).as_str(), "deleted")?;
             bump_revision(&tx, 1)?;
+            crate::neural::work::changed(&tx, path, None, revision_in(&tx)?)?;
         }
         fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
-        tx.commit()?;
+        self.semantic_commit(tx, [path], std::iter::empty(), false)?;
+        self.semantic_wake.notify();
         fault!(SOURCE_AFTER_COMMIT, Some(self), None, path)?;
         Ok(true)
     }
@@ -3775,14 +4663,17 @@ impl Engine {
     /// or missing index, I/O) leaves the key pending and is not reported:
     /// the authoritative mutation already succeeded and replay converges.
     pub(crate) fn drain_memory_key(&mut self, id: &str) {
-        let _ = self.try_drain_memory_key(id);
+        let _ = self.try_drain_record_key(id, "memory");
     }
 
-    fn try_drain_memory_key(&mut self, id: &str) -> FResult<()> {
+    pub(crate) fn drain_brief_key(&mut self, id: &str) {
+        let _ = self.try_drain_record_key(id, "brief");
+    }
+    fn try_drain_record_key(&mut self, id: &str, kind: &str) -> FResult<()> {
         if self.repair_reason.is_some() {
             return Ok(());
         }
-        let key = memory_pending_key(id);
+        let key = format!("{kind}:{id}");
         let (value, record) = {
             let tx = self.db.begin_read()?;
             let Some(value) = tx
@@ -3792,9 +4683,16 @@ impl Engine {
             else {
                 return Ok(());
             };
-            let record = match tx.open_table(MEMORY)?.get(id)? {
-                Some(raw) => serde_json::from_str::<MemoryRecord>(raw.value()).ok(),
-                None => None,
+            let record = if kind == "brief" {
+                tx.open_table(BRIEFS)?
+                    .get(id)?
+                    .and_then(|raw| crate::brief::decode_row(id, raw.value()).ok())
+                    .map(|r| (r.id, r.revision, r.brief.searchable_text()))
+            } else {
+                tx.open_table(MEMORY)?
+                    .get(id)?
+                    .and_then(|raw| serde_json::from_str::<MemoryRecord>(raw.value()).ok())
+                    .map(|r| (r.id, r.revision, r.text))
             };
             (value, record)
         };
@@ -3805,11 +4703,12 @@ impl Engine {
             .writer
             .delete_term(Term::from_field_text(handles.fields.key, &key));
         if let Some(record) = &record {
-            handles.writer.add_document(memory_document(
+            handles.writer.add_document(record_document(
                 &handles.fields,
-                &record.id,
-                record.revision,
-                &record.text,
+                kind,
+                &record.0,
+                record.1,
+                &record.2,
             ))?;
         }
         handles.writer.commit()?;
@@ -3838,6 +4737,19 @@ impl Engine {
     /// commit its documents, then stops before the pending clear: its keys
     /// stay pending, a later refresh clears them, and replay converges.
     pub fn refresh_index(&mut self, control: &crate::Control) -> FResult<(usize, usize)> {
+        self.refresh_index_page(control, PAGE)
+    }
+
+    pub(crate) fn indexing_pool(&mut self) -> FResult<std::sync::Arc<rayon::ThreadPool>> {
+        index_pool(&mut self.index_pool, &IndexHooks::current())
+    }
+
+    /// A smaller page for a background owner that yields to foreground requests.
+    pub(crate) fn refresh_index_page(
+        &mut self,
+        control: &crate::Control,
+        limit: usize,
+    ) -> FResult<(usize, usize)> {
         if let Some(reason) = &self.repair_reason {
             return Err(FoundryError::RepairRequired(reason.clone()));
         }
@@ -3847,7 +4759,7 @@ impl Engine {
         let pending: Vec<(String, String)> = tx
             .open_table(PENDING)?
             .iter()?
-            .take(PAGE)
+            .take(limit.clamp(1, PAGE))
             .map(|row| {
                 let (k, v) = row?;
                 Ok((k.value().into(), v.value().into()))
@@ -3860,12 +4772,11 @@ impl Engine {
         // Typed pending keys (008): the drain dispatches on the prefix. An
         // untyped key cannot exist in a v3 store — the upgrade migrated them
         // all — so it names authoritative corruption, before any work.
-        if let Some((key, _)) = pending
-            .iter()
-            .find(|(key, _)| !key.starts_with("source:") && !key.starts_with("memory:"))
-        {
+        if let Some((key, _)) = pending.iter().find(|(key, _)| {
+            !key.starts_with("source:") && !key.starts_with("memory:") && !key.starts_with("brief:")
+        }) {
             return Err(FoundryError::CorruptStore(format!(
-                "pending key {key:?} is not typed (source:/memory:)"
+                "pending key {key:?} is not typed (source:/memory:/brief:)"
             )));
         }
         let sources = tx.open_table(SOURCES)?;
@@ -3876,20 +4787,36 @@ impl Engine {
             ));
         };
         let hooks = IndexHooks::current();
+        let pool = if pending.iter().any(|(key, _)| key.starts_with("source:")) {
+            Some(index_pool(&mut self.index_pool, &hooks)?)
+        } else {
+            None
+        };
         let memory = tx.open_table(MEMORY)?;
+        let briefs = tx.open_table(BRIEFS)?;
         let SearchHandles {
             reader,
             writer,
             fields,
         } = handles;
-        // Every build thread has finished here. A page stopped at a hand-out,
+        // Every page job has finished here. A page stopped at a hand-out,
         // or failed while building or adding, returns here uncommitted; one
         // cancelled after its last hand-out is committed below and stops
         // after the commit.
         let panics = index_page(
-            writer, fields, &pending, &sources, &stored, &memory, control, &hooks,
+            writer,
+            fields,
+            &pending,
+            &sources,
+            &stored,
+            &memory,
+            &briefs,
+            control,
+            &hooks,
+            pool.as_deref(),
         )?;
         drop(memory);
+        drop(briefs);
         index_fault!(INDEX_BEFORE_COMMIT, control, "")?;
         writer.commit()?;
         // The page's documents are committed: its parse panics are this
@@ -3927,8 +4854,8 @@ impl Engine {
             }
         }
         tx.commit()?;
-        // (sources drained, memory documents drained); any other key shape
-        // was refused above, so the split covers the whole batch.
+        // Preserve the public (sources, memory documents) counters. Briefs
+        // also drain here, so (0, 0) alone does not prove the queue is empty.
         Ok((
             pending
                 .iter()
@@ -3950,7 +4877,7 @@ impl Engine {
             // Cooperative cancellation between index batches.
             control.check()?;
             match self.refresh_index(control) {
-                Ok((0, 0)) => return Ok(total),
+                Ok((0, 0)) if self.pending()? == 0 => return Ok(total),
                 Ok((sources, memories)) => {
                     total.0 += sources;
                     total.1 += memories;
@@ -4036,6 +4963,62 @@ impl Engine {
         }
     }
 
+    /// Candidate source paths across the admitted search index. Only the first
+    /// document of each source has these exact syntax-name postings, so comments
+    /// and repeated calls within a file cannot drown out other files. This reads
+    /// at most nine stored index documents and no source bodies. Final source
+    /// hash/AST validation belongs to the task's final read snapshot.
+    pub(crate) fn task_call_sources(
+        &self,
+        names: &[String],
+        control: &crate::Control,
+    ) -> FResult<(Vec<SourceHandle>, bool)> {
+        control.check()?;
+        if names.is_empty() {
+            return Ok((Vec::new(), false));
+        }
+        let handles = self.require_search()?;
+        let fields = &handles.fields;
+        let searcher = handles.reader.searcher();
+        let clauses: Vec<Box<dyn Query>> = names
+            .iter()
+            .take(4)
+            .map(|name| {
+                Box::new(TermQuery::new(
+                    Term::from_field_text(fields.call_name, name),
+                    IndexRecordOption::Basic,
+                )) as Box<dyn Query>
+            })
+            .collect();
+        let window = searcher.search(
+            &BooleanQuery::union(clauses),
+            &TopDocs::with_limit(9).order_by_u64_field("key_hash", tantivy::Order::Asc),
+        )?;
+        control.check()?;
+        let mut limited = names.len() > 4 || window.len() > 8;
+        let workspace_id = self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?;
+        let mut sources = Vec::new();
+        for (_, address) in window.into_iter().take(8) {
+            control.check()?;
+            let doc: TantivyDocument = searcher.doc(address)?;
+            let invalid =
+                || FoundryError::CorruptStore("invalid call-source search document".into());
+            let text = |field| doc.get_first(field).and_then(|value| value.as_str());
+            let path = text(fields.path).ok_or_else(invalid)?;
+            let hash = text(fields.hash).ok_or_else(invalid)?;
+            limited |= text(fields.call_coverage) != Some("complete");
+            sources.push(SourceHandle {
+                workspace_id: workspace_id.clone(),
+                path: path.to_owned(),
+                sha256: hash.to_owned(),
+                // This is an index identity receipt, never a requested body span.
+                start: 0,
+                end: 0,
+            });
+        }
+        Ok((sources, limited))
+    }
+
     /// Whether this store defines `name` exactly as written, under tier 1's
     /// restriction (`path` as the search's path filter): the group-3
     /// admission probe of context-v2 § Anchors and qualifiers, which a
@@ -4085,6 +5068,26 @@ impl Engine {
         control: &crate::Control,
         anchors: Option<&[AnchorCandidate]>,
     ) -> FResult<CandidateBatch> {
+        self.search_candidates_selected(
+            query,
+            path,
+            limit,
+            control,
+            SearchSelection {
+                anchors,
+                prose: false,
+            },
+        )
+    }
+
+    fn search_candidates_selected(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+        control: &crate::Control,
+        selection: SearchSelection<'_>,
+    ) -> FResult<CandidateBatch> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
@@ -4098,11 +5101,12 @@ impl Engine {
         path.map(path_filter).transpose()?;
         let workspace_id = self.require_workspace_id()?;
         let TwoTier {
+            prose,
             first,
             second,
             candidates_full,
             windows,
-        } = self.collect_two_tier(query, path, control, anchors)?;
+        } = self.collect_two_tier(query, path, control, selection)?;
 
         // Final read: revalidate, merge per delivery unit and cap per file over
         // the whole candidate window, then cut to `limit`; stale and capped
@@ -4116,11 +5120,11 @@ impl Engine {
         };
         let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
             std::collections::BTreeMap::new();
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = LexicalSelection::default();
         let mut per_file: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
         let mut kept: Vec<&Candidate> = Vec::new();
-        for candidate in first.iter().chain(&second) {
+        for (rank, candidate) in first.iter().chain(&second).enumerate() {
             if !current.contains_key(&candidate.path) {
                 let meta = match sources.get(candidate.path.as_str())? {
                     Some(raw) => Some(decode::<SourceMeta>(raw.value(), "source")?),
@@ -4133,30 +5137,39 @@ impl Engine {
                 .is_none_or(|meta| meta.hash != candidate.hash)
             {
                 counters.stale += 1;
+                candidate.trace(control, &workspace_id, rank, "stale");
                 continue;
             }
-            if !seen.insert(candidate.unit()) {
+            if let Err(outcome) = seen.insert(candidate, prose) {
+                candidate.trace(control, &workspace_id, rank, outcome);
                 continue;
             }
             let count = per_file.entry(candidate.path.clone()).or_default();
             if *count == PER_FILE_CAP {
                 counters.capped += 1;
+                candidate.trace(control, &workspace_id, rank, "per_file_cap");
                 continue;
             }
             *count += 1;
             if kept.len() == limit {
                 counters.truncated = true;
+                candidate.trace(control, &workspace_id, rank, "limit");
                 continue;
             }
+            candidate.trace(control, &workspace_id, rank, "kept");
             kept.push(candidate);
         }
-        let wanted: std::collections::BTreeSet<String> =
+        let wanted: std::collections::BTreeSet<String> = if prose {
+            prose_terms(query)
+        } else {
             analyzed_terms(crate::syntax::code_subtokens, query)
-                .into_iter()
-                .collect();
+        }
+        .into_iter()
+        .collect();
         let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
             std::collections::BTreeMap::new();
         let mut items = Vec::with_capacity(kept.len());
+        let mut delivered = std::collections::BTreeSet::new();
         for (rank, candidate) in kept.into_iter().enumerate() {
             let Some(Some(meta)) = current.get(&candidate.path) else {
                 continue;
@@ -4166,14 +5179,20 @@ impl Engine {
                 verified.insert(candidate.path.clone(), source);
             }
             let body = &verified[&candidate.path].body;
-            items.push(ranked_item(
+            let item = ranked_context_item(
                 candidate,
                 rank,
                 &workspace_id,
                 &meta.hash,
                 body,
                 &wanted,
-            )?);
+                prose,
+            )?;
+            candidate.trace_materialization(control, &item);
+            let handle = item.handle.as_ref().expect("source candidate");
+            if delivered.insert((handle.path.clone(), handle.start, handle.end)) {
+                items.push(item);
+            }
         }
         let anchors = anchor_windows(
             &windows,
@@ -4217,7 +5236,7 @@ impl Engine {
         query: &str,
         path: Option<&str>,
         control: &crate::Control,
-        anchors: Option<&[AnchorCandidate]>,
+        selection: SearchSelection<'_>,
     ) -> FResult<TwoTier> {
         let filter = path.map(path_filter).transpose()?;
         let handles = self.require_search()?;
@@ -4237,13 +5256,20 @@ impl Engine {
         let mut tier1_full = false;
         let parsed = QueryAnchors::parse(query);
         let qualifiers: Vec<u64> = parsed.qualifiers.iter().map(|q| hash64(q)).collect();
-        let anchors = match anchors {
+        let mut anchors = match selection.anchors {
             Some(chosen) => chosen.to_vec(),
             None => parsed.select(|candidate| {
                 control.check()?;
                 exact_case_defined(&searcher, fields, filter.as_deref(), &candidate.text)
             })?,
         };
+        if selection.prose && prose_query(query) {
+            anchors.retain(|anchor| !incidental_prose_anchor(query, anchor));
+        }
+        let prose = selection.prose && anchors.is_empty() && prose_query(query);
+        if prose && let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({"stage":"lexical_intent", "intent":"anchorless_prose", "exact_run_promotion":false, "scoring":"distinct_terms_proximity_v1", "term_limit":64}));
+        }
         for anchor in anchors {
             // The anchor's window (context-v2 § Resolver order): every
             // matching definition scored under tier 1's own restriction.
@@ -4282,7 +5308,7 @@ impl Engine {
                 documents,
             });
         }
-        if tier1.is_empty() {
+        if tier1.is_empty() && !prose {
             // Without anchors the 2026-10-06 rule stands: one exact count and
             // the 64 smallest-`key_hash` definitions per run, under the same
             // restriction as the documents it keeps.
@@ -4334,6 +5360,9 @@ impl Engine {
         }
         let mut clauses: Vec<Box<dyn Query>> = Vec::new();
         for part in query.split_whitespace() {
+            if prose && prose_stopword(part.trim_end_matches(['?', '.', ',', ':'])) {
+                continue;
+            }
             let terms = analyzed_terms(crate::syntax::code_subtokens, part);
             match terms.as_slice() {
                 [] => {}
@@ -4349,6 +5378,9 @@ impl Engine {
         idents.sort();
         idents.dedup();
         for ident in &idents {
+            if prose && prose_stopword(ident) {
+                continue;
+            }
             clauses.push(Box::new(BoostQuery::new(
                 term(fields.ident, ident, IndexRecordOption::WithFreqs),
                 3.0,
@@ -4358,26 +5390,89 @@ impl Engine {
             term(fields.path, query.trim(), IndexRecordOption::Basic),
             100.0,
         )));
-        let collector =
-            TopDocs::with_limit(CANDIDATE_LIMIT).tweak_score(|reader: &SegmentReader| {
-                let key_hash = reader
-                    .fast_fields()
-                    .u64("key_hash")
-                    .expect("schema v2 fast field")
-                    .first_or_default_col(0);
-                move |doc: DocId, score: Score| (score, Reverse(key_hash.get_val(doc)))
-            });
-        let tier2: Vec<(Score, tantivy::DocAddress)> = searcher
-            .search(
-                restrict(Box::new(BooleanQuery::union(clauses))).as_ref(),
-                &collector,
-            )?
-            .into_iter()
-            .map(|((score, _), address)| (score, address))
-            .collect();
-        // A window filled: tier 1's 64 slots with definitions left over (an
-        // anchor's window over more than 64 definitions), or tier 2's limit.
-        let candidates_full = tier1_full || tier2.len() >= CANDIDATE_LIMIT;
+        let per_lane = if prose {
+            CANDIDATE_LIMIT / 2
+        } else {
+            CANDIDATE_LIMIT
+        };
+        let collector = TopDocs::with_limit(per_lane).tweak_score(|reader: &SegmentReader| {
+            let key_hash = reader
+                .fast_fields()
+                .u64("key_hash")
+                .expect("schema v2 fast field")
+                .first_or_default_col(0);
+            move |doc: DocId, score: Score| (score, Reverse(key_hash.get_val(doc)))
+        });
+        let lexical: Box<dyn Query> = if prose {
+            let lexical = prose_lexical(query, fields.body);
+            if let Some(language) = prose_language(query) {
+                if let Some(trace) = control.trace() {
+                    trace.record(serde_json::json!({"stage":"lexical_language","language":language,"policy":"prefer_explicit_language_v1","filters_roots":false}));
+                }
+                // Distinct-term scores are bounded by 64.5. Prefer matching
+                // language before spending the fixed discovery window; adding
+                // this after TopDocs would leave relevant files undiscovered.
+                // The lexical Must keeps unrelated files out; Should preserves
+                // fallback languages and the separate documentation window.
+                Box::new(BooleanQuery::new(vec![
+                    (Occur::Must, lexical),
+                    (
+                        Occur::Should,
+                        Box::new(ConstScoreQuery::new(
+                            term(fields.lang, language, IndexRecordOption::Basic),
+                            65.0,
+                        )),
+                    ),
+                ]))
+            } else {
+                lexical
+            }
+        } else {
+            Box::new(BooleanQuery::union(clauses))
+        };
+        let mut full = false;
+        let mut tier2 = Vec::new();
+        let mut collect = |query: Box<dyn Query>| -> FResult<()> {
+            let found = searcher.search(restrict(query).as_ref(), &collector)?;
+            full |= found.len() == per_lane;
+            tier2.extend(
+                found
+                    .into_iter()
+                    .map(|((score, _), address)| (score, address)),
+            );
+            Ok(())
+        };
+        if prose {
+            // Disjoint windows keep large documentation sets from exhausting
+            // code discovery, and preserve documentation discovery in code-heavy
+            // roots. Their combined cap is still 256 documents.
+            let code: Box<dyn Query> = Box::new(BooleanQuery::new(vec![
+                (Occur::Must, Box::new(tantivy::query::AllQuery)),
+                (
+                    Occur::MustNot,
+                    term(fields.kind, "section", IndexRecordOption::Basic),
+                ),
+                (
+                    Occur::MustNot,
+                    term(fields.kind, "block", IndexRecordOption::Basic),
+                ),
+                (
+                    Occur::MustNot,
+                    term(fields.kind, UNPARSED_KIND, IndexRecordOption::Basic),
+                ),
+            ]));
+            collect(Box::new(BooleanQuery::new(vec![
+                (Occur::Must, lexical.box_clone()),
+                (Occur::Must, code.box_clone()),
+            ])))?;
+            collect(Box::new(BooleanQuery::new(vec![
+                (Occur::Must, lexical),
+                (Occur::MustNot, code),
+            ])))?;
+        } else {
+            collect(lexical)?;
+        }
+        let candidates_full = tier1_full || full;
         control.check()?;
 
         // A resolver-window document is a definition document: it carries
@@ -4409,6 +5504,7 @@ impl Engine {
                     path: text(fields.path).ok_or_else(invalid)?,
                     hash: text(fields.hash).ok_or_else(invalid)?,
                     start: number(fields.start)?,
+                    end: number(fields.end)?,
                     unit_start: number(fields.unit_start)?,
                     unit_head: number(fields.unit_head)?,
                     unit_end: number(fields.unit_end)?,
@@ -4467,7 +5563,24 @@ impl Engine {
                 .then_with(|| a.path.cmp(&b.path))
                 .then_with(|| a.start.cmp(&b.start))
         });
+        if prose {
+            let (code, prose): (Vec<_>, Vec<_>) = second
+                .into_iter()
+                .partition(|c| !["section", "block", UNPARSED_KIND].contains(&c.kind.as_str()));
+            second = Vec::with_capacity(code.len() + prose.len());
+            let mut code = code.into_iter();
+            let mut prose = prose.into_iter();
+            loop {
+                let (a, b) = (code.next(), prose.next());
+                if a.is_none() && b.is_none() {
+                    break;
+                }
+                second.extend(a);
+                second.extend(b);
+            }
+        }
         Ok(TwoTier {
+            prose,
             first,
             second,
             candidates_full,
@@ -4503,6 +5616,29 @@ impl Engine {
         dense: &crate::neural::query::DenseWindow,
         anchors: Option<&[AnchorCandidate]>,
     ) -> FResult<CandidateBatch> {
+        self.search_candidates_semantic_selected(
+            query,
+            path,
+            limit,
+            control,
+            dense,
+            SearchSelection {
+                anchors,
+                prose: false,
+            },
+        )
+    }
+
+    #[cfg(feature = "semantic")]
+    fn search_candidates_semantic_selected(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+        control: &crate::Control,
+        dense: &crate::neural::query::DenseWindow,
+        selection: SearchSelection<'_>,
+    ) -> FResult<CandidateBatch> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
@@ -4516,18 +5652,122 @@ impl Engine {
         let filter = path.map(path_filter).transpose()?;
         let workspace_id = self.require_workspace_id()?;
         let TwoTier {
+            prose,
             first,
             second,
             candidates_full,
             windows,
-        } = self.collect_two_tier(query, path, control, anchors)?;
+        } = self.collect_two_tier(query, path, control, selection)?;
+
+        // Bound ordinary provenance once, before discovery or final-read
+        // materialization. Shared vector labels can name arbitrarily many
+        // sources; output caps alone do not bound that metadata expansion.
+        let mut ordinary = dense
+            .bounded_units(filter.as_deref(), 4096, control)
+            .map_err(|error| FoundryError::Semantic {
+                code: error.code,
+                message: error.detail,
+            })?;
+        if let Some(trace) = control.trace() {
+            trace.record(
+                serde_json::json!({"stage":"dense_provenance", "available":ordinary.available,
+                "examined":ordinary.items.len(), "limit":4096, "truncated":ordinary.truncated}),
+            );
+        }
+
+        // A coarse hit discovers a file, not its answer passage. Reuse the
+        // query vector to localize within a bounded union of discovered files.
+        // This reads published vectors only; missing refinement is coverage
+        // debt for the explicit preparation owner, never query-time inference.
+        let mut refinement_paths = std::collections::BTreeSet::new();
+        let mut refinement_limited = false;
+        let refined = if prose && dense.has_overviews() && !dense.file_overviews_only() {
+            let mut examined = 0;
+            for (_, unit) in &ordinary.items {
+                control.check()?;
+                if refinement_paths.len() == 64 {
+                    break;
+                }
+                examined += 1;
+                refinement_paths.insert(unit.path.clone());
+            }
+            if let Some(trace) = control.trace() {
+                trace.record(
+                    serde_json::json!({"stage":"refinement_discovery", "examined":examined,
+                    "files":refinement_paths.len(), "truncated":examined < ordinary.items.len()}),
+                );
+            }
+            refinement_limited |= examined < ordinary.items.len();
+            use crate::neural::query::{OwnerProof, OwnerScope};
+            let mut refinement_scopes =
+                std::collections::BTreeMap::<String, Vec<OwnerScope<'_>>>::new();
+            for candidate in first.iter().chain(&second).take(16) {
+                control.check()?;
+                refinement_paths.insert(candidate.path.clone());
+                if matches!(candidate.kind.as_str(), "fn" | "method") {
+                    refinement_scopes
+                        .entry(candidate.path.clone())
+                        .or_default()
+                        .push(OwnerScope {
+                            source_hash: &candidate.hash,
+                            start: candidate.unit_start,
+                            end: candidate.unit_end,
+                            proof: OwnerProof::Callable {
+                                kind: &candidate.kind,
+                                head: candidate.unit_head,
+                                document: (candidate.start, candidate.end),
+                            },
+                        });
+                }
+            }
+            // Discovery keeps its original first64 dense files and first16
+            // lexical documents. Collect Parent scopes from the same bounded
+            // provenance window, including already admitted files after64.
+            // Body/File/ContainerFragment ranges cannot invent an owner.
+            for (rank, unit) in &ordinary.items {
+                control.check()?;
+                if unit.kind == crate::neural::cache::CardKind::Parent
+                    && refinement_paths.contains(&unit.path)
+                {
+                    refinement_scopes
+                        .entry(unit.path.clone())
+                        .or_default()
+                        .push(OwnerScope {
+                            source_hash: &unit.source_sha256,
+                            start: unit.start,
+                            end: unit.end,
+                            proof: OwnerProof::Parent {
+                                input_key: dense.input_key(&dense.hits[*rank]),
+                            },
+                        });
+                }
+            }
+            match dense.refine(self, &refinement_paths, &refinement_scopes, control) {
+                Ok(refinement) => {
+                    refinement_limited |= refinement.stats.truncated;
+                    if let Some(trace) = control.trace() {
+                        trace.record(serde_json::json!({"stage":"refinement", "outcome":"scored", "method":"published_body_exact", "localization":"current_owner_narrowing_v1", "work":refinement.stats}));
+                    }
+                    refinement.hits
+                }
+                Err(error) => {
+                    if let Some(trace) = control.trace() {
+                        trace.record(serde_json::json!({"stage":"refinement", "outcome":"unavailable", "reason":error.code}));
+                    }
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        control.check()?;
 
         // Final read: every candidate is validated here, before placement.
         let tx = self.db.begin_read()?;
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
         let mut counters = CandidateCounters {
-            candidates_full,
+            candidates_full: candidates_full || ordinary.truncated || refinement_limited,
             ..CandidateCounters::default()
         };
         let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
@@ -4544,10 +5784,13 @@ impl Engine {
             }
             Ok(())
         };
-        let wanted: std::collections::BTreeSet<String> =
+        let wanted: std::collections::BTreeSet<String> = if prose {
+            prose_terms(query)
+        } else {
             analyzed_terms(crate::syntax::code_subtokens, query)
-                .into_iter()
-                .collect();
+        }
+        .into_iter()
+        .collect();
         let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
             std::collections::BTreeMap::new();
         // The anchor windows, from the tier-1 documents as collected; their
@@ -4566,50 +5809,143 @@ impl Engine {
         )?;
         // Lexical documents of the current source version only.
         let mut lexical: Vec<Candidate> = Vec::with_capacity(first.len() + second.len());
-        for candidate in first.into_iter().chain(second) {
+        let mut lexical_selection = LexicalSelection::default();
+        for (rank, candidate) in first.into_iter().chain(second).enumerate() {
             load(&mut current, &candidate.path)?;
             if current[&candidate.path]
                 .as_ref()
                 .is_some_and(|meta| meta.hash == candidate.hash)
             {
+                if let Err(outcome) = lexical_selection.insert(&candidate, prose) {
+                    candidate.trace(control, &workspace_id, rank, outcome);
+                    continue;
+                }
+                candidate.trace(control, &workspace_id, rank, "eligible");
                 lexical.push(candidate);
             } else {
+                candidate.trace(control, &workspace_id, rank, "stale");
                 counters.stale += 1;
             }
         }
         // Dense locations in similarity order: the path restriction first,
         // then freshness.
-        let mut placed: Vec<((String, u64, u64), bool)> = Vec::new();
-        for hit in &dense.hits {
-            for location in dense.units(hit) {
-                if filter
-                    .as_deref()
-                    .is_some_and(|filter| !within_filter(&location.path, filter))
-                {
-                    continue;
+        let mut placed = Vec::new();
+        let refined_count = refined.len();
+        let mut eligible_refined = 0;
+        // Preserve similarity order after fair admission, using only the
+        // ordinary locations already admitted and the exact refined joins.
+        ordinary.items.sort_by_key(|(rank, _)| *rank);
+        let refined_locations = refined.iter().enumerate().flat_map(|(rank, refined)| {
+            refined
+                .locations
+                .iter()
+                .copied()
+                .map(move |location| (rank, &refined.hit, location, true))
+        });
+        let ordinary_locations = ordinary
+            .items
+            .iter()
+            .map(|(rank, location)| (refined_count + rank, &dense.hits[*rank], *location, false));
+        for (rank, hit, location, is_refined) in refined_locations.chain(ordinary_locations) {
+            control.check()?;
+            let trace_location = |outcome: &str| {
+                if let Some(trace) = control.trace() {
+                    trace.record(serde_json::json!({
+                            "stage": "selection", "origin": "dense", "rank": rank,
+                            "distance": hit.distance, "input_key": dense.input_key(hit), "outcome": outcome,
+                            "representation": location.kind, "refined":is_refined,
+                            "unit": {"workspace_id": workspace_id, "path": location.path,
+                                "sha256": location.source_sha256, "start": location.start,
+                                "end": location.end},
+                        }));
                 }
-                load(&mut current, &location.path)?;
-                let current_location =
-                    current[location.path.as_str()]
-                        .as_ref()
-                        .is_some_and(|meta| {
-                            meta.hash == location.source_sha256 && location.end <= meta.bytes as u64
-                        });
-                if !current_location {
-                    counters.stale += 1;
-                    continue;
-                }
-                placed.push(((location.path.clone(), location.start, location.end), true));
+            };
+            if filter
+                .as_deref()
+                .is_some_and(|filter| !within_filter(&location.path, filter))
+            {
+                trace_location("path_filter");
+                continue;
             }
+            load(&mut current, &location.path)?;
+            let current_location = current[location.path.as_str()]
+                .as_ref()
+                .is_some_and(|meta| {
+                    meta.hash == location.source_sha256
+                        && location.end <= meta.bytes as u64
+                        && (location.kind != crate::neural::cache::CardKind::File
+                            || (location.start == 0 && location.end == meta.bytes as u64))
+                });
+            if !current_location {
+                trace_location("stale");
+                counters.stale += 1;
+                continue;
+            }
+            trace_location("eligible");
+            eligible_refined += usize::from(is_refined);
+            placed.push((
+                (location.path.clone(), location.start, location.end),
+                Some(location.kind),
+            ));
         }
-        // Then the lexical candidates in today's order (tier 1, tier 2).
-        placed.extend(lexical.iter().map(|candidate| (candidate.unit(), false)));
+        let freshness = self.freshness_in(&tx)?;
+        let word = dense.coverage_at(freshness.source_revision);
+        // Coverage reports availability, not whether dense relevance outranks
+        // lexical evidence. Experimental body/hierarchy placement uses the same
+        // bounded hybrid order before and after preparation completes. Keep the
+        // existing partial/address and coarse-only admission rules; complete
+        // address coverage and ordinary search retain their placement.
+        // Freshness was checked above; no candidate/output slots are added.
+        if prose
+            && (word == "partial"
+                || dense.file_overviews_only()
+                || dense.has_body_representations())
+        {
+            let mut dense_order = std::mem::take(&mut placed).into_iter();
+            let mut lexical_order = lexical.iter().map(|c| (c.selection_unit(prose), None));
+            loop {
+                let (lexical, dense) = (lexical_order.next(), dense_order.next());
+                if lexical.is_none() && dense.is_none() {
+                    break;
+                }
+                // Independently embedded body passages precede broad lexical
+                // documents. Without eligible refinement, lexical evidence
+                // goes first. Neither choice depends on coverage completeness.
+                if eligible_refined > 0 {
+                    placed.extend(dense);
+                    placed.extend(lexical);
+                } else {
+                    placed.extend(lexical);
+                    placed.extend(dense);
+                }
+            }
+            if let Some(trace) = control.trace() {
+                let policy = if dense.has_body_representations() {
+                    "body_prose_interleave_v1"
+                } else if dense.file_overviews_only() {
+                    "coarse_prose_interleave_v1"
+                } else {
+                    "partial_prose_interleave_v1"
+                };
+                trace.record(serde_json::json!({"stage":"placement_policy","policy":policy,"coverage":word,"lexical_first":eligible_refined == 0,"refined_hits":refined_count,"eligible_refined_locations":eligible_refined,"refinement_files":refinement_paths.len()}));
+            }
+        } else {
+            placed.extend(
+                lexical
+                    .iter()
+                    .map(|candidate| (candidate.selection_unit(prose), None)),
+            );
+        }
         // The candidate carrying each lexical unit: its first (best-ranked)
         // current document, as in the baseline.
         let mut by_unit: std::collections::HashMap<(String, u64, u64), &Candidate> =
             std::collections::HashMap::new();
+        let mut by_document = std::collections::HashMap::new();
         for candidate in &lexical {
             by_unit.entry(candidate.unit()).or_insert(candidate);
+            by_document
+                .entry(candidate.selection_unit(prose))
+                .or_insert(candidate);
         }
 
         // The baseline's merge per unit, per-file cap and cut, over the
@@ -4617,25 +5953,51 @@ impl Engine {
         let mut seen = std::collections::BTreeSet::new();
         let mut per_file: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
-        let mut kept: Vec<(&(String, u64, u64), bool)> = Vec::new();
-        for (unit, from_dense) in &placed {
+        let mut kept = Vec::new();
+        for (rank, (unit, kind)) in placed.iter().enumerate() {
+            let trace_placement = |outcome: &str| {
+                if let Some(trace) = control.trace() {
+                    trace.record(serde_json::json!({
+                        "stage": "placement", "origin": if kind.is_some() { "dense" } else { "lexical" },
+                        "rank": rank, "outcome": outcome,
+                        "unit": {"workspace_id": workspace_id, "path": unit.0,
+                            "sha256": current.get(&unit.0).and_then(|m| m.as_ref()).map(|m| &m.hash),
+                            "start": unit.1, "end": unit.2},
+                    }));
+                }
+            };
             if !seen.insert(unit) {
+                trace_placement("duplicate");
                 continue;
             }
             let count = per_file.entry(unit.0.clone()).or_default();
             if *count == PER_FILE_CAP {
                 counters.capped += 1;
+                trace_placement("per_file_cap");
                 continue;
             }
             *count += 1;
             if kept.len() == limit {
                 counters.truncated = true;
+                trace_placement("limit");
                 continue;
             }
-            kept.push((unit, *from_dense));
+            trace_placement("kept");
+            kept.push((unit, *kind));
         }
         let mut items = Vec::with_capacity(kept.len());
-        for (rank, (unit, from_dense)) in kept.into_iter().enumerate() {
+        let mut delivered = std::collections::BTreeSet::new();
+        for (rank, (unit, kind)) in kept.into_iter().enumerate() {
+            control.check()?;
+            let from_dense = kind.is_some();
+            let exact_body = kind == Some(crate::neural::cache::CardKind::Body);
+            let exact_span = matches!(
+                kind,
+                Some(
+                    crate::neural::cache::CardKind::Body
+                        | crate::neural::cache::CardKind::ContainerFragment
+                )
+            );
             let (unit_path, unit_start, unit_end) = unit;
             let Some(Some(meta)) = current.get(unit_path) else {
                 continue;
@@ -4645,11 +6007,27 @@ impl Engine {
                 verified.insert(unit_path.clone(), source);
             }
             let body = &verified[unit_path].body;
-            let candidate = by_unit.get(unit).copied();
+            let candidate = if from_dense {
+                // An exact unit match may contribute its label and support.
+                // A scored Body still renders its own unchanged byte range.
+                by_unit.get(unit)
+            } else {
+                by_document.get(unit)
+            }
+            .copied();
             let mut item = match candidate {
-                Some(candidate) => {
+                Some(candidate) if exact_span => {
                     ranked_item(candidate, rank, &workspace_id, &meta.hash, body, &wanted)?
                 }
+                Some(candidate) => ranked_context_item(
+                    candidate,
+                    rank,
+                    &workspace_id,
+                    &meta.hash,
+                    body,
+                    &wanted,
+                    prose && (!from_dense || dense.has_overviews()),
+                )?,
                 None => {
                     // A dense-only unit: no delivery-unit label.
                     let (from, to) = (*unit_start as usize, *unit_end as usize);
@@ -4662,6 +6040,15 @@ impl Engine {
                             "candidate unit outside {unit_path}"
                         )));
                     }
+                    let (from, to, focused) =
+                        if prose && !exact_span && dense.has_overviews() && to - from > 1536 {
+                            prose_passage(&body[from..to], &wanted)
+                                .map_or((from, to, false), |(start, end)| {
+                                    (from + start, from + end, true)
+                                })
+                        } else {
+                            (from, to, false)
+                        };
                     let text = &body[from..to];
                     let newlines = |bytes: &[u8]| bytes.iter().filter(|&&b| b == b'\n').count();
                     let start_line = newlines(&body.as_bytes()[..from]) as u64 + 1;
@@ -4674,13 +6061,22 @@ impl Engine {
                             workspace_id: workspace_id.clone(),
                             path: unit_path.clone(),
                             sha256: meta.hash.clone(),
-                            start: *unit_start,
-                            end: *unit_end,
+                            start: from as u64,
+                            end: to as u64,
                         }),
                         start_line,
                         end_line,
-                        line: start_line,
-                        label: String::new(),
+                        line: start_line
+                            + if focused {
+                                best_line_index(text, &wanted)
+                            } else {
+                                0
+                            },
+                        label: if focused {
+                            "excerpt".into()
+                        } else {
+                            String::new()
+                        },
                         lang: crate::syntax::Lang::from_path(unit_path)
                             .map(|lang| lang.tag().to_owned()),
                         semantic: None,
@@ -4693,13 +6089,31 @@ impl Engine {
                 item.semantic = Some(SemanticEvidence {
                     dense_only: candidate.is_none(),
                 });
+                if let Some(trace) = control.trace() {
+                    let focused = item
+                        .handle
+                        .as_ref()
+                        .is_some_and(|h| (h.start, h.end) != (*unit_start, *unit_end));
+                    trace.record(serde_json::json!({
+                        "stage":"materialization", "origin":"dense", "rank":rank,
+                        "unit":{"workspace_id":workspace_id,"path":unit_path,"sha256":meta.hash,
+                            "start":unit_start,"end":unit_end},
+                        "excerpt":item.handle,
+                        "local_query_focus":focused,
+                        "representation":kind,
+                        "passage_independently_embedded":exact_body,
+                    }));
+                }
+            } else if let Some(candidate) = candidate {
+                candidate.trace_materialization(control, &item);
             }
-            items.push(item);
+            let handle = item.handle.as_ref().expect("source candidate");
+            if delivered.insert((handle.path.clone(), handle.start, handle.end)) {
+                items.push(item);
+            }
         }
-        let freshness = self.freshness_in(&tx)?;
         // The word describes THIS read (a context recomputes it against its
         // own later final read).
-        let word = dense.coverage_at(freshness.source_revision);
         Ok(CandidateBatch {
             freshness,
             items,
@@ -4716,7 +6130,11 @@ impl Engine {
     /// tier-2 lexical clauses over `body`/`ident`, restricted to
     /// `kind:"memory"`, at most `limit` by (score, key_hash). Callers
     /// validate each candidate against the live row before delivery.
-    pub(crate) fn memory_plan(&self, query: &str) -> FResult<crate::memory::MemoryPlan> {
+    pub(crate) fn memory_plan(&self, query: &str) -> FResult<RecordPlan> {
+        self.record_plan(query, "memory")
+    }
+
+    pub(crate) fn record_plan(&self, query: &str, kind: &str) -> FResult<RecordPlan> {
         if query.trim().is_empty() || query.len() > 4096 {
             return Err(FoundryError::InvalidArgument(
                 "query must contain 1..4096 nonblank bytes".into(),
@@ -4759,7 +6177,7 @@ impl Engine {
             (
                 Occur::Must,
                 Box::new(TermQuery::new(
-                    Term::from_field_text(fields.kind, "memory"),
+                    Term::from_field_text(fields.kind, kind),
                     IndexRecordOption::Basic,
                 )) as Box<dyn Query>,
             ),
@@ -4783,10 +6201,10 @@ impl Engine {
             let key = doc
                 .get_first(fields.key)
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| FoundryError::CorruptStore("invalid memory document".into()))?;
-            let Some(id) = key.strip_prefix("memory:") else {
+                .ok_or_else(|| FoundryError::CorruptStore("invalid record document".into()))?;
+            let Some(id) = key.strip_prefix(&format!("{kind}:")) else {
                 return Err(FoundryError::CorruptStore(format!(
-                    "memory query matched non-memory document {key:?}"
+                    "{kind} query matched another kind of document {key:?}"
                 )));
             };
             let revision = doc
@@ -4794,14 +6212,14 @@ impl Engine {
                 .and_then(|v| v.as_str())
                 .and_then(|v| v.parse::<u64>().ok())
                 .ok_or_else(|| {
-                    FoundryError::CorruptStore(format!("memory document {key:?} has no revision"))
+                    FoundryError::CorruptStore(format!("{kind} document {key:?} has no revision"))
                 })?;
-            out.push(crate::memory::MemoryCandidate {
+            out.push(RecordCandidate {
                 id: id.to_owned(),
                 revision,
             });
         }
-        Ok(crate::memory::MemoryPlan {
+        Ok(RecordPlan {
             window_full: out.len() >= MEMORY_CANDIDATE_WINDOW,
             candidates: out,
         })
@@ -4870,7 +6288,29 @@ impl Engine {
         control: &crate::Control,
         options: &ContextOptions,
     ) -> FResult<crate::memory::MemoryContext> {
+        if options.compact_evidence && !options.compose_evidence {
+            return Err(FoundryError::InvalidArgument(
+                "compact_evidence requires compose_evidence".into(),
+            ));
+        }
+        if options.compose_evidence {
+            return self.compose_task_evidence(query, strategy, control, options);
+        }
+        if options.boundary_config.is_some() {
+            return Err(FoundryError::InvalidArgument(
+                "boundary_config requires compose_evidence".into(),
+            ));
+        }
+        if let Some(task) = options.task {
+            self.check_task_scope(task)?;
+        }
         let (policy, anchors) = (options.policy, options.anchors);
+        if let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({
+                "stage": "query", "query_sha256": crate::digest(query.as_bytes()),
+                "workspace_id": self.workspace_id, "strategy": strategy.to_string(),
+            }));
+        }
         let memory = options
             .memory
             .then(|| self.memory_plan(query))
@@ -4880,20 +6320,28 @@ impl Engine {
                 "query must contain 1..4096 nonblank bytes".into(),
             ));
         }
+        let selection = SearchSelection {
+            anchors,
+            prose: options.experimental_behavior
+                && prose_context_query(query, strategy, policy.is_some()),
+        };
         #[cfg(feature = "semantic")]
         let search = match options.dense {
-            Some(dense) => self.search_candidates_semantic(
+            Some(dense) => self.search_candidates_semantic_selected(
                 query,
                 None,
                 CONTEXT_UNITS,
                 control,
                 dense,
-                anchors,
+                selection,
             )?,
-            None => self.search_candidates_with(query, None, CONTEXT_UNITS, control, anchors)?,
+            None => {
+                self.search_candidates_selected(query, None, CONTEXT_UNITS, control, selection)?
+            }
         };
         #[cfg(not(feature = "semantic"))]
-        let search = self.search_candidates_with(query, None, CONTEXT_UNITS, control, anchors)?;
+        let search =
+            self.search_candidates_selected(query, None, CONTEXT_UNITS, control, selection)?;
         control.check()?;
         // 013 T003: routing happens HERE, after the 009 merge and before
         // doors are built. Only `auto` with a configured policy consults it;
@@ -4907,6 +6355,24 @@ impl Engine {
             (Strategy::Auto, None) => (response::strategy_for_query(query), None),
             (explicit, _) => (explicit, None),
         };
+        let behavior_terms = search
+            .anchors
+            .first()
+            .and_then(|anchor| anchor.entries.first())
+            .and_then(|entry| entry.handle.clone())
+            .zip(
+                (options.experimental_behavior && resolved == Strategy::Search)
+                    .then(|| behavior_terms(query, &search.anchors))
+                    .flatten(),
+            );
+        #[allow(unused_mut)]
+        let mut brief_plan = (options.briefs && search.anchors.is_empty())
+            .then(|| self.record_plan(query, "brief"))
+            .transpose()?;
+        #[cfg(feature = "semantic")]
+        if let (Some(plan), Some(dense)) = (&mut brief_plan, options.dense) {
+            plan.prepend(dense.areas.iter().cloned());
+        }
         // A context resolved to graph requests doors (context-v2 § Doors),
         // for the first anchor's target as resolved from the collected
         // windows: the final read can drop that definition, never retarget.
@@ -4922,6 +6388,10 @@ impl Engine {
             ""
         )?;
         let tx = self.db.begin_read()?;
+        let task_view = options
+            .task
+            .map(|scope| self.task_view_in(&tx, scope))
+            .transpose()?;
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
         let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
@@ -4949,6 +6419,11 @@ impl Engine {
             if fresh {
                 units.push(item);
             } else {
+                if let Some(trace) = control.trace() {
+                    trace.record(
+                        serde_json::json!({"stage":"validation", "outcome":"stale", "unit":handle}),
+                    );
+                }
                 dropped.insert((handle.path.clone(), handle.start, handle.end));
                 counters.stale += 1;
             }
@@ -4965,10 +6440,34 @@ impl Engine {
                 if current_meta(&handle.path)?.is_some_and(|meta| meta.hash == handle.sha256) {
                     fresh_entries.push(entry);
                 } else if dropped.insert((handle.path.clone(), handle.start, handle.end)) {
+                    if let Some(trace) = control.trace() {
+                        trace.record(serde_json::json!({"stage":"validation", "origin":"anchor", "outcome":"stale", "unit":handle}));
+                    }
                     counters.stale += 1;
                 }
             }
             window.entries = fresh_entries;
+        }
+        // A packing repair, not another candidate generator: preserve the
+        // original lexical window, caps and ranks. Final-read identity must
+        // still match the one used to recognize behavioral intent.
+        if let Some((owner, terms)) = behavior_terms
+            && anchors.len() == 1
+            && anchors[0].resolved()
+            && let Some(anchor) = anchors[0].entries.first()
+            && anchor.handle.as_ref() == Some(&owner)
+        {
+            for item in &mut units {
+                control.check()?;
+                if behavior_supports(anchor, item, &terms) {
+                    item.tier = TIER_BEHAVIOR;
+                    if let Some(trace) = control.trace() {
+                        trace.record(serde_json::json!({"stage":"behavior_support",
+                            "unit":item.handle, "anchor":anchor.handle,
+                            "reason":"same_source_owned_method_with_query_terms"}));
+                    }
+                }
+            }
         }
         // Doors, from the validated windows, in this same read.
         let doors = match &collected {
@@ -4979,6 +6478,30 @@ impl Engine {
                 Some(self.doors_in(&tx, &target, &anchors, &mut counters, control)?)
             }
             None => None,
+        };
+        let briefs = match &brief_plan {
+            Some(plan) => {
+                let (hits, stale, _) =
+                    self.brief_hits_in(&tx, plan, crate::brief::CONTEXT_HITS, control)?;
+                counters.stale += stale;
+                counters.candidates_full |= plan.window_full;
+                let mut evidence = Vec::new();
+                for hit in &hits {
+                    let source = self.brief_source_in(&tx, hit)?;
+                    // One primary representation per source; generated forms do
+                    // not displace independent files in the source window.
+                    units.retain(|unit| {
+                        unit.handle.as_ref().map(|h| &h.path)
+                            != source.handle.as_ref().map(|h| &h.path)
+                    });
+                    evidence.push(source);
+                }
+                evidence.append(&mut units);
+                evidence.truncate(CONTEXT_UNITS);
+                units = evidence;
+                hits
+            }
+            None => Vec::new(),
         };
         // Verified bodies, once per path, for the signature forms of units in
         // languages with units and for the first distinct files' outlines.
@@ -5151,7 +6674,10 @@ impl Engine {
         for (rank, item) in items.iter_mut().enumerate() {
             item.rank = rank;
         }
-        Ok(crate::memory::MemoryContext {
+        let context = crate::memory::MemoryContext {
+            evidence: None,
+            briefs,
+            task_view,
             batch: CandidateBatch {
                 semantic,
                 route,
@@ -5166,7 +6692,22 @@ impl Engine {
                 collected: collected.flatten(),
             },
             hits,
-        })
+        };
+        if let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({
+                "stage": "packing_input", "workspace_id": self.workspace_id,
+                "source_revision": context.batch.freshness.source_revision,
+                "semantic": context.batch.semantic, "anchored": context.batch.anchored(),
+                "items": context.batch.items.iter().map(|i| serde_json::json!({
+                    "unit":i.handle, "label":i.label, "rank":i.rank, "tier":i.tier,
+                })).collect::<Vec<_>>(),
+                "anchors": context.batch.anchors.iter().map(|a| serde_json::json!({
+                    "resolved": a.resolved(), "definitions": a.definitions,
+                    "units": a.entries.iter().filter_map(|i| i.handle.as_ref()).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+            }));
+        }
+        Ok(context)
     }
 
     /// The doors of a context that requested them (context-v2 § Doors),
@@ -5426,6 +6967,7 @@ impl Engine {
         let mentions = BooleanQuery::new(vec![
             (Occur::Must, term(fields.ident, &name.to_lowercase())),
             (Occur::MustNot, term(fields.kind, "memory")),
+            (Occur::MustNot, term(fields.kind, "brief")),
         ]);
         let mut units: std::collections::BTreeMap<(String, u64, u64), DoorCandidate> =
             std::collections::BTreeMap::new();
@@ -5641,7 +7183,7 @@ impl Engine {
     /// marker, one retained quarantine, paged enqueue, drained replacement.
     pub fn repair_index(store_dir: &Path, control: &crate::Control) -> FResult<RepairReport> {
         control.check()?;
-        let mut engine = Self::open_authoritative(store_dir)?;
+        let mut engine = Self::open_with(store_dir, false, true)?;
         if engine.schema != SCHEMA_VERSION {
             return Err(FoundryError::UpgradeRequired {
                 found: engine.schema.to_string(),
@@ -5866,6 +7408,39 @@ impl Engine {
             after = page.last().map(|(k, _)| k.clone());
         }
         control.check()?;
+        let mut after: Option<String> = None;
+        loop {
+            control.check()?;
+            let page = {
+                let tx = engine.db.begin_read()?;
+                let table = tx.open_table(BRIEFS)?;
+                table
+                    .range::<&str>((
+                        after.as_deref().map_or(Bound::Unbounded, Bound::Excluded),
+                        Bound::Unbounded,
+                    ))?
+                    .take(PAGE)
+                    .map(|row| {
+                        let (key, raw) = row?;
+                        let revision = crate::brief::decode_row(key.value(), raw.value())
+                            .map_or_else(|_| "corrupt".into(), |r| r.revision.to_string());
+                        Ok((key.value().to_owned(), revision))
+                    })
+                    .collect::<Result<Vec<_>, redb::StorageError>>()?
+            };
+            if page.is_empty() {
+                break;
+            }
+            let tx = engine.db.begin_write()?;
+            {
+                let mut pending = tx.open_table(PENDING)?;
+                for (id, revision) in &page {
+                    pending.insert(crate::brief::pending_key(id).as_str(), revision.as_str())?;
+                }
+            }
+            tx.commit()?;
+            after = page.last().map(|(id, _)| id.clone());
+        }
         // Construct the replacement index and drain.
         fault!(
             REPAIR_BEFORE_REPLACEMENT_INDEX,
@@ -5886,7 +7461,7 @@ impl Engine {
         loop {
             control.check()?;
             match engine.refresh_index(control)? {
-                (0, 0) => break,
+                (0, 0) if engine.pending()? == 0 => break,
                 (sources, memories) => {
                     drained.0 += sources;
                     drained.1 += memories;
@@ -5923,6 +7498,7 @@ impl Engine {
         // the retained f32 cache — derived state both, zero document calls.
         // A semantic failure is named in the report, never a rollback of the
         // lexical repair.
+        engine.semantic_reconcile_cache()?;
         #[cfg(feature = "semantic")]
         let semantic_index = Some(engine.semantic_rebuild_index(control).unwrap_or_else(|e| {
             crate::neural::index::SemanticIndexReport {
@@ -6005,6 +7581,10 @@ pub fn workspace_id_for_root(root: &Path) -> FResult<String> {
         .ok_or_else(|| FoundryError::InvalidArgument("workspace path is not UTF-8".into()))
 }
 
+pub(crate) fn revision_in(tx: &WriteTransaction) -> FResult<u64> {
+    read_counter(&tx.open_table(META)?, "source_revision")
+}
+
 fn bump_revision(tx: &WriteTransaction, by: u64) -> FResult<()> {
     let mut meta = tx.open_table(META)?;
     let current = read_counter(&meta, "source_revision")?;
@@ -6023,5 +7603,52 @@ impl Engine {
         control: &crate::Control,
     ) -> FResult<crate::ingest::IndexReport> {
         crate::ingest::index(self, root, control)
+    }
+}
+
+#[cfg(all(test, feature = "test-faults"))]
+mod batch_tests {
+    use super::*;
+    use crate::fault::{self, Action, names};
+
+    #[test]
+    fn four_prepared_sources_roll_back_together_on_failure_and_cancellation() {
+        for cancel in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("root");
+            std::fs::create_dir(&root).unwrap();
+            let store = dir.path().join("store");
+            let engine = Engine::initialize(&store, &root).unwrap();
+            let batch = |body: &str| {
+                (0..4)
+                    .map(|n| PreparedSource::new(format!("batch{n}.rs"), body.into()).unwrap())
+                    .collect::<Vec<_>>()
+            };
+            engine
+                .replace_prepared_sources(&batch("fn old() {}\n"), &crate::Control::unbounded())
+                .unwrap();
+            drop(engine);
+            let before = crate::testkit::snapshot(&store);
+            let engine = Engine::open_existing(&store).unwrap();
+            fault::disarm_all();
+            fault::arm(
+                names::SOURCE_BATCH_BEFORE_COMMIT,
+                0,
+                if cancel {
+                    Action::Cancel
+                } else {
+                    Action::Fail("injected batch failure".into())
+                },
+            );
+            assert!(
+                engine
+                    .replace_prepared_sources(&batch("fn new() {}\n"), &crate::Control::unbounded())
+                    .is_err()
+            );
+            assert_eq!(fault::reached(names::SOURCE_BATCH_BEFORE_COMMIT), 1);
+            fault::disarm_all();
+            drop(engine);
+            assert_eq!(before, crate::testkit::snapshot(&store));
+        }
     }
 }

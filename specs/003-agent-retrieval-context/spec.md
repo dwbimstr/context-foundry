@@ -1,5 +1,10 @@
 # 003 — Context inside coding agents
 
+Planning addition, 2026-10-09: [T006](#t006--validate-retrieval-repairs-in-real-coding-tasks)
+is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
+The 2026-10-10 continuation now permits explicit frozen task-view application at the
+gateway boundary under the [adapter contract](contracts/adapter-economics.md#experimental-exported-task-view-application--2026-10-10). Ordinary MCP delivery still reports host application as unknown.
+
 Status: T001–T003 and the optional shared owner implemented and verified locally,
 2026-10-01, including concurrent OMP 18.4.9 and Codex 0.159.2 service on one store
 ([validation](../../docs/validation.md)). Not released. T004 gateway, retargeted
@@ -144,9 +149,9 @@ tokens with 008 (661 after 007 T001; 598 after T006; ceiling 800).
 schema still lists `include_memory`. Tool descriptions, exactly:
 
 ~~~text
-search: Use BEFORE grep/rg to find code in the indexed repo(s): one line per hit with a handle, line, symbol and matching text. Follow handles with retrieve. Indexed snapshot, not live disk.
-context: Use INSTEAD of exploratory file reads: one budgeted, cited bundle of the most relevant symbols (verbatim, or signatures when large), graph edges and file outlines.
-retrieve: Read exact indexed source for a handle. `lines` narrows to a line range; `view:"outline"` returns a skeleton with elided line ranges. Stale handles are rejected.
+search: Use BEFORE grep/rg for indexed code: one line per hit with handle, line, symbol and match. Follow handles with retrieve. Indexed snapshot, not live disk.
+context: Use INSTEAD of exploratory file reads: budgeted, cited symbols (verbatim or signatures when large), graph edges and outlines.
+retrieve: Read exact indexed source by handle; stale handles rejected. `lines`: line range; `view:"outline"`: skeleton with elided line ranges.
 index: Re-index after edits: the bound repo, or an admitted reference root via `root`.
 status: Revision, pending work, index/scan state and coverage for each admitted root.
 memory: Explicit project memory records.
@@ -678,6 +683,442 @@ Hosts: OMP 18.4.10 (`omp --version`); Codex CLI version recorded at run time.
   Claims carry the economics contract's label.
 
 SC-001..SC-005 are the pass conditions of T001..T005 above. SC-001–SC-003 passed on
-2026-10-01; SC-004 (gateway) and SC-005 (token-economics adoption) are unexecuted.
+2026-10-01; SC-004 (gateway) and SC-005 (token-economics adoption) were accepted
+2026-10-04, with their real-host results and limits recorded in validation.
 T004 is one additional task because the owner added credential-bearing forwarding,
 not hidden work inside packing; T005 carries the owner's 2026-10-03 economics priority.
+
+### T006 — Validate retrieval repairs in real coding tasks
+
+**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
+
+**Executed boundary checks, 2026-10-09:** the Rust SDK/real Foundry stdio tests
+exercise opt-in behavior and diagnostic flags, byte-identical untraced/traced text,
+request IDs and error-result recording. Codex CLI `0.159.0-alpha.3` accepts the
+Foundry startup configuration with the experimental flag via command-local `-c`
+overrides; no global configuration changed. This is configuration parsing, not an
+agent-task run or evidence that the provider consumed a response. OMP/Bun were absent
+at that inspection. The 2026-10-10 continuation installs and checks OMP 18.6.0/Bun 1.3.14
+at the application boundary; live paired task/usage acceptance remains pending.
+
+**Host capability inspection (source only):** the corpus pin
+[`can1357/oh-my-pi@5b8d5b8a15ab1711597584aadbdc112c55befed1`](https://github.com/can1357/oh-my-pi/tree/5b8d5b8a15ab1711597584aadbdc112c55befed1)
+identifies package version **18.5.0**, not the 18.6.0 binary used for T004's earlier
+acceptance. `packages/coding-agent/src/extensibility/extensions/runner.ts` exposes
+`ExtensionRunner::emitContext` and `emitBeforeProviderRequest`; `types.ts` defines
+`ContextEventResult` / `BeforeProviderRequestEvent`. Message and payload replacements
+chain, with context replacements leaving persisted history unchanged. Relevant
+`packages/coding-agent/test/extensions-runner.test.ts` cases are “chains payload
+replacements across handlers in load order”, “keeps chaining after handler errors”,
+and “rejects instead of returning untransformed context when its caller aborts a
+pending handler”. These upstream tests were inspected, not executed here.
+
+The Foundry integration differs deliberately: final-byte budget and
+view-revision acknowledgment are checked after all transformations at the actual
+supported transport. An early hook acknowledgment can be invalidated by later hooks;
+an error may leave the prior payload in use. Upstream `docs/extensions.md` says
+`before_provider_request` depends on the provider transport calling `onPayload`
+(`devin-agent` does not), and an ephemeral turn's `maxContextBytes` check precedes
+payload replacement. Consequently this inspection proves neither end-to-end budget
+enforcement nor applied-view acknowledgment. The later installed-host check below
+verifies the gateway boundary against a scripted upstream. No third-party code is vendored.
+
+**Run procedure when measurement inputs are available:**
+
+1. Pin the binary SHA-256, host version, model/settings, corpora/store generations,
+   prompts, task oracles and declared cost/time/sample-size limits. Use a dedicated
+   host profile with an explicitly admitted fixture repository, following T005's
+   runbook. Freeze holdout labels before tuning. A public fixture run establishes
+   plumbing only, not general task-quality improvement.
+2. Control: launch the existing Foundry MCP command without the experimental flag.
+   Candidate: use the identical command plus `--experimental-behavior-context`.
+   The current anchorless repair is unselected, so do not invent its ablation result
+   or claim the combined milestone has passed.
+3. For attribution runs, append `--retrieval-trace-dir <new-private-directory>` to
+   each owner launch; use a distinct new directory per process, and capture stderr.
+   Match request IDs/session IDs and context-query hashes to the harness's frozen
+   requests. Keep successful and refused results. A missing/truncated record or
+   `retrieval_trace_unavailable` invalidates attribution. Run normal latency/economics
+   comparisons without trace I/O, and measure that overhead separately.
+4. Compare actual model-request evidence, verified patches/tests and imported provider
+   usage under the experiment below. Preserve every failure and paid attempt. Record
+   aggregate results and limitations in validation. If the gate fails or remains
+   inconclusive, keep the default unchanged and repair the identified cause.
+
+- **Depends:** 001 T010 and 009 T005 supply the candidate retrieval changes; T003/T005
+  supply the existing host integration and economics boundary. Baseline collection,
+  public fixture design and host capability inspection can start before the repairs.
+- **Scope:** existing CLI/MCP/host adapters and the T005 real-host runbook. Use a
+  dedicated explicitly configured host profile. Planning assumption: inspect OMP
+  first because it has a measured integration; selecting it does not establish
+  context-editing capability. Keep Codex/other hosts' existing MCP behavior.
+- **Experiment:**
+  - Use matched bug-fix tasks with independently specified patch/test oracles,
+    including anchorless discovery, mixed behavior, ambiguity and exact locators.
+    Keep prompts, repository revisions, host/model/settings and budgets identical.
+    Separate pilot/development tasks from held-out evaluation tasks. Preserve failed
+    and invalid runs and include their paid attempts in cost totals.
+  - Compare current Foundry, mixed-intent repair alone, anchorless repair alone and
+    both repairs. Repeated paired runs account for model variability. Before final
+    runs, freeze sample-size rationale, total spend/time ceiling, stop rules,
+    task-success noninferiority margin, required improvement and cost/latency limits.
+    Do not choose those limits after reading candidate outcomes. This is one shared
+    task suite to extend in later milestones, not a new benchmark for every feature.
+  - Record first useful evidence, complete supporting evidence, exploratory calls,
+    steps to a verified patch, constraint violations, retries, task success, turns,
+    latency and complete available provider usage under the economics contract.
+    Separate Foundry delivery from evidence actually included in a model request.
+    Unknown consumption/usage remains unknown, not a zero or a savings claim.
+- **Acceptance:** the selected retrieval change preserves verified task success
+  within the preregistered margin and improves the declared evidence/discovery
+  outcome within the declared total-cost/latency bounds. Report paired uncertainty,
+  per-intent regressions and absolute success. An underpowered or incomplete run
+  cannot promote the default or establish dollar savings. Retain the baseline if
+  the outcome gate fails, even if G2 improved.
+- **Next-milestone capability artifact:** inspect the pinned real host for tool
+  interception, pre-send context mutation, protected message/tool pairing, restart
+  persistence and application acknowledgments. Classify each as supported with
+  observed evidence, unsupported or unverified. A proposed view ID is not proof
+  that the provider request used it. Document the smallest host/003 amendment
+  required for task-state and reversible context work; do not implement a generic
+  adapter platform or rewrite the gateway under this measurement task.
+- **Verification:** exercise actual installed host behavior at the claimed boundary;
+  fixtures alone cannot establish native adoption. Keep raw sessions private and
+  publish aggregate counts, apparatus identities and limitations in validation.
+  This plan itself performs no paid host runs or global host configuration changes.
+
+### T007 — Experimental task-context delivery
+
+Status: implemented locally through CLI and the real SDK MCP client. The later
+explicit gateway integration applies frozen/live views and is checked with installed
+OMP; broader host outcomes and measured task economics remain pending.
+
+Authorized 2026-10-09 on the experimental branch; measurements do not block sandbox
+implementation. 008 T003/T004 own durable state and mutations. This task exposes the
+same scoped commands through CLI `task-context` and opt-in MCP
+`--experimental-task-context` / `task_context`. Default catalogs remain unchanged.
+The primary admitted root alone owns task state; no session text admits another root.
+The explicit workspace/task IDs are scope, not per-agent authentication or ACLs.
+
+Requests use `{workspace_id,task_id,command:{op,...}}`. MCP retains its 64 KiB frame
+and 256 KiB result envelope limits; large observation ingestion and exact task export
+use CLI (1 MiB request, 2 MiB stored record). A rendered view's `max_bytes` limits the
+compact JSON payload plus newline; MCP additionally checks its final result envelope.
+No operation here replaces a host conversation, restructures tool calls/results or
+controls provider input. `host_application:"unknown"` remains explicit for ordinary
+MCP delivery. The later [gateway integration](../../docs/experimental-context.md#exported-task-views-in-omp-requests)
+separately acknowledges the final serialized revision/digest and checks protected
+instruction/tool linkage. That explicit integration does not turn every rendered
+MCP view into an applied host view.
+
+Verify with the real SDK client and separate CLI processes: discoverable opt-in
+schema, unknown-field refusal, scoped create/apply/peek/render/advise/promote/forget,
+restart recovery and bounded output. Host outcome and cost comparisons remain pending.
+
+### T008 — Deliver task-aware source context under one allowance
+
+Status: implemented locally through CLI and the real SDK MCP client; see
+[validation](../../docs/validation.md#task-aware-retrieval-and-recovery-search--2026-10-09).
+Applied-host replacement and measured task outcomes remain pending.
+
+Experimental continuation of T007 and 008 T005. Add paired CLI context options
+`--task ID --task-revision REV`, and paired MCP context fields `task_id` and
+`task_revision`. Only an owner launched with `--experimental-task-context` advertises
+or accepts the MCP extension; default catalog schemas remain unchanged. The task
+scope is the explicitly admitted primary store. Existing root selection, optional
+semantic/behavioral retrieval and memory disabling still apply.
+
+The combined response starts with the ordinary v2 context header, then one mandatory
+`task-view: {"sha256":...,"view":...}` line, then ordinary cited source/graph/memory
+items. Entry counts in the header remain evidence-item counts, not task entries.
+The locked o200k tokenizer counts the **entire delivered text**, including task data.
+CLI uses stdout bytes, MCP additionally caps its serialized result envelope. Reuse
+normal MCP reservation/charge/refund behavior; revision conflicts and packing refusals
+refund the reservation. Recovery search remains byte-bounded on `task_context`, not a
+provider-token claim. No conversation replacement, host acknowledgment or learned
+policy is introduced. Live-host outcomes remain pending and do not block sandbox work.
+
+### T009 — Compose evidence for a repository task
+
+Selected 2026-10-09; bounded experimental composition implemented 2026-10-10. Extend T008 using the caller's task requirements
+and open questions to collect the evidence needed for a change: orientation, relevant
+implementation, callers/boundary consumers, constraints and verification tests.
+010 briefs guide discovery; source and 005 graph citations remain recoverable.
+Deduplicate representations of one source and expose missing/conflicting facets.
+Top-k relevance and a generated summary cannot certify complete evidence.
+
+Use one final delivery allowance and retain exact-name/ordinary context behavior.
+Keep the request explicit and bounded, without autonomous extra model calls or a
+claim to control the host's whole conversation. Verify multi-file sandbox tasks and
+trace how the selected evidence supports the patch and its test. Later paired host
+runs compare verified completions, incorrect changes, complete provider usage,
+auxiliary generation and amortized preparation cost. Smaller tool replies alone are
+not success. This acceptance evidence does not block experimental implementation.
+
+
+#### T009 implementation — 2026-10-10
+
+[`task_evidence.rs`](../../src/task_evidence.rs) adds explicit CLI
+`context --task ID --task-revision REV --compose-evidence` and MCP
+`context {task_id,task_revision,compose_evidence:true}` under
+`--experimental-task-context`. Optional `boundary_config` names 005's indexed config;
+`include_briefs` retains 010's explicit opt-in. The initial primary-store slice is now
+extended to admitted roots by the continuation below. Ordinary and exact-name
+context remains byte-compatible without the new option.
+
+The planner starts with eight main-query candidates, at most four selected active
+requirements/questions (1,024 bytes each, four lexical candidates per query), eight
+explicit source links, four source-bound briefs, eight boundary seed paths/eight
+relations and at most 32 final source units. It makes no extra model calls and writes
+no task state. Folded entries use the caller's selected summary; original bytes remain
+recoverable through T007. Brief vocabulary can discover a source and then its boundary
+neighbors. File-outline candidates are excluded from the primary source-seed
+window: their whole-file handles describe reduced forms, not selected source
+bodies. Promoting those handles swallowed the actual caller functions during
+coalescing and left only a file address under a small budget. The continuation
+preserves the bounded function spans without changing ordinary outline delivery.
+Overlapping ranges with matching provenance are coalesced with their
+attribution; separate functions remain separate units. Enclosing boundary contexts
+over 32 KiB fall back to exact occurrence spans. Other large units deliver a bounded
+prefix with its own exact handle and an explicit discovery-limit indication.
+
+One final read rechecks task revision, source identities, boundary/config dependencies,
+brief lineage and memory revisions. The packer interleaves implementation, consumers,
+configuration, test-path candidates and constraint sources, then considers remaining
+units. Test paths are a heuristic, not an assertion that the test verifies a requirement.
+Caller constraints remain attributed assertions, with semantic conflicts unevaluated.
+Ambiguous/unresolved/incomplete boundary facets are exposed separately.
+
+The ordinary v2 header, mandatory task view, `task-evidence` report, source forms,
+optional `task-relationship` lines, derived briefs and memory share one token/byte
+allowance. The report is recalculated for every packing trial: source candidates,
+addresses only, omitted by budget and missing are distinct. Relationship details are
+included only when both endpoint occurrence spans and configuration source were
+delivered. Derived briefs require their primary cited source body. Reports always state
+`complete:false`, tests unexecuted and host application unknown; matching task words
+does not establish a satisfied requirement. MCP uses its existing reservation/refund
+and serialized-result byte boundary.
+
+[`tests/task_evidence.rs`](../../tests/task_evidence.rs) checks CLI and SDK MCP delivery,
+opt-in catalogs/publication, budget accounting, final-read races, ordinary compatibility,
+deduplication, missing tests, ambiguity and brief-driven discovery. Its two-service
+catalog fixture exposes a provider returning `items` while consumer/test require
+`products`; the delivered spans support a one-line provider repair, with billing and
+the route unchanged. A deterministic in-process Python transport executes the selected
+provider, consumer and test before/after the repair. This verifies the sandbox contract,
+not a deployed HTTP service or autonomous model patch quality. Real-host paired tasks,
+provider economics and broader language/framework coverage remain follow-ups. [Usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
+and [validation](../../docs/validation.md#boundary-relationships-and-task-evidence--2026-10-10)
+retain the practical limits.
+
+
+#### T009 evidence coverage continuation — 2026-10-10
+
+The selected continuation reuses compiler `references` in the composition's final
+read transaction: at most four seed windows and eight references per window, retaining
+005's producer, selected-snapshot, source, range and ambiguity checks. Compiler facts
+remain references, not inferred call edges or proof that a test verifies a requirement.
+Only unique targets with delivered definition and reference spans may emit a compiler
+relationship line. Missing, stale, partial, ambiguous and capped windows stay visible.
+Exact query units are retained before source-span coalescing; non-definition and
+changed/missing seeds are counted explicitly instead of refusing the whole request.
+No new graph table, model call or background producer is needed.
+
+Composition may also search explicitly admitted reference roots using the primary task's
+selected requirements/questions. Only the primary owns task state, memory, briefs and
+boundary configuration. Root-local compiler relationships never become cross-root edges.
+Per-root final snapshots and ordinary root coverage headers remain; one task view and
+at most 32 merged source units share the final delivery allowance. Bounded discovery
+work can grow with the existing maximum of nine admitted roots. Reference-only selection
+with a task refuses, and unavailable roots remain named rather than silently admitted.
+
+The continuation is implemented in `task_evidence`, `graph`, `response` and the existing
+MCP root dispatcher. Tests cover compiler publication/staleness, budgets and primary
+state isolation with identical reference-root paths/bytes. The gateway continuation
+is verified with installed OMP 18.6.0/Bun 1.3.14 and a scripted upstream, including
+resumed original tool history and captured final-body receipt matching. See
+[validation](../../docs/validation.md#evidence-coverage-host-application-and-real-cpu-maintenance--2026-10-10).
+
+
+T009 compact accounting continuation (2026-10-10): optional `compact_evidence` on
+composed CLI/MCP context emits a version-2 report with delivered-item ordinals instead
+of repeated handles. Facet delivery states, discovery bounds/staleness, compiler
+coverage, boundary ambiguity and constraint caveats remain. Source forms, exact handles,
+protected task state and relationship bodies are retained under the same allowance;
+verbose v1 stays the default. Router relationships additionally require the v3 router
+declaration and mount dependency bodies. Focused tests compare both forms, exercise
+MCP advertisement/budgets, and refuse relationships whose dependencies did not fit.
+This reduces accounting overhead; total task economics still require observed usage
+and verified outcomes. See the expanded continuation in [validation](../../docs/validation.md).
+
+
+T009 caller/test syntax continuation (2026-10-10): compiler-resolved Rust/Python
+references now carry optional exact callee-expression spans; references to a function
+as an argument or pointer do not become calls. Rust `test`, `tokio::test` and
+`async_std::test` attributes can supply a cited enclosing test span, including tests
+inside ordinary source files. Parsing is size/time bounded and cached per source within
+the final read snapshot. Relationships remain compiler **references**: `runtime_call`
+is `unverified` and `test_execution` is `not_observed`. Attributes do not establish
+execution or requirement coverage; existing test-path classification remains heuristic. Definition, reference and additional syntax bodies must all fit before the
+relationship is emitted. Dynamic dispatch and semantic constraint conflicts remain open.
+
+T009 source discovery continuation (2026-10-11): composition no longer requires a
+compiler artifact to discover useful caller/test candidates. Up to four resolved
+query anchors supply exact canonical names; their defining source hashes must still
+match in the final snapshot. Ingestion collects terminal call names during the existing
+source parse and places distinct exact-name postings on each file's first search
+document. The lookup reaches all admitted indexed sources, including files absent
+from the initial lexical candidate window; it performs no query-time repository scan.
+A four-name union selects at most eight matching source identities, ordered by the
+existing key hash, plus a ninth hit to detect a limited window. The lookup reads no
+source bodies. The final transaction rechecks both definition and candidate hashes,
+prioritizes those indexed sources, and checks call syntax in at most eight selected
+files, reusing bounded parses from compiler-reference processing. Stale identities
+are discarded. There is no pagination of the remaining matches.
+
+Rust, Python, Go and JavaScript/TypeScript/TSX calls with the same terminal name can
+supply at most 32 enclosing source spans. They are **unresolved name candidates**,
+including possible shadowing, aliases, overloads or unrelated receivers; they create
+no graph edges. String literals, function values and arguments passed to another
+call are not calls to that name. Go `_test.go` paths join the existing test-path
+heuristic. Each source indexes at most 4,096 distinct names of at most 1,024 bytes;
+parse limits, recovered syntax and posting limits leave its recipe coverage incomplete.
+Unsupported languages have no call-name recipe. `call_coverage: complete` describes
+only this supported syntax recipe, never complete caller or runtime coverage.
+
+A conservative ASCII Python recipe also discovers explicit module-level
+`from module import original as alias` declarations with subsequent bare alias calls.
+It refuses an alias used in any other identifier role, including shadowing, assignment,
+value references and duplicate/nested imports. Wildcard imports, non-ASCII identifiers
+(Python NFKC normalization) and collector overflow disable enrichment and mark the
+recipe incomplete. Ingestion reuses its existing walk; final-snapshot discovery reuses
+the parsed tree and the same bounded rules. The collector caps 128 declarations,
+including repeats, and 4,096 ordinary and bare-call spellings each. No extra table,
+parse, corpus scan or runtime execution is introduced.
+
+Each alias candidate charges its import and call spans to the same 32-span bound.
+An optional `syntax.import_aliases` report counts available candidates. A
+`task-syntax` receipt with `kind: import_alias_call_candidate` cites the canonical
+anchor's full defining unit, exact import declaration and actual call. Their fresh
+workspace/hash identities and all three complete bodies must survive final packing,
+including compact delivery, before that receipt is emitted. It remains
+`resolution: unresolved` and `runtime_call: unverified`; source availability and a
+lexical import do not establish runtime binding or execution. Indirect aliases and
+dynamic mutation remain outside the recipe.
+
+Rust assertion expression macros (`assert`, `assert_eq`, `assert_ne` and their
+`debug_` variants) also expose name-plus-parentheses candidates inside their token
+trees. Arbitrary macro DSLs remain unsupported. Attributed Rust tests can supply
+their whole bounded source span. Because a test often calls a public wrapper,
+up to four attributed tests matching distinct task words can also be discovered
+in the selected files. This second basis is `same_file_test_task_terms`, not a
+call relationship. Query/goal text is capped at 1,024 bytes per entry and 64
+distinct non-stopword terms. Existing 1 MiB parse, parser-work, 32 KiB span,
+32-source-unit and final delivery limits remain.
+
+The compact and verbose reports expose syntactic candidate counts, skipped parse
+paths, indexed candidates, stale indexed identities and the limited-window flag.
+`syntax.discovery.scope` is `admitted_source_call_postings`; its coverage is
+`syntax_recipe_only_not_complete_evidence`. Selected incomplete recipes, a ninth
+match, missing canonical names and pending index work make the index discovery limit
+visible. An unsupported source with no matching posting need not appear in that
+window: even an unlimited result is not an absence or completeness proof. Final
+delivered facets still depend on exact bodies that fit the budget. Compiler
+relationships and imported execution observations keep separate provenance.
+Dynamic dispatch, indirect wrappers, unsupported languages, broader framework behavior
+and requirement satisfaction remain open. Task-word test selection still searches
+only selected files; it is discovery, not observed coverage. Search schema 7 requires
+explicit derived-index repair, including from schema 6 whose identical fields lack
+canonical import-alias postings; source-unit schema 5 is independent of these postings
+(see [001](../001-source-state-recovery/contracts/context-v2.md#call-name-postings--2026-10-11)).
+
+An opt-in free-form OMP parser calibration now complements the scripted host integration
+and earlier fixed-choice model tests: two initial-context arms, one attempt each,
+permission to edit files, an external immutable checker and gateway receipts including
+failures. Both original 0.5B arms made no edits and failed the task. The subsequent
+pinned Qwen3-1.7B comparison adds 64 identical unrelated functions to both workspaces:
+real writes occur, but both external checks fail (panic/noncompiling patch). This is
+synthetic volume, not task diversity. The composed arm has complete usage; one cancelled
+baseline request is unknown. Neither run establishes quality or total-cost savings.
+The public T003 fixture is not held out. See the current Linux continuation in
+[validation](../../docs/validation.md) for executed outcomes and limits.
+
+
+T009 observed evidence continuation (2026-10-11): explicit completed execution artifacts
+from 005 now supply bounded runtime neighbors. Lookup runs once after compiler and
+syntax discovery, so those discovered paths can seed it. It examines at most eight
+source paths and 128 graph rows and retains at most 16 observations; static rows and
+duplicates also consume the examination limit. The final snapshot verifies caller,
+target and test identities and, for v2, the exact indexed workspace/revision. V1 stays
+explicitly endpoint-only. An observation is emitted as `task-execution` only when all
+three source spans are actually delivered. Budget omission is visible in execution
+accounting. Static reference syntax retains `runtime_call: unverified` and
+`test_execution: not_observed`; importing observations does not rewrite those facts.
+Producer-reported execution is not complete test coverage, attestation or task success.
+The explicit Python runtime fixture and task packing/staleness checks are recorded in
+[validation](../../docs/validation.md).
+
+The free-form host harness now supports a second fixed arithmetic-overflow repair and
+an explicitly pinned Qwen2.5-Coder-7B model. Both tasks preserve immutable external
+oracles, protected files, one attempt per arm and full gateway receipt accounting.
+A run cannot claim success merely because the host exits cleanly or uses fewer tokens.
+These public calibration tasks do not replace held-out multi-step repository tasks,
+memory-intervention outcomes or complete amortized model/maintenance economics.
+
+The 2026-10-11 continuation checks native tool-call support before task runs. Pinned
+Qwen3-4B-Instruct-2507 supplies real calls where the retained 7B backend fails that
+protocol. The first read/write-only repairs make edits but all fail independent
+checks. The same harness now supports a published `percent-encoding` 2.3.2 seeded
+regression: exact source hashes, original-source positive control, seeded negative
+control, no-alloc/alloc compilation and external malformed/valid/UTF-8/borrowing
+checks. This is public upstream calibration, not a held-out discovery task.
+
+A separately selected parser recipe enables bash and the existing visible fixture
+checks, with compilation outside the protected workspace. The external oracle is
+unchanged and never supplied as feedback. Both arms share the same task budget and
+tool recipe; changing the recipe starts a distinct experiment and retains the failed
+read/write-only attempts. Completion-cost ratios require two verified patches and
+complete request usage. Common model acquisition/loading, energy and amortized
+maintenance stay explicit exclusions, not inferred savings. In the executed public-check
+pair, the full-file control passes; composed context fails at its time limit after
+more known input/output tokens and one unknown request. T006 remains unaccepted. See
+[current results](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11).
+
+After the T009 outline/source-seed correction, a new frozen pair on the same public
+parser task produces two patches that pass the unchanged external oracle. Full-file
+context completes with 4 metered requests; composed context reaches its host deadline
+with 10 metered and 1 unknown request. Known composed input is 40,844 tokens versus
+19,474 for the control. A correct final patch does not turn an unfinished, incompletely
+metered host run into a completion-cost win. General task/economic acceptance remains
+open; see [the follow-up](../../docs/validation.md#fair-preparation-and-evidence-delivery--2026-10-11).
+
+
+The next host recipe also exposes percent-encoding 2.3.2's unchanged upstream unit
+tests through a public checker, with exact edits and bash available in both arms.
+An explicit local-server slot reset allows a separate prompt-cached comparison with
+empty initial KV state in each arm and actual cached-token accounting. It uses
+llama.cpp `b9acf138`, `tools/server/server-context.cpp::handle_slots_erase` and
+`tools/server/tests/unit/test_slot_save.py::test_slot_erase` (inspected, not run).
+Foundry's real-host harness checks and retains each erase response; its ordinary
+uncached recipe remains available. This affects only the explicitly invoked local
+calibration harness. External oracles, protected files, task/output budgets and the
+completion-cost eligibility rule remain unchanged. Failed and incompletely metered
+runs stay in the record. The comparator reports total and uncached input ratios
+separately, rejects impossible cached totals, and leaves monetary/amortized cost
+unknown; cached input is observed usage, not inferred monetary savings.
+
+T006/T009 code continuation (2026-10-11): `usage economics --manifest FILE` now reuses
+production receipt validation to account for all declared task attempts and shared
+bootstrap/maintenance/retrieval/auxiliary work. Failed attempts count; duplicate request
+attribution across logs refuses. Partial fields, conflicting/invalid receipts and
+missing expected requests suppress completion-cost claims. Observed costs and an
+explicit reuse projection are separate; currencies never combine. External task
+outcomes/digests are reported inputs, not checker execution or attestation by Foundry.
+See the [manifest contract](contracts/adapter-economics.md#declared-task-economics).
+
+Task composition now joins fresh explicit requirement source links to overlapping
+observed target lines. Delivered `task-execution.requirements` lists only those task
+entry IDs, with `basis: explicit_source_link_overlap` and satisfaction not established.
+Text similarity, an observing-test link alone and stale/foreign source identities do
+not produce a join. All original endpoint/test bodies must still fit atomically.
+This supplies traceability, not requirement correctness or exhaustive coverage.

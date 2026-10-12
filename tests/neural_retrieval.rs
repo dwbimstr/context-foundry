@@ -27,7 +27,7 @@ use context_foundry::neural::index;
 use context_foundry::neural::prepare::{self, Acquire, PrepareOptions, PrepareReport};
 use context_foundry::neural::profile::SemanticProfile;
 use context_foundry::neural::provider::{
-    self, DocumentLimits, EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput,
+    self, EmbeddingProvider, FunctionDescriptor, ProviderError, TokenizedInput,
 };
 use context_foundry::neural::query::{
     DENSE_WINDOW, DenseWindow, MakeProvider, QUERY_CEILING, QueryRuntime,
@@ -172,6 +172,10 @@ struct Probe {
     document_calls: Arc<AtomicU64>,
     document_inputs: Arc<AtomicU64>,
     document_tokens: Arc<AtomicU64>,
+    document_batches: Arc<Mutex<Vec<Vec<usize>>>>,
+    document_keys: Arc<Mutex<Vec<String>>>,
+    publication_path: Arc<Mutex<Option<PathBuf>>>,
+    publication_before_call: Arc<Mutex<Vec<(u64, u64)>>>,
     query_calls: Arc<AtomicU64>,
     queries: Arc<Mutex<Vec<String>>>,
     mode: Arc<Mutex<QueryMode>>,
@@ -218,7 +222,30 @@ impl EmbeddingProvider for ConceptProvider {
         batch: &[TokenizedInput],
         _control: &Control,
     ) -> Result<Vec<Vec<f32>>, ProviderError> {
-        provider::check_document_batch(batch, DocumentLimits::PROTOCOL)?;
+        provider::check_document_batch(batch, self.descriptor.input_limits())?;
+        if let Some(path) = self.probe.publication_path.lock().unwrap().as_ref() {
+            let count = std::fs::read(path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .and_then(|manifest| manifest["count"].as_u64())
+                .unwrap_or(0);
+            self.probe
+                .publication_before_call
+                .lock()
+                .unwrap()
+                .push((self.probe.document_inputs(), count));
+        }
+        let digest = self.descriptor.digest();
+        self.probe.document_keys.lock().unwrap().extend(
+            batch
+                .iter()
+                .map(|input| provider::input_key(&digest, &model_input(&input.ids))),
+        );
+        self.probe
+            .document_batches
+            .lock()
+            .unwrap()
+            .push(batch.iter().map(|input| input.ids.len()).collect());
         let pause = *self.probe.document_pause.lock().unwrap();
         std::thread::sleep(pause);
         self.probe.document_calls.fetch_add(1, Ordering::SeqCst);
@@ -240,7 +267,7 @@ impl EmbeddingProvider for ConceptProvider {
         input: &TokenizedInput,
         _deadline: Instant,
     ) -> Result<Vec<f32>, ProviderError> {
-        provider::check_query(input)?;
+        provider::check_query_with_limit(input, self.descriptor.input_limits().tokens)?;
         let rendered = model_input(&input.ids);
         self.probe.query_calls.fetch_add(1, Ordering::SeqCst);
         self.probe.queries.lock().unwrap().push(rendered.clone());
@@ -330,7 +357,7 @@ impl Corpus {
     fn prepare_within(&mut self, budget_seconds: u64) -> PrepareReport {
         let descriptor = self.profile.descriptor.clone();
         let probe = self.probe.clone();
-        let acquire: Acquire = Box::new(move |_profile, _development, _control| {
+        let acquire: Acquire = Box::new(move |_profile, _artifacts, _development, _control| {
             Ok(Box::new(ConceptProvider {
                 descriptor: descriptor.clone(),
                 probe: probe.clone(),
@@ -345,6 +372,7 @@ impl Corpus {
         let report = prepare::run(
             &self.store,
             &PrepareOptions {
+                priority_paths: &[],
                 profile_path: &self.profile_path,
                 budget_seconds,
                 development: false,
@@ -769,6 +797,64 @@ fn search_returns_locators_and_never_a_selection_tag() {
     assert_eq!(span_of(&answer.parsed.items[0].handle).0, DUSK_PATH);
 }
 
+/// Prose intent must agree at model admission and final lexical selection.
+#[test]
+fn experimental_prose_uses_the_same_anchor_intent_for_model_admission_and_selection() {
+    use context_foundry::store::ContextOptions;
+    let corpus = Corpus::new(&[
+        ("worker.go".into(), "package sample\nfunc Go() {}\n".into()),
+        ("cpu.rs".into(), "pub fn Cpu() {}\n".into()),
+    ]);
+    for shared_anchors in [false, true] {
+        let slot = corpus.slot();
+        let read = |query: &str, enabled| {
+            let anchors = context_foundry::roots::select_anchors(
+                &[corpus.engine()],
+                query,
+                None,
+                &Corpus::control(),
+            )
+            .unwrap();
+            mcp::context_primary_with_options(
+                &slot,
+                corpus.engine(),
+                query,
+                Strategy::Search,
+                &Corpus::control(),
+                ContextOptions {
+                    anchors: shared_anchors.then_some(anchors.as_slice()),
+                    experimental_behavior: enabled,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        for query in [
+            "refund timing for a Go string",
+            "refund timing for Cpu-heavy source",
+        ] {
+            let calls = corpus.probe.query_calls();
+            assert!(read(query, false).batch.semantic.is_none());
+            assert_eq!(corpus.probe.query_calls(), calls);
+            assert_eq!(read(query, true).batch.semantic.as_deref(), Some("ready"));
+            assert_eq!(
+                corpus.probe.query_calls(),
+                calls + 1,
+                "prose must reach the provider"
+            );
+        }
+        for query in ["`Go`", "call Go string helper", "call `Go` with a callback"] {
+            let calls = corpus.probe.query_calls();
+            assert!(read(query, true).batch.semantic.is_none(), "{query}");
+            assert_eq!(
+                corpus.probe.query_calls(),
+                calls,
+                "explicit symbol must not call the model"
+            );
+        }
+    }
+}
+
 /// 009 T004 "Placement": a query with an anchor never calls the model; its
 /// search and context answers are the answers without a profile, byte for
 /// byte (no `semantic:` word, no tag).
@@ -876,6 +962,44 @@ fn dense_units_come_first_in_similarity_order_then_the_lexical_ones_in_todays_or
     assert_eq!(placed.counters.capped, capped);
     let unique: BTreeSet<_> = all.iter().cloned().collect();
     assert_eq!(all.len(), unique.len(), "no unit twice");
+
+    // The opt-in prose repair changes only lexical exact-run promotion. A
+    // supplied semantic window must retain its precedence and similarity order.
+    let prose = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &context_foundry::store::ContextOptions {
+                experimental_behavior: true,
+                anchors: Some(&[]),
+                dense: Some(&window),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let prose_dense: Vec<_> = prose
+        .batch
+        .items
+        .iter()
+        .take_while(|item| item.semantic.is_some())
+        .map(unit)
+        .collect();
+    assert!(!prose_dense.is_empty());
+    assert_eq!(
+        prose_dense,
+        dense
+            .iter()
+            .take(prose_dense.len())
+            .map(|i| unit(i))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        prose.batch.items[prose_dense.len()..]
+            .iter()
+            .all(|item| item.semantic.is_none())
+    );
 }
 
 /// One placed unit: `(path, start, end)`.
@@ -953,13 +1077,14 @@ fn capped_dense_units_are_followed_by_a_known_lexical_only_candidate_in_exact_or
         .engine()
         .search_candidates(query, None, 64, &Control::unbounded())
         .unwrap();
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
     let placed = mcp::search_primary(
         &slot,
         corpus.engine(),
         query,
         None,
         64,
-        &Corpus::control(),
+        &Corpus::control().with_trace(Some(trace.clone())),
         None,
     )
     .unwrap();
@@ -1006,6 +1131,19 @@ fn capped_dense_units_are_followed_by_a_known_lexical_only_candidate_in_exact_or
     assert_eq!(glow.len(), PER_FILE_CAP);
     assert!(glow.iter().all(|item| item.semantic.is_some()));
     assert!(capped >= 2, "the fifth and sixth glow cards were capped");
+    let data = trace.snapshot();
+    let events = data["events"].as_array().unwrap();
+    assert!(events.iter().any(|e| e["stage"] == "selection"
+        && e["origin"] == "dense"
+        && e["input_key"].is_string()));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["stage"] == "placement" && e["outcome"] == "per_file_cap")
+            .count(),
+        capped as usize
+    );
+    assert_eq!(data["truncated"], false);
     // The lexical-only candidate is placed, untagged, after every dense unit.
     let first_lexical = placed
         .items
@@ -1517,6 +1655,164 @@ fn partial_coverage_serves_prepared_vectors_beside_baseline_candidates_and_says_
     assert!(dusk.semantic);
 }
 
+#[test]
+fn partial_semantics_preserves_distinct_lexical_passages_and_dense_evidence() {
+    use context_foundry::store::ContextOptions;
+    let mut corpus = Corpus::new(&[]);
+    let body = format!(
+        "fn fire() {{\n    twilight_onset_kiln_prepare();\n{}    twilight_onset_kiln_finish();\n}}\n",
+        "    ordinary_step();\n".repeat(400)
+    );
+    corpus
+        .engine_mut()
+        .replace_source("kiln.rs", &body)
+        .unwrap();
+    corpus.engine_mut().refresh(&Control::unbounded()).unwrap();
+    let runtime = corpus.runtime();
+    let query = "twilight onset kiln";
+    let window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let candidates = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(candidates.batch.semantic.as_deref(), Some("partial"));
+    let passages: Vec<_> = candidates
+        .batch
+        .items
+        .iter()
+        .filter(|i| i.label == "excerpt fn fire")
+        .collect();
+    assert_eq!(passages.len(), 2);
+    for item in passages {
+        let handle = item.handle.as_ref().unwrap();
+        assert!(item.semantic.is_none());
+        assert_eq!(
+            item.forms[0],
+            context_foundry::store::RenderedForm::Verbatim(
+                body[handle.start as usize..handle.end as usize].into()
+            )
+        );
+    }
+    assert!(candidates.batch.items.iter().any(|i| i.semantic.is_some()));
+    let packed = response::pack_enriched_context(
+        &candidates,
+        None,
+        response::Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.text.contains("twilight_onset_kiln_prepare"));
+    assert!(packed.text.contains("twilight_onset_kiln_finish"));
+    assert!(packed.tokens <= 2048);
+}
+
+#[test]
+fn experimental_partial_prose_preserves_unprepared_lexical_evidence_early() {
+    use context_foundry::store::ContextOptions;
+    let mut corpus = Corpus::new(&[]);
+    corpus
+        .engine_mut()
+        .replace_source(
+            "docs/kiln.md",
+            "# Kiln log\n\nThe kiln was fired twice this week.\n",
+        )
+        .unwrap();
+    corpus.engine_mut().refresh(&Control::unbounded()).unwrap();
+    let runtime = corpus.runtime();
+    let query = "twilight onset kiln";
+    let window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let context = |enabled| {
+        corpus
+            .engine()
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Corpus::control(),
+                &ContextOptions {
+                    dense: Some(&window),
+                    experimental_behavior: enabled,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let ordinary = context(false);
+    assert_eq!(
+        ordinary.batch.items[0].handle.as_ref().unwrap().path,
+        DUSK_PATH
+    );
+    let experimental = context(true);
+    assert_eq!(experimental.batch.semantic.as_deref(), Some("partial"));
+    assert_eq!(
+        experimental.batch.items[0].handle.as_ref().unwrap().path,
+        "docs/kiln.md"
+    );
+    assert!(experimental.batch.items[0].semantic.is_none());
+    assert!(
+        experimental
+            .batch
+            .items
+            .iter()
+            .any(|i| i.semantic.is_some())
+    );
+    let packed = response::pack_enriched_context(
+        &experimental,
+        None,
+        response::Budget::request(512),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.tokens <= 512 && packed.text.contains("kiln was fired"));
+    // Stale lexical bytes remain ineligible even when they would win placement.
+    corpus
+        .engine()
+        .replace_source("docs/kiln.md", "# Changed\nUnrelated text.\n")
+        .unwrap();
+    let current = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(
+        current
+            .batch
+            .items
+            .iter()
+            .all(|i| i.handle.as_ref().is_none_or(|h| h.path != "docs/kiln.md"))
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Crowding, preview, lexical span, attribution.
 // ---------------------------------------------------------------------------
@@ -1817,10 +2113,12 @@ fn a_usearch_header_that_disagrees_with_the_manifest_is_refused_by_name() {
     }
     let mut buffer = vec![0u8; foreign.serialized_length()];
     foreign.save_to_buffer(&mut buffer).unwrap();
-    let index_path = directory.join(index::INDEX_FILE);
+    let index_path = testkit::semantic_file(&directory, index::INDEX_FILE);
     std::fs::remove_file(&index_path).unwrap();
     std::fs::write(&index_path, &buffer).unwrap();
-    manifest["index_sha256"] = serde_json::Value::String(context_foundry::digest(&buffer));
+    let hash = context_foundry::digest(&buffer);
+    std::fs::rename(&index_path, directory.join(format!("ann-{hash}.usearch"))).unwrap();
+    manifest["index_sha256"] = serde_json::Value::String(hash);
     std::fs::remove_file(&manifest_path).unwrap();
     std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 
@@ -1878,7 +2176,10 @@ fn the_fixture_costs_are_exact_and_recorded() {
     assert!(corpus.probe.document_tokens() < source_bytes);
     // The preparation report carries the same input-token total itself.
     assert_eq!(report.input_tokens, corpus.probe.document_tokens());
-    let index_file = index::generation_dir(&corpus.store, &corpus.digest()).join(index::INDEX_FILE);
+    let index_file = testkit::semantic_file(
+        &index::generation_dir(&corpus.store, &corpus.digest()),
+        index::INDEX_FILE,
+    );
     let vector_bytes = std::fs::metadata(index_file).unwrap().len();
     let slot = corpus.slot();
     let delivered: Vec<usize> = [DUSK_QUERY, LEDGER_QUERY, CODE_QUERY]
@@ -1951,10 +2252,16 @@ async fn serve(
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = mcp::serve_http(
         ServerOptions {
+            model_resources: None,
+            knowledge: None,
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: corpus.store.clone(),
             root: corpus.root.clone(),
             references: Vec::new(),
             no_memory: false,
+            experimental_task_context: false,
+            watch: false,
             semantic: Some(semantic),
             policy: None,
             budget: BudgetConfig::default(),
@@ -2290,7 +2597,7 @@ fn bytes_replaced_after_verification_never_reach_the_loaded_index() {
     }
     let mut replacement = vec![0u8; foreign.serialized_length()];
     foreign.save_to_buffer(&mut replacement).unwrap();
-    let target = directory.join(index::INDEX_FILE);
+    let target = testkit::semantic_file(&directory, index::INDEX_FILE);
     fault::arm(
         LOAD_AFTER_VERIFY,
         0,
@@ -2324,7 +2631,7 @@ fn bytes_replaced_after_verification_never_reach_the_loaded_index() {
 fn a_v1_generation_is_unavailable_by_name_and_prepare_republishes_it_without_document_calls() {
     let mut corpus = Corpus::new(&[]);
     let directory = index::generation_dir(&corpus.store, &corpus.digest());
-    let labels_path = directory.join(index::LABELS_FILE);
+    let labels_path = testkit::semantic_file(&directory, index::LABELS_FILE);
     let manifest_path = directory.join(index::MANIFEST_FILE);
     let read = |path: &Path| -> serde_json::Value {
         serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
@@ -2406,9 +2713,11 @@ fn fake_worker_profile(dir: &Path) -> SemanticProfile {
         },
         descriptor,
         query_template: "query: {text}".into(),
+        representation: Default::default(),
         card_tokens: DEFAULT_CARD_TOKENS,
         batch: DEFAULT_BATCH,
         memory_ceiling_bytes: 3 << 30,
+        cpu: Default::default(),
         load_timeout_seconds: 30,
     }
 }
@@ -2465,7 +2774,7 @@ fn a_failed_footprint_measurement_of_a_live_worker_stops_it_with_resource_limit(
     // 250 ms memory poll.
     let hooks = vec!["--slow-ms".to_owned(), "2000".to_owned()];
     let descriptor = corpus.profile.descriptor.clone();
-    let acquire: Acquire = Box::new(move |_profile, _development, _control| {
+    let acquire: Acquire = Box::new(move |_profile, _artifacts, _development, _control| {
         let worker = WorkerProvider::launch(&worker_profile, hooks.clone())?;
         // The worker is up; from now on every measurement fails. The poll
         // runs on the supervisor's own thread, hence process-wide arming
@@ -2723,15 +3032,29 @@ impl Corpus {
 
     /// This corpus's MCP owner over the stdio transport; it opens the store.
     async fn serve_stdio(&mut self, semantic: Option<SemanticServing>) -> Served {
+        self.serve_stdio_watching(semantic, false).await
+    }
+
+    async fn serve_stdio_watching(
+        &mut self,
+        semantic: Option<SemanticServing>,
+        watch: bool,
+    ) -> Served {
         self.engine = None;
         let (client_io, server_io) = tokio::io::duplex(1 << 20);
         let (input, output) = tokio::io::split(server_io);
         let server = tokio::spawn(mcp::serve_streams(
             ServerOptions {
+                model_resources: None,
+                knowledge: None,
+                retrieval_trace_dir: None,
+                experimental_behavior_context: false,
                 store: self.store.clone(),
                 root: self.root.clone(),
                 references: Vec::new(),
                 no_memory: false,
+                experimental_task_context: false,
+                watch,
                 semantic,
                 policy: None,
                 budget: BudgetConfig::default(),
@@ -3034,6 +3357,171 @@ async fn context_is_baseline_while_preparing_then_partial_then_ready_and_an_edit
         header_word(&served.context(DUSK_QUERY).await),
         Some("ready")
     );
+    served.close().await;
+}
+
+/// A cold priority wave is searchable before the rest of the repository is
+/// partitioned. A zero-card tail cannot turn the one prefetch into a full pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn progressive_bootstrap_serves_priority_before_the_unprepared_tail_and_resumes() {
+    let extra: Vec<_> = (0..80)
+        .map(|n| {
+            (
+                format!("00-background/{n:03}.rs"),
+                format!("// Empty source {n}\n"),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&extra);
+    let hold = Hold::gated();
+    let served = corpus.serve_stdio(Some(corpus.held(&hold))).await;
+    for arguments in [
+        serde_json::json!({"priority_paths": [DUSK_PATH]}),
+        serde_json::json!({"semantic": "pause", "priority_paths": []}),
+        serde_json::json!({"semantic": "prepare", "priority_paths": ["../escape"]}),
+        serde_json::json!({"semantic": "prepare", "priority_paths": null}),
+        serde_json::json!({"semantic": "prepare", "priority_paths": vec!["docs"; 17]}),
+    ] {
+        let (error, text) = served.raw("index", arguments).await;
+        assert!(error && text.contains("invalid_argument"), "{text}");
+    }
+    served
+        .ok(
+            "index",
+            serde_json::json!({
+                "semantic": "prepare", "priority_paths": [DUSK_PATH]
+            }),
+        )
+        .await;
+    hold.wait_entered(1).await;
+    let active = served
+        .until("a fair background wave", |s| {
+            s["bootstrap"]["waves"].as_u64().is_some_and(|n| n >= 2)
+        })
+        .await;
+    assert!(
+        active["unpartitioned_sources"].as_u64().unwrap() >= 77,
+        "{active}"
+    );
+    assert_eq!(active["bootstrap"]["priority_waves"], 1);
+    assert!(item_of(&served.search("parse_record").await, "src/records.rs").is_some());
+    let (error, pause) = served.semantic_action("pause").await;
+    assert!(!error, "{pause}");
+    hold.release();
+    let partial = served
+        .until("first coverage", |s| s["searchable_current_units"] == 1)
+        .await;
+    assert!(
+        partial["unpartitioned_sources"].as_u64().unwrap() >= 77,
+        "{partial}"
+    );
+    assert!(
+        partial["bootstrap"]["first_searchable_ms"].is_u64(),
+        "{partial}"
+    );
+    let context = served.context(DUSK_QUERY).await;
+    assert_eq!(header_word(&context), Some("partial"));
+    assert!(item_of(&context, DUSK_PATH).is_some_and(|item| item.semantic));
+    served.close().await;
+    corpus.reopen().await;
+    assert!(
+        corpus
+            .engine()
+            .semantic_partition(DUSK_PATH)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        corpus
+            .engine()
+            .semantic_partition("00-background/000.rs")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        corpus
+            .engine()
+            .semantic_partition("00-background/079.rs")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        corpus
+            .engine()
+            .semantic_state()
+            .unwrap()
+            .unwrap()
+            .bootstrap
+            .unwrap()
+            .first_searchable_ms
+            .is_some()
+    );
+
+    // A new owner recovers accepted vectors without submitting them again.
+    let inputs = corpus.probe.document_inputs();
+    let resumed = Hold::default();
+    let served = corpus.serve_stdio(Some(corpus.held(&resumed))).await;
+    served.prepare().await;
+    let done = served.stopped().await;
+    assert_eq!(done["unpartitioned_sources"], 0, "{done}");
+    assert_eq!(done["missing_units"], 0, "{done}");
+    assert_eq!(
+        corpus.probe.document_inputs() - inputs,
+        done["eligible_units"].as_u64().unwrap() - 1
+    );
+    assert_eq!(
+        header_word(&served.context(DUSK_QUERY).await),
+        Some("ready")
+    );
+    let calls = resumed.entered();
+    served.prepare().await;
+    served.stopped().await;
+    assert_eq!(
+        resumed.entered(),
+        calls,
+        "a completed restart is cache-only"
+    );
+    assert_eq!(resumed.max_in_call(), 1);
+    served.close().await;
+}
+
+/// A priority file can occur in the background prefetch while its vector is
+/// still in flight. It must be embedded once, even across wave boundaries.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn progressive_priority_overlap_does_not_duplicate_in_flight_inputs() {
+    let extra: Vec<_> = (0..20)
+        .map(|n| {
+            (
+                format!("00-notes/{n:03}.md"),
+                format!("# Note {n}\n\nUnique topic {n}.\n"),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&extra);
+    let hold = Hold::gated();
+    let served = corpus.serve_stdio(Some(corpus.held(&hold))).await;
+    served
+        .ok(
+            "index",
+            serde_json::json!({
+                "semantic": "prepare", "priority_paths": ["00-notes/000.md"]
+            }),
+        )
+        .await;
+    hold.wait_entered(1).await;
+    served
+        .until("overlapping background wave", |s| {
+            s["bootstrap"]["waves"] == 2
+        })
+        .await;
+    hold.open();
+    let done = served.stopped().await;
+    assert_eq!(done["missing_units"], 0, "{done}");
+    assert_eq!(
+        corpus.probe.document_inputs(),
+        done["eligible_units"].as_u64().unwrap()
+    );
+    assert_eq!(hold.max_in_call(), 1);
     served.close().await;
 }
 
@@ -3341,8 +3829,17 @@ async fn a_late_result_after_deletion_may_be_cached_but_its_source_is_never_elig
     let done = served.stopped().await;
     assert_eq!(done["sources"], 5, "{done}");
     assert_eq!(done["missing_units"], 0, "{done}");
+    let audited: serde_json::Value = serde_json::from_str(
+        &served
+            .ok("status", serde_json::json!({"semantic_audit": true}))
+            .await,
+    )
+    .unwrap();
     assert!(
-        done["cache"]["orphan_entries"].as_u64().unwrap() >= 1,
+        audited["semantic"]["cache"]["orphan_entries"]
+            .as_u64()
+            .unwrap()
+            >= 1,
         "the late result is retained, not eligible: {done}"
     );
     let context = served.context(DUSK_QUERY).await;
@@ -3564,7 +4061,20 @@ async fn model_failures_stop_preparation_by_name_and_never_wedge_foreground_oper
         .await;
     assert_eq!(malformed["reason"], "provider_malformed", "{malformed}");
     assert_eq!(malformed["committed_units"], 0, "{malformed}");
-    assert_eq!(malformed["index"]["available"], false, "{malformed}");
+    assert_eq!(
+        malformed["index"]["validation"], "not_checked",
+        "{malformed}"
+    );
+    let audited: serde_json::Value = serde_json::from_str(
+        &served
+            .ok("status", serde_json::json!({"semantic_audit": true}))
+            .await,
+    )
+    .unwrap();
+    assert_eq!(
+        audited["semantic"]["index"]["available"], false,
+        "{audited}"
+    );
     assert!(starts_with(&served.context(DUSK_QUERY).await, "fallback:"));
     served.close().await;
 
@@ -4135,10 +4645,16 @@ async fn owner_with(
     let (input, output) = tokio::io::split(server_io);
     let server = tokio::spawn(mcp::serve_streams(
         ServerOptions {
+            model_resources: None,
+            knowledge: None,
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references,
             no_memory: false,
+            experimental_task_context: false,
+            watch: false,
             semantic,
             policy: None,
             budget,
@@ -4835,4 +5351,3407 @@ fn a_worker_dying_mid_query_falls_back_by_name_and_stays_named_unavailable() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// Continuous maintenance uses the ordinary MCP owner and durable source seam.
+/// Selection work is observed separately from E3's still-full index publication.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn continuous_maintenance_selects_edits_and_reuses_reverts_then_pauses_and_restarts() {
+    let extra: Vec<_> = (0..40)
+        .map(|n| {
+            (
+                format!("src/extra{n}.rs"),
+                format!("pub fn extra_{n}() {{}}\n"),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&extra);
+    let hold = Hold::default();
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    let (error, reply) = served.semantic_action("maintain").await;
+    assert!(!error, "{reply}");
+    let first = served
+        .until("caught up", |s| {
+            s["state"] == "waiting" && s["pending"]["paths"] == 0
+        })
+        .await;
+    let selected = first["bootstrap"]["selected_sources"].as_u64().unwrap();
+    let base_path = testkit::semantic_file(
+        &index::generation_dir(&corpus.store, &corpus.digest()),
+        index::INDEX_FILE,
+    );
+    let base_before = std::fs::metadata(&base_path).unwrap();
+    let calls = corpus.probe.document_calls();
+    corpus.write("src/extra0.rs", "pub fn changed_entry() {}\n");
+    served.index().await;
+    let edited = served
+        .until("edit maintained", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && s["source_revision"] != first["source_revision"]
+        })
+        .await;
+    assert_eq!(
+        edited["bootstrap"]["selected_sources"].as_u64().unwrap() - selected,
+        1,
+        "{edited}"
+    );
+    assert_eq!(corpus.probe.document_calls(), calls + 1);
+    assert_eq!(edited["missing_units"], 0);
+    assert_eq!(
+        edited["bootstrap"]["generation_builds"],
+        first["bootstrap"]["generation_builds"]
+    );
+    assert!(
+        edited["bootstrap"]["delta_publications"].as_u64().unwrap()
+            > first["bootstrap"]["delta_publications"].as_u64().unwrap()
+    );
+    use std::os::unix::fs::MetadataExt;
+    assert_eq!(
+        std::fs::metadata(&base_path).unwrap().ino(),
+        base_before.ino(),
+        "an ordinary maintained edit does not replace the base ANN"
+    );
+    corpus.write("src/extra0.rs", "pub fn extra_0() {}\n");
+    served.index().await;
+    let reverted = served
+        .until("revert maintained", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && s["source_revision"] != edited["source_revision"]
+        })
+        .await;
+    assert_eq!(
+        corpus.probe.document_calls(),
+        calls + 1,
+        "exact input reuse on revert"
+    );
+    std::fs::rename(
+        corpus.root.join("src/extra0.rs"),
+        corpus.root.join("src/moved.rs"),
+    )
+    .unwrap();
+    served.index().await;
+    let renamed = served
+        .until("rename maintained", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && s["source_revision"] != reverted["source_revision"]
+        })
+        .await;
+    assert_eq!(
+        corpus.probe.document_calls(),
+        calls + 2,
+        "the new address is a new input"
+    );
+    std::fs::remove_file(corpus.root.join("src/moved.rs")).unwrap();
+    served.index().await;
+    let deleted = served
+        .until("delete maintained", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && s["source_revision"] != renamed["source_revision"]
+        })
+        .await;
+    assert_eq!(corpus.probe.document_calls(), calls + 2);
+    assert_eq!(
+        deleted["sources"].as_u64().unwrap() + 1,
+        first["sources"].as_u64().unwrap()
+    );
+    assert!(!served.semantic_action("pause").await.0);
+    served.until("paused", |s| s["state"] == "paused").await;
+    corpus.write("src/extra1.rs", "pub fn paused_edit() {}\n");
+    served.index().await;
+    let pending = served.semantic().await;
+    assert_eq!(pending["pending"]["paths"], 1);
+    assert_eq!(pending["coverage_observation"], "stale");
+    assert!(pending["cached_current_units"].is_null());
+    served.close().await;
+    // Restart without the explicit mode leaves work pending and starts no documents.
+    let semantic = corpus.held(&hold);
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    assert_eq!(served.semantic().await["pending"]["paths"], 1);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(corpus.probe.document_calls(), calls + 2);
+    served.close().await;
+    let mut semantic = corpus.held(&hold);
+    semantic.maintain = true;
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    let resumed = served
+        .until("explicit startup catches up", |s| {
+            s["state"] == "waiting" && s["pending"]["paths"] == 0
+        })
+        .await;
+    assert_eq!(resumed["bootstrap"]["selected_sources"], 1, "{resumed}");
+    assert_eq!(corpus.probe.document_calls(), calls + 3);
+    // Switching a caught-up continuous owner to one-shot must execute the
+    // requested full reconciliation, then stop; it must not just disable wakeups.
+    served.prepare().await;
+    let once = served.stopped().await;
+    assert!(once["bootstrap"]["selected_sources"].as_u64().unwrap() > 1);
+    assert_eq!(corpus.probe.document_calls(), calls + 3);
+    served.close().await;
+    corpus.reopen().await;
+    assert!(
+        corpus
+            .engine()
+            .derivation_pending(context_foundry::neural::work::Lane::Knowledge)
+            .unwrap()
+            .paths
+            > 0
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn watching_wakes_continuous_semantics_and_status_does_not_shrink_batches() {
+    let extra: Vec<_> = (0..18)
+        .map(|n| {
+            (
+                format!("src/batch{n}.rs"),
+                format!("pub fn batch_{n}() {{}}\n"),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&extra);
+    let hold = Hold::gated();
+    let mut semantic = corpus.held(&hold);
+    semantic.maintain = true;
+    let served = corpus.serve_stdio_watching(Some(semantic), true).await;
+    hold.wait_entered(1).await;
+    for _ in 0..4 {
+        served.status().await;
+    }
+    hold.release();
+    hold.wait_entered(2).await;
+    assert!(
+        hold.batch(2) > 2,
+        "progress polling imposed the foreground throttle"
+    );
+    hold.open();
+    hold.release();
+    let first = served
+        .until("watched bootstrap", |s| {
+            s["state"] == "waiting" && s["pending"]["paths"] == 0
+        })
+        .await;
+    corpus.write("src/watched.rs", "pub fn automatically_observed() {}\n");
+    let current = served
+        .until("watch-triggered semantic work", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && s["source_revision"] != first["source_revision"]
+        })
+        .await;
+    assert_eq!(current["missing_units"], 0);
+    assert_eq!(
+        current["bootstrap"]["selected_sources"].as_u64().unwrap(),
+        first["bootstrap"]["selected_sources"].as_u64().unwrap() + 1
+    );
+    served.close().await;
+}
+
+#[test]
+fn ordinary_semantic_status_is_a_cheap_observation_with_explicit_stale_and_audit() {
+    let corpus = Corpus::new(&[]);
+    let engine = corpus.engine();
+    for name in [
+        context_foundry::neural::fault_names::PARTITION_READ,
+        context_foundry::neural::fault_names::CACHE_RECONCILE,
+        context_foundry::neural::status::fault_names::BEFORE_VALIDATION,
+    ] {
+        fault::arm(
+            name,
+            1,
+            Action::Fail("ordinary status must not perform a census".into()),
+        );
+    }
+    for _ in 0..20 {
+        let value = engine.semantic_progress(&Control::unbounded()).unwrap();
+        assert_eq!(value["coverage_observation"], "current");
+        assert_eq!(value["missing_units"], 0);
+        assert_eq!(value["index"]["validation"], "not_checked");
+        assert!(value["index"]["available"].is_null());
+    }
+    assert!(
+        engine.semantic_status(&Control::unbounded()).is_err(),
+        "the explicit audit still validates"
+    );
+    fault::disarm_all();
+    engine
+        .replace_source("src/new.rs", "fn new_source() {}\n")
+        .unwrap();
+    let stale = engine.semantic_progress(&Control::unbounded()).unwrap();
+    assert_eq!(stale["coverage_observation"], "stale");
+    assert!(stale["cached_current_units"].is_null());
+    assert!(
+        stale["last_observed"]["cached_current_units"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(stale["index"]["validation"], "not_checked");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn continuous_edit_during_inference_and_pause_keep_the_new_version_pending() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::gated();
+    let mut semantic = corpus.held(&hold);
+    semantic.maintain = true;
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    hold.wait_entered(1).await;
+    corpus.write(
+        DUSK_PATH,
+        "# Changed while embedding\n\nTwilight starts here.\n",
+    );
+    served.index().await;
+    assert!(!served.semantic_action("pause").await.0);
+    hold.release();
+    served
+        .until("paused after its in-flight call", |s| {
+            s["state"] == "paused" && s["provider"]["state"] == "ready"
+        })
+        .await;
+    assert!(
+        served.semantic().await["pending"]["reconcile_required"]
+            .as_bool()
+            .unwrap()
+    );
+    hold.open();
+    assert!(!served.semantic_action("maintain").await.0);
+    served
+        .until("new version caught up", |s| {
+            s["state"] == "waiting" && s["pending"]["paths"] == 0
+        })
+        .await;
+    served.close().await;
+    corpus.reopen().await;
+    let engine = corpus.engine();
+    assert_eq!(
+        engine
+            .semantic_partition(DUSK_PATH)
+            .unwrap()
+            .unwrap()
+            .source_hash,
+        engine.source(DUSK_PATH).unwrap().unwrap().hash
+    );
+    assert_eq!(
+        engine
+            .semantic_status(&Control::unbounded())
+            .unwrap()
+            .missing_units,
+        0
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn continuous_semantics_progresses_during_filesystem_traffic_and_converges() {
+    let mut corpus = Corpus::unprepared(&[]);
+    let hold = Hold::default();
+    let mut semantic = corpus.held(&hold);
+    semantic.maintain = true;
+    let served = corpus.serve_stdio_watching(Some(semantic), true).await;
+    served
+        .until("initial continuous coverage", |s| s["state"] == "waiting")
+        .await;
+    let calls = corpus.probe.document_calls();
+    let stop = Arc::new(AtomicBool::new(false));
+    // Keep one genuinely pending version stable while other paths churn.
+    // Continuously replacing every candidate can legitimately reject every
+    // stale partition before inference; that is not a scheduler starvation test.
+    std::fs::write(
+        corpus.root.join("src/settled.rs"),
+        "pub fn settled_during_traffic() {}\n",
+    )
+    .unwrap();
+    let writer = std::thread::spawn({
+        let stop = Arc::clone(&stop);
+        let root = corpus.root.clone();
+        move || {
+            let end = Instant::now() + Duration::from_secs(15);
+            let mut n = 0;
+            while !stop.load(Ordering::SeqCst) && Instant::now() < end {
+                std::fs::write(
+                    root.join(format!("src/stream{}.rs", n % 2)),
+                    format!("pub fn streamed_{n}() {{}}\n"),
+                )
+                .unwrap();
+                n += 1;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            n
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while corpus.probe.document_calls() == calls {
+        assert!(
+            Instant::now() < deadline,
+            "no semantic progress during source traffic"
+        );
+        assert!(!writer.is_finished());
+        served.status().await;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !writer.is_finished(),
+        "progress must precede the end of source traffic"
+    );
+    assert!(
+        !served.search("parse_record").await.items.is_empty(),
+        "foreground source retrieval remains serviceable"
+    );
+    stop.store(true, Ordering::SeqCst);
+    assert!(writer.join().unwrap() > 1);
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let status = served.status().await;
+        if status["watch"]["phase"] == "idle"
+            && status["watch"]["pending_paths"] == 0
+            && status["semantic"]["state"] == "waiting"
+            && status["semantic"]["pending"]["paths"] == 0
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "did not converge: {status}");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    served.close().await;
+    corpus.reopen().await;
+    for path in ["src/stream0.rs", "src/stream1.rs", "src/settled.rs"] {
+        let hash = context_foundry::digest(&std::fs::read(corpus.root.join(path)).unwrap());
+        assert_eq!(corpus.engine().source(path).unwrap().unwrap().hash, hash);
+        assert_eq!(
+            corpus
+                .engine()
+                .semantic_partition(path)
+                .unwrap()
+                .unwrap()
+                .source_hash,
+            hash
+        );
+    }
+}
+
+/// Advance one source through the genuine renderer/cache acceptance without
+/// reopening the owner. The vector function is the same deterministic fixture
+/// used by ConceptProvider; these checks establish work selection, not quality.
+fn accept_fixture_edit(corpus: &Corpus, path: &str, body: &str) {
+    use context_foundry::neural::{cache, partition, tokenize::DocumentTokenizer};
+    let engine = corpus.engine();
+    engine.replace_source(path, body).unwrap();
+    let profile = &corpus.profile;
+    let digest = corpus.digest();
+    let tokenizer = DocumentTokenizer::load(profile).unwrap();
+    let cards = partition::cards(
+        body,
+        path,
+        context_foundry::syntax::Lang::from_path(path),
+        &partition::CardRecipe {
+            template: &profile.descriptor.document_template,
+            function_digest: &digest,
+            card_tokens: profile.card_tokens as usize,
+        },
+        &tokenizer,
+    )
+    .unwrap();
+    let units: Vec<_> = cards
+        .iter()
+        .map(|card| cache::PartitionUnit {
+            kind: card.kind,
+            start: card.start,
+            end: card.end,
+            input_key: card.input_key.clone(),
+        })
+        .collect();
+    engine
+        .semantic_record_partition(
+            path,
+            &engine.source(path).unwrap().unwrap().hash,
+            &partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens),
+            &digest,
+            Some(&units),
+            &|_| Ok(units.clone()),
+        )
+        .unwrap();
+    let entries: Vec<_> = cards
+        .iter()
+        .filter(|card| {
+            engine
+                .semantic_cache_probe(&card.input_key, &digest)
+                .unwrap()
+                != cache::CacheProbe::Current
+        })
+        .map(|card| {
+            (
+                card.input_key.clone(),
+                concept_vector(&model_input(&card.ids)),
+            )
+        })
+        .collect();
+    engine
+        .semantic_cache_commit(&entries, &digest, DIMENSIONS, DEFAULT_CACHE_CAP_BYTES)
+        .unwrap();
+}
+
+#[test]
+fn a_v4_generation_republishes_immutable_metadata_from_cache_without_inference() {
+    let mut corpus = Corpus::new(&[]);
+    corpus
+        .engine()
+        .semantic_rebuild_index(&Control::unbounded())
+        .unwrap();
+    let directory = index::generation_dir(&corpus.store, &corpus.digest());
+    let path = directory.join(index::MANIFEST_FILE);
+    let bytes = std::fs::read(&path).unwrap();
+    let current: index::GenerationManifest = serde_json::from_slice(&bytes).unwrap();
+    let mut prior: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    prior["v"] = 4.into();
+    let keys: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join(current.members_file())).unwrap())
+            .unwrap();
+    prior["base_entries"] = keys.clone();
+    prior["entries"] = keys;
+    for name in [
+        "base_count",
+        "members_sha256",
+        "locations_delta",
+        "mapping_revision",
+        "coverage_stats",
+    ] {
+        prior.as_object_mut().unwrap().remove(name);
+    }
+    std::fs::write(&path, serde_json::to_vec(&prior).unwrap()).unwrap();
+    let calls = corpus.probe.document_calls();
+    let report = corpus.prepare();
+    assert!(report.index_published && !report.partial, "{report:?}");
+    assert_eq!(report.document_calls, 0);
+    assert_eq!(corpus.probe.document_calls(), calls);
+    let current: index::GenerationManifest =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(current.v, index::GENERATION_VERSION);
+    assert!(current.mapping_revision.is_some());
+    assert!(directory.join(current.members_file()).exists());
+    let slot = corpus.slot();
+    assert_eq!(
+        corpus.context(&slot, DUSK_QUERY, BUDGET).word(),
+        Some("ready")
+    );
+}
+
+#[test]
+fn clean_restart_and_changed_inputs_reuse_the_durable_mapping_lookup() {
+    use context_foundry::neural::fault_names::{
+        MAPPING_CACHE_PROBE, MAPPING_FULL_PAGE, METADATA_READ, PARTITION_READ,
+    };
+    let mut corpus = Corpus::new(&[]);
+    let control = Control::unbounded();
+    corpus.engine().semantic_publish_pending(&control).unwrap();
+    let calls = corpus.probe.document_calls.load(Ordering::SeqCst);
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    assert!(matches!(
+        corpus.engine().semantic_publish_pending(&control).unwrap(),
+        index::Publication::Current(_)
+    ));
+    assert!(
+        fault::reached(METADATA_READ) >= 2,
+        "cold owner still verifies artifacts"
+    );
+    for point in [MAPPING_FULL_PAGE, MAPPING_CACHE_PROBE, PARTITION_READ] {
+        assert_eq!(fault::reached(point), 0, "clean restart: {point}");
+    }
+    let reads = fault::reached(METADATA_READ);
+    corpus.engine().semantic_publish_pending(&control).unwrap();
+    assert_eq!(fault::reached(METADATA_READ), reads);
+    // Partition changes at the same source revision must invalidate reuse too.
+    let engine = corpus.engine();
+    let revision = engine.source_revision().unwrap();
+    let state = engine.semantic_state().unwrap().unwrap();
+    engine
+        .semantic_record_partition(
+            CODE_PATH,
+            &engine.source(CODE_PATH).unwrap().unwrap().hash,
+            state.recipe_id.as_deref().unwrap(),
+            state.function_digest.as_deref().unwrap(),
+            Some(&[]),
+            &|_| Ok(vec![]),
+        )
+        .unwrap();
+    assert_eq!(engine.source_revision().unwrap(), revision);
+    let changed = engine.semantic_publish_pending(&control).unwrap();
+    assert!(!matches!(changed, index::Publication::Current(_)));
+    assert_eq!(
+        fault::reached(MAPPING_FULL_PAGE),
+        0,
+        "one partition change resumes the lookup"
+    );
+    assert_eq!(fault::reached(PARTITION_READ), 1);
+    // A durable source change made before closing cannot borrow an older fence.
+    engine
+        .replace_source(DUSK_PATH, "# Offline change\n")
+        .unwrap();
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    assert!(!matches!(
+        corpus.engine().semantic_publish_pending(&control).unwrap(),
+        index::Publication::Current(_)
+    ));
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), 0);
+    assert_eq!(fault::reached(PARTITION_READ), 1);
+    assert_eq!(corpus.probe.document_calls.load(Ordering::SeqCst), calls);
+}
+
+#[test]
+fn location_publication_shares_unchanged_metadata_and_failed_edits_remain_retryable() {
+    use context_foundry::neural::fault_names::{
+        LOCATION_COMPARE, LOCATION_WRITE, MAPPING_FULL_PAGE, METADATA_READ, PUBLISH_BEFORE_MANIFEST,
+    };
+    let corpus = Corpus::new(&[]);
+    let engine = corpus.engine();
+    let control = Control::unbounded();
+    engine.semantic_rebuild_index(&control).unwrap();
+    engine.semantic_publish_pending(&control).unwrap();
+    let runtime = corpus.runtime();
+    let window = || {
+        runtime
+            .window(
+                engine,
+                DUSK_QUERY,
+                Instant::now() + Duration::from_secs(30),
+                &control,
+            )
+            .unwrap()
+    };
+    window();
+    let original = corpus.source(CODE_PATH);
+    accept_fixture_edit(&corpus, CODE_PATH, &format!("\n{original}"));
+    fault::disarm_all();
+    fault::arm(
+        PUBLISH_BEFORE_MANIFEST,
+        0,
+        Action::Fail("location publication failed".into()),
+    );
+    assert!(engine.semantic_publish_pending(&control).is_err());
+    fault::disarm_all();
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Mapped(_)
+    ));
+    assert_eq!(
+        fault::reached(MAPPING_FULL_PAGE),
+        0,
+        "retry retains the warm mapping view"
+    );
+    assert_eq!(
+        fault::reached(LOCATION_WRITE),
+        1,
+        "only the bounded overlay is written"
+    );
+    let compares = fault::reached(LOCATION_COMPARE);
+    assert!(compares > 0);
+    let reads = fault::reached(METADATA_READ);
+    window();
+    assert_eq!(
+        fault::reached(METADATA_READ) - reads,
+        1,
+        "only the new overlay is read/hashed/decoded"
+    );
+    let reads = fault::reached(METADATA_READ);
+    // A zero-card source changes coverage, with no vector or location changes.
+    accept_fixture_edit(&corpus, "empty.rs", "\n");
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Mapped(_)
+    ));
+    window();
+    assert_eq!(fault::reached(LOCATION_COMPARE), compares);
+    assert_eq!(fault::reached(LOCATION_WRITE), 1);
+    assert_eq!(fault::reached(METADATA_READ), reads);
+    // The receipt must not bless a same-length edit of a retained metadata file.
+    let directory = index::generation_dir(&corpus.store, &corpus.profile.descriptor.digest());
+    let manifest: index::GenerationManifest =
+        serde_json::from_slice(&std::fs::read(directory.join(index::MANIFEST_FILE)).unwrap())
+            .unwrap();
+    let path = directory.join(manifest.location_delta_file().unwrap());
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[0] ^= 1;
+    std::fs::write(&path, bytes).unwrap();
+    runtime.forget_index();
+    let error = runtime
+        .window(
+            engine,
+            DUSK_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &control,
+        )
+        .expect_err("changed metadata refused");
+    assert!(error.detail.contains("manifest hash"), "{error:?}");
+}
+
+#[test]
+fn warm_publications_reuse_verification_and_resident_segments_with_fresh_locations() {
+    use context_foundry::neural::fault_names::{
+        MAPPING_FULL_PAGE, PARTITION_READ, SEGMENT_HASH, SEGMENT_RESTORE,
+    };
+    let corpus = Corpus::new(&[]);
+    let engine = corpus.engine();
+    let control = Control::unbounded();
+    // Begin with a compacted base: progressive preparation may leave a delta.
+    engine.semantic_rebuild_index(&control).unwrap();
+    // First publication warms the mapping and receipts without loading USearch.
+    engine.semantic_publish_pending(&control).unwrap();
+    let runtime = corpus.runtime();
+    let window = || {
+        runtime
+            .window(
+                engine,
+                DUSK_QUERY,
+                Instant::now() + Duration::from_secs(30),
+                &control,
+            )
+            .unwrap()
+    };
+    let hash = fault::reached(SEGMENT_HASH);
+    let initial = window();
+    let initial_revision = engine.source_revision().unwrap();
+    assert_eq!(
+        fault::reached(SEGMENT_HASH),
+        hash,
+        "publisher verification reused by serving"
+    );
+    let restores = fault::reached(SEGMENT_RESTORE);
+    let pages = fault::reached(MAPPING_FULL_PAGE);
+    let original = corpus.source(CODE_PATH);
+    accept_fixture_edit(&corpus, CODE_PATH, &format!("\n\n{original}"));
+    let reads = fault::reached(PARTITION_READ);
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Mapped(_)
+    ));
+    assert_eq!(fault::reached(PARTITION_READ) - reads, 1);
+    // Deliberately omit forget_index: the manifest receipt must notice publication.
+    let mapped = window();
+    assert_eq!(
+        mapped.complete_at(),
+        Some(engine.source_revision().unwrap())
+    );
+    assert_ne!(initial.complete_at(), mapped.complete_at());
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores,
+        "same immutable ANN"
+    );
+    assert_eq!(
+        fault::reached(SEGMENT_HASH),
+        hash,
+        "unchanged inode/version"
+    );
+    accept_fixture_edit(
+        &corpus,
+        CODE_PATH,
+        &format!("{original}\npub fn novel_delta_card() {{}}\n"),
+    );
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Delta(_)
+    ));
+    let delta = window();
+    assert_eq!(delta.complete_at(), Some(engine.source_revision().unwrap()));
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores + 1,
+        "only new delta restored"
+    );
+    assert_eq!(
+        fault::reached(SEGMENT_HASH),
+        hash + 1,
+        "only new delta verified"
+    );
+    runtime.forget_index();
+    window();
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores + 1,
+        "explicit refresh also keeps base and delta"
+    );
+    accept_fixture_edit(&corpus, CODE_PATH, &original);
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Delta(_)
+    ));
+    let reverted = window();
+    assert_eq!(
+        reverted.complete_at(),
+        Some(engine.source_revision().unwrap())
+    );
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores + 1,
+        "reversion reuses the base"
+    );
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), pages);
+    assert_eq!(
+        initial.complete_at(),
+        Some(initial_revision),
+        "old requests retain their own mapping"
+    );
+    // Exceed the bounded overlay: a compacted base must restore exactly once.
+    let mut compacted_body = original.clone();
+    for i in 0..65 {
+        compacted_body.push_str(&format!("\npub fn compaction_card_{i}() {{}}\n"));
+    }
+    accept_fixture_edit(&corpus, CODE_PATH, &compacted_body);
+    assert!(matches!(
+        engine.semantic_publish_pending(&control).unwrap(),
+        index::Publication::Rebuilt(_)
+    ));
+    let compacted = window();
+    assert_eq!(
+        compacted.complete_at(),
+        Some(engine.source_revision().unwrap())
+    );
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores + 2,
+        "new compacted base restored once"
+    );
+    runtime.forget_index();
+    window();
+    assert_eq!(fault::reached(SEGMENT_RESTORE), restores + 2);
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), pages);
+    // Audits intentionally rehash even when warm serving already verified the file.
+    let audit_hash = fault::reached(SEGMENT_HASH);
+    engine.semantic_status(&control).unwrap();
+    assert!(fault::reached(SEGMENT_HASH) > audit_hash);
+}
+
+#[test]
+fn resident_generation_rechecks_owner_profile_and_manifest_without_invalidation_hints() {
+    use context_foundry::neural::fault_names::SEGMENT_RESTORE;
+    let mut corpus = Corpus::new(&[]);
+    let runtime = corpus.runtime();
+    let window = |corpus: &Corpus| {
+        runtime.window(
+            corpus.engine(),
+            DUSK_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &Control::unbounded(),
+        )
+    };
+    let before = fault::reached(SEGMENT_RESTORE);
+    window(&corpus).unwrap();
+    let restores = fault::reached(SEGMENT_RESTORE);
+    let segment_count = restores - before;
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    window(&corpus).unwrap();
+    assert_eq!(
+        fault::reached(SEGMENT_RESTORE),
+        restores + segment_count,
+        "new owner cannot reuse old owner's cache"
+    );
+    let path = index::generation_dir(&corpus.store, &corpus.digest()).join(index::MANIFEST_FILE);
+    let original = std::fs::read(&path).unwrap();
+    let mut manifest: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    manifest["v"] = 99.into();
+    std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    assert_eq!(window(&corpus).unwrap_err().code, "index_unavailable");
+    std::fs::write(&path, original).unwrap();
+    window(&corpus).unwrap();
+    let mut state = corpus.engine().semantic_state().unwrap().unwrap();
+    state.function_digest = Some("cd".repeat(32));
+    corpus.engine().semantic_set_state(&state).unwrap();
+    assert_eq!(window(&corpus).unwrap_err().code, "profile_mismatch");
+}
+
+#[test]
+fn segment_receipts_refuse_in_place_replacement_and_symlink_changes_on_refresh() {
+    use context_foundry::neural::fault_names::{SEGMENT_HASH, SEGMENT_RESTORE};
+    for mode in ["in-place", "replacement", "symlink"] {
+        let corpus = Corpus::new(&[]);
+        let runtime = corpus.runtime();
+        let window = || {
+            runtime.window(
+                corpus.engine(),
+                DUSK_QUERY,
+                Instant::now() + Duration::from_secs(30),
+                &Control::unbounded(),
+            )
+        };
+        window().unwrap();
+        let path = testkit::semantic_file(
+            &index::generation_dir(&corpus.store, &corpus.digest()),
+            index::INDEX_FILE,
+        );
+        let mut bytes = std::fs::read(&path).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        if mode == "replacement" {
+            std::fs::remove_file(&path).unwrap();
+        }
+        if mode == "symlink" {
+            let outside = corpus.dir.path().join("foreign-ann");
+            std::fs::write(&outside, bytes).unwrap();
+            std::fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(outside, path).unwrap();
+        } else {
+            std::fs::write(path, bytes).unwrap();
+        }
+        let hashes = fault::reached(SEGMENT_HASH);
+        let restores = fault::reached(SEGMENT_RESTORE);
+        runtime.forget_index();
+        assert_eq!(window().unwrap_err().code, "index_unavailable", "{mode}");
+        assert_eq!(
+            fault::reached(SEGMENT_RESTORE),
+            restores,
+            "corrupt bytes never restored"
+        );
+        if mode != "symlink" {
+            assert_eq!(fault::reached(SEGMENT_HASH), hashes + 1);
+        }
+    }
+}
+
+fn select_body_recipe(
+    corpus: &mut Corpus,
+    tokens: u32,
+    parent_tokens: u32,
+    geometry: Option<provider::InputGeometry>,
+) {
+    let profile = Arc::make_mut(&mut corpus.profile);
+    profile.representation =
+        context_foundry::neural::partition::Representation::Body { parent_tokens };
+    profile.card_tokens = tokens;
+    profile.descriptor.geometry = geometry;
+    if geometry.is_some() {
+        profile.descriptor.adapter_revision = provider::GEOMETRY_ADAPTER_REVISION;
+    }
+    profile.validate().unwrap();
+    std::fs::write(&corpus.profile_path, serde_json::to_vec(&*profile).unwrap()).unwrap();
+}
+
+#[test]
+fn body_recipe_migration_edits_rename_and_revert_reuse_exact_inputs_and_deliver_child_evidence() {
+    let path = "src/opaque.rs";
+    let body = "impl Billing {\n    fn xyz() {\n        // reimbursement repayment credit refund cancel\n        transfer(400);\n    }\n}\n";
+    let mut corpus = Corpus::new(&[(path.into(), body.into())]);
+    let old_profile = corpus.profile.clone();
+    let old_key = corpus
+        .engine()
+        .semantic_partition(path)
+        .unwrap()
+        .unwrap()
+        .units[0]
+        .input_key
+        .clone();
+    select_body_recipe(&mut corpus, 512, 64, None);
+    let report = corpus.prepare();
+    assert!(!report.partial && report.document_calls > 0, "{report:?}");
+    assert_eq!(
+        old_profile.descriptor.digest(),
+        corpus.digest(),
+        "same embedding function, distinct recipe/input text"
+    );
+    assert!(matches!(
+        corpus
+            .engine()
+            .semantic_cache_lookup(&old_key, &corpus.digest(), DIMENSIONS)
+            .unwrap(),
+        context_foundry::neural::cache::CacheLookup::Hit(_)
+    ));
+    let first = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    assert!(first.recipe_id.starts_with("body-v1"));
+    let slot = corpus.slot();
+    let answer = corpus.context(&slot, LEDGER_QUERY, 4096);
+    assert_eq!(answer.word(), Some("ready"));
+    assert!(
+        answer.item(path).is_some(),
+        "body-only behavior reaches final context: {}",
+        answer.packed.text
+    );
+    let runtime = corpus.runtime();
+    let window = runtime
+        .window(
+            corpus.engine(),
+            LEDGER_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &Control::unbounded(),
+        )
+        .unwrap();
+    let target = window
+        .hits
+        .iter()
+        .flat_map(|hit| window.units(hit))
+        .find(|unit| {
+            unit.path == path && body[unit.start as usize..unit.end as usize].starts_with("fn xyz")
+        })
+        .unwrap();
+    assert_eq!(
+        &body[target.start as usize..target.end as usize],
+        "fn xyz() {\n        // reimbursement repayment credit refund cancel\n        transfer(400);\n    }"
+    );
+    drop(runtime);
+    drop(slot);
+    assert_eq!(corpus.prepare().document_calls, 0, "unchanged restart");
+    let edited = body.replace("transfer(400)", "transfer(800)");
+    std::fs::write(corpus.root.join(path), &edited).unwrap();
+    corpus.engine().replace_source(path, &edited).unwrap();
+    assert_eq!(
+        corpus.prepare().embedded_units,
+        1,
+        "only the changed child input"
+    );
+    let renamed = "src/moved.rs";
+    std::fs::rename(corpus.root.join(path), corpus.root.join(renamed)).unwrap();
+    corpus.engine().delete_source(path).unwrap();
+    corpus.engine().replace_source(renamed, &edited).unwrap();
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "path is provenance, not body input"
+    );
+    let parent_edit = edited.replace("impl Billing", "impl Payment");
+    corpus
+        .engine()
+        .replace_source(renamed, &parent_edit)
+        .unwrap();
+    let changed = corpus.prepare();
+    assert!(
+        changed.embedded_units >= 2,
+        "included parent context invalidates its child: {changed:?}"
+    );
+    corpus.engine().delete_source(renamed).unwrap();
+    corpus.engine().replace_source(path, body).unwrap();
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "body/context revert reuses retained vectors"
+    );
+    corpus.profile = old_profile;
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "switching back preserves address caches"
+    );
+}
+
+#[test]
+fn hierarchy_area_preparation_deduplicates_exact_inputs_and_reuses_on_restart() {
+    use context_foundry::{brief, neural::partition::Representation};
+    let a = "fn refund() { credit(4); }\n";
+    let b = "fn check() { refund(); }\n";
+    let mut corpus = Corpus::new(&[("a.rs".into(), a.into()), ("b.rs".into(), b.into())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    let wid = corpus.engine().workspace_id().unwrap();
+    let handle = |path: &str, body: &str| {
+        format!(
+            "{path}#0-{}@{}.{}",
+            body.len(),
+            &context_foundry::digest(body.as_bytes())[..32],
+            &wid[..16]
+        )
+    };
+    for spans in [
+        [handle("a.rs", a), handle("b.rs", b)],
+        [handle("b.rs", b), handle("a.rs", a)],
+    ] {
+        let input = serde_json::json!({"cited_spans":spans,"recipe_sha256":"a".repeat(64),"model":"fixture/derived",
+            "artifact_sha256":"b".repeat(64),"prompt_sha256":"c".repeat(64),"generated_at_unix_ms":1,
+            "purpose":[{"text":"Refund reimbursement","citations":[0],"identifiers":[]}],
+            "behavior":[{"text":"Credit an account.","citations":[0],"identifiers":[]}],
+            "provides":[],"consumes":[],"constraints":[],"tests":[],"unknowns":[]});
+        let request = brief::parse(
+            &serde_json::to_vec(
+                &serde_json::json!({"workspace_id":wid,"command":{"op":"put","brief":input}}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        corpus
+            .engine()
+            .brief(&request, &Control::unbounded())
+            .unwrap();
+    }
+    let first = corpus.prepare();
+    assert!(!first.partial);
+    assert_eq!(
+        (first.area_vectors, first.embedded_areas),
+        (2, 1),
+        "two provenance bindings share one exact area input"
+    );
+    let restart = corpus.prepare();
+    assert_eq!(
+        (
+            restart.document_calls,
+            restart.area_vectors,
+            restart.embedded_areas
+        ),
+        (0, 2, 0)
+    );
+    assert!(
+        !corpus
+            .engine()
+            .derivation_pending(context_foundry::neural::work::Lane::Semantic)
+            .unwrap()
+            .overviews_pending
+    );
+}
+
+#[test]
+fn coarse_semantic_context_focuses_current_evidence_beyond_the_file_prefix() {
+    use context_foundry::neural::partition::Representation;
+    use context_foundry::store::ContextOptions;
+    let path = "src/payments.rs";
+    let body = format!(
+        "// repayment credit reimbursement\n{}fn settle() {{\n    // refund cancelled payments\n    return_credit();\n}}\n{}",
+        "// ordinary unrelated setup\n".repeat(200),
+        "// ordinary unrelated cleanup\n".repeat(200),
+    );
+    let mut corpus = Corpus::unprepared(&[(path.into(), body.clone())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation = Representation::Overview;
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert!(!corpus.prepare().partial);
+    let runtime = corpus.runtime();
+    let query = "refund cancelled payments";
+    let window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let candidates = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(candidates.batch.semantic.as_deref(), Some("ready"));
+    assert!(
+        candidates.batch.items[0].semantic.is_none(),
+        "complete file coverage keeps precise lexical evidence first"
+    );
+    let item = candidates
+        .batch
+        .items
+        .iter()
+        .find(|item| item.is_dense_only() && item.handle.as_ref().is_some_and(|h| h.path == path))
+        .expect("independent file vector is served");
+    let handle = item.handle.as_ref().unwrap();
+    assert!(handle.start > 4000, "the evidence is past the prefix");
+    assert!(handle.end - handle.start <= 1536);
+    assert_eq!(
+        item.forms[0],
+        context_foundry::store::RenderedForm::Verbatim(
+            body[handle.start as usize..handle.end as usize].into()
+        )
+    );
+    let packed = response::pack_enriched_context(
+        &candidates,
+        None,
+        response::Budget::request(1024),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.tokens <= 1024);
+    assert!(packed.text.contains("return_credit();"), "{}", packed.text);
+    assert!(
+        trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| {
+                event["stage"] == "materialization"
+                    && event["origin"] == "dense"
+                    && event["unit"]["path"] == path
+                    && event["unit"]["start"] == 0
+                    && event["excerpt"]["start"] == handle.start
+                    && event["passage_independently_embedded"] == false
+            })
+    );
+    // A loaded coarse generation cannot cite the old passage after an edit,
+    // including an edit not yet published to the lexical index.
+    corpus
+        .engine_mut()
+        .replace_source(path, "fn updated() {}\n")
+        .unwrap();
+    let current = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(
+        !current
+            .batch
+            .items
+            .iter()
+            .any(|item| item.handle.as_ref().is_some_and(|h| h.path == path))
+    );
+}
+
+#[test]
+fn overview_bootstrap_bounds_inputs_and_reuses_them_during_hierarchy_expansion() {
+    use context_foundry::neural::partition::Representation;
+    let original: String = (0..80)
+        .map(|n| format!("/// Transfer record {n}.\nfn transfer_{n}() {{ save({n}); }}\n"))
+        .collect();
+    let path = "src/billing.rs";
+    let mut corpus = Corpus::new(&[
+        (path.into(), original.clone()),
+        ("empty.rs".into(), " \n".into()),
+    ]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation = Representation::Overview;
+    let save_profile = |corpus: &Corpus| {
+        std::fs::write(
+            &corpus.profile_path,
+            serde_json::to_vec(&*corpus.profile).unwrap(),
+        )
+        .unwrap()
+    };
+    save_profile(&corpus);
+    let prepared = corpus.prepare();
+    assert!(!prepared.partial, "{prepared:?}");
+    assert_eq!(
+        prepared.embedded_units, 7,
+        "one bounded input plus six built-in nonblank fixture files, not eighty bodies"
+    );
+    let overview = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    assert_eq!(overview.units.len(), 1);
+    assert_eq!(
+        (overview.units[0].start, overview.units[0].end),
+        (0, original.len())
+    );
+    assert!(
+        corpus
+            .engine()
+            .semantic_partition("empty.rs")
+            .unwrap()
+            .unwrap()
+            .units
+            .is_empty()
+    );
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "unchanged restart reuses the file vector"
+    );
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    save_profile(&corpus);
+    let expanded = corpus.prepare();
+    assert!(!expanded.partial);
+    let hierarchy = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    assert!(hierarchy.units.contains(&overview.units[0]));
+    assert!(
+        expanded.reused_cached_units >= 1,
+        "file vector reused during expansion"
+    );
+    Arc::make_mut(&mut corpus.profile).representation = Representation::Overview;
+    save_profile(&corpus);
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "switching back reuses the cache"
+    );
+    corpus
+        .engine()
+        .replace_source(
+            path,
+            &original.replace("Transfer record 0", "Refund record 0"),
+        )
+        .unwrap();
+    assert_eq!(
+        corpus.prepare().embedded_units,
+        1,
+        "only the changed overview"
+    );
+    corpus.engine().replace_source(path, &original).unwrap();
+    assert_eq!(corpus.prepare().document_calls, 0, "revert reuse");
+    corpus.engine().delete_source(path).unwrap();
+    corpus.prepare();
+    let mapping = corpus
+        .engine()
+        .semantic_current_mapping(
+            &Control::unbounded(),
+            &corpus.digest(),
+            &corpus.profile.recipe_id(),
+        )
+        .unwrap();
+    assert!(
+        mapping
+            .units
+            .values()
+            .all(|locations| locations.iter().all(|location| location.path != path))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hierarchy_cli_and_resident_bootstrap_cover_files_before_body_inference() {
+    use context_foundry::neural::partition::Representation;
+    let extra: Vec<_> = (0..21)
+        .map(|n| {
+            (
+                format!("first/{n:02}.rs"),
+                (0..30)
+                    .map(|i| {
+                        format!("/// Evidence {n} {i}.\nfn action_{n}_{i}() {{ perform({i}); }}\n")
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    for resident in [false, true] {
+        let mut corpus = Corpus::unprepared(&extra);
+        select_body_recipe(&mut corpus, 512, 64, None);
+        Arc::make_mut(&mut corpus.profile).representation =
+            Representation::Hierarchy { parent_tokens: 64 };
+        std::fs::write(
+            &corpus.profile_path,
+            serde_json::to_vec(&*corpus.profile).unwrap(),
+        )
+        .unwrap();
+        *corpus.probe.publication_path.lock().unwrap() =
+            Some(index::generation_dir(&corpus.store, &corpus.digest()).join(index::MANIFEST_FILE));
+        if resident {
+            let served = corpus
+                .serve_stdio(Some(corpus.held(&Hold::default())))
+                .await;
+            served.prepare().await;
+            let state = served.stopped().await;
+            assert_eq!(state["unpartitioned_sources"], 0, "{state}");
+            assert_eq!(state["missing_units"], 0, "{state}");
+            served.close().await;
+            corpus.reopen().await;
+        } else {
+            assert!(!corpus.prepare().partial);
+        }
+        let mapping = corpus
+            .engine()
+            .semantic_current_mapping(
+                &Control::unbounded(),
+                &corpus.digest(),
+                &corpus.profile.recipe_id(),
+            )
+            .unwrap();
+        let paths: BTreeSet<_> = mapping
+            .units
+            .values()
+            .flat_map(|locations| locations.iter())
+            .map(|unit| unit.path.clone())
+            .collect();
+        let first: BTreeSet<_> = paths
+            .iter()
+            .map(|path| {
+                corpus
+                    .engine()
+                    .semantic_partition(path)
+                    .unwrap()
+                    .unwrap()
+                    .units[0]
+                    .input_key
+                    .clone()
+            })
+            .collect();
+        let keys = corpus.probe.document_keys.lock().unwrap().clone();
+        assert_eq!(
+            keys[..first.len()].iter().cloned().collect::<BTreeSet<_>>(),
+            first,
+            "resident={resident}: no body input may displace the first view of a later file"
+        );
+        assert!(keys.len() > first.len());
+        assert_eq!(
+            corpus
+                .probe
+                .publication_before_call
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(before, _)| *before == first.len() as u64)
+                .copied(),
+            Some((first.len() as u64, first.len() as u64)),
+            "resident={resident}: publish every initial view before admitting any body refinement"
+        );
+        assert_eq!(
+            keys.len(),
+            keys.iter().collect::<BTreeSet<_>>().len(),
+            "phase changes cannot resubmit accepted or in-flight keys"
+        );
+        assert_eq!(
+            corpus.prepare().document_calls,
+            0,
+            "unchanged restart retains both phases"
+        );
+    }
+}
+
+#[test]
+fn representation_metadata_upgrade_reuses_exact_vectors() {
+    let mut corpus = Corpus::unprepared(&[]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    assert!(!corpus.prepare().partial);
+    let mut record = serde_json::to_value(
+        corpus
+            .engine()
+            .semantic_partition(CODE_PATH)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    record["recipe_id"] = record["recipe_id"]
+        .as_str()
+        .unwrap()
+        .replace("+kinds1", "")
+        .replace("+kinds2", "")
+        .into();
+    for unit in record["units"].as_array_mut().unwrap() {
+        unit.as_object_mut().unwrap().remove("kind");
+    }
+    let legacy: context_foundry::neural::cache::PartitionRecord =
+        serde_json::from_value(record.clone()).unwrap();
+    assert!(
+        legacy
+            .units
+            .iter()
+            .all(|unit| unit.kind == context_foundry::neural::cache::CardKind::Unknown)
+    );
+    corpus.engine = None;
+    testkit::write_raw_partition(
+        &corpus.store,
+        CODE_PATH,
+        &serde_json::to_string(&record).unwrap(),
+    );
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    let upgraded = corpus.prepare();
+    assert!(!upgraded.partial);
+    assert_eq!(
+        upgraded.document_calls, 0,
+        "metadata versioning must not re-embed identical inputs"
+    );
+    let record = corpus
+        .engine()
+        .semantic_partition(CODE_PATH)
+        .unwrap()
+        .unwrap();
+    assert!(
+        record
+            .units
+            .iter()
+            .all(|unit| unit.kind == context_foundry::neural::cache::CardKind::Body)
+    );
+    assert_eq!(corpus.prepare().document_calls, 0);
+}
+
+#[test]
+fn container_role_upgrade_reuses_vectors_and_republishes_exact_roles() {
+    use context_foundry::neural::cache::{CardKind, PartitionRecord};
+    let path = "src/container_roles.rs";
+    let source = "impl Billing {\n    fn adjust() { settle(); }\n}\n";
+    let mut corpus = Corpus::unprepared(&[(path.into(), source.into())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    assert!(!corpus.prepare().partial);
+    let current = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    assert!(
+        current
+            .units
+            .iter()
+            .any(|unit| unit.kind == CardKind::ContainerFragment)
+    );
+    let digest = corpus.digest();
+    let previous_recipe = current.recipe_id.replace("+kinds2", "+kinds1");
+    assert_ne!(previous_recipe, current.recipe_id);
+    let calls = corpus.probe.document_calls();
+    let control = Control::unbounded();
+
+    // Seed the complete previous metadata recipe, then publish its real ANN
+    // generation through the ordinary cache-backed rebuild. The rendered inputs
+    // are unchanged; kinds1 classified every body-recipe location as Body.
+    corpus.engine = None;
+    let previous: Vec<(String, PartitionRecord)> =
+        testkit::table_rows(&corpus.store, "semantic_partitions")
+            .into_iter()
+            .map(|(path, raw)| {
+                let mut record: PartitionRecord = serde_json::from_str(&raw).unwrap();
+                assert_eq!(record.recipe_id, current.recipe_id);
+                record.recipe_id = previous_recipe.clone();
+                for unit in &mut record.units {
+                    unit.kind = CardKind::Body;
+                }
+                (path, record)
+            })
+            .collect();
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    for (previous_path, record) in &previous {
+        corpus
+            .engine()
+            .semantic_record_partition(
+                previous_path,
+                &record.source_hash,
+                &record.recipe_id,
+                &digest,
+                Some(&record.units),
+                &|body| {
+                    assert_eq!(context_foundry::digest(body.as_bytes()), record.source_hash);
+                    Ok(record.units.clone())
+                },
+            )
+            .unwrap();
+    }
+    corpus
+        .engine()
+        .semantic_begin_run(|state| {
+            state.recipe_id = Some(previous_recipe.clone());
+            state.coverage = None;
+            state.bootstrap = None;
+            state.state = "stopped".into();
+        })
+        .unwrap();
+    let published = corpus.engine().semantic_rebuild_index(&control).unwrap();
+    assert!(published.rebuilt && published.reason.is_none() && published.entries > 0);
+    let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+    let prior_generation =
+        index::validate_generation_with(&store, &digest, &previous_recipe, DIMENSIONS, &control)
+            .unwrap();
+    assert_eq!(prior_generation.manifest.coverage, index::COVERAGE_COMPLETE);
+    assert!(
+        prior_generation
+            .labels
+            .values()
+            .flat_map(|locations| locations.iter())
+            .all(|location| location.kind == CardKind::Body)
+    );
+    for unit in &current.units {
+        assert!(
+            prior_generation.labels[&unit.input_key]
+                .iter()
+                .any(|location| {
+                    location.path == path
+                        && location.start == unit.start as u64
+                        && location.end == unit.end as u64
+                        && location.kind == CardKind::Body
+                })
+        );
+    }
+    assert_eq!(corpus.probe.document_calls(), calls);
+
+    let upgraded = corpus.prepare();
+    assert!(!upgraded.partial && upgraded.index_published);
+    assert_eq!(upgraded.document_calls, 0);
+    assert_eq!(upgraded.input_tokens, 0);
+    assert_eq!(corpus.probe.document_calls(), calls);
+    let restored = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    assert_eq!(restored.recipe_id, current.recipe_id);
+    assert_eq!(
+        restored.units, current.units,
+        "metadata changes neither source coordinates nor exact input keys"
+    );
+    let mapping = corpus
+        .engine()
+        .semantic_current_mapping(&control, &digest, &corpus.profile.recipe_id())
+        .unwrap();
+    assert!(
+        mapping
+            .units
+            .values()
+            .flat_map(|locations| locations.iter())
+            .any(|location| location.path == path && location.kind == CardKind::ContainerFragment)
+    );
+    let upgraded_generation =
+        index::validate_generation_with(&store, &digest, &current.recipe_id, DIMENSIONS, &control)
+            .unwrap();
+    assert_eq!(
+        upgraded_generation.manifest.coverage,
+        index::COVERAGE_COMPLETE
+    );
+    assert_eq!(
+        upgraded_generation.manifest.count,
+        prior_generation.manifest.count
+    );
+    assert_eq!(
+        upgraded_generation.labels.keys().collect::<BTreeSet<_>>(),
+        prior_generation.labels.keys().collect::<BTreeSet<_>>(),
+        "republication retains every exact cached input"
+    );
+    for unit in &current.units {
+        assert!(
+            upgraded_generation.labels[&unit.input_key]
+                .iter()
+                .any(|location| {
+                    location.path == path
+                        && location.start == unit.start as u64
+                        && location.end == unit.end as u64
+                        && location.kind == unit.kind
+                })
+        );
+    }
+    assert_eq!(corpus.prepare().document_calls, 0);
+    assert_eq!(corpus.probe.document_calls(), calls);
+}
+
+#[test]
+fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
+    use context_foundry::neural::{cache::CardKind, partition::Representation};
+    use context_foundry::store::{ContextOptions, RenderedForm};
+    let path = "src/refund_containers.rs";
+    let source: String = (0..12)
+        .map(|i| {
+            format!(
+                "impl RefundTiming{i} {{\n    fn operation_{i}() {{ apply_adjustment({i}); }}\n}}\n"
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&[(path.into(), source.clone())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert!(!corpus.prepare().partial);
+    let partition = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    let fragments: BTreeSet<_> = partition
+        .units
+        .iter()
+        .filter(|unit| unit.kind == CardKind::ContainerFragment)
+        .map(|unit| (unit.start as u64, unit.end as u64))
+        .collect();
+    let bodies: BTreeSet<_> = partition
+        .units
+        .iter()
+        .filter(|unit| unit.kind == CardKind::Body)
+        .map(|unit| (unit.start as u64, unit.end as u64))
+        .collect();
+    assert!(fragments.len() >= 12 && bodies.len() == 12);
+    let runtime = corpus.runtime();
+    let mut window = runtime
+        .window(
+            corpus.engine(),
+            "refund timing rules",
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    // A valid coarse/discovery window may consist entirely of high-scoring
+    // container fragments. They must not consume independently scored Body slots.
+    window.hits = window
+        .hits
+        .iter()
+        .filter(|hit| {
+            window
+                .units(hit)
+                .iter()
+                .any(|unit| unit.path == path && unit.kind == CardKind::ContainerFragment)
+        })
+        .cloned()
+        .collect();
+    assert!(!window.hits.is_empty());
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let result = corpus
+        .engine()
+        .context_candidates_with(
+            "refund timing rules",
+            Strategy::Search,
+            &Corpus::control().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let events = trace.snapshot();
+    // Refinement has four Body slots; final placement shares the existing
+    // four file slots with the interleaved lexical lane. Outlines are separate.
+    let ranked: Vec<_> = result
+        .batch
+        .items
+        .iter()
+        .filter(|item| {
+            item.handle
+                .as_ref()
+                .is_some_and(|handle| handle.path == path)
+                && !matches!(item.forms.first(), Some(RenderedForm::Outline(_)))
+        })
+        .collect();
+    assert_eq!(ranked.len(), 4);
+    assert!(ranked.iter().any(|item| item.semantic.is_some()));
+    assert!(ranked.iter().any(|item| item.semantic.is_none()));
+    for item in ranked {
+        let handle = item.handle.as_ref().unwrap();
+        assert_eq!(handle.sha256, partition.source_hash);
+        assert_eq!(
+            item.forms[0],
+            RenderedForm::Verbatim(source[handle.start as usize..handle.end as usize].into())
+        );
+        if item.semantic.is_some() {
+            assert!(bodies.contains(&(handle.start, handle.end)));
+            assert!(!fragments.contains(&(handle.start, handle.end)));
+        } else {
+            assert!(
+                events["events"].as_array().unwrap().iter().any(|event| {
+                    event["stage"] == "materialization"
+                        && event["origin"] == "lexical"
+                        && event["excerpt"] == serde_json::to_value(handle).unwrap()
+                }),
+                "the other file slots retain current lexical evidence: {events}"
+            );
+        }
+    }
+    let refined: Vec<_> = events["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| {
+            event["stage"] == "selection"
+                && event["refined"] == true
+                && event["outcome"] == "eligible"
+                && event["unit"]["path"] == path
+        })
+        .collect();
+    assert_eq!(refined.len(), 4);
+    assert!(refined.iter().all(|event| event["representation"] == "body"
+        && bodies.contains(&(
+            event["unit"]["start"].as_u64().unwrap(),
+            event["unit"]["end"].as_u64().unwrap(),
+        ))));
+    let packed = response::pack_enriched_context(
+        &result,
+        None,
+        Budget::request(BUDGET),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.tokens <= BUDGET);
+    assert!(
+        packed.text.contains("apply_adjustment"),
+        "body evidence crosses the ordinary response boundary"
+    );
+    let before = corpus.probe.document_calls();
+    assert_eq!(corpus.prepare().document_calls, 0);
+    assert_eq!(corpus.probe.document_calls(), before);
+}
+
+#[test]
+fn experimental_body_placement_survives_real_partial_to_complete_publication() {
+    use context_foundry::neural::{cache::CardKind, partition::Representation};
+    use context_foundry::store::ContextOptions;
+
+    let query = "quasar zephyr lantern";
+    let lexical_path = "src/target_reconciliation.rs";
+    let noise_paths: BTreeSet<_> = (0..40)
+        .map(|n| format!("src/ordinary_inventory_{n:02}.rs"))
+        .collect();
+    let mut extra: Vec<_> = noise_paths
+        .iter()
+        .enumerate()
+        .map(|(n, path)| {
+            (
+                path.clone(),
+                format!("fn ordinary_inventory_{n}() {{ record_serial({n}); }}\n"),
+            )
+        })
+        .collect();
+    extra.push((
+        lexical_path.into(),
+        "fn target_reconciliation() {\n    // quasar zephyr lantern\n    preserve_transaction();\n}\n"
+            .into(),
+    ));
+
+    for representation in [
+        Representation::Body { parent_tokens: 0 },
+        Representation::Hierarchy { parent_tokens: 0 },
+        Representation::Address,
+    ] {
+        let address = representation == Representation::Address;
+        let hierarchy = matches!(representation, Representation::Hierarchy { .. });
+        let retained_kind = if address {
+            CardKind::Address
+        } else {
+            CardKind::Body
+        };
+        let mut corpus = Corpus::unprepared(&extra);
+        select_body_recipe(&mut corpus, 512, 0, None);
+        Arc::make_mut(&mut corpus.profile).representation = representation;
+        corpus.profile.validate().unwrap();
+        std::fs::write(
+            &corpus.profile_path,
+            serde_json::to_vec(&*corpus.profile).unwrap(),
+        )
+        .unwrap();
+        assert!(!corpus.prepare().partial);
+        let digest = corpus.digest();
+        let recipe = corpus.profile.recipe_id();
+        let original = corpus
+            .engine()
+            .semantic_current_mapping(&Corpus::control(), &digest, &recipe)
+            .unwrap();
+        assert!(original.scope.complete);
+        for path in &noise_paths {
+            assert_eq!(
+                original
+                    .units
+                    .values()
+                    .flat_map(|units| units.iter())
+                    .filter(|unit| { unit.path == *path && unit.kind == retained_kind })
+                    .count(),
+                1,
+                "one complete small callable per dense file: {representation:?} {path}"
+            );
+        }
+
+        // This is a placement regression, not an embedding-quality or ANN
+        // repeatability claim. Control scores while preserving all real
+        // prepared input keys, source hashes, roles and exact byte spans.
+        let query_vector = concept_vector(&provider::render(&corpus.profile.query_template, query));
+        let opposite: Vec<_> = query_vector.iter().map(|value| -*value).collect();
+        let entries: Vec<_> = original
+            .units
+            .iter()
+            .map(|(key, locations)| {
+                let noise = locations
+                    .iter()
+                    .any(|unit| noise_paths.contains(&unit.path) && unit.kind == retained_kind);
+                (
+                    key.clone(),
+                    if noise {
+                        query_vector.clone()
+                    } else {
+                        opposite.clone()
+                    },
+                )
+            })
+            .collect();
+        corpus
+            .engine()
+            .semantic_cache_commit(&entries, &digest, DIMENSIONS, DEFAULT_CACHE_CAP_BYTES)
+            .unwrap();
+
+        // The new source has no query terms and cannot enter the retained
+        // ordinary window or the first16 lexical discovery documents. Its
+        // missing partition changes actual coverage, not existing candidates.
+        let late_path = "src/late_checkpoint.rs";
+        let late_source = "fn late_checkpoint() { remember_checkpoint(711); }\n";
+        assert!(
+            corpus
+                .engine()
+                .replace_source(late_path, late_source)
+                .unwrap()
+        );
+        corpus.engine_mut().refresh(&Corpus::control()).unwrap();
+        let revision = corpus.engine().source_revision().unwrap();
+        assert_eq!(revision, original.scope.source_revision + 1);
+        let rebuilt = corpus
+            .engine()
+            .semantic_rebuild_index(&Corpus::control())
+            .unwrap();
+        assert!(rebuilt.rebuilt && rebuilt.reason.is_none(), "{rebuilt:?}");
+        let partial = corpus
+            .engine()
+            .semantic_current_mapping(&Corpus::control(), &digest, &recipe)
+            .unwrap();
+        assert!(!partial.scope.complete);
+        assert_eq!(partial.scope.source_revision, revision);
+        assert_eq!(partial.units, original.units);
+        let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+        let published = index::validate_generation_with(
+            &store,
+            &digest,
+            &recipe,
+            DIMENSIONS,
+            &Corpus::control(),
+        )
+        .unwrap();
+        assert_eq!(published.manifest.coverage, index::COVERAGE_PARTIAL);
+        assert_eq!(published.manifest.source_revision, revision);
+        let hashes: Vec<_> = extra
+            .iter()
+            .map(|(path, _)| {
+                (
+                    path.clone(),
+                    corpus.engine().source(path).unwrap().unwrap().hash,
+                )
+            })
+            .collect();
+
+        let queries_before = corpus.probe.query_calls();
+        let runtime = Arc::new(corpus.runtime());
+        let slot: SemanticSlot = Some(Ok(Arc::clone(&runtime)));
+        let mut identities = Vec::new();
+        let mut experimental_orders = Vec::new();
+        let mut default_orders = Vec::new();
+        for complete in [false, true] {
+            if complete {
+                let inputs_before = corpus.probe.document_inputs();
+                let report = corpus.prepare();
+                assert!(!report.partial && report.index_published, "{report:?}");
+                let current = corpus
+                    .engine()
+                    .semantic_current_mapping(&Corpus::control(), &digest, &recipe)
+                    .unwrap();
+                assert!(current.scope.complete);
+                assert_eq!(current.scope.source_revision, revision);
+                for (key, locations) in &original.units {
+                    assert_eq!(current.units.get(key), Some(locations));
+                }
+                let new_keys: BTreeSet<_> = current
+                    .units
+                    .keys()
+                    .filter(|key| !original.units.contains_key(*key))
+                    .collect();
+                assert!(!new_keys.is_empty());
+                assert!(new_keys.iter().all(|key| {
+                    current.units[*key]
+                        .iter()
+                        .all(|unit| unit.path == late_path)
+                }));
+                assert_eq!(report.embedded_units, new_keys.len() as u64);
+                assert_eq!(
+                    corpus.probe.document_inputs() - inputs_before,
+                    new_keys.len() as u64
+                );
+                assert!(report.document_calls > 0);
+                let published = index::validate_generation_with(
+                    &store,
+                    &digest,
+                    &recipe,
+                    DIMENSIONS,
+                    &Corpus::control(),
+                )
+                .unwrap();
+                assert_eq!(published.manifest.coverage, index::COVERAGE_COMPLETE);
+                assert_eq!(published.manifest.source_revision, revision);
+            }
+            let documents_before = corpus.probe.document_calls();
+            assert_eq!(corpus.engine().source_revision().unwrap(), revision);
+            for (path, hash) in &hashes {
+                assert_eq!(&corpus.engine().source(path).unwrap().unwrap().hash, hash);
+            }
+            let mut window = runtime
+                .window(
+                    corpus.engine(),
+                    query,
+                    Instant::now() + Duration::from_secs(30),
+                    &Corpus::control(),
+                )
+                .unwrap();
+            let coverage = if complete { "ready" } else { "partial" };
+            assert_eq!(window.coverage_at(revision), coverage);
+            assert_eq!(window.complete_at(), complete.then_some(revision));
+
+            // Hold the original 40 candidate inputs/locations fixed across
+            // two real immutable publications. Numeric ANN label IDs may
+            // change on rebuild; input identity and scores must not change.
+            let mut retained: Vec<_> = window
+                .hits
+                .iter()
+                .filter(|hit| {
+                    window
+                        .units(hit)
+                        .iter()
+                        .any(|unit| noise_paths.contains(&unit.path) && unit.kind == retained_kind)
+                })
+                .cloned()
+                .collect();
+            retained.sort_by(|left, right| {
+                window.units(left)[0]
+                    .path
+                    .cmp(&window.units(right)[0].path)
+                    .then_with(|| window.input_key(left).cmp(window.input_key(right)))
+            });
+            assert_eq!(retained.len(), 40, "{representation:?} {coverage}");
+            assert!(retained.iter().all(|hit| {
+                let locations = window.units(hit);
+                locations.len() == 1
+                    && locations[0].kind == retained_kind
+                    && noise_paths.contains(&locations[0].path)
+            }));
+            window.hits = retained;
+            identities.push(
+                window
+                    .hits
+                    .iter()
+                    .map(|hit| {
+                        (
+                            window.input_key(hit).to_owned(),
+                            hit.distance.to_bits(),
+                            window.units(hit).to_vec(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            );
+
+            for experimental in [false, true] {
+                let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+                let result = corpus
+                    .engine()
+                    .context_candidates_with(
+                        query,
+                        Strategy::Search,
+                        &Corpus::control().with_trace(Some(trace.clone())),
+                        &ContextOptions {
+                            dense: Some(&window),
+                            experimental_behavior: experimental,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(result.batch.semantic.as_deref(), Some(coverage));
+                assert_eq!(result.batch.freshness.source_revision, revision);
+                let order: Vec<_> = result
+                    .batch
+                    .items
+                    .iter()
+                    .filter_map(|item| {
+                        item.handle.as_ref().map(|handle| {
+                            (
+                                handle.path.clone(),
+                                handle.start,
+                                handle.end,
+                                handle.sha256.clone(),
+                                item.semantic.is_some(),
+                            )
+                        })
+                    })
+                    .collect();
+                assert_eq!(order.len(), 32, "the candidate bound remains unchanged");
+                if !address {
+                    for (path, start, end, hash, semantic) in &order {
+                        if *semantic {
+                            assert!(
+                                original.units.values().flat_map(|units| units.iter()).any(
+                                    |unit| {
+                                        unit.kind == CardKind::Body
+                                            && unit.path == *path
+                                            && unit.start == *start
+                                            && unit.end == *end
+                                            && unit.source_sha256 == *hash
+                                    }
+                                ),
+                                "delivered semantic evidence preserves its scored span"
+                            );
+                        }
+                    }
+                }
+                let lexical_position = order.iter().position(|item| item.0 == lexical_path);
+                let preserved = experimental && (!address || !complete);
+                assert_eq!(
+                    lexical_position,
+                    preserved.then_some(usize::from(hierarchy)),
+                    "{representation:?} {coverage} experimental={experimental}"
+                );
+                assert!(!order.iter().any(|item| item.0 == late_path));
+                let snapshot = trace.snapshot();
+                let policies: Vec<_> = snapshot["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|event| event["stage"] == "placement_policy")
+                    .collect();
+                if experimental && (!address || !complete) {
+                    assert_eq!(policies.len(), 1, "{snapshot}");
+                    assert_eq!(
+                        policies[0]["policy"],
+                        if address {
+                            "partial_prose_interleave_v1"
+                        } else {
+                            "body_prose_interleave_v1"
+                        }
+                    );
+                    assert_eq!(policies[0]["coverage"], coverage);
+                    assert_eq!(policies[0]["lexical_first"], !hierarchy);
+                    assert_eq!(
+                        policies[0]["eligible_refined_locations"].as_u64().unwrap() > 0,
+                        hierarchy
+                    );
+                } else {
+                    assert!(policies.is_empty(), "{snapshot}");
+                }
+                let packed = response::pack_enriched_context(
+                    &result,
+                    None,
+                    Budget::request(BUDGET),
+                    &response::stdout_bytes,
+                )
+                .unwrap();
+                assert!(packed.tokens <= BUDGET);
+                let parsed = parse_v2(&packed.text).unwrap();
+                assert_eq!(
+                    item_of(&parsed, lexical_path).is_some(),
+                    preserved,
+                    "{representation:?} {coverage} experimental={experimental}: {}",
+                    packed.text
+                );
+                for item in parsed.items.iter().filter(|item| !item.handle.is_empty()) {
+                    let (path, start, end) = span_of(&item.handle);
+                    assert!(start < end);
+                    assert!(
+                        order
+                            .iter()
+                            .any(|unit| unit.0 == path && unit.1 == start && unit.2 == end)
+                    );
+                }
+                if experimental {
+                    experimental_orders.push(order);
+                } else {
+                    default_orders.push(order);
+                }
+            }
+
+            // The production owner still bypasses query inference for an
+            // anchored identifier, regardless of coverage or experimental mode.
+            let anchored_calls = corpus.probe.query_calls();
+            let options = ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            };
+            let anchored = mcp::context_primary_with_options(
+                &slot,
+                corpus.engine(),
+                "target_reconciliation",
+                Strategy::Search,
+                &Corpus::control(),
+                options,
+            )
+            .unwrap();
+            let lexical = mcp::context_primary_with_options(
+                &None,
+                corpus.engine(),
+                "target_reconciliation",
+                Strategy::Search,
+                &Corpus::control(),
+                options,
+            )
+            .unwrap();
+            let pack = |result: &context_foundry::memory::MemoryContext| {
+                response::pack_enriched_context(
+                    result,
+                    None,
+                    Budget::request(BUDGET),
+                    &response::stdout_bytes,
+                )
+                .unwrap()
+            };
+            let anchored = pack(&anchored);
+            assert!(anchored.tokens <= BUDGET);
+            assert_eq!(anchored.text, pack(&lexical).text);
+            let anchored = parse_v2(&anchored.text).unwrap();
+            assert!(item_of(&anchored, lexical_path).is_some());
+            assert!(anchored.items.iter().all(|item| !item.semantic));
+            assert_eq!(corpus.probe.query_calls(), anchored_calls);
+            assert_eq!(corpus.probe.document_calls(), documents_before);
+        }
+        assert_eq!(
+            identities[0], identities[1],
+            "candidate geometry/scores changed"
+        );
+        assert_eq!(
+            default_orders[0], default_orders[1],
+            "default placement changed"
+        );
+        if !address {
+            assert_eq!(
+                experimental_orders[0], experimental_orders[1],
+                "coverage alone must not change Body/Hierarchy candidate ordering"
+            );
+        }
+        assert_eq!(corpus.probe.query_calls() - queries_before, 2);
+        runtime.shutdown();
+    }
+}
+
+#[test]
+fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discovery() {
+    use context_foundry::neural::{cache::CardKind, partition::Representation};
+    use context_foundry::store::{ContextOptions, RenderedForm};
+    use context_foundry::syntax::{self, Lang, UnitKind};
+
+    let path = "src/owner_scope.rs";
+    let query = "quasar zephyr balance";
+    let lines: String = (0..400)
+        .map(|n| format!("    let carried_{n} = balance + {n};\n"))
+        .collect();
+    let target = format!(
+        "fn reconcile_order() {{\n    // quasar zephyr balance\n{lines}    preserve_transaction();\n}}\n"
+    );
+    let siblings: String = (0..8)
+        .map(|n| format!("    fn unrelated_{n}() {{ unrelated_action({n}); }}\n"))
+        .collect();
+    let source = format!("{target}impl Neighbors {{\n{siblings}}}\n");
+    let owner = syntax::units(&source, Lang::Rust)
+        .into_iter()
+        .find(|unit| unit.kind == UnitKind::Fn && unit.start == 0)
+        .expect("the lexical match belongs to a complete callable");
+    assert!(owner.end - owner.start > 8192);
+    let owner_range = owner.start as u64..owner.end as u64;
+    let mut corpus = Corpus::unprepared(&[(path.into(), source.clone())]);
+    select_body_recipe(&mut corpus, 512, 0, None);
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 0 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert!(!corpus.prepare().partial);
+    let partition = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    let owned: BTreeSet<_> = partition
+        .units
+        .iter()
+        .filter(|unit| {
+            unit.kind == CardKind::Body && owner.start <= unit.start && unit.end <= owner.end
+        })
+        .map(|unit| (unit.start as u64, unit.end as u64))
+        .collect();
+    assert!(
+        owned.len() > 4,
+        "the callable has several exact body windows"
+    );
+    let preferred: BTreeSet<_> = owned.iter().rev().take(4).copied().collect();
+    assert!(preferred.iter().all(|(start, _)| *start > 8192));
+    assert!(
+        partition
+            .units
+            .iter()
+            .filter(|unit| unit.kind == CardKind::Body && unit.start >= owner.end)
+            .count()
+            >= 8,
+        "the same file has enough siblings to exhaust its four slots"
+    );
+
+    // Controlled fixture vectors make every sibling strictly closer than
+    // every owned Body. Within the callable, its last four windows win, well
+    // beyond the first lexical document that contains the query words. This
+    // tests full-unit owner admission, not embedding quality.
+    // All keys, roles and source spans remain those produced by preparation.
+    let query_vector = concept_vector(&provider::render(&corpus.profile.query_template, query));
+    let opposite: Vec<_> = query_vector.iter().map(|value| -*value).collect();
+    assert_eq!(
+        query_vector[0], 0.0,
+        "the query has no first-dimension concept"
+    );
+    let mut tail_vector = opposite.clone();
+    tail_vector[0] = 1.0;
+    let norm = tail_vector
+        .iter()
+        .map(|value| value * value)
+        .sum::<f32>()
+        .sqrt();
+    tail_vector.iter_mut().for_each(|value| *value /= norm);
+    let entries: Vec<_> = partition
+        .units
+        .iter()
+        .map(|unit| {
+            (
+                unit.input_key.clone(),
+                if unit.kind == CardKind::Body
+                    && owned.contains(&(unit.start as u64, unit.end as u64))
+                {
+                    if preferred.contains(&(unit.start as u64, unit.end as u64)) {
+                        tail_vector.clone()
+                    } else {
+                        opposite.clone()
+                    }
+                } else {
+                    query_vector.clone()
+                },
+            )
+        })
+        .collect();
+    corpus
+        .engine()
+        .semantic_cache_commit(
+            &entries,
+            &corpus.digest(),
+            DIMENSIONS,
+            DEFAULT_CACHE_CAP_BYTES,
+        )
+        .unwrap();
+    let rebuilt = corpus
+        .engine()
+        .semantic_rebuild_index(&Corpus::control())
+        .unwrap();
+    assert!(rebuilt.rebuilt && rebuilt.reason.is_none(), "{rebuilt:?}");
+    let documents_before = corpus.probe.document_calls();
+    let queries_before = corpus.probe.query_calls();
+    let runtime = corpus.runtime();
+    let mut window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let original_hits = window.hits.clone();
+    for discovery_kind in [CardKind::File, CardKind::Body, CardKind::ContainerFragment] {
+        // Tiny Body/fragment hits discover the file but cannot claim ownership
+        // of its refinement. The current lexical callable remains the owner.
+        window.hits = original_hits
+            .iter()
+            .filter(|hit| {
+                window.units(hit).iter().any(|unit| {
+                    unit.path == path
+                        && unit.kind == discovery_kind
+                        && (discovery_kind == CardKind::File
+                            || (unit.start >= owner_range.end && unit.end - unit.start < 128))
+                })
+            })
+            .take(1)
+            .cloned()
+            .collect();
+        assert!(
+            !window.hits.is_empty(),
+            "missing {discovery_kind:?} discovery"
+        );
+        let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+        let result = corpus
+            .engine()
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Corpus::control().with_trace(Some(trace.clone())),
+                &ContextOptions {
+                    dense: Some(&window),
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let events = trace.snapshot();
+        assert!(
+            events["events"].as_array().unwrap().iter().any(|event| {
+                event["stage"] == "selection"
+                    && event["origin"] == "lexical"
+                    && event["outcome"] == "eligible"
+                    && event["unit"]["path"] == path
+                    && event["unit"]["start"] == owner_range.start
+                    && event["unit"]["end"] == owner_range.end
+                    && event["document"]["end"]
+                        .as_u64()
+                        .is_some_and(|end| end < preferred.first().unwrap().0)
+            }),
+            "the current lexical document preserves its larger callable: {events}"
+        );
+        let scope = events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| event["stage"] == "refinement_scope" && event["path"] == path)
+            .expect("the owner decision is auditable");
+        assert_eq!(scope["policy"], "current_owner_narrowing_v1");
+        assert!(scope["fallback"].is_null());
+        assert_eq!(
+            scope["ranges"],
+            serde_json::json!([[owner_range.start, owner_range.end]])
+        );
+        let work = &events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| event["stage"] == "refinement" && event["outcome"] == "scored")
+            .unwrap()["work"];
+        assert_eq!(work["owner_scoped_paths"], 1);
+        assert!(work["owner_filtered_locations"].as_u64().unwrap() >= 8);
+        assert!(work["units_considered"].as_u64().unwrap() <= 32_768);
+        assert!(work["vectors_scored"].as_u64().unwrap() <= 4096);
+        assert!(work["retained_locations"].as_u64().unwrap() <= 80 * 4);
+        let refined: Vec<_> = events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                event["stage"] == "selection"
+                    && event["refined"] == true
+                    && event["outcome"] == "eligible"
+                    && event["unit"]["path"] == path
+            })
+            .collect();
+        assert_eq!(refined.len(), 4, "{discovery_kind:?}: {events}");
+        assert!(
+            refined.iter().all(|event| {
+                event["representation"] == "body"
+                    && preferred.contains(&(
+                        event["unit"]["start"].as_u64().unwrap(),
+                        event["unit"]["end"].as_u64().unwrap(),
+                    ))
+            }),
+            "a sibling must not consume an owned refinement slot: {events}"
+        );
+        // Context appends a separate whole-file outline after the ranked
+        // units. It is not a fifth independently scored refinement passage.
+        let (outlines, delivered): (Vec<_>, Vec<_>) = result
+            .batch
+            .items
+            .iter()
+            .filter(|item| {
+                item.handle
+                    .as_ref()
+                    .is_some_and(|handle| handle.path == path)
+            })
+            .partition(|item| matches!(item.forms.first(), Some(RenderedForm::Outline(_))));
+        assert_eq!(outlines.len(), 1, "{discovery_kind:?}");
+        let outline = outlines[0];
+        assert!(outline.semantic.is_none());
+        let handle = outline.handle.as_ref().unwrap();
+        assert_eq!((handle.start, handle.end), (0, source.len() as u64));
+        assert_eq!(handle.sha256, partition.source_hash);
+        assert!(
+            outline
+                .forms
+                .iter()
+                .all(|form| matches!(form, RenderedForm::Outline(_) | RenderedForm::OutlineMin(_)))
+        );
+        assert_eq!(delivered.len(), 4, "{discovery_kind:?}");
+        assert!(delivered.iter().any(|item| item.semantic.is_some()));
+        assert!(delivered.iter().any(|item| item.semantic.is_none()));
+        let mut lexical_spans = BTreeSet::new();
+        for item in delivered {
+            let handle = item.handle.as_ref().unwrap();
+            if item.semantic.is_some() {
+                assert!(preferred.contains(&(handle.start, handle.end)));
+            } else {
+                assert!(owner_range.start <= handle.start && handle.end <= owner_range.end);
+                assert!(
+                    events["events"].as_array().unwrap().iter().any(|event| {
+                        event["stage"] == "materialization"
+                            && event["origin"] == "lexical"
+                            && event["unit"]["start"] == owner_range.start
+                            && event["unit"]["end"] == owner_range.end
+                            && event["excerpt"] == serde_json::to_value(handle).unwrap()
+                    }),
+                    "lexical slots must retain the current callable's exact excerpt: {events}"
+                );
+                lexical_spans.insert((handle.start, handle.end));
+            }
+            assert_eq!(handle.sha256, partition.source_hash);
+            assert_eq!(
+                item.forms[0],
+                RenderedForm::Verbatim(source[handle.start as usize..handle.end as usize].into())
+            );
+        }
+        let packed = response::pack_enriched_context(
+            &result,
+            None,
+            Budget::request(BUDGET),
+            &response::stdout_bytes,
+        )
+        .unwrap();
+        assert!(packed.tokens <= BUDGET);
+        let parsed = parse_v2(&packed.text).unwrap();
+        let mut packed_bodies = 0;
+        for item in parsed.items.iter().filter(|item| !item.handle.is_empty()) {
+            let (item_path, start, end) = span_of(&item.handle);
+            if item_path != path {
+                continue;
+            }
+            if item.form.as_deref() == Some("outline") {
+                assert!(!item.semantic);
+                assert_eq!((start, end), (0, source.len() as u64));
+            } else if item.semantic {
+                packed_bodies += 1;
+                assert!(preferred.contains(&(start, end)));
+            } else {
+                assert!(lexical_spans.contains(&(start, end)));
+            }
+        }
+        assert!(packed_bodies > 0, "{discovery_kind:?}: {}", packed.text);
+    }
+    assert_eq!(corpus.probe.query_calls(), queries_before + 1);
+    assert_eq!(corpus.probe.document_calls(), documents_before);
+}
+
+#[test]
+fn serving_rejects_a_rehashed_mapping_that_claims_the_wrong_representation() {
+    let corpus = Corpus::new(&[]);
+    let runtime = corpus.runtime();
+    let window = || {
+        runtime.window(
+            corpus.engine(),
+            DUSK_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &Control::unbounded(),
+        )
+    };
+    assert!(window().is_ok());
+    let directory = index::generation_dir(&corpus.store, &corpus.digest());
+    let manifest_path = directory.join(index::MANIFEST_FILE);
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    let old_labels = directory.join(format!(
+        "locations-{}.json",
+        manifest["labels_sha256"].as_str().unwrap()
+    ));
+    let mut labels: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(old_labels).unwrap()).unwrap();
+    labels["labels"][0]["units"][0]["kind"] = "body".into();
+    let bytes = serde_json::to_vec(&labels).unwrap();
+    let hash = context_foundry::digest(&bytes);
+    std::fs::write(directory.join(format!("locations-{hash}.json")), bytes).unwrap();
+    manifest["labels_sha256"] = hash.into();
+    std::fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let calls = corpus.probe.query_calls();
+    let refused = window().unwrap_err();
+    assert_eq!(refused.code, "index_unavailable");
+    assert_eq!(
+        corpus.probe.query_calls(),
+        calls,
+        "reject malformed provenance before embedding"
+    );
+    runtime.shutdown();
+}
+
+#[test]
+fn hierarchy_refinement_preserves_scored_body_spans_and_rechecks_freshness() {
+    use context_foundry::neural::cache::CardKind;
+    use context_foundry::neural::partition::Representation;
+    use context_foundry::store::ContextOptions;
+    let path = "src/settlement.rs";
+    let source = format!(
+        "/// Reimbursement timing for cancelled transfers.\nfn settle() {{\n{}    issue_credit();\n}}\n{}",
+        "    // Preserve the original transaction state.\n".repeat(48),
+        "// refund timing is discussed elsewhere\n".repeat(70),
+    );
+    let shared_path = "src/settlement_copy.rs";
+    let mut extra = vec![(path.into(), source.clone()), (shared_path.into(), source)];
+    extra.extend((0..128).map(|i| {
+        (
+            format!("src/unrelated_{i}.rs"),
+            format!("fn inventory_{i}() {{ record_serial({i}); }}\n"),
+        )
+    }));
+    let mut corpus = Corpus::unprepared(&extra);
+    select_body_recipe(&mut corpus, 2048, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert!(!corpus.prepare().partial);
+    let partition = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    let bodies: BTreeSet<_> = partition
+        .units
+        .iter()
+        .filter(|unit| unit.kind == CardKind::Body)
+        .map(|unit| (unit.start as u64, unit.end as u64))
+        .collect();
+    assert!(!bodies.is_empty());
+    let runtime = corpus.runtime();
+    let query = "refund timing rules";
+    let mut window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    // Exercise the refinement boundary with a coarse-only initial ANN window.
+    // The body inputs exist in the generation but none is in these initial hits.
+    window.hits = window
+        .hits
+        .iter()
+        .filter(|hit| {
+            window
+                .units(hit)
+                .iter()
+                .any(|unit| unit.kind == CardKind::File)
+        })
+        .cloned()
+        .collect();
+    assert!(!window.hits.is_empty());
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let select = || {
+        corpus
+            .engine()
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Corpus::control().with_trace(Some(trace.clone())),
+                &ContextOptions {
+                    dense: Some(&window),
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let result = select();
+    assert!(
+        trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["stage"] == "selection"
+                && event["refined"] == true
+                && event["representation"] == "body"
+                && event["outcome"] == "eligible"
+                && event["unit"]["path"] == path),
+        "bounded scoring must discover a published body beyond the initial ANN window"
+    );
+    assert!(
+        result.batch.items.iter().any(|item| {
+            item.semantic.is_some()
+                && item.handle.as_ref().is_some_and(|handle| {
+                    handle.path == path && bodies.contains(&(handle.start, handle.end))
+                })
+        }),
+        "an independently scored body passage must survive materialization"
+    );
+    // The generation has many unrelated vectors, but refinement reads only
+    // selected mappings and never needs to traverse those ANN nodes.
+    let mapping = corpus
+        .engine()
+        .semantic_current_mapping(
+            &Corpus::control(),
+            &corpus.digest(),
+            &corpus.profile.recipe_id(),
+        )
+        .unwrap();
+    assert!(mapping.units.len() > DENSE_WINDOW * 2);
+    let paths: BTreeSet<_> = mapping
+        .units
+        .values()
+        .flat_map(|units| units.iter().map(|unit| unit.path.clone()))
+        .collect();
+    let saved: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            (
+                path.clone(),
+                corpus.engine().semantic_partition(path).unwrap().unwrap(),
+            )
+        })
+        .collect();
+    let replace_mapping =
+        |path: &str,
+         record: &context_foundry::neural::cache::PartitionRecord,
+         units: &[context_foundry::neural::cache::PartitionUnit]| {
+            corpus
+                .engine()
+                .semantic_record_partition(
+                    path,
+                    &record.source_hash,
+                    &record.recipe_id,
+                    &record.function_digest,
+                    Some(units),
+                    &|_| Ok(units.to_vec()),
+                )
+                .unwrap();
+        };
+    let shared = saved
+        .iter()
+        .find(|(path, _)| path == shared_path)
+        .unwrap()
+        .1
+        .clone();
+    assert!(
+        shared
+            .units
+            .iter()
+            .filter(|unit| unit.kind == CardKind::Body)
+            .all(|unit| partition
+                .units
+                .iter()
+                .any(|other| other.input_key == unit.input_key))
+    );
+    let coarse: Vec<_> = shared
+        .units
+        .iter()
+        .filter(|unit| unit.kind == CardKind::File)
+        .cloned()
+        .collect();
+    let assert_joined_only = |before: usize| {
+        let snapshot = trace.snapshot();
+        let events = &snapshot["events"].as_array().unwrap()[before..];
+        assert!(events.iter().any(|event| event["stage"] == "selection"
+            && event["refined"] == true
+            && event["outcome"] == "eligible"
+            && event["unit"]["path"] == path));
+        assert!(
+            !events.iter().any(|event| event["stage"] == "selection"
+                && event["refined"] == true
+                && event["unit"]["path"] == shared_path),
+            "a shared input key cannot promote an unjoined location"
+        );
+    };
+    replace_mapping(shared_path, &shared, &coarse);
+    let before = trace.snapshot()["events"].as_array().unwrap().len();
+    select();
+    assert_joined_only(before);
+    // A row too large for bounded query decoding must not piggyback on the
+    // same input key's successfully joined provenance in the other file.
+    let mut oversized = shared.units.clone();
+    oversized.extend((0..corpus.source(shared_path).len()).map(|start| {
+        context_foundry::neural::cache::PartitionUnit {
+            kind: CardKind::Body,
+            start,
+            end: start + 1,
+            input_key: "ab".repeat(32),
+        }
+    }));
+    oversized.sort_by(|a, b| {
+        a.start
+            .cmp(&b.start)
+            .then_with(|| b.end.cmp(&a.end))
+            .then_with(|| a.input_key.cmp(&b.input_key))
+    });
+    assert!(serde_json::to_vec(&oversized).unwrap().len() > 512 * 1024);
+    replace_mapping(shared_path, &shared, &oversized);
+    let before = trace.snapshot()["events"].as_array().unwrap().len();
+    let bounded = select();
+    assert!(bounded.batch.counters.candidates_full);
+    let packed = response::pack_enriched_context(
+        &bounded,
+        None,
+        response::Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(
+        packed
+            .text
+            .lines()
+            .next()
+            .unwrap()
+            .contains("candidates:full")
+    );
+    assert_joined_only(before);
+    assert!(
+        trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|event| event["stage"] == "refinement")
+            .unwrap()["work"]["mapping_rows_skipped"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    replace_mapping(shared_path, &shared, &shared.units);
+    // Keep every selected source current but remove its fine partition work.
+    // The retained generation still contains body vectors: this specifically
+    // tests the selected metadata gate, not an empty global ANN shortcut.
+    for (path, record) in &saved {
+        let coarse: Vec<_> = record
+            .units
+            .iter()
+            .filter(|unit| unit.kind == CardKind::File)
+            .cloned()
+            .collect();
+        replace_mapping(path, record, &coarse);
+    }
+    select();
+    let last_work = || {
+        trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|event| event["stage"] == "refinement")
+            .unwrap()["work"]
+            .clone()
+    };
+    assert_eq!(last_work()["vectors_scored"], 0);
+    assert_eq!(last_work()["unpublished_units"], 0);
+    for (path, record) in &saved {
+        replace_mapping(path, record, &record.units);
+    }
+    // A current Body mapping alone is insufficient: its exact key must also
+    // occur in this retained publication before any resident vector is read.
+    let mut unpublished = partition.units.clone();
+    unpublished
+        .iter_mut()
+        .find(|unit| unit.kind == CardKind::Body)
+        .unwrap()
+        .input_key = "ef".repeat(32);
+    replace_mapping(path, &partition, &unpublished);
+    select();
+    assert!(last_work()["unpublished_units"].as_u64().unwrap() > 0);
+    replace_mapping(path, &partition, &partition.units);
+    corpus
+        .engine()
+        .replace_source(path, "fn replaced() {}\n")
+        .unwrap();
+    let fresh = select();
+    assert!(
+        fresh.batch.items.iter().all(|item| item
+            .handle
+            .as_ref()
+            .is_none_or(|handle| handle.path != path)),
+        "the retained query/generation cannot bypass the final source hash check"
+    );
+    runtime.shutdown();
+    assert!(
+        corpus.prepare().document_calls > 0,
+        "the changed source needs new body and overview inputs"
+    );
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "unchanged replay has no inference"
+    );
+}
+
+#[test]
+fn exact_body_keeps_matching_lexical_label_without_refocusing() {
+    use context_foundry::neural::{cache::CardKind, partition::Representation};
+    use context_foundry::store::{ContextOptions, RenderedForm};
+    let path = "src/refund_rule.rs";
+    let source = "fn refund_rule() { issue_credit(); }";
+    let mut corpus = Corpus::unprepared(&[(path.into(), source.into())]);
+    select_body_recipe(&mut corpus, 2048, 64, None);
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    assert!(!corpus.prepare().partial);
+    assert!(
+        corpus
+            .engine()
+            .semantic_partition(path)
+            .unwrap()
+            .unwrap()
+            .units
+            .iter()
+            .any(|unit| unit.kind == CardKind::Body && unit.start == 0 && unit.end == source.len())
+    );
+    let runtime = corpus.runtime();
+    let query = "refund timing rules";
+    let window = runtime
+        .window(
+            corpus.engine(),
+            query,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let context = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let item = context
+        .batch
+        .items
+        .iter()
+        .find(|item| {
+            item.handle.as_ref().is_some_and(|handle| {
+                handle.path == path && handle.start == 0 && handle.end == source.len() as u64
+            })
+        })
+        .unwrap();
+    assert_eq!(item.label, "fn refund_rule");
+    assert!(item.semantic.is_some());
+    assert!(
+        !item.is_dense_only(),
+        "the exact lexical delivery unit supports this body span"
+    );
+    assert_eq!(item.forms, vec![RenderedForm::Verbatim(source.into())]);
+    runtime.shutdown();
+}
+
+#[test]
+fn hierarchy_vectors_are_independent_and_incremental_with_shared_source_ranges() {
+    use context_foundry::neural::partition::Representation;
+    let path = "src/billing.rs";
+    let original = "impl Billing {\n fn refund() { transfer(400); }\n fn keep() { save(7); }\n}\n";
+    let mut corpus = Corpus::new(&[(path.into(), original.into())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    corpus.prepare();
+    let bodies = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    Arc::make_mut(&mut corpus.profile).representation =
+        Representation::Hierarchy { parent_tokens: 64 };
+    std::fs::write(
+        &corpus.profile_path,
+        serde_json::to_vec(&*corpus.profile).unwrap(),
+    )
+    .unwrap();
+    let prepared = corpus.prepare();
+    assert!(!prepared.partial);
+    assert!(
+        prepared.embedded_units >= 2,
+        "independent overviews are new"
+    );
+    let hierarchy = corpus.engine().semantic_partition(path).unwrap().unwrap();
+    for body in &bodies.units {
+        assert!(
+            hierarchy.units.contains(body),
+            "body key/range remains reusable"
+        );
+    }
+    assert_eq!(hierarchy.units.len(), bodies.units.len() + 2);
+    assert_eq!(corpus.prepare().document_calls, 0, "unchanged restart");
+    let edited = original.replace("transfer(400)", "transfer(800)");
+    corpus.engine().replace_source(path, &edited).unwrap();
+    let changed = corpus.prepare();
+    assert_eq!(
+        changed.embedded_units, 3,
+        "changed body plus independent parent and file"
+    );
+    let mapping = corpus
+        .engine()
+        .semantic_current_mapping(
+            &Control::unbounded(),
+            &corpus.digest(),
+            &corpus.profile.recipe_id(),
+        )
+        .unwrap();
+    assert!(mapping.scope.complete);
+    corpus.engine().replace_source(path, original).unwrap();
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "revert reuses all independent inputs"
+    );
+    corpus.engine().delete_source(path).unwrap();
+    corpus.prepare();
+    assert!(
+        corpus
+            .engine()
+            .semantic_current_mapping(
+                &Control::unbounded(),
+                &corpus.digest(),
+                &corpus.profile.recipe_id()
+            )
+            .unwrap()
+            .units
+            .values()
+            .all(|units| units.iter().all(|unit| unit.path != path))
+    );
+}
+
+#[test]
+fn body_recipe_uses_explicit_large_geometry_and_packs_short_and_long_inputs_by_actual_tokens() {
+    let source = format!(
+        "fn opaque() {{\n{}\n}}\n",
+        "    send_credit_with_backoff();\n".repeat(180)
+    );
+    let mut corpus = Corpus::unprepared(&[("src/long.rs".into(), source)]);
+    select_body_recipe(
+        &mut corpus,
+        4096,
+        64,
+        Some(provider::InputGeometry {
+            v: 1,
+            input_tokens: 8192,
+            batch_tokens: 8192,
+            sequences: 8,
+        }),
+    );
+    let report = corpus.prepare();
+    assert!(!report.partial, "{report:?}");
+    let batches = corpus.probe.document_batches.lock().unwrap().clone();
+    assert!(
+        batches.iter().flatten().any(|&n| n > 2048),
+        "large body reaches the provider intact"
+    );
+    assert!(
+        batches.iter().any(|b| b.len() > 2),
+        "short inputs are not capped by batch × worst-case size"
+    );
+    assert!(
+        batches.iter().all(|b| b.len() <= 8
+            && b.iter().sum::<usize>() <= 8192
+            && b.iter().all(|&n| n <= 4096))
+    );
+    assert_eq!(
+        batches
+            .iter()
+            .map(|b| b.iter().sum::<usize>() as u64)
+            .sum::<u64>(),
+        report.input_tokens
+    );
+    let runtime = corpus.runtime();
+    let query = "credit ".repeat(500);
+    runtime
+        .embed(&query, Instant::now() + Duration::from_secs(30))
+        .unwrap();
+    assert_eq!(
+        corpus.probe.queries().last(),
+        Some(&provider::render(&corpus.profile.query_template, &query)),
+        "the query also uses the explicit input limit without truncation"
+    );
+    let calls = corpus.probe.query_calls();
+    assert!(matches!(
+        runtime.embed(
+            &"credit ".repeat(1300),
+            Instant::now() + Duration::from_secs(30)
+        ),
+        Err(ProviderError::InputTooLarge(_))
+    ));
+    assert_eq!(corpus.probe.query_calls(), calls);
+    drop(runtime);
+    assert_eq!(corpus.prepare().document_calls, 0);
+}
+
+#[tokio::test]
+async fn body_recipe_mcp_maintenance_keeps_token_caps_and_reuses_unchanged_context() {
+    let extra: Vec<_> = (0..7)
+        .map(|i| {
+            (
+                format!("src/b{i}.rs"),
+                format!("fn b{i}() {{\n{}\n}}", "    send_credit();\n".repeat(48)),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::unprepared(&extra);
+    select_body_recipe(&mut corpus, 1536, 64, None);
+    let semantic = SemanticServing::with_provider(
+        corpus.profile_path.clone(),
+        maker(corpus.profile.descriptor.clone(), corpus.probe.clone()),
+    );
+    let served = corpus.serve_stdio(Some(semantic)).await;
+    assert!(!served.semantic_action("maintain").await.0);
+    served
+        .until("body coverage", |s| {
+            s["state"] == "waiting" && s["pending"]["paths"] == 0
+        })
+        .await;
+    let calls = corpus.probe.document_calls();
+    let original = corpus.source("src/b0.rs");
+    std::fs::write(
+        corpus.root.join("src/b0.rs"),
+        original.replace("send_credit", "return_credit"),
+    )
+    .unwrap();
+    served.index().await;
+    served
+        .until("body edit", |s| {
+            s["state"] == "waiting"
+                && s["pending"]["paths"] == 0
+                && corpus.probe.document_calls() > calls
+        })
+        .await;
+    let answer = served.context(LEDGER_QUERY).await;
+    assert_eq!(header_word(&answer), Some("ready"));
+    let batches = corpus.probe.document_batches.lock().unwrap().clone();
+    assert!(
+        batches
+            .iter()
+            .all(|b| b.len() <= 8 && b.iter().sum::<usize>() <= 2048)
+    );
+    assert!(batches.iter().flatten().any(|&n| n > 512));
+    served.close().await;
+}
+
+#[test]
+fn changed_restart_refreshes_only_affected_paths_and_matches_an_independent_audit() {
+    use context_foundry::neural::fault_names::{
+        MAPPING_FULL_PAGE, MAPPING_READ_SNAPSHOT, PARTITION_READ,
+    };
+    let extra: Vec<_> = (0..260)
+        .map(|n| {
+            (
+                format!("notes/{n:04}.md"),
+                "# Shared note\nbody\n".to_owned(),
+            )
+        })
+        .collect();
+    let mut corpus = Corpus::new(&extra);
+    let body = corpus.source(CODE_PATH);
+    accept_fixture_edit(&corpus, CODE_PATH, &format!("\n{body}"));
+    accept_fixture_edit(&corpus, "new.rs", "pub fn new_only() {}\n");
+    accept_fixture_edit(&corpus, "empty.rs", "\n");
+    corpus.engine().delete_source(DUSK_PATH).unwrap();
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    corpus
+        .engine()
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), 0);
+    assert_eq!(
+        fault::reached(PARTITION_READ),
+        3,
+        "only extant dirty sources"
+    );
+    assert_eq!(fault::reached(MAPPING_READ_SNAPSHOT), 1);
+    let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+    let state = corpus.engine().semantic_state().unwrap().unwrap();
+    let actual = index::validate_generation_with(
+        &store,
+        &corpus.digest(),
+        state.recipe_id.as_deref().unwrap(),
+        DIMENSIONS,
+        &Control::unbounded(),
+    )
+    .unwrap();
+    let expected = corpus
+        .engine()
+        .semantic_current_mapping(
+            &Control::unbounded(),
+            &corpus.digest(),
+            state.recipe_id.as_deref().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(actual.labels, expected.units);
+    assert_eq!(
+        actual.manifest.source_revision,
+        expected.scope.source_revision
+    );
+    assert_eq!(
+        actual
+            .manifest
+            .coverage_stats
+            .as_ref()
+            .unwrap()
+            .cached_current_units,
+        expected.units.values().map(|u| u.len() as u64).sum::<u64>()
+    );
+    assert!(
+        fault::reached(MAPPING_FULL_PAGE) > 0,
+        "audit remains independent"
+    );
+}
+
+#[test]
+fn publication_checkpoint_crash_child() {
+    let Ok(store) = std::env::var("FOUNDRY_MAPPING_CRASH_STORE") else {
+        return;
+    };
+    let point = std::env::var("FOUNDRY_MAPPING_CRASH_POINT").unwrap();
+    let engine = Engine::open_existing(std::path::Path::new(&store)).unwrap();
+    fault::arm(&point, 0, Action::Abort);
+    engine
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    panic!("crash point was not reached");
+}
+
+#[test]
+fn publication_checkpoint_and_manifest_crashes_replay_without_losing_changed_work() {
+    use context_foundry::neural::fault_names::{
+        MAPPING_CHECKPOINT_BEFORE_COMMIT, PUBLISH_AFTER_MANIFEST, PUBLISH_BEFORE_MANIFEST,
+    };
+    for point in [
+        MAPPING_CHECKPOINT_BEFORE_COMMIT,
+        PUBLISH_BEFORE_MANIFEST,
+        PUBLISH_AFTER_MANIFEST,
+    ] {
+        let mut corpus = Corpus::new(&[]);
+        let body = corpus.source(CODE_PATH);
+        accept_fixture_edit(&corpus, CODE_PATH, &format!("\n{body}"));
+        let calls = corpus.probe.document_calls();
+        corpus.engine = None;
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "publication_checkpoint_crash_child",
+                "--nocapture",
+            ])
+            .env("FOUNDRY_MAPPING_CRASH_STORE", &corpus.store)
+            .env("FOUNDRY_MAPPING_CRASH_POINT", point)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(!status.success(), "child must crash at {point}");
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(status.signal(), Some(libc::SIGABRT));
+        }
+        corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+        corpus
+            .engine()
+            .semantic_publish_pending(&Control::unbounded())
+            .unwrap();
+        let state = corpus.engine().semantic_state().unwrap().unwrap();
+        let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+        let actual = index::validate_generation_with(
+            &store,
+            &corpus.digest(),
+            state.recipe_id.as_deref().unwrap(),
+            DIMENSIONS,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        let expected = corpus
+            .engine()
+            .semantic_current_mapping(
+                &Control::unbounded(),
+                &corpus.digest(),
+                state.recipe_id.as_deref().unwrap(),
+            )
+            .unwrap();
+        assert_eq!(actual.labels, expected.units, "replay at {point}");
+        assert_eq!(corpus.probe.document_calls(), calls);
+    }
+}
+
+#[test]
+fn restarted_partial_mapping_refreshes_shared_cache_keys_without_a_partition_census() {
+    use context_foundry::neural::fault_names::{MAPPING_FULL_PAGE, PARTITION_READ};
+    let mut corpus = Corpus::new(&[]);
+    let state = corpus.engine().semantic_state().unwrap().unwrap();
+    let key = "ef".repeat(32);
+    for path in ["late-a.md", "late-b.md"] {
+        let e = corpus.engine();
+        e.replace_source(path, "late shared body\n").unwrap();
+        e.semantic_record_partition(
+            path,
+            &e.source(path).unwrap().unwrap().hash,
+            state.recipe_id.as_deref().unwrap(),
+            &corpus.digest(),
+            None,
+            &|body| {
+                Ok(vec![context_foundry::neural::cache::PartitionUnit {
+                    kind: context_foundry::neural::cache::CardKind::Address,
+                    start: 0,
+                    end: body.len(),
+                    input_key: key.clone(),
+                }])
+            },
+        )
+        .unwrap();
+    }
+    corpus
+        .engine()
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    let mut vector = vec![0.0; DIMENSIONS];
+    vector[0] = 1.0;
+    corpus
+        .engine()
+        .semantic_cache_commit(
+            &[(key.clone(), vector)],
+            &corpus.digest(),
+            DIMENSIONS,
+            DEFAULT_CACHE_CAP_BYTES,
+        )
+        .unwrap();
+    // Restart again after a cache-only commit; no source revision changed.
+    corpus.engine = None;
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    corpus
+        .engine()
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), 0);
+    assert_eq!(fault::reached(PARTITION_READ), 2);
+    let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+    let actual = index::validate_generation_with(
+        &store,
+        &corpus.digest(),
+        state.recipe_id.as_deref().unwrap(),
+        DIMENSIONS,
+        &Control::unbounded(),
+    )
+    .unwrap();
+    assert_eq!(actual.labels[&key].len(), 2);
+    assert_eq!(actual.manifest.coverage, "complete");
+    let expected = corpus
+        .engine()
+        .semantic_current_mapping(
+            &Control::unbounded(),
+            &corpus.digest(),
+            state.recipe_id.as_deref().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(actual.labels, expected.units);
+}
+
+#[test]
+fn schema_eleven_upgrade_preserves_cached_publication_and_is_atomic() {
+    use redb::{MultimapTableDefinition, TableDefinition};
+    let mut corpus = Corpus::new(&[]);
+    let original = corpus.engine().source(CODE_PATH).unwrap().unwrap();
+    corpus.engine = None;
+    let db = redb::Database::open(corpus.store.join("knowledge.redb")).unwrap();
+    let tx = db.begin_write().unwrap();
+    tx.delete_table(TableDefinition::<&str, &str>::new("semantic_mapping_rows"))
+        .unwrap();
+    tx.delete_table(TableDefinition::<&str, u64>::new("semantic_mapping_work"))
+        .unwrap();
+    tx.delete_multimap_table(MultimapTableDefinition::<&str, &str>::new(
+        "semantic_mapping_keys",
+    ))
+    .unwrap();
+    let mut meta = tx
+        .open_table(TableDefinition::<&str, &str>::new("meta"))
+        .unwrap();
+    meta.insert("schema", "11").unwrap();
+    meta.remove("semantic_mapping_checkpoint").unwrap();
+    drop(meta);
+    tx.commit().unwrap();
+    drop(db);
+    assert!(matches!(
+        Engine::open_existing(&corpus.store),
+        Err(context_foundry::FoundryError::UpgradeRequired { .. })
+    ));
+    fault::arm(
+        context_foundry::fault::names::UPGRADE_BEFORE_COMMIT,
+        0,
+        Action::Fail("upgrade interrupted".into()),
+    );
+    assert!(
+        Engine::upgrade_store(
+            &corpus.store,
+            context_foundry::SCHEMA_VERSION,
+            &Control::unbounded()
+        )
+        .is_err()
+    );
+    fault::disarm_all();
+    assert!(matches!(
+        Engine::open_existing(&corpus.store),
+        Err(context_foundry::FoundryError::UpgradeRequired { .. })
+    ));
+    Engine::upgrade_store(
+        &corpus.store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    assert_eq!(
+        corpus.engine().source(CODE_PATH).unwrap().unwrap().hash,
+        original.hash
+    );
+    assert!(matches!(
+        corpus
+            .engine()
+            .semantic_publish_pending(&Control::unbounded())
+            .unwrap(),
+        index::Publication::Current(_)
+    ));
+    accept_fixture_edit(&corpus, "after-upgrade.rs", "pub fn upgraded() {}\n");
+    corpus
+        .engine()
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    let calls = corpus.probe.document_calls();
+    assert_eq!(corpus.prepare().document_calls, 0);
+    assert_eq!(corpus.probe.document_calls(), calls);
+}
+
+#[test]
+fn explicit_repair_reconstructs_missing_disposable_mapping_tables_from_cached_authority() {
+    let mut corpus = Corpus::new(&[]);
+    let source = corpus.engine().source(CODE_PATH).unwrap().unwrap().hash;
+    let calls = corpus.probe.document_calls();
+    corpus.engine = None;
+    let db = redb::Database::open(corpus.store.join("knowledge.redb")).unwrap();
+    let tx = db.begin_write().unwrap();
+    tx.delete_table(redb::TableDefinition::<&str, &str>::new(
+        "semantic_mapping_rows",
+    ))
+    .unwrap();
+    tx.commit().unwrap();
+    drop(db);
+    assert!(
+        Engine::open_existing(&corpus.store).is_err(),
+        "ordinary open does not invent a missing lookup"
+    );
+    Engine::repair_index(&corpus.store, &Control::unbounded()).unwrap();
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    assert_eq!(
+        corpus.engine().source(CODE_PATH).unwrap().unwrap().hash,
+        source
+    );
+    assert!(matches!(
+        corpus
+            .engine()
+            .semantic_publish_pending(&Control::unbounded())
+            .unwrap(),
+        index::Publication::Current(_)
+    ));
+    assert_eq!(corpus.probe.document_calls(), calls);
+}
+
+#[test]
+fn offline_cli_source_commit_preserves_incremental_publication_obligations() {
+    use context_foundry::neural::fault_names::{MAPPING_FULL_PAGE, PARTITION_READ};
+    let mut corpus = Corpus::new(&[]);
+    std::fs::write(
+        corpus.root.join(CODE_PATH),
+        "pub fn offline_lexical_change() {}\n",
+    )
+    .unwrap();
+    corpus.engine = None;
+    let result = std::process::Command::new(env!("CARGO_BIN_EXE_foundry"))
+        .arg("--store")
+        .arg(&corpus.store)
+        .arg("index")
+        .arg(&corpus.root)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    corpus
+        .engine()
+        .semantic_publish_pending(&Control::unbounded())
+        .unwrap();
+    assert_eq!(fault::reached(MAPPING_FULL_PAGE), 0);
+    assert_eq!(fault::reached(PARTITION_READ), 1);
+    let status = corpus
+        .engine()
+        .semantic_status(&Control::unbounded())
+        .unwrap();
+    assert!(
+        status.unpartitioned_sources > 0,
+        "offline source requires new partition work"
+    );
 }

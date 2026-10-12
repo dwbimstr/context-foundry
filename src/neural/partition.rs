@@ -1,6 +1,9 @@
 //! 009 T004 card partition, recipe `cards-v1` (spec 009 § T004 "Cards, not
 //! bodies").
 //!
+//! T009's opt-in body/parent recipe lives in [`body`]. The address recipe
+//! described below remains the default, with its exact model inputs unchanged.
+//!
 //! One card per definition (001 T007's definitions: a named
 //! programming-language unit, a Rust `impl` excluded) and per Markdown
 //! section. A card is, line by line:
@@ -32,25 +35,71 @@
 use crate::neural::provider::{self, ProviderError};
 use crate::syntax::{self, Lang, Unit, UnitKind};
 
+pub mod body;
+pub mod hierarchy;
+
+/// Address cards remain the default and retain their exact model inputs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum Representation {
+    #[default]
+    #[serde(rename = "cards-v1")]
+    Address,
+    #[serde(rename = "body-v1")]
+    Body { parent_tokens: u32 },
+    /// Independent body, enclosing-unit and file overview inputs. Existing
+    /// body inputs reuse their exact keys; overviews have distinct domains.
+    #[serde(rename = "hierarchy-v1")]
+    Hierarchy { parent_tokens: u32 },
+    /// One extractive file overview, without computing body or parent cards.
+    /// Reuses the hierarchy file input for later expansion.
+    #[serde(rename = "overview-v1")]
+    Overview,
+}
+
+impl Representation {
+    pub fn is_address(&self) -> bool {
+        *self == Self::Address
+    }
+    pub fn recipe_id(self, tokenizer: &str, tokens: u32) -> String {
+        match self {
+            Self::Address => recipe_id(tokenizer, tokens),
+            Self::Body { parent_tokens } => format!(
+                "body-v1+kinds2+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                crate::store::SOURCE_UNIT_SCHEMA
+            ),
+            Self::Hierarchy { parent_tokens } => format!(
+                "hierarchy-v1+overview3+kinds2+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                crate::store::SOURCE_UNIT_SCHEMA
+            ),
+            Self::Overview => format!(
+                "overview-v1+overview3+kinds1+units{}:{tokens}+{tokenizer}",
+                crate::store::SOURCE_UNIT_SCHEMA
+            ),
+        }
+    }
+}
+
 /// The pinned recipe grammar version.
 pub const RECIPE_GRAMMAR: &str = "cards-v1";
 
 /// The partition recipe id for one tokenizer identity and card limit. It
 /// participates in mapping eligibility: a partition row under another
-/// recipe is stale. It names the search index version too, which changes
+/// recipe is stale. It names the source-unit grammar version too, which changes
 /// whenever units can (a grammar, language or unit-kind change, 001's index
 /// version gate): a source partitioned before such a change, even into no
 /// cards, is partitioned again, while unchanged card inputs keep their
 /// cached vectors.
 pub fn recipe_id(tokenizer_identity: &str, card_tokens: u32) -> String {
-    let units = crate::store::SEARCH_SCHEMA;
-    format!("{RECIPE_GRAMMAR}+units{units}:{card_tokens}+{tokenizer_identity}")
+    let units = crate::store::SOURCE_UNIT_SCHEMA;
+    format!("{RECIPE_GRAMMAR}+kinds1+units{units}:{card_tokens}+{tokenizer_identity}")
 }
 
 /// One rendered card: the unit's half-open byte range, its exact
 /// document-input key and the exact model-input token ids.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Card {
+    pub kind: super::cache::CardKind,
     pub start: usize,
     pub end: usize,
     pub input_key: String,
@@ -71,6 +120,12 @@ pub struct TokenizedText {
 /// Implementations never truncate.
 pub trait TokenCount {
     fn encode(&self, rendered: &str) -> Result<TokenizedText, ProviderError>;
+
+    /// Optional bounded reuse local to one card's exact prefix fitting.
+    /// Implementations must preserve each candidate's complete token stream.
+    fn fitting(&self) -> Option<Box<dyn TokenCount + '_>> {
+        None
+    }
 
     fn count(&self, rendered: &str) -> Result<usize, ProviderError> {
         Ok(self.encode(rendered)?.ids.len())
@@ -131,6 +186,7 @@ pub fn card(
 ) -> Result<Card, ProviderError> {
     let (rendered, ids) = render_card(source, path, unit, recipe, tokens)?;
     Ok(Card {
+        kind: super::cache::CardKind::Address,
         start: unit.start,
         end: unit.end,
         input_key: provider::input_key(recipe.function_digest, &rendered),
@@ -178,6 +234,8 @@ fn render_card(
     recipe: &CardRecipe<'_>,
     tokens: &dyn TokenCount,
 ) -> Result<(String, Vec<u32>), ProviderError> {
+    let fitting = tokens.fitting();
+    let tokens = fitting.as_deref().unwrap_or(tokens);
     let limit = recipe.card_tokens;
     let encode = |text: &str| -> Result<(String, Vec<u32>), ProviderError> {
         let rendered = provider::render(recipe.template, text);

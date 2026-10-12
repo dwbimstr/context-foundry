@@ -27,6 +27,9 @@
 # written next to the bundle as `<APP minus .app>.entitlements.plist` so they
 # stay auditable without sitting inside the sealed bundle.
 #
+# On Linux this creates an unsigned directory containing the executable and
+# native notice; the supervised process enforces its descriptor-only policy.
+#
 # usage: embed-worker-bundle.sh --binary PATH --out APP --profile PROFILE.json \
 #         [--extra-read DIR]... [--identifier ID]
 set -eu
@@ -82,6 +85,21 @@ for required in "$BINARY" "$OUT" "$PROFILE"; do
 done
 [ -x "$BINARY" ] || { echo "binary is not executable: $BINARY" >&2; exit 66; }
 [ -f "$PROFILE" ] || { echo "profile is not a file: $PROFILE" >&2; exit 66; }
+
+# Linux uses the same descriptor-verified worker protocol with a native
+# descriptor-only seccomp policy, not macOS entitlements or signing. The owner
+# validates the profile and its scratch root before every launch. Nothing here
+# grants pathname/network access to the model process.
+if [ "$(uname -s)" = Linux ]; then
+    [ -z "$EXTRA_READ" ] || { echo "Linux workers admit no extra pathname grants" >&2; exit 64; }
+    [ ! -e "$OUT" ] || { echo "output already exists: $OUT" >&2; exit 73; }
+    mkdir -m 700 "$OUT"
+    cp "$BINARY" "$OUT/foundry-embed"
+    chmod 755 "$OUT/foundry-embed"
+    "$OUT/foundry-embed" --notices "$OUT/THIRD-PARTY/llama.cpp" >/dev/null
+    sha256sum "$OUT/foundry-embed" | cut -d ' ' -f 1
+    exit 0
+fi
 
 # Read every value in its own assignment: a failed `$(...)` ends the script
 # (`set -e`), while a nested substitution would swallow the failure and hand

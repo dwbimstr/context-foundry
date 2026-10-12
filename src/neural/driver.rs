@@ -10,9 +10,10 @@
 //! - every store step takes the owner's ONE engine slot, and only while no
 //!   foreground operation is in flight, and gives it back before the next
 //!   step; a foreground operation arriving during such a step waits for it
-//!   (the owner's `take_engine_slot`), so steps are kept short: a partition
-//!   step and each step of a publication end at their first boundary after
-//!   [`STEP_TIME`], and the generation itself is built with the slot free;
+//!   (the owner's `take_engine_slot`), so steps are kept short: partition
+//!   input collection and publication end at their first boundary after
+//!   [`STEP_TIME`]. Partition CPU work and generation construction run with
+//!   the slot free; computed partitions recheck their source at commit;
 //! - the model call runs on the owner's ONE resident worker
 //!   ([`QueryRuntime`]) with NO engine slot and NO transaction held. Its
 //!   admission is refused, never queued, while that slot is occupied or a
@@ -52,21 +53,22 @@
 //! - completion, a pass over an unchanged source revision, is `stopped` with
 //!   no reason.
 //!
-//! There are no hidden retries, job journal, leases, retry queue or watcher.
-//! Startup never resumes preparation: only an explicit `prepare` starts (or
-//! resumes) the driver.
+//! Continuous maintenance is explicit (`maintain` / `--semantic-maintain`). It
+//! consumes durable coalesced source obligations through this same driver and waits
+//! on source notifications when caught up. Ordinary startup and watching alone do
+//! not prepare. Provider/resource failures pause with pending work retained; retries
+//! require an explicit action. No extra job service or model owner is introduced.
 use crate::control::Control;
 use crate::error::{FResult, FoundryError};
 use crate::neural::cache::{self, SemanticState};
-use crate::neural::index::{
-    self, GenerationError, MappingWalk, Publication, validate_generation_with,
-};
-use crate::neural::partition;
+use crate::neural::index::{self, GenerationError, MappingWalk, Publication, validate_cached};
 use crate::neural::prepare::{
     self, Batch, Cards, PrepareReport, Progress, Selected, Selection, Steps, Stop, StopOrError,
     Walk,
 };
-use crate::neural::provider::{ProviderError, TokenizedInput};
+use crate::neural::provider::ProviderError;
+#[cfg(test)]
+use crate::neural::provider::TokenizedInput;
 use crate::neural::query::QueryRuntime;
 use crate::store::Engine;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -76,8 +78,6 @@ use std::time::{Duration, Instant};
 /// in-flight grace before stopping the worker; the stop is the resumable
 /// `provider_timeout`.
 pub const DOCUMENT_CALL_TIMEOUT: Duration = Duration::from_secs(60);
-/// New partitions one store step may write.
-const PARTITIONS_PER_STEP: usize = 8;
 /// Sources one selection step may examine.
 const SOURCES_PER_STEP: usize = cache::PAGE;
 /// How long the driver waits before looking again for a free engine slot,
@@ -104,6 +104,11 @@ pub trait Owner: Send + Sync {
     /// but only while no foreground operation is in flight. `Ok(false)` when
     /// the slot cannot be taken right now; `Err` when it never can again.
     fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool>;
+    /// Shared background-call admission. A busy knowledge request defers the
+    /// selected embedding batch intact instead of pausing semantic maintenance.
+    fn try_model(&self) -> Option<crate::neural::work::ModelPermit> {
+        Some(crate::neural::work::ModelPermit::unshared())
+    }
     /// True once the owner is shutting down (EOF or owner shutdown).
     fn closing(&self) -> bool;
     /// Test seam: the driver selected a batch and is about to decide its
@@ -136,12 +141,18 @@ struct State {
     phase: Phase,
     /// The driver's own document call is in flight.
     in_call: bool,
+    priority_paths: Vec<String>,
+    priority_revision: u64,
+    bootstrap: crate::neural::cache::BootstrapProgress,
+    continuous: bool,
+    waiting: bool,
 }
 
 /// The live state of this owner's driver, overlaid on the committed row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Live {
     Running,
+    Waiting,
     /// A pause was requested; at most the in-flight call still finishes.
     Paused,
 }
@@ -154,6 +165,8 @@ pub struct Preparation {
     state: Mutex<State>,
     /// When the owner last started a foreground operation.
     foreground: Mutex<Option<Instant>>,
+    /// CPU-only pool is lazy and survives explicit pause/resume runs.
+    workers: prepare::PartitionWorkers,
 }
 
 impl Default for Preparation {
@@ -162,8 +175,14 @@ impl Default for Preparation {
             state: Mutex::new(State {
                 phase: Phase::Idle,
                 in_call: false,
+                priority_paths: Vec::new(),
+                priority_revision: 0,
+                bootstrap: Default::default(),
+                continuous: false,
+                waiting: false,
             }),
             foreground: Mutex::new(None),
+            workers: prepare::PartitionWorkers::default(),
         }
     }
 }
@@ -173,8 +192,8 @@ impl Preparation {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// 009 T003: the owner calls this for every MCP request it serves
-    /// (search, context, retrieve, index, status, memory, references). For
+    /// The owner calls this for foreground operations (status observation is
+    /// excluded). For
     /// the next [`FOREGROUND_WINDOW`] the driver embeds at most
     /// [`FOREGROUND_BATCH`] inputs per document call.
     pub fn foreground(&self) {
@@ -203,6 +222,39 @@ impl Preparation {
         owner: Arc<dyn Owner>,
         runtime: Arc<QueryRuntime>,
     ) -> FResult<()> {
+        self.prepare_with_priorities(owner, runtime, None)
+    }
+
+    /// A new explicit list replaces scheduling preferences at the next wave;
+    /// ordinary work always retains its alternating turn.
+    pub fn prepare_with_priorities(
+        self: &Arc<Self>,
+        owner: Arc<dyn Owner>,
+        runtime: Arc<QueryRuntime>,
+        paths: Option<Vec<String>>,
+    ) -> FResult<()> {
+        self.start(owner, runtime, paths, false)
+    }
+
+    pub fn maintain(
+        self: &Arc<Self>,
+        owner: Arc<dyn Owner>,
+        runtime: Arc<QueryRuntime>,
+        paths: Option<Vec<String>>,
+    ) -> FResult<()> {
+        self.start(owner, runtime, paths, true)
+    }
+
+    fn start(
+        self: &Arc<Self>,
+        owner: Arc<dyn Owner>,
+        runtime: Arc<QueryRuntime>,
+        paths: Option<Vec<String>>,
+        continuous: bool,
+    ) -> FResult<()> {
+        if let Some(paths) = &paths {
+            prepare::validate_priority_paths(paths)?;
+        }
         let busy = || FoundryError::Semantic {
             code: "provider_busy",
             message: "an earlier model call still occupies the runtime slot; nothing was \
@@ -210,17 +262,31 @@ impl Preparation {
                 .into(),
         };
         let mut state = self.lock();
+        if state.phase != Phase::Running
+            && (runtime.occupied() && !runtime.knowledge_occupied())
+            && !state.in_call
+        {
+            return Err(busy());
+        }
+        if let Some(paths) = paths {
+            state.priority_paths = paths;
+            state.priority_revision = state.priority_revision.wrapping_add(1);
+        }
+        if state.continuous != continuous {
+            state.waiting = false;
+        }
+        state.continuous = continuous;
         match state.phase {
             Phase::Running => Ok(()),
             Phase::Pausing | Phase::Stopping => {
-                if runtime.occupied() && !state.in_call {
+                if (runtime.occupied() && !runtime.knowledge_occupied()) && !state.in_call {
                     return Err(busy());
                 }
                 state.phase = Phase::Running;
                 Ok(())
             }
             Phase::Idle => {
-                if runtime.occupied() {
+                if runtime.occupied() && !runtime.knowledge_occupied() {
                     return Err(busy());
                 }
                 let preparation = Arc::clone(self);
@@ -239,6 +305,8 @@ impl Preparation {
     /// `index {semantic: "pause"}`: no new batch is admitted.
     pub fn pause(&self) {
         let mut state = self.lock();
+        state.continuous = false;
+        state.waiting = false;
         if matches!(state.phase, Phase::Running | Phase::Stopping) {
             state.phase = Phase::Pausing;
         }
@@ -246,8 +314,10 @@ impl Preparation {
 
     /// The live state while a driver thread exists.
     pub fn live(&self) -> Option<Live> {
-        match self.lock().phase {
+        let state = self.lock();
+        match state.phase {
             Phase::Idle => None,
+            Phase::Running if state.waiting => Some(Live::Waiting),
             Phase::Pausing => Some(Live::Paused),
             Phase::Running | Phase::Stopping => Some(Live::Running),
         }
@@ -256,6 +326,11 @@ impl Preparation {
     /// No driver thread exists (none started, or it recorded its stop).
     pub fn idle(&self) -> bool {
         self.lock().phase == Phase::Idle
+    }
+
+    pub fn progress(&self) -> Option<crate::neural::cache::BootstrapProgress> {
+        let state = self.lock();
+        (state.phase != Phase::Idle).then(|| state.bootstrap.clone())
     }
 
     fn set_in_call(&self, in_call: bool) {
@@ -333,9 +408,29 @@ enum Failed {
     Step(FoundryError),
 }
 
-/// One run of the driver: the profile identity, its report and the
-/// publication bookkeeping.
+/// Bounded scheduling state; accepted work lives in partitions and cache.
+struct Frontier {
+    order: prepare::SourceOrder,
+    walk: Option<Walk>,
+    paused: prepare::PausedSources,
+    active_cursor: Option<prepare::SourceCursor>,
+    wave_inputs: usize,
+    priority_revision: Option<u64>,
+    changed_only: bool,
+}
+
+impl Frontier {
+    fn yield_wave(&mut self) {
+        let walk = self.walk.take().expect("active wave");
+        let mut cursor = self.active_cursor.take().expect("active wave cursor");
+        cursor.resume = Some(walk.pause(&mut self.paused));
+        self.order.advance(cursor, false);
+    }
+}
+
+/// One run of the driver: identity, accounting and publication bookkeeping.
 struct Run<'a> {
+    started: Instant,
     owner: &'a dyn Owner,
     runtime: &'a QueryRuntime,
     preparation: &'a Preparation,
@@ -349,6 +444,7 @@ struct Run<'a> {
     unpublished: u64,
     /// Entries of the last generation this run published.
     published: u64,
+    publish_overview_boundary: bool,
 }
 
 impl<'a> Run<'a> {
@@ -360,11 +456,12 @@ impl<'a> Run<'a> {
     ) -> Self {
         let profile = &runtime.profile;
         let digest = profile.descriptor.digest();
-        let recipe = partition::recipe_id(&profile.descriptor.tokenizer, profile.card_tokens);
+        let recipe = profile.recipe_id();
         Self {
             owner,
             runtime,
             preparation,
+            started: Instant::now(),
             control,
             report: PrepareReport {
                 profile: profile.name.clone(),
@@ -380,6 +477,7 @@ impl<'a> Run<'a> {
             digest,
             unpublished: 0,
             published: 0,
+            publish_overview_boundary: false,
         }
     }
 
@@ -394,32 +492,140 @@ impl<'a> Run<'a> {
                 message: "the worker's document function does not match the profile".into(),
             });
         }
+        self.sync_progress();
         let report = &self.report;
         hold(self.owner, |engine| prepare::begin(engine, report))
+    }
+
+    fn sync_progress(&mut self) {
+        self.preparation.lock().bootstrap =
+            prepare::snapshot_progress(&mut self.report, self.started);
     }
 
     /// Passes until one saw an unchanged source revision, or a stop.
     fn passes(&mut self) -> FResult<Stop> {
         loop {
+            if self.preparation.lock().continuous {
+                if let Some(stop) = self.maintain()? {
+                    return Ok(stop);
+                }
+                continue;
+            }
+            let stop = self.one_shot()?;
+            if matches!(stop, Stop::Complete) && self.preparation.lock().continuous {
+                continue;
+            }
+            return Ok(stop);
+        }
+    }
+
+    fn one_shot(&mut self) -> FResult<Stop> {
+        let work = hold(self.owner, |engine| {
+            engine.derivation_reconcile(
+                crate::neural::work::Lane::Semantic,
+                &format!("{}:{}", self.digest, self.recipe),
+            )
+        })?;
+        // Recover prior committed coverage before doing more provider work.
+        if let Some(stop) = self.publish()? {
+            return Ok(stop);
+        }
+        loop {
             let revision = hold(self.owner, |engine| engine.source_revision())?;
-            if let Some(stop) = self.partition_pass()? {
+            let mut frontier = Frontier {
+                order: prepare::SourceOrder::new(&[])?
+                    .for_representation(self.runtime.profile.representation),
+                walk: None,
+                paused: prepare::PausedSources::default(),
+                active_cursor: None,
+                wave_inputs: 0,
+                priority_revision: None,
+                changed_only: false,
+            };
+            if let Some(stop) = self.embed_pass(&mut frontier)? {
                 return Ok(stop);
             }
-            if let Some(stop) = self.requested_stop() {
+            if let Some(stop) = self.area_pass()? {
                 return Ok(stop);
             }
-            // Committed coverage of earlier runs becomes searchable before
-            // any new inference.
-            if let Some(stop) = self.publish(false)? {
+            // Also publish new locations/complete coverage when every card was
+            // reused: cache hits do not increment the new-vector counter.
+            if let Some(stop) = self.publish()? {
                 return Ok(stop);
             }
-            if let Some(stop) = self.embed_pass()? {
-                return Ok(stop);
-            }
-            // An explicit `index` during the pass can change sources the walk
-            // already passed; walk again until a pass saw one revision.
             if hold(self.owner, |engine| engine.source_revision())? == revision {
+                hold(self.owner, |engine| {
+                    engine.derivation_ack(crate::neural::work::Lane::Semantic, &work)
+                })?;
                 return Ok(Stop::Complete);
+            }
+        }
+    }
+
+    /// `None` hands control back to an explicitly requested one-shot pass.
+    fn maintain(&mut self) -> FResult<Option<Stop>> {
+        use crate::neural::work::Lane;
+        let identity = format!("{}:{}", self.digest, self.recipe);
+        let wake = hold(self.owner, |engine| Ok(Arc::clone(&engine.semantic_wake)))?;
+        loop {
+            if let Some(stop) = self.requested_stop() {
+                return Ok(Some(stop));
+            }
+            let stamp = wake.stamp();
+            let work = hold(self.owner, |engine| {
+                engine.derivation_batch(Lane::Semantic, &identity)
+            })?;
+            if !work.requires_reconcile() && work.paths().is_empty() && !work.overviews_changed() {
+                self.sync_progress();
+                hold(self.owner, |engine| {
+                    prepare::finalize(engine, &mut self.report, &Ok(Stop::Complete))
+                })?;
+                self.preparation.lock().waiting = true;
+                loop {
+                    if let Some(stop) = self.requested_stop() {
+                        return Ok(Some(stop));
+                    }
+                    if !self.preparation.lock().continuous {
+                        self.preparation.lock().waiting = false;
+                        return Ok(None);
+                    }
+                    if wake.wait(stamp) {
+                        break;
+                    }
+                }
+                self.preparation.lock().waiting = false;
+                hold(self.owner, |engine| prepare::begin(engine, &self.report))?;
+                continue;
+            }
+            let mut frontier = Frontier {
+                order: (if work.requires_reconcile() {
+                    prepare::SourceOrder::new(&[])?
+                } else {
+                    prepare::SourceOrder::changed(work.paths().iter().map(|(path, _)| path.clone()))
+                })
+                .for_representation(self.runtime.profile.representation),
+                walk: None,
+                paused: prepare::PausedSources::default(),
+                active_cursor: None,
+                wave_inputs: 0,
+                priority_revision: None,
+                changed_only: !work.requires_reconcile(),
+            };
+            if let Some(stop) = self.embed_pass(&mut frontier)? {
+                return Ok(Some(stop));
+            }
+            if let Some(stop) = self.area_pass()? {
+                return Ok(Some(stop));
+            }
+            if let Some(stop) = self.publish()? {
+                return Ok(Some(stop));
+            }
+            hold(self.owner, |engine| {
+                engine.derivation_ack(Lane::Semantic, &work)
+            })?;
+            if !self.preparation.lock().continuous {
+                self.preparation.lock().waiting = false;
+                return Ok(None);
             }
         }
     }
@@ -433,39 +639,77 @@ impl<'a> Run<'a> {
         (self.preparation.lock().phase == Phase::Pausing).then(paused)
     }
 
-    fn partition_pass(&mut self) -> FResult<Option<Stop>> {
-        let mut after: Option<String> = None;
-        loop {
-            if let Some(stop) = self.requested_stop() {
-                return Ok(Some(stop));
-            }
-            let (owner, runtime, control) = (self.owner, self.runtime, self.control);
-            let (recipe, digest, report) = (&self.recipe, &self.digest, &mut self.report);
-            let progress = hold(owner, |engine| {
-                Steps {
-                    engine,
-                    cards: Cards {
-                        tokenizer: runtime.tokenizer(),
-                        profile: &runtime.profile,
-                        function_digest: digest,
-                    },
-                    recipe,
-                }
-                .partition_page(
-                    &mut after,
-                    PARTITIONS_PER_STEP,
-                    Some(Instant::now() + STEP_TIME),
-                    control,
-                    report,
-                    &mut || owner.closing().then(cancelled),
-                )
-            })?;
-            match progress {
-                Progress::More => {}
-                Progress::Done => return Ok(None),
-                Progress::Halted(stop) => return Ok(Some(stop)),
-            }
+    fn partition_wave(
+        &mut self,
+        cursor: &mut prepare::SourceCursor,
+    ) -> FResult<(Progress, Vec<prepare::PreparedCards>)> {
+        if let Some(stop) = self.requested_stop() {
+            return Ok((Progress::Halted(stop), Vec::new()));
         }
+        let (owner, runtime, control) = (self.owner, self.runtime, self.control);
+        let (recipe, digest, report) = (&self.recipe, &self.digest, &mut self.report);
+        let (progress, inputs) = hold(owner, |engine| {
+            Steps {
+                engine,
+                cards: Cards {
+                    tokenizer: runtime.tokenizer(),
+                    profile: &runtime.profile,
+                    function_digest: digest,
+                },
+                recipe,
+            }
+            .partition_inputs_in(
+                &mut cursor.after,
+                cursor.scope.as_deref(),
+                cursor.exact,
+                prepare::PARTITION_WAVE,
+                Some(Instant::now() + STEP_TIME),
+                report,
+                &mut || owner.closing().then(cancelled),
+            )
+        })?;
+        if matches!(progress, Progress::Halted(_)) {
+            return Ok((progress, Vec::new()));
+        }
+        if let Some(stop) = self.requested_stop() {
+            return Ok((Progress::Halted(stop), Vec::new()));
+        }
+        let computed = Instant::now();
+        let prepared = self.preparation.workers.prepare(
+            Cards {
+                tokenizer: runtime.tokenizer(),
+                profile: &runtime.profile,
+                function_digest: &self.digest,
+            },
+            inputs,
+            &self.recipe,
+            control,
+        );
+        self.report.bootstrap.partition_compute_ms += prepare::elapsed_ms(computed);
+        let prepared = prepared?;
+        let mut retained = Vec::new();
+        for computed in prepared {
+            if let Some(stop) = self.requested_stop() {
+                return Ok((Progress::Halted(stop), Vec::new()));
+            }
+            let preparation = self.preparation;
+            let report = &mut self.report;
+            let stop = hold(owner, |engine| {
+                if owner.closing() {
+                    return Ok(Some(cancelled()));
+                }
+                if preparation.lock().phase == Phase::Pausing {
+                    return Ok(Some(paused()));
+                }
+                prepare::commit_partition(engine, computed.partition, control, report)?;
+                Ok(None)
+            })?;
+            if let Some(stop) = stop {
+                return Ok((Progress::Halted(stop), Vec::new()));
+            }
+            retained.extend(computed.retained);
+        }
+        Ok((progress, retained))
     }
 
     /// Select batches of up to the profile's batch of cards and embed them.
@@ -473,9 +717,8 @@ impl<'a> Run<'a> {
     /// inputs, in walk order, for the next admission; the walk resumes only
     /// once fewer inputs remain than the current batch size. While a call
     /// runs, the next batch is selected and rendered ([`Self::embed`]).
-    fn embed_pass(&mut self) -> FResult<Option<Stop>> {
+    fn embed_pass(&mut self, frontier: &mut Frontier) -> FResult<Option<Stop>> {
         let full = self.runtime.profile.document_limits().inputs;
-        let mut walk = Walk::default();
         let mut batch = Batch::default();
         let mut end = false;
         loop {
@@ -484,7 +727,14 @@ impl<'a> Run<'a> {
             }
             if !end && batch.len() < self.preparation.batch_limit(Instant::now(), full) {
                 let room = full - batch.len();
-                match self.fill(&mut walk, &mut batch, room)? {
+                let selected = self.fill(frontier, &mut batch, room, &[])?;
+                if self.publish_overview_boundary && batch.is_empty() {
+                    if let Some(stop) = self.publish()? {
+                        return Ok(Some(stop));
+                    }
+                    self.publish_overview_boundary = false;
+                }
+                match selected {
                     Selected::Full => {}
                     Selected::End => end = true,
                     Selected::Yield => continue,
@@ -492,7 +742,7 @@ impl<'a> Run<'a> {
                 }
             }
             if !batch.is_empty()
-                && let Some(stop) = self.embed(&mut walk, &mut batch, &mut end, full)?
+                && let Some(stop) = self.embed(frontier, &mut batch, &mut end, full, true)?
             {
                 return Ok(Some(stop));
             }
@@ -505,36 +755,165 @@ impl<'a> Run<'a> {
     /// Up to `room` more cards into `batch`: one selection step under the
     /// engine slot (the missing cards and their sources' bodies), then their
     /// rendering and tokenization with NO engine slot and no transaction.
-    fn fill(&mut self, walk: &mut Walk, batch: &mut Batch, room: usize) -> FResult<Selected> {
-        let (owner, runtime) = (self.owner, self.runtime);
-        let (recipe, report) = (&self.recipe, &mut self.report);
-        let cards = Cards {
-            tokenizer: runtime.tokenizer(),
-            profile: &runtime.profile,
-            function_digest: &self.digest,
-        };
-        let mut selection = Selection::default();
-        let selected = hold(owner, |engine| {
-            Steps {
-                engine,
-                cards,
-                recipe,
+    fn fill(
+        &mut self,
+        frontier: &mut Frontier,
+        batch: &mut Batch,
+        room: usize,
+        in_flight: &[String],
+    ) -> FResult<Selected> {
+        let target = batch.len() + room;
+        let mut waves = 0;
+        loop {
+            if let Some(stop) = self.requested_stop() {
+                return Ok(Selected::Halted(stop));
             }
-            .select_batch(
-                walk,
-                &mut selection,
-                room,
-                SOURCES_PER_STEP,
-                report,
-                &mut || owner.closing().then(cancelled),
-            )
-        })?;
-        if selection.len() > 0 {
-            let rendered = cards.render(selection)?;
-            batch.keys.extend(rendered.keys);
-            batch.inputs.extend(rendered.inputs);
+            // Drain the last file-view inputs, including foreground-sized
+            // leftovers, before prefetching any refinement. Publication cannot
+            // race ahead of those still uncommitted inputs.
+            if self.publish_overview_boundary {
+                return Ok(Selected::Full);
+            }
+            {
+                let state = self.preparation.lock();
+                if !frontier.changed_only
+                    && frontier.priority_revision != Some(state.priority_revision)
+                {
+                    frontier.order.prioritize(&state.priority_paths)?;
+                    frontier.priority_revision = Some(state.priority_revision);
+                }
+            }
+            if frontier.walk.is_some()
+                && frontier.wave_inputs >= prepare::WAVE_INPUTS
+                && frontier.order.waiting()
+            {
+                frontier.yield_wave();
+            }
+            if frontier.walk.is_none() {
+                // A prefetch must not become an all-corpus partition barrier
+                // when the next areas have only cached or zero-card sources.
+                if waves == 1 {
+                    return Ok(Selected::Yield);
+                }
+                waves += 1;
+                let overview_phase = frontier.order.overview_first();
+                let Some(mut cursor) = frontier.order.next() else {
+                    return Ok(Selected::End);
+                };
+                if overview_phase && !frontier.order.overview_first() {
+                    self.publish_overview_boundary = true;
+                    frontier.order.advance(cursor, false);
+                    return Ok(Selected::Full);
+                }
+                let resumed = cursor.resume.take();
+                let before = resumed
+                    .as_ref()
+                    .map_or_else(|| cursor.after.clone(), |position| position.after.clone());
+                let (progress, retained) = if resumed.is_some() {
+                    (Progress::More, Vec::new())
+                } else {
+                    self.partition_wave(&mut cursor)?
+                };
+                if let Progress::Halted(stop) = progress {
+                    return Ok(Selected::Halted(stop));
+                }
+                let done = matches!(progress, Progress::Done);
+                if cursor.after != before {
+                    self.report.bootstrap.waves += 1;
+                    self.report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
+                    let mut walk =
+                        Walk::wave(cursor.scope.clone(), before.clone(), cursor.after.clone())
+                            .with_retained(retained);
+                    if let Some(position) = resumed {
+                        walk = walk.restore(position, &mut frontier.paused);
+                    }
+                    walk.exact = cursor.exact;
+                    walk.overview_first = frontier.order.overview_first();
+                    frontier.walk = Some(walk);
+                    frontier.active_cursor = Some(cursor);
+                    frontier.wave_inputs = 0;
+                    self.sync_progress();
+                } else {
+                    frontier.order.advance(cursor, done);
+                }
+                if frontier.walk.is_none() {
+                    continue;
+                }
+            }
+            let (owner, runtime) = (self.owner, self.runtime);
+            let (recipe, report) = (&self.recipe, &mut self.report);
+            let cards = Cards {
+                tokenizer: runtime.tokenizer(),
+                profile: &runtime.profile,
+                function_digest: &self.digest,
+            };
+            // Priority and background waves can overlap the active call. Keep
+            // only bounded pending keys across waves; committed keys use cache.
+            frontier
+                .walk
+                .as_mut()
+                .expect("wave exists")
+                .exclude(in_flight.iter().chain(batch.keys.iter()).cloned());
+            let mut selection = Selection::default();
+            let selected = hold(owner, |engine| {
+                Steps {
+                    engine,
+                    cards,
+                    recipe,
+                }
+                .select_batch(
+                    frontier.walk.as_mut().expect("wave exists"),
+                    &mut selection,
+                    if frontier.order.waiting() {
+                        (target - batch.len()).min(prepare::WAVE_INPUTS - frontier.wave_inputs)
+                    } else {
+                        target - batch.len()
+                    },
+                    SOURCES_PER_STEP,
+                    report,
+                    &mut || owner.closing().then(cancelled),
+                )
+            })?;
+            if selection.len() > 0 {
+                frontier.wave_inputs += selection.len();
+                let started = Instant::now();
+                let rendered = cards.render(selection);
+                self.report.bootstrap.render_ms += prepare::elapsed_ms(started);
+                let rendered = rendered?;
+                batch.keys.extend(rendered.keys);
+                batch.inputs.extend(rendered.inputs);
+            }
+            match selected {
+                Selected::End => {
+                    frontier.walk = None;
+                    let mut cursor = frontier.active_cursor.take().expect("active wave cursor");
+                    cursor.resume = None;
+                    frontier.order.advance(cursor, false);
+                    // Send a short first wave without waiting for later sources.
+                    // The following wave is prepared by the one in-call prefetch.
+                    if !batch.is_empty() {
+                        return Ok(Selected::Full);
+                    }
+                    if self.published == 0
+                        && self.report.reused_cached_units > 0
+                        && let Some(stop) = self.publish()?
+                    {
+                        return Ok(Selected::Halted(stop));
+                    }
+                }
+                other => {
+                    if matches!(other, Selected::Full)
+                        && frontier.wave_inputs >= prepare::WAVE_INPUTS
+                        && frontier.order.waiting()
+                    {
+                        // Scalar progress skips already selected inputs; in-flight
+                        // and buffered keys remain excluded across other cursors.
+                        frontier.yield_wave();
+                    }
+                    return Ok(other);
+                }
+            }
         }
-        Ok(selected)
     }
 
     /// One admission: the first inputs of `batch`, as many as the batch size
@@ -553,14 +932,25 @@ impl<'a> Run<'a> {
     /// the committed batch is counted first, so the stop publishes it.
     fn embed(
         &mut self,
-        walk: &mut Walk,
+        frontier: &mut Frontier,
         batch: &mut Batch,
         end: &mut bool,
         full: usize,
+        source_inputs: bool,
     ) -> FResult<Option<Stop>> {
         #[cfg(feature = "test-faults")]
         self.owner.admitting();
+        let model_permit = loop {
+            if let Some(stop) = self.requested_stop() {
+                return Ok(Some(stop));
+            }
+            if let Some(permit) = self.owner.try_model() {
+                break permit;
+            }
+            std::thread::sleep(POLL);
+        };
         let preparation = self.preparation;
+        let started = Instant::now();
         let (keys, tokens, call) = {
             let mut state = preparation.lock();
             if self.owner.closing() {
@@ -573,8 +963,9 @@ impl<'a> Run<'a> {
             let size = batch
                 .len()
                 .min(preparation.batch_limit(Instant::now(), full));
-            let keys: Vec<String> = batch.keys.drain(..size).collect();
-            let inputs: Vec<TokenizedInput> = batch.inputs.drain(..size).collect();
+            let admitted = batch.take(self.runtime.profile.document_limits(), size)?;
+            let keys = admitted.keys;
+            let inputs = admitted.inputs;
             let tokens: u64 = inputs.iter().map(|input| input.ids.len() as u64).sum();
             let job = self
                 .control
@@ -595,7 +986,7 @@ impl<'a> Run<'a> {
         // The prefetch: a halt (owner shutdown) is caught by the wait below.
         let mut prefetch_error = None;
         if !*end && batch.len() < full {
-            match self.fill(walk, batch, full - batch.len()) {
+            match self.fill(frontier, batch, full - batch.len(), &keys) {
                 Ok(Selected::End) => *end = true,
                 Ok(_) => {}
                 Err(error) => prefetch_error = Some(error),
@@ -608,6 +999,7 @@ impl<'a> Run<'a> {
                 // The uncommitted result is discarded; the call itself may
                 // run on and keeps the runtime slot until it really ends.
                 self.preparation.set_in_call(false);
+                self.report.bootstrap.provider_ms += prepare::elapsed_ms(started);
                 self.control.cancel();
                 return Ok(Some(cancelled()));
             }
@@ -616,6 +1008,8 @@ impl<'a> Run<'a> {
             }
         };
         self.preparation.set_in_call(false);
+        drop(model_permit);
+        self.report.bootstrap.provider_ms += prepare::elapsed_ms(started);
         let vectors = match result {
             Ok(vectors) => vectors,
             Err(error) => return Ok(Some(self.failed(error))),
@@ -650,12 +1044,74 @@ impl<'a> Run<'a> {
         }
         // Committed is unpublished until a publication, whatever stops the
         // run next: the stop ([`Self::finish`]) publishes it.
-        self.unpublished += size;
+        if source_inputs {
+            self.unpublished += size;
+            self.report.embedded_units += size;
+        } else {
+            self.report.embedded_areas += size;
+        }
+        self.sync_progress();
         if let Some(error) = prefetch_error {
             return Err(error);
         }
-        if self.unpublished >= self.published.max(1) {
-            return self.publish(true);
+        let file_views_drained = self.publish_overview_boundary && batch.is_empty();
+        if source_inputs && (file_views_drained || self.unpublished >= self.published.max(1)) {
+            let stop = self.publish()?;
+            if file_views_drained && stop.is_none() {
+                self.publish_overview_boundary = false;
+            }
+            return Ok(stop);
+        }
+        Ok(None)
+    }
+
+    fn area_pass(&mut self) -> FResult<Option<Stop>> {
+        let profile = &self.runtime.profile;
+        let records = hold(self.owner, |engine| {
+            super::area::snapshot(engine, profile, self.control)
+        })?;
+        // Tokenization holds neither the owner slot nor a database transaction.
+        let areas = super::area::render(records, profile, self.runtime.tokenizer(), self.control)?;
+        hold(self.owner, |engine| {
+            super::area::prune(engine, profile, &areas, self.control)
+        })?;
+        self.report.area_vectors = 0;
+        for area in areas {
+            if let Some(stop) = self.requested_stop() {
+                return Ok(Some(stop));
+            }
+            if !hold(self.owner, |engine| {
+                super::area::cached(engine, profile, &area)
+            })? {
+                let mut frontier = Frontier {
+                    order: prepare::SourceOrder::new(&[])?
+                        .for_representation(self.runtime.profile.representation),
+                    walk: None,
+                    paused: prepare::PausedSources::default(),
+                    active_cursor: None,
+                    wave_inputs: 0,
+                    priority_revision: None,
+                    changed_only: false,
+                };
+                let mut batch = Batch {
+                    keys: vec![area.key().to_owned()],
+                    inputs: vec![super::provider::TokenizedInput {
+                        ids: area.ids.clone(),
+                    }],
+                };
+                if let Some(stop) = self.embed(&mut frontier, &mut batch, &mut true, 1, false)? {
+                    return Ok(Some(stop));
+                }
+            }
+            if !hold(self.owner, |engine| {
+                super::area::bind(engine, profile, &area.record, self.control)
+            })? {
+                return Ok(Some(Stop::partial(
+                    "stale_area",
+                    "area changed during preparation",
+                )));
+            }
+            self.report.area_vectors += 1;
         }
         Ok(None)
     }
@@ -681,19 +1137,64 @@ impl<'a> Run<'a> {
         )
     }
 
-    /// Publish committed coverage (`rebuild` replays the generation from the
-    /// cache; otherwise only pending coverage), then drop the runtime's
+    /// Publish committed coverage using bounded deltas, then drop the runtime's
     /// loaded index so the next request loads the new generation.
-    fn publish(&mut self, rebuild: bool) -> FResult<Option<Stop>> {
-        let outcome = match self.generation(rebuild) {
-            Ok(publication) => Ok(publication),
-            Err(Failed::Step(error)) => Err(error),
-            Err(Failed::Owner(error)) => return Err(error),
+    fn publish(&mut self) -> FResult<Option<Stop>> {
+        let started = Instant::now();
+        let mut attempt = 0usize;
+        let delays = [250u64, 1000, 3000];
+        let outcome = loop {
+            match self.generation() {
+                Ok(publication) => break Ok(publication),
+                Err(Failed::Owner(error)) => return Err(error),
+                Err(Failed::Step(error)) => {
+                    if attempt == delays.len()
+                        || !matches!(error.code(), "internal" | "index_unavailable")
+                    {
+                        break Err(error);
+                    }
+                    let delay = delays[attempt];
+                    attempt += 1;
+                    self.report.index_published = false;
+                    self.report.index_reason = Some(error.to_string());
+                    self.report.bootstrap.publication_retries += 1;
+                    self.report.bootstrap.publication_backoff_ms = Some(delay);
+                    self.report.bootstrap.publication_error =
+                        Some(error.to_string().chars().take(240).collect());
+                    self.sync_progress();
+                    let until = Instant::now() + Duration::from_millis(delay);
+                    while Instant::now() < until {
+                        if let Err(error) = self.control.check() {
+                            self.report.bootstrap.publication_backoff_ms = None;
+                            self.sync_progress();
+                            return Err(error);
+                        }
+                        if let Some(stop) = self.requested_stop() {
+                            self.report.bootstrap.publication_backoff_ms = None;
+                            self.sync_progress();
+                            return Ok(Some(stop));
+                        }
+                        std::thread::sleep(Duration::from_millis(25));
+                    }
+                }
+            }
         };
+        self.report.bootstrap.publication_backoff_ms = None;
+        if outcome.is_ok() {
+            self.report.bootstrap.publication_error = None;
+        }
+        let changed = matches!(
+            outcome,
+            Ok(Publication::Rebuilt(_) | Publication::Delta(_) | Publication::Mapped(_))
+        );
         let stop = prepare::record_publication(outcome, 0, &mut self.report);
+        self.report.bootstrap.publication_ms += prepare::elapsed_ms(started);
+        self.sync_progress();
         if stop.is_none() {
             if self.report.index_published {
-                self.runtime.forget_index();
+                if changed {
+                    self.runtime.forget_index();
+                }
                 self.published = self.report.index_entries;
             }
             self.unpublished = 0;
@@ -709,49 +1210,72 @@ impl<'a> Run<'a> {
     /// built and staged with the engine slot free; the slot is taken again
     /// only to publish the staged set. Sources edited between the steps make
     /// the mapping incomplete, never wrong: locations revalidate per request.
-    fn generation(&self, rebuild: bool) -> Result<Publication, Failed> {
+    fn generation(&self) -> Result<Publication, Failed> {
         let control = self.control;
-        let Some((identity, store, mut walk)) = self.step(|engine| {
+        let Some((identity, store, segments)) = self.step(|engine| {
             let Some(identity) = engine.semantic_identity()? else {
                 return Ok(None);
             };
-            let walk = MappingWalk::start(engine, &identity.digest, &identity.recipe)?;
-            Ok(Some((identity, engine.semantic_anchor()?, walk)))
+            Ok(Some((
+                identity,
+                engine.semantic_anchor()?,
+                engine.semantic_segments.clone(),
+            )))
         })?
         else {
             return Ok(Publication::Nothing);
         };
-        while !self.step(|engine| walk.step(engine, control, Some(Instant::now() + STEP_TIME)))? {}
-        let mapping = self.step(|engine| walk.finish(engine))?;
-        if !rebuild {
-            if mapping.units.is_empty() {
-                return Ok(Publication::Nothing);
-            }
-            // Current means the same keys, unit locations, coverage AND
-            // source revision.
-            match validate_generation_with(
-                &store,
+        let previous = match validate_cached(&store, &identity, control, false, &segments) {
+            Ok((generation, _)) => Some(generation),
+            Err(GenerationError::Interrupted(error)) => return Err(Failed::Step(error)),
+            Err(_) => None,
+        };
+        if let Some(generation) = &previous
+            && self.step(|engine| engine.semantic_generation_current(generation))?
+        {
+            return Ok(Publication::Current(generation.manifest.count));
+        }
+        let mut walk = self.step(|engine| {
+            MappingWalk::resume(
+                engine,
                 &identity.digest,
                 &identity.recipe,
-                identity.dimensions,
-                control,
-            ) {
-                Ok(generation) if mapping.published_by(&generation) => {
-                    return Ok(Publication::Current(generation.manifest.count));
-                }
-                Err(GenerationError::Interrupted(error)) => return Err(Failed::Step(error)),
-                _ => {}
-            }
+                previous.as_ref(),
+            )
+        })?;
+        while !self.step(|engine| walk.step(engine, control, Some(Instant::now() + STEP_TIME)))? {}
+        let mapping = self.step(|engine| walk.finish(engine, control))?;
+        if let Some(generation) = &previous
+            && mapping.published_by(generation)
+        {
+            let directory = index::open_generation_dir(&store, &identity.digest, false)
+                .map_err(Failed::Step)?
+                .expect("validated generation");
+            let id = directory.identity().map_err(|e| Failed::Step(e.into()))?;
+            self.step(|engine| {
+                engine.semantic_remember_mapping(
+                    generation.manifest.mapping_id(),
+                    mapping.units,
+                    id,
+                    control,
+                )?;
+                engine.semantic_record_coverage(mapping.coverage)
+            })?;
+            return Ok(Publication::Current(generation.manifest.count));
         }
-        let mut scope = mapping.scope;
-        let mut keys = mapping.units.into_iter();
+        if previous.is_none() && mapping.units.is_empty() {
+            self.step(|engine| engine.semantic_record_coverage(mapping.coverage))?;
+            return Ok(Publication::Nothing);
+        }
+        let mut plan = index::publication::Plan::new(mapping, previous);
+        let mut keys = plan.needed().into_iter();
         let mut entries = Vec::with_capacity(keys.len());
         while !self.step(|engine| {
             index::lookup_entries(
                 engine,
                 &mut keys,
                 &identity,
-                &mut scope,
+                &mut plan.scope,
                 &mut entries,
                 control,
                 Some(Instant::now() + STEP_TIME),
@@ -761,11 +1285,15 @@ impl<'a> Run<'a> {
         let built = || self.owner.staging();
         #[cfg(not(feature = "test-faults"))]
         let built = || {};
-        let staged = index::stage_generation(&store, &identity, &entries, scope, control, &built)
+        let (staged, coverage, publication) = plan
+            .stage(&store, &identity, &entries, control, &built)
             .map_err(Failed::Step)?;
         drop(entries);
-        let count = self.step(|_| staged.publish(control))?;
-        Ok(Publication::Rebuilt(count))
+        self.step(|engine| {
+            engine.semantic_publish_staged(staged, control)?;
+            engine.semantic_record_coverage(coverage)
+        })?;
+        Ok(publication)
     }
 
     /// One short store step of a publication under the engine slot. A run
@@ -791,8 +1319,13 @@ impl<'a> Run<'a> {
         let cancelled = self.owner.closing()
             || matches!(&outcome, Ok(Stop::Partial { code, .. }) if *code == "cancelled");
         let mut outcome = outcome;
-        if !cancelled && self.unpublished > 0 {
-            match self.publish(true) {
+        if !cancelled
+            && self.report.index_reason.is_none()
+            && (self.unpublished > 0 || !matches!(&outcome, Ok(Stop::Complete)))
+        {
+            // A paused wave may have updated only locations/partition coverage
+            // through cache reuse. Publish that scope even without new vectors.
+            match self.publish() {
                 Ok(None) => {}
                 Ok(Some(published)) => {
                     outcome = outcome.map(|stop| prepare::merge_publication(Some(stop), published));
@@ -800,6 +1333,7 @@ impl<'a> Run<'a> {
                 Err(error) => outcome = outcome.and(Err(error)),
             }
         }
+        self.sync_progress();
         let (owner, preparation, report) = (self.owner, self.preparation, &mut self.report);
         let resumed = hold(owner, |engine| {
             let mut state = preparation.lock();
@@ -808,6 +1342,8 @@ impl<'a> Run<'a> {
             }
             let written = prepare::finalize(engine, report, &outcome);
             state.phase = Phase::Idle;
+            state.waiting = false;
+            state.continuous = false;
             state.in_call = false;
             written.map(|()| false)
         });
@@ -826,14 +1362,22 @@ impl<'a> Run<'a> {
     }
 }
 
-/// The `semantic` object of the MCP `status`: T001's metadata-only census of
-/// the committed rows (paged, never a source body, tokenizer or model), with
-/// this owner's live driver state overlaid, `reason` (the last error's code)
-/// and the resident `runtime` (`ready` or its `fallback:` word). The census
-/// gets half of the remaining read deadline; when that runs out, the object
-/// carries the committed state row and names the cut-off census instead of
-/// failing the whole status.
+/// Cheap committed publication observation plus this owner's live state.
+/// Source changes mark counters stale; payload integrity is checked on use/audit.
 pub fn status_object(
+    engine: &Engine,
+    live: Option<Live>,
+    runtime: &str,
+    control: &Control,
+) -> FResult<serde_json::Value> {
+    let mut value = engine.semantic_progress(control)?;
+    overlay(&mut value, live);
+    value["runtime"] = runtime.into();
+    Ok(value)
+}
+
+/// Explicit full audit, bounded to half of the remaining read deadline.
+pub fn status_audit_object(
     engine: &Engine,
     live: Option<Live>,
     runtime: &str,
@@ -887,6 +1431,10 @@ pub fn brief(live: Option<Live>, row: Option<&SemanticState>) -> serde_json::Val
 fn overlay(value: &mut serde_json::Value, live: Option<Live>) {
     match live {
         None => {}
+        Some(Live::Waiting) => {
+            value["state"] = "waiting".into();
+            value["last_error"] = serde_json::Value::Null;
+        }
         Some(Live::Running) => {
             value["state"] = "running".into();
             value["last_error"] = serde_json::Value::Null;
@@ -988,6 +1536,700 @@ mod tests {
         while !preparation.idle() {
             assert!(Instant::now() < deadline, "the driver never stopped");
             std::thread::sleep(POLL);
+        }
+    }
+
+    #[test]
+    fn large_priority_wave_yields_to_background_without_duplicate_prefetch() {
+        struct Checked {
+            inner: Sizes,
+            owner: Arc<Quiet>,
+            seen: Arc<Mutex<std::collections::HashSet<Vec<u32>>>>,
+        }
+        impl EmbeddingProvider for Checked {
+            fn descriptor(&self) -> &FunctionDescriptor {
+                self.inner.descriptor()
+            }
+            fn embed_query(
+                &mut self,
+                _: &TokenizedInput,
+                _: Instant,
+            ) -> Result<Vec<f32>, ProviderError> {
+                unreachable!()
+            }
+            fn embed_documents(
+                &mut self,
+                inputs: &[TokenizedInput],
+                control: &Control,
+            ) -> Result<Vec<Vec<f32>>, ProviderError> {
+                if self.inner.sizes.lock().unwrap().len() == 1 {
+                    assert!(
+                        self.owner
+                            .0
+                            .lock()
+                            .unwrap()
+                            .semantic_partition("note00.md")
+                            .unwrap()
+                            .is_some(),
+                        "background must be prepared for the second call"
+                    );
+                }
+                for input in inputs {
+                    assert!(
+                        self.seen.lock().unwrap().insert(input.ids.clone()),
+                        "a prefetched or committed input must not be inferred twice"
+                    );
+                }
+                self.inner.embed_documents(inputs, control)
+            }
+        }
+        let (_dir, engine, profile) = notes();
+        let large: String = (0..40)
+            .map(|i| format!("pub fn priority_{i:02}() -> u32 {{ {i} }}\n"))
+            .collect();
+        engine.replace_source("z/large.rs", &large).unwrap();
+        let owner = Arc::new(Quiet(Mutex::new(engine)));
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let provider = Checked {
+            inner: Sizes {
+                descriptor: profile.descriptor.clone(),
+                sizes: Arc::clone(&sizes),
+                foreground: None,
+            },
+            owner: Arc::clone(&owner),
+            seen: Arc::clone(&seen),
+        };
+        let runtime = Arc::new(
+            QueryRuntime::start(
+                profile,
+                Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+            )
+            .unwrap(),
+        );
+        let preparation = Arc::new(Preparation::default());
+        preparation
+            .prepare_with_priorities(
+                Arc::clone(&owner) as Arc<dyn Owner>,
+                Arc::clone(&runtime),
+                Some(vec!["z".into()]),
+            )
+            .unwrap();
+        until_idle(&preparation);
+        runtime.shutdown();
+        let state = owner.0.lock().unwrap().semantic_state().unwrap().unwrap();
+        assert!(state.last_error.is_none(), "{state:?}");
+        assert_eq!(state.committed_units, 52);
+        assert_eq!(seen.lock().unwrap().len(), 52);
+    }
+
+    /// Exercise the actual CLI pending loop and MCP prefetch loop, including
+    /// short source tails, cached holes, duplicate keys and non-divisor batches.
+    #[test]
+    fn cli_and_mcp_hierarchy_turns_preserve_mixed_pending_inputs() {
+        use crate::neural::partition::Representation;
+        use crate::neural::tokenize::DocumentTokenizer;
+        use std::collections::HashSet;
+
+        struct Checked {
+            inner: Sizes,
+            seen: Arc<Mutex<HashSet<Vec<u32>>>>,
+            first: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+        }
+        impl EmbeddingProvider for Checked {
+            fn descriptor(&self) -> &FunctionDescriptor {
+                self.inner.descriptor()
+            }
+            fn embed_query(
+                &mut self,
+                _: &TokenizedInput,
+                _: Instant,
+            ) -> Result<Vec<f32>, ProviderError> {
+                unreachable!()
+            }
+            fn embed_documents(
+                &mut self,
+                inputs: &[TokenizedInput],
+                control: &Control,
+            ) -> Result<Vec<Vec<f32>>, ProviderError> {
+                for input in inputs {
+                    assert!(
+                        self.seen.lock().unwrap().insert(input.ids.clone()),
+                        "no committed or prefetched input may be inferred twice"
+                    );
+                }
+                let result = self.inner.embed_documents(inputs, control);
+                if let Some((entered, release)) = self.first.take() {
+                    entered.send(()).unwrap();
+                    release.recv_timeout(Duration::from_secs(30)).unwrap();
+                }
+                result
+            }
+        }
+        for mcp in [false, true] {
+            for batch in [1, 3] {
+                let (dir, engine, mut profile) = notes();
+                Arc::make_mut(&mut profile).representation =
+                    Representation::Hierarchy { parent_tokens: 32 };
+                Arc::make_mut(&mut profile).card_tokens = 512;
+                Arc::make_mut(&mut profile).batch = batch;
+                let profile_path = dir.path().join("profile-notes.json");
+                std::fs::write(&profile_path, serde_json::to_vec(profile.as_ref()).unwrap())
+                    .unwrap();
+                let mut paths: Vec<String> = (0..12).map(|n| format!("note{n:02}.md")).collect();
+                for (path, count, family) in [
+                    ("z/short.rs", 3, "short"),
+                    ("z/twin.rs", 3, "short"),
+                    ("z/large.rs", 41, "large"),
+                    ("a/middle.rs", 17, "middle"),
+                ] {
+                    let body: String = (0..count)
+                        .map(|n| format!("pub fn {family}_{n:02}() -> u32 {{ {n} }}\n"))
+                        .collect();
+                    engine.replace_source(path, &body).unwrap();
+                    paths.push(path.into());
+                }
+                let digest = profile.descriptor.digest();
+                let recipe = profile.recipe_id();
+                let tokenizer = DocumentTokenizer::load(&profile).unwrap();
+                let steps = Steps {
+                    engine: &engine,
+                    cards: Cards {
+                        tokenizer: &tokenizer,
+                        profile: &profile,
+                        function_digest: &digest,
+                    },
+                    recipe: &recipe,
+                };
+                let mut after = None;
+                while !matches!(
+                    steps
+                        .partition_page(
+                            &mut after,
+                            8,
+                            None,
+                            &Control::unbounded(),
+                            &mut PrepareReport::default(),
+                            &mut || None
+                        )
+                        .unwrap(),
+                    Progress::Done
+                ) {}
+                let partitions: Vec<_> = paths
+                    .iter()
+                    .map(|path| engine.semantic_partition(path).unwrap().unwrap())
+                    .collect();
+                let keys: HashSet<_> = partitions
+                    .iter()
+                    .flat_map(|partition| partition.units.iter().map(|unit| unit.input_key.clone()))
+                    .collect();
+                let locations: usize = partitions
+                    .iter()
+                    .map(|partition| partition.units.len())
+                    .sum();
+                assert!(keys.len() < locations, "fixture includes shared input keys");
+                assert!(
+                    keys.len() > 8 * 4,
+                    "fixture requires repeated contended turns"
+                );
+                let large = engine.semantic_partition("z/large.rs").unwrap().unwrap();
+                let seeded: Vec<_> = large
+                    .units
+                    .iter()
+                    .skip(2)
+                    .step_by(5)
+                    .take(3)
+                    .map(|unit| (unit.input_key.clone(), unit_vector(&profile.descriptor)))
+                    .collect();
+                assert_eq!(seeded.len(), 3);
+                engine
+                    .semantic_cache_commit(&seeded, &digest, profile.descriptor.dims(), u64::MAX)
+                    .unwrap();
+                drop(tokenizer);
+                let sizes = Arc::new(Mutex::new(Vec::new()));
+                let seen = Arc::new(Mutex::new(HashSet::new()));
+                let preparation = Arc::new(Preparation::default());
+                let priorities = vec!["z".into(), "a".into()];
+                if mcp {
+                    let (entered_tx, entered) = mpsc::channel();
+                    let (release, release_rx) = mpsc::channel();
+                    let (prefetched_tx, prefetched) = mpsc::channel();
+                    let owner = Arc::new(Counted {
+                        engine: Mutex::new(engine),
+                        in_flight: AtomicUsize::new(0),
+                        closing: AtomicBool::new(false),
+                        prefetched: Mutex::new(prefetched_tx),
+                        fail_prefetch: AtomicBool::new(false),
+                        armed: AtomicBool::new(false),
+                    });
+                    let provider = Checked {
+                        inner: Sizes {
+                            descriptor: profile.descriptor.clone(),
+                            sizes: Arc::clone(&sizes),
+                            foreground: Some(Arc::clone(&preparation)),
+                        },
+                        seen: Arc::clone(&seen),
+                        first: Some((entered_tx, release_rx)),
+                    };
+                    let runtime = Arc::new(
+                        QueryRuntime::start(
+                            Arc::clone(&profile),
+                            Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+                        )
+                        .unwrap(),
+                    );
+                    preparation
+                        .prepare_with_priorities(
+                            Arc::clone(&owner) as Arc<dyn Owner>,
+                            Arc::clone(&runtime),
+                            Some(priorities),
+                        )
+                        .unwrap();
+                    entered.recv_timeout(Duration::from_secs(30)).unwrap();
+                    assert!(
+                        prefetched.recv_timeout(Duration::from_secs(30)).unwrap() > 0,
+                        "the real driver buffers inputs while the first call is blocked"
+                    );
+                    release.send(()).unwrap();
+                    until_idle(&preparation);
+                    if batch == 3 {
+                        assert!(
+                            prefetched.try_iter().any(|size| size == 3),
+                            "a full prefetch must survive smaller foreground admissions"
+                        );
+                    }
+                    let before = sizes.lock().unwrap().len();
+                    preparation
+                        .prepare(Arc::clone(&owner) as Arc<dyn Owner>, Arc::clone(&runtime))
+                        .unwrap();
+                    until_idle(&preparation);
+                    runtime.shutdown();
+                    assert_eq!(
+                        sizes.lock().unwrap().len(),
+                        before,
+                        "unchanged MCP replay has zero calls"
+                    );
+                    let status = locked(&owner.engine)
+                        .semantic_status(&Control::unbounded())
+                        .unwrap();
+                    assert!(status.last_error.is_none(), "{status:?}");
+                    assert_eq!(status.cached_current_units, locations as u64, "{status:?}");
+                    assert_eq!(
+                        status.searchable_current_units, locations as u64,
+                        "{status:?}"
+                    );
+                    assert_eq!(status.unpartitioned_sources, 0, "{status:?}");
+                    assert_eq!(status.missing_units, 0, "{status:?}");
+                    assert!(
+                        sizes
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .skip(1)
+                            .all(|size| *size <= FOREGROUND_BATCH)
+                    );
+                } else {
+                    drop(engine);
+                    let provider_sizes = Arc::clone(&sizes);
+                    let provider_seen = Arc::clone(&seen);
+                    let control = Control::unbounded();
+                    let options = prepare::PrepareOptions {
+                        profile_path: &profile_path,
+                        budget_seconds: 60,
+                        development: true,
+                        cache_cap_bytes: u64::MAX,
+                        started: Instant::now(),
+                        control: &control,
+                        priority_paths: &priorities,
+                    };
+                    let report = prepare::run(
+                        &dir.path().join("store"),
+                        &options,
+                        Box::new(move |profile, _, _, _| {
+                            Ok(Box::new(Checked {
+                                inner: Sizes {
+                                    descriptor: profile.descriptor.clone(),
+                                    sizes: Arc::clone(&provider_sizes),
+                                    foreground: None,
+                                },
+                                seen: Arc::clone(&provider_seen),
+                                first: None,
+                            }))
+                        }),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        report.embedded_units as usize,
+                        keys.len() - seeded.len(),
+                        "{report:?}"
+                    );
+                    let replay = prepare::run(
+                        &dir.path().join("store"),
+                        &prepare::PrepareOptions {
+                            started: Instant::now(),
+                            ..options
+                        },
+                        Box::new(|_, _, _, _| {
+                            panic!("unchanged CLI replay must not acquire a provider")
+                        }),
+                    )
+                    .unwrap();
+                    assert_eq!(replay.document_calls, 0, "{replay:?}");
+                    let engine = Engine::open_existing(&dir.path().join("store")).unwrap();
+                    let status = engine.semantic_status(&control).unwrap();
+                    assert!(status.last_error.is_none(), "{status:?}");
+                    assert_eq!(status.cached_current_units, locations as u64, "{status:?}");
+                    assert_eq!(
+                        status.searchable_current_units, locations as u64,
+                        "{status:?}"
+                    );
+                    assert_eq!(status.unpartitioned_sources, 0, "{status:?}");
+                    assert_eq!(status.missing_units, 0, "{status:?}");
+                }
+                assert!(
+                    sizes
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .all(|size| *size <= batch as usize)
+                );
+                assert_eq!(
+                    sizes.lock().unwrap().iter().sum::<usize>(),
+                    keys.len() - seeded.len(),
+                    "all missing unique inputs committed exactly once: mcp={mcp}, batch={batch}"
+                );
+                assert_eq!(seen.lock().unwrap().len(), keys.len() - seeded.len());
+            }
+        }
+    }
+
+    #[test]
+    fn continuous_area_changes_wake_the_driver_without_reselecting_sources() {
+        use crate::brief;
+        use serde_json::json;
+        let (_dir, engine, mut profile) = notes();
+        Arc::make_mut(&mut profile).representation =
+            super::super::partition::Representation::Hierarchy { parent_tokens: 32 };
+        Arc::make_mut(&mut profile).card_tokens = 512;
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let provider = Sizes {
+            descriptor: profile.descriptor.clone(),
+            sizes: sizes.clone(),
+            foreground: None,
+        };
+        let runtime = Arc::new(
+            QueryRuntime::start(
+                profile,
+                Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+            )
+            .unwrap(),
+        );
+        let owner = Arc::new(Quiet(Mutex::new(engine)));
+        let preparation = Arc::new(Preparation::default());
+        preparation
+            .maintain(owner.clone(), runtime.clone(), None)
+            .unwrap();
+        let settled = |areas| {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                if preparation.live() == Some(Live::Waiting)
+                    && !owner
+                        .0
+                        .lock()
+                        .unwrap()
+                        .derivation_pending(crate::neural::work::Lane::Semantic)
+                        .unwrap()
+                        .overviews_pending
+                    && preparation.lock().bootstrap.area_vectors == areas
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "overview maintenance did not settle"
+                );
+                std::thread::sleep(POLL);
+            }
+        };
+        settled(0);
+        let selected = preparation.lock().bootstrap.selected_sources;
+        let calls = sizes.lock().unwrap().len();
+        let wid = owner.0.lock().unwrap().workspace_id().unwrap();
+        let spans: Vec<_> = (0..2)
+            .map(|n| {
+                let source = format!("# Note {n}\n\nbody of note {n}\n");
+                format!(
+                    "note{n:02}.md#0-{}@{}.{}",
+                    source.len(),
+                    &crate::digest(source.as_bytes())[..32],
+                    &wid[..16]
+                )
+            })
+            .collect();
+        let mut revision = None;
+        let mut id = String::new();
+        for text in [
+            "Explain the shared note workflow.",
+            "Explain the revised shared note workflow.",
+        ] {
+            let input = json!({"cited_spans":spans,"recipe_sha256":"a".repeat(64),"model":"fixture",
+                "artifact_sha256":"b".repeat(64),"prompt_sha256":crate::digest(text.as_bytes()),"generated_at_unix_ms":1,
+                "purpose":[{"text":text,"citations":[0,1],"identifiers":[]}],
+                "behavior":[{"text":"Retain both notes.","citations":[0,1],"identifiers":[]}],
+                "provides":[],"consumes":[],"constraints":[],"tests":[],"unknowns":[]});
+            let request = brief::parse(&serde_json::to_vec(&json!({"workspace_id":wid,"command":{"op":"put","brief":input,"expected_revision":revision}})).unwrap()).unwrap();
+            let result = owner
+                .0
+                .lock()
+                .unwrap()
+                .brief(&request, &Control::unbounded())
+                .unwrap();
+            revision = result["revision"].as_u64();
+            id = result["id"].as_str().unwrap().to_owned();
+            settled(1);
+            assert_eq!(preparation.lock().bootstrap.selected_sources, selected);
+        }
+        assert_eq!(
+            sizes.lock().unwrap().len(),
+            calls + 2,
+            "one new area input per changed brief"
+        );
+        let request = brief::parse(&serde_json::to_vec(&json!({"workspace_id":wid,"command":{"op":"forget","id":id,"expected_revision":revision}})).unwrap()).unwrap();
+        owner
+            .0
+            .lock()
+            .unwrap()
+            .brief(&request, &Control::unbounded())
+            .unwrap();
+        settled(0);
+        assert_eq!(
+            sizes.lock().unwrap().len(),
+            calls + 2,
+            "forgetting embeds nothing"
+        );
+        assert_eq!(preparation.lock().bootstrap.selected_sources, selected);
+        preparation.pause();
+        until_idle(&preparation);
+        runtime.shutdown();
+    }
+
+    #[test]
+    fn a_pause_publishes_changed_locations_without_new_vectors() {
+        let (_dir, engine, profile) = notes();
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let provider = Sizes {
+            descriptor: profile.descriptor.clone(),
+            sizes: Arc::clone(&sizes),
+            foreground: None,
+        };
+        let runtime = QueryRuntime::start(
+            profile,
+            Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+        )
+        .unwrap();
+        let owner = Quiet(Mutex::new(engine));
+        let preparation = Preparation::default();
+        preparation.lock().phase = Phase::Running;
+        let control = Control::unbounded();
+        let mut run = Run::new(&owner, &runtime, &preparation, &control);
+        run.begin().unwrap();
+        assert!(matches!(run.passes().unwrap(), Stop::Complete));
+        assert_eq!(run.published, 12);
+        assert_eq!(run.unpublished, 0);
+        owner.0.lock().unwrap().delete_source("note00.md").unwrap();
+        preparation.pause();
+        assert!(!run.finish(Ok(paused())));
+        let engine = owner.0.lock().unwrap();
+        let status = engine.semantic_status(&control).unwrap();
+        assert_eq!(status.searchable_current_units, 11);
+        let state = engine.semantic_state().unwrap().unwrap();
+        assert_eq!(state.bootstrap.unwrap().published_entries, 11);
+        assert_eq!(sizes.lock().unwrap().iter().sum::<usize>(), 12);
+    }
+
+    #[test]
+    fn publication_failure_backs_off_visibly_without_the_owner_slot_or_model_calls() {
+        use crate::fault::{self, Action};
+        use crate::neural::fault_names::PUBLISH_BEFORE_MANIFEST;
+        let (_dir, engine, profile) = notes();
+        let sizes = Arc::new(Mutex::new(Vec::new()));
+        let provider = Sizes {
+            descriptor: profile.descriptor.clone(),
+            sizes: Arc::clone(&sizes),
+            foreground: None,
+        };
+        let runtime = QueryRuntime::start(
+            profile,
+            Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+        )
+        .unwrap();
+        let owner = Quiet(Mutex::new(engine));
+        let preparation = Preparation::default();
+        preparation.lock().phase = Phase::Running;
+        let control = Control::unbounded();
+        let mut run = Run::new(&owner, &runtime, &preparation, &control);
+        run.begin().unwrap();
+        assert!(matches!(run.passes().unwrap(), Stop::Complete));
+        owner.0.lock().unwrap().delete_source("note00.md").unwrap();
+        let before = fault::reached(PUBLISH_BEFORE_MANIFEST);
+        fault::arm(
+            PUBLISH_BEFORE_MANIFEST,
+            0,
+            Action::Fail("publication disk failure".into()),
+        );
+        let stop = std::thread::scope(|scope| {
+            let observed = scope.spawn(|| {
+                let until = Instant::now() + Duration::from_secs(10);
+                loop {
+                    if preparation
+                        .progress()
+                        .unwrap()
+                        .publication_backoff_ms
+                        .is_some()
+                    {
+                        let engine = owner.0.try_lock().expect("backoff holds no serving slot");
+                        let status = engine.semantic_status(&Control::unbounded()).unwrap();
+                        assert!(status.index.available, "prior generation is still readable");
+                        assert!(preparation.progress().unwrap().publication_error.is_some());
+                        break;
+                    }
+                    assert!(Instant::now() < until, "backoff not observable");
+                    std::thread::sleep(POLL);
+                }
+            });
+            let stop = run
+                .publish()
+                .unwrap()
+                .expect("persistent failure stops after bounded retries");
+            observed.join().unwrap();
+            stop
+        });
+        assert_eq!(run.report.bootstrap.publication_retries, 3);
+        assert_eq!(fault::reached(PUBLISH_BEFORE_MANIFEST), before + 4);
+        assert!(run.report.index_reason.is_some());
+        preparation.decided();
+        assert!(!run.finish(Ok(stop)));
+        assert_eq!(
+            fault::reached(PUBLISH_BEFORE_MANIFEST),
+            before + 4,
+            "finalization must not start another retry cycle"
+        );
+        fault::disarm_all();
+        assert_eq!(
+            owner
+                .0
+                .lock()
+                .unwrap()
+                .derivation_pending(crate::neural::work::Lane::Semantic)
+                .unwrap()
+                .paths,
+            1
+        );
+        preparation.lock().phase = Phase::Running;
+        let mut resumed = Run::new(&owner, &runtime, &preparation, &control);
+        resumed.begin().unwrap();
+        assert!(matches!(resumed.passes().unwrap(), Stop::Complete));
+        assert_eq!(
+            sizes.lock().unwrap().iter().sum::<usize>(),
+            12,
+            "publication retries do not repeat inference"
+        );
+        assert_eq!(
+            owner
+                .0
+                .lock()
+                .unwrap()
+                .derivation_pending(crate::neural::work::Lane::Semantic)
+                .unwrap()
+                .paths,
+            0
+        );
+    }
+
+    #[test]
+    fn partition_computation_releases_the_engine_slot_and_obeys_pause_and_shutdown() {
+        struct Available {
+            engine: Mutex<Engine>,
+            closing: AtomicBool,
+        }
+        impl Owner for Available {
+            fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
+                step(&self.engine.lock().unwrap());
+                Ok(true)
+            }
+            fn closing(&self) -> bool {
+                self.closing.load(Ordering::SeqCst)
+            }
+        }
+        for stop in ["none", "pause", "shutdown"] {
+            let (_dir, engine, profile) = notes();
+            let descriptor = profile.descriptor.clone();
+            let runtime = QueryRuntime::start(
+                profile,
+                Box::new(move || {
+                    Ok(Box::new(Sizes {
+                        descriptor,
+                        sizes: Arc::new(Mutex::new(Vec::new())),
+                        foreground: None,
+                    }) as Box<dyn EmbeddingProvider>)
+                }),
+            )
+            .unwrap();
+            let owner = Arc::new(Available {
+                engine: Mutex::new(engine),
+                closing: AtomicBool::new(false),
+            });
+            let preparation = Arc::new(Preparation::default());
+            preparation.lock().phase = Phase::Running;
+            let foreground = Arc::clone(&owner);
+            let pause = Arc::clone(&preparation);
+            let entered = Arc::new(AtomicBool::new(false));
+            let seen = Arc::clone(&entered);
+            crate::fault::arm(
+                prepare::fault_names::PARTITION_BEFORE_COMPUTE,
+                0,
+                crate::fault::Action::Call(Box::new(move |_| {
+                    let engine = foreground
+                        .engine
+                        .try_lock()
+                        .expect("partition CPU work must release the serving slot");
+                    let evidence = engine
+                        .context_candidates(
+                            "note00.md",
+                            crate::Strategy::Search,
+                            &Control::unbounded(),
+                        )
+                        .unwrap();
+                    assert!(!evidence.items.is_empty());
+                    // A write succeeds too: there is no lingering redb writer.
+                    engine
+                        .replace_source("foreground.md", "# Foreground source\n")
+                        .unwrap();
+                    seen.store(true, Ordering::SeqCst);
+                    if stop == "pause" {
+                        pause.pause();
+                    }
+                    if stop == "shutdown" {
+                        foreground.closing.store(true, Ordering::SeqCst);
+                    }
+                })),
+            );
+            let control = Control::unbounded();
+            let (result, _) = Run::new(&*owner, &runtime, &preparation, &control)
+                .partition_wave(&mut prepare::SourceCursor::default())
+                .unwrap();
+            crate::fault::disarm_all();
+            assert!(entered.load(Ordering::SeqCst));
+            let engine = owner.engine.lock().unwrap();
+            if stop == "none" {
+                assert!(!matches!(result, Progress::Halted(_)));
+                assert!(engine.semantic_partition("note00.md").unwrap().is_some());
+            } else {
+                assert!(
+                    matches!(result, Progress::Halted(Stop::Partial { code, .. }) if code == if stop == "pause" { "paused" } else { "cancelled" })
+                );
+                assert!(engine.semantic_partition("note00.md").unwrap().is_none());
+            }
         }
     }
 

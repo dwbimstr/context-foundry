@@ -70,13 +70,125 @@ pub struct PartitionRecord {
     pub units: Vec<PartitionUnit>,
 }
 
+/// What the exact model input represents. Legacy mappings remain readable, but
+/// unknown provenance cannot be promoted to independently scored body evidence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CardKind {
+    #[default]
+    Unknown,
+    Address,
+    Body,
+    /// A parsed container header/delimiter residual, not an implementation body.
+    ContainerFragment,
+    Parent,
+    File,
+}
+
+impl CardKind {
+    /// Legacy recipes predate representation metadata. A current recipe must
+    /// carry a role it can actually render; a file overview cannot acquire body
+    /// semantics by changing only its location metadata.
+    pub(crate) fn valid_for(self, recipe: &str) -> bool {
+        let mut versions = recipe.split('+').filter(|part| part.starts_with("kinds"));
+        let version = versions.next();
+        if versions.next().is_some() {
+            return false;
+        }
+        let fragments = match version {
+            None => return self != Self::ContainerFragment, // only roles predating metadata
+            Some("kinds1") => false,
+            Some("kinds2") => true,
+            Some(_) => return false,
+        };
+        match recipe.split('+').next() {
+            Some("cards-v1") => self == Self::Address,
+            Some("body-v1") => self == Self::Body || (fragments && self == Self::ContainerFragment),
+            Some("overview-v1") => self == Self::File,
+            Some("hierarchy-v1") => {
+                matches!(self, Self::Body | Self::Parent | Self::File)
+                    || (fragments && self == Self::ContainerFragment)
+            }
+            _ => false,
+        }
+    }
+}
+
 /// One card's provenance: the unit range it was rendered from and the key
 /// of its exact rendered input.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PartitionUnit {
+    #[serde(default)]
+    pub kind: CardKind,
     pub start: usize,
     pub end: usize,
     pub input_key: String,
+}
+
+/// Verified immutable input for off-transaction partition computation. Fields
+/// stay private so acceptance cannot be given arbitrary source bytes or tuples.
+#[derive(Debug)]
+pub(crate) struct PartitionSource {
+    path: String,
+    source_hash: String,
+    body: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparedPartition {
+    path: String,
+    record: PartitionRecord,
+}
+
+impl PartitionSource {
+    #[cfg(feature = "semantic")]
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    #[cfg(feature = "semantic")]
+    pub(crate) fn source_hash(&self) -> &str {
+        &self.source_hash
+    }
+
+    pub(crate) fn prepare(
+        self,
+        recipe_id: &str,
+        function_digest: &str,
+        claimed: Option<&[PartitionUnit]>,
+        cards: impl FnOnce(&str) -> FResult<Vec<PartitionUnit>>,
+    ) -> FResult<PreparedPartition> {
+        let units = cards(&self.body)?;
+        validate_units(&units, self.body.len(), Some(&self.body))
+            .map_err(|m| invalid_partition(format!("{}: {m}", self.path)))?;
+        if units.iter().any(|unit| !unit.kind.valid_for(recipe_id)) {
+            return Err(invalid_partition(format!(
+                "{}: card role is incompatible with the partition recipe",
+                self.path
+            )));
+        }
+        if let Some(claimed) = claimed
+            && let Some(message) = first_difference(claimed, &units)
+        {
+            return Err(invalid_partition(format!("{}: {message}", self.path)));
+        }
+        Ok(PreparedPartition {
+            path: self.path,
+            record: PartitionRecord {
+                source_hash: self.source_hash,
+                recipe_id: recipe_id.to_owned(),
+                function_digest: function_digest.to_owned(),
+                units,
+            },
+        })
+    }
+}
+
+impl PreparedPartition {
+    #[cfg(feature = "semantic")]
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
 }
 
 /// The last provider state preparation observed. It is a record of what a
@@ -114,6 +226,12 @@ pub struct SemanticState {
     /// Exact byte total of the cache rows (their actual lengths), updated
     /// with each batch commit.
     pub cache_bytes: u64,
+    /// Versioned accounting travels in the state row. Older writers drop these
+    /// fields when rewriting it, forcing one reconciliation on the next run.
+    #[serde(default)]
+    pub cache_accounting_version: Option<u32>,
+    #[serde(default)]
+    pub cache_entries: Option<u64>,
     /// The cache cap of the last run that began; `None` before one recorded
     /// it, which means [`DEFAULT_CACHE_CAP_BYTES`].
     #[serde(default)]
@@ -121,6 +239,62 @@ pub struct SemanticState {
     /// The last provider state a preparation run observed, if any.
     #[serde(default)]
     pub provider: Option<ProviderObservation>,
+    /// Last completed/paused run's stage accounting; older rows have none.
+    #[serde(default)]
+    pub bootstrap: Option<BootstrapProgress>,
+    #[serde(default)]
+    pub coverage: Option<CoverageSnapshot>,
+}
+
+/// Last successful publication observation. Freshness is checked against source
+/// revision and profile at read time; it is never proof of on-disk integrity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CoverageSnapshot {
+    pub version: u32,
+    pub source_revision: u64,
+    pub function_digest: String,
+    pub recipe_id: String,
+    pub sources: u64,
+    pub unpartitioned_sources: u64,
+    pub eligible_units: u64,
+    pub cached_current_units: u64,
+    pub searchable_current_units: u64,
+    pub index_entries: u64,
+}
+
+/// Observed run accounting, not a model/device throughput estimate. Provider wait
+/// overlaps card prefetch, so durations are not additive CPU/device utilization.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct BootstrapProgress {
+    #[serde(default)]
+    pub area_vectors: u64,
+    #[serde(default)]
+    pub embedded_areas: u64,
+    #[serde(default)]
+    pub selected_sources: u64,
+    pub waves: u64,
+    pub priority_waves: u64,
+    pub partition_compute_ms: u64,
+    pub render_ms: u64,
+    pub provider_ms: u64,
+    pub publication_ms: u64,
+    pub generation_builds: u64,
+    #[serde(default)]
+    pub delta_publications: u64,
+    #[serde(default)]
+    pub mapping_publications: u64,
+    #[serde(default)]
+    pub publication_retries: u64,
+    #[serde(default)]
+    pub publication_backoff_ms: Option<u64>,
+    #[serde(default)]
+    pub publication_error: Option<String>,
+    pub published_entries: u64,
+    pub first_searchable_ms: Option<u64>,
+    pub elapsed_ms: u64,
+    pub reused_cached_units: u64,
+    pub embedded_units: u64,
+    pub input_tokens: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -177,19 +351,65 @@ pub(crate) fn source_page(
     db: &Database,
     after: Option<&str>,
 ) -> FResult<Vec<(String, SourceMeta)>> {
+    source_page_in(db, after, None)
+}
+
+/// One path or subtree, preserving the same ordered source cursor. No siblings
+/// are enumerated for an explicitly requested area.
+pub(crate) fn source_page_in(
+    db: &Database,
+    after: Option<&str>,
+    scope: Option<&str>,
+) -> FResult<Vec<(String, SourceMeta)>> {
     let tx = db.begin_read()?;
     let sources = tx.open_table(SOURCES)?;
-    let rows = match after {
-        None => sources.range::<&str>(..)?,
-        Some(key) => sources.range::<&str>((Bound::Excluded(key), Bound::Unbounded))?,
-    };
     let mut page = Vec::with_capacity(PAGE);
-    for row in rows.take(PAGE) {
+    let prefix = scope.map(|path| format!("{path}/"));
+    if after.is_none()
+        && let Some(path) = scope
+        && let Some(raw) = sources.get(path)?
+    {
+        page.push((path.to_owned(), decode(raw.value(), "source")?));
+    }
+    let start = match (after, prefix.as_deref()) {
+        (Some(key), Some(prefix)) if key < prefix => Bound::Included(prefix),
+        (Some(key), _) => Bound::Excluded(key),
+        (None, Some(prefix)) => Bound::Included(prefix),
+        (None, None) => Bound::Unbounded,
+    };
+    for row in sources
+        .range::<&str>((start, Bound::Unbounded))?
+        .take(PAGE - page.len())
+    {
         let (key, raw) = row?;
+        if prefix
+            .as_deref()
+            .is_some_and(|prefix| !key.value().starts_with(prefix))
+        {
+            break;
+        }
         let meta: SourceMeta = decode(raw.value(), "source")?;
         page.push((key.value().to_owned(), meta));
     }
     Ok(page)
+}
+
+/// Publication visits prepared rows, so a cold first wave does not census every
+/// unprepared source. Keep only keys in the page; decode one partition at a time.
+#[cfg(feature = "semantic")]
+pub(crate) fn partition_paths(db: &Database, after: Option<&str>) -> FResult<Vec<String>> {
+    let tx = db.begin_read()?;
+    let partitions = tx.open_table(PARTITIONS)?;
+    let start = after.map_or(Bound::Unbounded, Bound::Excluded);
+    partitions
+        .range::<&str>((start, Bound::Unbounded))?
+        .take(PAGE)
+        .map(|row| Ok(row?.0.value().to_owned()))
+        .collect()
+}
+
+pub(crate) fn source_count(db: &Database) -> FResult<u64> {
+    Ok(db.begin_read()?.open_table(SOURCES)?.len()?)
 }
 
 /// Create the three semantic tables (initialization and the v5 upgrade).
@@ -229,6 +449,43 @@ fn decode_state(raw: &str) -> FResult<SemanticState> {
     })
 }
 
+fn cache_accounting(
+    table: &impl ReadableTable<&'static str, &'static [u8]>,
+    state: &mut SemanticState,
+    reconcile: bool,
+) -> FResult<()> {
+    if state
+        .cache_accounting_version
+        .is_some_and(|version| version != 1)
+    {
+        return Err(FoundryError::CorruptStore(
+            "unknown semantic cache accounting version".into(),
+        ));
+    }
+    if !reconcile && state.cache_accounting_version == Some(1) {
+        if state.cache_entries != Some(table.len()?) {
+            return Err(FoundryError::CorruptStore(
+                "semantic cache entry accounting disagrees with the table; reconcile the cache"
+                    .into(),
+            ));
+        }
+        return Ok(());
+    }
+    neural_fault!(CACHE_RECONCILE, None, "")?;
+    let mut bytes = 0u64;
+    for row in table.iter()? {
+        bytes = bytes
+            .checked_add(row?.1.value().len() as u64)
+            .ok_or_else(|| {
+                FoundryError::CorruptStore("semantic cache byte total overflow".into())
+            })?;
+    }
+    state.cache_bytes = bytes;
+    state.cache_entries = Some(table.len()?);
+    state.cache_accounting_version = Some(1);
+    Ok(())
+}
+
 /// Validate a card list against a source of `len` bytes: nonempty ranges
 /// inside the source in the unit forest's pre-order (start ascending, the
 /// enclosing range first among equal starts), no range twice, and key
@@ -250,15 +507,24 @@ pub fn validate_units(
                 unit.end
             ));
         }
+        if unit.kind == CardKind::File && (unit.start != 0 || unit.end != len) {
+            return Err(format!(
+                "card {index} claims file provenance for a partial range"
+            ));
+        }
         if !is_key(&unit.input_key) {
             return Err(format!("card {index} has a malformed input key"));
         }
         if index > 0 {
             let previous = &units[index - 1];
             let ordered = previous.start < unit.start
-                || (previous.start == unit.start && previous.end > unit.end);
+                || (previous.start == unit.start
+                    && (previous.end > unit.end
+                        || (previous.end == unit.end && previous.input_key < unit.input_key)));
             if !ordered {
-                return Err(format!("card {index} is out of order or repeats a range"));
+                return Err(format!(
+                    "card {index} is out of order or repeats a range/key"
+                ));
             }
         }
         if let Some(body) = body
@@ -310,6 +576,10 @@ pub fn partition_is_current(
     record.source_hash == meta.hash
         && record.recipe_id == recipe_id
         && record.function_digest == function_digest
+        && record
+            .units
+            .iter()
+            .all(|unit| unit.kind.valid_for(recipe_id))
         && validate_units(&record.units, meta.bytes, None).is_ok()
 }
 
@@ -372,7 +642,161 @@ fn encode_row(function_digest: &str, vector: &[f32]) -> Vec<u8> {
     value
 }
 
+/// A page shares one redb snapshot across source, partition and cache metadata.
+#[cfg(feature = "semantic")]
+pub(crate) struct MappingPage {
+    sources: redb::ReadOnlyTable<&'static str, &'static str>,
+    partitions: redb::ReadOnlyTable<&'static str, &'static str>,
+    cache: redb::ReadOnlyTable<&'static str, &'static [u8]>,
+}
+#[cfg(feature = "semantic")]
+impl MappingPage {
+    pub(crate) fn new(engine: &Engine, _control: &Control) -> FResult<Self> {
+        neural_fault!(MAPPING_READ_SNAPSHOT, Some(_control), "page")?;
+        let tx = engine.db.begin_read()?;
+        Ok(Self {
+            sources: tx.open_table(SOURCES)?,
+            partitions: tx.open_table(PARTITIONS)?,
+            cache: tx.open_table(CACHE)?,
+        })
+    }
+    /// Point-read size guard for selected query mappings, before JSON allocation.
+    pub(crate) fn partition_bytes(&self, path: &str) -> FResult<usize> {
+        Ok(self
+            .partitions
+            .get(path)?
+            .map_or(0, |raw| raw.value().len()))
+    }
+
+    pub(crate) fn partition(
+        &self,
+        path: &str,
+        digest: &str,
+        recipe: &str,
+        control: &Control,
+    ) -> FResult<Option<PartitionRecord>> {
+        Ok(self
+            .partition_with_source_len(path, digest, recipe, control)?
+            .map(|(record, _)| record))
+    }
+
+    /// Current mapping and source length from the same point-read snapshot.
+    /// Query owner ranges must fit this source, not a stale lexical document.
+    pub(crate) fn partition_with_source_len(
+        &self,
+        path: &str,
+        digest: &str,
+        recipe: &str,
+        _control: &Control,
+    ) -> FResult<Option<(PartitionRecord, usize)>> {
+        let Some(raw) = self.sources.get(path)? else {
+            return Ok(None);
+        };
+        let meta: SourceMeta = decode(raw.value(), "source")?;
+        neural_fault!(PARTITION_READ, Some(_control), path)?;
+        let record: Option<PartitionRecord> = self
+            .partitions
+            .get(path)?
+            .map(|v| decode(v.value(), "semantic partition"))
+            .transpose()?;
+        Ok(record
+            .filter(|r| partition_is_current(r, &meta, recipe, digest))
+            .map(|record| (record, meta.bytes)))
+    }
+    pub(crate) fn cached(&self, key: &str, digest: &str) -> FResult<bool> {
+        Ok(self
+            .cache
+            .get(key)?
+            .is_some_and(|raw| probe_row(raw.value(), digest) == CacheProbe::Current))
+    }
+}
+
+fn mapping_revision(table: &impl ReadableTable<&'static str, &'static str>) -> FResult<u64> {
+    table
+        .get("semantic_mapping_revision")?
+        .map(|raw| {
+            raw.value()
+                .parse()
+                .map_err(|_| FoundryError::CorruptStore("invalid semantic mapping revision".into()))
+        })
+        .transpose()
+        .map(|revision| revision.unwrap_or(0))
+}
+
 impl Engine {
+    /// Every mapping-affecting commit, including builds without ANN support,
+    /// advances this durable revision in the SAME authoritative transaction.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn semantic_mapping_revision(&self) -> FResult<u64> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(crate::store::META)?;
+        mapping_revision(&table)
+    }
+
+    /// Commit and notify the disposable mapping view without an observation gap.
+    /// The same short mutex orders cursor snapshots with redb publication.
+    pub(crate) fn semantic_commit<'a>(
+        &self,
+        tx: WriteTransaction,
+        paths: impl IntoIterator<Item = &'a str>,
+        keys: impl IntoIterator<Item = &'a str>,
+        reset: bool,
+    ) -> FResult<()> {
+        let mut path_set = std::collections::BTreeSet::new();
+        let mut key_set = std::collections::BTreeSet::new();
+        let mut bytes = 0usize;
+        let mut reset = reset;
+        if !reset {
+            for (path, value) in paths
+                .into_iter()
+                .map(|p| (true, p))
+                .chain(keys.into_iter().map(|k| (false, k)))
+            {
+                let set = if path { &mut path_set } else { &mut key_set };
+                if set.insert(value.to_owned()) {
+                    bytes = bytes.saturating_add(value.len() + 2);
+                }
+                if path_set.len() + key_set.len() > super::mapping_store::MAX_DIRTY
+                    || bytes > super::mapping_store::MAX_BYTES
+                {
+                    path_set.clear();
+                    key_set.clear();
+                    reset = true;
+                    break;
+                }
+            }
+        }
+        let paths: Vec<_> = path_set.into_iter().collect();
+        let keys: Vec<_> = key_set.into_iter().collect();
+        let revision = {
+            let mut meta = tx.open_table(crate::store::META)?;
+            let revision = mapping_revision(&meta)?
+                .checked_add(1)
+                .ok_or(FoundryError::RevisionExhausted)?;
+            meta.insert("semantic_mapping_revision", revision.to_string().as_str())?;
+            revision
+        };
+        super::mapping_store::changed(&tx, revision, &paths, &keys, reset)?;
+        #[cfg(feature = "semantic")]
+        {
+            self.semantic_mapping
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .commit(
+                    tx,
+                    paths.iter().map(String::as_str),
+                    keys.iter().map(String::as_str),
+                    reset,
+                )
+        }
+        #[cfg(not(feature = "semantic"))]
+        {
+            let _ = (paths, keys, reset);
+            tx.commit()?;
+            Ok(())
+        }
+    }
+
     /// The recorded partition of one source, if any. Metadata-only.
     pub fn semantic_partition(&self, path: &str) -> FResult<Option<PartitionRecord>> {
         neural_fault!(PARTITION_READ, None, path)?;
@@ -386,8 +810,9 @@ impl Engine {
 
     /// Accept one completed card mapping (possibly without cards) for the
     /// CURRENT version of `path`, named by `source_hash`. That version and
-    /// its immutable body are read in the write transaction, and the row
-    /// written is `cards` applied to THAT body (the run's card renderer
+    /// its immutable body are verified in a read transaction, computation
+    /// runs with no transaction, and acceptance rechecks the source hash in
+    /// the write transaction. The row is `cards` applied to THAT body (the run's card renderer
     /// under `recipe_id` and `function_digest`): every accepted
     /// `(start, end, input_key)` tuple is the card the verified body renders
     /// at that range, whether or not its vector is cached, so a vector is
@@ -405,43 +830,59 @@ impl Engine {
         claimed: Option<&[PartitionUnit]>,
         cards: &dyn Fn(&str) -> FResult<Vec<PartitionUnit>>,
     ) -> FResult<()> {
+        let source = self.semantic_partition_source(path, source_hash)?;
+        let prepared = source.prepare(recipe_id, function_digest, claimed, cards)?;
+        self.semantic_accept_partition(prepared)
+    }
+
+    pub(crate) fn semantic_partition_source(
+        &self,
+        path: &str,
+        source_hash: &str,
+    ) -> FResult<PartitionSource> {
+        let tx = self.db.begin_read()?;
+        let sources = tx.open_table(SOURCES)?;
+        let meta: SourceMeta = match sources.get(path)? {
+            Some(raw) => decode(raw.value(), "source")?,
+            None => return Err(FoundryError::NotFound),
+        };
+        if meta.hash != source_hash {
+            return Err(invalid_partition(format!(
+                "{path}: the mapping names a stale source version"
+            )));
+        }
+        let chunks = tx.open_table(CHUNKS)?;
+        let body = reconstruct_verified(&chunks, path, &meta)?.body;
+        Ok(PartitionSource {
+            path: path.to_owned(),
+            source_hash: meta.hash,
+            body,
+        })
+    }
+
+    pub(crate) fn semantic_accept_partition(&self, prepared: PreparedPartition) -> FResult<()> {
+        let PreparedPartition { path, record } = prepared;
         let tx = self.db.begin_write()?;
         {
             let sources = tx.open_table(SOURCES)?;
-            let meta: SourceMeta = match sources.get(path)? {
+            let meta: SourceMeta = match sources.get(path.as_str())? {
                 Some(raw) => decode(raw.value(), "source")?,
                 None => return Err(FoundryError::NotFound),
             };
-            if meta.hash != source_hash {
+            if meta.hash != record.source_hash {
                 return Err(invalid_partition(format!(
                     "{path}: the mapping names a stale source version"
                 )));
             }
-            let chunks = tx.open_table(CHUNKS)?;
-            let body = reconstruct_verified(&chunks, path, &meta)?.body;
-            let units = cards(&body)?;
-            validate_units(&units, body.len(), Some(&body))
-                .map_err(|m| invalid_partition(format!("{path}: {m}")))?;
-            if let Some(claimed) = claimed
-                && let Some(message) = first_difference(claimed, &units)
-            {
-                return Err(invalid_partition(format!("{path}: {message}")));
-            }
-            let record = PartitionRecord {
-                source_hash: meta.hash,
-                recipe_id: recipe_id.to_owned(),
-                function_digest: function_digest.to_owned(),
-                units,
-            };
             let mut table = tx.open_table(PARTITIONS)?;
             table.insert(
-                path,
+                path.as_str(),
                 serde_json::to_string(&record)
                     .map_err(FoundryError::from)?
                     .as_str(),
             )?;
         }
-        tx.commit()?;
+        self.semantic_commit(tx, [path.as_str()], std::iter::empty(), false)?;
         Ok(())
     }
 
@@ -474,9 +915,25 @@ impl Engine {
         let tx = self.db.begin_write()?;
         {
             let mut table = tx.open_table(STATE)?;
+            let mut state = state.clone();
+            // A finalizer or provider observation cannot overwrite accounting
+            // from a cache batch committed after it read the state.
+            if let Some(raw) = table.get(STATE_KEY)? {
+                let current = decode_state(raw.value())?;
+                state.cache_bytes = current.cache_bytes;
+                state.cache_entries = current.cache_entries;
+                state.cache_accounting_version = current.cache_accounting_version;
+                state.committed_units = current.committed_units;
+                state.coverage = current.coverage;
+            } else {
+                state.cache_bytes = 0;
+                state.cache_entries = None;
+                state.cache_accounting_version = None;
+                state.committed_units = 0;
+            }
             table.insert(
                 STATE_KEY,
-                serde_json::to_string(state)
+                serde_json::to_string(&state)
                     .map_err(FoundryError::from)?
                     .as_str(),
             )?;
@@ -486,33 +943,68 @@ impl Engine {
     }
 
     /// Record a preparation run's start in ONE write transaction: `start`
-    /// sets the run's identity on the state row, after the row's cache-byte
-    /// total was reconciled from the actual row lengths. Another binary may
-    /// have recorded a different total (a pre-T004 finalizer counts 8,256
-    /// bytes per row); nothing is purged, and cache-cap admission counts real
-    /// bytes from the run's first commit on.
+    /// sets the run identity after checking versioned transactional accounting.
+    /// A legacy writer drops the accounting version: reconcile once in that
+    /// case, rather than scanning the whole cache on every warm run.
     pub fn semantic_begin_run(&self, start: impl FnOnce(&mut SemanticState)) -> FResult<()> {
         let tx = self.db.begin_write()?;
         {
             let cache = tx.open_table(CACHE)?;
-            let mut bytes = 0u64;
-            for row in cache.iter()? {
-                bytes += row?.1.value().len() as u64;
-            }
             let mut table = tx.open_table(STATE)?;
             let mut state = table
                 .get(STATE_KEY)?
                 .map(|raw| decode_state(raw.value()))
                 .transpose()?
                 .unwrap_or_default();
-            state.cache_bytes = bytes;
+            cache_accounting(&cache, &mut state, false)?;
+            let accounting = (
+                state.cache_bytes,
+                state.cache_entries,
+                state.cache_accounting_version,
+                state.committed_units,
+            );
             start(&mut state);
+            (
+                state.cache_bytes,
+                state.cache_entries,
+                state.cache_accounting_version,
+                state.committed_units,
+            ) = accounting;
             table.insert(
                 STATE_KEY,
                 serde_json::to_string(&state)
                     .map_err(FoundryError::from)?
                     .as_str(),
             )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Record counters from the same mapping that was successfully published.
+    /// A concurrent edit/profile change leaves the previous observation stale.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn semantic_record_coverage(&self, coverage: CoverageSnapshot) -> FResult<()> {
+        let tx = self.db.begin_write()?;
+        {
+            if crate::store::revision_in(&tx)? != coverage.source_revision {
+                return Ok(());
+            }
+            let mut table = tx.open_table(STATE)?;
+            let Some(mut state) = table
+                .get(STATE_KEY)?
+                .map(|raw| decode_state(raw.value()))
+                .transpose()?
+            else {
+                return Ok(());
+            };
+            if state.function_digest.as_ref() != Some(&coverage.function_digest)
+                || state.recipe_id.as_ref() != Some(&coverage.recipe_id)
+            {
+                return Ok(());
+            }
+            state.coverage = Some(coverage);
+            table.insert(STATE_KEY, serde_json::to_string(&state)?.as_str())?;
         }
         tx.commit()?;
         Ok(())
@@ -575,17 +1067,51 @@ impl Engine {
         }
     }
 
-    /// Cache rows and the exact sum of their actual lengths (one read).
+    /// Committed cache totals, without walking rows. Legacy state falls back
+    /// to a census; the next begin/commit records its versioned accounting.
     pub fn semantic_cache_totals(&self) -> FResult<(u64, u64)> {
         let tx = self.db.begin_read()?;
         let table = tx.open_table(CACHE)?;
-        let (mut rows, mut bytes) = (0u64, 0u64);
-        for row in table.iter()? {
-            let (_, value) = row?;
-            rows += 1;
-            bytes += value.value().len() as u64;
+        let mut state = tx
+            .open_table(STATE)?
+            .get(STATE_KEY)?
+            .map(|raw| decode_state(raw.value()))
+            .transpose()?
+            .unwrap_or_default();
+        cache_accounting(&table, &mut state, false)?;
+        Ok((
+            state.cache_entries.expect("accounted entries"),
+            state.cache_bytes,
+        ))
+    }
+
+    /// Explicit repair of accounting only; vectors and their eligibility are
+    /// unchanged. Payload validation still happens whenever a vector is used.
+    pub fn semantic_reconcile_cache(&self) -> FResult<(u64, u64)> {
+        if self.semantic_state()?.is_none()
+            && self.db.begin_read()?.open_table(CACHE)?.is_empty()?
+        {
+            return Ok((0, 0));
         }
-        Ok((rows, bytes))
+        let tx = self.db.begin_write()?;
+        let totals = {
+            let cache = tx.open_table(CACHE)?;
+            let mut table = tx.open_table(STATE)?;
+            let mut state = table
+                .get(STATE_KEY)?
+                .map(|raw| decode_state(raw.value()))
+                .transpose()?
+                .unwrap_or_else(SemanticState::stopped);
+            cache_accounting(&cache, &mut state, true)?;
+            let totals = (
+                state.cache_entries.expect("accounted entries"),
+                state.cache_bytes,
+            );
+            table.insert(STATE_KEY, serde_json::to_string(&state)?.as_str())?;
+            totals
+        };
+        tx.commit()?;
+        Ok(totals)
     }
 
     /// Paged, metadata-only census of the whole cache: each row is validated
@@ -674,16 +1200,36 @@ impl Engine {
                 .map(|raw| decode_state(raw.value()))
                 .transpose()?
                 .unwrap_or_else(SemanticState::stopped);
+            // Repairing a malformed/replaced cache row may also need to repair
+            // its byte accounting. Ordinary valid commits never run a census.
+            let repair = entries
+                .iter()
+                .try_fold(false, |repair, (key, _)| -> FResult<bool> {
+                    Ok(repair
+                        || table.get(key.as_str())?.is_some_and(|old| {
+                            probe_row(old.value(), function_digest) != CacheProbe::Current
+                                || layout(old.value()) != Layout::Dims(dims)
+                        }))
+                })?;
+            cache_accounting(&table, &mut state, repair)?;
             let mut bytes = state.cache_bytes;
             let mut replaced: HashSet<&str> = HashSet::new();
             for (key, _) in entries {
                 if replaced.insert(key.as_str())
                     && let Some(old) = table.get(key.as_str())?
                 {
-                    bytes = bytes.saturating_sub(old.value().len() as u64);
+                    bytes = bytes.checked_sub(old.value().len() as u64).ok_or_else(|| {
+                        FoundryError::CorruptStore(
+                            "semantic cache byte accounting underflow; reconcile the cache".into(),
+                        )
+                    })?;
                 }
             }
-            bytes += replaced.len() as u64 * row_bytes(dims) as u64;
+            bytes = bytes
+                .checked_add(replaced.len() as u64 * row_bytes(dims) as u64)
+                .ok_or_else(|| {
+                    FoundryError::CorruptStore("semantic cache byte accounting overflow".into())
+                })?;
             if bytes > cap_bytes {
                 return Err(FoundryError::Semantic {
                     code: "cache_full",
@@ -699,6 +1245,7 @@ impl Engine {
             }
             state.committed_units += entries.len() as u64;
             state.cache_bytes = bytes;
+            state.cache_entries = Some(table.len()?);
             state_table.insert(
                 STATE_KEY,
                 serde_json::to_string(&state)
@@ -706,7 +1253,12 @@ impl Engine {
                     .as_str(),
             )?;
         }
-        tx.commit()?;
+        self.semantic_commit(
+            tx,
+            std::iter::empty(),
+            entries.iter().map(|(key, _)| key.as_str()),
+            false,
+        )?;
         Ok(())
     }
 
@@ -766,7 +1318,10 @@ impl Engine {
                         .as_str(),
                 )?;
             }
-            tx.commit()?;
+            crate::neural::work::invalidate(&tx, crate::neural::work::Lane::Semantic)?;
+            super::mapping_store::purge(&tx)?;
+            self.semantic_commit(tx, std::iter::empty(), std::iter::empty(), true)?;
+            self.semantic_wake.notify();
             (partitions, rows, bytes)
         };
         // Rows are gone; the descriptor-relative deletion follows. The hook
@@ -859,6 +1414,73 @@ mod tests {
     const DIGEST: &str = "abababababababababababababababababababababababababababababababab";
 
     #[test]
+    fn current_partition_rejects_a_role_the_recipe_cannot_render() {
+        for (recipe, accepted) in [
+            ("cards-v1", vec![CardKind::Address]),
+            ("body-v1", vec![CardKind::Body]),
+            ("overview-v1", vec![CardKind::File]),
+            (
+                "hierarchy-v1",
+                vec![CardKind::File, CardKind::Parent, CardKind::Body],
+            ),
+        ] {
+            for kind in [
+                CardKind::Unknown,
+                CardKind::Address,
+                CardKind::Body,
+                CardKind::ContainerFragment,
+                CardKind::Parent,
+                CardKind::File,
+            ] {
+                let source = PartitionSource {
+                    path: "src/example.rs".into(),
+                    source_hash: DIGEST.into(),
+                    body: "fn example() {}".into(),
+                };
+                let result = source.prepare(
+                    &format!("{recipe}+kinds1+units5:512+tokenizer"),
+                    DIGEST,
+                    None,
+                    |body| {
+                        Ok(vec![PartitionUnit {
+                            kind,
+                            start: 0,
+                            end: body.len(),
+                            input_key: DIGEST.into(),
+                        }])
+                    },
+                );
+                assert_eq!(
+                    result.is_ok(),
+                    accepted.contains(&kind),
+                    "{recipe}: {kind:?}"
+                );
+            }
+        }
+        for recipe in ["body-v1", "hierarchy-v1"] {
+            assert!(
+                CardKind::ContainerFragment.valid_for(&format!("{recipe}+kinds2+units5:512+t"))
+            );
+            assert!(
+                !CardKind::ContainerFragment.valid_for(&format!("{recipe}+kinds1+units5:512+t"))
+            );
+            assert!(!CardKind::Unknown.valid_for(&format!("{recipe}+kinds2+units5:512+t")));
+            assert!(!CardKind::Address.valid_for(&format!("{recipe}+kinds2+units5:512+t")));
+        }
+        for recipe in [
+            "cards-v1+kinds2",
+            "overview-v1+kinds2",
+            "body-v1+kinds3",
+            "body-v1+kinds1+kinds2",
+            "body-v1+kinds2+kinds2",
+        ] {
+            assert!(!CardKind::ContainerFragment.valid_for(recipe), "{recipe}");
+        }
+        assert!(CardKind::Unknown.valid_for("cards-v1+units5:512+tokenizer"));
+        assert!(!CardKind::ContainerFragment.valid_for("body-v1+units5:512+tokenizer"));
+    }
+
+    #[test]
     fn rows_describe_their_own_dimension_and_legacy_rows_are_retained() {
         for dims in [768, 512, 256, 128, 2048] {
             let row = encode_row(DIGEST, &vec![0.5; dims]);
@@ -898,6 +1520,7 @@ mod tests {
     fn cards_may_nest_and_be_absent_but_never_repeat_or_leave_the_source() {
         let key = "e".repeat(64);
         let unit = |start: usize, end: usize| PartitionUnit {
+            kind: crate::neural::cache::CardKind::Address,
             start,
             end,
             input_key: key.clone(),

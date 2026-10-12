@@ -10,10 +10,52 @@ use crate::control::Control;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-/// Serving limit for any single model input, template and special tokens
-/// included (D001), and the token total of one call: the worker embeds a
-/// call's sequences in one llama.cpp context of this many tokens.
+/// Legacy limit for a single input and the total tokens per call, including
+/// template and special tokens. Explicit geometry is descriptor-bound.
 pub const SERVING_LIMIT_TOKENS: usize = 2048;
+/// Hard token-payload ceiling; an explicit, verified geometry selects a smaller
+/// model/backend limit. This constant is not a claim about any model's window.
+pub const MAX_CONTEXT_TOKENS: usize = 32768;
+pub const GEOMETRY_ADAPTER_REVISION: u32 = 2;
+/// Corrected pooled-output recipe, independently bound to the execution backend.
+pub const CPU_ADAPTER_REVISION: u32 = 3;
+pub const METAL_ADAPTER_REVISION: u32 = 4;
+/// Explicit Linux x86_64 AVX-512 BF16 kernels; never share a baseline namespace.
+pub const CPU_AVX512_BF16_ADAPTER_REVISION: u32 = 5;
+pub const POOLED_NATIVE_RECIPE: &str = "gemma2-pooled-output-v1";
+
+/// Versioned independently of descriptor/IPC layout. The descriptor binds these
+/// context settings to vector identity; workers verify them before reporting ready.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputGeometry {
+    pub v: u32,
+    pub input_tokens: u32,
+    pub batch_tokens: u32,
+    pub sequences: u32,
+}
+
+impl InputGeometry {
+    pub fn validate(self) -> Result<(), String> {
+        if self.v != 1
+            || self.input_tokens == 0
+            || self.input_tokens > self.batch_tokens
+            || self.batch_tokens as usize > MAX_CONTEXT_TOKENS
+            || self.sequences == 0
+            || self.sequences as usize > MAX_DOCUMENT_BATCH
+        {
+            return Err("invalid input geometry: v1, 1 <= input_tokens <= batch_tokens <= 32768, 1..=32 sequences required".into());
+        }
+        Ok(())
+    }
+    pub fn limits(self) -> DocumentLimits {
+        DocumentLimits {
+            inputs: self.sequences as usize,
+            tokens: self.input_tokens as usize,
+            total_tokens: self.batch_tokens as usize,
+        }
+    }
+}
 /// The largest number of sequences a profile may embed per document call.
 pub const MAX_DOCUMENT_BATCH: usize = 32;
 /// Output dimensions a profile may pin: the model's full width or one of its
@@ -29,10 +71,9 @@ pub const POOLINGS: [&str; 3] = ["mean", "cls", "last"];
 /// digest encoding bumps it, which re-keys every cached vector. Version 1 was
 /// the MLX worker's layout; it is refused with `profile_unsupported`.
 pub const DESCRIPTOR_VERSION: u32 = 2;
-/// Revision of the first-party llama.cpp adapter in `foundry-embed` (batch
-/// construction, pooling read-out, truncation and renormalization). The
-/// descriptor's `adapter_revision` must equal it: the worker computes
-/// exactly this recipe and never anything a profile merely claims.
+/// Legacy revision of the first-party llama.cpp adapter in `foundry-embed`
+/// (batch construction, pooling, truncation and renormalization). Descriptors
+/// with explicit geometry require [`GEOMETRY_ADAPTER_REVISION`] instead.
 pub const REAL_ADAPTER_REVISION: u32 = 1;
 /// The llama.cpp commit `foundry-embed` is built from (statically linked,
 /// Metal): `build.rs` exports exactly this commit's tree and builds it with
@@ -85,6 +126,9 @@ pub struct FunctionDescriptor {
     pub adapter_revision: u32,
     /// The document template: [`TEXT_SLOT`] exactly once, filled with a card.
     pub document_template: String,
+    /// Omitted in legacy v2 profiles, preserving their exact digest and 2K context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<InputGeometry>,
 }
 
 /// The template's one [`TEXT_SLOT`], or why it has none.
@@ -127,6 +171,9 @@ impl FunctionDescriptor {
             ));
         }
         check_template("document_template", &self.document_template)?;
+        if let Some(geometry) = self.geometry {
+            geometry.validate()?;
+        }
         if !SUPPORTED_DIMENSIONS.contains(&(self.dimensions as usize)) {
             return Err(format!(
                 "dimensions {} is not one of {SUPPORTED_DIMENSIONS:?}",
@@ -186,6 +233,12 @@ impl FunctionDescriptor {
     /// The output dimension as a length.
     pub fn dims(&self) -> usize {
         self.dimensions as usize
+    }
+
+    pub fn input_limits(&self) -> DocumentLimits {
+        self.geometry
+            .map(InputGeometry::limits)
+            .unwrap_or(DocumentLimits::PROTOCOL)
     }
 
     /// Lowercase hex SHA-256 of the compact JSON of this descriptor. Field
@@ -304,7 +357,7 @@ pub trait EmbeddingProvider {
         batch: &[TokenizedInput],
         control: &Control,
     ) -> Result<Vec<Vec<f32>>, ProviderError>;
-    /// Embed one query of at most [`SERVING_LIMIT_TOKENS`] IDs.
+    /// Embed one query within the descriptor's per-input token limit.
     fn embed_query(
         &mut self,
         input: &TokenizedInput,
@@ -321,19 +374,22 @@ pub trait EmbeddingProvider {
 }
 
 /// The size limits of one document call: at most `inputs` sequences of at
-/// most `tokens` IDs each, and never more than [`SERVING_LIMIT_TOKENS`] IDs
-/// in all (one llama.cpp context per call).
+/// most `tokens` IDs each, and never more than `total_tokens` IDs in all
+/// (one llama.cpp context per call).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DocumentLimits {
     pub inputs: usize,
     pub tokens: usize,
+    pub total_tokens: usize,
 }
 
 impl DocumentLimits {
-    /// The protocol's caps: what the worker itself accepts from any profile.
+    /// Legacy descriptor limits. Explicit geometry overrides these within the
+    /// independent hard IPC byte and token ceilings.
     pub const PROTOCOL: Self = Self {
         inputs: MAX_DOCUMENT_BATCH,
         tokens: SERVING_LIMIT_TOKENS,
+        total_tokens: SERVING_LIMIT_TOKENS,
     };
 }
 
@@ -362,9 +418,10 @@ pub fn check_document_batch(
         }
         total += input.ids.len();
     }
-    if total > SERVING_LIMIT_TOKENS {
+    if total > limits.total_tokens {
         return Err(ProviderError::InputTooLarge(format!(
-            "document batch has {total} tokens; at most {SERVING_LIMIT_TOKENS} per call"
+            "document batch has {total} tokens; at most {} per call",
+            limits.total_tokens
         )));
     }
     Ok(())
@@ -372,9 +429,13 @@ pub fn check_document_batch(
 
 /// Query counterpart of [`check_document_batch`].
 pub fn check_query(input: &TokenizedInput) -> Result<(), ProviderError> {
-    if input.ids.is_empty() || input.ids.len() > SERVING_LIMIT_TOKENS {
+    check_query_with_limit(input, SERVING_LIMIT_TOKENS)
+}
+
+pub fn check_query_with_limit(input: &TokenizedInput, limit: usize) -> Result<(), ProviderError> {
+    if input.ids.is_empty() || input.ids.len() > limit {
         return Err(ProviderError::InputTooLarge(format!(
-            "query has {} tokens; 1..={SERVING_LIMIT_TOKENS} allowed",
+            "query has {} tokens; 1..={limit} allowed",
             input.ids.len()
         )));
     }
@@ -384,6 +445,57 @@ pub fn check_query(input: &TokenizedInput) -> Result<(), ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn geometry_is_versioned_bounded_and_changes_vector_identity_without_rekeying_legacy_profiles()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate::testkit::write_semantic_profile(dir.path(), "geometry", |_| {});
+        let profile = crate::neural::profile::SemanticProfile::load(&path).unwrap();
+        let mut desc = profile.descriptor;
+        let old = desc.digest();
+        assert!(!serde_json::to_string(&desc).unwrap().contains("geometry"));
+        desc.geometry = Some(InputGeometry {
+            v: 1,
+            input_tokens: 8192,
+            batch_tokens: 16384,
+            sequences: 8,
+        });
+        desc.validate().unwrap();
+        assert_ne!(old, desc.digest());
+        let large = desc.digest();
+        desc.geometry.as_mut().unwrap().batch_tokens = 8192;
+        assert_ne!(large, desc.digest());
+        for geometry in [
+            InputGeometry {
+                v: 2,
+                input_tokens: 1,
+                batch_tokens: 1,
+                sequences: 1,
+            },
+            InputGeometry {
+                v: 1,
+                input_tokens: 8193,
+                batch_tokens: 8192,
+                sequences: 8,
+            },
+            InputGeometry {
+                v: 1,
+                input_tokens: 1,
+                batch_tokens: 32769,
+                sequences: 8,
+            },
+            InputGeometry {
+                v: 1,
+                input_tokens: 1,
+                batch_tokens: 8192,
+                sequences: 33,
+            },
+        ] {
+            assert!(geometry.validate().is_err());
+        }
+    }
 
     #[test]
     fn the_cache_key_separates_function_and_input_unambiguously() {
@@ -418,6 +530,7 @@ mod tests {
         let limits = DocumentLimits {
             inputs: 2,
             tokens: 4,
+            total_tokens: SERVING_LIMIT_TOKENS,
         };
         assert!(check_document_batch(&[input(4), input(1)], limits).is_ok());
         assert!(check_document_batch(&[], limits).is_err());
@@ -427,6 +540,7 @@ mod tests {
         let wide = DocumentLimits {
             inputs: 2,
             tokens: SERVING_LIMIT_TOKENS,
+            total_tokens: SERVING_LIMIT_TOKENS,
         };
         assert!(
             check_document_batch(&[input(SERVING_LIMIT_TOKENS), input(1)], wide).is_err(),

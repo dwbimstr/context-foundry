@@ -27,11 +27,34 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum BoundaryCommand {
+    Index {
+        #[arg(long)]
+        config: String,
+        #[arg(long)]
+        path: Vec<String>,
+    },
+    Relations {
+        #[arg(long)]
+        config: String,
+        #[arg(long, required = true)]
+        path: Vec<String>,
+        #[arg(long, default_value_t = 4096)]
+        tokens: usize,
+    },
+}
+
+#[derive(Subcommand)]
 enum Command {
     /// Index a workspace. Respect ignore files; do not execute repository code.
     /// Initializes a store explicitly when none exists.
     Index {
         root: PathBuf,
+    },
+    /// Experimental indexed Python HTTP boundary publication and traversal.
+    Boundary {
+        #[command(subcommand)]
+        command: BoundaryCommand,
     },
     /// Print v2 locator lines (one per hit) within the token budget.
     Search {
@@ -44,7 +67,7 @@ enum Command {
         #[arg(long)]
         path: Option<String>,
         /// 009 T002: fuse dense evidence from this semantic profile into
-        /// the lexical candidates. The worker loads at command start.
+        /// the lexical candidates. Only eligible queries load the worker.
         #[arg(long = "semantic-profile", value_name = "FILE")]
         semantic_profile: Option<PathBuf>,
         /// Required to run the development-isolated worker.
@@ -61,13 +84,37 @@ enum Command {
         query: String,
         #[arg(long, default_value_t = 2048)]
         tokens: usize,
+        /// Write bounded private diagnostics in a NEW directory; never changes evidence.
+        #[arg(long, value_name = "DIR")]
+        retrieval_trace_dir: Option<PathBuf>,
+        /// Test behavior/prose selection; default off pending retrieval/host validation.
+        #[arg(long)]
+        experimental_behavior_context: bool,
         #[arg(long, default_value = "auto")]
         strategy: String,
+        /// Include this experimental task's complete selected view.
+        #[arg(long, requires = "task_revision")]
+        task: Option<String>,
+        /// Expected task revision; refuses changed or forgotten task state.
+        #[arg(long, requires = "task")]
+        task_revision: Option<u64>,
+        /// Compose implementation, boundary consumers, configuration and tests for the selected task.
+        #[arg(long, requires = "task")]
+        compose_evidence: bool,
+        /// Deliver compact evidence accounting without repeating source handles.
+        #[arg(long, requires = "compose_evidence")]
+        compact_evidence: bool,
+        /// Indexed boundary configuration used for task evidence traversal.
+        #[arg(long, requires = "compose_evidence")]
+        boundary_config: Option<String>,
         /// 008: append compact `mem:` lines for validated memory hits.
         #[arg(long = "include-memory")]
         include_memory: bool,
+        /// Experimental source-bound derived vocabulary (anchorless queries only).
+        #[arg(long)]
+        include_briefs: bool,
         /// 009 T002: fuse dense evidence from this semantic profile into
-        /// the lexical candidates. The worker loads at command start.
+        /// the lexical candidates. Only eligible queries load the worker.
         #[arg(long = "semantic-profile", value_name = "FILE")]
         semantic_profile: Option<PathBuf>,
         /// 013 T003: route `--strategy auto` with the learned policy this
@@ -109,6 +156,10 @@ enum Command {
     },
     ImportGraph {
         bundle: PathBuf,
+    },
+    /// Import a completed producer execution artifact; never runs its command.
+    ImportExecution {
+        artifact: PathBuf,
     },
     /// 005: import one completed SCIP artifact bound by a snapshot manifest
     /// (explicit, CLI-only; the importer runs no compiler). Exits 1 for a
@@ -165,8 +216,7 @@ enum Command {
         #[arg(long = "policy-config", value_name = "FILE")]
         policy_config: Option<PathBuf>,
     },
-    /// Explicit v1..v5 -> v6 schema upgrade under exclusive ownership; `--to`
-    /// must be 6, the only supported target.
+    /// Explicit schema upgrade under exclusive ownership; target is schema 12.
     UpgradeStore {
         #[arg(long)]
         to: u32,
@@ -178,6 +228,15 @@ enum Command {
         #[command(subcommand)]
         action: SemanticAction,
     },
+    /// Selectively generate source briefs and area knowledge under an explicit profile.
+    Knowledge {
+        #[command(subcommand)]
+        action: KnowledgeAction,
+    },
+    /// Experimental task state: one scoped JSON request on stdin.
+    TaskContext,
+    /// Experimental source brief: one bounded JSON request on stdin.
+    Brief,
     /// 008 explicit project memory: put, update, get, forget, search, export.
     Memory {
         #[command(subcommand)]
@@ -185,6 +244,26 @@ enum Command {
     },
     #[command(flatten)]
     Adapter(crate::adapter_cli::AdapterCommand),
+}
+
+#[derive(Subcommand)]
+enum KnowledgeAction {
+    Prepare {
+        #[arg(long)]
+        profile: PathBuf,
+        #[arg(long, default_value_t = 300)]
+        budget_seconds: u64,
+        #[arg(long, default_value_t = 8)]
+        max_calls: u32,
+        /// o200k tokens of serialized requests, distinct from provider usage.
+        #[arg(long, default_value_t = 32768)]
+        request_tokens: u64,
+        /// Sum of requested provider completion ceilings.
+        #[arg(long, default_value_t = 16384)]
+        output_tokens: u64,
+    },
+    Status,
+    PurgeCache,
 }
 
 #[derive(Subcommand)]
@@ -213,10 +292,17 @@ enum SemanticAction {
             value_parser = clap::value_parser!(u64).range(1..)
         )]
         cache_cap: Option<u64>,
+        /// Prioritize an admitted source file or subtree; repeat up to 16 times.
+        #[arg(long = "priority", value_name = "PATH")]
+        priority_paths: Vec<String>,
     },
     /// Metadata-only readiness: never loads the tokenizer, the worker, the
     /// model or a broken profile.
-    Status,
+    Status {
+        /// Explicit full source/cache census and generation integrity validation.
+        #[arg(long)]
+        audit: bool,
+    },
     /// Offline removal of every semantic partition, cache entry and index
     /// generation under sole ownership. Sources, graph, memory and feedback
     /// stay; nothing repopulates.
@@ -645,6 +731,109 @@ fn run() -> AResult<()> {
         Command::Semantic { action } => semantic_run(&cli.store, action, semantic_started)?,
         Command::Adapter(command) => crate::adapter_cli::run(command, cli.store, store_explicit)?,
         Command::Memory { action } => memory_run(&cli.store, action)?,
+        Command::Knowledge { action } => match action {
+            KnowledgeAction::Prepare {
+                profile,
+                budget_seconds,
+                max_calls,
+                request_tokens,
+                output_tokens,
+            } => {
+                if !(1..=3600).contains(&budget_seconds) {
+                    return Err(crate::knowledge::fail(
+                        "knowledge_budget_invalid",
+                        "budget-seconds must be 1..3600",
+                    )
+                    .into());
+                }
+                let control = live_control()
+                    .bounded_by(semantic_started + std::time::Duration::from_secs(budget_seconds));
+                let profile = crate::knowledge::Profile::load(&profile)?;
+                let mut engine = Engine::open_existing(&cli.store)?;
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                let report = runtime.block_on(crate::knowledge::prepare(
+                    &mut engine,
+                    &profile,
+                    crate::knowledge::RunLimits {
+                        calls: max_calls,
+                        request_tokens,
+                        output_tokens,
+                    },
+                    &control,
+                ))?;
+                println!("{}", serde_json::to_string(&report)?);
+                if !report.complete {
+                    return Err(crate::knowledge::fail(
+                        "knowledge_incomplete",
+                        "generation is incomplete; see the report; committed results are retained",
+                    )
+                    .into());
+                }
+            }
+            KnowledgeAction::Status => println!(
+                "{}",
+                Engine::open_authoritative(&cli.store)?.knowledge_status()?
+            ),
+            KnowledgeAction::PurgeCache => println!(
+                "{}",
+                Engine::open_authoritative(&cli.store)?.knowledge_purge_cache()?
+            ),
+        },
+        Command::Brief => {
+            let mut bytes = Vec::new();
+            io::stdin()
+                .lock()
+                .take(crate::brief::MAX_REQUEST_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            let request = crate::brief::parse(&bytes)?;
+            let mut engine = if matches!(
+                request.command,
+                crate::brief::Command::Get { .. } | crate::brief::Command::Export { .. }
+            ) {
+                Engine::open_authoritative(&cli.store)?
+            } else {
+                Engine::open_existing(&cli.store)?
+            };
+            let result = engine.brief(&request, &live_control())?;
+            if matches!(
+                request.command,
+                crate::brief::Command::Put { .. } | crate::brief::Command::Forget { .. }
+            ) && let Some(id) = result["id"].as_str()
+            {
+                engine.drain_brief_key(id);
+            }
+            println!("{}", serde_json::to_string(&result)?);
+        }
+        Command::TaskContext => {
+            let mut bytes = Vec::new();
+            io::stdin()
+                .lock()
+                .take(crate::task_context::MAX_REQUEST_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > crate::task_context::MAX_REQUEST_BYTES {
+                return Err(
+                    FoundryError::InvalidArgument("task request exceeds 1 MiB".into()).into(),
+                );
+            }
+            let value = serde_json::from_slice(&bytes).map_err(|_| {
+                FoundryError::InvalidArgument("expected one task JSON request".into())
+            })?;
+            let request = crate::task_context::parse(value)?;
+            let mut engine = if matches!(
+                request.command,
+                crate::task_context::Command::Promote { .. }
+                    | crate::task_context::Command::Forget { .. }
+            ) {
+                Engine::open_existing(&cli.store)?
+            } else {
+                Engine::open_authoritative(&cli.store)?
+            };
+            let result = engine.task_context(&request, &live_control())?;
+            engine.drain_task_memory(&result);
+            println!("{}", serde_json::to_string(&result)?);
+        }
         Command::Index { root } => {
             let control = live_control();
             let mut engine = open_or_initialize(&cli.store, &root)?;
@@ -668,7 +857,14 @@ fn run() -> AResult<()> {
             let engine = Engine::open_existing(&cli.store)?;
             let semantic = semantic_launch(semantic_profile, development_isolation);
             let outcome = if let Some(launch) = semantic {
-                let slot = crate::mcp::semantic_slot(Some(launch))?;
+                let slot = crate::mcp::cli_semantic_slot(
+                    Some(launch),
+                    &engine,
+                    &query,
+                    path.as_deref(),
+                    false,
+                    &Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE),
+                )?;
                 let control = Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE);
                 Engine::search_outcome(crate::mcp::search_primary(
                     &slot,
@@ -697,8 +893,16 @@ fn run() -> AResult<()> {
         Command::Context {
             query,
             tokens,
+            retrieval_trace_dir,
+            experimental_behavior_context,
             strategy,
             include_memory,
+            include_briefs,
+            task,
+            task_revision,
+            compose_evidence,
+            compact_evidence,
+            boundary_config,
             semantic_profile,
             policy_config,
             development_isolation,
@@ -709,63 +913,99 @@ fn run() -> AResult<()> {
             }
             let strategy = parse_strategy(&strategy)?;
             check_token_budget(tokens)?;
-            let engine = Engine::open_existing(&cli.store)?;
-            // 008: memory candidates validate in the SAME final read as the
-            // source and graph items; one snapshot governs the response.
-            // 009 T002: with a profile the worker loads at command start
-            // (bounded by the profile's load timeout); the query ceiling
-            // then applies to the embedding call only. A refused or failed
-            // worker leaves baseline results with the reason in the header.
-            let semantic = semantic_launch(semantic_profile, development_isolation);
-            // 013 T003: the policy config is validated and its worker loaded
-            // at command start, outside the request's read deadline; an
-            // invalid config or a failed start keeps deterministic routing
-            // with the reason in the header. No config, or a disabled one,
-            // leaves the output byte-identical.
-            let policy = policy_config.map(|config| {
-                crate::policy::Policy::start(
-                    Some(crate::policy::PolicyServing::new(
-                        config,
-                        development_isolation,
-                    )),
-                    engine.workspace_id().as_deref(),
-                )
-            });
-            let routed = policy.as_ref().filter(|policy| policy.routes());
-            let (batch, memory) = if semantic.is_some() || routed.is_some() {
-                let slot = crate::mcp::semantic_slot(semantic)?;
-                let control = Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE);
-                let combined = crate::mcp::context_primary(
+            let trace_sink = retrieval_trace_dir
+                .as_deref()
+                .map(crate::retrieval_trace::TraceSink::create)
+                .transpose()?;
+            let trace = trace_sink
+                .as_ref()
+                .map(|_| crate::retrieval_trace::RetrievalTrace::default());
+            let result = (|| -> AResult<_> {
+                let engine = Engine::open_existing(&cli.store)?;
+                // 008: memory candidates validate in the SAME final read as the
+                // source and graph items; one snapshot governs the response.
+                // The shared anchor/prose rule can skip unused semantic startup.
+                // Otherwise loading keeps its separate profile timeout and a
+                // refusal leaves baseline results with the named fallback.
+                let semantic = semantic_launch(semantic_profile, development_isolation);
+                // 013 T003: the policy config is validated and its worker loaded
+                // at command start, outside the request's read deadline; an
+                // invalid config or a failed start keeps deterministic routing
+                // with the reason in the header. No config, or a disabled one,
+                // leaves the output byte-identical.
+                let policy = policy_config.map(|config| {
+                    crate::policy::Policy::start(
+                        Some(crate::policy::PolicyServing::new(
+                            config,
+                            development_isolation,
+                        )),
+                        engine.workspace_id().as_deref(),
+                    )
+                });
+                let routed = policy.as_ref().filter(|policy| policy.routes());
+                let bounded_query = semantic.is_some() || routed.is_some();
+                // Worker admission/load stays outside the query deadline.
+                let slot = crate::mcp::cli_semantic_slot(
+                    semantic,
+                    &engine,
+                    &query,
+                    None,
+                    experimental_behavior_context
+                        && crate::store::prose_context_query(&query, strategy, routed.is_some()),
+                    &Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE)
+                        .with_trace(trace.clone()),
+                )?;
+                let control = if bounded_query {
+                    Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE)
+                } else {
+                    Control::unbounded()
+                }
+                .with_trace(trace.clone());
+                let workspace_id = engine
+                    .workspace_id()
+                    .ok_or(FoundryError::WorkspaceUnbound)?;
+                let task_scope = task.as_deref().map(|task_id| crate::task_context::Scope {
+                    workspace_id: &workspace_id,
+                    task_id,
+                    expected_revision: task_revision.expect("clap requires paired task revision"),
+                });
+                let combined = crate::mcp::context_primary_with_options(
                     &slot,
-                    routed,
                     &engine,
                     &query,
                     strategy,
                     &control,
-                    include_memory,
-                    None,
+                    crate::store::ContextOptions {
+                        task: task_scope,
+                        compose_evidence,
+                        compact_evidence,
+                        boundary_config: boundary_config.as_deref(),
+                        memory: include_memory,
+                        briefs: include_briefs,
+                        policy: routed,
+                        experimental_behavior: experimental_behavior_context,
+                        ..crate::store::ContextOptions::default()
+                    },
                 )?;
-                (combined.batch, combined.hits)
-            } else if include_memory {
-                let combined =
-                    engine.context_candidates_memory(&query, strategy, &Control::unbounded())?;
-                (combined.batch, combined.hits)
-            } else {
-                (
-                    engine.context_candidates(&query, strategy, &Control::unbounded())?,
-                    Vec::new(),
-                )
-            };
-            let packed = if memory.is_empty() {
-                response::pack_context(&batch, Budget::request(tokens), &response::stdout_bytes)?
-            } else {
-                response::pack_context_with_memory(
-                    &batch,
-                    &memory,
+                let packed = response::pack_enriched_context(
+                    &combined,
+                    None,
                     Budget::request(tokens),
                     &response::stdout_bytes,
-                )?
-            };
+                )?;
+                Ok((packed, combined.batch.doors.is_some()))
+            })();
+            if let (Some(sink), Some(trace)) = (&trace_sink, &trace) {
+                let outcome = match &result {
+                    Ok((packed, _)) => serde_json::json!({"status":"success", "text":packed.text,
+                        "tokens":packed.tokens, "sha256":crate::digest(packed.text.as_bytes())}),
+                    Err(error) => {
+                        serde_json::json!({"status":"error", "error":error.bounded_json()})
+                    }
+                };
+                sink.save("context", trace, outcome)?;
+            }
+            let (packed, graph) = result?;
             print!("{}", packed.text);
             eprintln!(
                 "{}",
@@ -773,7 +1013,7 @@ fn run() -> AResult<()> {
                     "stdout_tokens": packed.tokens,
                     "tokenizer": response::TOKENIZER,
                     "omitted": packed.omitted,
-                    "strategy": if batch.doors.is_some() { "graph" } else { "search" },
+                    "strategy": if graph { "graph" } else { "search" },
                 })
             );
         }
@@ -817,6 +1057,33 @@ fn run() -> AResult<()> {
                 })
             );
         }
+        Command::Boundary { command } => {
+            let engine = Engine::open_existing(&cli.store)?;
+            let control = live_control();
+            match command {
+                BoundaryCommand::Index { config, path } => println!(
+                    "{}",
+                    serde_json::to_string(&engine.index_boundaries(&config, &path, &control)?)?
+                ),
+                BoundaryCommand::Relations {
+                    config,
+                    path,
+                    tokens,
+                } => {
+                    check_token_budget(tokens)?;
+                    let report = engine.boundary_relations(&config, &path, &control)?;
+                    print!(
+                        "{}",
+                        response::pack_boundaries(
+                            &report,
+                            Budget::request(tokens),
+                            &response::stdout_bytes
+                        )?
+                        .text
+                    );
+                }
+            }
+        }
         Command::Graph {
             path,
             reverse,
@@ -844,6 +1111,17 @@ fn run() -> AResult<()> {
             println!(
                 "{}",
                 serde_json::json!({"imported_edges": engine.import_graph(&bundle)?})
+            );
+        }
+        Command::ImportExecution { artifact } => {
+            let engine = Engine::open_existing(&cli.store)?;
+            let mut bytes = Vec::new();
+            std::fs::File::open(artifact)?
+                .take(4 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)?;
+            println!(
+                "{}",
+                serde_json::json!({"imported_edges":engine.import_execution(&bytes)?})
             );
         }
         Command::ImportScip { index, snapshot } => {
@@ -1125,9 +1403,13 @@ fn semantic_run(
     started: std::time::Instant,
 ) -> AResult<()> {
     match action {
-        SemanticAction::Status => {
+        SemanticAction::Status { audit } => {
             let engine = Engine::open_existing(store)?;
-            let status = engine.semantic_status(&live_control())?;
+            let status = if audit {
+                serde_json::to_value(engine.semantic_status(&live_control())?)?
+            } else {
+                engine.semantic_progress(&live_control())?
+            };
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
         SemanticAction::Purge => {
@@ -1140,11 +1422,12 @@ fn semantic_run(
             budget_seconds,
             development_isolation,
             cache_cap,
+            priority_paths,
         } => {
             #[cfg(feature = "semantic")]
             {
                 let control = live_control();
-                let report = crate::neural::prepare::cli_prepare(
+                let report = crate::neural::prepare::cli_prepare_with_priorities(
                     store,
                     &profile,
                     budget_seconds,
@@ -1152,6 +1435,7 @@ fn semantic_run(
                     cache_cap.unwrap_or(crate::neural::cache::DEFAULT_CACHE_CAP_BYTES),
                     started,
                     &control,
+                    &priority_paths,
                 )?;
                 println!("{}", serde_json::to_string_pretty(&report)?);
                 if let Some(error) = report.error() {
@@ -1165,6 +1449,7 @@ fn semantic_run(
                     budget_seconds,
                     development_isolation,
                     cache_cap,
+                    priority_paths,
                     started,
                 );
                 return Err(FoundryError::Semantic {

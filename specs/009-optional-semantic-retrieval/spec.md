@@ -1,5 +1,201 @@
 # 009 — Neural context that becomes useful and stays prepared
 
+Opt-in Linux CPU efficiency variant, 2026-10-11: the explicit
+`embed-worker-avx512-bf16` build uses fixed AVX-512/BF16 flags on Linux x86_64,
+with runtime capability refusal before native initialization. Ordinary workers
+retain the portable baseline. Adapter revision **5** owns the new numerical
+namespace; revisions 3/4 and their caches are never relabeled. The pinned weights,
+input geometry, pooling and allocation repair stay unchanged. The same-input
+128-source comparison reduces provider time from 30.838 to 17.939 seconds, with
+minimum cosine 0.999990767 against baseline; reversed and mixed-length batches also
+pass. This bounded measurement supports explicitly selecting the variant for longer
+preparation; it establishes neither completed corpus inference nor retrieval quality.
+The unchanged portable build remains the default. See [validation](../../docs/validation.md).
+
+Representation and localization correction, 2026-10-11: partition and published
+location metadata now records `address`, `body`, `parent` or `file`. Recipes include
+`+kinds1`; legacy missing roles decode as `unknown`, require refitting under the new
+recipe, and cannot claim independent body evidence. Exact rendered input keys remain
+unchanged, so current cached vectors are reused during metadata upgrades. Acceptance,
+currentness and generation decoding reject roles incompatible with the recipe; file
+locations span the whole source. Metadata verification caches include the recipe.
+Source-unit schema 5 is independent of derived search schema 7; the schema-6 to -7
+import-alias posting repair does not change semantic input recipes.
+
+Experimental prose retrieval with hierarchy vectors reuses its one query embedding
+to localize independently embedded bodies within up to 64 dense-selected source paths
+plus the first 16 lexical candidates' paths. Selected partition point reads are joined
+against the retained generation's published locations and resident segment membership;
+cache-only or unpublished inputs cannot supply evidence. The scorer considers at most
+80 paths, 512 KiB per partition row, 8 MiB total mapping bytes, 32,768 units and 4,096
+distinct resident vectors. Vector slots rotate between selected files; shared inputs
+are scored once. It computes cosine from resident f16 vectors, accounting for their
+norms, and returns at most 64 labels with input-key tie breaking. While filling that
+window it applies the existing four-per-file delivery quota to distinct joined
+locations, continuing through the same bounded scored set when a label has no
+remaining admissible location. Shared labels retain only individually admissible
+locations. This prevents a file's fifth body from consuming a label slot that
+placement would later discard; it adds neither scored inputs nor delivery slots.
+Work counts, candidate-window quota skips and truncation are traced. This avoids filtered ANN's potentially corpus-wide traversal
+when a selected subset has few or no body vectors. The ordinary global ANN search is
+unchanged. Refined labels carry only the exact locations that passed those joins;
+a shared input cannot import another file's unverified provenance. Ordinary hits
+admit at most 4,096 locations fairly across the 64 labels, using logarithmic exact
+path/subtree lookup. The same admitted locations supply discovery and delivery.
+Refined labels precede the original 64 before the existing per-file and
+output candidate limits. Final source hashes and ranges are checked in one read
+snapshot. Materialization retains exact scored body
+spans instead of substituting lexical excerpts. Experimental hierarchy/body prose
+placement interleaves dense and lexical candidates at both partial and complete
+coverage. A hierarchy puts body hits first only when a refined location survives
+that final check; otherwise lexical candidates go first. Coverage remains a
+freshness/availability report, not a relevance preference. File-only profiles do not
+perform a body search. No source inference, preparation, extra model call, output
+allowance or automatic refinement
+job is introduced by reading. Examination limits also surface as `candidates:full`
+in ordinary responses. Exact lexical matches retain their labels without replacing
+the independently scored body bytes. Traces distinguish representation role,
+refinement and independently embedded passages from focused coarse excerpts.
+
+Container-fragment classification correction: Body/Hierarchy metadata recipes use
+`+kinds2`. Parsed nonleaf-container residuals proven to contain only an opening
+header/delimiter or a closing delimiter and whitespace are `container_fragment`,
+not `body`. Full declarations/prototypes, functions/macros, meaningful residual
+fields/assignments/comments and uncertain/unparsed source remain body evidence.
+Classification requires the existing parser pass to prove the entire syntax tree
+free of recovered errors or missing nodes; otherwise every span remains Body.
+Leading documentation also remains body evidence. Every original non-whitespace
+source span, rendered input and input key is retained; reclassification refits and
+republishes metadata with exact cached-vector reuse and preserves completeness.
+Address/Overview recipes remain `+kinds1`. Current recipe validation rejects unknown
+or conflicting metadata versions and roles. Fragments can still discover a file and
+render their exact source spans through ordinary ANN delivery, but cannot consume
+hierarchy's independently scored Body refinement quota. Body-only serving retains
+its existing ordering; default address and unknown-language behavior are unchanged.
+This corrects role eligibility, not the model's relevance scores or output budgets.
+
+Owner-localization experiment, 2026-10-11: the hierarchy/prose branch preserves
+source scopes from its existing first 16 lexical documents and bounded dense
+provenance. A lexical scope requires an indexed `fn`/`method` kind, current source
+hash, and valid full-unit/head/document coordinates. It is not a truncated display
+label or the focused document range. A dense Parent scope must join the exact
+current Parent input-key/range/hash tuple; File, Body and container-fragment hits
+supply file discovery only. All proof checks use the same selected mapping snapshot.
+Duplicate scopes coalesce; nested scopes narrow to their leaves as the declared
+experimental ranking tradeoff, while disjoint scopes remain a union. A body is
+eligible only when its entire independently scored span fits one retained scope;
+intersecting bytes are never clipped or joined across owners. Incompatible partial
+overlap, no valid current owner, or no published body contained in the owner falls
+back to the existing bounded file refinement, with the reason recorded. The same
+point-read, vector, per-file, final-hash and output bounds apply; no query/source
+inference, model input, recipe change, extra delivery slot or inferred type-to-impl
+association is added. Default/address serving is unchanged. Per-path
+`refinement_scope` traces disclose requested/valid/stale/invalid scopes, narrowing,
+effective ranges and fallback; aggregate work records filtered locations. The
+`current_owner_narrowing_v1` trace policy identifies this candidate for comparison
+with role-only binaries on the identical complete prepared store and token budget.
+This variant does not claim that source ownership proves passage relevance.
+
+CLI lifecycle correction, 2026-10-11: the per-command semantic slot now waits
+for the existing runtime shutdown before leaving scope, on success or error. Closing
+the job channel alone detached the provider thread, allowing CLI exit to interrupt
+worker reaping. The guard joins that thread; the supervisor retains its existing
+TERM/KILL/reap contract and grace. This cleanup may outlast the query read deadline.
+Resident MCP continues to use its explicit owner shutdown. Skipped/failed acquisition
+still starts no worker, and no model or result-format change is introduced.
+
+Hierarchy scheduling continuation, 2026-10-11: CLI and resident preparation now
+visit the first representation of every selected source before refining body and
+parent inputs. Hierarchy's existing preorder puts a representation spanning the
+whole file first (a complete body or parent may share that range for a short file). A second
+cursor pass then consumes all remaining uncached inputs. Both passes preserve
+priority/background fairness and changed-path scope; updating priorities updates
+the pending refinement pass too. No new durable cache, index, schema or input recipe
+is introduced. Cursors contain scalar progress, with no source bodies or token
+arrays; the transient paused-plan budget below is shared across them. Accepted and
+in-flight keys retain ordinary deduplication, and restart/revert reuse remains exact.
+
+The transition publishes accepted file views before body refinement, including
+cache-only mapping changes. Resident prefetch stops at that boundary and drains all
+initial inputs, including foreground-sized leftovers, before publishing and admitting
+refinement. The hierarchy index remains **partial** until every eligible body,
+parent and file input is covered; completing the first pass never claims full
+retrieval or completed inference. Partitions still fit all hierarchy inputs, and
+the second pass still has the full model obligation. This improves delivery order;
+automatic query-driven selective body preparation remains open. Address, body-only
+and overview-only preparation keep their existing order.
+
+Evidence-delivery continuation, 2026-10-11: experimental prose context can focus
+long overview/hierarchy candidates to an exact source passage of at most 1,536
+bytes. Dense-only passages maximize distinct query concepts across adjacent lines,
+with bounded leading context and UTF-8-safe offsets. They retain final-read source
+identity and the semantic selection tag; no new passage vector/similarity is claimed.
+If no query concept occurs, ordinary unit delivery remains. Traces record both the
+original dense unit and its materialized handle. Address/body profiles and ordinary
+symbol/search requests retain their existing materialization.
+
+Complete file-overview coverage now interleaves lexical evidence first, just as
+partial preparation does: complete coarse coverage does not justify spending every
+early slot on file vectors. Existing candidate/per-file/output limits still apply.
+Plural uppercase acronyms in prose use singular/plural alternatives (`CPUs` →
+`cpu` or `cpus`) rather than CamelCase fragments (`CP`/`Us`). Both alternatives
+share one constant concept score and one adjacent-concept bonus; repeating either
+form in the query or document adds no concept score. Explicit/defined symbol
+requests and stored tokenization are unchanged.
+Two broader lexical scoring trials regressed preserved evidence and were removed.
+
+CLI `search`/`context` now apply the same anchor/prose admission predicate before
+opening the semantic profile or starting its worker. Explicit/defined anchors that
+already bypass semantic queries also bypass their unused tokenizer, artifact hashes
+and model load. A query admitted for semantic retrieval retains the existing startup
+timeout, fallback behavior and separate read deadline. Scoped searches use their
+actual path filter; incidental language qualifiers still reach the provider when
+experimental prose is enabled. Resident MCP startup, ownership and maintenance are
+unchanged; a build without semantic support still rejects the configured feature.
+
+Implementation continuation, 2026-10-11: T005 now treats an unambiguous explicit
+language qualifier as a metadata preference before the bounded lexical window, and
+removes that qualifier from behavioral term scoring. Documentation and other languages
+remain eligible; ordinary/marked symbol requests retain precedence. Unmarked “Unicode
+whitespace” is also prose. A broader inflection expansion was removed after losing
+previously delivered Rust evidence. See [current results](../../docs/validation.md#ecosystem-code-improvements--2026-10-11).
+
+T007/T009 add opt-in `representation: {"kind":"overview-v1"}`: at most one independent
+file vector per nonblank admitted source, plus the existing bounded area-brief lane.
+It uses the same file input as hierarchy-v1 without computing body/parent cards. This
+reduces the exhaustive function-card obligation without adding a scheduler, model,
+table or automatic generation. File extracts use distributed declaration headers,
+bounded bytes and logarithmic prefix fitting; every retained input is checked against
+the actual tokenizer. Both file-capable recipe IDs now include `+overview3`, forcing old
+partitions to refit while preserving exact-input cache reuse (including all unchanged
+body inputs). Short complete-file inputs keep their existing keys and skip syntax
+parsing in overview preparation. Files without declarations sample up to 16 source
+regions, each at most 256 bytes before fitting, instead of representing only their
+first line. Sparse input falls back to actual nonblank content; prefix-only file
+inputs are refused. This is extractive coverage, not a claim that every part survived
+the token fit. Parent extraction and body inputs retain their previous identity.
+
+Existing CLI/MCP preparation, priorities, watching, changed-input publication and
+restart/revert reuse apply. Switching to hierarchy-v1 expands the recipe and reuses
+matching overview vectors. There is still one active source recipe: this is not a
+simultaneous coarse index with automatic query-triggered body preparation. “Complete”
+means complete for the selected recipe; a file vector does not represent every omitted
+body byte or establish complete retrieval. Comparative quality, full representative
+inference and selective mixed-granularity preparation remain open.
+
+Planning addition, 2026-10-09: [T005](#t005--diagnose-and-improve-anchorless-evidence-retrieval)
+is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
+It does not change T001–T004 acceptance or semantic enablement/package restrictions.
+
+Experimental update, 2026-10-09: T006/T007 implement bounded parallel partitions and
+progressive bootstrap. The subsequent efficiency audit selects their CPU/startup
+follow-up, T008 incremental maintenance/publication and T009 model-aware input
+geometry before broad 010 generation. CPU/startup reuse (E1) and durable continuous
+maintenance/cheap status (E2), bounded delta publication/reuse (E3) and opt-in
+model-aware body/parent inputs (E4) are implemented experimentally. Real-device
+long-context parity, quality and throughput remain unexecuted. See the
+[revised build order](../../docs/context-ecosystem-plan.md#revised-build-order).
+
 Status: T001 (preparation, cache, index and the supervised development worker), T002
 (semantic context within the existing budget) and T003 (progressive preparation in the
 MCP owner) implemented and accepted locally on 2026-10-05, under development isolation
@@ -496,6 +692,20 @@ only for queries without an anchor, ahead of the lexical ones. Do not add a mode
 reranker endpoint, second candidate journal or reranker configuration in this scope.
 The owned policy under 013 (frozen off, 2026-10-07) chose graph expansion; its
 confidence is not a passage relevance score and must never reorder source candidates.
+
+Experimental hierarchy/body amendment: anchorless prose under the existing
+behavior-context opt-in uses deterministic alternating dense/lexical lanes whether
+coverage is partial or complete. The dense lane precedes the lexical lane only when
+at least one independently scored refined Body survives the final source check;
+otherwise lexical goes first. Each lane retains its existing order. The same
+first-placement merge, four-per-file quota and candidate/output limits apply after
+interleaving; this reserves neither extra slots nor guaranteed lexical delivery.
+Trace `body_prose_interleave_v1` records coverage separately from the policy. This
+amends T004 placement only for these experimental representations. Ordinary/default
+search, anchored requests and address-card recipes keep their existing behavior;
+the existing partial/address and file-overview rules are unchanged. The boundary
+regression holds source/candidate tuples fixed while coverage becomes complete and
+checks equal placement. Real fixed-query ablations remain separate quality evidence.
 
 A learned reranker is a future option only after a fixed example shows that a required
 passage is present in the bounded candidate set, but ordering loses it before packing.
@@ -1053,3 +1263,945 @@ selected EmbeddingGemma 2, and replaces the MLX worker. Signing and installed-pa
 acceptance remain open in the measurement handoff. The owned learning head (013,
 frozen off) cannot substitute
 for this proof.
+
+### T005 — Diagnose and improve anchorless evidence retrieval
+
+**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted. T004's
+selected Gemma profile and current implementation are the comparison baseline.
+The original G2 verdict remains valid for its original question: gain over no profile.
+This task asks which current losses can be repaired at the same delivery budget.
+
+**Implementation in progress:** `src/retrieval_trace.rs` owns opt-in request-local
+diagnostics, shared through `Control` by the ordinary selection/final-read paths.
+`context --retrieval-trace-dir DIR` and `mcp --retrieval-trace-dir DIR` require a new
+run directory; existing paths, including symlinks, are refused. Unix directories are
+0700 and files are created exclusively as 0600. No automatic capture occurs.
+Events contain source identities, candidate origin/rank, stale/filter/dedup/cap/cut
+outcomes and packing inputs. Dense events identify the card input key. Context queries
+are correlated by SHA-256; MCP records also retain their request ID. The actual
+Foundry response is retained privately; it is not a host-consumption acknowledgment.
+
+Limits per request: 8,192 events and 2 MiB of serialized event data, with `truncated`
+set on overflow, and 4 MiB per persisted record. One owner writes at most 4,096
+records / 256 MiB, including failed-write reservations. CLI diagnostic failures fail
+the explicit measurement command before successful stdout. MCP diagnostic failures
+emit `retrieval_trace_unavailable: run is incomplete` on stderr without changing an
+already settled delivery. A missing, malformed, truncated or uncorrelated report
+invalidates attribution; no missing event proves absence. Invalid requests rejected
+before the delivery path still require the harness's request/refusal accounting.
+Diagnostics are outside the evidence allowance but their I/O/latency is measured
+separately. Their payloads can contain private source/memory; keep the directory
+outside indexed source and Git, and explicitly remove it when its retention ends.
+
+The private G1/G2 questions/results, prepared Gemma stores and macOS measurement host
+are absent from this cloud workspace. That blocks full miss attribution and quality
+acceptance. Local traced examples and fixture results must remain separately labelled;
+they do not assign causes to the 249 historical G2 misses.
+
+- **Depends:** T004 implementation and preserved G1/G2 apparatus from the
+  [measurement handoff](../../docs/measurement-handoff.md). The diagnostic checkpoint
+  below unlocks 001 T010; completion of one repair is not a prerequisite for starting
+  the other. 003 T006 owns integrated real-host acceptance.
+- **Scope:** opt-in bounded retrieval traces through `src/neural/{partition,query}.rs`,
+  `src/store.rs`, `src/response.rs` and `src/mcp.rs`; measurement harness outside Git;
+  regression fixtures in existing retrieval tests. Reuse ordinary source validation,
+  deterministic ordering and the existing worker. No new model, service or mandatory
+  reranker. Query traces are retrieval diagnostics, never automatic training records.
+- **Diagnostic checkpoint:**
+  - Pin binary, profile, source commits, source/index generations, prepared coverage,
+    query set, harness, token cap and runtime configuration. Trace both successful and
+    unsuccessful queries. Preserve the original response bytes when tracing is off;
+    diagnostics stay off protocol stdout and outside the evidence/token allowance.
+    Measure trace overhead separately from normal latency.
+  - Trace unit identity and eligibility, candidate origin/rank, exclusion by
+    freshness/deduplication/per-file/global caps, packed evidence/form and adapter
+    delivery. Join expected answers offline in the evaluator; ground-truth labels
+    must never affect candidate generation, ranking or packing. Persist only bounded,
+    explicitly requested diagnostics in the private
+    run directory. Never infer provider consumption from server delivery.
+  - Account for all 388 queries and partition the 249 recorded misses by first
+    observed loss. Retain `unknown` with its missing input where historical results
+    cannot support attribution. A new traced run is a new run, not retroactive proof
+    of the historical path. Report reproduction differences rather than forcing its
+    counts to match. A claim that a card omits behavioral meaning requires a labelled
+    example and a controlled representation comparison, not just low similarity.
+  - Deliver stage counts, examples, current-baseline G1 wins/losses and one selected
+    repair hypothesis. If dominant losses remain unexplained, improve diagnostics
+    before selecting an embedding or ranking replacement.
+- **Candidate checkpoint:**
+  - Hold Gemma fixed and predeclare at most three variants targeting the demonstrated
+    loss: representation, candidate coverage, ordering or packing. Keep other stages
+    fixed for each ablation. If a source representation changes, update its recipe
+    identity and test invalidation/reuse, interrupted preparation and retained cache
+    safety; report preparation time, footprint and query cold/warm latency.
+  - Reuse the existing G1/G2 files unchanged as regression/development evidence.
+    Freeze fresh held-out anchorless questions and their required definitions before
+    candidate tuning, with per-corpus results and the original leakage/answer-quality
+    checks. Exposed old misses cannot serve as a fresh holdout. Keep labels private
+    from implementation/tuning and do not repeatedly select against the final set.
+  - Before evaluation freeze candidate count, sample-size rationale, paired statistic,
+    multiplicity correction, per-corpus guards and latency/resource bounds. Proposed
+    promotion requires a positive lower bound on paired delivered-evidence gain at
+    95% confidence over current Gemma, at no more mean delivered tokens under the same
+    cap, and all existing G1 gates. Publish absolute coverage, gained/lost task counts,
+    refusals, missing/retried/duplicate tasks and uncertainty. Preserve frozen-run
+    invalidity rules. If no candidate clears the gate, retain the baseline and record
+    a no-promotion result instead of opening an unbounded model search.
+  - A successful amendment names exactly which T004 representation/placement rule it
+    replaces in this spec and the shared context contract; no parallel undocumented
+    ranking path. Every newly lost current-baseline G1 case is reviewed and counted;
+    passing historical guards alone does not erase those losses.
+- **Verification:** fixtures establish trace attribution for absent candidates,
+  stale units, rank/cap exclusion and packing omission; invalid traces cannot certify
+  coverage. Test the selected repair's relevant source/budget/cache invariants and run
+  the repository's required implementation checks when code changes. Linux fixtures
+  do not substitute for the real Gemma/Metal measurements or signed installed checks.
+  Record aggregate results in validation; raw labels, traces and source payloads stay
+  outside Git. Validation records the executed diagnostic fixtures; the full G1/G2,
+  held-out quality and installed-artifact checks are not claimed by those fixtures.
+
+T005 sandbox repair continuation (2026-10-10): the existing behavior-context opt-in
+now admits [anchorless prose selection](../001-source-state-recovery/contracts/context-v2.md#experimental-anchorless-prose-selection--009-t005-2026-10-10).
+Plain-language requests no longer promote coincidentally named definitions ahead of
+body matches. The regression fixture reproduces a 32-slot eviction by common-word
+names; ordinary search, explicit identifiers/paths, anchors, graph requests, dense
+precedence and final source/budget checks keep their existing contracts. No candidate
+cap is enlarged and no model is replaced. One candidate is selected for this experiment;
+repository development comparisons remain separate from held-out acceptance.
+The corrected diagnostic excludes its own evaluator source. The first candidate
+delivered 1/8 in each arm. The subsequent bounded code/prose windows and exact
+late-body excerpts improve candidate delivery to 2/8 against baseline 1/8; broader
+retrieval usefulness remains open. No expected labels enter selection. See the
+[executed Linux results](../../docs/validation.md).
+
+The October 11 continuation reuses the positional body index for distinct-term
+coverage with a bounded proximity tie-breaker, and admits alphabetic hyphenated
+prose. It stays behind the same experimental flag. A frozen Foundry corpus gives
+2/8 required spans versus 1/8 from the saved previous executable; six fresh public
+Rust questions initially give 0/6 in all arms. Neither result establishes a general repair or
+held-out acceptance. The diagnostic supports frozen external roots/labels and a
+same-store previous executable, with source-admission observations kept distinct
+from bounded trace attribution. Rank/packing work remains open.
+
+The representative partial-index probe subsequently exposed dense-subset dominance.
+The same opt-in now interleaves lexical/dense placement, lexical first, only for
+anchorless prose with partial coverage at the final read's source revision. Existing
+caps and freshness checks still apply. The later hierarchy/body amendment above
+extends this experimental admission to complete coverage for independent passage
+representations; complete address-card coverage, explicit symbols and ordinary search
+preserve T004 placement. This amends the experimental context rule
+linked above; it is not a new provider, corpus scan or default promotion.
+
+Inspection of the public Rust losses also found three relevant rank-2 callables
+whose excerpts contained leading documentation but omitted the declaration. The
+experimental rule now starts a bounded excerpt at the callable head in that case;
+matches within the body retain their focused window. Both remain one exact source
+range under the same 1,536-byte ceiling. Re-evaluation after inspecting these losses
+is development evidence, not a fresh holdout. The earlier failed comparison stays
+in validation alongside the follow-up result: 3/6 required whole-line spans versus
+0/6 controls after preserving declaration-line indentation. Foundry remains 2/8
+versus 1/8. General ranking, per-file selection and macro-contained evidence remain
+open.
+
+A 2026-10-11 candidate reranked that discovery window by distinct concepts in
+64-position passages. It was rejected: Foundry stayed at 2/8, eight additional
+public Rust questions stayed at 5/8, and the earlier Rust set regressed from 3/6
+to 2/6. The unchanged ranking remains experimental; neither set is held-out
+acceptance. The raw comparison and rejected patch are retained outside Git in the
+[current validation record](../../docs/validation.md#fair-preparation-and-evidence-delivery--2026-10-11).
+
+### T006 — Bound and parallelize semantic partition computation
+
+Status: implemented experimentally in the shared CLI/MCP pipeline; sandbox evidence
+is in [validation](../../docs/validation.md#large-repository-architecture-and-parallel-partitioning--2026-10-09).
+Bounded representative CPU progress is recorded in [current validation](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11); complete repository throughput and task benefit remain unaccepted.
+
+Selected 2026-10-09 for the experimental branch, following the owner's large-repository
+architecture correction. Current `partition_page` tokenizes serially inside a redb
+write transaction and, in MCP, the engine slot. This blocks unrelated source work
+even though card computation only needs an immutable, verified source body.
+
+Split partition acceptance into three ordinary operations: copy and hash-verify a
+bounded source snapshot; compute card tuples outside all store transactions and the
+MCP engine slot; reacquire the writer and compare the current source hash before
+publication. A private prepared value binds the computed tuples to their verified
+input. The public claim-validation API still renders the actual source and refuses
+invented tuples. Source changes/deletion during computation refuse stale publication.
+
+Share the pipeline between CLI and MCP. Keep at most eight source bodies (at most
+16 MiB under the existing per-source bound) in one computation wave, and use at most
+min(available CPU parallelism, eight) scoped workers. Commit in source order, one
+atomic source mapping at a time. Check cancellation before work and before commits;
+join workers on error/panic and surface a named failure. No unbounded channel, new
+database, schema, model process or provider concurrency is introduced. MCP pause
+and shutdown discard unpublished results when observed before commit admission.
+Existing model/query admission stays intact.
+
+Verify serial/parallel tuple equality, actual overlapping CPU work, bounded admission,
+cancellation, source change/deletion before commit, restart reuse, panic propagation
+and foreground engine-slot availability while card computation runs. Local fixtures
+prove those contracts; they do not establish real-model throughput or task outcomes.
+Full-source partition barriers, progressive ANN publication, larger device batches,
+watching and LLM enrichment remain separate work in the revised ecosystem plan.
+
+### T007 — Make semantic bootstrap useful before a complete corpus pass
+
+Selected 2026-10-09; progressive scheduling/publication implemented experimentally,
+with device tuning and real throughput still unverified. T006 removes CPU computation
+from serving and writer locks. Replace the whole-source partition and initial
+generation barriers with bounded waves of
+partition/select/embed/commit and amortized searchable publication, preserving exact
+source/input identity and resumability. Do not rebuild a full ANN generation after
+every small batch; justify segmented or delta publication against the current USearch
+generation owner before adding another persisted representation.
+
+Prioritize explicitly requested areas and entry points, retain fair background
+progress, and expose partial coverage. Keep lexical retrieval immediately usable.
+Account independently for CPU preparation, provider/device work, cached reuse and
+publication. Reuse CPU workers and buffers when their measured overhead warrants it;
+keep queue bytes, token IDs, completed outputs and publication scratch bounded.
+
+Tune model batches by tokens/sequence geometry and actual device capacity. Additional
+model workers are not inferred from available CPU cores. Any batching change must
+preserve single-versus-batched vector parity and foreground latency; any change to
+vector meaning re-keys the descriptor/cache. Foreground/idle resource admission also
+governs 010 generation, with explicit CPU/memory/device limits and hysteresis.
+
+Verify that the first bounded wave is searchable while later sources remain
+unprepared, edits invalidate immediately, restarts reuse accepted work, and background
+progress neither starves queries nor spins while paused. Record real throughput when
+the selected runtime/device is available; do not extrapolate a fake provider's speed.
+
+
+T007 implementation (experimental): [prepare.rs](../../src/neural/prepare.rs) and
+[driver.rs](../../src/neural/driver.rs) compose up to eight new partitions with
+selection/embedding, alternate at most 16 priority cursors with a general cursor,
+and keep one provider call plus one bounded prefetch. The 2026-10-11 continuation
+limits a contended wave to eight new inputs before another cursor gets a turn,
+including continuous changed-path work. Queued resumptions retain source-range
+bounds and the next card index, bound to path, source hash, full partition recipe
+and embedding-function digest. Selection rechecks those identities against current
+source metadata and partitions; rendering still compares each selected role/range/key
+tuple. A changed identity discards the old position and starts that source afresh.
+Accepted, buffered and in-flight keys retain ordinary deduplication.
+
+One transient paused-plan cache is shared by all cursors in a CLI run or MCP pass:
+at most 32 entries and 16 MiB of accounted retained payload, including its queue
+allocation, source bodies, owned strings, parsed hierarchy spans and their contexts.
+It retains no token arrays or prepared-card handoffs. Entries are consumed on resume;
+same-path replacement invalidates stale identity, and FIFO eviction or an oversized
+plan falls back to rebuilding the plan while preserving scalar progress. Thus a
+cache miss can repeat parsing/fitting but does not restart growing cached prefixes.
+The cache disappears on pass/command exit; restart derives work from accepted
+partition/cache state. It is additional to the active wave and prefetch bounds, not
+a whole-process memory limit. Parser, tokenizer, thread-stack and allocator overhead
+remain outside retained-payload accounting.
+
+CLI selection is capped by the remaining eight-input turn, so a fairness yield
+cannot discard uncommitted pending inputs. MCP keeps its bounded batch across
+cursor yields and excludes both buffered and in-flight keys from further selection.
+No store transaction or MCP engine slot is held during rendering, fitting or model
+execution. File-view publication still drains initial inputs before refinement.
+The turn limit counts inputs, not wall time. This addresses large-file monopolization
+of priority rotation, not model throughput or complete coverage across all files.
+The same-budget real Rust comparison reaches six of 16 priority files versus one before. A separate four-thread,
+single-input follow-up reaches all 16, with five fully cached; full corpus coverage
+remains open. See [the measured limits](../../docs/validation.md#fair-preparation-and-evidence-delivery--2026-10-11).
+Priority revisits use the cache or pending-key exclusion, not duplicate inference. No durable cursor is needed:
+restart replays accepted partition/cache state. [index.rs](../../src/neural/index.rs)
+walks prepared keys and compares current-partition count/source revision for complete
+coverage, publishing first coverage and then geometric growth plus final scope.
+Retaining the existing generation format avoids a second persisted owner, query
+fusion and recovery protocol; bounded logical metadata/vector/serialization payloads
+fail with `resource_limit` while accepted work stays. A full generation still needs
+memory and rebuild time. Segmentation is not ruled out if later device/scale evidence
+requires it. [Usage and accounting](../../docs/experimental-context.md#progressive-semantic-bootstrapping)
+separate coverage from live/last-run stage counters. Existing token geometry, vector
+meaning, model ownership and foreground hysteresis remain unchanged. Reusable CPU
+pools, different model batches, device-pressure admission and 010 generation controls
+need their own runtime evidence; this increment does not claim them completed.
+
+### T006/T007 follow-up — Remove repeated preparation and startup work
+
+Selected after the 2026-10-09 efficiency audit; first increment implemented
+experimentally, with the remainder explicitly pending below. Keep the
+implemented bounded waves and one resident model. Reuse bounded CPU workers and
+verified intermediates across partition and batch selection: source bytes, parsed
+ranges and token IDs must carry source/recipe identity, have a byte limit, and be
+discardable after a wave. A corpus-wide AST/token cache is unnecessary. Avoid
+repeated prefix tokenization when fitting an input; preserve exact rendered bytes
+and token limits. Coordinate ingestion pipelining with 001 T009/T011.
+
+Acquire the CLI model lazily when inference is actually needed. Avoid verifying the
+same artifact twice within one acquisition by passing a private verified handle
+through the same trust boundary; path or mtime equality alone is insufficient.
+Do not remove worker-boundary verification or allow substitution between checking
+and opening. Maintain cache-byte totals transactionally; full reconciliation remains
+available for repair/upgrade rather than running on every ordinary warm replay.
+Cancellation, pause, panic and shutdown must reclaim bounded workers/buffers and
+leave accepted work reusable. Verify work counts and vector/input equivalence in
+sandbox fixtures; real-device speed remains a separate claim.
+
+Implemented increment in [prepare.rs](../../src/neural/prepare.rs),
+[driver.rs](../../src/neural/driver.rs) and 001's `replace_source`:
+
+- A lazy Rayon 1.12.0 pool reuses at most `min(available_parallelism, 8)` CPU workers
+  for a CLI run and across MCP prepare/pause/resume runs for the owner. Rayon already
+  exists in Cargo.lock through maintained dependencies; using it directly avoids
+  a custom worker/channel/shutdown implementation. 001's subsequent ingestion
+  increment makes it available in lexical-only builds as well. Each
+  wave joins before returning, preserves input order and reports tokenizer panics
+  without poisoning subsequent work. Empty/current waves start no CPU threads.
+- Fresh verified partitions retain exact cards for selection, capped at 2 MiB per
+  source (16 MiB per eight-source wave), including ids, key strings and array capacity.
+  This is a retained-payload bound, not a process RAM limit. Sources that exceed it
+  discard retained cards and use the existing on-demand rendering path. Retained
+  cards are private in-memory values bound to source hash, recipe and function;
+  both paths compare every selected range/key to its accepted partition. No new
+  persisted cache, recipe, schema or vector meaning is introduced. Input reconstruction,
+  parsing and tokenization need not repeat for a retained source in that wave.
+- CLI acquisition occurs only after selecting missing input and checking the run
+  budget/reserve. Cache-only replay, mapping-only republishing and zero-card sources
+  need no model. Startup uses the existing run control, and admission rechecks the
+  reserve afterward. A startup refusal/timeout can leave verified partitions and
+  prior cached coverage published; it cannot commit vectors from a refused worker.
+  Provider observations change only when acquisition is actually attempted; a
+  cache-only run preserves the previous observation. MCP's query runtime remains
+  resident under its existing ownership rule.
+- Source replacement checks the current hash before allocating copied storage
+  chunks, preserving the transaction and unchanged-source result.
+
+001's subsequent E1 increment implements bounded initial ingestion and reusable
+lexical workers; see its [contract](../001-source-state-recovery/contracts/context-v2.md#parallel-indexing).
+The remaining E1 work now implements verified artifact handoff, transactional cache
+accounting and per-card fitting:
+
+- `VerifiedArtifacts` retains verified open regular files and the tokenizer bytes read
+  while hashing. Acquisition consumes the same receipt; descriptor/path identity and
+  descriptor metadata are checked before use and after model load/inference. The macOS
+  worker inherits the verified GGUF descriptor and loads `/dev/fd`, avoiding pathname
+  substitution. This is not an immutable filesystem snapshot. Inventory is bounded at
+  64 files and tokenizer bytes at 64 MiB. Worker-executable verification remains.
+- Versioned cache row/byte totals update in the vector transaction. Warm begin/finalize
+  reads these totals; older writers remove the new accounting marker when rewriting
+  state, triggering one reconciliation. Explicit repair can recount. Stale finalizers
+  cannot overwrite newer totals; payload validation still occurs on vector use.
+- Each card owns a bounded memo of identical normalized segments (128 KiB logical
+  payload, 1,024 entries). Every complete candidate still passes through normalization,
+  added-token extraction, pretokenization and postprocessing, preserving first-overflow
+  fitting even when prefix lengths are nonmonotone. Overflow uses ordinary tokenization;
+  BPE dropout disables memoization. No recipe/input-key change or persistent token cache.
+
+Upstream inspected: tokenizers **0.23.2**, `tokenizer/mod.rs`
+`encode_single_sequence`, `do_tokenize`, `post_process`; `added_vocabulary.rs`
+`extract_and_normalize`; byte-level test `offsets_when_char_split_up` and BPE test
+`test_tokenize_with_and_without_dropout`. T006/T007 reuse that public pipeline;
+only bounded per-card deterministic segment memoization differs. Sandbox tests compare
+exact IDs, offsets, spans and keys, including Unicode and overflow. The macOS descriptor
+handoff has not been executed on this Linux sandbox; real-device throughput is unverified.
+T008 E2 is implemented below; E3 delta publication, T009 and 010 generation remain
+separate pending increments. See
+[validation](../../docs/validation.md#bootstrap-work-reuse--2026-10-09) for sandbox
+evidence; no real-device throughput or task-quality gain is claimed.
+
+### T008 — Maintain and publish only changed semantic work
+
+2026-10-10 shared-resource amendment: opt-in owner memory admission reserves the embedding
+worker ceiling before loading and retains it through provider shutdown/reaping. The same
+owner defers background embedding batches under observed memory pressure while preserving
+foreground query access. Generation shares this reservation sum and can unload idle residency.
+The implementation, limitations and verification belong to
+[010 T002 shared admission](../010-source-bound-derived-knowledge/spec.md#t002-shared-memory-admission--2026-10-10).
+Default serving/model/cache identity and existing per-worker controls are unchanged.
+
+Selected; E2/E3 maintenance, ANN deltas, affected-location reconciliation and verified/
+resident segment reuse are implemented experimentally. Generation v5 adds bounded
+location overlays, shared mapping snapshots and clean-restart publication reuse. Depends on
+001 T011's source acceptance seam and T006/T007's bounded preparation. Current input-key cache reuse is retained. Replace
+normal edit-time full walks and generation rebuilds with work proportional to the
+changed inputs and their locations. Full reconciliation is still valid for initial
+bootstrap, profile changes, repair and missed filesystem notifications.
+
+- **Durable obligations:** source replacement/deletion records a coalesced current
+  version or tombstone in the same transaction as source publication. Semantic and
+  010 generation completion are independent of lexical `PENDING` acknowledgment.
+  A completion clears only the version/recipe it processed; late results cannot
+  erase newer work. Bound queues and use a durable reconcile-required marker on
+  overflow. Use redb and the existing owner, not a separate broker, journal or
+  generic job service. A versioned schema change, if needed, preserves existing
+  source, user memory, briefs and reusable caches through upgrade/restart.
+- **Lifecycle:** watching alone still starts no model. Add explicit continuous
+  maintenance enablement with a selected profile and resource limits. When enabled,
+  wake the existing preparation owner on changed work and wait when caught up;
+  retain one-shot prepare and explicit pause. Startup resumes only under that
+  explicit mode. This amends T003's stopped-driver behavior for the new mode only.
+  Continuous source traffic must allow bounded semantic progress without delaying
+  source invalidation or foreground queries. Status polling must not perpetually
+  impose the two-input/60-second foreground throttle; observation still uses bounded
+  serving resources. This follow-up amends T003 D5, not its query-priority guarantee.
+- **Publication:** separate vector membership from source/location mapping. A
+  mapping-only change must not reconstruct unchanged ANN data. Select the simplest
+  restart-safe delta design over the existing cache and USearch: evaluate a single
+  immutable base plus a bounded delta and tombstones against in-place USearch edits
+  with safe checkpoints. Adding/removing an in-memory vector alone does not avoid
+  full checkpoint writes or solve atomic publication. Bound query fan-out, delta
+  bytes and compaction scratch; avoid an unbounded segment collection. Preserve
+  current-source eligibility, duplicate suppression, profile identity and fresh-hit
+  recall when stale base entries occupy the candidate window. Publish manifest,
+  vectors and mappings atomically under a generation identity; interrupted writes
+  remain ineligible. Cache commits precede publication. Failed compaction retains a
+  readable generation, durable pending work and a visible bounded-backoff state.
+- **Status:** maintain versioned committed coverage/progress counters with cheap
+  reads and explicit stale/unknown states. Keep reconciliation/audit available;
+  replace neither payload validation on use nor corruption reporting with optimistic
+  counters. Progress polling must not hash an entire index or census every source
+  and cache row. Derive counters from the same accepted transitions as work state.
+- **Verification:** unchanged replay makes zero document calls; an ordinary edit
+  visits only affected derivation work and reuses unchanged input keys. Cover
+  delete/rename/revert, duplicate hints, edit during inference, coalescing, overflow,
+  pause, owner exit and restart at source/cache/publication/compaction boundaries.
+  Below compaction thresholds a small edit performs no full ANN rebuild. Assert
+  mapping-only publication, stale candidate suppression, bounded query merge,
+  convergence under sustained edits, cheap status and foreground service. Fixtures
+  establish work selection and recovery, not real-device throughput.
+
+Implemented E2 in [work.rs](../../src/neural/work.rs), [driver.rs](../../src/neural/driver.rs),
+[status.rs](../../src/neural/status.rs) and the existing source/MCP owner:
+
+- Schema 9 adds two domain-specific redb tables, `semantic_work` and `knowledge_work`.
+  One shared queue would let one consumer erase or crowd out the other's obligations;
+  each table owns a metadata row, at most 1,024 paths and 1 MiB of queued path text
+  plus one bounded rotation cursor. Updates,
+  tombstones and overflow markers commit with source/chunk/revision publication,
+  including scan sweeps. There is no new broker, service, model thread or dependency.
+- Overflow clears the bounded lane and advances its reconciliation epoch; subsequent
+  changes continue to be recorded. A baseline completion clears only its epoch and
+  versions at or before its start revision. Ordinary batches select eight exact paths
+  with a persisted rotating cursor, so repeatedly edited paths cannot starve the tail.
+  Acknowledgment requires the same owner, lane, epoch, function/recipe and exact version;
+  it follows successful cache work and publication. Source/lexical acknowledgment
+  never clears derivation obligations. Upgrade initializes reconciliation and preserves
+  source, briefs, memory, task, graph, semantic cache and learning data.
+- `index {semantic:"maintain"}` enables the existing driver for this owner. Explicit
+  `mcp --semantic-maintain --semantic-profile FILE` starts it at launch; `--watch` is
+  separately needed for automatic filesystem acceptance. One-shot `prepare` remains
+  an explicit full reconciliation and persists that obligation before publication.
+  `pause`, shutdown, provider errors and cache limits retain unfinished work; named
+  failures require explicit resume, with no hidden provider retry. Quiet mode waits
+  on committed-source notifications without body/cache/index polling; pause/shutdown
+  is observed within the 250 ms notification wait, apart from existing in-flight work.
+- Source work gets eight owner steps before a requested semantic step may reserve
+  the slot briefly (100 ms reservation ceiling); foreground requests still go first.
+  Existing CPU, cache, profile batch and document-call limits apply. Continuous mode
+  does not grant new filesystem roots or model download/execution permission.
+- Publication records versioned coverage from its existing mapping walk; no extra
+  census is added. Ordinary CLI/MCP status reads transactional cache totals, pending
+  metadata and the last recorded publication. Source/profile mismatch yields stale
+  or unknown counters (`null`), with the prior observation labeled separately.
+  `index.available` is unknown and `validation:not_checked`; this observation does
+  not certify on-disk integrity or claim live cache census totals. Use
+  `semantic status --audit` or MCP `status {semantic_audit:true}` for the bounded audit.
+  Status still obeys serving admission but does not renew the two-input/60-second
+  foreground throttle. This amends T001 readiness, T003 D4/D5 and startup behavior
+  only for the explicitly selected mode.
+
+Implemented E3 ANN publication in [publication.rs](../../src/neural/index/publication.rs)
+and [query.rs](../../src/neural/query.rs), shared by CLI preparation and the existing
+MCP driver:
+
+- Generation **v5** separates current input locations from immutable base
+  membership. There is one USearch F16/cosine base and at most one F16/cosine delta.
+  Missing active base keys are tombstones; a reverted base key reactivates its existing
+  vector. Duplicate source locations share one input vector. Location-only publication
+  decodes no cached vectors and builds/writes no ANN bytes. A changed overlay decodes
+  and rebuilds only its bounded active keys; explicit repair still compacts from cache.
+- Compact when either delta membership or retired base membership exceeds
+  `clamp(base_count / 4, 64, 4096)`, or delta f32 payload would exceed 32 MiB. The delta
+  serialized file also has a 32 MiB hard bound. Compaction retains the existing 2 GiB
+  logical f32 payload, 4 GiB serialized base and 256 MiB per-metadata-file bounds.
+  These are payload limits, not total RSS or a measured device throughput guarantee.
+- One manifest atomically references content-named base, delta and location files.
+  Private-stage files are synced, promoted and directory-synced before the manifest
+  rename; the manifest directory is synced afterwards. All operations use held
+  descriptors with no symlink traversal. Failed compaction leaves the prior manifest
+  and referenced artifacts readable. Next staging reclaims only owned unreferenced
+  content files and abandoned private stages; current artifacts remain. This replaces
+  the former three-file overwrite that could destroy the last readable pair.
+- Cache commits still precede publication; E2 acknowledgment follows publication.
+  Crashes before the manifest switch leave the prior generation; crashes after it
+  leave the complete new generation and pending work that can replay without inference.
+  The MCP owner retries publication I/O/index failures after 250 ms, 1 s and 3 s,
+  exposing `publication_backoff_ms`, retry count and last publication error in progress.
+  Backoff releases the serving slot, observes pause/shutdown and admits no model work.
+  Exhaustion pauses by name with pending work intact; finalization does not retry again.
+  CLI publication retains its existing bounded-command, named-failure behavior.
+- The global query window uses at most two USearch filtered searches and 128 candidates
+  before merging its final 64. Opt-in hierarchy localization adds bounded exact
+  resident-vector scoring as described above, yielding at most another 64 labels
+  before the existing delivery limits. It adds no ANN traversal or model call.
+  Segment ordinals select immutable input keys; a persistent
+  ordered map checks active membership and supplies locations in O(log n).
+  Tombstones are excluded inside ANN selection, before the candidate window is limited;
+  final source-hash/range eligibility remains unchanged. Segment memberships are
+  disjoint and validated, so shared inputs cannot appear twice. Approximate ANN search
+  remains approximate; the stale-neighbor fixture establishes suppression behavior,
+  not general recall or task quality.
+- In-place USearch edits were rejected for this slice because a restart-safe checkpoint
+  would still serialize the entire base or require a separate mutation journal. The
+  bounded overlay reuses the maintained library's serialization, redb's authoritative
+  cache and the existing preparation owner. No new table, broker or thread.
+  Format v1–v4 generations are refused by name and republished from cache by preparation
+  or repair; schema 9, partition identities and vector cache format do not change.
+
+Implemented warm publication reuse in [mapping.rs](../../src/neural/index/mapping.rs)
+and [verification.rs](../../src/neural/index/verification.rs), shared by the CLI/owner:
+
+- An owner-local mapping view retains current partitions, input-key-to-path reverse
+  references, cached locations and coverage counters. Source replace/delete/sweep,
+  partition acceptance and cache commits record affected paths/keys under the same
+  short mutex as the redb commit. A walk captures that commit serial; edits during
+  paged work remain dirty, and an old completion cannot clear newer work or claim
+  complete coverage. Cache completion refreshes all locations sharing that input key,
+  including when no source revision changed. Unchanged scans do not dirty the view.
+- The disposable frontier holds at most 1,024 combined paths/keys and 1 MiB of their
+  text. Overflow drops the view and requires reconciliation. The retained view has a
+  conservative 256 MiB logical-payload bound (not allocator overhead or total RSS).
+  Refresh is paged through the existing owner steps. Restart, cancellation of a taken
+  view, identity change, purge and explicit mapping audit/repair can rebuild it from
+  redb when authoritative inputs changed. No new durable journal, schema, table or
+  thread is added: the schema-9 queues preserve obligations. Clean restart publication
+  can reuse its revision fence, as described below.
+- Publication and serving share at most two verified ANN-file receipts per Engine.
+  A receipt retains the verified file descriptor and checks device/inode, length,
+  mtime and ctime (including nanoseconds), against both the held inode and the current
+  descriptor-relative no-follow file open. New/changed files are bounded and hashed;
+  before/after metadata must agree before retaining the receipt. Unchanged files skip
+  SHA work. This is trusted-local-writer integrity reuse, not authentication or a
+  defense against an actor able to forge filesystem metadata. Explicit audits always
+  hash independently; restart receives no inherited receipt. Cache-lock waiting obeys
+  caller cancellation/deadlines.
+- Serving retains immutable `Arc<usearch::Index>` segments in those two receipts.
+  A new delta restores only that segment; location-only publication or base reversion
+  restores no ANN data. Header/geometry validation remains mandatory for new buffers;
+  reused segments still check dimensions, count, scalar and metric against the new
+  manifest. Generations share immutable membership and location snapshots; no full
+  active-ordinal translation array is rebuilt.
+  In-flight windows retain their original immutable generation. Every warm request
+  checks Engine lifetime, prepared identity and the held manifest version; manifest
+  replacement or profile changes refresh/refuse even without an invalidation hint.
+  Once loaded, an unchanged generation serves its verified in-memory copy; segment
+  file versions are rechecked on generation refresh, not on every warm query.
+
+Implemented compact metadata in [locations.rs](../../src/neural/index/locations.rs),
+[publication.rs](../../src/neural/index/publication.rs), and [cache.rs](../../src/neural/cache.rs):
+
+- Generation v5 moves base membership into one immutable `members-<sha>.json` artifact.
+  The manifest retains counts, artifact hashes, coverage/revision and bounded ANN-delta
+  keys. A location base has one replacement/tombstone overlay, at most 4,096 changed
+  keys and 32 MiB serialized. Crossing either limit compacts locations independently;
+  unchanged ANN base, ANN delta and membership remain untouched. ANN compaction also
+  compacts locations. The existing atomic manifest switch and closed-set cleanup own
+  all artifacts. No additional publication journal or database checkpoint is introduced.
+- The disposable mapping view, published snapshot and serving generations share
+  `imbl::OrdMap<String, Arc<Vec<UnitLocation>>>`. Clone shares tree nodes; updates copy
+  affected tree paths and changed location values. Structural diff skips unchanged
+  shared nodes. The owner remembers a published root only after successful publication;
+  failures leave differences discoverable on retry without another acknowledgment log.
+  Full reconciliation can create an independently allocated tree and thus needs a full
+  comparison. Cold load and location compaction also retain corpus-sized work.
+- Held-file receipts cache decoded membership, location base and the single overlay.
+  New or changed bytes are bounded, hashed and checked for sorted unique keys, valid
+  units, disjoint segment membership and active counts. Only new overlays are read on
+  ordinary refresh; the base membership join is reused for the same immutable pair.
+  Retention is one artifact per metadata role, one active snapshot, and a bounded set
+  of non-base keys; old request windows retain their own snapshots. As with ANN receipts,
+  audits always verify independently and receipts do not survive restart.
+- Every source/partition/cache mapping commit advances `semantic_mapping_revision` in
+  the same redb transaction, including lexical-only builds. This is an additive key in
+  existing META, with absent value zero and checked overflow; schema remains 9. A stable
+  mapping walk records that revision plus coverage counters in the manifest. Publication
+  first verifies the generation and compares its durable revision and source revision;
+  an unchanged reopened owner can return Current without partition/cache-layout scans.
+  Partition/cache changes invalidate reuse even without a source revision change.
+  Changed input after restart still requires one paged baseline; explicit repair/audit
+  deliberately reconciles. Preparation's source/partition discovery remains separate.
+  This is publication reuse, not zero-I/O restart or automatically resumed inference.
+
+**Implemented cold/restart follow-up (2026-10-10):** schema 12 adds a disposable
+redb publication lookup (partition rows and input-key-to-path multimap) and a bounded
+changed-input frontier. The current failure is a corpus-wide partition/cache census
+after a small offline edit. An in-memory view alone cannot survive owner restart;
+reusing the derivation queue would lose cache/partition-only changes and would couple
+independent acknowledgments. These three tables reuse redb transactions, with no new
+worker, broker or log format. Maintenance is explicit schema upgrade, bounded
+invalidation, revision-matched checkpoint reuse and full reconciliation on mismatch.
+The lookup is an optimization, never source authority or a persisted file-verification
+receipt. Initial reconciliation still builds it; ordinary refresh changes only affected
+rows and reverse references. Cold generation bytes must still verify independently.
+
+The frontier holds at most 1,024 paths/keys and 1 MiB of key text. It records source,
+partition and cache-only changes under the mapping revision even without the semantic
+feature. Before the first reusable checkpoint, changes advance the reconciliation floor
+without recording unusable work. A stable mapping walk commits its lookup and counters
+before manifest publication;
+a restart between those commits refuses the mismatch and reconciles. A matching restart
+loads only affected lookup rows/reverse postings, then revalidates current source/partition/
+cache metadata. Partial coverage and zero-card sources retain exact counts. Explicit
+purge removes the lookup. If a concurrent edit makes a retained full view unstable, the
+next stable checkpoint includes all of that view's uncheckpointed rows. The initial/full checkpoint is a bounded redb transaction;
+its write cost still scales with the admitted mapping and is not a constant-time claim.
+
+Cache-only CLI preparation now verifies only the tokenizer. A private tokenizer receipt
+can be promoted to a full artifact receipt only by verifying every remaining pinned file;
+changed descriptors/tokenizer paths refuse promotion. Missing weights are therefore allowed
+for cached work and still fail before acquisition when inference is required. Completed
+partition metadata can survive refused/cancelled model verification. Worker executable and
+worker-boundary checks remain. A single-file check runs on the caller without extra threads.
+Explicit `repair-index` can reconstruct even missing disposable lookup tables; ordinary
+open never silently invents them. Source/cache/partition authority remains unchanged.
+
+Cold reconciliation shares one source/partition/cache read snapshot per 128-path page,
+with a bounded 1,024-key probe memo. Artifact acquisition hashes independent opened files
+with at most `min(available_parallelism, 4)` scoped workers and one MiB scratch each,
+retaining the existing 64-file/64-MiB-tokenizer limits. All workers join before receipts
+escape; descriptor/path versions are rechecked. A single large GGUF still needs its full
+sequential SHA-256. ANN loading hashes each MiB while filling the exact restore buffer,
+avoiding a second uninterruptible whole-buffer hash pass. No new backend or hash identity.
+
+**Remaining costs:** initial bootstrap/checkpoint construction, cold artifact verification,
+overflow or unmatched-checkpoint reconciliation, explicit repair, location rebasing and
+ANN compaction still scale with
+corpus size. Overlay comparison/serialization and ANN delta rebuilds are bounded, not
+strictly proportional to the latest edit. Candidate eligibility now uses ordered-map
+lookup rather than an ordinal boolean array. E4 model-aware inputs remain separate.
+No 80,000-file throughput, real-model cost or task-quality result is claimed.
+
+Reference inspected, not executed upstream: imbl **7.0.2**, Cargo.lock archive SHA-256
+`46bad832b9b463ed9398b8506488cc2e3b897a9d44f13af115f382aac71f4fec`,
+[`src/ord/map.rs`](https://docs.rs/imbl/7.0.2/src/imbl/ord/map.rs.html),
+`OrdMap::{clone,diff}`, `PartialEq`, and tests `diff_clone_derived_shared_structure` /
+`diff_clone_derived_narrow_keys`. The published archive records source commit
+`834c67f1e08c63a4d662a4132425026a4cea7b25` with a dirty flag; the archive pin is the
+inspected authority. T008 uses its ordinary persistent tree for disposable in-memory
+snapshots only. Foundry owns durable JSON, integrity, bounded overlays and atomic
+publication. This dependency avoids a custom persistent map or a second dirty-key log.
+
+Reference inspected, not executed: USearch **2.26.2** (the Cargo.lock version),
+[`rust/lib.rs`](https://github.com/unum-cloud/usearch/blob/v2.26.2/rust/lib.rs)
+`Index::{add,remove,filtered_search,save_to_buffer,restore_from_buffer,metric_kind,scalar_kind}`, tests
+`add_remove_vector`, `search_with_stateless_filter` and `search_with_stateful_filter`.
+Inspected at the pinned Cargo.lock release, not executed upstream. These operations
+inform T008: Foundry supplies source-bound locations, validated disjoint membership,
+atomic publication and bounded compaction; USearch supplies ANN storage and search.
+
+### T009 — Use model-owned geometry and contextual representations
+
+Implemented experimentally, 2026-10-10; real-device acceptance remains open. The exact publisher contracts and their limits
+are in the [model-window audit](../../docs/context-ecosystem-plan.md#model-windows-and-chunk-representations).
+The selected EmbeddingGemma 2 advertises 8,192 tokens, while the legacy worker geometry has
+a 2,048-token context/batch limit and the address recipe defaults to 128 tokens.
+Raising the card limit does not add multiline function bodies to that recipe.
+
+- Version provider capabilities independently: per-input tokens, total batch tokens,
+  sequence count, dimensions, tokenizer/template identity, pooling and normalization.
+  Validate actual backend support and retain hard protocol byte/memory ceilings;
+  reject oversize inputs explicitly rather than silently truncating. Use actual
+  token lengths for bounded packing, with length bucketing only where it helps.
+  Preserve foreground latency and single-versus-batched vector parity at every
+  supported geometry. Thread counts, kernels and KV precision are backend-specific
+  experiments; additional CPU cores do not authorize extra resident GPU models.
+- Keep address cards as a reproducible baseline. Add an explicit body-aware recipe
+  for short complete units and bounded windows for oversized units, with surrounding
+  context and exact cited span maps. Select parent/file/area inputs when useful;
+  deduplicate representations by evidence identity and limit their candidate shares.
+  Long embedding inputs and small delivered evidence are independent choices.
+  Unsupported syntax, opaque names, configuration and tests need explicit coverage.
+- Bind reuse to all input and model properties that change vector meaning. Separating
+  path/line locations from vector content is a recipe change, not permission to
+  reuse vectors for different text. Parent context increases the invalidation domain.
+  New profiles/recipes coexist with the old cache namespace until an explicit
+  migration or purge; never mix vector spaces in an ANN generation. Enforce truthful
+  partial coverage while new representations populate.
+- Late chunking is a candidate, not part of the current pooled-vector protocol. It
+  requires contextual token states and correct span pooling/projection/normalization;
+  averaging existing chunk vectors does not implement it. Compare its recomputation
+  and memory costs against independent body units before committing to that backend.
+- Verify body-only edits, small versus oversized units, context-only edits, rename
+  mapping, model/recipe migration, limits, batch parity and recoverable exact spans.
+  Use sandbox fixtures first. Actual long-context quality, device throughput and
+  task economics need the real model/runtime. Publisher window size alone proves
+  none of them. A hosted adapter requires explicit endpoint/data scope; this task
+  does not select a paid endpoint, download weights or send repository source.
+
+
+#### T009 implementation — 2026-10-10
+
+[Provider geometry](../../src/neural/provider.rs) is an optional strict `geometry`
+object inside descriptor v2: `v:1`, `input_tokens`, `batch_tokens`, `sequences`.
+It requires `1 <= input_tokens <= batch_tokens <= 32768` and 1–32 sequences. The
+32,768-token value is a hard admission ceiling, not a model capability. Omission
+preserves the legacy serialized descriptor, digest, adapter revision 1 and 2,048-token
+input/call limits. Explicit geometry requires real-adapter revision 2 and participates
+in vector identity because a changed context configuration can affect computation.
+Dimensions, tokenizer, templates, pooling and normalization retain their existing
+identities. IPC remains v2 with independently versioned geometry and unchanged byte
+caps; older strict workers refuse the new field instead of silently ignoring it.
+
+The [real worker](../../src/bin/foundry_embed.rs) checks explicit per-input capacity
+against the loaded GGUF training context, sets unified `n_ctx = n_batch = n_ubatch`
+to the call total and checks actual context, per-sequence context, batch, microbatch
+and sequence capacity before Ready. No per-input context extrapolation is selected. F32 KV,
+flash-attention-off and length-grouped sequence construction remain unchanged.
+Profile `card_tokens` bounds individual documents; profile `batch` bounds sequences.
+[CLI preparation](../../src/neural/prepare.rs) and the [MCP driver](../../src/neural/driver.rs)
+pack ordered prefixes by actual token totals, retaining unadmitted inputs. Foreground
+sequence limits and one resident model slot remain. A batch need not satisfy the old
+`batch * card_tokens` worst-case restriction. Query limits come from the same descriptor;
+all oversize inputs refuse, with no token-ID truncation.
+
+The explicit profile setting `representation: {"kind":"body-v1","parent_tokens":64}`
+selects [body windows](../../src/neural/partition/body.rs). Omission preserves cards-v1.
+The recipe keeps complete short functions/methods/sections; containers contribute
+residual source ranges and child units. Oversized regions split into non-overlapping,
+UTF-8-safe windows, preferring line boundaries. File preamble, unparsed/unsupported
+syntax, configuration and tests use the same source-window fallback. Whitespace-only
+ranges produce no input. Each child window includes a bounded nearest-parent/own-header
+or file-preamble prefix; it is not a generated summary or an independent parent ANN
+candidate. Thus this increment introduces no duplicate parent evidence or competing
+parent candidate quota. Independent file/area representations remain selected future
+work with 010 T002; they still require deduplication and candidate-share limits.
+
+`parent_tokens` is at most one quarter of `card_tokens` (zero disables context).
+The complete rendered input, including template, context, body and special tokens,
+must fit `card_tokens`. Tokenizer offsets suggest cuts; exact candidate re-encoding
+verifies every window without assuming prefix-monotonic token counts. A template
+that leaves no space for one source character refuses. Bounds are 2 MiB source,
+16,384 windows per source and 16 MiB accumulated context text in a source plan;
+context construction is byte-bounded before tokenization. These are payload bounds,
+not peak RSS: parser/tokenizer scratch, span arrays and allocator overhead remain.
+Fresh cards share the existing 2 MiB-per-source retained handoff; overflow falls back
+to one lazy source plan and selected-card rendering, preserving exact input parity.
+
+Input keys bind the full rendered text and function digest. Paths/offsets stay in
+provenance, so a same-language rename reuses vectors; a body edit or included parent
+context edit changes affected keys. Context outside the bounded prefix is not encoded.
+Recipe identity binds syntax schema, body version, tokenizer and both token settings.
+Profile switches rebuild partitions/publication without purging old vector rows;
+reversion reuses them. Existing partial coverage and freshness checks remain authoritative.
+No new table, worker, dependency, endpoint or representation-specific index is added.
+Long embedding inputs do not increase MCP evidence allowances. Late chunking still
+requires a different backend exposing contextual token states and is not implemented.
+
+Upstream reference for this task: llama.cpp
+[`b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`](https://github.com/ggml-org/llama.cpp/tree/b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea),
+`include/llama.h` (`llama_model_n_ctx_train`, `llama_n_ctx_seq`, context parameters)
+and `examples/embedding/embedding.cpp` (unified context and noncausal microbatch
+capacity). Its `tests/test-backend-ops.cpp` contains `test_rope` and `test_mean` backend
+operator checks; these were inspected as references, not executed or treated as
+end-to-end vector parity evidence. Foundry intentionally keeps its own tokenizer,
+explicit geometry, strict limits and existing pooling/normalization. The model-window
+audit above retains publisher revisions. Foundry's ignored real-consumer
+`dev_real_worker_batched_and_single_sequence_vectors_agree` now exercises the selected
+profile's input limit and heterogeneous batches; it remains unexecuted for explicit
+geometry on this Linux sandbox. See [executed fixture evidence](../../docs/validation.md#model-aware-bodyparent-inputs--2026-10-10).
+
+The macOS consumer harness checks finite, unit-normalized vectors as well as
+cosine agreement, prints actual descriptor/document geometry, and repeats a query at
+the full input limit. The eight-sequence workload explicitly requires a profile that
+admits eight sequences instead of silently skipping that coverage. A short card window
+does not certify long-document batching. This macOS-only harness is neither target-typechecked
+nor executed here: the selected worker requires a macOS App Sandbox bundle,
+the selected embedding artifacts and Metal hardware. This Linux CPU sandbox has no GPU
+device. Selected embedding weights were subsequently supplied for the test-only CPU
+diagnostic below; that result does not accept the production macOS worker. Generation's
+real Qwen CPU results are separate evidence; fake embedding transport/lifecycle tests
+cannot establish embedding numerical quality.
+
+
+T006/T008 ingestion overlap repair (2026-10-10): four-file transaction gathering must
+not delay an available prefix behind a still-running read. The existing ordered
+read/read-writer overlap test exposed that regression. Ingestion now blocks only when
+it has no accepted prefix, then gathers already-ready neighbors up to four; a pending
+next receiver keeps its original slot/order for the next turn. Source descriptors and
+final identity checks, the eight-read/result ceiling, cancellation accounting and
+periodic lexical publication remain. No queue, worker or store contract is added.
+The original synchronization test remains unchanged. Groups stop at the exact lexical
+publication boundary. A direct four-source transaction test preserves rollback coverage;
+the scan fixture permits readiness-dependent successful grouping. Prior cold-bootstrap
+timing is historical; mixed-size throughput still needs a workload comparison.
+
+
+Linux ecosystem diagnostics continuation (2026-10-10):
+
+- **T005:** `tests/retrieval_attribution.rs` validates query/source/delivery identity
+  and reports observed candidate/filter/freshness/packing losses. Truncated, conflicting
+  or missing evidence remains unknown. Eight frozen public Foundry development labels
+  were run with baseline and behavioral lexical retrieval at 2,048 tokens: each arm
+  delivered 1/8; three candidate-limit losses, two packing omissions and two unknowns.
+  Tracing preserved identical delivery. This neither improves acceptance nor attributes
+  the historical 249 G2 misses; preserved G2 inputs and fresh held-out repair checks remain.
+- **T006/T008:** an opt-in mixed-size 8,192-file fixture runs production body/parent
+  fitting, cache and ANN publication with a byte-tokenizer fixture and fake vectors.
+  Cold publication completed; unchanged restart did zero partitioning/model work, one
+  edit plus deletion embedded one new unit, and revert reused cached vectors. This is
+  storage/lifecycle scale evidence, not selected-model tokenization or inference throughput.
+- **T009:** the embedding binary's shared numerical implementation has an explicitly
+  test-only Linux CPU diagnostic using selected Gemma BF16 weights and the pinned native
+  runtime. Eight-sequence single/batch/reverse/mixed-length/full-window comparisons
+  passed at 2,048 tokens (minimum cosine 0.99999528). At 8,192 tokens the pinned
+  `llama_context::output_reserve` requests an 8,216 MiB logits/embedding buffer and
+  fails under the tested 8 GiB address-space ceiling. `decode` requires all tokens for
+  pooled embeddings, so clearing output flags is not a compatible repair. Runtime
+  output allocation needs a separately pinned, parity-validated fix or a justified
+  larger resource envelope; a larger model window alone does not establish usable
+  geometry. The diagnostic uses GGUF tokenization, not profile tokenizer.json parity.
+  It does not admit a Linux production embedding worker. macOS/Metal, signed bundle,
+  worker IPC/isolation acceptance and real long-context retrieval quality remain open.
+
+Native reference: llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`,
+`src/llama-context.cpp::{decode,output_reserve}`, and Foundry's ignored
+`cpu_pinned_gemma_batch_geometry` diagnostic. No upstream runtime patch or descriptor
+identity change is hidden in these measurements. Raw logs/artifacts remain outside Git;
+[validation](../../docs/validation.md) records reproduction and limitations.
+
+#### T009 Linux allocation repair experiment — 2026-10-10
+
+The owner selected feasible sandbox completion after the closeout audit. A separate
+`embed-worker-pooled-diagnostic` build applies one checked replacement to the exported
+pinned `llama-context.cpp`: when embeddings are requested for `GEMMA_EMBEDDING2`, do
+not allocate unused logits. The upstream `models/gemma-embedding2.cpp::graph` writes
+`t_embd` and never `t_logits`; pooling, token outputs and graph evaluation are unchanged.
+The exact-source precondition must match once or the build refuses. The recipe is
+reported as `gemma2-pooled-output-v1` beside the upstream commit, never presented as
+an unmodified upstream build. Ordinary native builds keep the original runtime.
+
+This narrow diagnostic avoids a general runtime fork or an unverified upstream
+upgrade. It is Linux-only, with the existing production Linux embedding refusal intact;
+it is not an admitted profile/cache namespace or a macOS package change. Before any
+production adoption, prefer a pinned upstream fix, bind its runtime identity and
+validate the actual worker/device. Compare against the original runtime's retained
+vectors, then exercise full-window/batched/reversed/heterogeneous inputs under the same
+8 GiB ceiling. Keep numerical tolerances fixed and report peak process RSS and failures.
+
+Executed: unmodified and patched 2,048-token runs pass, then the patched 8,192-token
+run passes with 2.72 GiB peak RSS and minimum cosine 0.99999528. Its first 600
+CPU-second attempt was killed; the final run used 900 CPU seconds with the same
+8 GiB ceiling. Cross-runtime comparison covers the retained short-input vectors;
+there is no stock full-window reference under this ceiling. This closes the sandbox
+allocation failure, not T009's production, tokenizer, representation or quality acceptance.
+
+#### T009 native worker adoption — 2026-10-10
+
+Selected by the owner as part of completing every Linux-feasible ecosystem item.
+The checked allocation replacement now builds with ordinary `embed-worker`;
+`embed-worker-pooled-diagnostic` is only a compatibility alias. New adapter revisions
+bind both recipe and backend: **3 for CPU**, **4 for Metal**. The real binary refuses
+other revisions before loading a model. Legacy 1/2 descriptors and their caches remain
+readable and can still use their original verified macOS worker; changing the adapter
+creates a new vector namespace and never silently relabels cached vectors.
+
+The existing supervisor/protocol now supports Linux. A Linux bundle contains
+`foundry-embed` directly, with the same executable hash verification, held artifact
+descriptors, scratch cleanup, single-flight slot, cancellation and bounded replies.
+Before creating any model/IPC threads, the worker installs the existing descriptor-only
+Linux seccomp policy and hard address-space/CPU limits; no pathname open, network,
+exec or child process is admitted. The held single-file GGUF is header-checked before
+confinement and loaded through `FILE*` afterward. Linux liveness uses the owner's pipe;
+the owner-exit and live-PID RSS checks are exercised separately from macOS kqueue.
+The profile's optional `cpu` controls affinity/thread count and lifetime CPU seconds
+(defaults: two threads, 3,600 seconds; maximum 64 threads / 86,400 seconds). These
+ceilings are not vector identity. All admission remains explicit through the existing
+development-isolation switch; this change does not claim release or signed-package
+acceptance. macOS compilation, Metal numerics, hardware resources and installed package
+checks require the deferred native runner. Linux worker/model results are recorded in
+[validation](../../docs/validation.md).
+
+#### T009 independent representations — 2026-10-11
+
+`hierarchy-v1` is opt-in, with the same `parent_tokens` field as body-v1. It reuses
+body inputs unchanged and adds independent parent and file inputs, each embedded
+normally under the selected document function. Short scopes include all source;
+long scopes select up to 128 distributed declaration headers and a bounded opening
+excerpt. The plan retains spans/text rather than corpus-wide token arrays, with the
+existing 2 MiB source / 16,384-card bounds and a 16 MiB overview-text bound. Parent
+header lookup uses ordered ranges rather than repeated whole-forest scans. Exact
+rendered input determines reuse. Distinct inputs may cite the same source range;
+partition order is start ascending, end descending, then input key ascending.
+Source ANN locations and final-read validation retain their existing owner.
+
+Multi-source derived briefs have separate `area-v1` inputs. The existing source-brief
+owner supplies identity, source hashes and transitive child lineage; the existing
+vector cache stores the independent embedding, and semantic state holds its disposable
+binding. Recomputing or averaging child vectors is not substituted for embedding the
+brief. A bounded exact cosine scan (256 area bindings, top eight) avoids introducing
+another ANN manifest/lifecycle for the small overview set. Preparation checks at most
+4,096 brief rows and refuses excess by name. This deliberate bound remains an acceptance
+limit for larger knowledge graphs, not a claim of exhaustive area coverage. A brief
+with no claim fitting the model allowance stays lexically available and gets no
+generic prefix-only vector.
+
+Area candidates feed the existing opt-in brief discovery/delivery path, including task
+composition, with a final revision/dependency check. Generated prose remains derived.
+CLI and continuous MCP share cache/binding logic. Brief publication/forgetting updates
+an independently acknowledged overview revision in the existing semantic queue, so it
+wakes the area pass without replaying all source partitions or its own generator.
+Late acknowledgments preserve newer obligations. Source changes continue through the
+existing source queue. Area counts are reported separately from source ANN coverage;
+model-call/token/cache totals include all admitted inputs. No new worker, database,
+background loop or source transaction inference is introduced.
+
+Fixture tests cover independent keys, migration/restart/edit/revert/delete reuse,
+bounded retained-card fallback and late dependency rejection. Linux real-model scale
+now completes 80,000 repeated-content files with 512 content families and 528 unique
+inputs, plus real query/ANN delivery. See [validation](../../docs/validation.md) for
+counts and times. This does not close unique-content scale, long-context retrieval
+quality, independent-representation task benefit, late chunking or Metal acceptance.
+
+
+Representative scale continuation (2026-10-11): a pinned Rust 1.90.0 snapshot has
+55,075 files and 53,897 distinct file contents. Indexing admits 53,955 sources in
+138 s. Real Gemma CPU preparation/resume/edit/revert publishes 582 current cards and
+passes current-source serving checks, but 53,913 sources remain unpartitioned after
+the bounded run. Cold inference takes 542 s versus 0.5 s partition computation.
+This is representative partial-progress evidence, not full 60–80k acceptance.
+Preparation reports now include the existing publication's corpus `coverage`, only
+when source revision/function/recipe still match; otherwise it is null. Run counters
+remain explicitly run-local. No new scan, durable state or on-disk integrity claim
+is introduced. [Validation](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11)
+records the preserved inputs, budgets, remaining coverage and cache checks.
+
+
+Further Linux continuation (2026-10-11): experimental prose delivery keeps at most
+two disjoint matching documents per long unit under the existing candidate window,
+four-item file cap and response budget. Exact rendered handles are deduplicated;
+anchored/ordinary retrieval keeps its prior unit identity, and dense locations retain
+their own ranges. Trace events expose the selected document and final excerpt so the
+offline diagnostic can identify an evidence-window loss instead of conflating it with
+failed discovery. Regression tests cover multiple passages, partial dense coverage,
+source identity and malformed/missing attribution evidence. An unmarked language
+qualifier such as “a Go string” no longer anchors an unrelated function named `Go`
+in experimental prose mode. Explicit call/name requests and marked/shaped identifiers
+retain symbol precedence; this does not filter repositories by language. CLI/MCP
+semantic admission uses these same rules, so an incidental capital cannot silently
+disable the model after lexical selection classifies the request as prose. The frozen
+Foundry/Rust scores remain 2/8, 3/6 and 5/8, preserving every delivered span. Eight
+new Go questions on the mixed corpus improve from 0/8 to 1/8. These are bounded
+evidence repairs, not general acceptance.
+
+Attribution correction (2026-10-11): lexical materialization events now retain the
+indexed document's coordinates as well as the enclosing unit and actual excerpt.
+The diagnostic requires the expected span to lie in the selected document before
+attributing an excerpt loss. A different fragment of the same long function is not
+evidence that the expected bytes reached that stage. Selection events use their
+document coordinates too; missing older coordinates leave the cause unknown.
+Answer labels, delivery checks and earlier raw reports remain unchanged.
+
+`representative_corpus_workload_inventory` uses a pinned 60–80k public file manifest,
+source admission and current hashes, the production body fitter and real tokenizer to
+count the entire distinct model-input/token obligation. Completion of that inventory
+is separate from vector inference and ANN coverage. Raw counts, bounded real-model
+progress and remaining acceptance are recorded in the latest validation entry. The
+portable `embedding_parity` receipt/comparator covers exact CPU/Metal token inputs,
+including 8,192 tokens, with backend identities kept distinct. Native macOS execution,
+GPU resource tests and signed package acceptance remain required; Linux checks alone
+cannot close them. See [the native handoff](../../docs/measurement-handoff.md).

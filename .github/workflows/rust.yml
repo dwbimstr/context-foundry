@@ -14,6 +14,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     env:
+      # Match native/local checks: worker fixtures are hashed and copied within
+      # the existing acquisition deadlines. Keep test parallelism unchanged.
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
       # The 013 learning tests read the pinned checkpoint's tokenizer and
       # configuration (convaiinnovations/laya-typed-decisions, Apache-2.0);
       # the small files are fetched below, never the weights.
@@ -43,4 +47,17 @@ jobs:
       - run: cargo +1.90.0 fetch --locked
       - run: cargo +1.90.0 fmt --check
       - run: cargo +1.90.0 clippy --locked --all-targets -- -D warnings
+      - name: Build tests and record worker fixture sizes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 test --locked --no-run
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          names = ["foundry-embed-fake", "foundry-generate-fake", "foundry-learn-fake"]
+          print(json.dumps({"worker_fixture_bytes": {
+              name: (Path("target/debug") / name).stat().st_size for name in names
+          }}, sort_keys=True))
+          PYTHON
       - run: cargo +1.90.0 test --locked --no-fail-fast

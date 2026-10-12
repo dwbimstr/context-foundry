@@ -40,6 +40,9 @@ const PINNED: &str = "https://api.z.ai/api/coding/paas/v4";
 const WAIT: Duration = Duration::from_secs(20);
 const TURN: &str = "omp-18.6.0-turn.json";
 
+#[path = "gateway/host_task.rs"]
+mod host_task;
+
 // ---------------------------------------------------------------------------
 // Request fixtures and SSE builders
 // ---------------------------------------------------------------------------
@@ -426,6 +429,8 @@ struct Spawn {
     run_name: Option<&'static str>,
     /// The global `--store` flag, which the gateway must never open.
     store: Option<PathBuf>,
+    task_view: Option<PathBuf>,
+    task_view_owner: Option<String>,
 }
 
 struct Gateway {
@@ -477,6 +482,15 @@ impl Gateway {
     fn start(dir: &Path, spawn: Spawn) -> Self {
         let run_dir = dir.join(spawn.run_name.unwrap_or("run"));
         let config = write_config(dir, &run_dir, spawn.log_bytes);
+        if let Some(packet) = &spawn.task_view {
+            let mut value: Value =
+                serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+            value["task_view"] = json!(packet);
+            if let Some(url) = &spawn.task_view_owner {
+                value["task_view_owner"] = json!({"url":url,"token_env":"FOUNDRY_TEST_TASK_OWNER"});
+            }
+            std::fs::write(&config, serde_json::to_vec(&value).unwrap()).unwrap();
+        }
         let mut command = Command::new(BIN);
         if let Some(store) = &spawn.store {
             command.arg("--store").arg(store);
@@ -488,6 +502,7 @@ impl Gateway {
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env(KEY_ENV, KEY_CANARY)
+            .env("FOUNDRY_TEST_TASK_OWNER", "task-owner-canary")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -2591,6 +2606,134 @@ fn the_launcher_routes_omp_through_a_fresh_profile_and_cleans_up() {
 }
 
 #[test]
+fn the_launcher_body_reads_uses_a_private_owned_overlay() {
+    for replaced in [false, true] {
+        let launcher = Launcher::new();
+        let config = launcher.config("body-run");
+        let key = launcher.key_file(&format!("{KEY_CANARY}\n"));
+        let out = launcher.work.path().join("body-out");
+        let omp = launcher.fake_omp(&out, "body-run", "body", 0);
+        let overlay = launcher
+            .profile_dir("body")
+            .join("agent/foundry-body-reads.yml");
+        let mut inspect = String::from(
+            "body=\"$HOME/.omp/profiles/body/agent/foundry-body-reads.yml\"\ncp \"$body\" \"$out/body.yml\"\nls -l \"$body\" > \"$out/body-mode\"\n",
+        );
+        if replaced {
+            // Keep the original inode alive elsewhere; cleanup owns only that
+            // inode and must leave a newly created file at its old name alone.
+            inspect.push_str(
+                "mv \"$body\" \"$out/original-body.yml\"\nprintf 'owner replacement\\n' > \"$body\"\n",
+            );
+        }
+        inspect.push_str("exit 0\n");
+        let script = std::fs::read_to_string(&omp).unwrap();
+        std::fs::write(&omp, script.replace("exit 0\n", &inspect)).unwrap();
+        let output = launcher.launch(
+            BIN,
+            &[
+                "--config",
+                path_str(&config),
+                "--key-file",
+                path_str(&key),
+                "--profile",
+                "body",
+                "--body-reads",
+                "--omp",
+                path_str(&omp),
+            ],
+            None,
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let argv = std::fs::read_to_string(out.join("argv")).unwrap();
+        assert_eq!(
+            argv.lines().collect::<Vec<_>>(),
+            [
+                "--profile",
+                "body",
+                "--model",
+                "zai/glm-5.3-flash",
+                "--thinking",
+                "max",
+                "--config",
+                path_str(&overlay),
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(out.join("body.yml")).unwrap(),
+            "read:\n  summarize:\n    enabled: false\n"
+        );
+        assert!(
+            std::fs::read_to_string(out.join("body-mode"))
+                .unwrap()
+                .starts_with("-rw-------"),
+            "the generated overlay is owner-private"
+        );
+        if replaced {
+            assert_eq!(
+                std::fs::read_to_string(&overlay).unwrap(),
+                "owner replacement\n"
+            );
+        } else {
+            assert!(!overlay.exists(), "the generated overlay is cleaned up");
+        }
+        assert!(
+            !launcher
+                .profile_dir("body")
+                .join("agent/models.yml")
+                .exists()
+        );
+        assert!(
+            launcher
+                .profile_dir("body")
+                .join("agent/session.jsonl")
+                .exists()
+        );
+        assert!(!launcher.run_dir("body-run").join("token").exists());
+        let host_env = std::fs::read_to_string(out.join("env")).unwrap();
+        assert!(!host_env.contains(KEY_CANARY));
+        assert!(!env_map(&host_env).contains_key(KEY_ENV));
+        launcher.assert_global_state_untouched();
+    }
+}
+
+#[test]
+fn the_launcher_body_reads_still_refuses_arbitrary_host_configuration() {
+    let launcher = Launcher::new();
+    let config = launcher.config("body-refusal");
+    let key = launcher.key_file(&format!("{KEY_CANARY}\n"));
+    let out = launcher.work.path().join("refused-out");
+    let omp = launcher.fake_omp(&out, "body-refusal", "refused", 0);
+    let output = launcher.launch(
+        BIN,
+        &[
+            "--config",
+            path_str(&config),
+            "--key-file",
+            path_str(&key),
+            "--profile",
+            "refused",
+            "--body-reads",
+            "--omp",
+            path_str(&omp),
+            "--",
+            "--config=owner.yml",
+        ],
+        None,
+    );
+    assert!(!output.status.success());
+    assert_eq!(error_code(&output), "invalid_argument");
+    assert!(!launcher.profile_dir("refused").exists());
+    assert!(!launcher.run_dir("body-refusal").exists());
+    assert!(!out.exists());
+    launcher.assert_global_state_untouched();
+}
+
+#[test]
 fn the_launcher_exits_with_omps_status() {
     let launcher = Launcher::new();
     let config = launcher.config("run7");
@@ -3750,4 +3893,673 @@ async fn local_refusals_are_counted_by_code_in_health_and_the_summary() {
     assert_eq!(summary["refused"]["gateway_feature_unsupported"], 1);
     assert_eq!(summary["attempts"], 0);
     finished.assert_no_secrets();
+}
+
+fn export_view(dir: &Path, original: &str, call_id: &str) -> PathBuf {
+    use context_foundry::{Control, Engine, task_context};
+    let root = dir.join("task-root");
+    std::fs::create_dir(&root).unwrap();
+    let engine = Engine::initialize(&dir.join("task-store"), &root).unwrap();
+    let task = |command| {
+        engine.task_context(&task_context::parse(json!({"workspace_id":engine.workspace_id().unwrap(),"task_id":"host-task","command":command})).unwrap(),&Control::unbounded()).unwrap()
+    };
+    task(json!({"op":"create","title":"Host application fixture"}));
+    task(
+        json!({"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"keep","kind":"constraint","text":"Preserve the user's requested behavior.","author":"operator","provenance":"fixture","source_links":[]}},{"op":"add","entry":{"id":"output","kind":"observation","text":original,"author":"operator","provenance":"explicitly supplied tool result","source_links":[]}},{"op":"fold","entry_id":"output","summary":"The read tool returned the fixture file."}]}),
+    );
+    let packet = task(
+        json!({"op":"export_host","expected_revision":2,"entry_id":"output","tool_call_id":call_id,"max_request_bytes":1048576}),
+    );
+    let path = dir.join("task-view.json");
+    std::fs::write(&path, serde_json::to_vec(&packet).unwrap()).unwrap();
+    path
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exported_view_applies_at_final_bytes_refuses_broken_bindings_and_replays_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let upstream = FakeUpstream::start().await;
+    let original = fixture("omp-18.6.0-tool-continuation.json");
+    let request: Value = serde_json::from_slice(&original).unwrap();
+    let index = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|m| m["role"] == "tool")
+        .unwrap();
+    let packet = export_view(
+        dir.path(),
+        request["messages"][index]["content"].as_str().unwrap(),
+        "call_9",
+    );
+    let mut gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            log_bytes: Some(1_048_576),
+            task_view: Some(packet.clone()),
+            ..Default::default()
+        },
+    );
+    upstream.queue(Reply::sse("", simple_stream()));
+    assert_eq!(gateway.post(original.clone()).await.status(), 200);
+    let receipts = gateway.wait_receipts(1).await;
+    let application = receipts[0]
+        .observation
+        .as_ref()
+        .unwrap()
+        .applied_view
+        .as_ref()
+        .unwrap();
+    let sent = upstream.received()[0].body.clone();
+    assert_eq!(application.request_sha256, context_foundry::digest(&sent));
+    assert_eq!(
+        application.incoming_sha256,
+        context_foundry::digest(&original)
+    );
+    assert_eq!(application.revision, 2);
+    let mut changed: Value = serde_json::from_slice(&sent).unwrap();
+    let view: Value =
+        serde_json::from_str(changed["messages"][index]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(view["scope"], "exported_task_snapshot");
+    assert_eq!(view["source_freshness"], "unchecked_at_send");
+    changed["messages"][index]["content"] = request["messages"][index]["content"].clone();
+    assert_eq!(changed, request, "every other request field is preserved");
+    for bad in [0, 1, 2, 3] {
+        let mut malformed = request.clone();
+        match bad {
+            0 => malformed["messages"][index]["content"] = json!("a different tool result"),
+            1 => {
+                let duplicate = malformed["messages"][index].clone();
+                malformed["messages"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(duplicate);
+            }
+            2 => {
+                malformed["messages"][index - 1]["tool_calls"][0]["id"] = json!("other_call");
+            }
+            _ => {
+                malformed["messages"]
+                    .as_array_mut()
+                    .unwrap()
+                    .swap(index, index - 1);
+            }
+        }
+        assert_eq!(
+            gateway
+                .post(serde_json::to_vec(&malformed).unwrap())
+                .await
+                .status(),
+            400
+        );
+    }
+    assert_eq!(upstream.count(), 1);
+    gateway.terminate().assert_no_secrets();
+    // The packet remains unchanged; startup selects the same snapshot. An
+    // already applied carrier produces exactly the same final serialized body.
+    let mut restarted = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            log_bytes: Some(1_048_576),
+            task_view: Some(packet),
+            run_name: Some("restart"),
+            ..Default::default()
+        },
+    );
+    upstream.queue(Reply::sse("", simple_stream()));
+    assert_eq!(restarted.post(sent.clone()).await.status(), 200);
+    restarted.wait_receipts(1).await;
+    assert_eq!(upstream.received()[1].body, sent);
+    restarted.terminate().assert_no_secrets();
+}
+
+/// Real consumer acceptance is opt-in; ordinary tests never download or launch
+/// an installed host. The upstream is scripted, so this proves request/history
+/// behavior, not coding quality or provider economics.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires FOUNDRY_OMP_BUN and FOUNDRY_OMP_CLI pinned to OMP 18.6.0"]
+async fn real_omp_applies_live_view_on_resumed_tool_history() {
+    let bun = std::env::var_os("FOUNDRY_OMP_BUN").expect("Bun executable");
+    let cli = std::env::var_os("FOUNDRY_OMP_CLI").expect("OMP dist/cli.js");
+    // Use the installed 18.6.0 template explicitly: ambient SYSTEM.md files
+    // must not replace the default workflow in this consumer-boundary check.
+    let template = PathBuf::from(&cli)
+        .parent()
+        .expect("OMP dist directory")
+        .parent()
+        .expect("OMP package directory")
+        .join("src/prompts/system/system-prompt.md");
+    assert_eq!(
+        context_foundry::digest(&std::fs::read(&template).expect("installed OMP default template")),
+        "0c02a5913988f0bd374926ccfa2961a95c8ba00c1b445041a435d5ef86e33736",
+        "the consumer prompt fixture is pinned to OMP 18.6.0"
+    );
+    const APPEND: &str =
+        "OMP prompt-append fixture: read the requested fixture and preserve user constraints.";
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("workspace");
+    let agent = dir.path().join("omp/agent");
+    let sessions = dir.path().join("sessions");
+    let summary_sessions = dir.path().join("summary-sessions");
+    for path in [&cwd, &agent, &sessions, &summary_sessions] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    // The body exceeds OMP 18.6.0's default 100-line unfolding ceiling.
+    // Its marker must disappear in a structural summary and survive a plain
+    // read. Keep the same source for both paths, below ordinary read limits.
+    const BODY_MARKER: &str =
+        "Sandbox observation: keep the required behavior. BODY_ONLY_OMP_READ_8d91";
+    let mut source = String::from(
+        "pub fn fixture_observation() -> &'static str {\n    let mut checksum = 0usize;\n",
+    );
+    for number in 0..128 {
+        source.push_str(&format!(
+            "    checksum = checksum.wrapping_add({number});\n"
+        ));
+    }
+    source.push_str(&format!("    let _ = checksum;\n    {BODY_MARKER:?}\n}}\n"));
+    std::fs::write(cwd.join("hello.rs"), source).unwrap();
+    let read_config = dir.path().join("verbatim-read.yml");
+    std::fs::write(&read_config, "read:\n  summarize:\n    enabled: false\n").unwrap();
+    let upstream = FakeUpstream::start().await;
+    let read_reply = || {
+        Reply::sse(
+            "",
+            vec![
+                data_event(
+                    &json!({"id":"fixture-call","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_9","type":"function","function":{"name":"read","arguments":"{\"path\":\"hello.rs\"}"}}]}}]}),
+                ),
+                data_event(
+                    &json!({"id":"fixture-call","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":usage_object(20,10,None)}),
+                ),
+                done_event(),
+            ],
+        )
+    };
+    upstream.queue(read_reply());
+    upstream.queue(Reply::sse("", simple_stream()));
+    let mut gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            log_bytes: Some(1_048_576),
+            ..Default::default()
+        },
+    );
+    let run = |gateway: &Gateway, resume: Option<&Path>, plain_read: bool| {
+        std::fs::write(
+            agent.join("models.yml"),
+            gateway.ready["omp_models_yml"].as_str().unwrap(),
+        )
+        .unwrap();
+        let mut cmd = tokio::process::Command::new(&bun);
+        // PI_CONFIG_DIR is joined to os.homedir by the pinned host. Resolve it
+        // into the fixture directory without changing HOME or host defaults.
+        let config_dir = format!(
+            "{}{}",
+            "../".repeat(32),
+            dir.path().join("omp").strip_prefix("/").unwrap().display()
+        );
+        cmd.arg(&cli)
+            .args([
+                "--print",
+                "--mode",
+                "json",
+                "--model",
+                "zai/glm-5.3-flash",
+                "--thinking",
+                "off",
+                "--tools",
+                "read",
+                "--no-lsp",
+                "--no-pty",
+                "--no-extensions",
+                "--no-skills",
+                "--no-rules",
+                "--no-title",
+                "--system-prompt-template",
+                template.to_str().unwrap(),
+                "--append-system-prompt",
+                APPEND,
+                "--max-time",
+                "45s",
+                "--approval-mode",
+                "yolo",
+            ])
+            .arg("--session-dir")
+            .arg(if plain_read {
+                &sessions
+            } else {
+                &summary_sessions
+            })
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("PI_CONFIG_DIR", config_dir)
+            .env("PI_CODING_AGENT_DIR", &agent)
+            .env("FOUNDRY_GATEWAY_TOKEN", &gateway.token)
+            .current_dir(&cwd)
+            .stdin(Stdio::null())
+            .kill_on_drop(true);
+        if plain_read {
+            cmd.arg("--config").arg(&read_config);
+        }
+        if let Some(path) = resume {
+            cmd.arg("--resume")
+                .arg(path)
+                .arg("Continue preserving the requested behavior.");
+        } else {
+            cmd.arg("Read hello.rs, then stop.");
+        }
+        cmd
+    };
+    let output = tokio::time::timeout(Duration::from_secs(60), run(&gateway, None, true).output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "OMP: {}\n{}\ngateway: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        gateway.stderr.lock().unwrap()
+    );
+    assert_eq!(
+        upstream.count(),
+        2,
+        "OMP stdout: {} stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    gateway.wait_receipts(2).await;
+    let continuation: Value = serde_json::from_slice(&upstream.received()[1].body).unwrap();
+    let tool = continuation["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap();
+    let original = tool["content"].as_str().unwrap();
+    assert!(
+        original.contains(BODY_MARKER),
+        "the configured read must deliver the actual Rust body to the provider"
+    );
+    let packet = export_view(dir.path(), original, tool["tool_call_id"].as_str().unwrap());
+    let owner = TaskOwner::start(dir.path(), 0).await;
+    let anchor: Value = serde_json::from_slice(&std::fs::read(&packet).unwrap()).unwrap();
+    owner.edit(&anchor, json!({"op":"apply","expected_revision":2,"edits":[{"op":"fold","entry_id":"output","summary":"Updated live observation for the next model request."}]})).await;
+    fn session_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                session_files(&path, out)
+            } else if path.extension().is_some_and(|e| e == "jsonl") {
+                out.push(path)
+            }
+        }
+    }
+    let mut files = Vec::new();
+    session_files(&sessions, &mut files);
+    assert_eq!(files.len(), 1, "{files:?}");
+    let history_before = std::fs::read_to_string(&files[0]).unwrap();
+    assert!(history_before.contains("Sandbox observation"));
+    gateway.terminate().assert_no_secrets();
+    upstream.queue(Reply::sse("", simple_stream()));
+    let mut gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            log_bytes: Some(1_048_576),
+            task_view: Some(packet),
+            task_view_owner: Some(owner.url.clone()),
+            run_name: Some("resumed"),
+            ..Default::default()
+        },
+    );
+    let output = tokio::time::timeout(
+        Duration::from_secs(60),
+        run(&gateway, Some(&files[0]), true).output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "OMP: {}\n{}\ngateway: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        gateway.stderr.lock().unwrap()
+    );
+    assert_eq!(upstream.count(), 3);
+    // Assert the actual outbound payload after host and gateway processing,
+    // including the tool continuation and resumed session. This is scripted
+    // provider integration evidence, not a hash claim about real model runs.
+    for (index, captured) in upstream.received().iter().enumerate() {
+        let request: Value = serde_json::from_slice(&captured.body).unwrap();
+        let system = request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "system" || message["role"] == "developer")
+            .map(|message| message["content"].as_str().expect("text system content"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        assert!(
+            system.contains("# 2. Research Before Editing")
+                && system.contains("Non-trivial work: NEVER yield without a smoke run:"),
+            "request {index}: the default research and verification workflow must survive"
+        );
+        assert_eq!(
+            system.matches(APPEND).count(),
+            1,
+            "request {index}: the append must accompany, not replace, the default workflow"
+        );
+    }
+    let receipts = gateway.wait_receipts(1).await;
+    let application = receipts[0]
+        .observation
+        .as_ref()
+        .unwrap()
+        .applied_view
+        .as_ref()
+        .unwrap();
+    let sent = upstream.received()[2].body.clone();
+    assert_eq!(application.request_sha256, context_foundry::digest(&sent));
+    let applied: Value = serde_json::from_slice(&sent).unwrap();
+    let tool = applied["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap();
+    assert!(
+        tool["content"]
+            .as_str()
+            .unwrap()
+            .contains("live_task_snapshot")
+    );
+    assert!(
+        !tool["content"]
+            .as_str()
+            .unwrap()
+            .contains("Sandbox observation")
+    );
+    let history_after = std::fs::read_to_string(&files[0]).unwrap();
+    assert!(
+        history_after.starts_with(&history_before),
+        "host history must retain original bytes"
+    );
+    assert!(!history_after.contains("exported_task_snapshot"));
+    assert!(!history_after.contains("live_task_snapshot"));
+    assert_eq!(application.revision, 3);
+    assert_eq!(
+        application.synchronization.as_deref(),
+        Some("owner_snapshot")
+    );
+    assert!(
+        tool["content"]
+            .as_str()
+            .unwrap()
+            .contains("Updated live observation")
+    );
+    eprintln!(
+        "OMP 18.6.0 application: {}",
+        serde_json::to_string(application).unwrap()
+    );
+    gateway.terminate().assert_no_secrets();
+
+    // Negative control: the same installed host, default workflow, read call
+    // and source, without the supported read-summary override. A separate
+    // session/upstream keeps the original live-view assertions unchanged.
+    let summary_upstream = FakeUpstream::start().await;
+    summary_upstream.queue(read_reply());
+    summary_upstream.queue(Reply::sse("", simple_stream()));
+    let mut summary_gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(summary_upstream.port),
+            log_bytes: Some(1_048_576),
+            run_name: Some("summary-control"),
+            ..Default::default()
+        },
+    );
+    let output = tokio::time::timeout(
+        Duration::from_secs(60),
+        run(&summary_gateway, None, false).output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "OMP summary control: {}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(summary_upstream.count(), 2);
+    summary_gateway.wait_receipts(2).await;
+    let continuation: Value = serde_json::from_slice(&summary_upstream.received()[1].body).unwrap();
+    let summarized = continuation["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .unwrap()["content"]
+        .as_str()
+        .unwrap();
+    assert!(
+        summarized.contains("fixture_observation") && !summarized.contains(BODY_MARKER),
+        "the default read must expose the signature while eliding its body marker"
+    );
+    summary_gateway.terminate().assert_no_secrets();
+}
+
+struct TaskOwner {
+    child: tokio::process::Child,
+    url: String,
+}
+impl TaskOwner {
+    async fn start(dir: &Path, port: u16) -> Self {
+        use tokio::io::AsyncBufReadExt;
+        let mut child = tokio::process::Command::new(BIN)
+            .arg("--store")
+            .arg(dir.join("task-store"))
+            .args(["mcp", "--root"])
+            .arg(dir.join("task-root"))
+            .args([
+                "--transport",
+                "streamable-http",
+                "--bind",
+                &format!("127.0.0.1:{port}"),
+                "--auth-token-env",
+                "FOUNDRY_TEST_TASK_OWNER",
+                "--experimental-task-context",
+            ])
+            .env("FOUNDRY_TEST_TASK_OWNER", "task-owner-canary")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+        let line = tokio::time::timeout(WAIT, lines.next_line())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let ready: Value = serde_json::from_str(&line).unwrap();
+        Self {
+            child,
+            url: ready["listening"].as_str().unwrap().into(),
+        }
+    }
+    async fn edit(&self, anchor: &Value, command: Value) {
+        use rmcp::transport::{
+            StreamableHttpClientTransport,
+            streamable_http_client::StreamableHttpClientTransportConfig,
+        };
+        let config = StreamableHttpClientTransportConfig::with_uri(self.url.clone())
+            .auth_header("task-owner-canary");
+        let client = ()
+            .serve(StreamableHttpClientTransport::with_client(
+                reqwest::Client::new(),
+                config,
+            ))
+            .await
+            .unwrap();
+        let args = json!({"workspace_id":anchor["view"]["workspace_id"],"task_id":"host-task","command":command});
+        let reply = client
+            .call_tool(
+                CallToolRequestParams::new("task_context")
+                    .with_arguments(args.as_object().unwrap().clone()),
+            )
+            .await
+            .unwrap();
+        assert_ne!(reply.is_error, Some(true), "{reply:?}");
+        client.cancel().await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn live_view_tracks_owner_edits_refuses_revocation_and_recovers_after_owner_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let upstream = FakeUpstream::start().await;
+    let original = fixture("omp-18.6.0-tool-continuation.json");
+    let request: Value = serde_json::from_slice(&original).unwrap();
+    let index = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|m| m["role"] == "tool")
+        .unwrap();
+    let packet = export_view(
+        dir.path(),
+        request["messages"][index]["content"].as_str().unwrap(),
+        "call_9",
+    );
+    let anchor: Value = serde_json::from_slice(&std::fs::read(&packet).unwrap()).unwrap();
+    let mut owner = TaskOwner::start(dir.path(), 0).await;
+    let mut gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            log_bytes: Some(1_048_576),
+            task_view: Some(packet),
+            task_view_owner: Some(owner.url.clone()),
+            ..Default::default()
+        },
+    );
+    for revision in [2, 3] {
+        if revision == 3 {
+            owner.edit(&anchor, json!({"op":"apply","expected_revision":2,"edits":[{"op":"fold","entry_id":"output","summary":"The current owner changed this view."},{"op":"add","entry":{"id":"new-constraint","kind":"constraint","text":"Keep the new acceptance target.","author":"operator","provenance":"live fixture","source_links":[]}}]})).await;
+        }
+        upstream.queue(Reply::sse("", simple_stream()));
+        assert_eq!(gateway.post(original.clone()).await.status(), 200);
+        let receipts = gateway.wait_receipts(revision as usize - 1).await;
+        let app = receipts
+            .last()
+            .unwrap()
+            .observation
+            .as_ref()
+            .unwrap()
+            .applied_view
+            .as_ref()
+            .unwrap();
+        assert_eq!(app.revision, revision);
+        assert_eq!(app.synchronization.as_deref(), Some("owner_snapshot"));
+        let sent = upstream.received().last().unwrap().body.clone();
+        assert_eq!(app.request_sha256, context_foundry::digest(&sent));
+        let mut applied: Value = serde_json::from_slice(&sent).unwrap();
+        if revision == 3 {
+            assert!(
+                applied["messages"][index]["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains("current owner changed")
+            );
+            assert!(
+                applied["messages"][index]["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Keep the new acceptance target.")
+            );
+        }
+        applied["messages"][index]["content"] = request["messages"][index]["content"].clone();
+        assert_eq!(applied, request, "all other request fields survive");
+    }
+    owner.edit(&anchor, json!({"op":"apply","expected_revision":3,"edits":[{"op":"select","entry_id":"output","selected":false}]})).await;
+    assert_eq!(gateway.post(original.clone()).await.status(), 403);
+    owner.edit(&anchor, json!({"op":"apply","expected_revision":4,"edits":[{"op":"select","entry_id":"output","selected":true},{"op":"expand","entry_id":"output"}]})).await;
+    assert_eq!(gateway.post(original.clone()).await.status(), 403);
+    owner.edit(&anchor, json!({"op":"apply","expected_revision":5,"edits":[{"op":"fold","entry_id":"output","summary":"Restored current view."}]})).await;
+    let port = reqwest::Url::parse(&owner.url).unwrap().port().unwrap();
+    owner.child.kill().await.unwrap();
+    owner.child.wait().await.unwrap();
+    assert_eq!(gateway.post(original.clone()).await.status(), 403);
+    assert_eq!(upstream.count(), 2, "no frozen fallback");
+    owner = TaskOwner::start(dir.path(), port).await;
+    upstream.queue(Reply::sse("", simple_stream()));
+    assert_eq!(gateway.post(original.clone()).await.status(), 200);
+    assert_eq!(
+        gateway.wait_receipts(3).await[2]
+            .observation
+            .as_ref()
+            .unwrap()
+            .applied_view
+            .as_ref()
+            .unwrap()
+            .revision,
+        6
+    );
+    owner
+        .edit(&anchor, json!({"op":"forget","expected_revision":6}))
+        .await;
+    assert_eq!(gateway.post(original.clone()).await.status(), 403);
+    owner
+        .edit(
+            &anchor,
+            json!({"op":"create","title":"Recreated task is below the admitted revision"}),
+        )
+        .await;
+    assert_eq!(gateway.post(original).await.status(), 403);
+    assert_eq!(upstream.count(), 3);
+    let finished = gateway.terminate();
+    finished.assert_no_secrets();
+    assert!(!finished.receipts_text.contains("task-owner-canary"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn live_owner_resolution_obeys_the_shorter_gateway_deadline_without_an_attempt() {
+    let dir = tempfile::tempdir().unwrap();
+    let upstream = FakeUpstream::start().await;
+    let stalled_owner = FakeUpstream::start().await;
+    let original = fixture("omp-18.6.0-tool-continuation.json");
+    let request: Value = serde_json::from_slice(&original).unwrap();
+    let tool = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap();
+    let packet = export_view(dir.path(), tool["content"].as_str().unwrap(), "call_9");
+    let mut gateway = Gateway::start(
+        dir.path(),
+        Spawn {
+            upstream: Some(upstream.port),
+            task_view: Some(packet),
+            task_view_owner: Some(format!("http://127.0.0.1:{}/mcp", stalled_owner.port)),
+            deadline_ms: Some(300),
+            ..Default::default()
+        },
+    );
+    stalled_owner.queue(Reply::raw(vec![Step::Hold]));
+    let started = Instant::now();
+    assert_eq!(gateway.post(original).await.status(), 403);
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(stalled_owner.count(), 1, "the owner read actually began");
+    assert_eq!(upstream.count(), 0);
+    assert_eq!(gateway.health().await["attempts"], 0);
+    gateway.terminate().assert_no_secrets();
 }

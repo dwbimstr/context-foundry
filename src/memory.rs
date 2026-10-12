@@ -1,7 +1,8 @@
 //! 008 explicit project memory: attributed records the caller creates,
-//! corrects, retrieves, exports and forgets. No automatic ingestion, no
-//! transcripts, no model reads or writes; every record comes from an explicit
-//! `put`/`update` and dies only by an explicit `forget`.
+//! corrects, retrieves, exports and forgets. No automatic ingestion or
+//! transcript capture. Records come from explicit `put`/`update` or experimental
+//! task-decision promotion, and die by explicit forget (including task cascades).
+//! Model workers never read or write this table.
 //!
 //! One `memory` table lives in the authoritative store beside sources. The
 //! row, the store-owned revision counter and a typed pending-index key
@@ -125,24 +126,12 @@ pub enum MemoryRequest {
     Search(SearchInput),
 }
 
-/// One derived memory search candidate before live-row validation (the
-/// document's id and the revision it was indexed at).
-pub(crate) struct MemoryCandidate {
-    pub id: String,
-    pub revision: u64,
-}
-
-/// The derived memory candidates of one query, collected before the final
-/// read: whether the 256-document selection window filled, and the (id,
-/// indexed revision) pairs it produced.
-pub(crate) struct MemoryPlan {
-    pub window_full: bool,
-    pub candidates: Vec<MemoryCandidate>,
-}
-
 /// The combined context outcome (008): the source/graph batch plus the
 /// memory hits validated in the batch's own final read transaction.
 pub struct MemoryContext {
+    pub evidence: Option<crate::task_evidence::Plan>,
+    pub task_view: Option<crate::task_context::ContextView>,
+    pub briefs: Vec<crate::brief::Record>,
     pub batch: crate::store::CandidateBatch,
     pub hits: Vec<MemoryHit>,
 }
@@ -487,7 +476,7 @@ impl Engine {
     /// `replace_source`: the parser may have checked, but the engine never
     /// trusts its callers. An id outside `[A-Za-z0-9_-]{1,128}` could forge
     /// wire lines or collide with source search keys, so it is refused here.
-    fn validate_record_fields(fields: &RecordFields) -> FResult<()> {
+    pub(crate) fn validate_record_fields(fields: &RecordFields) -> FResult<()> {
         let valid_id = !fields.id.is_empty()
             && fields.id.len() <= MAX_ID_BYTES
             && fields

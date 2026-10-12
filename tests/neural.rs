@@ -116,6 +116,7 @@ impl Env {
         let report = prepare::run(
             &self.store,
             &PrepareOptions {
+                priority_paths: &[],
                 profile_path: &profile,
                 budget_seconds,
                 development: false,
@@ -136,6 +137,7 @@ impl Env {
         let error = prepare::run(
             &self.store,
             &PrepareOptions {
+                priority_paths: &[],
                 profile_path: &profile,
                 budget_seconds,
                 development: false,
@@ -187,6 +189,7 @@ fn run_once(store: &Path, profile: &Path, slot: &mut Option<Engine>) -> (u64, Pr
     let report = prepare::run(
         store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: profile,
             budget_seconds: 60,
             development: false,
@@ -243,6 +246,150 @@ fn unchanged_restart_makes_zero_document_calls() {
     assert_eq!(second.reused_cached_units, first.eligible_units);
     assert!(!second.partial);
     assert_eq!(second.index_entries, first.index_entries);
+}
+
+#[test]
+fn cache_only_replay_and_mapping_changes_do_not_acquire_a_model() {
+    let (mut env, first) = first_preparation(&[("a.md", &body(100)), ("b.md", &body(120))]);
+    for delete in [false, true] {
+        if delete {
+            env.open().delete_source("a.md").unwrap();
+        }
+        env.close();
+        let report = prepare::run(
+            &env.store,
+            &PrepareOptions {
+                priority_paths: &[],
+                profile_path: &env.profile,
+                budget_seconds: 60,
+                development: false,
+                cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+                started: Instant::now(),
+                control: &Control::unbounded(),
+            },
+            Box::new(|_, _, _, _| panic!("cached-only preparation must not acquire a model")),
+        )
+        .unwrap();
+        assert!(!report.partial, "{report:?}");
+        assert_eq!(report.provider_state, None, "no new provider observation");
+        assert_eq!(report.document_calls, 0);
+        assert_eq!(
+            report.index_entries,
+            if delete { 1 } else { first.index_entries }
+        );
+        assert!(report.index_published);
+        assert_eq!(
+            env.status().provider.state,
+            "ready",
+            "keep the prior observation"
+        );
+    }
+}
+
+#[test]
+fn empty_or_uncarded_sources_prepare_without_a_provider() {
+    for sources in [
+        vec![],
+        vec![("empty.rs", ""), ("data.unknown", "uncarded bytes")],
+    ] {
+        let mut env = Env::new(&sources);
+        env.close();
+        let report = prepare::run(
+            &env.store,
+            &PrepareOptions {
+                priority_paths: &[],
+                profile_path: &env.profile,
+                budget_seconds: 60,
+                development: false,
+                cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+                started: Instant::now(),
+                control: &Control::unbounded(),
+            },
+            Box::new(|_, _, _, _| panic!("no eligible cards means no model startup")),
+        )
+        .unwrap();
+        assert!(!report.partial, "{report:?}");
+        assert_eq!(report.eligible_units, 0);
+        assert_eq!(report.provider_state, None);
+        assert_eq!(report.partitioned_sources, sources.len() as u64);
+        assert_eq!(env.status().provider.state, "unknown");
+    }
+}
+
+#[test]
+fn cold_waves_acquire_once_and_low_budget_does_not_start_a_worker() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let owned: Vec<_> = (0..25)
+        .map(|n| (format!("n{n:02}.md"), body(100 + n)))
+        .collect();
+    let sources: Vec<_> = owned
+        .iter()
+        .map(|(path, body)| (path.as_str(), body.as_str()))
+        .collect();
+    let mut env = Env::new(&sources);
+    let acquired = Arc::new(AtomicUsize::new(0));
+    for budget_seconds in [4, 60] {
+        env.close();
+        let calls = Arc::clone(&acquired);
+        let factory = env.factory.acquire();
+        let report = prepare::run(
+            &env.store,
+            &PrepareOptions {
+                priority_paths: &[],
+                profile_path: &env.profile,
+                budget_seconds,
+                development: false,
+                cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+                started: Instant::now(),
+                control: &Control::unbounded(),
+            },
+            Box::new(move |profile, artifacts, development, control| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                factory(profile, artifacts, development, control)
+            }),
+        )
+        .unwrap();
+        if budget_seconds == 4 {
+            assert_eq!(report.reason_code, Some("budget_exhausted"));
+            assert_eq!(acquired.load(Ordering::SeqCst), 0);
+            assert_eq!(report.document_calls, 0);
+        } else {
+            assert!(!report.partial, "{report:?}");
+            assert_eq!(report.embedded_units, 25);
+            assert!(report.document_calls > 1);
+            assert_eq!(acquired.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+#[test]
+fn partial_prepare_reports_corpus_coverage_separately_from_run_counters() {
+    let paths: Vec<_> = (0..20).map(|i| format!("note{i:02}.md")).collect();
+    let sources: Vec<_> = paths
+        .iter()
+        .map(|p| (p.as_str(), "# A note\nUseful source detail.\n"))
+        .collect();
+    let mut env = Env::new(&sources);
+    let partial = env.prepare(4); // shorter than the publication reserve
+    assert!(partial.partial);
+    assert_eq!(partial.document_calls, 0);
+    let coverage = partial.coverage.expect("published partial corpus counts");
+    assert_eq!(coverage.sources, 20);
+    assert!(coverage.unpartitioned_sources > 0);
+    assert_eq!(coverage.searchable_current_units, 0);
+    assert_eq!(
+        coverage.source_revision,
+        env.open().source_revision().unwrap()
+    );
+    let complete = env.prepare(60);
+    let coverage = complete.coverage.unwrap();
+    assert!(!complete.partial);
+    assert_eq!(coverage.sources, 20);
+    assert_eq!(coverage.unpartitioned_sources, 0);
+    assert_eq!(coverage.searchable_current_units, coverage.eligible_units);
 }
 
 #[test]
@@ -473,7 +620,11 @@ fn repair_index_rebuilds_the_semantic_generation_with_zero_calls() {
     // Corrupt the published index file; validation must refuse it.
     env.close();
     let generation = index::generation_dir(&env.store, &env.digest());
-    std::fs::write(generation.join(index::INDEX_FILE), b"broken").unwrap();
+    std::fs::write(
+        testkit::semantic_file(&generation, index::INDEX_FILE),
+        b"broken",
+    )
+    .unwrap();
     let engine = Engine::open_existing(&env.store).unwrap();
     let status = engine.semantic_status(&Control::unbounded()).unwrap();
     assert!(!status.index.available, "{status:?}");
@@ -527,6 +678,7 @@ fn short_and_nonfinite_vectors_preserve_valid_data() {
         let report = prepare::run(
             &store,
             &PrepareOptions {
+                priority_paths: &[],
                 profile_path: &profile,
                 budget_seconds: 60,
                 development: false,
@@ -1003,6 +1155,7 @@ fn serving_limit_is_checked_before_any_model_work() {
     let limits = DocumentLimits {
         inputs: context_foundry::neural::profile::DEFAULT_BATCH as usize,
         tokens: context_foundry::neural::profile::DEFAULT_CARD_TOKENS as usize,
+        total_tokens: provider::SERVING_LIMIT_TOKENS,
     };
     let batch: Vec<TokenizedInput> = (0..limits.inputs)
         .map(|_| TokenizedInput {
@@ -1086,7 +1239,12 @@ fn schema_5_upgrade_from_v4_preserves_every_table_atomically() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap_err();
     fault::disarm_all();
     assert_eq!(testkit::snapshot(&store), before);
     // The previous version is no longer a target.
@@ -1098,9 +1256,17 @@ fn schema_5_upgrade_from_v4_preserves_every_table_atomically() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&store, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(
+        &store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap_err();
     fault::disarm_all();
-    assert_eq!(testkit::schema_marker(&store), "6");
+    assert_eq!(
+        testkit::schema_marker(&store),
+        context_foundry::SCHEMA_VERSION.to_string()
+    );
     let after = testkit::snapshot(&store);
     for table in [
         "sources",
@@ -1184,13 +1350,26 @@ fn schema_6_upgrade_from_v5_preserves_every_table_and_the_vector_cache() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&env.store, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(
+        &env.store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap_err();
     fault::disarm_all();
     assert_eq!(testkit::snapshot(&env.store), before);
     assert_eq!(testkit::semantic_cache_rows(&env.store), cache_before);
     assert_eq!(testkit::schema_marker(&env.store), "5");
-    Engine::upgrade_store(&env.store, 6, &Control::unbounded()).unwrap();
-    assert_eq!(testkit::schema_marker(&env.store), "6");
+    Engine::upgrade_store(
+        &env.store,
+        context_foundry::SCHEMA_VERSION,
+        &Control::unbounded(),
+    )
+    .unwrap();
+    assert_eq!(
+        testkit::schema_marker(&env.store),
+        context_foundry::SCHEMA_VERSION.to_string()
+    );
     let after = testkit::snapshot(&env.store);
     for (table, rows) in &before {
         let (mut left, mut right) = (after[table].clone(), rows.clone());
@@ -1222,6 +1401,7 @@ fn missing_artifacts_fail_by_name_without_downloads() {
     env.close();
     let model_dir = SemanticProfile::load(&env.profile).unwrap().model_dir;
     std::fs::remove_file(model_dir.join("model.gguf")).unwrap();
+    env.open().replace_source("a.md", &body(200)).unwrap();
     let error = env.prepare_err(60);
     assert_eq!(error.code(), "profile_invalid", "{error}");
     // The committed cache survives the refused run untouched.
@@ -1376,6 +1556,7 @@ fn one_entry() -> Vec<index::GenerationEntry> {
         input_key: "00".repeat(32),
         vector: vec![0.5f32; DIMS],
         units: vec![index::UnitLocation {
+            kind: context_foundry::neural::cache::CardKind::Address,
             path: "a.md".into(),
             start: 0,
             end: 1,
@@ -1514,6 +1695,7 @@ fn caller_cancellation_reaches_the_provider_call() {
     let report = prepare::run(
         &env.store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: &profile,
             budget_seconds: 60,
             development: false,
@@ -1533,15 +1715,20 @@ fn caller_cancellation_reaches_the_provider_call() {
 fn the_run_budget_reaches_worker_acquisition_and_names_budget_exhausted() {
     let mut env = env_with(&nine_sources(), FakeBehavior::StallAcquire);
     let started = Instant::now();
-    let report = env.prepare(1);
+    // Startup is lazy: leave room outside the five-second publication
+    // reserve so this actually reaches acquisition after the first wave.
+    let report = env.prepare(6);
     assert!(
-        started.elapsed() < Duration::from_secs(7),
+        started.elapsed() >= Duration::from_secs(5) && started.elapsed() < Duration::from_secs(8),
         "acquisition was not bounded"
     );
     assert!(report.partial, "{report:?}");
     assert_eq!(report.reason_code, Some("budget_exhausted"), "{report:?}");
     assert_eq!(env.calls(), 0, "no document call before a provider exists");
-    assert_eq!(report.partitioned_sources, 0, "nothing was partitioned");
+    assert_eq!(
+        report.partitioned_sources, 8,
+        "verified partitions survive startup expiry"
+    );
     let status = env.status();
     assert_eq!(status.state, "paused");
     assert_eq!(status.last_error.as_ref().unwrap().code, "budget_exhausted");
@@ -1606,6 +1793,7 @@ fn renderer(env: &Env) -> impl Fn(&str, &str) -> Result<Vec<PartitionUnit>, Foun
         Ok(cards
             .into_iter()
             .map(|card| PartitionUnit {
+                kind: card.kind,
                 start: card.start,
                 end: card.end,
                 input_key: card.input_key,
@@ -1649,6 +1837,7 @@ fn mapping_acceptance_validates_the_cards_against_the_current_body() {
         ranges
             .iter()
             .map(|&(start, end)| PartitionUnit {
+                kind: context_foundry::neural::cache::CardKind::Address,
                 start,
                 end,
                 input_key: key.clone(),
@@ -1693,6 +1882,7 @@ fn mapping_acceptance_validates_the_cards_against_the_current_body() {
     // A key that is not lowercase SHA-256 hex is refused.
     let with_key = |key: &str| {
         vec![PartitionUnit {
+            kind: context_foundry::neural::cache::CardKind::Address,
             start: 0,
             end: 100,
             input_key: key.to_owned(),
@@ -1711,6 +1901,57 @@ fn mapping_acceptance_validates_the_cards_against_the_current_body() {
         &render,
     )
     .unwrap();
+}
+
+#[test]
+fn partition_computation_allows_source_writes_but_refuses_changed_or_deleted_inputs() {
+    for deleted in [false, true] {
+        let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
+        let render = renderer(&env);
+        let engine = env.open();
+        let before = engine.semantic_partition("a.md").unwrap().unwrap();
+        let error = engine
+            .semantic_record_partition(
+                "a.md",
+                &before.source_hash,
+                &before.recipe_id,
+                &before.function_digest,
+                None,
+                &|source| {
+                    // This callback used to run inside the write transaction.
+                    // It can now overlap ingestion; acceptance must recheck it.
+                    let units = render("a.md", source)?;
+                    if deleted {
+                        engine.delete_source("a.md")?;
+                    } else {
+                        engine.replace_source("a.md", "# New source revision\n")?;
+                    }
+                    Ok(units)
+                },
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.code(),
+            if deleted {
+                "not_found"
+            } else {
+                "partition_invalid"
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(engine.semantic_partition("a.md").unwrap().unwrap()).unwrap(),
+            serde_json::to_value(&before).unwrap()
+        );
+        env.close();
+        assert_eq!(
+            env.open()
+                .semantic_partition("a.md")
+                .unwrap()
+                .unwrap()
+                .source_hash,
+            before.source_hash
+        );
+    }
 }
 
 #[test]
@@ -1801,6 +2042,8 @@ fn old_binary_counter(env: &mut Env, per_row: u64) {
     let object = state.as_object_mut().unwrap();
     object.remove("dimensions");
     object.remove("cache_cap_bytes");
+    object.remove("cache_accounting_version");
+    object.remove("cache_entries");
     object.insert("cache_bytes".into(), (rows * per_row).into());
     testkit::tamper_semantic_state(&env.store, &state.to_string());
 }
@@ -2001,7 +2244,11 @@ fn publication_is_anchored_to_the_descriptors_not_the_path() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .collect();
-    assert_eq!(published.len(), 3, "{published:?}");
+    assert!(
+        // Two full generations each have ANN, locations and membership; one manifest.
+        published.len() <= 7,
+        "current and preceding artifacts: {published:?}"
+    );
 }
 
 /// C1 bootstrap binding: the store-directory descriptor is taken ONCE, when
@@ -2027,6 +2274,7 @@ fn purge_and_publication_follow_the_bound_store_not_a_substituted_ancestor() {
     let report = prepare::run(
         &store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: &profile,
             budget_seconds: 60,
             development: false,
@@ -2061,16 +2309,14 @@ fn purge_and_publication_follow_the_bound_store_not_a_substituted_ancestor() {
             .exists()
     );
 
+    let bound_file = testkit::semantic_file(
+        &moved.join("store/semantic").join(&digest),
+        index::INDEX_FILE,
+    );
     // Publication on the still-open Engine: the bound generation's index file
     // is removed (reached through the moved path), so pending coverage must
     // be rebuilt — into the bound directory, not into the decoy.
-    std::fs::remove_file(
-        moved
-            .join("store/semantic")
-            .join(&digest)
-            .join(index::INDEX_FILE),
-    )
-    .unwrap();
+    std::fs::remove_file(&bound_file).unwrap();
     match engine
         .semantic_publish_pending(&Control::unbounded())
         .unwrap()
@@ -2079,11 +2325,7 @@ fn purge_and_publication_follow_the_bound_store_not_a_substituted_ancestor() {
         other => panic!("expected a rebuild into the bound store, got {other:?}"),
     }
     assert!(
-        moved
-            .join("store/semantic")
-            .join(&digest)
-            .join(index::INDEX_FILE)
-            .exists(),
+        bound_file.exists(),
         "the bound store's generation was rebuilt"
     );
     assert_eq!(
@@ -2129,11 +2371,21 @@ fn grow_weights(env: &Env) {
 }
 
 #[test]
-fn artifact_verification_obeys_the_run_budget() {
+fn model_verification_is_not_started_below_the_publication_reserve() {
     let mut env = Env::new(&[("a.md", &body(100))]);
     grow_weights(&env);
+    use context_foundry::fault::{self, Action};
+    fault::arm(
+        context_foundry::neural::fault_names::ARTIFACT_HASH,
+        0,
+        Action::FailWhen {
+            detail_contains: "model.gguf".into(),
+            message: "unneeded weight hash".into(),
+        },
+    );
     let started = Instant::now();
     let report = env.prepare(1);
+    fault::disarm_all();
     assert!(
         started.elapsed() < Duration::from_secs(6),
         "verification was not bounded: {:?}",
@@ -2141,7 +2393,10 @@ fn artifact_verification_obeys_the_run_budget() {
     );
     assert!(report.partial, "{report:?}");
     assert_eq!(report.reason_code, Some("budget_exhausted"), "{report:?}");
-    assert_eq!(report.partitioned_sources, 0);
+    assert!(
+        report.partitioned_sources <= 1,
+        "accepted partition metadata remains reusable"
+    );
     assert_eq!(env.calls(), 0);
     assert_eq!(env.open().semantic_cache_totals().unwrap().0, 0);
     assert!(env.open().source("a.md").unwrap().is_some());
@@ -2163,6 +2418,7 @@ fn artifact_verification_obeys_caller_cancellation() {
     let report = prepare::run(
         &env.store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: &profile,
             budget_seconds: 60,
             development: false,
@@ -2179,7 +2435,10 @@ fn artifact_verification_obeys_caller_cancellation() {
         "cancellation did not reach verification"
     );
     assert_eq!(report.reason_code, Some("cancelled"), "{report:?}");
-    assert_eq!(report.partitioned_sources, 0);
+    assert!(
+        report.partitioned_sources <= 1,
+        "accepted partition metadata remains reusable"
+    );
     assert_eq!(env.calls(), 0);
 }
 
@@ -2324,6 +2583,7 @@ fn status_reports_the_last_provider_observation_never_a_live_probe() {
     let error = prepare::run(
         &refused.store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: &profile,
             budget_seconds: 60,
             development: false,
@@ -2331,7 +2591,7 @@ fn status_reports_the_last_provider_observation_never_a_live_probe() {
             started: Instant::now(),
             control: &Control::unbounded(),
         },
-        Box::new(|_profile, _development, _control| {
+        Box::new(|_profile, _artifacts, _development, _control| {
             Err(ProviderError::IsolationUnavailable("no profile".into()))
         }),
     )
@@ -2374,6 +2634,10 @@ fn mixed_retained_rows_open_and_account_their_actual_lengths() {
     assert_eq!(status.cache.corrupt_entries, 0);
     assert_eq!(status.cached_current_units, 1);
     assert!(status.index.available, "{status:?}");
+    // Out-of-band rows also invalidate the committed entry counter; explicit
+    // reconciliation repairs that counter without touching the retained rows.
+    assert!(env.open().semantic_cache_totals().is_err());
+    assert_eq!(env.open().semantic_reconcile_cache().unwrap(), (3, total));
     assert_eq!(env.open().semantic_cache_totals().unwrap(), (3, total));
     // Neither retained row is served under the current profile.
     let digest = env.digest();
@@ -2416,6 +2680,7 @@ fn a_v1_profile_is_refused_by_name_and_its_retained_data_is_kept() {
     let error = prepare::run(
         &env.store,
         &PrepareOptions {
+            priority_paths: &[],
             profile_path: &v1,
             budget_seconds: 60,
             development: false,
@@ -2451,4 +2716,309 @@ fn a_v1_profile_is_refused_by_name_and_its_retained_data_is_kept() {
         .unwrap();
     assert_eq!(report.removed_cache_entries, 1);
     assert_eq!(report.removed_generation_dirs, 1);
+}
+
+#[test]
+fn large_priority_source_yields_inference_and_resumes_from_committed_cache() {
+    use context_foundry::fault::{self, Action};
+    let large: String = (0..40)
+        .map(|n| format!("pub fn priority_{n:02}() -> u32 {{ {n} }}\n"))
+        .collect();
+    let mut sources: Vec<_> = (0..16)
+        .map(|n| (format!("a/{n:03}.md"), body(100 + n)))
+        .collect();
+    sources.push(("z/large.rs".into(), large));
+    let borrowed: Vec<_> = sources
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect();
+    let mut env = Env::new(&borrowed);
+    env.close();
+    let control = Control::unbounded();
+    fault::arm(prepare::fault_names::AFTER_PUBLISH, 2, Action::Cancel);
+    let report = prepare::run(
+        &env.store,
+        &PrepareOptions {
+            profile_path: &env.profile,
+            budget_seconds: 60,
+            development: false,
+            cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+            started: Instant::now(),
+            control: &control,
+            priority_paths: &["z".into()],
+        },
+        env.factory.acquire(),
+    )
+    .unwrap();
+    fault::disarm_all();
+    assert_eq!(report.reason_code, Some("cancelled"));
+    assert_eq!(report.embedded_units, 16);
+    assert!(
+        env.open().semantic_partition("a/000.md").unwrap().is_some(),
+        "the background must run before all forty priority inputs"
+    );
+    assert_eq!(env.status().searchable_current_units, 16);
+    let resumed = env.prepare(60);
+    assert!(!resumed.partial, "{resumed:?}");
+    assert_eq!(resumed.embedded_units, 40);
+    assert_eq!(env.status().searchable_current_units, 56);
+    assert_eq!(env.prepare(60).embedded_units, 0);
+}
+
+#[test]
+fn progressive_cli_priority_and_background_publish_before_the_corpus_is_partitioned() {
+    use context_foundry::fault::{self, Action};
+    let sources: Vec<_> = (0..64)
+        .map(|n| {
+            (
+                format!("{}/{n:03}.md", if n < 32 { "a" } else { "z" }),
+                body(100 + n),
+            )
+        })
+        .collect();
+    let borrowed: Vec<_> = sources
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect();
+    let mut env = Env::new(&borrowed);
+    let control = Control::unbounded();
+    // Initial empty publication, first priority wave, then first background
+    // wave. Cancel after the second nonempty publication has reached disk.
+    fault::arm(prepare::fault_names::AFTER_PUBLISH, 2, Action::Cancel);
+    env.close();
+    let report = prepare::run(
+        &env.store,
+        &PrepareOptions {
+            profile_path: &env.profile,
+            budget_seconds: 60,
+            development: false,
+            cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+            started: Instant::now(),
+            control: &control,
+            priority_paths: &["z".to_owned()],
+        },
+        env.factory.acquire(),
+    )
+    .unwrap();
+    fault::disarm_all();
+    assert_eq!(report.reason_code, Some("cancelled"));
+    assert_eq!(report.bootstrap.waves, 2, "{report:?}");
+    assert_eq!(report.bootstrap.priority_waves, 1);
+    assert_eq!(report.bootstrap.generation_builds, 1);
+    assert_eq!(report.bootstrap.delta_publications, 1);
+    assert_eq!(report.embedded_units, 16);
+    let status = env.status();
+    assert_eq!(status.searchable_current_units, 16);
+    assert_eq!(status.unpartitioned_sources, 48);
+    assert!(env.open().semantic_partition("z/032.md").unwrap().is_some());
+    assert!(env.open().semantic_partition("a/000.md").unwrap().is_some());
+    assert!(env.open().semantic_partition("a/031.md").unwrap().is_none());
+    let resumed = env.prepare(60);
+    assert_eq!(resumed.embedded_units, 48);
+    assert_eq!(env.status().searchable_current_units, 64);
+    assert!(
+        resumed.bootstrap.generation_builds <= 3,
+        "geometric publication: {resumed:?}"
+    );
+}
+
+#[test]
+fn verified_artifacts_are_hashed_once_and_reject_changed_files_or_profiles() {
+    use context_foundry::fault::{self, Action};
+    use context_foundry::neural::fault_names;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let env = Env::new(&[]);
+    let profile = SemanticProfile::load(&env.profile).unwrap();
+    let hashes = Rc::new(RefCell::new(Vec::new()));
+    let observed = hashes.clone();
+    fault::arm(
+        fault_names::ARTIFACT_HASH,
+        0,
+        Action::Call(Box::new(move |ctx| {
+            observed.borrow_mut().push(ctx.detail.to_owned());
+        })),
+    );
+    let receipt = profile
+        .verified_artifacts_until(&Control::unbounded())
+        .unwrap();
+    let tokenizer = DocumentTokenizer::load_verified(&profile, &receipt).unwrap();
+    let expected = tokenizer.encode("doc: exact bytes é\n").unwrap();
+    for _ in 0..3 {
+        receipt.check(&profile, &Control::unbounded()).unwrap();
+    }
+    assert_eq!(
+        hashes.borrow().len(),
+        profile.descriptor.artifact_files.len()
+    );
+    fault::disarm_all();
+    let mut other = profile.clone();
+    other.descriptor.document_template = "different {text}".into();
+    assert!(receipt.check(&other, &Control::unbounded()).is_err());
+    // Replacement cannot substitute bytes used by the already loaded tokenizer.
+    let path = profile.model_dir.join("tokenizer.json");
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, "substitution").unwrap();
+    assert!(receipt.check(&profile, &Control::unbounded()).is_err());
+    assert!(DocumentTokenizer::load_verified(&profile, &receipt).is_err());
+    assert_eq!(tokenizer.encode("doc: exact bytes é\n").unwrap(), expected);
+}
+
+#[test]
+fn artifact_receipt_detects_in_place_changes_and_symlink_replacement() {
+    for symlink in [false, true] {
+        let env = Env::new(&[]);
+        let profile = SemanticProfile::load(&env.profile).unwrap();
+        let receipt = profile
+            .verified_artifacts_until(&Control::unbounded())
+            .unwrap();
+        let model = profile.model_dir.join(&profile.descriptor.gguf);
+        if symlink {
+            let outside = env._dir.path().join("substitute");
+            std::fs::write(&outside, "outside").unwrap();
+            std::fs::remove_file(&model).unwrap();
+            std::os::unix::fs::symlink(outside, &model).unwrap();
+        } else {
+            std::fs::write(&model, "changed in place").unwrap();
+        }
+        assert!(receipt.check(&profile, &Control::unbounded()).is_err());
+    }
+}
+
+#[test]
+fn acquisition_receives_the_same_verified_artifacts_without_rehashing() {
+    use context_foundry::fault::{self, Action};
+    use context_foundry::neural::fault_names;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let mut env = Env::new(&[("a.md", &body(100))]);
+    env.close();
+    let hashes = Rc::new(Cell::new(0));
+    let observed = hashes.clone();
+    fault::arm(
+        fault_names::ARTIFACT_HASH,
+        0,
+        Action::Call(Box::new(move |_| {
+            observed.set(observed.get() + 1);
+        })),
+    );
+    let factory = env.factory.acquire();
+    let report = prepare::run(
+        &env.store,
+        &PrepareOptions {
+            priority_paths: &[],
+            profile_path: &env.profile,
+            budget_seconds: 60,
+            development: false,
+            cache_cap_bytes: DEFAULT_CACHE_CAP_BYTES,
+            started: Instant::now(),
+            control: &Control::unbounded(),
+        },
+        Box::new(move |profile, artifacts, development, control| {
+            artifacts.check(profile, control)?;
+            factory(profile, artifacts, development, control)
+        }),
+    )
+    .unwrap();
+    fault::disarm_all();
+    assert!(!report.partial, "{report:?}");
+    assert_eq!(hashes.get(), 2, "one hash per model/tokenizer artifact");
+}
+
+#[test]
+fn warm_cache_runs_and_finalizers_use_transactional_counters_without_censuses() {
+    use context_foundry::fault::{self, Action};
+    use context_foundry::neural::fault_names;
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
+    fault::arm(
+        fault_names::CACHE_RECONCILE,
+        0,
+        Action::Fail("warm cache census".into()),
+    );
+    for _ in 0..2 {
+        let report = env.prepare(60);
+        assert!(!report.partial, "{report:?}");
+        assert_eq!(
+            (
+                report.cache_entries,
+                report.cache_bytes,
+                report.document_calls
+            ),
+            (1, ROW, 0)
+        );
+    }
+    let stale = env.open().semantic_state().unwrap().unwrap();
+    let digest = env.digest();
+    let mut vector = vec![0.0; DIMS];
+    vector[0] = 1.0;
+    let entries = [("ab".repeat(32), vector.clone()), ("ab".repeat(32), vector)];
+    env.open()
+        .semantic_cache_commit(&entries, &digest, DIMS, 2 * ROW)
+        .unwrap();
+    env.open().semantic_set_state(&stale).unwrap();
+    assert_eq!(env.open().semantic_cache_totals().unwrap(), (2, 2 * ROW));
+    assert_eq!(
+        env.open().semantic_state().unwrap().unwrap().cache_bytes,
+        2 * ROW
+    );
+    fault::disarm_all();
+    env.close();
+    assert_eq!(env.open().semantic_cache_totals().unwrap(), (2, 2 * ROW));
+}
+
+#[test]
+fn cache_only_preparation_never_opens_weights_but_missing_inputs_require_them() {
+    let (mut env, _) = first_preparation(&[("a.md", &body(100))]);
+    let profile = SemanticProfile::load(&env.profile).unwrap();
+    std::fs::remove_file(profile.model_dir.join(&profile.descriptor.gguf)).unwrap();
+    let calls = env.calls();
+    let replay = env.prepare(60);
+    assert!(!replay.partial, "{replay:?}");
+    assert_eq!(replay.document_calls, 0);
+    assert_eq!(env.calls(), calls);
+    env.open().replace_source("a.md", &body(200)).unwrap();
+    let error = env.prepare_err(60);
+    assert_eq!(error.code(), "profile_invalid", "{error:?}");
+    assert_eq!(env.calls(), calls, "no call can use unverified weights");
+    assert!(
+        env.open().semantic_cache_totals().unwrap().0 > 0,
+        "accepted cache survives"
+    );
+}
+
+#[test]
+fn tokenizer_receipt_cannot_promote_after_a_substitution() {
+    use context_foundry::fault::{self, Action};
+    let mut env = Env::new(&[("a.md", &body(100))]);
+    let path = SemanticProfile::load(&env.profile)
+        .unwrap()
+        .model_dir
+        .join("tokenizer.json");
+    fault::arm(
+        prepare::fault_names::PARTITION_AFTER_COMMIT,
+        0,
+        Action::Call(Box::new(move |_| {
+            std::fs::write(&path, "substitution after tokenization").unwrap();
+        })),
+    );
+    let error = env.prepare_err(60);
+    fault::disarm_all();
+    assert_eq!(error.code(), "profile_invalid");
+    assert_eq!(env.calls(), 0);
+    assert_eq!(env.open().semantic_cache_totals().unwrap().0, 0);
+}
+
+#[test]
+fn cold_full_artifact_verification_still_obeys_its_own_deadline() {
+    let env = Env::new(&[]);
+    grow_weights(&env);
+    let profile = SemanticProfile::load(&env.profile).unwrap();
+    let started = Instant::now();
+    let result = profile
+        .verified_artifacts_until(&Control::with_deadline(started + Duration::from_millis(40)));
+    assert!(
+        matches!(result, Err(ProviderError::Timeout)),
+        "bounded hash must stop"
+    );
+    assert!(started.elapsed() < Duration::from_secs(6));
 }

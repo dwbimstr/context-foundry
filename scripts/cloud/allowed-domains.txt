@@ -1,0 +1,4 @@
+huggingface.co
+*.huggingface.co
+hf.co
+*.hf.co

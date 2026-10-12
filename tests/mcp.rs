@@ -161,6 +161,131 @@ fn bootstrap_apply(store: &Path, root: &Path) {
     );
 }
 
+#[tokio::test]
+async fn retrieval_trace_preserves_mcp_text_and_records_the_actual_result_and_request_id() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("workspace");
+    let store = fixture.path().join("store");
+    let traces = fixture.path().join("traces");
+    write_fixture(&root, 4);
+    bootstrap_apply(&store, &root);
+    let query = "find `parse_record_0000`";
+    let baseline = std::process::Command::new(BIN)
+        .arg("--store")
+        .arg(&store)
+        .args(["context", query, "--tokens", "2048"])
+        .output()
+        .unwrap();
+    assert!(baseline.status.success());
+    let client = stdio_client_with(
+        &store,
+        &root,
+        &["--retrieval-trace-dir".into(), traces.display().to_string()],
+    )
+    .await;
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("context").with_arguments(
+                serde_json::json!({"query":query, "tokens":2048})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        assert_single_text_success(&result),
+        String::from_utf8(baseline.stdout).unwrap()
+    );
+    let reports: Vec<_> = std::fs::read_dir(&traces)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(reports.len(), 1);
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&reports[0]).unwrap()).unwrap();
+    assert_eq!(record["outcome"], serde_json::to_value(&result).unwrap());
+    assert_eq!(record["host_consumption"], "unknown");
+    assert!(
+        record["trace"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["stage"] == "request" && !e["request_id"].is_null())
+    );
+    assert_eq!(record["trace"]["truncated"], false);
+    let refused = client
+        .call_tool(
+            CallToolRequestParams::new("context").with_arguments(
+                serde_json::json!({"query":query, "tokens":1})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refused.is_error, Some(true));
+    let records: Vec<serde_json::Value> = std::fs::read_dir(&traces)
+        .unwrap()
+        .map(|e| serde_json::from_slice(&std::fs::read(e.unwrap().path()).unwrap()).unwrap())
+        .collect();
+    assert_eq!(records.len(), 2);
+    assert!(
+        records
+            .iter()
+            .any(|r| r["outcome"] == serde_json::to_value(&refused).unwrap())
+    );
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn behavioral_context_is_opt_in_at_the_real_mcp_boundary() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("workspace");
+    let store = fixture.path().join("store");
+    write_fixture(&root, 1);
+    std::fs::write(
+        root.join("session.rs"),
+        "pub struct Session;\nimpl Session { pub fn retry(&self) { exponential_delay(); } }\n",
+    )
+    .unwrap();
+    bootstrap_apply(&store, &root);
+    let query = "How does `Session` retry requests?";
+    let baseline = std::process::Command::new(BIN)
+        .arg("--store")
+        .arg(&store)
+        .args(["context", query])
+        .output()
+        .unwrap();
+    assert!(baseline.status.success());
+    assert!(!String::from_utf8_lossy(&baseline.stdout).contains("exponential_delay"));
+    let client =
+        stdio_client_with(&store, &root, &["--experimental-behavior-context".into()]).await;
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("context").with_arguments(
+                serde_json::json!({"query":query, "tokens":512})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    let text = assert_single_text_success(&result);
+    assert!(text.contains("exponential_delay"), "{text}");
+    assert!(count_tokens(&text) <= 512);
+    assert!(
+        v2(&text)
+            .items
+            .iter()
+            .any(|item| item.label.as_deref() == Some("fn Session::retry"))
+    );
+    client.cancel().await.unwrap();
+}
+
 fn text_of(result: &rmcp::model::CallToolResult) -> String {
     let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
         panic!("expected one text block");
@@ -265,7 +390,7 @@ async fn stdio_lists_the_seven_tool_catalog_and_serves_it() {
         .unwrap();
     let status_json: serde_json::Value =
         serde_json::from_str(&assert_single_text_success(&status)).unwrap();
-    assert_eq!(status_json["schema"], 6);
+    assert_eq!(status_json["schema"], context_foundry::SCHEMA_VERSION);
 
     let indexed = client
         .call_tool(CallToolRequestParams::new("index"))
@@ -1077,10 +1202,16 @@ async fn start_http(store: &Path, root: &Path) -> HttpServer {
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
+            knowledge: None,
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
             no_memory: false,
+            experimental_task_context: false,
+            watch: false,
             semantic: None,
             policy: None,
             budget: context_foundry::config::BudgetConfig::default(),
@@ -1324,10 +1455,16 @@ async fn session_allowance_exhaustion_refuses_before_dispatch() {
     .unwrap();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
+            knowledge: None,
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
             no_memory: false,
+            experimental_task_context: false,
+            watch: false,
             semantic: None,
             policy: None,
             budget,
@@ -2257,13 +2394,33 @@ async fn start_observed_index(
 
 #[tokio::test]
 async fn http_dropped_stream_keeps_slot_and_overload_keeps_control_traffic_serviceable() {
+    use context_foundry::fault::{self, GlobalAction, names::SCAN_BEFORE_OPEN};
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path().join("workspace");
     let store = fixture.path().join("store");
     write_fixture(&root, 1);
     let server = start_http(&store, &root).await;
-    // Grow the workspace after apply so the MCP index has real, long work.
-    write_fixture(&root, BIG_WORKSPACE);
+    // Hold an admitted scan until its actual Control is cancelled. Fixture size
+    // cannot reliably keep an index running while HTTP control traffic executes.
+    let workspace_id =
+        context_foundry::store::workspace_id_for_root(&std::fs::canonicalize(&root).unwrap())
+            .unwrap();
+    fault::arm_global(
+        SCAN_BEFORE_OPEN,
+        0,
+        GlobalAction::AwaitCancellation {
+            workspace_id,
+            timeout: Duration::from_secs(30),
+        },
+    );
+    struct ClearFault;
+    impl Drop for ClearFault {
+        fn drop(&mut self) {
+            fault::disarm_global(SCAN_BEFORE_OPEN);
+        }
+    }
+    let _clear_fault = ClearFault;
+    write_fixture(&root, 8);
     let http = reqwest::Client::new();
     let session = open_session(&http, &server.url).await;
     // A second session carries control traffic while the first is flooded.
@@ -2424,8 +2581,8 @@ async fn http_dropped_stream_keeps_slot_and_overload_keeps_control_traffic_servi
     );
     // A no-op DELETE-cancellation would let the whole index finish.
     assert!(
-        count < BIG_WORKSPACE as u64,
-        "DELETE cancelled the index before it completed ({count} of {BIG_WORKSPACE})"
+        count < 8,
+        "DELETE cancelled the index before it completed ({count} of 8)"
     );
     assert!(
         !last_body.contains("scan_state\\\":\\\"complete"),
@@ -2554,10 +2711,16 @@ async fn http_refuses_absent_or_blank_token_before_opening_the_store() {
 async fn assert_http_refused(token_env: &str, store: &Path, root: &Path) {
     let result = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
+            knowledge: None,
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
             no_memory: false,
+            experimental_task_context: false,
+            watch: false,
             semantic: None,
             policy: None,
             budget: context_foundry::config::BudgetConfig::default(),
@@ -2773,10 +2936,16 @@ async fn http_sessions_expire_and_admit_again_after_keep_alive() {
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
+            knowledge: None,
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.clone(),
             root: root.clone(),
             references: Vec::new(),
             no_memory: false,
+            experimental_task_context: false,
+            watch: false,
             semantic: None,
             policy: None,
             budget: context_foundry::config::BudgetConfig::default(),
@@ -4677,10 +4846,16 @@ async fn http_sessions_have_independent_allowances_and_a_lost_delivery_stays_cha
     let shutdown = tokio_util::sync::CancellationToken::new();
     let serve = context_foundry::mcp::serve_http(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
+            knowledge: None,
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: store.clone(),
             root: root.clone(),
             references: Vec::new(),
             no_memory: false,
+            experimental_task_context: false,
+            watch: false,
             semantic: None,
             policy: None,
             budget: context_foundry::config::BudgetConfig::from_object(&serde_json::json!({
@@ -5601,11 +5776,11 @@ async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_1000
     let expected = [
         (
             "context",
-            "Use INSTEAD of exploratory file reads: one budgeted, cited bundle of the most relevant symbols (verbatim, or signatures when large), graph edges and file outlines.",
+            "Use INSTEAD of exploratory file reads: budgeted, cited symbols (verbatim or signatures when large), graph edges and outlines.",
         ),
         (
             "index",
-            "Re-index after edits: the bound repo, or an admitted reference root via `root`.",
+            "Index an admitted root or control semantic preparation.",
         ),
         (
             "memory",
@@ -5617,15 +5792,15 @@ async fn the_catalog_and_instructions_are_exact_and_tools_list_stays_within_1000
         ),
         (
             "retrieve",
-            r#"Read exact indexed source for a handle. `lines` narrows to a line range; `view:"outline"` returns a skeleton with elided line ranges. Stale handles are rejected."#,
+            r#"Read exact indexed source by handle; stale handles rejected. `lines`: line range; `view:"outline"`: skeleton with elided line ranges."#,
         ),
         (
             "search",
-            "Use BEFORE grep/rg to find code in the indexed repo(s): one line per hit with a handle, line, symbol and matching text. Follow handles with retrieve. Indexed snapshot, not live disk.",
+            "Use BEFORE grep/rg for indexed code: one line per hit with handle, line, symbol and match. Follow handles with retrieve. Indexed snapshot, not live disk.",
         ),
         (
             "status",
-            "Revision, pending work, index/scan state and coverage for each admitted root.",
+            "Progress and coverage for admitted roots; optional semantic audit.",
         ),
     ]
     .map(|(name, description)| (name.to_owned(), description.to_owned()));

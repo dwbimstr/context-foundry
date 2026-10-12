@@ -2080,7 +2080,11 @@ fn the_cli_keeps_output_identical_without_a_policy_and_reports_it() {
 
     let status: serde_json::Value = serde_json::from_str(&stdout(&["status"])).unwrap();
     assert_eq!(status["policy"], json!({"state": "disabled"}));
-    assert_eq!(status["schema"], 6, "the store fields are unchanged");
+    assert_eq!(
+        status["schema"],
+        context_foundry::SCHEMA_VERSION,
+        "the store fields are unchanged"
+    );
     let status: serde_json::Value =
         serde_json::from_str(&stdout(&["status", "--policy-config", &path_arg(&config)])).unwrap();
     assert_eq!(status["policy"]["state"], "enabled");
@@ -2256,6 +2260,10 @@ async fn a_policy_chosen_graph_reaches_the_reference_root_holding_the_definition
     let (input, output) = tokio::io::split(server_io);
     let server = tokio::spawn(context_foundry::mcp::serve_streams(
         context_foundry::mcp::ServerOptions {
+            model_resources: None,
+            knowledge: None,
+            retrieval_trace_dir: None,
+            experimental_behavior_context: false,
             store: env.store.clone(),
             root: env.ws.clone(),
             references: vec![context_foundry::roots::ReferenceSpec {
@@ -2264,6 +2272,8 @@ async fn a_policy_chosen_graph_reaches_the_reference_root_holding_the_definition
             }],
             budget: context_foundry::config::BudgetConfig::default(),
             no_memory: false,
+            experimental_task_context: false,
+            watch: false,
             semantic: None,
             policy: Some(PolicyServing::with_worker_args(
                 config.clone(),

@@ -17,6 +17,896 @@ fn drain(engine: &mut Engine) {
     engine.refresh(&Control::unbounded()).unwrap();
 }
 
+#[test]
+fn retrieval_trace_distinguishes_selection_caps_from_anchored_packing_omissions() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    let mut body = "pub struct Session;\nimpl Session {\n".to_owned();
+    for n in 0..12 {
+        body.push_str(&format!("fn request_{n}(&self) {{ retry_requests(); }}\n"));
+    }
+    body.push_str("}\n");
+    engine.replace_source("session.rs", &body).unwrap();
+    drain(&mut engine);
+    let query = "How does `Session` retry requests?";
+    let baseline = engine
+        .context_candidates(query, Strategy::Auto, &Control::unbounded())
+        .unwrap();
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let control = Control::unbounded().with_trace(Some(trace.clone()));
+    let batch = engine
+        .context_candidates(query, Strategy::Auto, &control)
+        .unwrap();
+    let pack = |batch: &_| {
+        response::pack_context(batch, Budget::request(2048), &response::stdout_bytes).unwrap()
+    };
+    let packed = pack(&batch);
+    assert_eq!(packed.text, pack(&baseline).text);
+    assert!(!packed.text.contains("retry_requests"));
+    assert!(
+        batch
+            .items
+            .iter()
+            .any(|item| item.label.starts_with("fn Session::request_"))
+    );
+    let data = trace.snapshot();
+    let events = data["events"].as_array().unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event["outcome"] == "per_file_cap")
+    );
+    assert!(events.iter().any(|event| {
+        event["outcome"] == "kept"
+            && event["label"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("Session::request_"))
+    }));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["stage"] == "packing_input" && event["anchored"] == true)
+    );
+    assert_eq!(data["truncated"], false);
+    // A later source edit without an index refresh must be attributed to
+    // validation, rather than misreported as an absent candidate.
+    engine
+        .replace_source("session.rs", "pub struct Session; // changed\n")
+        .unwrap();
+    let stale_trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    engine
+        .context_candidates(
+            query,
+            Strategy::Auto,
+            &Control::unbounded().with_trace(Some(stale_trace.clone())),
+        )
+        .unwrap();
+    assert!(
+        stale_trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["outcome"] == "stale")
+    );
+}
+
+#[test]
+fn anchorless_context_preserves_code_discovery_and_exact_late_body_excerpts() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    let query = "validate retained checksum before catalog replay";
+    for i in 0..300 {
+        engine
+            .replace_source(
+                &format!("docs/{i}.md"),
+                &format!("# Overview {i}\n{}\n", query.repeat(8)),
+            )
+            .unwrap();
+    }
+    let body = format!(
+        "pub fn execute() {{\n{}    let validate_retained_checksum_before_catalog_replay = verify_checksum();\n}}\n",
+        "    ordinary_step();\n".repeat(600)
+    );
+    engine.replace_source("runner.rs", &body).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let candidates = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let item = candidates
+        .batch
+        .items
+        .iter()
+        .find(|i| i.handle.as_ref().is_some_and(|h| h.path == "runner.rs"))
+        .expect("documentation must not exhaust code discovery");
+    let handle = item.handle.as_ref().unwrap();
+    assert!(
+        handle.start > 0,
+        "the matching late body is required, not the function prefix"
+    );
+    assert!(handle.end - handle.start <= 1536);
+    assert!(item.label.starts_with("excerpt "));
+    for budget in [512, 1024, 2048] {
+        let packed = response::pack_enriched_context(
+            &candidates,
+            None,
+            Budget::request(budget),
+            &response::stdout_bytes,
+        )
+        .unwrap();
+        assert!(packed.tokens <= budget);
+        assert!(packed.text.contains("verify_checksum"));
+        assert!(parse_v2(&packed.text).is_ok());
+    }
+    let context_foundry::store::RenderedForm::Verbatim(excerpt) = &item.forms[0] else {
+        panic!("verbatim source required")
+    };
+    assert_eq!(excerpt, &body[handle.start as usize..handle.end as usize]);
+    // The complementary window still delivers prose on a documentation query.
+    assert!(candidates.batch.items.iter().any(|i| {
+        i.handle
+            .as_ref()
+            .is_some_and(|h| h.path.starts_with("docs/"))
+    }));
+}
+
+#[test]
+fn prose_language_qualifiers_do_not_hijack_explicit_symbol_resolution() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    engine
+        .replace_source(
+            "worker.go",
+            "package sample\n// Go starts a worker.\nfunc Go(f func()) { f() }\n",
+        )
+        .unwrap();
+    engine.replace_source("strings.go", "package sample\n// TrimSpace removes leading and trailing whitespace from a string.\nfunc TrimSpace(s string) string { return trim(s) }\n").unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = "remove leading and trailing whitespace from a Go string";
+    let read = |query, enabled| {
+        engine
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: enabled,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        read(query, false).batch.items[0]
+            .handle
+            .as_ref()
+            .unwrap()
+            .path,
+        "worker.go"
+    );
+    assert_eq!(
+        read(query, true).batch.items[0]
+            .handle
+            .as_ref()
+            .unwrap()
+            .path,
+        "strings.go"
+    );
+    for explicit in [
+        "Go",
+        "call Go with a callback",
+        "call `Go` with a callback",
+        "call Go string helper",
+    ] {
+        assert_eq!(
+            read(explicit, true).batch.items[0]
+                .handle
+                .as_ref()
+                .unwrap()
+                .path,
+            "worker.go",
+            "explicit call remains a symbol request: {explicit}"
+        );
+    }
+}
+
+#[test]
+fn prose_language_preference_applies_before_discovery_without_excluding_fallbacks() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    for i in 0..150 {
+        engine
+            .replace_source(
+                &format!("rust/{i}.rs"),
+                "/// Remove leading and trailing whitespace from a Go string.\nfn trim() {}\n",
+            )
+            .unwrap();
+    }
+    engine.replace_source("strings.go", "package sample\n// TrimSpace removes whitespace from a string.\nfunc TrimSpace(s string) string { return trim(s) }\n").unwrap();
+    engine
+        .replace_source(
+            "docs.md",
+            "# Guide\nRemove leading and trailing whitespace from a Go string.\n",
+        )
+        .unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = |text| {
+        engine
+            .context_candidates_with(
+                text,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let selected = query("remove leading and trailing whitespace from a Go string");
+    assert_eq!(
+        selected.batch.items[0].handle.as_ref().unwrap().path,
+        "strings.go"
+    );
+    assert!(
+        selected
+            .batch
+            .items
+            .iter()
+            .any(|i| i.handle.as_ref().is_some_and(|h| h.path == "docs.md"))
+    );
+    assert!(selected.batch.items.iter().any(|i| {
+        i.handle
+            .as_ref()
+            .is_some_and(|h| h.path.starts_with("rust/"))
+    }));
+    // No eligible language evidence: the query still has useful fallback hits.
+    assert!(
+        !query("remove whitespace from a Python string")
+            .batch
+            .items
+            .is_empty()
+    );
+    // Conflicting explicit languages do not silently select either side.
+    let mixed = query("convert a Go string to a Rust string removing whitespace");
+    assert!(
+        mixed.batch.items[0]
+            .handle
+            .as_ref()
+            .unwrap()
+            .path
+            .starts_with("rust/")
+    );
+}
+
+#[test]
+fn prose_plural_acronyms_match_the_acronym_without_changing_symbol_requests() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&dir.path().join("ws"));
+    engine
+        .replace_source(
+            "a.rs",
+            "/// Collect ap into the catalog.\nfn incidental() {}\n",
+        )
+        .unwrap();
+    engine
+        .replace_source(
+            "z.rs",
+            "/// Collect api into the catalog.\nfn useful() {}\n",
+        )
+        .unwrap();
+    drain(&mut engine);
+    let query = "collect APIs into the catalog";
+    let experimental = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        experimental.batch.items[0].handle.as_ref().unwrap().path,
+        "z.rs"
+    );
+    let ordinary = engine
+        .context_candidates(query, Strategy::Search, &Control::unbounded())
+        .unwrap();
+    assert_eq!(ordinary.items[0].handle.as_ref().unwrap().path, "a.rs");
+    engine.replace_source("named.rs", "fn APIs() {}\n").unwrap();
+    drain(&mut engine);
+    for query in ["call APIs with an argument", "call `APIs` with an argument"] {
+        let named = engine
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(named.batch.anchors[0].anchor, "APIs");
+        assert_eq!(
+            named.batch.items[0].handle.as_ref().unwrap().path,
+            "named.rs"
+        );
+    }
+}
+
+#[test]
+fn prose_acronym_forms_share_one_score_and_keep_plural_only_source() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&dir.path().join("ws"));
+    for (name, form) in [("one", "cpu"), ("many", "cpus"), ("both", "cpu cpus")] {
+        engine
+            .replace_source(
+                &format!("{name}.rs"),
+                &format!("/// Collect {form} utilization sample.\nfn {name}() {{}}\n"),
+            )
+            .unwrap();
+    }
+    drain(&mut engine);
+    let mut score = None;
+    for query in [
+        "collect CPUs utilization sample",
+        "collect CPUs CPU utilization sample",
+        "collect CPU CPUs utilization sample",
+    ] {
+        let candidates = engine
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(candidates.batch.items.len(), 3);
+        let score = *score.get_or_insert(candidates.batch.items[0].score);
+        assert!(
+            candidates
+                .batch
+                .items
+                .iter()
+                .all(|item| item.score == score)
+        );
+        assert!(
+            candidates
+                .batch
+                .items
+                .iter()
+                .any(|item| { item.handle.as_ref().unwrap().path == "many.rs" })
+        );
+    }
+}
+
+#[test]
+fn standard_adjectives_in_prose_are_not_symbol_requests() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    engine
+        .replace_source("unicode.go", "package sample\nfunc Unicode() {}\n")
+        .unwrap();
+    engine.replace_source("strings.go", "package sample\n// Removes leading Unicode whitespace from a string.\nfunc TrimSpace(s string) string { return s }\n").unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = |text| {
+        engine
+            .context_candidates_with(
+                text,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    assert_eq!(
+        query("remove leading Unicode whitespace from a Go string")
+            .batch
+            .items[0]
+            .handle
+            .as_ref()
+            .unwrap()
+            .path,
+        "strings.go"
+    );
+    for explicit in [
+        "Unicode",
+        "call Unicode with a callback",
+        "call `Unicode` with a callback",
+    ] {
+        assert_eq!(
+            query(explicit).batch.items[0].handle.as_ref().unwrap().path,
+            "unicode.go"
+        );
+    }
+}
+
+#[test]
+fn prose_context_keeps_distinct_matches_inside_one_long_function() {
+    use context_foundry::store::{ContextOptions, RenderedForm};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    let body = format!(
+        "pub fn inspect() {{\n    validate_certificate_signature();\n{}    reject_revoked_certificate();\n{}    audit_certificate_signature();\n}}\n",
+        "    ordinary_step();\n".repeat(200),
+        "    ordinary_step();\n".repeat(200),
+    );
+    engine.replace_source("certificates.rs", &body).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = "validate certificate signature reject revoked certificate";
+    let candidates = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let excerpts: Vec<_> = candidates
+        .batch
+        .items
+        .iter()
+        .filter(|i| i.label == "excerpt fn inspect")
+        .collect();
+    assert_eq!(
+        excerpts.len(),
+        2,
+        "long units have a bounded number of matching windows"
+    );
+    for item in excerpts {
+        let handle = item.handle.as_ref().unwrap();
+        let RenderedForm::Verbatim(text) = &item.forms[0] else {
+            panic!("exact source required")
+        };
+        assert_eq!(text, &body[handle.start as usize..handle.end as usize]);
+    }
+    let packed = response::pack_enriched_context(
+        &candidates,
+        None,
+        Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.text.contains("validate_certificate_signature"));
+    assert!(packed.text.contains("reject_revoked_certificate"));
+    assert!(packed.tokens <= 2048);
+    assert!(parse_v2(&packed.text).is_ok());
+}
+
+#[test]
+fn prose_matching_long_callable_docs_delivers_the_declaration_and_implementation() {
+    use context_foundry::store::{ContextOptions, RenderedForm};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    let body = format!(
+        "/// Keep accepted entries in stable order.\n{}    pub fn sift(entries: &mut Vec<u8>) {{\n        entries.retain(|v| *v > 0);\n    }}\n",
+        "/// Extended usage example — additional explanation.\n".repeat(150)
+    );
+    engine.replace_source("sift.rs", &body).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = "keep accepted entries in stable order";
+    let candidates = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let item = candidates
+        .batch
+        .items
+        .iter()
+        .find(|item| item.label == "excerpt fn sift")
+        .unwrap();
+    let handle = item.handle.as_ref().unwrap();
+    assert_eq!(handle.sha256, context_foundry::digest(body.as_bytes()));
+    assert_eq!(handle.start as usize, body.find("    pub fn sift").unwrap());
+    assert!(handle.end - handle.start <= 1536);
+    let RenderedForm::Verbatim(text) = &item.forms[0] else {
+        panic!("exact source required")
+    };
+    assert_eq!(text, &body[handle.start as usize..handle.end as usize]);
+    assert!(text.contains("pub fn sift"));
+    assert!(text.contains("entries.retain"));
+    for budget in [512, 1024, 2048] {
+        let packed = response::pack_enriched_context(
+            &candidates,
+            None,
+            Budget::request(budget),
+            &response::stdout_bytes,
+        )
+        .unwrap();
+        assert!(packed.tokens <= budget);
+        assert!(packed.text.contains("pub fn sift"));
+        assert!(packed.text.contains("entries.retain"));
+        assert!(parse_v2(&packed.text).is_ok());
+    }
+}
+
+#[test]
+fn prose_coverage_and_proximity_beat_repeated_single_term_and_accept_compounds() {
+    use context_foundry::store::{ContextOptions, QueryAnchors};
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    engine
+        .replace_source(
+            "constant.rs",
+            "pub const CPU: usize = 4;\npub struct Cpu;\n",
+        )
+        .unwrap();
+    engine
+        .replace_source(
+            "broad.rs",
+            &format!(
+                "pub fn perform() {{ preserve(); {} catalog(); {} checksum(); }}\n",
+                "padding();".repeat(20),
+                "padding();".repeat(20)
+            ),
+        )
+        .unwrap();
+    engine
+        .replace_source(
+            "near.rs",
+            "pub fn restore() { preserve_catalog_checksum(); }\n",
+        )
+        .unwrap();
+    engine.replace_source("worker.rs", "/// Schedule CPU heavy processing outside transactions.\npub fn schedule() { spawn_worker(); }\n").unwrap();
+    for i in 0..40 {
+        engine
+            .replace_source(
+                &format!("noise{i}.rs"),
+                &format!("pub fn checksum() {{ {} }}\n", "checksum();".repeat(30)),
+            )
+            .unwrap();
+    }
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = |text, anchors| {
+        engine
+            .context_candidates_with(
+                text,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: true,
+                    anchors,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let candidates = query("preserve catalog checksum", None);
+    assert_eq!(
+        candidates.batch.items[0].handle.as_ref().unwrap().path,
+        "near.rs"
+    );
+    assert_eq!(
+        candidates.batch.items[1].handle.as_ref().unwrap().path,
+        "broad.rs"
+    );
+    let prose = "schedule Cpu-heavy processing outside transactions";
+    let candidates = query(prose, None);
+    assert_eq!(
+        candidates.batch.items[0].handle.as_ref().unwrap().path,
+        "worker.rs"
+    );
+    assert!(candidates.batch.anchors.is_empty());
+    // Multi-root admission must not turn the compound back into a symbol query.
+    let anchors = QueryAnchors::parse(prose)
+        .select(|_| Ok::<_, std::convert::Infallible>(true))
+        .unwrap();
+    let multi = query(prose, Some(&anchors));
+    assert!(multi.batch.anchors.is_empty());
+    assert_eq!(
+        multi.batch.items[0].handle,
+        candidates.batch.items[0].handle
+    );
+    let symbol = query("schedule `CPU` heavy processing", None);
+    assert_eq!(
+        symbol.batch.anchors[0].entries[0]
+            .handle
+            .as_ref()
+            .unwrap()
+            .path,
+        "constant.rs"
+    );
+}
+
+#[test]
+fn anchorless_prose_does_not_promote_incidental_common_word_definitions() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    for i in 0..48 {
+        engine
+            .replace_source(
+                &format!("distractor{i:02}.rs"),
+                "pub fn read() { unrelated(); }\n",
+            )
+            .unwrap();
+    }
+    engine.replace_source("catalog.rs", "/// Read retained records safely after checking their checksum.\npub fn restore_catalog() { verify_checksum(); return_retained_records(); }\n").unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let context = |query, enabled, strategy, budget| {
+        let c = engine
+            .context_candidates_with(
+                query,
+                strategy,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: enabled,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        response::pack_enriched_context(&c, None, Budget::request(budget), &response::stdout_bytes)
+            .unwrap()
+    };
+    let query = "read retained records safely";
+    assert!(
+        !context(query, false, Strategy::Search, 2048)
+            .text
+            .contains("verify_checksum")
+    );
+    let corrected = context(query, true, Strategy::Search, 2048);
+    assert!(
+        corrected.text.contains("verify_checksum"),
+        "{}",
+        corrected.text
+    );
+    for budget in [128, 256, 512, 1024, 2048] {
+        let packed = context(query, true, Strategy::Search, budget);
+        assert!(packed.tokens <= budget);
+        assert!(parse_v2(&packed.text).is_ok());
+    }
+    for query in [
+        "read",
+        "`read`",
+        "find read",
+        "where is read",
+        "read retained_records safely",
+        "How does `read` work?",
+    ] {
+        assert_eq!(
+            context(query, false, Strategy::Auto, 2048).text,
+            context(query, true, Strategy::Auto, 2048).text,
+            "{query}"
+        );
+    }
+    assert_eq!(
+        context(query, false, Strategy::Graph, 2048).text,
+        context(query, true, Strategy::Graph, 2048).text
+    );
+    engine
+        .replace_source("catalog.rs", "pub fn restore_catalog() { unrelated(); }\n")
+        .unwrap();
+    let c = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let packed =
+        response::pack_enriched_context(&c, None, Budget::request(2048), &response::stdout_bytes)
+            .unwrap();
+    assert!(
+        !packed.text.contains("verify_checksum"),
+        "stale source must not survive intent selection"
+    );
+}
+
+#[test]
+fn behavioral_context_delivers_owned_methods_and_preserves_locator_and_unknown_queries() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    engine
+        .replace_source(
+            "session.rs",
+            r#"
+pub struct Session { attempts: u32 }
+impl Session {
+    /// Retry requests using exponential delay.
+    pub fn retry(&self) { exponential_delay(self.attempts); }
+    pub fn stop(&self) { close_connection(); }
+}
+pub struct Other;
+impl Other { pub fn retry(&self) { unrelated_retry(); } }
+"#,
+        )
+        .unwrap();
+    drain(&mut engine);
+    let context = |query, enabled, strategy| {
+        engine
+            .context_candidates_with(
+                query,
+                strategy,
+                &Control::unbounded(),
+                &context_foundry::store::ContextOptions {
+                    experimental_behavior: enabled,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .batch
+    };
+    let pack = |batch: &_, tokens| {
+        response::pack_context(batch, Budget::request(tokens), &response::stdout_bytes).unwrap()
+    };
+    let query = "How does `Session` retry requests?";
+    let baseline = context(query, false, Strategy::Auto);
+    let candidate = context(query, true, Strategy::Auto);
+    assert!(!pack(&baseline, 2048).text.contains("exponential_delay"));
+    let result = pack(&candidate, 2048);
+    assert!(result.text.contains("exponential_delay"), "{}", result.text);
+    assert!(!result.text.contains("unrelated_retry"));
+    assert!(!result.text.contains("close_connection"));
+    assert!(parse_v2(&result.text).is_ok());
+    for tokens in [80, 100, 128, 256, 512, 1024, 2048] {
+        let packed = pack(&candidate, tokens);
+        assert!(packed.tokens <= tokens);
+        assert!(parse_v2(&packed.text).is_ok());
+    }
+    for query in [
+        "where is `Session`",
+        "find `Session`",
+        "How do I find `Session`?",
+        "`Session` retry requests",
+        "who calls `Session`",
+    ] {
+        assert_eq!(
+            pack(&context(query, false, Strategy::Auto), 2048).text,
+            pack(&context(query, true, Strategy::Auto), 2048).text,
+            "{query}"
+        );
+    }
+    assert_eq!(
+        pack(&context(query, false, Strategy::Graph), 2048).text,
+        pack(&context(query, true, Strategy::Graph), 2048).text
+    );
+}
+
+#[test]
+fn behavioral_context_keeps_global_ambiguity_and_never_crosses_root_identity() {
+    use context_foundry::roots::{RootBatch, merge_context};
+    let fixture = tempfile::tempdir().unwrap();
+    let mut roots = Vec::new();
+    let mut stores = Vec::new();
+    for name in ["one", "two"] {
+        let (store, mut engine) = setup(&fixture.path().join(name));
+        engine.replace_source("session.rs", &format!("pub struct Session;\nimpl Session {{ pub fn retry(&self) {{ retry_{name}(); }} }}\n")).unwrap();
+        drain(&mut engine);
+        roots.push(engine);
+        stores.push(store);
+    }
+    let query = "How does `Session` retry requests?";
+    let batches: Vec<_> = roots
+        .iter()
+        .enumerate()
+        .map(|(n, engine)| RootBatch {
+            alias: format!("root{n}"),
+            batch: engine
+                .context_candidates_with(
+                    query,
+                    Strategy::Auto,
+                    &Control::unbounded(),
+                    &context_foundry::store::ContextOptions {
+                        experimental_behavior: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .batch,
+        })
+        .collect();
+    assert!(batches.iter().all(|b| b.batch.anchors[0].resolved()));
+    let merged = merge_context(&batches);
+    assert!(!merged.anchors[0].resolved());
+    let packed =
+        response::pack_context(&merged, Budget::request(2048), &response::stdout_bytes).unwrap();
+    assert!(!packed.text.contains("retry_one"));
+    assert!(!packed.text.contains("retry_two"));
+    assert!(packed.text.contains("defs:2"));
+}
+
+#[test]
+fn behavioral_context_uses_syntax_owned_methods_in_python_and_typescript() {
+    for (path, body) in [
+        (
+            "relay.py",
+            "class Relay:\n    def retry(self):\n        return retry_network_request()\n",
+        ),
+        (
+            "relay.ts",
+            "export class Relay { retry() { return retryNetworkRequest(); } }\n",
+        ),
+    ] {
+        let fixture = tempfile::tempdir().unwrap();
+        let (_store, mut engine) = setup(&fixture.path().join("ws"));
+        engine.replace_source(path, body).unwrap();
+        drain(&mut engine);
+        let batch = engine
+            .context_candidates_with(
+                "How does `Relay` retry requests?",
+                Strategy::Auto,
+                &Control::unbounded(),
+                &context_foundry::store::ContextOptions {
+                    experimental_behavior: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .batch;
+        assert!(
+            batch
+                .items
+                .iter()
+                .any(|i| i.tier == context_foundry::store::TIER_BEHAVIOR),
+            "{path}: {:?}",
+            batch.items
+        );
+        let packed =
+            response::pack_context(&batch, Budget::request(512), &response::stdout_bytes).unwrap();
+        assert!(
+            packed.text.contains("retry_network_request")
+                || packed.text.contains("retryNetworkRequest"),
+            "{}",
+            packed.text
+        );
+        assert!(packed.tokens <= 512);
+        assert!(parse_v2(&packed.text).is_ok());
+    }
+}
+
 fn endpoint(path: &str, body: &str) -> Endpoint {
     Endpoint {
         path: path.into(),
@@ -55,7 +945,10 @@ fn explicit_initialize_and_existing_only_open() {
     assert!(!store.exists(), "open must not create filesystem state");
     // Explicit initialization accepts a missing directory.
     let engine = Engine::initialize(&store, &root).unwrap();
-    assert_eq!(engine.status().unwrap().schema, 6);
+    assert_eq!(
+        engine.status().unwrap().schema,
+        context_foundry::SCHEMA_VERSION
+    );
     assert!(engine.workspace_id().is_some());
     // Nonempty directory without a store is unrecognized.
     let stray = fixture.path().join("stray");
@@ -242,7 +1135,7 @@ fn upgrade_preserves_records_and_is_atomic() {
         0,
         Action::Fail("injected".into()),
     );
-    Engine::upgrade_store(&v1, 6, &Control::unbounded()).unwrap_err();
+    Engine::upgrade_store(&v1, context_foundry::SCHEMA_VERSION, &Control::unbounded()).unwrap_err();
     fault::disarm_all();
     assert_eq!(schema_marker(&v1), "1");
     assert_eq!(testkit::snapshot(&v1), before);
@@ -251,11 +1144,11 @@ fn upgrade_preserves_records_and_is_atomic() {
     assert_eq!(code(&err), "unsupported_mode");
     let err = Engine::upgrade_store(&v1, 3, &Control::unbounded()).unwrap_err();
     assert_eq!(code(&err), "unsupported_mode");
-    Engine::upgrade_store(&v1, 6, &Control::unbounded()).unwrap();
-    assert_eq!(schema_marker(&v1), "6");
+    Engine::upgrade_store(&v1, context_foundry::SCHEMA_VERSION, &Control::unbounded()).unwrap();
+    assert_eq!(schema_marker(&v1), "12");
     let engine = Engine::open_existing(&v1).unwrap();
     let status = engine.status().unwrap();
-    assert_eq!(status.schema, 6);
+    assert_eq!(status.schema, context_foundry::SCHEMA_VERSION);
     assert_eq!(status.source_revision, 0);
     assert_eq!(status.source_count, 1);
     assert_eq!(status.scan_state, "never");
@@ -296,7 +1189,7 @@ fn unbound_store_names_workspace_unbound_for_queries() {
     let fixture = tempfile::tempdir().unwrap();
     let v1 = fixture.path().join("v1store");
     craft_v1_store(&v1, None);
-    Engine::upgrade_store(&v1, 6, &Control::unbounded()).unwrap();
+    Engine::upgrade_store(&v1, context_foundry::SCHEMA_VERSION, &Control::unbounded()).unwrap();
     let engine = Engine::open_existing(&v1).unwrap();
     let status = engine.status().unwrap();
     assert!(status.workspace_id.is_none());
@@ -1405,6 +2298,75 @@ fn failed_commit_preserves_prior_source_bytes_and_state() {
     drop(engine);
     // Not one row changed: bytes, revision, pending and derived bookkeeping.
     assert_eq!(testkit::snapshot(store.path()), before);
+}
+
+#[test]
+fn ingestion_batch_failure_and_cancellation_preserve_all_prior_versions() {
+    for cancel in [false, true] {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("ws");
+        let (store, mut engine) = setup(&root);
+        for n in 0..4 {
+            let path = format!("batch{n}.rs");
+            engine
+                .replace_source(&path, "fn old_version() {}\n")
+                .unwrap();
+            std::fs::write(root.join(path), "fn new_version() {}\n").unwrap();
+        }
+        drain(&mut engine);
+        let revision = engine.source_revision().unwrap();
+        drop(engine);
+        let before = testkit::snapshot(store.path());
+        let mut engine = Engine::open_existing(store.path()).unwrap();
+        fault::arm(
+            names::SOURCE_BATCH_BEFORE_COMMIT,
+            0,
+            if cancel {
+                Action::Cancel
+            } else {
+                Action::Fail("batch disk failure".into())
+            },
+        );
+        let result = engine.index(&root, &Control::unbounded());
+        if cancel {
+            let report = result.unwrap();
+            assert!(report.partial && !report.scan_complete);
+            assert_eq!(report.reason_code, Some("cancelled"));
+            assert_eq!((report.changed, report.unchanged), (0, 0));
+        } else {
+            assert_eq!(code(&result.unwrap_err()), "internal");
+        }
+        assert_eq!(fault::reached(names::SOURCE_BATCH_BEFORE_COMMIT), 1);
+        fault::disarm_all();
+        assert_eq!(engine.source_revision().unwrap(), revision);
+        drop(engine);
+        let after = testkit::snapshot(store.path());
+        // Scan bookkeeping may advance, but no source, revision or obligation
+        // from any of the four staged files can escape a rolled-back commit.
+        for table in [
+            "sources",
+            "chunks",
+            "pending_index",
+            "semantic_work",
+            "knowledge_work",
+        ] {
+            assert_eq!(before[table], after[table], "{table}, cancel={cancel}");
+        }
+        let mut engine = Engine::open_existing(store.path()).unwrap();
+        let report = engine.index(&root, &Control::unbounded()).unwrap();
+        assert_eq!((report.changed, report.unchanged), (4, 0));
+        // Ready prefixes may commit before all four reads finish; grouping is
+        // opportunistic. Rollback above still permits no partial failed group.
+        assert!((1..=4).contains(&fault::reached(names::SOURCE_BATCH_BEFORE_COMMIT)));
+        assert_eq!(engine.source_revision().unwrap(), revision + 4);
+        assert!(!report.partial);
+        fault::disarm_all();
+        let replay = engine.index(&root, &Control::unbounded()).unwrap();
+        assert_eq!((replay.changed, replay.unchanged), (0, 4));
+        assert_eq!(fault::reached(names::SOURCE_BATCH_BEFORE_COMMIT), 0);
+        assert_eq!(engine.source_revision().unwrap(), revision + 4);
+        fault::disarm_all();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3710,12 +4672,14 @@ fn a_panic_in_the_earliest_keys_build_names_it_and_indexes_every_other_key() {
     expected[0] = "unparsed".to_owned();
     assert_eq!(kinds(&first), expected);
     assert_eq!(kinds(&plain), vec!["block".to_owned(); plain.len()]);
+    assert_eq!(first[0]["call_coverage"][0], "incomplete");
+    assert_eq!(plain[0]["call_coverage"][0], "unsupported");
     let without = |docs: &[serde_json::Value]| -> Vec<serde_json::Value> {
         docs.iter()
             .map(|doc| {
                 let mut doc = doc.clone();
                 let fields = doc.as_object_mut().unwrap();
-                for name in ["key", "key_hash", "path", "dir", "kind"] {
+                for name in ["key", "key_hash", "path", "dir", "kind", "call_coverage"] {
                     fields.remove(name);
                 }
                 doc
@@ -4240,4 +5204,34 @@ fn a_committed_parse_panic_is_named_although_the_run_is_cancelled_after_commit()
     );
     assert_eq!(report.pending_sources, 2, "the page was not acknowledged");
     assert_eq!(engine.status().unwrap().parse_failures, Some(1));
+}
+
+#[test]
+fn call_posting_search_upgrade_requires_explicit_derived_repair_without_source_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let (store, mut engine) = setup(&dir.path().join("ws"));
+    engine
+        .replace_source("callee.rs", "fn callee() {}\nfn caller() { callee(); }\n")
+        .unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let source_revision = engine.source_revision().unwrap();
+    let source = engine.source("callee.rs").unwrap().unwrap().hash;
+    drop(engine);
+    // Schema 6 has the same fields but lacks canonical Python alias postings.
+    // Its recipe must be refused even when the Tantivy field schema still fits.
+    testkit::set_meta(store.path(), "search_schema", Some("6"));
+    let engine = Engine::open_existing(store.path()).unwrap();
+    assert_eq!(engine.status().unwrap().index_state, "repair_required");
+    assert!(engine.search("callee", 8).is_err());
+    assert_eq!(engine.source_revision().unwrap(), source_revision);
+    assert_eq!(engine.source("callee.rs").unwrap().unwrap().hash, source);
+    drop(engine);
+    Engine::repair_index(store.path(), &Control::unbounded()).unwrap();
+    assert_eq!(
+        testkit::meta_value(store.path(), "search_schema").as_deref(),
+        Some("7")
+    );
+    let engine = Engine::open_existing(store.path()).unwrap();
+    assert!(!engine.search("callee", 8).unwrap().hits.is_empty());
+    assert_eq!(engine.source_revision().unwrap(), source_revision);
 }

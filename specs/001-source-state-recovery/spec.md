@@ -1,5 +1,10 @@
 # 001 — Reliable local context
 
+Planning addition, 2026-10-09: [T010](#t010--retrieve-behavioral-evidence-for-a-named-symbol)
+is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
+Existing task acceptance stands; default city-map behavior is unchanged. The
+implemented mixed-intent candidate is opt-in pending its full acceptance gates.
+
 Status: T001–T006 implemented and verified locally; not released. T001–T003 were
 verified on 2026-10-01 (owner-approved scope: 001 + 003 first implementation). T004–T006
 (token-economics tranche, approved 2026-10-03) were each accepted locally at the
@@ -537,6 +542,75 @@ owed: every attempt swapped
   single-threaded on 2026-10-07) and rust-lang/rust before and after are recorded by
   the [measurement handoff](../../docs/measurement-handoff.md).
 
+### T010 — Retrieve behavioral evidence for a named symbol
+
+**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
+
+The first candidate is implemented behind `--experimental-behavior-context` (CLI
+context / MCP owner), default off. It changes packing of existing, fresh candidates,
+not their recall or the embedding model. The
+[experimental amendment](contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)
+defines its exact supported intent and ownership/budget behavior. Local trace evidence
+found `QueryRuntime::dense_index` already selected at candidate rank 2 but omitted
+by anchored packing. On that frozen local query the candidate supplies the method
+and the owner's address at 357 delivered tokens versus 437 for the baseline's struct
+alone. This is one development example, not a G1/G2 or real-agent acceptance result.
+The full gates below remain pending; see [validation](../../docs/validation.md).
+
+- **Problem:** T007 resolves identity well, but its anchored packing can deliver a
+  type definition or directory without the implementation needed by a question about
+  that type. For example, “How does `QueryRuntime` load the dense index on the first
+  query?” needs the load path, not merely the structure. This is a mixed-intent
+  retrieval problem, separate from 009's anchorless G2 misses.
+- **Depends:** T007 and 005 T004; 009 T005's diagnostic checkpoint supplies the shared
+  stage trace, not a dependency on completing the semantic repair. 003 T006 owns
+  evidence that the repair improves actual agent tasks.
+- **Scope:** intent/resolution at `src/mcp.rs` and the ordinary query entry points,
+  candidate selection in `src/store.rs`, packing in `src/response.rs`, and the
+  [context v2 contract](contracts/context-v2.md). Keep one query path for CLI/MCP;
+  reuse existing source identity, budgets and graph availability rules. A new public
+  intent parameter is not assumed necessary: compare the current query interface
+  with a minimal explicit selector only if bounded intent recognition cannot work.
+- **Proposed behavior:**
+  - Separate identity resolution from evidence needs: locate a definition; explain
+    behavior; follow usages/relationships; or report ambiguous/insufficient evidence.
+    Define the supported cases and fallback in the existing contract before coding.
+    Pure locator requests retain today's deterministic identity/qualifier semantics.
+  - Use a resolved symbol as a constraint, then admit relevant implementation units,
+    lexical matches and supported current graph neighbors. Start with bounded
+    deterministic selection, without model inference for anchored queries. Expansion
+    cannot cross root admission or treat a lexical relationship as compiler proof.
+  - For behavioral intent, amend the anchored packing ladder so useful supporting
+    units can accompany the anchor within the same budget. Identify why each unit
+    supports the query. If support does not fit or remains uncertain, show the
+    limitation and an existing retrieve handle; do not imply a complete explanation
+    because one definition was found. Source spans remain verbatim or existing
+    deterministic outlines. Any claim of complete coverage is restricted to an
+    explicitly enumerated, checkable evidence requirement.
+  - Preserve ambiguous-name directory behavior where identity is unresolved. No
+    implicit broadening of admission, stale-handle acceptance, extra model call,
+    replacement source store or learned router.
+- **Acceptance:**
+  - Freeze development and held-out mixed-intent cases before tuning, including
+    type-to-method behavior, qualified duplicate names, usage/caller evidence, absent
+    graph, stale support and a budget too small for all required evidence. Ground
+    truth names the necessary spans, not just an answer file. Include paired pure
+    locator controls, unmarked names and more-than-16-way ambiguity.
+  - Explain loss through the shared trace and score complete support as well as
+    first relevant evidence. Compare with the current city-map/Gemma binary under
+    identical token caps and source revisions. Require improvement under the paired,
+    preregistered evaluation in 009 T005, report current-baseline gains/losses by
+    intent, and preserve G1's existing guards and source/budget invariants.
+  - Unknown intent safely retains current behavior; no new claim of sufficiency on
+    an unknown case. Frozen pure-locator controls retain evidence identities and
+    ordering. A changed accepted contract must identify the replaced T007 rule and
+    its regression fixtures, rather than silently invalidating the old tests.
+- **Verification:** targeted core/MCP fixtures for relevant support, identity
+  ambiguity, unavailable/stale graph, bounded packing and scope isolation, followed
+  by the required implementation checks and the frozen measurements when this task
+  is implemented. Local implementation evidence is recorded in validation; the full
+  benchmark and real-host acceptance gates are still open.
+
 ### G1 — city-map measurement
 
 **Frozen 2026-10-08 00:22Z, before any T007 code; refrozen 00:51Z after cross-lab
@@ -639,3 +713,128 @@ toolchain: put `<rustup home>/toolchains/1.90.0-<host>/bin` first on `PATH` and 
 `rustc`, `cargo` and `clippy-driver --version`. Do not rely on `rustup run 1.90.0` or
 `cargo +1.90.0` alone: where another package manager's `cargo` precedes the rustup
 proxies, they can resolve to a different compiler.
+
+### T011 — Maintain the admitted workspace from filesystem change hints
+
+Implemented locally 2026-10-09 for the experimental ecosystem. The owner
+requires continuous incremental maintenance at 60,000–80,000 files. Reuse this spec's
+source ingestion, ignore/no-follow and reconciliation rules. Watch events do not
+admit roots, certify bytes or become a second source ledger.
+
+- Add explicit watcher enablement to the existing long-lived primary owner. Use a
+  maintained filesystem notification library; bound and coalesce changed paths.
+  Re-read/hash-verify only affected admitted files during ordinary operation.
+- Handle rename/delete/directory changes, ignore-rule changes, missed events and
+  overflow explicitly. Reconcile from a bounded dirty-root marker on overflow and
+  restart; an incomplete walk cannot retire unseen sources. Preserve prior accepted
+  bytes on named read failures. Quiet ticks must not reread every source body.
+- Source publication immediately invalidates old graph/embedding/derived-brief
+  evidence under its existing ownership rule. Record pending derivation without
+  running a model on the source path. Resume source work before optional idle work.
+- Foreground admission, bounded memory and shutdown apply to each reconciliation
+  step. Expose pending/overflow/last-success/error status; no invisible hot scan loop.
+- Verify event bursts, rename/delete, symlink replacement, lost-event reconciliation,
+  restart, edit during refresh and idle operation on a synthetic large-file-count
+  sandbox. That fixture does not establish semantic preparation throughput.
+
+Reference: Prakarana `3143213d`, `src/internal/workspace.cpp`,
+`docs/design/watcher-efficiency.md`, `test_watch_scan_efficiency.cpp` and
+`test_watcher_delete_floor.cpp`, inspected without execution. Preserve the live-update
+capability while avoiding its documented repeated full-scan/transient-budget failure.
+
+Implementation: [`watch.rs`](../../src/watch.rs), `ingest::{ChangeReader,ChangeScan}`,
+`store::{sweep_unseen_page,refresh_index_page}` and the existing `mcp::Shared` owner.
+`mcp --watch` is explicit and primary-only on both existing transports. `notify` 8.2
+owns native registration, with symlink following disabled. One owned Rust driver
+uses the same foreground-prioritized engine slot as semantic preparation; source
+maintenance takes priority over optional preparation. No new service, store table,
+schema, model call or root discovery is introduced.
+
+The queue coalesces subtree prefixes, bounds itself to 2,048 paths / 1 MiB path text,
+and collapses overflow into one root marker. Debounce is 75 ms with a one-second
+maximum. Native access reads and store/build-directory noise do not enqueue work.
+Every startup begins dirty, replacing a durable event journal. Policy hints and
+overflow change a reconciliation epoch; superseded walks cannot sweep. Explicit
+indexing supersedes background scans through the existing scan ID.
+
+Known-file updates use held-root, descriptor-relative no-follow reads, check file
+identity/size/mtime/ctime before and after reading and recheck the named inode before
+publication. Scoped walks use the same ignore library as full indexing. New-file
+admission may enumerate sibling metadata to retain ignore precedence; it reads only
+the requested file's body. Failed walks never sweep unseen sources. Seen marks use
+existing redb rows, buffered in pages of 128. Source commits and index refresh reuse
+existing freshness and crash-recovery rules, including source-dependent briefs.
+
+One step processes one walk entry/file, 128 sweep keys or eight lexical keys. During
+long walks and busy edit queues lexical pages publish every 32 source steps;
+remaining index work drains when hints settle. Cancellation is cooperative between
+these steps; an individual OS call or commit is not a hard latency bound. Read failures retry after 2–30 seconds
+with a visible error. The queue bound excludes OS/native-library registrations.
+Status exposes pending work, overflows, last success and sticky backend errors.
+
+Foreground handoff correction, 2026-10-11: the last foreground engine call now
+notifies a contended watcher after releasing its engine guard. A generation checked
+under the existing queue mutex prevents a release-before-wait from being lost.
+This wakes scheduling only; it does not enqueue paths, dirty the root or trigger an
+idle body rescan. The foreground counter lives inside the blocking call and releases
+on success, error or unwind. Shutdown refuses new watch work; an incomplete scan
+skips futile abort-slot retries against a closing owner and is reconciled on restart.
+The existing page sizes, foreground priority, 25 ms contention fallback and 180-second
+6,000-file test deadline are unchanged. Linux owner-boundary, restart and integration
+checks pass; native throughput requires its own rerun.
+
+Intentional differences from the pinned Prakarana implementation: native hints drive
+maintenance, idle ticks do not read source bodies, no periodic all-source treadmill,
+and no separate ledger/graph service. Notification loss without a rescan signal is
+not detectable: explicit indexing or restart reconciles it. Ignore files outside the
+root need the same explicit action. Backend errors are visible and need owner restart
+to re-register. Linux native event and synthetic large-workspace evidence is recorded
+in [validation](../../docs/validation.md); macOS, network filesystems, 80,000-file
+throughput and model preparation speed are not inferred from those tests.
+
+T009/T011 efficiency follow-up, selected 2026-10-09: unchanged-source chunk allocation
+avoidance, bounded ingestion pipelining and lexical worker reuse are implemented.
+The [parallel-indexing contract](contracts/context-v2.md#parallel-indexing) owns the
+read/result bounds, ordered acceptance, early publication and interruption behavior.
+The remaining semantic/generation obligations below are pending under 009 T008.
+
+Implementation in [ingest.rs](../../src/ingest.rs) and [store.rs](../../src/store.rs):
+eight read/result slots overlap no-follow reads and hashes with the one source
+writer; the held descriptor and named version are rechecked before accepting bytes
+or exclusion decisions. Every 128 accepted candidates admits one lexical page,
+followed by the existing final drain. One Engine-owned Rayon 1.12.0 pool serves
+reads and lexical builds, retained across pages/calls. Rayon was already pinned for
+semantic preparation; it is now available in lexical-only builds too. This removes
+per-page thread creation without adding another worker protocol or durable owner.
+The 2026-10-10 cold-scale follow-up groups at most four supported files per source
+transaction within the existing eight read/result slots. The contract above specifies
+atomic rollback, count publication, ordered exclusions and cancellation; single-source
+watcher steps and conditional pending acknowledgments remain unchanged. This removes
+three of four durable source commits on an all-changed scan without another queue or
+worker. Actual large-file/mixed-workload throughput remains separate evidence. Explicit MCP
+indexing still occupies its engine slot. Sandbox concurrency, interruption and
+restart evidence is recorded in [validation](../../docs/validation.md#pipelined-source-ingestion--2026-10-09);
+no large-repository throughput improvement is inferred.
+
+- Pipeline bounded source reads/hash/preparation and lexical work during initial
+  ingestion instead of waiting for the full walk. Keep one transactional writer,
+  deterministic acceptance, held-root/no-follow checks and incomplete-scan deletion
+  rules. Bound bytes of in-flight bodies and completed results, not only file count.
+  Source commits may be batched only with explicit partial-failure/counting rules;
+  preserve existing accepted versions on read failures and changes during compute.
+- Check existing source identity before allocating replacement storage chunks for
+  unchanged bodies. Reuse bounded buffers and CPU workers where they remove repeated
+  setup/copying. Storage chunk size is not an embedding or delivered-context policy.
+  No custom storage engine, memory allocator or mandatory machine-specific kernel
+  replaces the current maintained libraries.
+- Source publication durably records semantic/generation obligations under
+  [009 T008](../009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work).
+  Schema 9 now implements independent bounded obligations in source transactions;
+  explicit continuous semantic mode consumes them through the existing owner. Keep
+  source freshness ahead of model work,
+  while preventing an always-pending initial scan/edit stream from starving bounded
+  derivation progress. Watch enablement alone still runs no model.
+- Verify bounded read overlap, unchanged-source allocation avoidance, source changes
+  during preparation, partial failures, shutdown/restart and fair engine admission.
+  Preserve quiet-tick behavior. Initial/recovery reconciliation remains necessary
+  because filesystem notifications alone cannot prove offline completeness.

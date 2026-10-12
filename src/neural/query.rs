@@ -8,15 +8,18 @@
 //!
 //! 009 T004: only a query without an anchor reaches this module (the
 //! request path decides that before any model call); the candidate assembly
-//! places the window's units first, in similarity order, ahead of the
+//! normally places the window's units first, in similarity order, ahead of the
 //! lexical candidates (`Engine::search_candidates_semantic`). Nothing here
-//! reranks, rewrites the query or calls a second model. A failure at any
+//! rewrites the query or calls a second model. Opt-in hierarchy localization
+//! exactly scores a bounded set of published body vectors from discovered files,
+//! reusing that query vector and retaining only current point-joined locations.
+//! A failure at any
 //! step is a NAMED fallback ([`Fallback`]) for the baseline path; it never
 //! fails the response.
 use crate::control::Control;
 use crate::error::FoundryError;
 use crate::neural::index::{
-    self, COVERAGE_COMPLETE, GenerationError, LabelEntry, METRIC, SCALAR_KIND, UnitLocation,
+    self, COVERAGE_COMPLETE, GenerationError, METRIC, SCALAR_KIND, UnitLocation,
 };
 use crate::neural::partition::TokenCount as _;
 use crate::neural::profile::SemanticProfile;
@@ -74,6 +77,15 @@ impl From<ProviderError> for Fallback {
     }
 }
 
+impl From<GenerationError> for Fallback {
+    fn from(error: GenerationError) -> Self {
+        match error {
+            GenerationError::Interrupted(error) => error.into(),
+            GenerationError::Unavailable(reason) => Self::new("index_unavailable", reason),
+        }
+    }
+}
+
 impl From<FoundryError> for Fallback {
     fn from(error: FoundryError) -> Self {
         Self::new(error.code(), error.to_string())
@@ -93,6 +105,10 @@ pub struct DenseHit {
 pub struct DenseWindow {
     pub hits: Vec<DenseHit>,
     generation: Arc<DenseIndex>,
+    /// Reused only for bounded exact scoring of already published body
+    /// vectors. Refinement never embeds source or starts preparation in a read.
+    vector: Vec<f32>,
+    pub(crate) areas: Vec<crate::store::RecordCandidate>,
 }
 
 impl std::fmt::Debug for DenseWindow {
@@ -103,16 +119,370 @@ impl std::fmt::Debug for DenseWindow {
     }
 }
 
+/// A discovery scope, not a new source candidate or an inherited body score.
+/// Lexical owners use the indexed unit kind/hash/geometry, never its display
+/// label. Parent scopes must join their exact current partition tuple below.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OwnerScope<'a> {
+    pub source_hash: &'a str,
+    pub start: u64,
+    pub end: u64,
+    pub proof: OwnerProof<'a>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum OwnerProof<'a> {
+    Callable {
+        kind: &'a str,
+        head: u64,
+        document: (u64, u64),
+    },
+    Parent {
+        input_key: &'a str,
+    },
+}
+
+#[derive(Default)]
+struct OwnerRanges {
+    ranges: Vec<(u64, u64)>,
+    valid: usize,
+    stale: usize,
+    invalid: usize,
+    narrowed: usize,
+    conflict: bool,
+}
+
+impl OwnerRanges {
+    /// Valid nested ranges reduce to leaves, which are disjoint and sorted.
+    /// A Body must fit whole; clipping would change the independently scored
+    /// evidence, and overlap alone could import a neighboring function.
+    fn contains(&self, start: u64, end: u64) -> bool {
+        self.ranges
+            .partition_point(|&(from, _)| from <= start)
+            .checked_sub(1)
+            .is_some_and(|index| end <= self.ranges[index].1)
+    }
+}
+
+fn refinement_scopes(
+    scopes: &[OwnerScope<'_>],
+    source_hash: &str,
+    source_len: usize,
+    parents: &std::collections::BTreeSet<(u64, u64, &str)>,
+    control: &Control,
+) -> Result<OwnerRanges, Fallback> {
+    control.check()?;
+    let mut result = OwnerRanges::default();
+    for scope in scopes {
+        control.check()?;
+        if scope.source_hash != source_hash {
+            result.stale += 1;
+            continue;
+        }
+        let geometry = scope.start < scope.end && scope.end <= source_len as u64;
+        let proven = match scope.proof {
+            OwnerProof::Callable {
+                kind,
+                head,
+                document: (from, to),
+            } => {
+                matches!(kind, "fn" | "method")
+                    && scope.start <= head
+                    && head < scope.end
+                    && scope.start <= from
+                    && from < to
+                    && to <= scope.end
+            }
+            OwnerProof::Parent { input_key } => {
+                parents.contains(&(scope.start, scope.end, input_key))
+            }
+        };
+        if !geometry || !proven {
+            result.invalid += 1;
+            continue;
+        }
+        result.valid += 1;
+        result.ranges.push((scope.start, scope.end));
+    }
+    result
+        .ranges
+        .sort_unstable_by_key(|&(start, end)| (start, std::cmp::Reverse(end)));
+    result.ranges.dedup();
+    // Same-source syntax scopes form a forest. Non-nested overlap is not a
+    // proven owner relationship: retain the old file fallback for that path.
+    let mut ends = Vec::new();
+    for &(start, end) in &result.ranges {
+        control.check()?;
+        while ends.last().is_some_and(|&through| through <= start) {
+            ends.pop();
+        }
+        if ends.last().is_some_and(|&through| end > through) {
+            result.conflict = true;
+            break;
+        }
+        ends.push(end);
+    }
+    if result.conflict {
+        result.ranges.clear();
+        return Ok(result);
+    }
+    // Declared experimental tradeoff: a current narrower owner localizes a
+    // broader discovered scope. Disjoint owners remain a union; no min/max
+    // envelope is allowed to admit the source between them.
+    let mut narrowed = Vec::with_capacity(result.ranges.len());
+    for (index, &range) in result.ranges.iter().enumerate() {
+        control.check()?;
+        if result
+            .ranges
+            .get(index + 1)
+            .is_some_and(|&next| next.1 <= range.1)
+        {
+            result.narrowed += 1;
+        } else {
+            narrowed.push(range);
+        }
+    }
+    result.ranges = narrowed;
+    Ok(result)
+}
+
 impl DenseWindow {
+    /// Localize coarse files by scoring a bounded working set of their published
+    /// body inputs. Selected partition point reads identify keys; only this
+    /// generation's matching locations and resident vectors can supply evidence.
+    /// No graph traversal, source inference, or corpus-wide metadata walk occurs.
+    pub(crate) fn refine(
+        &self,
+        engine: &Engine,
+        paths: &std::collections::BTreeSet<String>,
+        scopes: &std::collections::BTreeMap<String, Vec<OwnerScope<'_>>>,
+        control: &Control,
+    ) -> Result<Refinement<'_>, Fallback> {
+        use std::collections::{BTreeSet, VecDeque};
+        const MAX_PATHS: usize = 80;
+        const MAX_ROW_BYTES: usize = 512 * 1024;
+        const MAX_MAPPING_BYTES: usize = 8 * 1024 * 1024;
+        const MAX_UNITS: usize = 32_768;
+        const MAX_VECTORS: usize = 4096;
+
+        control.check()?;
+        let page = super::cache::MappingPage::new(engine, control)?;
+        let mut stats = RefinementStats {
+            truncated: paths.len() > MAX_PATHS,
+            ..Default::default()
+        };
+        let mut queues = Vec::new();
+        // References retain only provenance that passed this request's point
+        // join. A shared vector key never admits other generation locations.
+        let mut joined: std::collections::BTreeMap<usize, Vec<&UnitLocation>> =
+            std::collections::BTreeMap::new();
+        for path in paths.iter().take(MAX_PATHS) {
+            control.check()?;
+            stats.paths += 1;
+            let bytes = page.partition_bytes(path)?;
+            if bytes > MAX_ROW_BYTES || bytes > MAX_MAPPING_BYTES - stats.mapping_bytes {
+                stats.truncated = true;
+                stats.mapping_rows_skipped += 1;
+                continue;
+            }
+            stats.mapping_bytes += bytes;
+            let Some((record, source_len)) = page.partition_with_source_len(
+                path,
+                &self.generation.identity.digest,
+                &self.generation.identity.recipe,
+                control,
+            )?
+            else {
+                continue;
+            };
+            let mut file_bodies = Vec::new();
+            let mut parents = BTreeSet::new();
+            for unit in &record.units {
+                control.check()?;
+                if stats.units_considered == MAX_UNITS {
+                    stats.truncated = true;
+                    break;
+                }
+                stats.units_considered += 1;
+                if unit.kind == super::cache::CardKind::Parent {
+                    parents.insert((unit.start as u64, unit.end as u64, unit.input_key.as_str()));
+                }
+                if unit.kind != super::cache::CardKind::Body {
+                    continue;
+                }
+                // Location vectors are produced in (path,start,end) order. A
+                // failed point join is never replaced with a cache-only vector.
+                // The full tuple, role and hash are checked after the lookup.
+                let published = self
+                    .generation
+                    .labels
+                    .get(&unit.input_key)
+                    .and_then(|locations| {
+                        locations
+                            .binary_search_by(|location| {
+                                (location.path.as_str(), location.start, location.end).cmp(&(
+                                    path.as_str(),
+                                    unit.start as u64,
+                                    unit.end as u64,
+                                ))
+                            })
+                            .ok()
+                            .and_then(|position| locations.get(position))
+                    })
+                    .filter(|location| {
+                        location.kind == super::cache::CardKind::Body
+                            && location.source_sha256 == record.source_hash
+                    });
+                let Some(location) = published else {
+                    stats.unpublished_units += 1;
+                    continue;
+                };
+                let Some(label) = self.generation.label_for_key(&unit.input_key) else {
+                    return Err(Fallback::new(
+                        "index_unavailable",
+                        "published body has no resident vector",
+                    ));
+                };
+                file_bodies.push((label, location));
+                stats.joined_locations += 1;
+            }
+            let requested = scopes.get(path).map_or(&[][..], Vec::as_slice);
+            let owners = refinement_scopes(
+                requested,
+                &record.source_hash,
+                source_len,
+                &parents,
+                control,
+            )?;
+            stats.owner_scopes += requested.len();
+            stats.owner_scopes_valid += owners.valid;
+            stats.owner_scopes_stale += owners.stale;
+            stats.owner_scopes_invalid += owners.invalid;
+            stats.owner_scopes_narrowed += owners.narrowed;
+            stats.owner_scope_conflicts += usize::from(owners.conflict);
+            let mut has_scoped_body = false;
+            for &(_, location) in &file_bodies {
+                control.check()?;
+                has_scoped_body |= owners.contains(location.start, location.end);
+            }
+            let fallback = if owners.conflict {
+                Some("incompatible_scopes")
+            } else if owners.ranges.is_empty() {
+                Some("no_current_owner")
+            } else if !has_scoped_body {
+                Some("no_published_body_in_owner")
+            } else {
+                None
+            };
+            if fallback.is_some() {
+                stats.owner_fallback_paths += 1;
+            } else {
+                stats.owner_scoped_paths += 1;
+            }
+            if let Some(trace) = control.trace() {
+                trace.record(serde_json::json!({
+                    "stage":"refinement_scope", "policy":"current_owner_narrowing_v1",
+                    "path":path, "sha256":record.source_hash,
+                    "requested":requested.len(), "valid":owners.valid,
+                    "stale":owners.stale, "invalid":owners.invalid,
+                    "narrowed":owners.narrowed, "conflict":owners.conflict,
+                    "ranges":owners.ranges, "fallback":fallback,
+                }));
+            }
+            let mut queue = VecDeque::new();
+            let mut seen = BTreeSet::new();
+            for (label, location) in file_bodies {
+                control.check()?;
+                if fallback.is_none() && !owners.contains(location.start, location.end) {
+                    stats.owner_filtered_locations += 1;
+                    continue;
+                }
+                joined.entry(label).or_default().push(location);
+                if seen.insert(label) {
+                    queue.push_back(label);
+                }
+            }
+            if !queue.is_empty() {
+                queues.push(queue);
+            }
+            if stats.units_considered == MAX_UNITS {
+                stats.truncated |= stats.paths < paths.len();
+                break;
+            }
+        }
+        drop(page);
+
+        let (labels, truncated) = refinement_working_set(queues, MAX_VECTORS, control)?;
+        stats.truncated |= truncated;
+        let mut hits = Vec::with_capacity(labels.len());
+        let mut scratch = vec![0.0f32; self.generation.dimensions];
+        for label in labels {
+            control.check()?;
+            hits.push(
+                self.generation
+                    .score_label(&self.vector, label, &mut scratch)?,
+            );
+        }
+        stats.vectors_scored = hits.len();
+        hits.sort_by(|a, b| {
+            a.distance.total_cmp(&b.distance).then_with(|| {
+                self.generation
+                    .input_key(a.label)
+                    .cmp(self.generation.input_key(b.label))
+            })
+        });
+        let hits = refinement_candidate_window(hits, joined, &mut stats, control)?;
+        control.check()?;
+        Ok(Refinement { hits, stats })
+    }
+
+    /// These opt-in recipes can map a small extractive input to a whole file
+    /// or parent. Context may focus their source locally; this does not mean
+    /// the resulting passage received its own embedding or similarity score.
+    pub(crate) fn has_overviews(&self) -> bool {
+        self.file_overviews_only() || self.generation.identity.recipe.starts_with("hierarchy-v1+")
+    }
+
+    /// Independent passage representations keep hybrid admission even after
+    /// preparation completes; coverage is availability, not relevance.
+    pub(crate) fn has_body_representations(&self) -> bool {
+        let recipe = &self.generation.identity.recipe;
+        recipe.starts_with("body-v1+") || recipe.starts_with("hierarchy-v1+")
+    }
+
+    pub(crate) fn file_overviews_only(&self) -> bool {
+        self.generation.identity.recipe.starts_with("overview-v1+")
+    }
+
     /// The document-input key of one hit.
     pub fn input_key(&self, hit: &DenseHit) -> &str {
-        &self.generation.labels[hit.label].input_key
+        self.generation.input_key(hit.label)
     }
 
     /// The unit locations one hit stood for at publication. Each is a
     /// candidate only after the request's final read revalidates it.
     pub fn units(&self, hit: &DenseHit) -> &[UnitLocation] {
-        &self.generation.labels[hit.label].units
+        &self.generation.labels[self.input_key(hit)]
+    }
+
+    /// Admit at most `limit` ordinary provenance locations fairly across the
+    /// bounded hit window. Filter lookup is logarithmic in each sorted map;
+    /// duplicate provenance cannot force a corpus-wide expansion before caps.
+    pub(crate) fn bounded_units(
+        &self,
+        filter: Option<&str>,
+        limit: usize,
+        control: &Control,
+    ) -> Result<DenseLocations<'_>, Fallback> {
+        let units = self
+            .hits
+            .iter()
+            .take(DENSE_WINDOW)
+            .map(|hit| self.units(hit))
+            .collect();
+        let mut locations = bounded_unit_locations(units, filter, limit, control)?;
+        locations.truncated |= self.hits.len() > DENSE_WINDOW;
+        Ok(locations)
     }
 
     /// The source revision a COMPLETE generation was published at; `None`
@@ -137,18 +507,202 @@ impl DenseWindow {
     }
 }
 
+/// Deterministic fair admission, with no more than `limit` distinct vector keys.
+/// Duplicate provenance consumes neither a scoring slot nor another file's turn.
+fn refinement_working_set(
+    mut queues: Vec<std::collections::VecDeque<usize>>,
+    limit: usize,
+    control: &Control,
+) -> Result<(Vec<usize>, bool), Fallback> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut labels = Vec::new();
+    loop {
+        let mut progressed = false;
+        for queue in &mut queues {
+            control.check()?;
+            while let Some(label) = queue.pop_front() {
+                control.check()?;
+                if !seen.insert(label) {
+                    continue;
+                }
+                if labels.len() == limit {
+                    return Ok((labels, true));
+                }
+                labels.push(label);
+                progressed = true;
+                break;
+            }
+        }
+        if !progressed {
+            return Ok((labels, false));
+        }
+    }
+}
+
+/// Apply the existing delivery quota before spending the fixed label window.
+/// The input is already sorted by cosine and input key. Backfill only from that
+/// same bounded scored set: a file's fifth body cannot evict another file's first
+/// body and then be discarded during placement. Shared labels keep only their
+/// individually admissible, point-joined locations. Final-read freshness and the
+/// ordinary placement cap still apply after this candidate selection.
+fn refinement_candidate_window<'a>(
+    hits: Vec<DenseHit>,
+    mut joined: std::collections::BTreeMap<usize, Vec<&'a UnitLocation>>,
+    stats: &mut RefinementStats,
+    control: &Control,
+) -> Result<Vec<RefinedHit<'a>>, Fallback> {
+    use std::collections::{BTreeMap, BTreeSet};
+    control.check()?;
+    let mut kept = Vec::with_capacity(DENSE_WINDOW.min(hits.len()));
+    let mut per_file = BTreeMap::<&str, usize>::new();
+    let mut seen = BTreeSet::new();
+    for hit in hits {
+        control.check()?;
+        if kept.len() == DENSE_WINDOW {
+            break;
+        }
+        stats.labels_examined += 1;
+        let mut locations = Vec::new();
+        for location in joined.remove(&hit.label).unwrap_or_default() {
+            control.check()?;
+            if !seen.insert((location.path.as_str(), location.start, location.end)) {
+                stats.duplicate_locations += 1;
+                continue;
+            }
+            let count = per_file.entry(location.path.as_str()).or_default();
+            if *count == crate::store::PER_FILE_CAP {
+                stats.quota_skipped_locations += 1;
+                continue;
+            }
+            *count += 1;
+            locations.push(location);
+        }
+        if !locations.is_empty() {
+            stats.retained_locations += locations.len();
+            kept.push(RefinedHit { hit, locations });
+        }
+    }
+    Ok(kept)
+}
+
+pub(crate) struct RefinedHit<'a> {
+    pub hit: DenseHit,
+    /// Only the exact locations admitted by the bounded current-partition join.
+    pub locations: Vec<&'a UnitLocation>,
+}
+
+pub(crate) struct Refinement<'a> {
+    pub hits: Vec<RefinedHit<'a>>,
+    pub stats: RefinementStats,
+}
+
+pub(crate) struct DenseLocations<'a> {
+    /// Fair admission order; the caller may restore hit order for placement.
+    pub items: Vec<(usize, &'a UnitLocation)>,
+    pub available: usize,
+    pub truncated: bool,
+}
+
+fn bounded_unit_locations<'a>(
+    units: Vec<&'a [UnitLocation]>,
+    filter: Option<&str>,
+    limit: usize,
+    control: &Control,
+) -> Result<DenseLocations<'a>, Fallback> {
+    control.check()?;
+    let subtree = filter.map(|path| (format!("{path}/"), format!("{path}0")));
+    let mut available = 0usize;
+    let mut cursors = Vec::with_capacity(units.len());
+    for units in units {
+        control.check()?;
+        let (exact, children) = if let Some(path) = filter {
+            // Exact path and component-boundary subtree are disjoint ranges:
+            // e.g. a-b and a.rs can sort between a and a/child.
+            let exact_from = units.partition_point(|unit| unit.path.as_str() < path);
+            let exact_to = units.partition_point(|unit| unit.path.as_str() <= path);
+            let (lower, upper) = subtree.as_ref().expect("filter subtree bounds");
+            let child_from = units.partition_point(|unit| unit.path.as_str() < lower.as_str());
+            let child_to = units.partition_point(|unit| unit.path.as_str() < upper.as_str());
+            (&units[exact_from..exact_to], &units[child_from..child_to])
+        } else {
+            (units, &units[..0])
+        };
+        available = available
+            .saturating_add(exact.len())
+            .saturating_add(children.len());
+        cursors.push(exact.iter().chain(children));
+    }
+    let mut items = Vec::with_capacity(limit.min(available));
+    while items.len() < limit {
+        let mut progressed = false;
+        for (rank, cursor) in cursors.iter_mut().enumerate() {
+            control.check()?;
+            if let Some(location) = cursor.next() {
+                items.push((rank, location));
+                progressed = true;
+                if items.len() == limit {
+                    break;
+                }
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+    Ok(DenseLocations {
+        truncated: items.len() < available,
+        items,
+        available,
+    })
+}
+
+#[derive(Default, serde::Serialize)]
+pub(crate) struct RefinementStats {
+    paths: usize,
+    mapping_bytes: usize,
+    mapping_rows_skipped: usize,
+    units_considered: usize,
+    unpublished_units: usize,
+    joined_locations: usize,
+    owner_scopes: usize,
+    owner_scopes_valid: usize,
+    owner_scopes_stale: usize,
+    owner_scopes_invalid: usize,
+    owner_scopes_narrowed: usize,
+    owner_scope_conflicts: usize,
+    owner_scoped_paths: usize,
+    owner_fallback_paths: usize,
+    owner_filtered_locations: usize,
+    retained_locations: usize,
+    vectors_scored: usize,
+    labels_examined: usize,
+    /// Candidate-window quota skips, before final-read placement counters.
+    quota_skipped_locations: usize,
+    duplicate_locations: usize,
+    pub(crate) truncated: bool,
+}
+
 /// A validated, loaded dense index. Availability came from VALIDATION
 /// (manifest, file hashes, header and geometry), and the index was restored
 /// from the very buffer whose hash matched the manifest, read through the
 /// store's bound descriptor: no later file substitution can reach it.
 pub struct DenseIndex {
-    index: usearch::Index,
-    /// `labels[label]` is that ordinal's input key and unit locations.
-    labels: Vec<LabelEntry>,
+    segments: Vec<DenseSegment>,
+    identity: index::Prepared,
+    owner: Option<Arc<crate::neural::work::Wake>>,
+    receipt: Arc<index::verification::ManifestReceipt>,
+    dimensions: usize,
+    /// Shared current locations keyed by the segment ordinal's input key.
+    labels: index::Locations,
     /// The source revision the label map was read at.
     source_revision: u64,
     /// True when the generation covers every eligible unit at that revision.
     complete: bool,
+}
+
+struct DenseSegment {
+    index: Arc<usearch::Index>,
+    keys: Arc<Vec<String>>,
 }
 
 impl DenseIndex {
@@ -190,85 +744,221 @@ impl DenseIndex {
             ));
         }
         let anchor = engine.semantic_anchor()?;
+        let identity = index::Prepared {
+            digest,
+            recipe,
+            dimensions,
+        };
         let (generation, bytes) =
-            match index::load_generation_with(&anchor, &digest, &recipe, dimensions, control) {
-                Ok(loaded) => loaded,
-                Err(GenerationError::Interrupted(error)) => return Err(error.into()),
-                Err(GenerationError::Unavailable(reason)) => {
-                    return Err(Fallback::new("index_unavailable", reason));
-                }
-            };
-        neural_fault!(LOAD_AFTER_VERIFY, Some(control), &digest)?;
-        // The deferred T002 check: the library's own dense header, parsed
-        // from the verified bytes and compared with the manifest's geometry
-        // before any vector is searched.
-        let geometry = |detail: String| Fallback::new("index_geometry", detail);
-        let header = usearch::Index::metadata_from_buffer(&bytes)
-            .map_err(|e| Fallback::new("index_unavailable", format!("usearch header: {e}")))?;
+            index::validate_cached(&anchor, &identity, control, true, &engine.semantic_segments)?;
+        neural_fault!(LOAD_AFTER_VERIFY, Some(control), &identity.digest)?;
+        let hashes: Vec<_> = std::iter::once(generation.manifest.index_sha256.clone())
+            .chain(generation.manifest.delta.as_ref().map(|d| d.sha256.clone()))
+            .collect();
+        let mut loaded = Self::from_buffers(generation, bytes.expect("kept segments"))?;
+        Arc::get_mut(&mut loaded).expect("new generation").owner =
+            Some(engine.semantic_wake.clone());
+        let mut cache = index::verification::lock(&engine.semantic_segments, control)?;
+        for (hash, segment) in hashes.iter().zip(&loaded.segments) {
+            cache.remember(hash, segment.index.clone());
+        }
+        Ok(loaded)
+    }
+
+    pub(crate) fn from_buffers(
+        generation: index::Generation,
+        bytes: index::IndexBuffers,
+    ) -> Result<Arc<Self>, Fallback> {
         let manifest = &generation.manifest;
-        if header.dimensions as usize != manifest.dimensions
-            || header.count_present as usize != manifest.count
-            || header.multi
-            || !format!("{:?}", header.metric).eq_ignore_ascii_case(METRIC)
-            || !format!("{:?}", header.quantization).eq_ignore_ascii_case(SCALAR_KIND)
-        {
-            return Err(geometry(format!(
-                "usearch header disagrees with the generation manifest \
-                 (dimensions {}, metric {:?}, scalar {:?}, multi {}, present {})",
-                header.dimensions,
-                header.metric,
-                header.quantization,
-                header.multi,
-                header.count_present
-            )));
+        let mut segments = Vec::with_capacity(2);
+        let mut load = |segment: index::Segment, keys: Arc<Vec<String>>| -> Result<(), Fallback> {
+            let geometry = |detail: String| Fallback::new("index_geometry", detail);
+            let loaded = match segment {
+                index::Segment::Bytes(bytes) => {
+                    let header = usearch::Index::metadata_from_buffer(&bytes).map_err(|e| {
+                        Fallback::new("index_unavailable", format!("usearch header: {e}"))
+                    })?;
+                    if header.dimensions as usize != manifest.dimensions
+                        || header.count_present as usize != keys.len()
+                        || header.multi
+                        || !format!("{:?}", header.metric).eq_ignore_ascii_case(METRIC)
+                        || !format!("{:?}", header.quantization).eq_ignore_ascii_case(SCALAR_KIND)
+                    {
+                        return Err(geometry("usearch header disagrees with generation geometry or segment membership".into()));
+                    }
+                    neural_fault!(SEGMENT_RESTORE, None, "ANN segment")?;
+                    Arc::new(usearch::Index::restore_from_buffer(&bytes).map_err(|e| {
+                        Fallback::new("index_unavailable", format!("usearch load: {e}"))
+                    })?)
+                }
+                index::Segment::Resident(index) => index,
+            };
+            if loaded.dimensions() != manifest.dimensions
+                || loaded.size() != keys.len()
+                || !format!("{:?}", loaded.metric_kind()).eq_ignore_ascii_case(METRIC)
+                || !format!("{:?}", loaded.scalar_kind()).eq_ignore_ascii_case(SCALAR_KIND)
+            {
+                return Err(geometry(
+                    "loaded index geometry disagrees with manifest".into(),
+                ));
+            }
+            segments.push(DenseSegment {
+                index: loaded,
+                keys,
+            });
+            Ok(())
+        };
+        load(bytes.base, manifest.base_entries.clone())?;
+        if let (Some(bytes), Some(delta)) = (bytes.delta, &manifest.delta) {
+            load(bytes, Arc::new(delta.entries.clone()))?;
         }
-        let loaded = usearch::Index::restore_from_buffer(&bytes)
-            .map_err(|e| Fallback::new("index_unavailable", format!("usearch load: {e}")))?;
-        if loaded.dimensions() != manifest.dimensions || loaded.size() != manifest.count {
-            return Err(geometry(format!(
-                "loaded index geometry disagrees with the manifest (dimensions {}, size {})",
-                loaded.dimensions(),
-                loaded.size()
-            )));
-        }
-        let source_revision = manifest.source_revision;
-        let complete = manifest.coverage == COVERAGE_COMPLETE;
         Ok(Arc::new(Self {
-            index: loaded,
-            labels: generation.labels.labels,
-            source_revision,
-            complete,
+            segments,
+            identity: index::Prepared {
+                digest: manifest.function_digest.clone(),
+                recipe: manifest.recipe_id.clone(),
+                dimensions: manifest.dimensions,
+            },
+            owner: None,
+            receipt: generation.receipt,
+            dimensions: manifest.dimensions,
+            labels: generation.labels,
+            source_revision: manifest.source_revision,
+            complete: manifest.coverage == COVERAGE_COMPLETE,
         }))
     }
 
-    /// The top `k` labels by ascending distance. Labels the label map does
-    /// not hold (a disagreement validation somehow missed) are skipped
-    /// rather than served.
+    pub(crate) fn input_key(&self, label: usize) -> &str {
+        let base = &self.segments[0].keys;
+        if label < base.len() {
+            &base[label]
+        } else {
+            &self.segments[1].keys[label - base.len()]
+        }
+    }
+
+    fn label_for_key(&self, key: &str) -> Option<usize> {
+        let mut offset = 0;
+        for segment in &self.segments {
+            if let Ok(ordinal) = segment
+                .keys
+                .binary_search_by(|stored| stored.as_str().cmp(key))
+            {
+                return Some(offset + ordinal);
+            }
+            offset += segment.keys.len();
+        }
+        None
+    }
+
+    fn score_label(
+        &self,
+        query: &[f32],
+        label: usize,
+        scratch: &mut [f32],
+    ) -> Result<DenseHit, Fallback> {
+        if query.len() != self.dimensions || scratch.len() != self.dimensions {
+            return Err(Fallback::new(
+                "index_geometry",
+                "refinement vector dimensions disagree",
+            ));
+        }
+        let mut ordinal = label;
+        for segment in &self.segments {
+            if ordinal >= segment.keys.len() {
+                ordinal -= segment.keys.len();
+                continue;
+            }
+            let count = segment.index.get(ordinal as u64, scratch).map_err(|e| {
+                Fallback::new("index_unavailable", format!("usearch vector lookup: {e}"))
+            })?;
+            if count != 1 {
+                return Err(Fallback::new(
+                    "index_unavailable",
+                    "published body vector is missing",
+                ));
+            }
+            // USearch stores f16 vectors. Account for quantization's small norm
+            // change instead of assuming the restored f32 values have norm 1.
+            let (mut dot, mut query_norm, mut body_norm) = (0.0f64, 0.0f64, 0.0f64);
+            for (&a, &b) in query.iter().zip(scratch.iter()) {
+                let (a, b) = (f64::from(a), f64::from(b));
+                dot += a * b;
+                query_norm += a * a;
+                body_norm += b * b;
+            }
+            if !dot.is_finite()
+                || !query_norm.is_finite()
+                || !body_norm.is_finite()
+                || query_norm <= 0.0
+                || body_norm <= 0.0
+            {
+                return Err(Fallback::new(
+                    "index_geometry",
+                    "refinement vector is nonfinite or zero",
+                ));
+            }
+            let distance = (1.0 - dot / (query_norm * body_norm).sqrt()).clamp(0.0, 2.0) as f32;
+            return Ok(DenseHit { label, distance });
+        }
+        Err(Fallback::new(
+            "index_unavailable",
+            "refinement label is outside generation membership",
+        ))
+    }
+
+    /// At most two searches and 2*k candidates. Filtering happens INSIDE ANN
+    /// selection, so retired base entries cannot consume the candidate window.
     pub fn search(&self, vector: &[f32], k: usize) -> Result<Vec<DenseHit>, Fallback> {
-        if vector.len() != self.index.dimensions() {
+        if vector.len() != self.dimensions {
             return Err(Fallback::new(
                 "index_unavailable",
                 format!(
-                    "query vector has {} values, the index holds {}",
+                    "query vector has {} values, index holds {}",
                     vector.len(),
-                    self.index.dimensions()
+                    self.dimensions
                 ),
             ));
         }
-        let matches = self
-            .index
-            .search(vector, k)
-            .map_err(|e| Fallback::new("index_unavailable", format!("usearch search: {e}")))?;
-        Ok(matches
-            .keys
-            .iter()
-            .zip(&matches.distances)
-            .filter(|&(&key, _)| (key as usize) < self.labels.len())
-            .map(|(&key, &distance)| DenseHit {
-                label: key as usize,
-                distance,
-            })
-            .collect())
+        let k = k.min(DENSE_WINDOW);
+        if k == 0 {
+            return Ok(Vec::new());
+        }
+        let mut hits = Vec::with_capacity(k * self.segments.len());
+        let mut offset = 0;
+        for segment in &self.segments {
+            let matches = segment
+                .index
+                .filtered_search(vector, k, |key| {
+                    segment
+                        .keys
+                        .get(key as usize)
+                        .and_then(|key| self.labels.get(key))
+                        .is_some_and(|units| !units.is_empty())
+                })
+                .map_err(|e| Fallback::new("index_unavailable", format!("usearch search: {e}")))?;
+            hits.extend(matches.keys.iter().zip(&matches.distances).filter_map(
+                |(&key, &distance)| {
+                    segment
+                        .keys
+                        .get(key as usize)
+                        .filter(|key| self.labels.get(*key).is_some_and(|units| !units.is_empty()))
+                        .map(|_| DenseHit {
+                            label: offset + key as usize,
+                            distance,
+                        })
+                },
+            ));
+            offset += segment.keys.len();
+        }
+        hits.sort_by(|a, b| {
+            a.distance
+                .total_cmp(&b.distance)
+                .then_with(|| self.input_key(a.label).cmp(self.input_key(b.label)))
+        });
+        // Membership validation makes segments disjoint, so there are no duplicate keys.
+        hits.truncate(k);
+        Ok(hits)
     }
 }
 
@@ -297,10 +987,19 @@ pub fn tokenize_query(
     template: &str,
     query: &str,
 ) -> Result<TokenizedInput, ProviderError> {
+    tokenize_query_with_limit(tokenizer, template, query, provider::SERVING_LIMIT_TOKENS)
+}
+
+fn tokenize_query_with_limit(
+    tokenizer: &DocumentTokenizer,
+    template: &str,
+    query: &str,
+    limit: usize,
+) -> Result<TokenizedInput, ProviderError> {
     let rendered = provider::render(template, query);
     let tokenized = tokenizer.encode(&rendered)?;
     let input = TokenizedInput { ids: tokenized.ids };
-    provider::check_query(&input)?;
+    provider::check_query_with_limit(&input, limit)?;
     Ok(input)
 }
 
@@ -326,6 +1025,7 @@ enum Holder {
     Query,
     /// One document batch of this owner's preparation driver.
     Documents,
+    Knowledge,
 }
 
 /// The ONE model slot, shared with the provider thread.
@@ -401,6 +1101,17 @@ impl DocumentCall {
     }
 }
 
+/// A configured HTTP generation request shares the existing model admission
+/// slot. Dropping it releases client admission; external compute may outlive HTTP.
+pub(crate) struct KnowledgeCall {
+    slot: Arc<Slot>,
+}
+impl Drop for KnowledgeCall {
+    fn drop(&mut self) {
+        self.slot.free();
+    }
+}
+
 /// Counts a foreground query from the start of its request path until it
 /// returns, so no document batch is admitted while it is being dispatched.
 /// Registration takes the runtime's admission lock, so it and a document
@@ -432,10 +1143,9 @@ pub type MakeProvider =
 /// The resident runtime one owner (MCP) or one command (CLI) holds: the
 /// verified profile, its exact-input tokenizer, the embedding provider
 /// (confined to its own thread, ONE admission slot for queries and document
-/// batches alike) and the loaded dense index. The index is kept until the
-/// owner's preparation driver publishes a new generation and calls
-/// [`QueryRuntime::forget_index`]; source edits are caught by the final
-/// read, not by the index.
+/// batches alike) and the loaded dense generation. Owner/profile/manifest checks
+/// refresh generation metadata; the Engine retains verified immutable ANN segments
+/// across refreshes. Source edits are caught by the final source read.
 pub struct QueryRuntime {
     pub profile: Arc<SemanticProfile>,
     tokenizer: DocumentTokenizer,
@@ -472,23 +1182,38 @@ impl QueryRuntime {
         development: bool,
     ) -> Result<Self, ProviderError> {
         let profile = Arc::new(SemanticProfile::load(profile_path)?);
-        #[cfg(target_os = "macos")]
+        Self::acquire_profile(profile, development, None)
+    }
+
+    pub(crate) fn acquire_profile(
+        profile: Arc<SemanticProfile>,
+        development: bool,
+        reservation: Option<crate::model_resources::Reservation>,
+    ) -> Result<Self, ProviderError> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
+            let control = Control::unbounded()
+                .bounded_by(Instant::now() + Duration::from_secs(profile.load_timeout_seconds));
+            let artifacts = Arc::new(profile.verified_artifacts_until(&control)?);
+            let tokenizer = DocumentTokenizer::load_verified(&profile, &artifacts)?;
             let for_worker = Arc::clone(&profile);
-            Self::start(
+            Self::start_tokenized(
                 profile,
                 Box::new(move || {
-                    crate::neural::supervisor::acquire_until(
+                    crate::neural::supervisor::acquire_verified_until(
                         &for_worker,
+                        &artifacts,
                         development,
-                        &Control::unbounded(),
+                        &control,
                     )
                 }),
+                tokenizer,
+                reservation,
             )
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
-            let _ = (profile, development);
+            let _ = (profile, development, reservation);
             Err(ProviderError::IsolationUnavailable(
                 "no accepted isolation profile admits model execution on this platform".into(),
             ))
@@ -498,6 +1223,24 @@ impl QueryRuntime {
     /// Start a runtime over `make` (the supervised worker, or a test
     /// provider). Blocks until the provider is built or refused.
     pub fn start(profile: Arc<SemanticProfile>, make: MakeProvider) -> Result<Self, ProviderError> {
+        Self::start_reserved(profile, make, None)
+    }
+
+    pub(crate) fn start_reserved(
+        profile: Arc<SemanticProfile>,
+        make: MakeProvider,
+        reservation: Option<crate::model_resources::Reservation>,
+    ) -> Result<Self, ProviderError> {
+        let tokenizer = DocumentTokenizer::load(&profile)?;
+        Self::start_tokenized(profile, make, tokenizer, reservation)
+    }
+
+    fn start_tokenized(
+        profile: Arc<SemanticProfile>,
+        make: MakeProvider,
+        tokenizer: DocumentTokenizer,
+        reservation: Option<crate::model_resources::Reservation>,
+    ) -> Result<Self, ProviderError> {
         let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
         let (ready_tx, ready_rx) =
             mpsc::channel::<Result<(String, Option<LateCall>), ProviderError>>();
@@ -506,6 +1249,9 @@ impl QueryRuntime {
         let thread = std::thread::Builder::new()
             .name("foundry-query-provider".into())
             .spawn(move || {
+                // Declared before the provider: released only AFTER its drop
+                // stops/reaps the process, even if the owner abandons a call.
+                let _reservation = reservation;
                 let mut provider = match make() {
                     Ok(provider) => {
                         let _ = ready_tx
@@ -552,7 +1298,6 @@ impl QueryRuntime {
                 ));
             }
         };
-        let tokenizer = DocumentTokenizer::load(&profile)?;
         Ok(Self {
             profile,
             tokenizer,
@@ -623,7 +1368,12 @@ impl QueryRuntime {
     pub fn embed(&self, query: &str, deadline: Instant) -> Result<Vec<f32>, ProviderError> {
         let _dispatching = Dispatching::enter(self);
         let _ = neural_fault!(QUERY_REGISTERED, None, query);
-        let input = tokenize_query(&self.tokenizer, &self.profile.query_template, query)?;
+        let input = tokenize_query_with_limit(
+            &self.tokenizer,
+            &self.profile.query_template,
+            query,
+            self.profile.descriptor.input_limits().tokens,
+        )?;
         let now = Instant::now();
         let ceiling = now + QUERY_CEILING.min(deadline.saturating_duration_since(now) / 2);
         if Instant::now() >= ceiling {
@@ -692,6 +1442,24 @@ impl QueryRuntime {
         Ok(DocumentCall { answer })
     }
 
+    pub(crate) fn admit_knowledge(&self) -> Result<KnowledgeCall, ProviderError> {
+        let _admission = self.admission();
+        if self.dispatching.load(Ordering::SeqCst) > 0 {
+            return Err(ProviderError::Busy);
+        }
+        {
+            let mut slot = self.slot.lock();
+            if slot.holder.is_some() || slot.waiter {
+                return Err(ProviderError::Busy);
+            }
+            slot.holder = Some(Holder::Knowledge);
+        }
+        self.probe_late_call("knowledge")?;
+        Ok(KnowledgeCall {
+            slot: self.slot.clone(),
+        })
+    }
+
     /// Claim a free slot for a document batch, never waiting: the slot
     /// FIRST, then the provider's late call ([`Self::probe_late_call`]). A
     /// slot that is held, or promised to a waiting query, is `Busy`.
@@ -722,7 +1490,7 @@ impl QueryRuntime {
             let mut slot = self.slot.lock();
             match (slot.holder, slot.waiter) {
                 (None, false) => {}
-                (Some(Holder::Documents), false) => {
+                (Some(Holder::Documents | Holder::Knowledge), false) => {
                     slot.waiter = true;
                     // The ceiling is read again after every reacquisition and
                     // right before the claim: a batch that ended after the
@@ -770,6 +1538,12 @@ impl QueryRuntime {
         Ok(())
     }
 
+    /// An external generation request owns the client admission slot. The
+    /// semantic driver can start and wait on shared background admission.
+    pub(crate) fn knowledge_occupied(&self) -> bool {
+        self.slot.lock().holder == Some(Holder::Knowledge)
+    }
+
     /// True while the one model slot is held by a call that has not actually
     /// ended (the provider's late call included), or a foreground query is
     /// being dispatched. The slot is read before the late call, in the order
@@ -800,33 +1574,41 @@ impl QueryRuntime {
         &self.tokenizer
     }
 
-    /// Drop the loaded dense index after a new generation was published; the
-    /// next request validates and loads the new one.
+    /// Refresh generation metadata after publication. The Engine retains at
+    /// most two verified immutable segments for reuse by the next request.
     pub fn forget_index(&self) {
         if let Ok(mut slot) = self.index.lock() {
             *slot = None;
         }
     }
 
-    /// The validated dense index of `engine`, loaded once and kept until
-    /// [`Self::forget_index`]. A store prepared for another profile is refused
+    /// Reuse the generation while its owner, prepared identity and manifest
+    /// version remain current. A store prepared for another profile is refused
     /// by name HERE, before any query embedding is spent.
     fn dense_index(&self, engine: &Engine, control: &Control) -> Result<Arc<DenseIndex>, Fallback> {
         let mut slot = self
             .index
             .lock()
             .map_err(|_| Fallback::new("internal", "the dense index lock was poisoned"))?;
-        if let Some(index) = slot.as_ref() {
+        control.check()?;
+        if let Some(index) = slot.as_ref()
+            && index
+                .owner
+                .as_ref()
+                .is_some_and(|owner| Arc::ptr_eq(owner, &engine.semantic_wake))
+            && engine.semantic_identity()?.as_ref() == Some(&index.identity)
+            && index
+                .receipt
+                .current(&engine.semantic_anchor()?, &index.identity.digest)
+        {
             return Ok(Arc::clone(index));
         }
+        *slot = None;
         let profile = &self.profile;
         let loaded = DenseIndex::load(
             engine,
             &profile.descriptor.digest(),
-            &crate::neural::partition::recipe_id(
-                &profile.descriptor.tokenizer,
-                profile.card_tokens,
-            ),
+            &profile.recipe_id(),
             profile.descriptor.dims(),
             control,
         )?;
@@ -853,7 +1635,13 @@ impl QueryRuntime {
         let vector = self.embed(query, deadline)?;
         control.check()?;
         let hits = generation.search(&vector, DENSE_WINDOW)?;
-        Ok(DenseWindow { hits, generation })
+        let areas = super::area::search(engine, &self.profile, &vector, control)?;
+        Ok(DenseWindow {
+            hits,
+            generation,
+            vector,
+            areas,
+        })
     }
 
     /// The function digest of the serving profile, for identity checks
@@ -873,6 +1661,366 @@ mod tests {
     use super::*;
     use crate::neural::provider::FunctionDescriptor;
     use std::sync::atomic::AtomicBool;
+
+    fn callable_owner(start: u64, end: u64) -> OwnerScope<'static> {
+        OwnerScope {
+            source_hash: "current",
+            start,
+            end,
+            proof: OwnerProof::Callable {
+                kind: "fn",
+                head: start,
+                document: (start, end),
+            },
+        }
+    }
+
+    #[test]
+    fn owners_narrow_nested_discoveries_but_preserve_disjoint_scopes_and_exact_bodies() {
+        let scopes = [
+            OwnerScope {
+                source_hash: "current",
+                start: 0,
+                end: 200,
+                proof: OwnerProof::Parent {
+                    input_key: "published_parent",
+                },
+            },
+            callable_owner(10, 60),
+            callable_owner(100, 150),
+            callable_owner(10, 60),
+        ];
+        let parents = [(0, 200, "published_parent")].into();
+        let result =
+            refinement_scopes(&scopes, "current", 300, &parents, &Control::unbounded()).unwrap();
+        assert_eq!(result.ranges, [(10, 60), (100, 150)]);
+        assert_eq!(result.valid, 4);
+        assert_eq!(result.narrowed, 1);
+        assert!(result.contains(10, 60));
+        assert!(result.contains(110, 130));
+        assert!(!result.contains(60, 100), "the gap is not an owner");
+        assert!(
+            !result.contains(0, 30),
+            "overlap cannot clip an embedded body"
+        );
+        assert!(
+            !result.contains(50, 110),
+            "two owners cannot combine into a new span"
+        );
+        let reversed: Vec<_> = scopes.into_iter().rev().collect();
+        let replay =
+            refinement_scopes(&reversed, "current", 300, &parents, &Control::unbounded()).unwrap();
+        assert_eq!(replay.ranges, result.ranges);
+    }
+
+    #[test]
+    fn stale_malformed_and_unpublished_owner_proofs_cannot_narrow_refinement() {
+        let scopes = [
+            OwnerScope {
+                source_hash: "old",
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                start: 70,
+                end: 60,
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                end: 301,
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                proof: OwnerProof::Callable {
+                    kind: "section",
+                    head: 10,
+                    document: (10, 60),
+                },
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                proof: OwnerProof::Callable {
+                    kind: "method",
+                    head: 61,
+                    document: (10, 60),
+                },
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                proof: OwnerProof::Callable {
+                    kind: "fn",
+                    head: 10,
+                    document: (10, 70),
+                },
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                proof: OwnerProof::Parent {
+                    input_key: "wrong_key",
+                },
+                ..callable_owner(10, 60)
+            },
+            OwnerScope {
+                proof: OwnerProof::Parent {
+                    input_key: "published_parent",
+                },
+                ..callable_owner(10, 59)
+            },
+        ];
+        let parents = [(10, 60, "published_parent")].into();
+        let result =
+            refinement_scopes(&scopes, "current", 300, &parents, &Control::unbounded()).unwrap();
+        assert!(
+            result.ranges.is_empty(),
+            "the old bounded file fallback remains available"
+        );
+        assert_eq!(result.stale, 1);
+        assert_eq!(result.invalid, 7);
+        assert_eq!(result.valid, 0);
+        let parent = OwnerScope {
+            proof: OwnerProof::Parent {
+                input_key: "published_parent",
+            },
+            ..callable_owner(10, 60)
+        };
+        assert_eq!(
+            refinement_scopes(&[parent], "current", 300, &parents, &Control::unbounded())
+                .unwrap()
+                .ranges,
+            [(10, 60)]
+        );
+        assert!(refinement_scopes(&[], "current", 300, &parents, &Control::cancelled()).is_err());
+    }
+
+    #[test]
+    fn overlapping_nonnested_owner_claims_fall_back_instead_of_widening() {
+        let scopes = [callable_owner(10, 80), callable_owner(60, 100)];
+        let result = refinement_scopes(
+            &scopes,
+            "current",
+            300,
+            &Default::default(),
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert!(result.conflict);
+        assert!(result.ranges.is_empty());
+    }
+
+    #[test]
+    fn refinement_working_set_is_fair_deduplicated_bounded_and_cancellable() {
+        use std::collections::VecDeque;
+        let queues: Vec<VecDeque<_>> = (0..80)
+            .map(|path| (0..100).map(|ordinal| path * 100 + ordinal).collect())
+            .collect();
+        let (labels, truncated) =
+            refinement_working_set(queues, 4096, &Control::unbounded()).unwrap();
+        assert_eq!(labels.len(), 4096);
+        assert!(truncated);
+        assert_eq!(
+            labels
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            4096
+        );
+        let mut counts = [0usize; 80];
+        for label in labels {
+            counts[label / 100] += 1;
+        }
+        assert!(counts.iter().all(|&count| count == 51 || count == 52));
+        let shared = vec![VecDeque::from([1, 2, 3]), VecDeque::from([1, 2, 4])];
+        assert_eq!(
+            refinement_working_set(shared.clone(), 4, &Control::unbounded()).unwrap(),
+            (vec![1, 2, 3, 4], false)
+        );
+        assert_eq!(
+            refinement_working_set(shared, 3, &Control::unbounded()).unwrap(),
+            (vec![1, 2, 3], true)
+        );
+        assert!(
+            refinement_working_set(vec![VecDeque::from([1])], 4096, &Control::cancelled()).is_err()
+        );
+        assert_eq!(
+            refinement_working_set(vec![VecDeque::new(); 80], 4096, &Control::unbounded()).unwrap(),
+            (vec![], false)
+        );
+    }
+
+    #[test]
+    fn refinement_window_backfills_after_file_quota_without_growing_the_window() {
+        let locations: Vec<_> = (0..140)
+            .map(|label| UnitLocation {
+                kind: super::super::cache::CardKind::Body,
+                path: if label < 64 {
+                    "src/repeated.rs".into()
+                } else {
+                    format!("src/independent_{label:03}.rs")
+                },
+                start: (label * 8) as u64,
+                end: (label * 8 + 8) as u64,
+                source_sha256: "ab".repeat(32),
+            })
+            .collect();
+        let hits = || {
+            (0..locations.len())
+                .map(|label| DenseHit {
+                    label,
+                    distance: label as f32 / 1000.0,
+                })
+                .collect()
+        };
+        let joined = || {
+            locations
+                .iter()
+                .enumerate()
+                .map(|(label, location)| (label, vec![location]))
+                .collect()
+        };
+        let mut stats = RefinementStats::default();
+        let selected =
+            refinement_candidate_window(hits(), joined(), &mut stats, &Control::unbounded())
+                .unwrap();
+        // Truncating the raw scores to 64 first would yield only four useful
+        // candidates, all from repeated.rs, after the ordinary file cap.
+        assert_eq!(selected.len(), DENSE_WINDOW);
+        let expected: Vec<_> = (0..crate::store::PER_FILE_CAP).chain(64..124).collect();
+        assert_eq!(
+            selected.iter().map(|hit| hit.hit.label).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(stats.labels_examined, 124);
+        assert_eq!(stats.quota_skipped_locations, 60);
+        assert_eq!(stats.retained_locations, 64);
+        assert_eq!(stats.duplicate_locations, 0);
+        assert!(
+            !stats.truncated,
+            "this is the existing delivery quota, not an examination limit"
+        );
+        let replay = refinement_candidate_window(
+            hits(),
+            joined(),
+            &mut RefinementStats::default(),
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert_eq!(
+            replay.iter().map(|hit| hit.hit.label).collect::<Vec<_>>(),
+            expected
+        );
+        assert!(
+            refinement_candidate_window(
+                hits(),
+                joined(),
+                &mut RefinementStats::default(),
+                &Control::cancelled()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn refinement_window_caps_shared_locations_individually_and_deduplicates_spans() {
+        let locations: Vec<_> = ["a", "a", "a", "a", "a", "b", "b", "b", "b", "b", "c"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, path)| UnitLocation {
+                kind: super::super::cache::CardKind::Body,
+                path: format!("src/{path}.rs"),
+                start: (index * 8) as u64,
+                end: (index * 8 + 8) as u64,
+                source_sha256: "ab".repeat(32),
+            })
+            .collect();
+        let joined = [
+            (0, locations[..4].iter().collect()),
+            (1, locations[4..10].iter().collect()),
+            (2, vec![&locations[10]]),
+            (3, vec![&locations[0], &locations[10]]),
+        ]
+        .into();
+        let hits = (0..4)
+            .map(|label| DenseHit {
+                label,
+                distance: label as f32,
+            })
+            .collect();
+        let mut stats = RefinementStats::default();
+        let selected =
+            refinement_candidate_window(hits, joined, &mut stats, &Control::unbounded()).unwrap();
+        assert_eq!(
+            selected.iter().map(|hit| hit.hit.label).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert_eq!(selected[1].locations.len(), crate::store::PER_FILE_CAP);
+        assert!(
+            selected[1]
+                .locations
+                .iter()
+                .all(|location| location.path == "src/b.rs")
+        );
+        assert_eq!(stats.retained_locations, 9);
+        assert_eq!(stats.quota_skipped_locations, 2);
+        assert_eq!(stats.duplicate_locations, 2);
+        assert_eq!(stats.labels_examined, 4);
+    }
+
+    #[test]
+    fn ordinary_provenance_is_bounded_fair_filtered_and_cancellable() {
+        let location = |path: String| UnitLocation {
+            kind: super::super::cache::CardKind::Body,
+            path,
+            start: 0,
+            end: 8,
+            source_sha256: "ab".repeat(32),
+        };
+        let shared: Vec<_> = (0..10_000)
+            .map(|i| location(format!("src/mirror_{i:05}.rs")))
+            .collect();
+        let independent = vec![
+            location("src/independent_a.rs".into()),
+            location("src/independent_b.rs".into()),
+        ];
+        let bounded = bounded_unit_locations(
+            vec![&shared, &independent],
+            None,
+            4096,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert_eq!(bounded.available, 10_002);
+        assert_eq!(bounded.items.len(), 4096);
+        assert!(bounded.truncated);
+        assert_eq!(
+            bounded.items.iter().filter(|(rank, _)| *rank == 1).count(),
+            2
+        );
+        assert_eq!(bounded.items[1].1.path, "src/independent_a.rs");
+        let filtered = bounded_unit_locations(
+            vec![&shared],
+            Some("src/mirror_09999.rs"),
+            4096,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert_eq!(filtered.items.len(), 1);
+        assert_eq!(filtered.items[0].1.path, "src/mirror_09999.rs");
+        assert!(!filtered.truncated);
+        let paths: Vec<_> = ["a", "a-b", "a.rs", "a/x", "a/x/z", "ab", "b"]
+            .into_iter()
+            .map(|path| location(path.into()))
+            .collect();
+        let filtered =
+            bounded_unit_locations(vec![&paths], Some("a"), 4096, &Control::unbounded()).unwrap();
+        assert_eq!(
+            filtered
+                .items
+                .iter()
+                .map(|(_, unit)| unit.path.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "a/x", "a/x/z"]
+        );
+        assert!(bounded_unit_locations(vec![&shared], None, 4096, &Control::cancelled()).is_err());
+    }
 
     fn unit_vector() -> Vec<f32> {
         let mut vector = vec![0f32; crate::testkit::FIXTURE_DIMENSIONS as usize];
@@ -1029,6 +2177,41 @@ mod tests {
                 None => panic!("the document call never ended"),
             }
         }
+    }
+
+    #[test]
+    fn knowledge_admission_defers_to_queries_and_keeps_document_calls_exclusive() {
+        let fixture = Fixture::new(false);
+        let knowledge = fixture.runtime.admit_knowledge().unwrap();
+        assert!(matches!(
+            fixture
+                .runtime
+                .dispatch_documents(one_input(), Control::unbounded()),
+            Err(ProviderError::Busy)
+        ));
+        let query = fixture.query();
+        fixture.until_waiting();
+        assert!(matches!(
+            fixture.runtime.admit_knowledge(),
+            Err(ProviderError::Busy)
+        ));
+        drop(knowledge);
+        assert_eq!(query.join().unwrap(), Ok(unit_vector()));
+        let documents = fixture.batch_in_flight();
+        assert!(matches!(
+            fixture.runtime.admit_knowledge(),
+            Err(ProviderError::Busy)
+        ));
+        fixture.release.send(()).unwrap();
+        Fixture::documents_done(&documents);
+        fixture.late.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            fixture.runtime.admit_knowledge(),
+            Err(ProviderError::Busy)
+        ));
+        fixture.late.store(false, Ordering::SeqCst);
+        drop(fixture.runtime.admit_knowledge().unwrap());
+        assert!(!fixture.runtime.occupied());
     }
 
     #[test]

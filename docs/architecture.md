@@ -1,13 +1,33 @@
 # Architecture
 
-Status: 001 and 003 T001–T003 implemented and verified locally, 2026-10-01
-([validation](validation.md)); not released. The token-economics tranche (001
-T004–T006, 003 T005, 007 T001) was approved on 2026-10-03. 001 T004–T006 are locally
-implemented, accepted at the reviewer's SHIP and committed (`5edf32c`), unreleased;
-003 T005 (usage import, economics tests, operator hook) and 007 T001 were implemented
-and accepted on 2026-10-04, committed locally (`5e99ffd`, `cc402e0`) and unreleased.
-Other capabilities are proposed as marked below. This is a design and ownership
-contract, not a performance claim.
+Experimental branch update (2026-10-09): schema 7 adds one bounded `task_context`
+record table and a monotonic revision counter in the existing redb owner. Explicit
+CLI/opt-in MCP operations retain task evidence, edit reversible views, advise on exact
+repeated failures and promote selected decisions into ordinary project memory. No
+worker, model call, source-index owner or host-conversation rewrite is added. See the
+[experimental workflow](experimental-context.md) and 008 T003/T004 / 003 T007.
+
+Task-aware retrieval (008 T005 / 003 T008) validates the selected task revision and
+source evidence in one primary-store read, packs them under one delivery budget and
+retains ordinary per-root snapshots for multi-root queries. Recovery search scans
+one bounded task's original observations; it adds no index or schema change.
+
+Status reconciled 2026-10-09: the [spec portfolio](../specs/README.md) and
+[validation](validation.md) record implemented/accepted 001, 003, 005, 007 and 008
+work and 009's development acceptance. Gemma is the selected semantic profile;
+semantic retrieval remains optional and off by default, with installed-artifact
+checks pending signing. 013 is frozen off and excluded from the release package.
+The product is not released. This is a design and ownership contract, not a
+performance claim; historical decisions below remain subordinate to the current
+owning spec's amendments.
+
+The [context ecosystem plan](context-ecosystem-plan.md) proposes retrieval repairs
+first, followed by task state, reversible working context and memory lifecycle work.
+The owner activated the first retrieval tranche on 2026-10-09. Bounded diagnostic
+capture and experimental behavioral packing are implemented locally, with the
+candidate default off and quality measurements pending. The experimental branch also
+implements task-state, reversible views, exact-failure reminders and explicit decision
+promotion; applied host control and broader intervention policies remain future work.
 
 The [spec portfolio](../specs/README.md) now owns planned capability sequencing;
 the [constitution](../.specify/memory/constitution.md) owns evidence policy. Sections
@@ -21,10 +41,10 @@ source spans and useful relationships, with citations, freshness, and explicit
 limits. Updates replace a source's owned content atomically. Models can improve
 selection but cannot decide whether a source exists or rewrite source truth.
 
-The product is intended to store explicit user memories and local task feedback.
-Feedback exists in the first slice; a separate user-memory service does not. Learning
-improves a bounded decision such as retrieval strategy; it does not create a new
-general agent or require training before the engine is useful.
+The product stores explicit scoped project memory (008) and local task feedback
+under the existing owner. Automatic transcript capture, task-state consolidation and
+model-written memory are not current 008 capabilities. Owned learning remains frozen
+research; retrieval does not require training.
 
 The agent integration (003, implemented and verified 2026-10-01) makes Foundry the
 first source-discovery route for explicitly admitted repositories, before grep/ripgrep.
@@ -33,8 +53,8 @@ The existing adapter owns
 small project guidance, ordinary tools and real-host acceptance. MCP availability
 alone proves neither adoption nor enforced routing. Exact-pattern/live-file checks
 retain their host tools; no shell interception, discovery daemon or model dependency
-is introduced. Launch-time multi-root context is approved in
-[007](../specs/007-multi-workspace-context/spec.md) (2026-10-03, not implemented);
+is introduced. Launch-time multi-root context is implemented and locally accepted in
+[007](../specs/007-multi-workspace-context/spec.md) (2026-10-04);
 cross-repository graph joins are still not planned.
 
 ## Sophisticated behavior through simple ownership
@@ -183,7 +203,7 @@ for inferred ownership, root overlap, cleanup and consent across unrelated repos
 The selected interface reuses explicit `index` and query operations against one
 bound store. The caller chooses B's separate store when B needs durable retrieval;
 query text never changes A's ownership. On 2026-10-03 the owner reactivated
-[007](../specs/007-multi-workspace-context/spec.md) (approved, not implemented): the
+[007](../specs/007-multi-workspace-context/spec.md) (implemented and accepted 2026-10-04): the
 operator may admit B as a reference when launching A's owner, and one search/context
 call then merges A's and B's rankings into one cited, budgeted response, each root
 keeping its own store, revision and handles. Admission stays explicit and launch-only;
@@ -204,13 +224,21 @@ one canonical root is bound per store; names are enumerated by the pathname walk
 which skips symlinks, and bytes are read root-relative with no-follow opening of each
 file and its ancestors, so a file or ancestor replaced after enumeration is refused by
 name (`source_changed` or `unsafe_source_path`) and the prior accepted record is kept.
+The experimental ingestion pipeline reads/hashes up to eight candidates ahead,
+then rechecks held/named versions and accepts them in walker order on the one writer.
+One retained CPU pool serves ingestion and lexical builds; periodic lexical pages
+publish before the scan ends. Source/pending transactions and incomplete-scan
+deletion rules retain their existing owner. See the
+[parallel-indexing contract](../specs/001-source-state-recovery/contracts/context-v2.md#parallel-indexing)
+for payload bounds, early publication and interruption behavior.
 Accepted limitation: a same-user process that substitutes a directory and restores it
 within one enumeration can make that scan miss names and retire their records until the
 next complete scan; no outside bytes are read. 001 records the
 [limitation and its re-entry condition](../specs/001-source-state-recovery/spec.md#reconciliation-rules-and-limits),
 and the scan is not described as rename-proof. A shell `cd` or session
-mention cannot rebind a store. There is no watcher in the prototype; if later needed,
-it supplies change hints to the same ingestion owner for that root. It does not own
+mention cannot rebind a store. Experimental 001 T011 adds opt-in `mcp --watch`
+change hints to the same ingestion owner for that root, with bounded coalescing,
+scoped updates, restart/overflow reconciliation and foreground priority. It does not own
 a second truth ledger or discover roots. Source bookkeeping, rebuildable derived
 indexes and consented training manifests have distinct purposes; none authorizes the
 other’s work. No globally atomic multi-repo snapshot is promised.
@@ -280,7 +308,9 @@ manifest and frozen-copy importer), `memory` (008), `neural` (009: partition, ca
 USearch generations, bounded preparation, status, the provider/frame/profile contract
 and the supervised embedding worker), `cli` (core commands), and the 003 adapter:
 `mcp`, `bootstrap`, `config`, `receipts`, `adapter_cli`, `adapter_error`, `gateway`.
-The `foundry-embed` worker binary builds only with the `embed-worker` feature; the
+The `foundry-embed` worker binary builds only with `embed-worker`; the owned decoder
+`foundry-generate` builds only with `generate-worker`. Both share the pinned llama.cpp
+build without linking it into the core. The
 `semantic` feature (default) gates the core's tokenizer and USearch dependencies.
 `fault`/`testkit` compile only under the test feature;
 fault arming lives in a separate test binary. CLI and MCP call the same library API;
@@ -317,44 +347,100 @@ serving owner's background preparation of its primary root (one driver, one resi
 model worker, store steps under the engine slot, inference outside it), and `status`
 reports it in a `semantic` object; there is no separate preparation tool.
 
+Experimental 009 T006 splits semantic partition work into bounded source snapshots,
+parallel CPU computation and source-hash-checked commits. At most eight verified
+source bodies (16 MiB of input) enter a wave, with at most eight CPU workers.
+Tokenization holds neither a store transaction nor the MCP engine slot; acceptance
+still refuses changed/deleted inputs. Model inference keeps its existing admission
+rules. Experimental 009 T007 interleaves partition/select/embed waves, alternates
+explicit priority scopes with the ordinary walk, and publishes the first accepted
+batch before unprepared sources are visited. Mapping publication walks prepared
+rows; geometric growth amortizes full USearch builds without a new segment format.
+One prefetch can prepare one more wave while the provider runs. Bounded pending
+keys prevent duplicate calls where priority/background waves overlap. Contended
+turns keep a scalar next-card position, revalidated against source hash, recipe and
+function identity. One transient cache shared by the run/pass may retain up to
+32 paused hierarchy plans under a global 16 MiB retained-payload cap; it retains
+no token arrays. Eviction preserves scalar progress, identity changes restart the
+source, and exit drops the cache. This bound is additional to the active wave and
+prefetch, not a whole-process RAM limit. Status exposes partial coverage and stage
+accounting; exact-profile durable cache reuse survives restart.
+See [usage and limits](experimental-context.md#progressive-semantic-bootstrapping).
+
+The owner's 2026-10-09 scale direction also reactivates 010 for source-bound LLM
+briefs and area summaries. T001 now implements explicit structured-brief import,
+source-hash invalidation and anchorless lexical discovery in schema 8. One
+`source_briefs` table shares the existing source authority and derived search index;
+context delivers original source before optional labeled derived orientation under
+one budget. T002 now adds explicit HTTP/CLI generation over at most 128 selected nodes
+and four area levels. Schema 10 adds bounded atomic completion reuse and optional
+transitive child lineage to the same source/brief owner. Source hashes and accepted
+child-text identities govern area freshness; no corpus scan or new dependency database
+is required for preparation. MCP now runs the same pipeline with foreground-prioritized store steps, request
+rendering/tokenization and HTTP outside the engine slot, shared embedding/generation
+client admission and notification-driven idle waits. Derived context stays source-first
+and budgeted. `knowledge::local` now owns a pinned native decoder, bounded private pipes,
+verified file-backed artifact reuse and idle unload. Linux has descriptor-only seccomp
+isolation and hard CPU/address-space bounds; the macOS App Sandbox/Metal path has supervised
+footprint/allocation limits and still needs hardware acceptance. No second table or source
+owner is added. Opt-in `model_resources` now reserves combined worker ceilings, checks
+host/container memory headroom and evicts idle generation under pressure. CPU/global GPU,
+thermal and battery policies remain open. See
+[usage](experimental-context.md#owned-local-generation).
+Exact source/graph evidence, derived repository knowledge and explicit task memory
+have distinct provenance and invalidation rules. The
+[revised ecosystem design](context-ecosystem-plan.md#architecture-correction-useful-context-across-6000080000-files)
+defines progressive readiness, incremental watching, resource bounds, task evidence
+and complete-task economics, with a pinned Prakarana comparison.
+
 Exact paths and identifiers take precedence on locator queries. Lexical retrieval
-is always available. Neural preparation/reuse is now an active proposed workflow
-under 009: its former blanket deferral missed cold-start and repeat-compute costs.
-The prototype has no dense retrieval. Graph expansion enriches selected evidence
-rather than generating another long sequence of tool calls.
+is always available. Neural preparation/reuse and dense retrieval are implemented
+under 009. T004 supplies address cards through the llama.cpp worker and selects Gemma
+using the recorded G2/G1 checks; signed installed-artifact checks remain open.
+Graph expansion enriches selected evidence rather than generating another long
+sequence of tool calls.
+
+Experimental T009 adds an explicit body-v1 recipe: complete short units or bounded
+source windows, with a nearest-parent/header prefix and exact child provenance.
+The prefix changes the input/cache identity but creates no extra parent candidate.
+Optional versioned descriptor geometry binds per-input tokens, total call tokens and
+sequence capacity; legacy descriptors retain their exact identity and 2,048-token
+geometry. Both preparation paths pack by actual token totals, preserving foreground
+admission and one model slot. Source and response allowances remain independent.
+See [profile usage and limits](experimental-context.md#model-aware-bodyparent-chunking).
+Real-device long-context parity/quality and independent file/area representations
+remain open; current address-model acceptance does not cover this new recipe.
 
 ### Embedding models and the policy head have different jobs
 
-An embedding model supplies similarity candidates. The owned head chooses a retrieval strategy
-from permitted task feedback. Neither owns source admission or watchers; changing
+An embedding model supplies similarity candidates. The frozen research head can choose
+a retrieval strategy from permitted task feedback. Neither owns source admission or watchers; changing
 one model does not automatically retrain the other. ModernBERT policy identity binds
 its own tokenizer, weights, head and complete ordered decision input. Changing only
-Nemotron's query function does not invalidate that model artifact, although changed
+the embedding query function does not invalidate that model artifact, although changed
 retrieval evidence may change the policy input and workflow benefit. Prior quality
 results do not prove benefit for a changed workflow.
 
-The planned normal path is lexical plus available semantic candidates → deterministic
-merge/order (009 D001: exact definitions first, then reciprocal-rank fusion) → bounded
-graph expansion when selected → verbatim or deterministically outlined evidence and
-exact budget packing. The source owner validates freshness throughout. Keep the roles
-narrow:
+The current path follows 001 T007 and 009 T004. Anchored queries resolve definitions,
+directories and available doors without calling the embedding model. For anchorless
+queries with a prepared, explicitly enabled profile, dense candidates precede lexical
+candidates through the ordinary unit ladder; T004 replaced the earlier reciprocal-rank
+fusion. Evidence remains verbatim or deterministically outlined and exactly budgeted.
+The source owner validates freshness throughout. Proposed mixed-intent changes are
+owned by 001 T010; its implemented candidate is opt-in and not part of the default
+path. Keep the roles narrow:
 
 | Component | Responsibility | What does not follow from enabling it |
 | --- | --- | --- |
-| Nemotron embedding runtime | Similarity candidates from prepared source inputs | No automatic training, graph creation or mandatory second ranking model |
+| Selected Gemma embedding runtime | Similarity candidates from prepared source inputs | No automatic training, graph creation or mandatory second ranking model |
 | Core ranking and packer | Merge, deduplicate, order and deliver cited evidence | No learned-model requirement; truncation cannot masquerade as localization |
 | Compiler graph | Current supported definition/reference relationships | No vector per occurrence or autonomous producer execution |
-| Optional policy head | Learn whether graph expansion benefits a task | No passage reranking, chunk selection, embedder fine-tuning or source admission |
+| Frozen research policy head | Study whether graph expansion benefits a task | No released routing, passage reranking, chunk selection, embedder fine-tuning or source admission |
 
-Owned training remains a repeated isolated batch workflow with ModernBERT decision
-inputs, independent of 009 query vectors. Semantic preparation and the baseline
-release do not depend on training. Normal learned routing stays off; since 2026-10-06
-`learning select` accepts, and owner startup serves, a candidate only when its routed
-option gains required task-checker evidence over deterministic routing on more
-evaluation tasks than it loses (013); classifier-label eligibility and token savings
-alone are not that evidence. The visible `--lifecycle-check` override exists only for
-lifecycle and package verification and is not enablement.
-Explicit strategy requests and unavailable/stale graph skip the router entirely.
+013's retained training code is an isolated ModernBERT batch workflow, independent of
+009 query vectors, frozen off by the owner on 2026-10-07. It is not packaged or
+advertised. Reopening it requires an owner-selected task and evidence of improved
+task outcomes; classifier-label eligibility and token savings alone do not suffice.
 A future reranker belongs inside 009 only if a bounded candidate set already contains
 the required passages but ordering loses them after ordinary defects are corrected.
 It is not a remedy for missing input, cold preparation or excessively coarse units.
@@ -502,8 +588,11 @@ processes are not a supported serving topology; the optional shared HTTP owner (
 serves several MCP clients through that one owner. Do not add process retries and
 lock stealing as a substitute for one serving owner.
 
-The implemented store schema is version 6 (013 T001, 2026-10-05). `upgrade-store --to 6` is
-the one explicit transaction from v1–v5. It applies the v1→v2 revision/scan/repair
+The experimental store schema is version 12 (009 T008, 2026-10-10). `upgrade-store --to 12`
+is the one explicit transaction from v1–v11. Later steps preserve task state (v7),
+briefs (v8), changed-work queues (v9), generated-knowledge caching/lineage (v10) and
+add source/config-bound relationship scopes with key postings (v11) and disposable
+publication lookup/frontier tables (v12). It applies the v1→v2 revision/scan/repair
 metadata (001 T001); for v1 and v2 stores, the v3 steps (the memory table, its revision
 counter, and typed pending-index keys `source:`/`memory:`); for v1–v3, the v4 steps (the
 empty 005 compiler-fact tables). Every store then gains the empty 009 semantic tables
@@ -572,19 +661,19 @@ there is no bootstrap job database. Deployment specifies exact command/failure b
 [003's economics contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md)
 distinguishes CLI output, MCP delivery, host hooks and explicit request forwarding.
 The owner requested both delivery control and an owned gateway. The latter is an
-optional Rust command with no source-store access, one supported Responses HTTP/SSE
-protocol and private loopback authentication. It forwards completed host requests;
+optional Rust command with no source-store access, the supported OMP/Z.ai
+`glm-5.3-flash` OpenAI-compatible chat-completions/SSE profile and private loopback
+authentication (003 T004, accepted 2026-10-04). It forwards completed host requests;
 it does not inject context or rewrite warm prefixes. MCP alone cannot redirect them.
 Measuring provider usage needs no gateway: the approved `foundry usage import` reads
 the host's own session records (003 T005).
 
-Meter mode records actual usage. Enforce mode additionally verifies the complete
-input using the provider count endpoint and reserves input plus bounded output before
-generation. Missing counts refuse generation in that mode; missing terminal usage
-retains the reservation as unknown. No automatic retries, direct-upstream bypass or
-implied durable account-wide dollar cap. Credentials stay outside ML workers.
-Exact host/stream/tool-call compatibility needs 003 T004's real proof; subscription
-authentication, other provider dialects and invisible traffic are not presumed supported.
+Meter mode records actual usage. It is the only accepted gateway mode; `enforce`
+refuses at startup with `gateway_feature_unsupported`. Missing terminal usage remains
+unknown. No automatic retries, direct-upstream bypass or implied durable account-wide
+dollar cap. Credentials stay outside ML workers. T004's real-host proof applies to
+its pinned protocol; subscription authentication, other provider dialects and
+invisible traffic are not presumed supported.
 Preparation/training costs and all observed provider attempts matter to savings claims.
 
 ## Release discipline
@@ -620,3 +709,90 @@ those goals to independently usable releases.
 
 Library references: [redb](https://docs.rs/redb/4.3.0/redb/),
 [Tantivy](https://docs.rs/tantivy/0.26.2/tantivy/).
+
+The experimental schema-9 continuation adds independent bounded semantic and knowledge
+obligations to source transactions. The existing semantic preparation owner consumes
+exact changed paths only when continuous maintenance is explicitly enabled, waits on
+commit notifications when caught up, and acknowledges versions after publication.
+Ordinary status reads the last recorded publication and transactional cache totals;
+source/profile mismatch is stale or unknown, and full audit remains explicit.
+See [009 T008](../specs/009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work).
+Generation v5 retains one immutable ANN base and at most one bounded delta, committed
+through one atomic manifest. Immutable membership and location bases are reused; one
+location overlay holds at most 4,096 changes / 32 MiB. Location rebasing preserves both
+ANN segments. Queries filter retired keys before selecting their bounded windows.
+A bounded owner-local mapping view refreshes committed paths/cache keys. Persistent
+ordered maps share unchanged tree nodes across that view, publication and serving.
+Held-file receipts retain decoded metadata and two immutable USearch segments; refresh
+reads only new artifacts, with full independent validation on audit. Warm requests check
+owner, profile and manifest version. A transactional mapping revision lets an unchanged
+restart reuse its verified publication without a database mapping scan. Changed-input
+restart uses the matching durable lookup below; overflow, identity change and repair
+reconcile. Required cold reads and compaction remain corpus-sized. Selective LLM generation now uses the explicit 010 T002 CLI described
+above and opt-in continuous MCP maintenance, now with owned local generation and
+per-worker resource controls, shared memory admission and optional Linux host CPU
+pause/resume thresholds. Native/cgroup CPU policy, global GPU pressure, hardware
+acceptance and model task utility remain open.
+
+009 publication restart uses `neural/mapping_store.rs`: a disposable redb partition
+lookup, input-key reverse multimap and bounded changed-input frontier. Source, partition
+and cache publication update the frontier in the same transaction, including lexical-only
+builds. A checkpoint is reusable only with its independently verified generation revision
+and coverage. Small offline changes refresh affected rows; incomplete/interrupted or
+overflowed baselines reconcile from authoritative rows. No filesystem verification
+receipt is persisted. Full walks share one read snapshot per page; artifact verification
+joins at most four scoped hash workers, and ANN load hashes while reading its retained
+buffer in cancellation-aware MiB chunks.
+
+Cold source ingestion uses the existing read/parse pool and at most eight reads/results.
+The owner commits up to four supported files atomically, preserving per-source revisions
+and derivation obligations. Source counts advance after commit; failed groups roll back.
+Watcher updates remain single-path transactions. No new queue or thread pool is added.
+
+### Experimental boundary relationships and task composition
+
+[005 T005](../specs/005-graph-evidence-lifecycle/spec.md#t005--connect-repository-behavior-across-process-boundaries)
+uses two redb indexes in [`boundary.rs`](../src/boundary.rs): one source/config-bound
+scope and one normalized-key posting list. This avoids whole-producer replacement,
+compiler-fact misclassification and materialized endpoint pairs. The first producer
+parses explicitly admitted static FastAPI routes and literal HTTP clients. It reuses
+unchanged scopes, revalidates before atomic publication, and suppresses stale facts
+on every read. A bounded configured-set metadata check accounts for missing providers
+before any unique join. Extraction is explicit; source watching alone starts no boundary
+work. One explicitly enabled configuration can reuse the existing watcher for bounded
+file turns, unchanged-scope reuse, status and pause, without another thread or durable queue.
+
+[003 T009](../specs/003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task)
+uses [`task_evidence.rs`](../src/task_evidence.rs) to add bounded lexical task queries,
+source links, derived vocabulary and boundary traversal to one primary-store request.
+The final snapshot validates every dependency; [`response.rs`](../src/response.rs)
+computes coverage from the actual packed forms under one allowance. Caller assertions,
+syntactic relationships, source bodies and derived claims stay distinguishable.
+Missing/ambiguous evidence and discovery limits remain visible. No new worker, scheduler,
+model call, host-control claim or learned routing policy is introduced.
+
+Source ingestion also collects distinct terminal call names in its existing parse.
+The first search document per source owns the exact postings and syntax-recipe coverage.
+Task composition queries up to four canonical anchor names across the admitted index,
+reads at most nine posting documents, and selects at most eight source files for final
+hash and AST checks. It reuses compiler parses and obeys the existing span/output budget;
+it does not scan all repository bodies per query. Conservative Python module-level
+explicit from-import aliases enrich the same postings; shadowed, reassigned, escaped
+or duplicate aliases are refused. Wildcard imports, non-ASCII identifiers and bounded
+collector overflow suppress alias enrichment with incomplete coverage. The unresolved
+alias receipt requires fresh complete definition, import and call bodies to fit.
+Search schema 7 requires explicit `repair-index`, including from field-compatible
+schema 6 which lacks alias postings; source-unit schema 5 remains a separate
+semantic-recipe dependency. The fixed window has no pagination. Unsupported syntax and dynamic resolution remain
+open, and these candidates cannot establish complete callers or executed tests.
+
+Execution v2 stays in the existing graph-bundle owner. An explicit producer collection
+`(producer, scope)` carries a manifest validated atomically against the indexed source
+snapshot. Reads require its exact workspace/revision plus caller/target/test identities;
+any accepted source change conservatively invalidates that run. Legacy v1 receipts are
+explicitly endpoint-only. The importer neither executes nor attests the producer, and
+cannot detect unindexed filesystem changes or establish complete runtime inputs.
+Task execution lookup follows compiler/syntax discovery and remains bounded to eight
+paths, 128 examined graph rows and 16 observations. All three endpoint bodies must fit
+before delivery. See [005](../specs/005-graph-evidence-lifecycle/spec.md) for replacement,
+freshness and provenance details.

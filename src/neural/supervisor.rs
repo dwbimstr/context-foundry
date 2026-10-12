@@ -12,7 +12,7 @@ use super::profile::{SemanticProfile, control_stop, hash_regular_file_until};
 use super::protocol::{self, Header, Purpose};
 use super::provider::{
     DocumentLimits, EmbeddingProvider, FunctionDescriptor, LateCall, ProviderError, TokenizedInput,
-    check_document_batch, check_query,
+    check_document_batch, check_query_with_limit,
 };
 use super::worker_runtime;
 use crate::control::Control;
@@ -112,8 +112,26 @@ pub fn acquire_until(
                 .into(),
         ));
     }
-    let provider = WorkerProvider::launch_with(profile, &[], control)?;
+    let provider = WorkerProvider::launch_with(profile, &[], control, None)?;
     Ok(Box::new(provider))
+}
+
+pub fn acquire_verified_until(
+    profile: &SemanticProfile,
+    artifacts: &Arc<crate::neural::profile::VerifiedArtifacts>,
+    development: bool,
+    control: &Control,
+) -> Result<Box<dyn EmbeddingProvider>, ProviderError> {
+    if !development {
+        return Err(ProviderError::IsolationUnavailable(
+            "normal semantic admission stays closed until platform isolation acceptance; pass --development-isolation under the owner's authorization".into()));
+    }
+    Ok(Box::new(WorkerProvider::launch_with(
+        profile,
+        &[],
+        control,
+        Some(Arc::clone(artifacts)),
+    )?))
 }
 
 /// Create this run's private scratch directory under `root`, the profile's
@@ -438,6 +456,14 @@ pub fn child_setup_limited(
     read_fd: i32,
     limits: Vec<(libc::c_int, libc::rlim_t)>,
 ) -> impl FnMut() -> std::io::Result<()> + Send + Sync + 'static {
+    child_setup_with_fds(read_fd, limits, Vec::new())
+}
+
+fn child_setup_with_fds(
+    read_fd: i32,
+    limits: Vec<(libc::c_int, libc::rlim_t)>,
+    artifacts: Vec<i32>,
+) -> impl FnMut() -> std::io::Result<()> + Send + Sync + 'static {
     move || {
         if unsafe { libc::setpgid(0, 0) } != 0 {
             return Err(std::io::Error::last_os_error());
@@ -447,23 +473,30 @@ pub fn child_setup_limited(
                 rlim_cur: value,
                 rlim_max: value,
             };
-            if unsafe { libc::setrlimit(resource, &limit) } != 0 {
+            if unsafe { libc::setrlimit(resource as _, &limit) } != 0 {
                 return Err(std::io::Error::last_os_error());
             }
         }
-        let limit = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        if unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &limit) } != 0 {
-            return Err(std::io::Error::last_os_error());
+        // Linux counts threads against NPROC; its worker seccomp policy blocks
+        // process creation while permitting inference threads.
+        #[cfg(target_os = "macos")]
+        {
+            let limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &limit) } != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
         }
-        if unsafe { libc::fcntl(read_fd, libc::F_SETFD, 0) } == -1 {
-            return Err(std::io::Error::last_os_error());
+        for fd in std::iter::once(&read_fd).chain(artifacts.iter()) {
+            if unsafe { libc::fcntl(*fd, libc::F_SETFD, 0) } == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
         }
         let table = unsafe { libc::getdtablesize() };
         for fd in 3..table {
-            if fd == read_fd {
+            if fd == read_fd || artifacts.contains(&fd) {
                 continue;
             }
             let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
@@ -482,21 +515,26 @@ pub fn child_setup_limited(
 #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
 pub(crate) fn physical_footprint(pid: u32, fault_detail: &str) -> Result<u64, String> {
     neural_fault!(FOOTPRINT_MEASURE, None, fault_detail).map_err(|e| e.to_string())?;
-    let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v0>() };
-    let rc = unsafe {
-        libc::proc_pid_rusage(
-            pid as libc::pid_t,
-            libc::RUSAGE_INFO_V0,
-            std::ptr::addr_of_mut!(info).cast(),
-        )
-    };
-    if rc == 0 {
-        Ok(info.ri_phys_footprint)
-    } else {
-        Err(format!(
-            "proc_pid_rusage: {}",
-            std::io::Error::last_os_error()
-        ))
+    #[cfg(target_os = "linux")]
+    return crate::knowledge::local::resources::memory(pid).map_err(|e| e.to_string());
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v0>() };
+        let rc = unsafe {
+            libc::proc_pid_rusage(
+                pid as libc::pid_t,
+                libc::RUSAGE_INFO_V0,
+                std::ptr::addr_of_mut!(info).cast(),
+            )
+        };
+        if rc == 0 {
+            Ok(info.ri_phys_footprint)
+        } else {
+            Err(format!(
+                "proc_pid_rusage: {}",
+                std::io::Error::last_os_error()
+            ))
+        }
     }
 }
 
@@ -662,6 +700,10 @@ impl Caller<'_> {
 
 /// The supervised worker behind one admission slot.
 pub struct WorkerProvider {
+    artifacts: Option<(
+        SemanticProfile,
+        Arc<crate::neural::profile::VerifiedArtifacts>,
+    )>,
     shared: Arc<Shared>,
     descriptor: Arc<FunctionDescriptor>,
     /// The profile's document-call limits, checked before any request.
@@ -698,7 +740,7 @@ impl WorkerProvider {
         extra_args: Vec<String>,
         control: &Control,
     ) -> Result<Self, ProviderError> {
-        Self::launch_with(profile, &extra_args, control)
+        Self::launch_with(profile, &extra_args, control, None)
     }
 
     /// Verify the profile, every artifact (the GGUF and the tokenizer) and the
@@ -714,6 +756,7 @@ impl WorkerProvider {
         profile: &SemanticProfile,
         extra_args: &[String],
         control: &Control,
+        artifacts: Option<Arc<crate::neural::profile::VerifiedArtifacts>>,
     ) -> Result<Self, ProviderError> {
         let load_bound =
             Instant::now().checked_add(Duration::from_secs(profile.load_timeout_seconds));
@@ -739,12 +782,13 @@ impl WorkerProvider {
         profile.validate()?;
         worker_runtime::check_real_descriptor(&profile.descriptor)
             .map_err(ProviderError::ProfileInvalid)?;
-        profile.verify_artifacts_until(control)?;
-        let executable = profile
-            .worker
-            .bundle
-            .join("Contents/MacOS")
-            .join("foundry-embed");
+        let artifacts = match artifacts {
+            Some(artifacts) => artifacts,
+            None => Arc::new(profile.verified_artifacts_until(control)?),
+        };
+        artifacts.check(profile, control)?;
+        let model_fd = artifacts.model_fd(profile)?;
+        let executable = profile.worker.executable();
         let (sha, _) = hash_regular_file_until(&executable, control)?;
         if sha != profile.worker.executable_sha256 {
             return Err(ProviderError::ProfileInvalid(format!(
@@ -778,7 +822,17 @@ impl WorkerProvider {
             .arg("--descriptor")
             .arg(&descriptor_json)
             .arg("--model-dir")
-            .arg(&profile.model_dir);
+            .arg(&profile.model_dir)
+            .arg("--model-fd")
+            .arg(model_fd.to_string());
+        #[cfg(target_os = "linux")]
+        command
+            .arg("--memory-bytes")
+            .arg(profile.memory_ceiling_bytes.to_string())
+            .arg("--cpu-threads")
+            .arg(profile.cpu.threads.to_string())
+            .arg("--cpu-seconds")
+            .arg(profile.cpu.seconds.to_string());
         command.args(extra_args);
         command
             .current_dir(&scratch_dir)
@@ -794,7 +848,7 @@ impl WorkerProvider {
             .stderr(Stdio::piped());
         // SAFETY: `child_setup` calls only async-signal-safe functions
         // between fork and exec and takes no lock or allocation.
-        unsafe { command.pre_exec(child_setup(read_fd)) };
+        unsafe { command.pre_exec(child_setup_with_fds(read_fd, Vec::new(), vec![model_fd])) };
         // The caller's stop is checked again right before the worker starts:
         // scratch preparation (and its reclamation of dead runs) took time.
         if let Some(stop) = control_stop(control) {
@@ -1128,7 +1182,13 @@ impl WorkerProvider {
             provider.shutdown();
             return Err(stop);
         }
-        Ok(Self::assemble(shared, profile, vocab, scratch_dir, handles))
+        let mut provider = Self::assemble(shared, profile, vocab, scratch_dir, handles);
+        if let Err(error) = artifacts.check(profile, control) {
+            provider.shutdown();
+            return Err(error);
+        }
+        provider.artifacts = Some((profile.clone(), artifacts));
+        Ok(provider)
     }
 
     fn assemble(
@@ -1139,6 +1199,7 @@ impl WorkerProvider {
         handles: Vec<Option<std::thread::JoinHandle<()>>>,
     ) -> Self {
         Self {
+            artifacts: None,
             shared,
             descriptor: Arc::new(profile.descriptor.clone()),
             limits: profile.document_limits(),
@@ -1158,6 +1219,17 @@ impl WorkerProvider {
     /// True only after shutdown completed and the process was reaped.
     pub fn stopped(&self) -> bool {
         self.shared.stopped.load(Ordering::SeqCst) && self.shared.child_gone.load(Ordering::SeqCst)
+    }
+
+    fn check_artifacts(&mut self) -> Result<(), ProviderError> {
+        let result = match &self.artifacts {
+            Some((profile, artifacts)) => artifacts.check(profile, &Control::unbounded()),
+            None => Ok(()),
+        };
+        if result.is_err() {
+            self.shutdown();
+        }
+        result
     }
 
     /// Retained worker stderr, bounded by [`protocol::MAX_STDERR_BYTES`].
@@ -1492,14 +1564,17 @@ impl EmbeddingProvider for WorkerProvider {
         control: &Control,
     ) -> Result<Vec<Vec<f32>>, ProviderError> {
         check_document_batch(batch, self.limits)?;
-        self.request(
+        self.check_artifacts()?;
+        let result = self.request(
             Purpose::Document,
             batch,
             Caller {
                 deadline: None,
                 control: Some(control),
             },
-        )
+        );
+        self.check_artifacts()?;
+        result
     }
 
     fn embed_query(
@@ -1507,7 +1582,8 @@ impl EmbeddingProvider for WorkerProvider {
         input: &TokenizedInput,
         deadline: Instant,
     ) -> Result<Vec<f32>, ProviderError> {
-        check_query(input)?;
+        check_query_with_limit(input, self.descriptor.input_limits().tokens)?;
+        self.check_artifacts()?;
         let mut vectors = self.request(
             Purpose::Query,
             std::slice::from_ref(input),
@@ -1516,6 +1592,7 @@ impl EmbeddingProvider for WorkerProvider {
                 control: None,
             },
         )?;
+        self.check_artifacts()?;
         if vectors.len() != 1 {
             return Err(ProviderError::Malformed(format!(
                 "{} vectors for one query",

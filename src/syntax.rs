@@ -374,6 +374,14 @@ pub fn units(source: &str, lang: Lang) -> Vec<Unit> {
     analyze(source, lang, Need::Units).units
 }
 
+/// The same single-pass forest with a conservative proof that its parser did
+/// not recover errors or missing nodes. Unsupported, stopped and non-tree
+/// analyses have no such proof; callers must keep their ordinary fallback.
+pub(crate) fn units_with_certainty(source: &str, lang: Lang) -> (Vec<Unit>, bool) {
+    let analysis = analyze(source, lang, Need::Units);
+    (analysis.units, analysis.clean_tree)
+}
+
 /// What one parse collects besides the unit forest.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Need {
@@ -391,9 +399,12 @@ enum Need {
 #[derive(Default)]
 struct Analysis {
     units: Vec<Unit>,
+    clean_tree: bool,
     comments: Vec<(usize, usize)>,
     members: Vec<(usize, usize)>,
     imports: Vec<String>,
+    call_names: std::collections::BTreeSet<String>,
+    call_coverage: Option<&'static str>,
     stopped: Option<ParseStopped>,
 }
 
@@ -433,6 +444,10 @@ pub fn documents(source: &str, lang: Option<Lang>) -> Vec<Document> {
 pub struct SourceIndex {
     pub documents: Vec<Document>,
     pub imports: Vec<String>,
+    /// Exact terminal and supported explicit import-alias call names, never resolution.
+    pub call_names: Vec<String>,
+    /// Coverage of the supported syntax recipe only, never runtime coverage.
+    pub call_coverage: &'static str,
 }
 
 /// A parse stopped before it finished (context-v2 § Languages): by its work
@@ -491,6 +506,14 @@ pub fn index(source: &str, lang: Option<Lang>) -> Result<SourceIndex, ParseStopp
     Ok(SourceIndex {
         documents: tile(source, &analysis.units),
         imports,
+        call_names: analysis.call_names.into_iter().collect(),
+        call_coverage: analysis
+            .call_coverage
+            .unwrap_or(if lang.is_some_and(call_language) {
+                "incomplete"
+            } else {
+                "unsupported"
+            }),
     })
 }
 
@@ -905,6 +928,272 @@ impl<'a> Outliner<'a> {
     }
 }
 
+/// Supported call-name syntax. Other language parsers retain ordinary indexing.
+fn call_language(lang: Lang) -> bool {
+    matches!(
+        lang,
+        Lang::Rust | Lang::Python | Lang::Go | Lang::TypeScript | Lang::Tsx | Lang::JavaScript
+    )
+}
+
+pub(crate) fn call_target(mut n: tree_sitter::Node<'_>) -> tree_sitter::Node<'_> {
+    loop {
+        let field = match n.kind() {
+            "generic_function" => "function",
+            "scoped_identifier" => "name",
+            "field_expression" => "field",
+            "attribute" => "attribute",
+            "member_expression" => "property",
+            "selector_expression" => "field",
+            _ => return n,
+        };
+        match n.child_by_field_name(field) {
+            Some(next) => n = next,
+            None => return n,
+        }
+    }
+}
+
+/// Rust assertion macros keep their arguments as token trees. A name directly
+/// followed by parentheses is a useful unresolved candidate in these expression
+/// macros; strings, values passed as arguments and arbitrary macro DSLs are not.
+pub(crate) fn assertion_call(node: tree_sitter::Node<'_>, body: &str) -> Option<(usize, usize)> {
+    if node.kind() != "identifier" {
+        return None;
+    }
+    let arguments = node.next_named_sibling()?;
+    if arguments.kind() != "token_tree"
+        || !body[arguments.byte_range()].starts_with('(')
+        || !body[node.end_byte()..arguments.start_byte()]
+            .trim()
+            .is_empty()
+    {
+        return None;
+    }
+    let mut parent = node.parent();
+    while let Some(ancestor) = parent {
+        if ancestor.kind() == "macro_invocation" {
+            let name = ancestor.child_by_field_name("macro")?;
+            return [
+                "assert",
+                "assert_eq",
+                "assert_ne",
+                "debug_assert",
+                "debug_assert_eq",
+                "debug_assert_ne",
+            ]
+            .contains(&&body[name.byte_range()])
+            .then_some((node.start_byte(), arguments.end_byte()));
+        }
+        if ancestor.kind() != "token_tree" {
+            return None;
+        }
+        parent = ancestor.parent();
+    }
+    None
+}
+
+/// Use the ingestion walk's existing ancestry and previous sibling. Node's
+/// parent/sibling helpers can re-descend from the root; calling them per token
+/// would make deeply nested ingestion unnecessarily expensive. Nested macro
+/// token trees beyond this recipe's fixed depth remain visibly incomplete.
+fn indexed_assertion_call(
+    arguments: tree_sitter::Node<'_>,
+    previous: Option<tree_sitter::Node<'_>>,
+    ancestors: &[tree_sitter::Node<'_>],
+    body: &str,
+) -> (Option<String>, bool) {
+    let Some(name) = previous.filter(|node| node.kind() == "identifier") else {
+        return (None, false);
+    };
+    if arguments.kind() != "token_tree"
+        || !body[arguments.byte_range()].starts_with('(')
+        || !body[name.end_byte()..arguments.start_byte()]
+            .trim()
+            .is_empty()
+    {
+        return (None, false);
+    }
+    for ancestor in ancestors.iter().rev().take(32) {
+        if ancestor.kind() == "macro_invocation" {
+            let supported = ancestor.child_by_field_name("macro").is_some_and(|node| {
+                [
+                    "assert",
+                    "assert_eq",
+                    "assert_ne",
+                    "debug_assert",
+                    "debug_assert_eq",
+                    "debug_assert_ne",
+                ]
+                .contains(&&body[node.byte_range()])
+            });
+            return (supported.then(|| body[name.byte_range()].to_owned()), false);
+        }
+        if ancestor.kind() != "token_tree" {
+            return (None, false);
+        }
+    }
+    (None, ancestors.len() >= 32)
+}
+
+pub(crate) fn call_name<'t>(
+    node: tree_sitter::Node<'t>,
+    body: &str,
+) -> Option<tree_sitter::Node<'t>> {
+    if matches!(node.kind(), "call_expression" | "call") {
+        node.child_by_field_name("function").map(call_target)
+    } else {
+        assertion_call(node, body).map(|_| node)
+    }
+}
+
+/// A deliberately conservative Python alias recipe, shared by ingestion and
+/// final-snapshot candidate discovery. This does not resolve Python bindings.
+#[derive(Clone, Debug)]
+pub(crate) struct PythonImportAlias {
+    pub name: String,
+    pub declaration: (usize, usize),
+}
+
+#[derive(Default)]
+struct PythonImportAliases {
+    aliases: std::collections::BTreeMap<String, Option<PythonImportAlias>>,
+    declarations: std::collections::BTreeSet<(usize, usize)>,
+    other_names: std::collections::BTreeSet<String>,
+    calls: std::collections::BTreeMap<String, usize>,
+    limited: bool,
+}
+
+impl PythonImportAliases {
+    fn observe(&mut self, node: tree_sitter::Node, ancestors: &[tree_sitter::Node], body: &str) {
+        if self.limited {
+            return;
+        }
+        let parent = ancestors.last().copied();
+        if node.kind() == "wildcard_import" {
+            // A star import can introduce a conflicting name without spelling it.
+            self.limited = true;
+            return;
+        }
+        if node.kind() == "aliased_import"
+            && let Some(import) = parent.filter(|p| p.kind() == "import_from_statement")
+            && ancestors
+                .iter()
+                .rev()
+                .nth(1)
+                .is_some_and(|p| p.kind() == "module")
+            && let Some(name) = node.child_by_field_name("name")
+            && let Some(alias) = node.child_by_field_name("alias")
+        {
+            let original = &body[name.byte_range()];
+            let bound = &body[alias.byte_range()];
+            if original.contains('.') || original == bound {
+                return;
+            }
+            if self.declarations.len() == 128
+                || original.len() > 1024
+                || bound.len() > 1024
+                || !original.is_ascii()
+                || !bound.is_ascii()
+            {
+                self.limited = true;
+                return;
+            }
+            self.declarations
+                .insert((alias.start_byte(), alias.end_byte()));
+            self.aliases
+                .entry(bound.to_owned())
+                .and_modify(|old| *old = None)
+                .or_insert_with(|| {
+                    Some(PythonImportAlias {
+                        name: original.to_owned(),
+                        declaration: (import.start_byte(), import.end_byte()),
+                    })
+                });
+        }
+        if node.kind() != "identifier"
+            || self
+                .declarations
+                .contains(&(node.start_byte(), node.end_byte()))
+        {
+            return;
+        }
+        let name = &body[node.byte_range()];
+        if name.len() > 1024 || !name.is_ascii() {
+            // Python applies NFKC to identifiers. Refuse this narrow recipe
+            // rather than miss an equivalent Unicode shadowing spelling.
+            self.limited = true;
+            return;
+        }
+        let direct_call = parent
+            .is_some_and(|p| p.kind() == "call" && p.child_by_field_name("function") == Some(node));
+        if direct_call {
+            if self.calls.len() == 4096 && !self.calls.contains_key(name) {
+                self.limited = true;
+            } else {
+                self.calls.insert(name.to_owned(), node.start_byte());
+            }
+        } else if self.other_names.len() == 4096 && !self.other_names.contains(name) {
+            self.limited = true;
+        } else {
+            // Any other use refuses the alias for the entire source. This
+            // catches every explicit binding role, including parameters,
+            // comprehensions, assignments and nested imports, at the cost of
+            // refusing harmless ordinary value references and attribute names.
+            self.other_names.insert(name.to_owned());
+        }
+    }
+
+    fn finish(self) -> (std::collections::BTreeMap<String, PythonImportAlias>, bool) {
+        if self.limited {
+            return (Default::default(), true);
+        }
+        let aliases = self
+            .aliases
+            .into_iter()
+            .filter_map(|(bound, alias)| {
+                let alias = alias?;
+                (!self.other_names.contains(&bound)
+                    && self
+                        .calls
+                        .get(&bound)
+                        .is_some_and(|at| *at >= alias.declaration.1))
+                .then_some((bound, alias))
+            })
+            .collect();
+        (aliases, false)
+    }
+}
+
+pub(crate) fn python_import_aliases(
+    tree: &tree_sitter::Tree,
+    body: &str,
+    control: &crate::Control,
+) -> crate::FResult<(std::collections::BTreeMap<String, PythonImportAlias>, bool)> {
+    let mut aliases = PythonImportAliases::default();
+    let mut cursor = tree.walk();
+    let mut ancestors = Vec::new();
+    let mut visited = 0usize;
+    loop {
+        visited += 1;
+        if visited.is_multiple_of(256) {
+            control.check()?;
+        }
+        let node = cursor.node();
+        aliases.observe(node, &ancestors, body);
+        if cursor.goto_first_child() {
+            ancestors.push(node);
+            continue;
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return Ok(aliases.finish());
+            }
+            ancestors.pop();
+        }
+    }
+}
+
 /// The unit candidates of one parse; for an outline, also the comment and
 /// declaration-only member ranges it needs, and for indexing the import keys.
 /// A source over a [`ScannerLimit`] is stopped before the parser runs.
@@ -926,6 +1215,15 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
             return out;
         }
     };
+    extras.clean_tree = !tree.root_node().has_error();
+    let collect_calls = need == Need::Imports && call_language(lang) && extras.clean_tree;
+    if need == Need::Imports && call_language(lang) {
+        extras.call_coverage = Some(if collect_calls {
+            "complete"
+        } else {
+            "incomplete"
+        });
+    }
     // Iterative pre-order walk: error-recovered trees can be deep. The
     // ancestors of the current node are kept on the heap, because
     // `Node::parent` (and so `prev_sibling`) re-descends from the root. Per
@@ -936,11 +1234,16 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
     let mut ancestors: Vec<tree_sitter::Node> = Vec::new();
     let mut facts: Vec<Facts> = Vec::new();
     let mut runs: Vec<Vec<(tree_sitter::Node, Leading)>> = vec![Vec::new()];
+    let mut previous_named = vec![None];
+    let mut python_aliases = PythonImportAliases::default();
     'walk: loop {
         let node = cursor.node();
         // Units, members and imports are named nodes; keyword tokens such
         // as F#'s `namespace` or Haskell's `import` share their kind names.
         if node.is_named() {
+            if collect_calls && lang == Lang::Python {
+                python_aliases.observe(node, &ancestors, source);
+            }
             // A Rust declaration-only item is a unit and stays a mandatory
             // outline member, so outlines keep its lines as before.
             let at = Walk {
@@ -952,6 +1255,38 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
             candidates(&at, node, &runs, need, &mut out);
             if need == Need::Imports {
                 import_keys(lang, node, bytes, &mut extras.imports);
+                if collect_calls {
+                    let (name, incomplete) = if matches!(node.kind(), "call_expression" | "call") {
+                        (
+                            call_name(node, source)
+                                .map(|name| source[name.byte_range()].to_owned()),
+                            false,
+                        )
+                    } else if lang == Lang::Rust && node.kind() == "token_tree" {
+                        indexed_assertion_call(
+                            node,
+                            *previous_named.last().unwrap(),
+                            &ancestors,
+                            source,
+                        )
+                    } else {
+                        (None, false)
+                    };
+                    if incomplete {
+                        extras.call_coverage = Some("incomplete");
+                    }
+                    if let Some(name) = name {
+                        // One name per source, on its first search document.
+                        if name.len() > 1024
+                            || (extras.call_names.len() == 4096
+                                && !extras.call_names.contains(&name))
+                        {
+                            extras.call_coverage = Some("incomplete");
+                        } else {
+                            extras.call_names.insert(name);
+                        }
+                    }
+                }
             } else if need == Need::Outline {
                 if is_member_signature(&at, node) {
                     // A template wrapper's lines belong to the signature too.
@@ -963,8 +1298,10 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
                     extras.comments.push((node.start_byte(), node.end_byte()));
                 }
             }
+            *previous_named.last_mut().unwrap() = Some(node);
         }
         if cursor.goto_first_child() {
+            previous_named.push(None);
             facts.push(Facts::of(lang, node));
             ancestors.push(node);
             runs.push(Vec::new());
@@ -987,9 +1324,23 @@ fn tree_units(source: &str, lang: Lang, need: Need, extras: &mut Analysis) -> Ve
             ancestors.pop();
             facts.pop();
             runs.pop();
+            previous_named.pop();
         }
     }
     close_statement_forms(bytes, &mut out);
+    if collect_calls && lang == Lang::Python {
+        let (aliases, limited) = python_aliases.finish();
+        if limited {
+            extras.call_coverage = Some("incomplete");
+        }
+        for alias in aliases.into_values() {
+            if extras.call_names.len() == 4096 && !extras.call_names.contains(&alias.name) {
+                extras.call_coverage = Some("incomplete");
+            } else {
+                extras.call_names.insert(alias.name);
+            }
+        }
+    }
     out
 }
 
@@ -1100,6 +1451,37 @@ pub mod parse_hooks {
 /// a scanner loop only a line break ends (Kotlin's after `@`) cannot run
 /// forever at a forced end of input.
 /// `Ok(None)`: the grammar did not load or the parser returned no tree.
+pub(crate) fn parse_boundary_python(
+    source: &str,
+) -> Result<Option<tree_sitter::Tree>, ParseStopped> {
+    if let Some(stopped) = over_scanner_limit(Lang::Python, source.as_bytes()) {
+        return Err(stopped);
+    }
+    parse(source, &tree_sitter_python::LANGUAGE.into())
+}
+
+/// Bounded syntax evidence for occurrences/call candidates, not name resolution.
+pub(crate) fn parse_reference_source(path: &str, source: &str) -> Option<tree_sitter::Tree> {
+    if source.len() > MAX_PARSE_BYTES {
+        return None;
+    }
+    let lang = Lang::from_path(path)?;
+    if over_scanner_limit(lang, source.as_bytes()).is_some() {
+        return None;
+    }
+    let grammar = match lang {
+        Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
+        Lang::Python => tree_sitter_python::LANGUAGE.into(),
+        Lang::Go => tree_sitter_go::LANGUAGE.into(),
+        Lang::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
+        Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        Lang::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        _ => return None,
+    };
+    let tree = parse(source, &grammar).ok()??;
+    (!tree.root_node().has_error()).then_some(tree)
+}
+
 fn parse(
     source: &str,
     grammar: &tree_sitter::Language,

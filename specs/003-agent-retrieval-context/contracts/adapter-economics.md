@@ -432,7 +432,8 @@ or role-specific text-part arrays, and nullable assistant `content` alongside
 derived in T004 from the effective loopback-configured OMP model's request builder.
 Extensions or extra-body overrides that change that payload are unsupported unless
 included in the pin. After validation the original request bytes are forwarded
-unchanged, preserving message order, text, tool catalog and reasoning content. Each
+unchanged, preserving message order, text, tool catalog and reasoning content, except
+for the explicitly configured frozen-view continuation below. Each
 request replays the whole conversation; there is no server-side state to reference.
 Refuse another model, `stream` absent or false, image/file/URL content parts and
 top-level fields outside the pinned set with `gateway_feature_unsupported`, so hidden
@@ -557,16 +558,34 @@ not promise savings merely from installing a forwarding hop.
 
 **Commands.** `src/gateway.rs` and `src/gateway_launch.rs` are unix-only.
 - `foundry gateway --config FILE` is the foreground server.
-- `foundry gateway-omp --config FILE --key-file FILE --profile NAME [--thinking low|high|max] [--omp PATH] [-- OMP_ARGS]`
+- `foundry gateway-omp --config FILE --key-file FILE --profile NAME [--thinking low|high|max] [--body-reads] [--omp PATH] [-- OMP_ARGS]`
   is the launcher.
   - `--thinking` defaults to `max`, the catalog default. It is always passed
     explicitly, so OMP never runs `auto` and its judge side requests.
+  - `--body-reads` explicitly disables OMP 18.6.0's automatic structural summaries
+    for bare code reads using its supported `read.summarize.enabled: false` setting.
+    Ordinary OMP pagination and read limits remain (300 lines by default); this is
+    not a full-file or successful-repair guarantee. Without the flag, host defaults
+    remain. The launcher exclusively creates a 0600 fixed YAML overlay in its fresh
+    profile, verifies its bytes and file identity, and passes that path internally
+    through OMP's `--config`. Arbitrary trailing `--config` remains refused; the
+    overlay contains no model, provider, credential or extension setting. Cleanup
+    removes only the created inode, preserving a replacement file and session evidence.
   - `run_dir`'s parent must exist; a failed startup removes only the directory it
     created.
   - Test-only overrides exist only under the `test-faults` feature:
     `FOUNDRY_GATEWAY_TEST_UPSTREAM` (plain-http loopback upstream),
     `FOUNDRY_GATEWAY_TEST_IDLE_MS` and `FOUNDRY_GATEWAY_TEST_DEADLINE_MS`. Release
     builds read none of them.
+
+The read option follows OMP **18.6.0**: `src/tools/settings.ts::cfgReadSummarizeEnabled`,
+`src/cli/flag-tables.ts`'s `--config`, and `src/config/settings.ts`'s explicit overlay
+loader. The existing ignored `tests/gateway.rs::real_omp_applies_live_view_on_resumed_tool_history`
+checks the pinned default consumer prompt and contrasts body reads with a default
+summary control at the actual request boundary. OMP's `src/prompts/tools/read.md`
+still describes bare code as “declarations only” even with the setting disabled;
+the launcher does not rewrite that upstream guidance. These checks establish read
+availability and request behavior, not repair success or provider savings.
 
 **Local refusals and gateway errors.** Every row but the last refuses before any
 upstream send. Each carries a bounded `{"error":{"code","message"}}` body.
@@ -631,6 +650,137 @@ of 500 and above, 408 and 429.
 Directed means sent by another process: `si_pid != 0` on macOS, `si_code <= 0` on
 Linux. A terminal Ctrl-C already reaches OMP through the shared foreground process
 group, so it is not forwarded a second time. After OMP exits, the launcher stops the
-gateway and removes only the generated `models.yml`, then exits with OMP's status.
+gateway and removes only its generated configuration files, then exits with OMP's status.
 
 `session_full` is verified at unit level; the process cannot lower the 10,000 cap.
+
+### Experimental exported task view application — 2026-10-10
+
+Explicit `task_view` in gateway config opts into a frozen, operator-exported task
+snapshot. Ordinary meter requests remain byte-exact. The Rust gateway may replace
+only the string content of one named tool result, with one preceding matching
+assistant tool call and an exact original-content digest. A duplicate, mismatched
+or unpaired carrier refuses before upstream admission. System/user/assistant
+content, other results, tool definitions, call IDs/arguments and model settings
+remain semantically identical. The final serialized body must fit the packet's
+explicit byte ceiling (at most 4 MiB); this is not a provider-token ceiling.
+
+`task-context` command `export_host` requires an expected revision, a selected,
+folded observation entry, tool_call_id and max_request_bytes. It exports the full
+selected view, including protected requirements/constraints, and an original-content
+binding. Originals remain recoverable in the task store and host transcript.
+The gateway never opens that store. The immutable packet is loaded at startup;
+changing the task or source does not update it. Its scope and source statuses are
+explicitly at export; live source freshness and provider consumption are unknown.
+Exporting again and restarting selects a new revision. No transcript is captured.
+
+The optional receipt observation `applied_view` records workspace/task/revision,
+entry/tool-call IDs, view digest, incoming/final body digests and byte counts, with
+boundary `gateway_upstream_body`. It records serialization for the attempted send,
+including failed attempts, not proof of provider consumption. Older strict receipt-v1
+readers may refuse this optional extension; ordinary receipts omit it. Missing carriers
+are forwarded unchanged without an application receipt. Exact replay of an already
+applied carrier is idempotent. Receipts contain identifiers/counts/digests only.
+This narrow supported OMP 18.6.0 continuation boundary extends the earlier meter-only
+contract; it does not claim generic history rewriting, automatic packet refresh,
+provider-enforced counting or correctness of caller summaries.
+
+### Live owner synchronization — 2026-10-10
+
+Optional gateway `task_view_owner: {"url":"http://127.0.0.1:PORT/mcp",
+"token_env":"FOUNDRY_MCP_TOKEN"}` resolves the current view before **every** admitted
+model request. It requires the existing `task_view` packet as an immutable task,
+entry, original-content, tool-call and byte-allowance anchor. Only an explicit IPv4
+loopback `/mcp` endpoint is admitted; redirects/proxies are disabled. The credential
+name must differ from the gateway/upstream names. The launcher forwards that named
+credential only to the gateway. The endpoint is the trusted existing Foundry owner,
+with experimental task context enabled, not a generic remote MCP server.
+
+[`task_host/live.rs`](../../../src/task_host/live.rs) uses maintained rmcp 3.5.0
+client/Streamable HTTP transport and the existing read-only `task_context render`
+operation. This avoids a second store reader, file projection/publication protocol or
+host-language extension. A retained SDK session costs one owner session; failed or
+cancelled reads discard it and the next request may reconnect. Resolution has a five
+second ceiling within the request deadline, a 256 KiB rendered-view limit and a 2 MiB
+SSE event limit. The owner's existing response/admission bounds still apply. SDK JSON
+initialization responses are trusted owner metadata. Gateway shutdown or cancellation
+drops an in-flight service instead of retaining outstanding work for the next request.
+
+The current task revision must not fall below the anchor or the last resolved revision
+in this gateway run. The original digest, selected folded observation and protected
+entry representations are checked again. Deselection, expansion, supersession,
+forgetting, oversized output, owner failure or broken identity refuses before upstream
+with `task_view_unavailable`; there is no frozen fallback. Changed tool linkage/body
+still refuses with `task_view_mismatch`. An absent carrier remains byte-exact, but live
+resolution must succeed. An old transformed carrier is not silently upgraded: hosts
+must retain the original result (as the tested OMP runtime does).
+
+Delivered text labels `live_task_snapshot`, `indexed_at_resolution` and
+`view_at_resolution`; receipts add `synchronization:"owner_snapshot"`. This is a
+consistent owner read followed by request serialization, not a lock across the provider
+send: later owner/source edits can race the send. Freshness means indexed source state,
+not unaccepted filesystem changes. A revision watermark is local to the gateway run;
+there is no durable task-incarnation/revocation registry. Caller-managed exported
+copies remain outside forgetting. The existing exact attempted-body digest, full
+selected view, protected content, provider-consumption uncertainty and byte ceiling
+contracts remain.
+
+Source reference: rmcp **3.5.0**, `transport/streamable_http_client.rs` configuration
+and `service.rs::RunningService::drop`; its session-expiry/reinitialization behavior is
+used through the SDK. Foundry additionally pins the local endpoint, bounds resolution,
+checks task identity/revision and never retries a model request automatically. Actual
+owner restart/refusal tests are in `tests/gateway.rs`; the installed OMP 18.6.0 consumer
+test verifies a post-export owner edit, outgoing revision and preserved saved history.
+
+## Declared task economics
+
+Experimental 2026-10-11: `foundry usage economics --manifest FILE` opens no store,
+executes no checker and contacts no provider. It accepts this strict v1 manifest:
+
+```json
+{
+  "v": 1,
+  "reuse_completions": 20,
+  "attempts": [{
+    "id": "repair-attempt-1",
+    "task": "repair-trial-1",
+    "outcome": "passed",
+    "verification_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "usage": {"receipts": "attempt.jsonl", "expected_requests": 7}
+  }],
+  "shared": [{
+    "phase": "bootstrap",
+    "usage": {"receipts": "bootstrap.jsonl", "expected_requests": 2}
+  }]
+}
+```
+
+Replace the example digest with the actual external checker result digest. Outcomes
+are `passed`, `failed` or `unknown`; known outcomes require a digest. They remain
+**externally reported, not attested**. All attempts, including failures/retries, count
+in cost; distinct task IDs with a reported pass form the completion denominator. Use
+distinct task IDs for independent repeated trials. Unknown outcomes or no completions
+leave completion ratios null. This command does not compare models or claim benefits.
+
+The manifest is at most 128 KiB with 1–256 unique attempt IDs, a positive reuse horizon
+and at most four unique shared phases: `bootstrap`, `maintenance`, `retrieval`,
+`auxiliary`. Log paths resolve beside the manifest. Logs must be distinct regular files,
+at most 64 MiB combined and within the existing per-log 16 MiB/10,000-row bounds. Each
+request tuple can be attributed to only one log. Within-log identical retries retain
+ordinary deduplication. Excess, overflow and cross-log attribution conflicts refuse.
+
+Each summary records exact log SHA-256/bytes, known subtotals and missing-field counts.
+An input-only or output-only receipt is partial even though it has some usage. Expected
+request counts must match and invalid/conflicting rows suppress completeness. This
+checks the **declared logs only**, not hidden traffic or whole-run coverage. Known
+failed/partial costs remain visible; absent prices are unknown, never zero-dollar work.
+Cached tokens are an input subset, never added twice. Complete cache/input observations
+allow a separate uncached-input count. Tokens across different models are raw work
+counters, not money or equivalent compute.
+
+For each currency, observed cost per reported completion includes all attempt and shared
+costs divided by completed tasks. The projection is attempt cost per completion plus
+shared cost divided by `reuse_completions`; it explicitly assumes the declared shared
+costs occur once over that horizon. Future maintenance, local energy and omitted work
+are not inferred. Supply receipts for those costs when measured. Neither projection
+nor smaller prompts establish task-quality or economic acceptance.

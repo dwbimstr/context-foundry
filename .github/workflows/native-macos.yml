@@ -1,0 +1,95 @@
+name: Native macOS acceptance
+on:
+  push:
+    branches: [experimental/context-ecosystem]
+    paths:
+      - '.github/workflows/native-macos.yml'
+      - 'scripts/native-macos-acceptance.py'
+      - 'scripts/embed-worker-bundle.sh'
+      - 'scripts/generate-worker-bundle.sh'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - 'src/model_resources.rs'
+      - 'src/bin/foundry_embed.rs'
+      - 'src/bin/foundry_generate.rs'
+      - 'src/knowledge/**'
+      - 'src/neural/**'
+      - 'tests/embed_worker.rs'
+      - 'tests/embedding_parity.rs'
+      - 'tests/native_scale.rs'
+      - 'tests/knowledge.rs'
+  workflow_dispatch:
+    inputs:
+      scale_calibration:
+        description: Measure 128 fixed public overview inputs after native acceptance
+        type: boolean
+        required: false
+        default: false
+      full_scale:
+        description: After calibration, run all 67663 admitted sources with real Metal inference and verification
+        type: boolean
+        required: false
+        default: false
+      full_scale_budget_seconds:
+        description: Full bootstrap wall budget, plus separate 600-second verification (1200 through 10800)
+        type: string
+        required: false
+        default: '7200'
+permissions:
+  contents: read
+concurrency:
+  group: native-macos-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  native:
+    # Fixed arm64 image; architecture alone does not establish Metal access.
+    runs-on: macos-15
+    timeout-minutes: 240
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Stop Spotlight indexing on this ephemeral runner
+        # Run 38205301244: Spotlight (mds_stores, mds, mdworker_shared) indexing
+        # the job's own multi-GB build output kept this 3-CPU host 81-100% busy
+        # through the CPU policy test's idle prerequisite. Thresholds are unchanged.
+        run: |
+          sudo mdutil -a -i off
+          mdutil -a -s
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Record native CPU, actual Metal and owned worker acceptance
+        shell: bash
+        env:
+          CF_NATIVE_SCALE_CALIBRATION: ${{ github.event_name == 'workflow_dispatch' && inputs.scale_calibration && 'true' || 'false' }}
+          CF_NATIVE_FULL_SCALE: ${{ github.event_name == 'workflow_dispatch' && inputs.full_scale && 'true' || 'false' }}
+          CF_NATIVE_FULL_SCALE_SECONDS: ${{ inputs.full_scale_budget_seconds || '7200' }}
+        run: |
+          set -euo pipefail
+          args=(--out "$RUNNER_TEMP/native-macos-results"
+                --work "$RUNNER_TEMP/native-macos-work")
+          if [[ "$CF_NATIVE_FULL_SCALE" == "true" ]]; then
+            args+=(--full-scale --full-scale-budget-seconds "$CF_NATIVE_FULL_SCALE_SECONDS")
+          else
+            args+=(--generation)
+          fi
+          if [[ "$CF_NATIVE_SCALE_CALIBRATION" == "true" ]]; then
+            args+=(--scale-calibration)
+          fi
+          python3 scripts/native-macos-acceptance.py "${args[@]}"
+      - name: Preserve results even when GPU acceptance is blocked or fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/native-macos-results/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 3
+          include-hidden-files: true

@@ -129,7 +129,7 @@ pub fn quarantine_dirs(store: &Path) -> Vec<std::path::PathBuf> {
 pub type Snapshot = BTreeMap<&'static str, Vec<(String, String)>>;
 
 /// Tables whose rows are authoritative knowledge (not scan/pending/meta bookkeeping).
-pub const KNOWLEDGE_TABLES: [&str; 14] = [
+pub const KNOWLEDGE_TABLES: [&str; 15] = [
     "sources",
     "chunks",
     "feedback",
@@ -137,6 +137,7 @@ pub const KNOWLEDGE_TABLES: [&str; 14] = [
     "edges_out",
     "edges_in",
     "memory",
+    "task_context",
     "compiler_producers",
     "compiler_scopes",
     "compiler_occurrences",
@@ -146,7 +147,9 @@ pub const KNOWLEDGE_TABLES: [&str; 14] = [
     "learning_datasets",
 ];
 
-const TABLES: [&str; 18] = [
+const TABLES: [&str; 21] = [
+    "semantic_work",
+    "knowledge_work",
     "sources",
     "chunks",
     "pending_index",
@@ -156,6 +159,7 @@ const TABLES: [&str; 18] = [
     "provider_bundles",
     "edges_out",
     "memory",
+    "task_context",
     "compiler_producers",
     "compiler_scopes",
     "compiler_occurrences",
@@ -1292,6 +1296,7 @@ pub fn write_semantic_profile(
         output: "f32".into(),
         adapter_revision: crate::neural::provider::REAL_ADAPTER_REVISION,
         document_template: "doc: {text}".into(),
+        geometry: None,
     };
     mutate(&mut descriptor);
     descriptor.validate().expect("fixture descriptor validates");
@@ -1306,9 +1311,11 @@ pub fn write_semantic_profile(
         },
         descriptor,
         query_template: "query: {text}".into(),
+        representation: Default::default(),
         card_tokens: crate::neural::profile::DEFAULT_CARD_TOKENS,
         batch: crate::neural::profile::DEFAULT_BATCH,
         memory_ceiling_bytes: 1024,
+        cpu: Default::default(),
         load_timeout_seconds: 1,
     };
     let path = dir.join(format!("profile-{name}.json"));
@@ -1341,4 +1348,17 @@ pub fn set_learning_row(dir: &Path, table: &str, key: &str, raw: Option<&str>) {
             }
         }
     });
+}
+
+/// Resolve a v4 semantic artifact from the manifest for tamper/fault fixtures.
+pub fn semantic_file(directory: &Path, artifact: &str) -> PathBuf {
+    use crate::neural::index::{self, GenerationManifest};
+    let manifest: GenerationManifest =
+        serde_json::from_slice(&std::fs::read(directory.join(index::MANIFEST_FILE)).unwrap())
+            .unwrap();
+    directory.join(match artifact {
+        index::INDEX_FILE => manifest.index_file(),
+        index::LABELS_FILE => manifest.labels_file(),
+        _ => panic!("unknown semantic artifact"),
+    })
 }

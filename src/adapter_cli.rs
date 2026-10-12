@@ -19,6 +19,18 @@ pub enum AdapterCommand {
             .args(["semantic_profile", "policy_config"])
     ))]
     Mcp {
+        /// Write bounded retrieval diagnostics in a NEW private run directory.
+        #[arg(long, value_name = "DIR")]
+        retrieval_trace_dir: Option<PathBuf>,
+        /// Test behavioral support packing; default off pending retrieval/host gates.
+        #[arg(long)]
+        experimental_behavior_context: bool,
+        /// Enable explicit experimental task state and reversible views.
+        #[arg(long)]
+        experimental_task_context: bool,
+        /// Watch the admitted primary repository for source changes.
+        #[arg(long)]
+        watch: bool,
         /// Repository root; canonicalized and bound once.
         #[arg(long)]
         root: PathBuf,
@@ -67,6 +79,18 @@ pub enum AdapterCommand {
             value_parser = clap::value_parser!(u64).range(1..)
         )]
         semantic_cache_cap: Option<u64>,
+        /// Continuously prepare accepted source changes; pair with --watch for filesystem edits.
+        #[arg(long, requires = "semantic_profile")]
+        semantic_maintain: bool,
+        /// Admit selective source/area generation through this explicit HTTP profile.
+        #[arg(long, value_name = "FILE")]
+        knowledge_profile: Option<PathBuf>,
+        /// Maintain generated knowledge for accepted changes (pair with --watch).
+        #[arg(long, requires = "knowledge_profile")]
+        knowledge_maintain: bool,
+        /// Opt-in owner-wide worker memory ceilings and background headroom policy.
+        #[arg(long, value_name = "FILE")]
+        model_resources: Option<PathBuf>,
     },
     /// Inspect repository bootstrap; `--apply` creates/opens the store and indexes baseline source.
     Bootstrap {
@@ -143,6 +167,9 @@ pub enum AdapterCommand {
         /// low|high|max. Explicit so OMP never runs `auto` judge side requests.
         #[arg(long, default_value = "max", value_parser = ["low", "high", "max"])]
         thinking: String,
+        /// Use ordinary paginated body reads instead of OMP's automatic code summaries.
+        #[arg(long)]
+        body_reads: bool,
         /// OMP executable; defaults to `omp` on PATH.
         #[arg(long)]
         omp: Option<PathBuf>,
@@ -159,6 +186,12 @@ pub enum AdapterCommand {
 
 #[derive(Subcommand)]
 pub enum UsageAction {
+    /// Account for declared task attempts and shared preparation/maintenance costs.
+    Economics {
+        /// Bounded manifest of receipt logs and externally reported task outcomes.
+        #[arg(long)]
+        manifest: PathBuf,
+    },
     /// Summarize known totals plus missing/conflicting coverage (<=16 MiB, <=10,000 rows).
     Summarize {
         #[arg(long)]
@@ -212,7 +245,13 @@ fn serve_mcp(
     references: Vec<String>,
     no_memory: bool,
     semantic: Option<crate::mcp::SemanticServing>,
+    knowledge: Option<crate::knowledge::maintenance::Serving>,
+    model_resources: Option<PathBuf>,
     policy: Option<crate::policy::PolicyServing>,
+    retrieval_trace_dir: Option<PathBuf>,
+    experimental_behavior_context: bool,
+    experimental_task_context: bool,
+    watch: bool,
 ) -> AResult<()> {
     let budget = read_budget(budget.as_deref())?;
     let mut parsed = Vec::with_capacity(references.len());
@@ -227,7 +266,16 @@ fn serve_mcp(
         budget,
         no_memory,
         semantic,
+        knowledge,
+        model_resources: model_resources
+            .as_deref()
+            .map(crate::model_resources::Config::load)
+            .transpose()?,
         policy,
+        retrieval_trace_dir,
+        experimental_behavior_context,
+        experimental_task_context,
+        watch,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -312,6 +360,10 @@ fn serve_mcp(
 pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> AResult<()> {
     match command {
         AdapterCommand::Mcp {
+            retrieval_trace_dir,
+            experimental_behavior_context,
+            experimental_task_context,
+            watch,
             root,
             transport,
             bind,
@@ -323,6 +375,10 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             policy_config,
             development_isolation,
             semantic_cache_cap,
+            semantic_maintain,
+            knowledge_profile,
+            knowledge_maintain,
+            model_resources,
         } => serve_mcp(
             store,
             root,
@@ -334,10 +390,20 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             no_memory,
             semantic_profile.map(|profile| crate::mcp::SemanticServing {
                 cache_cap_bytes: semantic_cache_cap,
+                maintain: semantic_maintain,
                 ..crate::mcp::SemanticServing::new(profile, development_isolation)
             }),
+            knowledge_profile.map(|profile| crate::knowledge::maintenance::Serving {
+                profile,
+                maintain: knowledge_maintain,
+            }),
+            model_resources,
             policy_config
                 .map(|config| crate::policy::PolicyServing::new(config, development_isolation)),
+            retrieval_trace_dir,
+            experimental_behavior_context,
+            experimental_task_context,
+            watch,
         )?,
         AdapterCommand::Bootstrap {
             root,
@@ -473,6 +539,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             key_file,
             profile,
             thinking,
+            body_reads,
             omp,
             omp_args,
         } => {
@@ -484,6 +551,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                     key_file,
                     profile,
                     thinking,
+                    body_reads,
                     omp: omp.unwrap_or_else(|| PathBuf::from("omp")),
                     omp_args,
                 })?;
@@ -493,7 +561,9 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             }
             #[cfg(not(unix))]
             {
-                let _ = (config, key_file, profile, thinking, omp, omp_args);
+                let _ = (
+                    config, key_file, profile, thinking, body_reads, omp, omp_args,
+                );
                 return Err(FoundryError::PlatformUnsupported(
                     "the model gateway needs a unix host".into(),
                 )
@@ -501,6 +571,10 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             }
         }
         AdapterCommand::Usage { action } => match action {
+            UsageAction::Economics { manifest } => println!(
+                "{}",
+                serde_json::to_string_pretty(&crate::usage::economics::report(&manifest)?)?
+            ),
             UsageAction::Summarize { input } => println!(
                 "{}",
                 serde_json::to_string_pretty(&crate::receipts::summarize(&input)?)?
