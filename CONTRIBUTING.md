@@ -53,7 +53,9 @@ after every edit.
 
 ## Full checks
 
-CI runs, on Rust 1.90.0, Linux and macOS ([workflow](.github/workflows/rust.yml)):
+GitHub Actions is unavailable for the foreseeable future (owner decision
+2026-10-12); the [workflow](.github/workflows/rust.yml) stays in the repository but
+does not run. Run its checks locally, on Rust 1.90.0:
 
 ```sh
 cargo fmt --check
@@ -118,7 +120,10 @@ templates; no stage is mandatory.
 - Keep each pull request small and about one behavior.
 - Describe the user-visible effect and the evidence: the tests you added or ran, and
   any output that shows the change. Say what you did not verify.
-- CI must be green.
+- Every gate in a local `scripts/gates.sh` run must report `exit=0`, and the pull
+  request must cite its receipt: the commit, the toolchains, each `GATE` line and the
+  log digests. Name any check you could not run. CI is unavailable, so it is neither
+  required nor waited on.
 - Maintainers request a cross-lab review (a reviewer from a different model lab than
   the author) for substantial changes, and may ask for changes before merging.
 - Update the docs and the owning spec's status when behavior changes.

@@ -16,6 +16,7 @@ pub struct Span {
 
 impl Span {
     /// Conservatively count shared context per reference when retaining a plan.
+    #[cfg(feature = "semantic")]
     pub(super) fn retained_heap_bytes(&self) -> usize {
         let alignment = std::mem::align_of::<usize>();
         self.context

@@ -1,9 +1,13 @@
-# Dependabot version updates. CI checks every update on Rust 1.90 (the MSRV),
-# so an update that needs a newer toolchain fails there.
+# Dependabot version updates. Work happens on experimental/context-ecosystem, so
+# updates target it. Dependabot reads this file only from the default branch (main);
+# target-branch takes effect once this file is there. GitHub Actions is unavailable
+# (owner decision 2026-10-12): check each update locally on Rust 1.90 (the MSRV) with
+# scripts/gates.sh before merging.
 version: 2
 updates:
   - package-ecosystem: "cargo"
     directory: "/"
+    target-branch: "experimental/context-ecosystem"
     schedule:
       interval: "weekly"
     groups:
@@ -13,5 +17,6 @@ updates:
           - "patch"
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "experimental/context-ecosystem"
     schedule:
       interval: "weekly"

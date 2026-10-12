@@ -852,7 +852,7 @@ fn literal(n: Node, s: &str) -> Option<String> {
     }
     let t = text(n, s);
     let quote = t.as_bytes().first().copied()?;
-    if ![b'\'', b'"'].contains(&quote) || t.len() < 2 || t.as_bytes().last() != Some(&quote) {
+    if !b"'\"".contains(&quote) || t.len() < 2 || t.as_bytes().last() != Some(&quote) {
         return None;
     }
     let value = &t[1..t.len() - 1];

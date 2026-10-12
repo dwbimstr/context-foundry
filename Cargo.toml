@@ -62,7 +62,7 @@ protobuf = "=3.7.2"
 # 003 adapter: real MCP SDK (rmcp 3.5.0, feasibility-proven on Rust 1.90) and
 # the async/HTTP runtime it mounts on. The bounded codec rides tokio-util;
 # axum hosts the SDK's tower service at /mcp.
-rmcp = { version = "=3.5.0", features = [
+rmcp = { version = "=3.5.1", features = [
     "server",
     "client",
     "transport-streamable-http-client-reqwest",
@@ -97,7 +97,7 @@ bytes = "1"
 # the pinned artifact's tokenizer.json and the USearch F16 index. Default on;
 # `--no-default-features` builds the lexical-only core.
 tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
-usearch = { version = "=2.26.2", optional = true }
+usearch = { version = "=2.26.4", optional = true }
 # Persistent location snapshots share unchanged tree nodes across publications (009 T008).
 imbl = "=7.0.2"
 # Bounded reusable CPU pools for ingestion/indexing and semantic preparation.
@@ -133,7 +133,7 @@ learning-worker = ["dep:tch"]
 test-faults = []
 
 [build-dependencies]
-bindgen = { version = "0.72", optional = true }
+bindgen = { version = "0.73", optional = true }
 
 [dev-dependencies]
 # Self dev-dependency: `cargo test` builds the crate with its fault points.
@@ -142,12 +142,12 @@ libc = "0.2"
 tempfile = "3"
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream"] }
 # Parses the printed Codex configuration for real.
-toml = "0.8"
+toml = "1.1"
 # Raw emitted-bytes capture for exact-accounting tests.
 serde_json = { version = "1", features = ["raw_value"] }
 # Real SDK client + child-process transport are test-only: production code
 # serves, it never connects.
-rmcp = { version = "=3.5.0", features = [
+rmcp = { version = "=3.5.1", features = [
     "client",
     "transport-child-process",
     "transport-streamable-http-client-reqwest",

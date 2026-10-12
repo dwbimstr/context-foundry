@@ -55,6 +55,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Stop Spotlight indexing on this ephemeral runner
+        # Run 38205301244: Spotlight (mds_stores, mds, mdworker_shared) indexing
+        # the job's own multi-GB build output kept this 3-CPU host 81-100% busy
+        # through the CPU policy test's idle prerequisite. Thresholds are unchanged.
+        run: |
+          sudo mdutil -a -i off
+          mdutil -a -s
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install 1.90.0 --profile minimal
       - name: Record native CPU, actual Metal and owned worker acceptance

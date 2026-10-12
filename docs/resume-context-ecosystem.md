@@ -7,6 +7,30 @@ constitution, [validation](validation.md#realistic-acceptance-continuation--2026
 and the [current inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
 Use the strongest available reasoning/coding model and inspect actual artifacts.
 
+## Cloud continuation — 2026-10-12
+
+A Claude Code cloud session continued from `16d7f0a` on branch
+`claude/festive-cannon-ladw9u` ([PR #11](https://github.com/dwbimstr/context-foundry/pull/11),
+based on `experimental/context-ecosystem`, which was not moved). It used public inputs
+only. GitHub Actions is now unavailable by owner decision, so a local
+`scripts/gates.sh` receipt replaces CI (see [CLAUDE.md](../CLAUDE.md)).
+
+- **Step 1** is closed.
+- **Step 2:**
+  - The frozen corpus is commit `ebf28f8`, and the lexical baseline reproduces (1/8,
+    and 2/8 experimental).
+  - The RRF candidate is implemented and tested as `9ccefcc`, then reverted by
+    `ef524b9` until it is measured.
+  - The dense measurement needs `avx512_bf16`, which the session's VM lost when it
+    restarted.
+- **Steps 3 and 4** also need public archives that the session's proxy refused.
+- **Step 7's** cause, Spotlight indexing, is fixed.
+
+Every remaining item is in [FOLLOWUP.md](../FOLLOWUP.md) with its blocker and resume
+commands: F9 for step 2's measurement, F10 and F11 for steps 3 and 4, F2 for step 5,
+F4 for step 6, and F7 and F8 for the native and capsule work. Results are in
+[validation](validation.md#cloud-continuation--2026-10-12).
+
 ## Code and working state
 
 Repository: `/workspace/context-foundry`; branch: `experimental/context-ecosystem`.
@@ -35,7 +59,7 @@ role metadata uses `kinds2`; overview/address recipes retain `kinds1`.
 | Representative scale | Exact overview fitting covers 67,663 admitted Rust/Go sources; 60,735–65,959 distinct inputs / 14.65–15.86 million tokens. | Full real inference, audit/replay, serving and changed-input verification. No complete 67,663-source model run exists. |
 | Economics | Failed attempts and unknown usage are retained. Selected history totals 71 requests, including the latest 13; 66 complete and five unknown. | Demonstrated completion benefit with bootstrap, acquisition, retrieval, maintenance and failed attempts included. Smaller failed prompts are not a benefit. |
 | Evidence | Bounded source call postings, conservative Python aliases, router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks pass. | Broader collectors, cross-language resolution and realistic task outcomes. Unsupported/dynamic cases remain explicitly incomplete. |
-| Mac/GPU | Real Metal embeddings, 8,192-token input, owned generation, cleanup and CPU/Metal parity pass. Actual 128-file calibration and zero-call replay pass. | Native CPU-pressure acceptance, physical-device performance/global GPU pressure, combined residency and signed installed-package acceptance. |
+| Mac/GPU | Real Metal embeddings, 8,192-token input, owned generation, cleanup and CPU/Metal parity pass. Actual 128-file calibration and zero-call replay pass. With Spotlight stopped on the runner, native CPU-pressure acceptance passes twice at unchanged thresholds (runs 38207948408, 38209502529). | Physical-device performance/global GPU pressure, combined residency and signed installed-package acceptance. |
 
 The complete small-repository preparation accounts for 3,608,991 tokens and
 2,710,537 ms of preparation (2,413,715 ms provider time). Unchanged replay takes
@@ -53,16 +77,26 @@ inputs, including 8,192 tokens, have minimum cosine 0.9999949405. Owned generati
 records real GPU allocation and initial/change/restart/revert reuse. The overall job
 **fails** CPU-pressure acceptance: its initial idle threshold never reaches 30%.
 The cause is unresolved, not proven environmental; no threshold was relaxed.
-The 128-file sample needs 744.804 provider seconds for 30,726 tokens (41.254 tokens/s).
+The 128-file sample needs 744.804 provider seconds for 30,726 tokens (41.254 tokens/s);
+a repeat with Spotlight stopped (run 38209502529) measures 41.584 tokens/s.
 Do not launch the proposed full Mac batch-one run within a two/three-hour budget.
 
 [Default Rust CI 38178644843](https://github.com/dwbimstr/context-foundry/actions/runs/38178644843)
-at `e7a1b59` was still running at 22:12:48 UTC. Both platforms passed fmt, Clippy and
-test builds; final tests, including the Mac watcher rerun, were pending. The local
-monitor was stopped; the remote jobs continue. This run does not include `6ac60d8`.
-An earlier full Ubuntu run passes 1,131 tests; its Mac counterpart passes 1,231 and
-fails the watcher deadline at 5,806/6,000 files. Recheck the newer run before reporting
-that regression fixed on Mac.
+at `e7a1b59` **passed** on both Ubuntu and macOS (completed 22:32:49 UTC), including the
+Mac watcher test that failed at 5,806/6,000 files in the earlier `bc10986` run. That is
+one passing Mac run, not a repeated measurement. It does not include `6ac60d8`;
+[CI 38205296934](https://github.com/dwbimstr/context-foundry/actions/runs/38205296934) at `1b5f0b1`
+covers that code and passes on Ubuntu (1,147 tests) and macOS (1,248 tests), watcher included.
+
+The native CPU-pressure test passed in native runs at `4dd9da9` and `4dab8e4`, with idle
+at 9%. It failed at `bc10986` and `f75f14c`, with idle at 84–100%. All four used the same
+runner image and stage order, and the commits between them touch neither the sampler
+nor the test. Native run 38205301244 records process snapshots: Spotlight indexing
+the job's own build output occupies the host (idle 0–2%). The workflow now stops
+Spotlight on the ephemeral runner before building, and
+[native run 38207948408](https://github.com/dwbimstr/context-foundry/actions/runs/38207948408)
+passes the whole native job at unchanged thresholds (idle 2%, recovered 27%). See
+[validation](validation.md#realistic-acceptance-continuation--2026-10-11).
 
 ## Evidence and portable package
 
@@ -125,7 +159,7 @@ the memory of the checkpoint host, which affects two steps below:
 
 ## Resume in this order
 
-1. Verify branch/HEAD/clean status and fetch the final remote CI result. Restore
+1. Verify branch/HEAD/clean status and the latest local gates receipt (CI is unavailable). Restore
    prerequisites from [resume instructions](resume.md) and the environment setup;
    this machine uses Rust 1.90, four CPU quota, 32 GiB RAM, no swap. Run only one
    heavy local build/index/model experiment at a time. Do not include compilation
@@ -173,7 +207,10 @@ the memory of the checkpoint host, which affects two steps below:
 7. Review the unrun native CPU diagnostic patch under
    `resume-capsule/foundry-native-cpu-diagnostics/`. It logs actual admission counters,
    self CPU and bounded process-name snapshots in explicit tests only. Investigate
-   the failed prerequisite without weakening policy. No further native job was started.
+   the failed prerequisite without weakening policy. Separately, the committed driver now
+   records bounded `top` snapshots, process names only, just before and after the
+   CPU-pressure test. They identify Spotlight indexing as the busy host activity, and
+   the workflow now stops Spotlight on the runner. The capsule patch is still unapplied.
 
 Sealed identities (hash verification does not authorize inspecting labels):
 manifest `01a9ad47473c0b99f82bee5f2fabf67cf96c86134e9627c63bd50cb67d80d429`;

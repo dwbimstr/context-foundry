@@ -6355,19 +6355,16 @@ impl Engine {
             (Strategy::Auto, None) => (response::strategy_for_query(query), None),
             (explicit, _) => (explicit, None),
         };
-        let behavior_terms = (options.experimental_behavior && resolved == Strategy::Search)
-            .then(|| behavior_terms(query, &search.anchors))
-            .flatten()
-            .and_then(|terms| {
-                search
-                    .anchors
-                    .first()?
-                    .entries
-                    .first()?
-                    .handle
-                    .clone()
-                    .map(|owner| (owner, terms))
-            });
+        let behavior_terms = search
+            .anchors
+            .first()
+            .and_then(|anchor| anchor.entries.first())
+            .and_then(|entry| entry.handle.clone())
+            .zip(
+                (options.experimental_behavior && resolved == Strategy::Search)
+                    .then(|| behavior_terms(query, &search.anchors))
+                    .flatten(),
+            );
         #[allow(unused_mut)]
         let mut brief_plan = (options.briefs && search.anchors.is_empty())
             .then(|| self.record_plan(query, "brief"))

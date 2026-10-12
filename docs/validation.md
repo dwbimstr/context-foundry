@@ -1,5 +1,110 @@
 # Validation
 
+## Cloud continuation — 2026-10-12
+
+A Claude Code cloud session continued the checkpoint from public inputs only. It did
+not use the private resume archive, and GitHub Actions is unavailable by owner decision.
+The host had 4 vCPUs, 15.7 GiB of RAM and no swap. Its VM restarted mid-session and
+came back on a different CPU: first a Xeon @ 2.10 GHz with `avx512_bf16`, then a Xeon
+@ 2.80 GHz without it. Remaining work is listed in [FOLLOWUP.md](../FOLLOWUP.md).
+
+### Local gates receipts
+
+`scripts/gates.sh` replaces Rust CI. The default toolchain was Rust 1.97.0, and the
+MSRV gates ran on Rust 1.90.0. Each receipt directory held the logs and the starting
+`git status`, under the session's ephemeral `/workspace`, so the digests below identify
+the logs. The `test` gate runs as root, which bypasses the read-only
+permissions two gateway fault tests rely on, so those tests are rerun unprivileged.
+
+| Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
+| --- | --- | --- | --- | --- | --- |
+| `d6903f7` | 0 | 101: three new lints | 101: 1,145 passed, only the 2 root-only failures | 0 | 0 |
+| `ef524b9` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `b432f46` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+
+Log SHA-256 digests:
+
+| Commit | clippy | test | msrv-check | msrv-clippy |
+| --- | --- | --- | --- | --- |
+| `d6903f7` | `712708a6…` | `d37d829e…` | `437b9d06…` | `368e057b…` |
+| `ef524b9` | `fcc7dfca…` | `ea77740f…` | `0d73feed…` | `243e2afe…` |
+| `b432f46` | `38c4c123…` | `276e988f…` | `b0f11c35…` | `45f25865…` |
+
+The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
+`d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
+tree. It applies Dependabot updates #10, #8 and #7 to this line (see
+[dependencies](dependencies.md)); `sha2` 0.11 (#6) was left out because it fails to
+compile. Each update was also checked alone on Rust 1.90. With `bindgen` 0.73 both
+llama.cpp workers build, and the regenerated bindings differ only in 20 opaque handle
+types losing `Copy`/`Clone`.
+
+`72c4319` fixes the three Clippy 1.97 lints (`byte_char_slices`, a manual `Option::zip`,
+`while_let_loop`) without changing behavior. `f491821` fixes a regression from
+`8ef3acc`: `cargo build --no-default-features --lib` had stopped compiling, because
+`syntax::units_with_certainty` was gated on the `semantic` feature while a caller
+outside that feature used it. The build now compiles without warnings. Native macOS
+acceptance did not run: there is no Mac here, and Actions is unavailable.
+
+Two timing-bound integration tests failed once each in a full parallel run of
+`tests/neural_retrieval.rs` on this 4-vCPU host and passed on rerun:
+`progressive_bootstrap_serves_priority_before_the_unprepared_tail_and_resumes` and
+`continuous_semantics_progresses_during_filesystem_traffic_and_converges`. Neither
+touches placement. Their 15-second wall-clock deadlines were not changed.
+
+### Document/body RRF (resume step 2)
+
+**Frozen corpus.** Commit `ebf28f8` is the frozen Foundry snapshot. The eight labelled
+needles of `CASES` in `tests/retrieval_attribution.rs` occur there exactly once each,
+and its `src/ingest.rs` still contains the literal private-key marker. Extracting it
+with `git archive ebf28f8` gives an uncompressed tar stream with SHA-256 `31ff389a…`.
+
+**Lexical baseline.** A fresh index changes 275 sources and excludes two:
+`src/ingest.rs` (private-key marker) and the binary SCIP fixture. The harness then
+deletes the evaluator source, leaving the recorded 274 admitted sources. At the fixed
+2,048-token budget, default delivery is **1/8** (Q7) and experimental lexical delivery
+is **2/8** (Q2, Q7). Both match the frozen record. Raw rows are in
+`validation-runs/rrf-step2/lexical-01/`.
+
+**Candidate.** `9ccefcc` implements the stated policy independently; the capsule's
+unfinished patch was not available. Experimental anchorless prose over body or
+hierarchy recipes fuses current lexical documents and Body locations by reciprocal
+rank (k = 60, one-based ranks), before the duplicate, per-file and limit cuts.
+- **Lists:** the lexical list keeps its order. The Body list keeps the dense order,
+  refined owner-scoped passages before ordinary hits, and counts a location found
+  both ways once.
+- **Support:** a document and a Body location add each other's best reciprocal rank
+  only when their byte ranges overlap in the same current source.
+- **Ties and coarse locations:** exact ties keep the previous experimental order.
+  Parent, file and container-fragment locations follow in dense order.
+- **Bounds:** no window, slot or output bound grows.
+
+The first draft ranked Body evidence by raw distance. The existing callable-scope
+regression rejected it: an ordinary sibling took an owner-scoped passage's per-file
+slot. The draft was corrected to keep the dense order.
+
+Verification: five new unit tests pass, the semantic-retrieval suite passes (93, 1
+ignored), Clippy 1.90/1.97 passes and contracts 009 and context-v2 are updated. The
+placement regression shows the mechanism directly: in the hierarchy case the lexical
+document leads because a refined passage overlapping it supports it
+(`supported_lexical: 1`).
+
+**Not measured.** The dense comparison needs the revision-5 AVX-512 BF16 worker. After
+the VM moved, that worker refused to load with "AVX-512 BF16 embedding worker is
+unsupported on this CPU". A different embedding function was not substituted, so no
+dense result exists. `ef524b9` reverts the candidate, keeping the measured 2/8
+interleave arm as the experimental placement. [FOLLOWUP F9](../FOLLOWUP.md) has the
+exact measurement and decision rule. Retrieval therefore remains **2/8**.
+
+### Steps 3 to 7
+
+- **Steps 3 and 4** (Linux calibration and full overview) did not run. They need the
+  revision-5 worker, and the proxy refused the pinned public Rust and Go archives
+  (`codeload.github.com` 403 for `rust-lang/rust` and `golang/go`). See F10 and F11.
+- **Step 5** cannot run on a 15.7 GiB host. **Step 6** and the private G1/G2 and Rust/Go
+  label sets need the archive. See F2 to F6.
+- **Step 7's** cause is resolved: Spotlight indexing (see below). Physical-device and
+  signed-package acceptance remain in F7.
+
 ## Realistic acceptance continuation — 2026-10-11
 
 Work continues on `experimental/context-ecosystem`; the open acceptance conditions
@@ -46,9 +151,41 @@ CPU/Metal comparison across five identical inputs passes with minimum cosine
 0.9999949405. The device is Apple Paravirtual Metal, not a physical-Mac performance
 receipt. The run still **fails native CPU-pressure acceptance**: its initial idle
 prerequisite never reaches 30%; raw causes need further observation. No threshold
-was relaxed. Calibration performs 128 calls / 30,726 tokens in 744.804 provider
-seconds (41.254 tokens/second). This rejects the proposed full-corpus Mac runtime
-budget; it is not 67,663-source acceptance. Generation records actual GPU allocation
+was relaxed. The same test passed in native runs
+[38172126296](https://github.com/dwbimstr/context-foundry/actions/runs/38172126296) (`4dd9da9`)
+and [38172614756](https://github.com/dwbimstr/context-foundry/actions/runs/38172614756) (`4dab8e4`):
+idle 9%, loaded 100% and recovered 2%. It failed in
+[38174697974](https://github.com/dwbimstr/context-foundry/actions/runs/38174697974) (`bc10986`)
+and 38176235770, where host CPU stayed at 84–100% for the whole 15-second idle
+window. All four runs used runner image `macos-15-arm64` 20260907.0337.1 and the
+same stage order. The commits between them change neither the sampler nor this
+test. The driver now records a bounded `top` snapshot of process names just before
+and after this test, outside its measured window. In
+[38205301244](https://github.com/dwbimstr/context-foundry/actions/runs/38205301244) (`1b5f0b1`)
+the test fails again with idle samples of 81–100%. Both snapshots show Spotlight
+indexing: `mds_stores` at 45–50% and `mds` at 12–23%, plus six or seven
+`mdworker_shared` workers. Host idle is 0–2% at a load average of 15 on three CPUs,
+after the job has written about 8 GB. The test process does not appear among the 12
+busiest processes. The cause is therefore Spotlight indexing the job's own output,
+not the sampler or the policy. All model and lifecycle checks in that run pass.
+The workflow now stops Spotlight on the ephemeral runner before building, and the
+driver records `mdutil -a -s`, without changing a threshold. With that change,
+[38207948408](https://github.com/dwbimstr/context-foundry/actions/runs/38207948408) (`e0a1458`)
+passes the whole native job for the first time: idle 2%, loaded 100% with three
+threads, then recovered samples of 31%, 35%, 35% and 27% at the unchanged 60%/30%
+thresholds. The host is 96% idle just before the test. Metal embedding and owned
+generation pass in the same run. This is one passing run on Apple Paravirtual
+hardware; physical-device, global GPU and signed-package acceptance remain open.
+The 41.254 tokens/second calibration below ran with Spotlight enabled.
+[38209502529](https://github.com/dwbimstr/context-foundry/actions/runs/38209502529) (`7e7176b`)
+repeats it with Spotlight stopped, using the same function digest, recipe and sample
+manifest: 128 calls / 30,726 tokens in 738.899 provider seconds (41.584
+tokens/second, +0.8%), with zero-call unchanged replay. Indexing was not the
+throughput limit, so the full-corpus Mac budget remains rejected. The same run
+passes CPU policy again (idle 14%, loaded 100%, recovered 3%).
+Calibration performs 128 calls / 30,726 tokens in 744.804 provider seconds
+(41.254 tokens/second). This rejects the proposed full-corpus Mac runtime budget;
+it is not 67,663-source acceptance. Generation records actual GPU allocation
 and successful initial/change/restart/revert behavior. Signed installed-package,
 combined residency and global GPU-pressure acceptance remain separate.
 
@@ -56,7 +193,18 @@ The full default Ubuntu job at `bc10986` passes (1,131 tests). The corresponding
 Mac job passes 1,231 tests and fails one: the 6,000-source watcher reaches 5,806
 sources at its unchanged 180-second reconciliation deadline. This is retained as
 a failure; native model acceptance and the foreground-release investigation are
-separate ongoing checks.
+separate ongoing checks. The next full default run,
+[38178644843](https://github.com/dwbimstr/context-foundry/actions/runs/38178644843) at `e7a1b59`,
+passes on both Ubuntu and macOS, including the unchanged Mac watcher deadline.
+That is one passing Mac run after the foreground-release change, not a repeated
+measurement. It does not cover `6ac60d8`, which was pushed under a `[skip ci]` head.
+[38205296934](https://github.com/dwbimstr/context-foundry/actions/runs/38205296934) at `1b5f0b1`
+(code at `6ac60d8`) passes on Ubuntu (1,147 tests) and macOS (1,248 tests), including
+the Mac watcher, which makes two consecutive passing Mac runs.
+A local Linux run of the checkpoint (code at `6ac60d8`) with Rust 1.90 in a cloud
+session passes fmt, all-target Clippy and 1,145 tests. Two gateway fault tests fail
+there only because the session runs as root, which bypasses their read-only
+permissions; run unprivileged, the whole gateway target passes.
 
 **Implementation.** Retrieval now distinguishes representation roles and scores
 current resident body vectors within bounded candidate files. A scored vector can
