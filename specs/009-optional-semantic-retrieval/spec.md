@@ -694,19 +694,13 @@ The owned policy under 013 (frozen off, 2026-10-07) chose graph expansion; its
 confidence is not a passage relevance score and must never reorder source candidates.
 
 Experimental hierarchy/body amendment: anchorless prose under the existing
-behavior-context opt-in places current lexical documents and independently scored
-Body locations by reciprocal rank fusion (k = 60, one-based ranks), whether coverage
-is partial or complete. The lexical list keeps its order. The Body list keeps the
-dense order, refined owner-scoped passages before ordinary hits, and counts a
-location found both ways once. A document and a Body location add each other's best
-reciprocal rank only when their byte ranges overlap in the same current source.
-Exact ties put Body first only when at least one refined Body survives the final
-source check; otherwise lexical goes first. Parent, file and container-fragment
-locations are not Body evidence and follow in dense order. The same first-placement
-merge, four-per-file quota and candidate/output limits apply after fusion; this
-reserves neither extra slots nor guaranteed lexical delivery. Trace
-`body_document_rrf_v1` records coverage separately from the policy, with the fused
-and supported counts. This
+behavior-context opt-in uses deterministic alternating dense/lexical lanes whether
+coverage is partial or complete. The dense lane precedes the lexical lane only when
+at least one independently scored refined Body survives the final source check;
+otherwise lexical goes first. Each lane retains its existing order. The same
+first-placement merge, four-per-file quota and candidate/output limits apply after
+interleaving; this reserves neither extra slots nor guaranteed lexical delivery.
+Trace `body_prose_interleave_v1` records coverage separately from the policy. This
 amends T004 placement only for these experimental representations. Ordinary/default
 search, anchored requests and address-card recipes keep their existing behavior;
 the existing partial/address and file-overview rules are unchanged. The boundary

@@ -7373,12 +7373,9 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                 }
                 let lexical_position = order.iter().position(|item| item.0 == lexical_path);
                 let preserved = experimental && (!address || !complete);
-                // Body recipes fuse by reciprocal rank. The lexical document
-                // leads: an overlapping refined hierarchy passage supports it,
-                // and body-v1 ties keep lexical documents first.
                 assert_eq!(
                     lexical_position,
-                    preserved.then_some(0),
+                    preserved.then_some(usize::from(hierarchy)),
                     "{representation:?} {coverage} experimental={experimental}"
                 );
                 assert!(!order.iter().any(|item| item.0 == late_path));
@@ -7396,17 +7393,11 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                         if address {
                             "partial_prose_interleave_v1"
                         } else {
-                            "body_document_rrf_v1"
+                            "body_prose_interleave_v1"
                         }
                     );
                     assert_eq!(policies[0]["coverage"], coverage);
                     assert_eq!(policies[0]["lexical_first"], !hierarchy);
-                    if !address {
-                        assert_eq!(
-                            policies[0]["supported_lexical"].as_u64().unwrap() > 0,
-                            hierarchy
-                        );
-                    }
                     assert_eq!(
                         policies[0]["eligible_refined_locations"].as_u64().unwrap() > 0,
                         hierarchy
