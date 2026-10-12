@@ -57,12 +57,14 @@ The 128-file sample needs 744.804 provider seconds for 30,726 tokens (41.254 tok
 Do not launch the proposed full Mac batch-one run within a two/three-hour budget.
 
 [Default Rust CI 38178644843](https://github.com/dwbimstr/context-foundry/actions/runs/38178644843)
-at `e7a1b59` was still running at 22:12:48 UTC. Both platforms passed fmt, Clippy and
-test builds; final tests, including the Mac watcher rerun, were pending. The local
-monitor was stopped; the remote jobs continue. This run does not include `6ac60d8`.
-An earlier full Ubuntu run passes 1,131 tests; its Mac counterpart passes 1,231 and
-fails the watcher deadline at 5,806/6,000 files. Recheck the newer run before reporting
-that regression fixed on Mac.
+at `e7a1b59` **passed** on both Ubuntu and macOS (completed 22:32:49 UTC), including the
+Mac watcher test that failed at 5,806/6,000 files in the earlier `bc10986` run. That is
+one passing Mac run, not a repeated measurement. This run does not include `6ac60d8`.
+
+The native CPU-pressure test passed in native runs at `4dd9da9` and `4dab8e4`, with idle
+at 9%. It failed at `bc10986` and `f75f14c`, with idle at 84–100%. All four used the same
+runner image and stage order, and the commits between them touch neither the sampler
+nor the test. See [validation](validation.md#realistic-acceptance-continuation--2026-10-11).
 
 ## Evidence and portable package
 
@@ -173,7 +175,9 @@ the memory of the checkpoint host, which affects two steps below:
 7. Review the unrun native CPU diagnostic patch under
    `resume-capsule/foundry-native-cpu-diagnostics/`. It logs actual admission counters,
    self CPU and bounded process-name snapshots in explicit tests only. Investigate
-   the failed prerequisite without weakening policy. No further native job was started.
+   the failed prerequisite without weakening policy. Separately, the committed driver now
+   records bounded `top` snapshots, process names only, just before and after the
+   CPU-pressure test. The capsule patch is still unapplied.
 
 Sealed identities (hash verification does not authorize inspecting labels):
 manifest `01a9ad47473c0b99f82bee5f2fabf67cf96c86134e9627c63bd50cb67d80d429`;

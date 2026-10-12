@@ -971,6 +971,25 @@ def main():
                 }
         return rows
 
+    def host_cpu_snapshot(label):
+        # Diagnostic only, taken outside the CPU test's measured window so it never
+        # loads the host the test samples. top's second sample covers the current
+        # one-second interval; it lists short process names, never arguments.
+        try:
+            listing = subprocess.run(
+                ["/usr/bin/top", "-l", "2", "-s", "1", "-n", "12", "-o", "cpu",
+                 "-stats", "pid,ppid,cpu,time,state,command"],
+                capture_output=True, text=True, timeout=20).stdout
+            current = listing[listing.rfind("Processes:"):] if "Processes:" in listing else listing
+            text = "\n".join(current.splitlines()[:40])
+        except (OSError, subprocess.SubprocessError) as error:
+            text = f"unavailable: {error}"
+        with (out / "cpu-pressure-host-processes.log").open("a") as log:
+            log.write(f"=== {label} {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n{text}\n")
+        result.setdefault("cpu_diagnostics", {"log": "cpu-pressure-host-processes.log",
+                                              "window": "before and after the CPU policy test, never inside it",
+                                              "snapshots": []})["snapshots"].append(label)
+
     def observe_workers(owner, worker_name):
         rows = processes()
         for pid, row in rows.items():
@@ -1090,7 +1109,11 @@ def main():
         require(stage("rust", ["rustc", "+1.90.0", "-vV"], 60), "Rust 1.90.0 unavailable")
         cpu_ok = True
         for name in ("native_macos_cpu_observation", "native_macos_cpu_pressure_pauses_and_resumes_both_lanes"):
+            if name.startswith("native_macos_cpu_pressure"):
+                host_cpu_snapshot("before " + name)
             cpu_ok = test("model_resources::tests::" + name, ["--lib"], True) and cpu_ok
+            if name.startswith("native_macos_cpu_pressure"):
+                host_cpu_snapshot("after " + name)
         # CPU policy tests keep their own acceptance result. A busy host may
         # lack their idle prerequisite; preserve that failure while independently
         # collecting model evidence behind the held-file and lifecycle gates.

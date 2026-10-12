@@ -46,9 +46,20 @@ CPU/Metal comparison across five identical inputs passes with minimum cosine
 0.9999949405. The device is Apple Paravirtual Metal, not a physical-Mac performance
 receipt. The run still **fails native CPU-pressure acceptance**: its initial idle
 prerequisite never reaches 30%; raw causes need further observation. No threshold
-was relaxed. Calibration performs 128 calls / 30,726 tokens in 744.804 provider
-seconds (41.254 tokens/second). This rejects the proposed full-corpus Mac runtime
-budget; it is not 67,663-source acceptance. Generation records actual GPU allocation
+was relaxed. The same test passed in native runs
+[38172126296](https://github.com/dwbimstr/context-foundry/actions/runs/38172126296) (`4dd9da9`)
+and [38172614756](https://github.com/dwbimstr/context-foundry/actions/runs/38172614756) (`4dab8e4`):
+idle 9%, loaded 100% and recovered 2%. It failed in
+[38174697974](https://github.com/dwbimstr/context-foundry/actions/runs/38174697974) (`bc10986`)
+and 38176235770, where host CPU stayed at 84–100% for the whole 15-second idle
+window. All four runs used runner image `macos-15-arm64` 20260907.0337.1 and the
+same stage order. The commits between them change neither the sampler nor this
+test. The busy process is still unobserved, so neither the code nor the environment
+is established as the cause. The driver now records a bounded `top` snapshot of
+process names immediately before and after this test, outside its measured window.
+Calibration performs 128 calls / 30,726 tokens in 744.804 provider seconds
+(41.254 tokens/second). This rejects the proposed full-corpus Mac runtime budget;
+it is not 67,663-source acceptance. Generation records actual GPU allocation
 and successful initial/change/restart/revert behavior. Signed installed-package,
 combined residency and global GPU-pressure acceptance remain separate.
 
@@ -56,7 +67,15 @@ The full default Ubuntu job at `bc10986` passes (1,131 tests). The corresponding
 Mac job passes 1,231 tests and fails one: the 6,000-source watcher reaches 5,806
 sources at its unchanged 180-second reconciliation deadline. This is retained as
 a failure; native model acceptance and the foreground-release investigation are
-separate ongoing checks.
+separate ongoing checks. The next full default run,
+[38178644843](https://github.com/dwbimstr/context-foundry/actions/runs/38178644843) at `e7a1b59`,
+passes on both Ubuntu and macOS, including the unchanged Mac watcher deadline.
+That is one passing Mac run after the foreground-release change, not a repeated
+measurement. It does not cover `6ac60d8`, which was pushed under a `[skip ci]` head.
+A local Linux run of the checkpoint (code at `6ac60d8`) with Rust 1.90 in a cloud
+session passes fmt, all-target Clippy and 1,145 tests. Two gateway fault tests fail
+there only because the session runs as root, which bypasses their read-only
+permissions; run unprivileged, the whole gateway target passes.
 
 **Implementation.** Retrieval now distinguishes representation roles and scores
 current resident body vectors within bounded candidate files. A scored vector can

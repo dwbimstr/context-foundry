@@ -31,6 +31,12 @@ if the sandbox is unavailable. The environment is defined in
   - The SIMD revision-5 Gemma function needs `avx512_bf16` (the doctor reports it).
     Without it, stop and report; do not switch to another embedding function, because
     its cache keys and vectors differ.
+  - Sessions run as root. Two `tests/gateway.rs` fault tests,
+    `a_failed_agent_creation_still_cleans_up_the_created_profile` and
+    `a_failed_models_write_still_cleans_up_and_does_not_block_the_next_launch`, simulate
+    a failure with read-only permissions, which root bypasses, so they fail here. Rerun
+    the built test binary as `nobody`, with a readable copy of the CA bundle in
+    `SSL_CERT_FILE`; do not change or skip the tests.
 - **Long jobs.** Start them with `run_in_background` and an explicit `timeout` (up to
   4 hours). Write all output under
   `/workspace/.context-foundry-tools/validation-runs/<run>/`. Keep the session active
