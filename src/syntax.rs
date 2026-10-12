@@ -377,7 +377,6 @@ pub fn units(source: &str, lang: Lang) -> Vec<Unit> {
 /// The same single-pass forest with a conservative proof that its parser did
 /// not recover errors or missing nodes. Unsupported, stopped and non-tree
 /// analyses have no such proof; callers must keep their ordinary fallback.
-#[cfg(feature = "semantic")]
 pub(crate) fn units_with_certainty(source: &str, lang: Lang) -> (Vec<Unit>, bool) {
     let analysis = analyze(source, lang, Need::Units);
     (analysis.units, analysis.clean_tree)

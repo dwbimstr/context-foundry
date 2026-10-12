@@ -90,6 +90,7 @@ pub struct Span {
 
 impl Span {
     /// Heap payload only; the owning vector accounts for inline span storage.
+    #[cfg(feature = "semantic")]
     pub(crate) fn retained_heap_bytes(&self) -> usize {
         self.key.capacity().saturating_add(match &self.content {
             Content::Body(body) => body.retained_heap_bytes(),
