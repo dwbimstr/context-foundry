@@ -3158,6 +3158,250 @@ impl Candidate {
     }
 }
 
+/// The reciprocal-rank constant of experimental document/body placement.
+#[cfg(feature = "semantic")]
+const BODY_RRF_K: f64 = 60.0;
+
+/// What experimental document/body fusion placed, for its trace.
+#[cfg(feature = "semantic")]
+#[derive(Debug, Default, PartialEq, Eq)]
+struct BodyRrfCounts {
+    lexical: usize,
+    body: usize,
+    duplicate_body: usize,
+    supported_lexical: usize,
+    supported_body: usize,
+    coarse: usize,
+}
+
+/// A placement unit and its dense representation, if any.
+#[cfg(feature = "semantic")]
+type Placed = ((String, u64, u64), Option<crate::neural::cache::CardKind>);
+
+/// A current lexical document's placement unit and its own byte range.
+#[cfg(feature = "semantic")]
+type LexicalDocument = ((String, u64, u64), (u64, u64));
+
+/// Experimental hierarchy placement (009 T009): reciprocal rank fusion
+/// (k = 60, one-based ranks) of current lexical documents and independently
+/// scored Body locations, before the duplicate, per-file and limit cuts.
+///
+/// `lexical` holds each current document's placement unit and its own byte
+/// range, in lexical order. `dense` holds the current dense locations in their
+/// existing order: refined owner-scoped passages first, then ordinary hits, so
+/// a sibling never outranks an owned passage. A location found both ways counts
+/// once, at its first rank. A document and a Body location support each other
+/// only when their byte ranges overlap in the same current source; each takes
+/// only its best supporter. Parent, file and container-fragment locations are
+/// not Body evidence: they follow in dense order. Nothing is added beyond the
+/// inputs. Exact score ties keep the previous experimental order: Body first
+/// when `body_first`, else lexical.
+#[cfg(feature = "semantic")]
+fn body_document_rrf(
+    lexical: &[LexicalDocument],
+    dense: &[Placed],
+    body_first: bool,
+) -> (Vec<Placed>, BodyRrfCounts) {
+    use crate::neural::cache::CardKind;
+    let mut counts = BodyRrfCounts::default();
+    let mut seen = std::collections::BTreeSet::new();
+    let body: Vec<_> = dense
+        .iter()
+        .filter(|(_, kind)| *kind == Some(CardKind::Body))
+        .filter(|(unit, _)| {
+            let first = seen.insert(unit);
+            counts.duplicate_body += usize::from(!first);
+            first
+        })
+        .collect();
+    let reciprocal = |rank: usize| 1.0 / (BODY_RRF_K + rank as f64);
+    let overlaps = |path: &str, (start, end): (u64, u64), unit: &(String, u64, u64)| {
+        unit.0 == path && start < unit.2 && unit.1 < end
+    };
+    // (score, own one-based rank, tie side, placement)
+    let (dense_side, lexical_side) = if body_first { (0u8, 1u8) } else { (1, 0) };
+    let mut fused = Vec::with_capacity(lexical.len() + body.len());
+    for (i, (unit, range)) in lexical.iter().enumerate() {
+        let support = body
+            .iter()
+            .position(|(body, _)| overlaps(&unit.0, *range, body));
+        counts.supported_lexical += usize::from(support.is_some());
+        let score = reciprocal(i + 1) + support.map_or(0.0, |j| reciprocal(j + 1));
+        fused.push((score, i + 1, lexical_side, (unit.clone(), None)));
+    }
+    for (j, placed) in body.iter().enumerate() {
+        let support = lexical
+            .iter()
+            .position(|(unit, range)| overlaps(&unit.0, *range, &placed.0));
+        counts.supported_body += usize::from(support.is_some());
+        let score = reciprocal(j + 1) + support.map_or(0.0, |i| reciprocal(i + 1));
+        fused.push((score, j + 1, dense_side, (*placed).clone()));
+    }
+    fused.sort_by(|a, b| {
+        b.0.total_cmp(&a.0)
+            .then(a.1.cmp(&b.1))
+            .then(a.2.cmp(&b.2))
+            .then_with(|| a.3.0.cmp(&b.3.0))
+    });
+    counts.lexical = lexical.len();
+    counts.body = body.len();
+    let mut placed: Vec<_> = fused.into_iter().map(|(.., placed)| placed).collect();
+    for coarse in dense
+        .iter()
+        .filter(|(_, kind)| *kind != Some(CardKind::Body))
+    {
+        counts.coarse += 1;
+        placed.push(coarse.clone());
+    }
+    (placed, counts)
+}
+
+#[cfg(all(test, feature = "semantic"))]
+mod body_rrf_tests {
+    use super::*;
+    use crate::neural::cache::CardKind;
+
+    fn unit(path: &str, start: u64, end: u64) -> (String, u64, u64) {
+        (path.into(), start, end)
+    }
+
+    fn dense(path: &str, start: u64, end: u64, kind: CardKind) -> Placed {
+        (unit(path, start, end), Some(kind))
+    }
+
+    #[test]
+    fn overlapping_document_and_body_support_each_other_before_unsupported_evidence() {
+        // a.rs's top document has no Body support; b.rs's second document
+        // overlaps the best Body location, so both outrank it.
+        let lexical = vec![
+            (unit("a.rs", 0, 100), (0, 100)),
+            (unit("b.rs", 0, 400), (120, 180)),
+        ];
+        let dense = vec![dense("b.rs", 100, 200, CardKind::Body)];
+        for body_first in [false, true] {
+            let (placed, counts) = body_document_rrf(&lexical, &dense, body_first);
+            assert_eq!(
+                placed,
+                vec![
+                    (unit("b.rs", 100, 200), Some(CardKind::Body)),
+                    (unit("b.rs", 0, 400), None),
+                    (unit("a.rs", 0, 100), None),
+                ]
+            );
+            assert_eq!((counts.supported_lexical, counts.supported_body), (1, 1));
+        }
+    }
+
+    #[test]
+    fn support_requires_an_exact_byte_overlap_in_the_same_source() {
+        // Adjacent ranges and the same range in another file are not overlap.
+        let lexical = vec![(unit("a.rs", 0, 300), (0, 100))];
+        let dense = vec![
+            dense("a.rs", 100, 200, CardKind::Body),
+            dense("b.rs", 0, 100, CardKind::Body),
+        ];
+        let (placed, counts) = body_document_rrf(&lexical, &dense, true);
+        assert_eq!((counts.supported_lexical, counts.supported_body), (0, 0));
+        // Equal reciprocal ranks tie; the tie keeps the requested side first.
+        assert_eq!(
+            placed,
+            vec![
+                (unit("a.rs", 100, 200), Some(CardKind::Body)),
+                (unit("a.rs", 0, 300), None),
+                (unit("b.rs", 0, 100), Some(CardKind::Body)),
+            ]
+        );
+        let (placed, _) = body_document_rrf(&lexical, &dense, false);
+        assert_eq!(
+            placed,
+            vec![
+                (unit("a.rs", 0, 300), None),
+                (unit("a.rs", 100, 200), Some(CardKind::Body)),
+                (unit("b.rs", 0, 100), Some(CardKind::Body)),
+            ]
+        );
+    }
+
+    #[test]
+    fn body_keeps_dense_order_and_counts_a_refined_and_ordinary_location_once() {
+        // The refined owner-scoped passage stays ahead of an ordinary sibling,
+        // whatever their distances; its ordinary duplicate is not re-ranked.
+        let dense = vec![
+            dense("a.rs", 0, 10, CardKind::Body),
+            dense("a.rs", 20, 30, CardKind::Body),
+            dense("a.rs", 0, 10, CardKind::Body),
+        ];
+        let (placed, counts) = body_document_rrf(&[], &dense, true);
+        assert_eq!(
+            placed,
+            vec![
+                (unit("a.rs", 0, 10), Some(CardKind::Body)),
+                (unit("a.rs", 20, 30), Some(CardKind::Body)),
+            ]
+        );
+        assert_eq!((counts.body, counts.duplicate_body), (2, 1));
+    }
+
+    #[test]
+    fn coarse_and_fragment_locations_are_not_body_evidence_and_follow_in_dense_order() {
+        let lexical = vec![(unit("a.rs", 0, 50), (0, 50))];
+        let dense = vec![
+            dense("a.rs", 0, 500, CardKind::Parent),
+            dense("a.rs", 0, 900, CardKind::File),
+            dense("a.rs", 0, 40, CardKind::ContainerFragment),
+        ];
+        let (placed, counts) = body_document_rrf(&lexical, &dense, true);
+        assert_eq!(
+            placed,
+            vec![
+                (unit("a.rs", 0, 50), None),
+                (unit("a.rs", 0, 500), Some(CardKind::Parent)),
+                (unit("a.rs", 0, 900), Some(CardKind::File)),
+                (unit("a.rs", 0, 40), Some(CardKind::ContainerFragment)),
+            ]
+        );
+        assert_eq!(
+            (counts.body, counts.coarse, counts.supported_lexical),
+            (0, 3, 0)
+        );
+    }
+
+    #[test]
+    fn fusion_is_deterministic_and_adds_no_candidates() {
+        let lexical: Vec<_> = (0..40)
+            .map(|i| {
+                (
+                    unit(&format!("f{}.rs", i % 7), i * 10, i * 10 + 30),
+                    (i * 10, i * 10 + 30),
+                )
+            })
+            .collect();
+        let dense: Vec<_> = (0..30)
+            .map(|i| {
+                let kind = if i % 3 == 0 {
+                    CardKind::Parent
+                } else {
+                    CardKind::Body
+                };
+                dense(
+                    &format!("f{}.rs", i % 5),
+                    (i % 10) * 7,
+                    (i % 10) * 7 + 25,
+                    kind,
+                )
+            })
+            .collect();
+        let (first, counts) = body_document_rrf(&lexical, &dense, true);
+        assert_eq!(first, body_document_rrf(&lexical, &dense, true).0);
+        assert!(counts.duplicate_body > 0);
+        assert_eq!(
+            first.len() + counts.duplicate_body,
+            lexical.len() + dense.len()
+        );
+        assert_eq!(first.len(), counts.lexical + counts.body + counts.coarse);
+    }
+}
+
 /// A long unit may contain several independently useful matches. Keep at most
 /// two disjoint documents in experimental prose context, within the existing
 /// candidate, per-file and delivery budgets. Anchored retrieval is unchanged.
@@ -5896,11 +6140,22 @@ impl Engine {
         // existing partial/address and coarse-only admission rules; complete
         // address coverage and ordinary search retain their placement.
         // Freshness was checked above; no candidate/output slots are added.
-        if prose
-            && (word == "partial"
-                || dense.file_overviews_only()
-                || dense.has_body_representations())
-        {
+        if prose && dense.has_body_representations() {
+            // Body passages and current lexical documents are fused by
+            // reciprocal rank before any destructive cut; see
+            // [`body_document_rrf`]. Placement adds no candidate or slot.
+            let documents: Vec<_> = lexical
+                .iter()
+                .map(|c| (c.selection_unit(prose), (c.start, c.end)))
+                .collect();
+            // Exact ties keep the previous experimental order: eligible
+            // refined passages first, otherwise lexical documents first.
+            let (order, counts) = body_document_rrf(&documents, &placed, eligible_refined > 0);
+            placed = order;
+            if let Some(trace) = control.trace() {
+                trace.record(serde_json::json!({"stage":"placement_policy","policy":"body_document_rrf_v1","rrf_k":BODY_RRF_K,"coverage":word,"lexical_first":eligible_refined == 0,"lexical_documents":counts.lexical,"body_locations":counts.body,"duplicate_body_locations":counts.duplicate_body,"supported_lexical":counts.supported_lexical,"supported_body":counts.supported_body,"coarse_locations":counts.coarse,"refined_hits":refined_count,"eligible_refined_locations":eligible_refined,"refinement_files":refinement_paths.len()}));
+            }
+        } else if prose && (word == "partial" || dense.file_overviews_only()) {
             let mut dense_order = std::mem::take(&mut placed).into_iter();
             let mut lexical_order = lexical.iter().map(|c| (c.selection_unit(prose), None));
             loop {
@@ -5908,21 +6163,13 @@ impl Engine {
                 if lexical.is_none() && dense.is_none() {
                     break;
                 }
-                // Independently embedded body passages precede broad lexical
-                // documents. Without eligible refinement, lexical evidence
-                // goes first. Neither choice depends on coverage completeness.
-                if eligible_refined > 0 {
-                    placed.extend(dense);
-                    placed.extend(lexical);
-                } else {
-                    placed.extend(lexical);
-                    placed.extend(dense);
-                }
+                // Only hierarchy recipes refine, and they are fused above, so
+                // lexical evidence goes first here, at any coverage.
+                placed.extend(lexical);
+                placed.extend(dense);
             }
             if let Some(trace) = control.trace() {
-                let policy = if dense.has_body_representations() {
-                    "body_prose_interleave_v1"
-                } else if dense.file_overviews_only() {
+                let policy = if dense.file_overviews_only() {
                     "coarse_prose_interleave_v1"
                 } else {
                     "partial_prose_interleave_v1"

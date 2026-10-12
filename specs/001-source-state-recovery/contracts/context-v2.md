@@ -601,15 +601,17 @@ line (clipped to the original unit), preserving indentation. This exposes its
 declaration and implementation start rather than only long introductory examples. Body matches keep their focused window. Its handle names the
 actual contiguous excerpt range and its label says `excerpt`; omitted documentation
 is not claimed as delivered.
-Experimental anchorless prose with hierarchy/body representations alternates dense
+Experimental anchorless prose with hierarchy/body representations fuses dense Body
 and lexical candidates at both partial and complete coverage, before ordinary
-first-placement deduplication, per-file caps and candidate limits. Dense goes first
-only when a refined Body survives the final source check; otherwise lexical goes
-first. Coverage describes availability and freshness, not relevance. The existing
+first-placement deduplication, per-file caps and candidate limits. Fusion is by
+reciprocal rank (k = 60): a lexical document and a Body
+location with overlapping current byte ranges support each other. Exact ties put
+Body first only when a refined Body survives the final source check; otherwise
+lexical goes first. Coverage describes availability and freshness, not relevance. The existing
 partial/address and file-overview rules still alternate lexical first; complete
 address-card coverage retains dense precedence. Explicit anchors and ordinary/default
 search keep their existing behavior. All independently scored body ranges remain
-unchanged. Bounded `placement_policy` traces name `body_prose_interleave_v1` for
+unchanged. Bounded `placement_policy` traces name `body_document_rrf_v1` for
 hierarchy/body and report coverage separately; `lexical_intent` remains available.
 This reserves no extra candidates or output tokens, and does not guarantee delivery
 of every lexical hit. No expected-answer labels enter selection. It changes no source
