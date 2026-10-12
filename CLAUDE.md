@@ -1,10 +1,20 @@
 @AGENTS.md
 
+## Where the work runs
+
+For now the ecosystem work is bound to **the sandbox**: the machine that made the
+[ecosystem checkpoint](docs/resume-context-ecosystem.md). It holds the checkout at
+`/workspace/context-foundry`, the restored evidence under
+`/workspace/.context-foundry-tools` and the archive, and has a 4-CPU quota, 32 GiB
+of RAM and no swap. Sessions there are driven over Remote Control:
+`bash scripts/cloud/sandbox.sh check`, then `start`. Run one heavy build, index or
+model job at a time, and keep the existing absolute paths.
+
 ## Cloud sessions
 
-These rules apply when `CLAUDE_CODE_REMOTE=true` (Claude Code on the web). The
-environment is defined in [scripts/cloud](scripts/cloud/setup.sh); the work to resume
-is the [ecosystem checkpoint](docs/resume-context-ecosystem.md).
+These rules apply when `CLAUDE_CODE_REMOTE=true` (Claude Code on the web), the fallback
+if the sandbox is unavailable. The environment is defined in
+[scripts/cloud](scripts/cloud/setup.sh).
 
 - **Check first.** Run `bash scripts/cloud/doctor.sh` at the start of every session. Do
   not start a build or model run while it reports FAIL.

@@ -88,12 +88,26 @@ absolute corpus paths to preserve source/store identity; do not casually rewrite
 profiles or claim cache equivalence across different worker descriptors/hardware.
 The archive is private handoff material, not a Git/release artifact.
 
-## Claude Code cloud environment
+## Where to continue
 
-The cloud environment for continuing this work is versioned in `scripts/cloud`:
+For now, continue on the sandbox that made this checkpoint. It already holds the
+checkout, the restored evidence and the archive, and it has 32 GiB of RAM. Drive it
+through Claude Code Remote Control, which needs a claude.ai Pro/Max login on the
+sandbox:
+
+1. Run `git pull --ff-only` in `/workspace/context-foundry`.
+2. Run `bash scripts/cloud/sandbox.sh check`. It reports PASS/FAIL for the Claude CLI,
+   the login, network access to Anthropic, tmux, the repository and the evidence.
+3. Run `bash scripts/cloud/sandbox.sh start`. It starts one Remote Control session in
+   tmux. Answer the trust and enable prompts once in `tmux attach -t cf-remote-control`,
+   then open the session at claude.ai/code.
+
+If the sandbox is unavailable, use a Claude Code cloud environment instead. It is
+versioned in `scripts/cloud`:
 
 | File | Use |
 | --- | --- |
+| [`sandbox.sh`](../scripts/cloud/sandbox.sh) | Checks, starts, shows and stops the sandbox's Remote Control session. |
 | [`setup.sh`](../scripts/cloud/setup.sh) | The environment's setup script. It installs Rust 1.90, libclang/CMake, the pinned llama.cpp object store, the pinned public models and 013 files, OMP/Bun, and the locked Cargo dependencies. |
 | [`environment.env`](../scripts/cloud/environment.env) | The environment variables. They hold paths only; there are no secrets. |
 | [`allowed-domains.txt`](../scripts/cloud/allowed-domains.txt) | Hosts added under Custom network access, alongside the default package managers. |
@@ -107,7 +121,7 @@ the memory of the checkpoint host, which affects two steps below:
   a larger host.
 - Steps 3 and 4 need `avx512_bf16` to run the same SIMD revision-5 function.
 
-[`CLAUDE.md`](../CLAUDE.md) gives cloud agents the session rules.
+[`CLAUDE.md`](../CLAUDE.md) gives agents the session rules for both places.
 
 ## Resume in this order
 
