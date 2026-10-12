@@ -8,6 +8,15 @@ The host had 4 vCPUs, 15.7 GiB of RAM and no swap. Its VM restarted mid-session 
 came back on a different CPU: first a Xeon @ 2.10 GHz with `avx512_bf16`, then a Xeon
 @ 2.80 GHz without it. Remaining work is listed in [FOLLOWUP.md](../FOLLOWUP.md).
 
+**Owner decision, 2026-10-12.** The owner authorized merging
+`experimental/context-ecosystem` into `main` while the acceptance gates in
+[FOLLOWUP.md](../FOLLOWUP.md) stay open. Retrieval remains 2/8. Scale, host tasks,
+economics, the sealed evaluation and the native macOS re-check remain unaccepted. The
+merge marks none of them passed and is not a release; the release checklist still
+applies. No Rust, Cargo or build file differs from `b432f46`, so its local gates receipt
+below covers the merged code, and the gates were not rerun. Native macOS acceptance was
+not rerun either, because Actions is unavailable.
+
 ### Local gates receipts
 
 `scripts/gates.sh` replaces Rust CI. The default toolchain was Rust 1.97.0, and the

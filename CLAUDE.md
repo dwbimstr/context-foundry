@@ -51,8 +51,10 @@ if the sandbox is unavailable. The environment is defined in
   restart or budget is INVALID.
 - **GitHub.** The proxy rejects GraphQL, so `gh pr` and `gh issue` fail; use REST
   through `gh api`.
-- **Git.** Work on `experimental/context-ecosystem`. Never push `main`, tags or
-  releases. Run `node scripts/check-links.mjs` before committing Markdown.
+- **Git.** Work on `experimental/context-ecosystem`. Never push tags or releases, and
+  never push `main` directly: `main` receives the experimental line only through an
+  owner-approved pull request merged with a merge commit (first done 2026-10-12). Run
+  `node scripts/check-links.mjs` before committing Markdown.
 
 ## GitHub Actions is unavailable
 
