@@ -269,30 +269,138 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 
 ## F13. Continuous semantics stops on a stale-source partition race
 
-- **Why parked:** it is a product change in the concurrent semantic driver, not a small
-  test fix. It was found while investigating
-  `continuous_semantics_progresses_during_filesystem_traffic_and_converges`
+- **Why parked:** it is a product change in the concurrent semantic driver, and the fix
+  below is a design awaiting owner approval (2026-10-13). It was found while
+  investigating `continuous_semantics_progresses_during_filesystem_traffic_and_converges`
   (`tests/neural_retrieval.rs`), which fails about 1 run in 6 under the full parallel
-  suite on 4 vCPUs. Nothing blocks it in a cloud session.
-- **Diagnosis:** while files churn, continuous maintenance partitions a source, the
-  source is replaced, and the accept step rejects the mapping with
-  `partition_invalid: <path>: the mapping names a stale source version`. That comes from
-  `semantic_accept_partition`, or from `semantic_partition_source`, in
-  `src/neural/cache.rs` (about lines 838–876). The lane then stops in state `paused`
-  with that `last_error` and pending paths still queued. It never converges, so a longer
-  deadline would only hide the defect. The test's 15-second bound is not the cause.
-- **Required resource:** none beyond a normal session; a design decision on the fix.
+  suite on 4 vCPUs. Nothing else blocks it in a cloud session.
+- **Diagnosis:** `Run::partition_wave` (`src/neural/driver.rs`) reads each source under
+  the engine slot, releases the slot while the partition workers compute, then retakes
+  it for each `commit_partition` (`src/neural/prepare.rs`), which calls
+  `Engine::semantic_accept_partition` (`src/neural/cache.rs`). The owner lets pending
+  watcher steps run before the driver (`try_primary` in `src/mcp.rs`), so under churn a
+  source edited during the compute is usually stale at accept. Accept refuses it with
+  `partition_invalid: <path>: the mapping names a stale source version`; the error
+  leaves `maintain`, `finish` records `paused` with that `last_error`, continuous mode is
+  switched off and the driver thread exits with the paths still pending. It never
+  converges, so a longer deadline would only hide the defect; the test's bound is not
+  the cause. Details:
+  - Only the accept-time check fires in the MCP owner: `semantic_partition_source` reads
+    in the same slot step as the source page, and every writer takes that slot.
+  - A source deleted in the same window fails the same way with `not_found`, which the
+    state row records as `internal`.
+  - A one-shot MCP `index {semantic: "prepare"}` runs the same wave and can stop the same
+    way. The CLI `semantic prepare` cannot: it holds the store exclusively.
+  - `area_pass` has the same shape: `stale_area`, when a brief changes during
+    preparation, also ends in `paused`. It was not observed.
+- **Proposed fix (design only):** treat a superseded source as a normal outcome. No new
+  requeue is needed: `replace_source` and `delete_source` record the new version in the
+  semantic obligation table in the same transaction (`work::changed`), and
+  `derivation_ack` removes a path only when its stored version equals the batch's. A
+  skipped path therefore stays pending, and the next `maintain` iteration, or the
+  one-shot pass's revision check, partitions it again.
+  1. `Engine::semantic_accept_partition` returns committed or superseded (hash differs,
+     or source gone) instead of an error.
+  2. `commit_partition` passes that through and counts `partitioned_sources` only on a
+     commit. The CLI `run` keeps today's error, which it cannot reach.
+  3. `Run::partition_wave` drops a superseded partition and its retained cards and
+     continues; the pause and cancel checks before each commit stay as they are.
+  4. The public `Engine::semantic_record_partition` still refuses a stale hash with
+     `partition_invalid`, so its contract in `tests/neural.rs` holds. The structural
+     `partition_invalid` checks (bounds, order, UTF-8, keys, rendering) are untouched.
+
+  Rejected: restarting the wave from a fresh batch (it discards the wave's other work
+  and can starve unrelated paths under steady churn), and serializing partition and
+  commit against the watcher (it reverses the 009 T003 slot decision and breaks the
+  driver test that requires partition CPU work to release the serving slot). A path
+  rewritten faster than its own partition compute is retried each pass; the watcher's
+  debounce (75 ms quiet, 1 s maximum) bounds that. Whether `stale_area` gets the same
+  treatment is a separate owner call.
+- **Required resource:** none beyond a normal session; owner approval of the design.
 - **Resume:**
-  1. Reproduce: build `tests/neural_retrieval.rs` and run the whole suite six times
-     (`cargo test --locked --test neural_retrieval`). On failure the panic prints the
-     full status: `semantic.state = "paused"`, a `last_error` naming a stale source
-     version, and `pending.paths > 0`.
-  2. Fix direction: in continuous maintenance, treat a stale-source mismatch at
-     partition or accept time as a requeue of that path rather than a lane stop, the
-     same as stale partitions rejected before inference. Keep `partition_invalid` for
-     genuine structural violations, and keep the one-shot CLI `semantic prepare`
-     behavior explicit.
-  3. Add a deterministic regression that replaces the source between partitioning and
-     accepting (a named fault point), then assert that maintenance requeues and
-     converges.
-  4. Run the full local gates. Leave the test's deadlines unchanged.
+  1. Red first, deterministic: in the `src/neural/driver.rs` tests, arm
+     `PARTITION_BEFORE_COMPUTE` with an `Action::Call` that replaces the source being
+     partitioned (`engine.replace_source`), as the existing slot-release test does, and
+     call `partition_wave`. Assert `Ok`, no partition row for that path, its obligation
+     still pending with the new version, and the wave's other sources committed. Today
+     it returns `partition_invalid`. Add the deletion variant (`delete_source`; today
+     `not_found`) and a mid-wave variant (`PARTITION_AFTER_COMMIT` on the first source
+     replaces the second).
+  2. Drive `maintain` through the same fault and assert state `waiting`, no pending
+     paths and a current partition for the new hash.
+  3. Implement fix steps 1-3; keep the `tests/neural.rs` stale-hash refusal and the
+     structural `partition_invalid` tests unchanged.
+  4. Soak `cargo test --locked --test neural_retrieval` about 12 times with deadlines
+     unchanged, then run the full local gates. Update the driver module doc ("a
+     superseded partition is dropped and stays pending") and
+     [validation](docs/validation.md).
+
+## F14. God-module splits (audit 2026-10-13)
+
+- **Why deferred:** each split is a separate, gated, revertable commit. On 2026-10-13
+  only the two splits that were purely mechanical (verbatim moves, no visibility
+  change, public API unchanged) ran; see [validation](docs/validation.md#god-module-splits--2026-10-13).
+  The rest change crate-internal visibility, split test modules, touch macOS-only or
+  feature-gated code that Linux gates do not compile, or collide with pending work.
+- **Audit:** a god module here is large and multi-responsibility. Production lines
+  exclude in-file test modules; fan-in counts other `src` files naming the module
+  (plus test files); churn counts commits touching the file in the shallow clone's
+  152 commits since 2026-10-06. Figures are at `a088969`, before the splits below.
+
+  | File | Prod. lines | Fns | Concerns | Fan-in (src + tests) | Churn | Hot path | Verdict |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | `src/store.rs` | 7,586 | 196 | 12+ (lifecycle, upgrade, scans, writes, indexing pool, lexical and semantic search, context, doors, retrieve, repair, query parsing, result types) | 30 + 22 | 44 | yes | god module |
+  | `src/mcp.rs` | 4,622 | 127 | ~14 (owner state, slot, ops, results, args, tools, delivery, Owner impls for three subsystems, transports, HTTP gate, startup, CLI semantic path) | 4 + 7 | 25 | yes | god module |
+  | `src/syntax.rs` | 4,857 | 113 | ~15 (languages, bounded parse, scanner limits, unit rules, outline, calls, imports, Markdown, forest, tiling, tokenizers, paths) | 11 + 7 | 17 | yes (indexing) | god module |
+  | `src/learning.rs` | 3,014 | 87 | ~13 (feedback, strict JSON, route state, store surface, run policy, dataset prepare and check, output publication, renderer) | 8 + 9 | 1 | no | god module |
+  | `src/graph.rs` | 2,955 | 65 | 3 (edge graph, compiler facts, references and doors) | 8 + 8 | 6 | yes (references) | borderline |
+  | `src/neural/query.rs` | 1,654 | 61 | 3 (refinement, provider-thread runtime, dense index) | 5 + 3 | 18 | yes | borderline |
+  | `src/neural/prepare.rs` | 2,319 | 67 | 3, already layered (CLI loop and lifecycle, scheduling, step machinery) | 3 + 2 | 19 | yes | borderline |
+
+  **Not god modules** (large but one responsibility; do not target them):
+  `src/gateway.rs` (one subcommand, one entry point), `src/scip.rs` (one import
+  pipeline), `src/response.rs` (one wire renderer), `src/cli.rs` (the command
+  dispatcher), `src/testkit.rs` (test-faults support), the `tests/*.rs` integration
+  suites (4,400–8,760 lines each), and the llama.cpp bindings, which `build.rs`
+  generates into `OUT_DIR` and are not in the tree.
+- **Done (2026-10-13):** `14729de` moved the tool layer of `src/mcp.rs` to
+  `src/mcp/tools.rs`, and `9a86665` moved context assembly from `src/store.rs` to
+  `src/store/context.rs`. Both are verbatim moves with `use super::*;` in the child and
+  no visibility change; see validation for the evidence.
+- **Remaining plan**, each step one commit, in this order within a file, gated as
+  below. "Bumps" are crate-internal visibility changes (`pub(super)`); none changes
+  the public API.
+
+  | File | Next splits (bumps) | Precondition or blocker |
+  | --- | --- | --- |
+  | `src/store.rs` | `retrieve` (0), `index_hooks` inline module to a file (0), `sources` (0), `indexing` (0; declare after the `index_fault!` macros), `lifecycle` (0; +2 to separate repair), `doors` (1), `semantic_search` (1, `#[cfg(feature = "semantic")]`), `lexical` (2) | Keep the shared core (`Fields`, `Candidate`, `TwoTier`, `WindowSlice`, storage helpers) in the parent; moving it costs 4–25 bumps each. |
+  | `src/mcp.rs` | `owners` (0), `transport` with its tests (0; not named `http`), `startup` (1), `semantic` (2–3) | Keep `Shared`, `RootMeta`, the slot and `run_op` in the parent. |
+  | `src/syntax.rs` | `outliner` (0), `text` (0), `tiling`, `forest`, `markdown`, `imports`, `extract` (1 each), `parser` with `parse_hooks` (2), `calls` (5) | Its in-file test parses `include_str!("syntax.rs")`; every split shrinks that sample. Freeze the sample as a fixture first; that is a test change and an owner call. |
+  | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | `serve`, `supervisor` and `worker` compile only on macOS, so Linux gates cannot check items they reach (`LearningPolicy`, `fail`, `hex64`); keep those in the root or re-export them, and check on a Mac. |
+  | `src/neural/prepare.rs` | `order` (0), `cli` (0), `steps` with the tests (1) | Wait for F13: its fix changes `commit_partition`. |
+  | `src/neural/query.rs` | `runtime` with its tests (0), `refinement` with its tests (0) | The test module must be split in two; add `use super::{area, cache};` in the parent for the moved relative paths. |
+  | `src/graph.rs` | `references` (0), `edges` (0), `compiler` (0) | Re-export the moved `pub` items exactly; check with the rustdoc comparison below. |
+
+- **Required resource:** none beyond a normal session, except a Mac for the
+  `learning.rs` splits that touch items its macOS-only children use.
+- **Resume, per split:**
+  1. Move the planned line ranges verbatim into `src/<module>/<child>.rs`, which starts
+     with a `//!` line and `use super::*;`; add `mod <child>;` after the parent's
+     imports and `pub use` / `pub(crate) use` lines only for moved items used outside
+     the child. Prove the move is verbatim by diffing the removed ranges against the
+     new file.
+  2. Run `cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings`.
+     If the compiler asks for a bump the plan did not list, revert the commit and update
+     this entry instead of forcing it.
+  3. Check the public API: `cargo doc --locked --no-deps --lib --features test-faults`
+     before and after, compare every page with the source links stripped, and for any
+     changed type page compare the set of documented members (an `impl` block moved to
+     a child reorders sections but must keep every signature and doc). A new redirect
+     page for the private child path is expected.
+  4. Run `cargo check --locked --no-default-features --lib` (no warnings), then
+     `scripts/gates.sh . OUTDIR` and the unprivileged rerun of the gateway target, and
+     record the receipt in [validation](docs/validation.md#local-gates-receipts). Source
+     `scripts/cloud/environment.env` and unset `RUSTUP_TOOLCHAIN` first: the learning
+     tests need its tokenizer path, the gates choose their own toolchains, and its
+     `CARGO_INCREMENTAL=0` and debuginfo-off profiles keep the gates target within the
+     disk allowance (with debuginfo each test binary is about 600 MB).
