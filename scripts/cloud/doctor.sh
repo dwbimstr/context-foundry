@@ -20,6 +20,24 @@ done
 [[ " $flags " == *" avx512_bf16 "* ]] ||
   info simd "no avx512_bf16: the SIMD revision-5 Gemma worker refuses here; do not substitute another embedding function"
 
+# Every variable environment.env sets to a value must reach the session (FOLLOWUP F16):
+# without them the toolchain pin, the debuginfo-off build profiles and the pinned input
+# paths are all missing, and the checks below fail without naming the cause.
+env_file=$(dirname "${BASH_SOURCE[0]}")/environment.env
+unset_vars=() other_vars=()
+while IFS='=' read -r name value; do
+  [[ $name =~ ^[A-Z_][A-Z0-9_]*$ && -n $value ]] || continue
+  value=${value#\"} value=${value%\"}
+  if [ -z "${!name+set}" ]; then unset_vars+=("$name")
+  elif [ "${!name}" != "$value" ]; then other_vars+=("$name"); fi
+done < "$env_file"
+if [ ${#unset_vars[@]} -eq 0 ]; then
+  pass environment "every variable $env_file sets is set"
+else
+  bad environment "missing ${#unset_vars[@]} of the variables $env_file sets (${unset_vars[*]}): paste the file into the environment's variables (environment menu, Edit) and start a new session; for this shell only, run set -a; . $env_file; set +a"
+fi
+[ ${#other_vars[@]} -eq 0 ] || info environment "set to other values than $env_file: ${other_vars[*]}"
+
 if version=$(rustc --version 2>/dev/null) && [[ $version == "rustc 1.90.0 "* ]]; then
   pass rust "$version (RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN:-unset})"
 else
@@ -30,9 +48,10 @@ cargo clippy --version >/dev/null 2>&1 && cargo fmt --version >/dev/null 2>&1 &&
 need_file "host rustc" "${FOUNDRY_HOST_RUSTC:-}"
 command -v cmake >/dev/null && pass cmake "$(cmake --version | head -n 1)" || bad cmake missing
 ls /usr/lib/llvm-*/lib/libclang.so* >/dev/null 2>&1 && pass libclang present || bad libclang missing
-include=${BINDGEN_EXTRA_CLANG_ARGS#-isystem }
+include=${BINDGEN_EXTRA_CLANG_ARGS:-}
+include=${include#-isystem }
 [ -d "$include" ] && pass "bindgen include" "$include" ||
-  bad "bindgen include" "$include is not a directory; set BINDGEN_EXTRA_CLANG_ARGS to -isystem $(cc -print-file-name=include)"
+  bad "bindgen include" "${include:-<unset>} is not a directory; set BINDGEN_EXTRA_CLANG_ARGS to -isystem $(cc -print-file-name=include)"
 commit=b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea
 git -C "${LLAMA_CPP_DIR:-/nonexistent}" cat-file -e "$commit^{tree}" 2>/dev/null &&
   pass llama.cpp "$commit in $LLAMA_CPP_DIR" || bad llama.cpp "commit $commit not in ${LLAMA_CPP_DIR:-<unset>}"
