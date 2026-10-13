@@ -338,10 +338,11 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 ## F14. God-module splits (audit 2026-10-13)
 
 - **Why deferred:** each split is a separate, gated, revertable commit. On 2026-10-13
-  only the two splits that were purely mechanical (verbatim moves, no visibility
-  change, public API unchanged) ran; see [validation](docs/validation.md#god-module-splits--2026-10-13).
-  The rest change crate-internal visibility, split test modules, touch macOS-only or
-  feature-gated code that Linux gates do not compile, or collide with pending work.
+  only the splits that were purely mechanical ran: verbatim moves with no visibility
+  change and an unchanged public API, 13 in two batches (see
+  [validation](docs/validation.md#god-module-splits--2026-10-13)). The rest change
+  crate-internal visibility, need an owner decision about a test's input, touch
+  macOS-only code that Linux gates do not compile, or wait on F13.
 - **Audit:** a god module here is large and multi-responsibility. Production lines
   exclude in-file test modules; fan-in counts other `src` files naming the module
   (plus test files); churn counts commits touching the file in the shallow clone's
@@ -363,44 +364,188 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   dispatcher), `src/testkit.rs` (test-faults support), the `tests/*.rs` integration
   suites (4,400–8,760 lines each), and the llama.cpp bindings, which `build.rs`
   generates into `OUT_DIR` and are not in the tree.
-- **Done (2026-10-13):** `14729de` moved the tool layer of `src/mcp.rs` to
-  `src/mcp/tools.rs`, and `9a86665` moved context assembly from `src/store.rs` to
-  `src/store/context.rs`. Both are verbatim moves with `use super::*;` in the child and
-  no visibility change; see validation for the evidence.
+- **Done (2026-10-13):** each split is a verbatim move with `use super::*;` in the
+  child and no visibility change; see
+  [validation](docs/validation.md#god-module-splits--2026-10-13) for the evidence.
+  - PR #17 (merge `1593c2c`): `14729de` moved the tool layer of `src/mcp.rs` to
+    `src/mcp/tools.rs`, and `9a86665` moved context assembly from `src/store.rs` to
+    `src/store/context.rs`.
+  - Second batch:
+    - `src/mcp.rs`: `94b9219` `owners`; `7353251` `transport`, with its three tests.
+    - `src/store.rs`: `e3c7b08` `retrieve`; `7dff09b` `index_hooks`, an inline module
+      turned into a file, so one indentation level is removed; `9d65e9d` `sources`;
+      `17697da` `indexing`, declared after the `index_event!` macros; `e814da2`
+      `lifecycle`, with repair.
+    - `src/neural/query.rs`: `57ae9de` `refinement`, with its seven tests; `1cb3173`
+      `runtime`, with the rest of the test module.
+    - `src/graph.rs`: `7c25def` `references`, with exact doors; `385a593` `edges`.
+
+    The parent files are now `src/mcp.rs` 3,313 lines (6,506 at `a088969`),
+    `src/store.rs` 4,967 (7,654), `src/neural/query.rs` 449 (2,358) and `src/graph.rs`
+    777 (2,954).
+- **Parked (2026-10-13): the `graph.rs` `compiler` split.**
+  - **Why:** the mapped boundary, lines 619–939 and 1094–1342 at `a088969`, moves
+    `impl OccurrenceKind` into the child. Its private `tag` and `from_tag` are also
+    called by the storage key codec that stays in the parent, so the compiler refuses
+    three calls with E0624. That boundary would need two visibility changes, which were
+    not made. The change was discarded before any commit.
+  - **Zero-change alternative, tested but not committed:** keep `OccurrenceKind` and its
+    `impl` in the parent next to the codec, and move the other three ranges verbatim.
+    That passed `cargo fmt --check` and `cargo clippy --all-targets -D warnings` on top
+    of `7c25def`. `OccurrenceKind` then keeps its own page, and the other public
+    compiler items are re-exported.
+  - **Resume:** run that boundary as its own commit, gated as below.
 - **Remaining plan**, each step one commit, in this order within a file, gated as
   below. "Bumps" are crate-internal visibility changes (`pub(super)`); none changes
   the public API.
 
   | File | Next splits (bumps) | Precondition or blocker |
   | --- | --- | --- |
-  | `src/store.rs` | `retrieve` (0), `index_hooks` inline module to a file (0), `sources` (0), `indexing` (0; declare after the `index_fault!` macros), `lifecycle` (0; +2 to separate repair), `doors` (1), `semantic_search` (1, `#[cfg(feature = "semantic")]`), `lexical` (2) | Keep the shared core (`Fields`, `Candidate`, `TwoTier`, `WindowSlice`, storage helpers) in the parent; moving it costs 4–25 bumps each. |
-  | `src/mcp.rs` | `owners` (0), `transport` with its tests (0; not named `http`), `startup` (1), `semantic` (2–3) | Keep `Shared`, `RootMeta`, the slot and `run_op` in the parent. |
-  | `src/syntax.rs` | `outliner` (0), `text` (0), `tiling`, `forest`, `markdown`, `imports`, `extract` (1 each), `parser` with `parse_hooks` (2), `calls` (5) | Its in-file test parses `include_str!("syntax.rs")`; every split shrinks that sample. Freeze the sample as a fixture first; that is a test change and an owner call. |
-  | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | `serve`, `supervisor` and `worker` compile only on macOS, so Linux gates cannot check items they reach (`LearningPolicy`, `fail`, `hex64`); keep those in the root or re-export them, and check on a Mac. |
+  | `src/store.rs` | `doors` (1), `semantic_search` (1, `#[cfg(feature = "semantic")]`), `lexical` (2) | Keep the shared core (`Fields`, `Candidate`, `TwoTier`, `WindowSlice`, storage helpers) in the parent; moving it costs 4–25 bumps each. |
+  | `src/mcp.rs` | `startup` (1), `semantic` (2–3) | Keep `Shared`, `RootMeta`, the slot and `run_op` in the parent. |
+  | `src/graph.rs` | `compiler` (0 with `OccurrenceKind` kept in the parent; 2 on the mapped boundary) | See "Parked" above. |
+  | `src/syntax.rs` | `outliner` (0), `text` (0), `tiling`, `forest`, `markdown`, `imports`, `extract` (1 each), `parser` with `parse_hooks` (2), `calls` (5) | Owner decision [F15](#f15-syntaxrs-self-sample-owner-decision-before-any-split-proposal-2026-10-13) first: its in-file test parses `include_str!("syntax.rs")`, so every split shrinks that sample. |
+  | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Needs a Mac. `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`, `hex64`); keep those in the root or re-export them. |
   | `src/neural/prepare.rs` | `order` (0), `cli` (0), `steps` with the tests (1) | Wait for F13: its fix changes `commit_partition`. |
-  | `src/neural/query.rs` | `runtime` with its tests (0), `refinement` with its tests (0) | The test module must be split in two; add `use super::{area, cache};` in the parent for the moved relative paths. |
-  | `src/graph.rs` | `references` (0), `edges` (0), `compiler` (0) | Re-export the moved `pub` items exactly; check with the rustdoc comparison below. |
 
-- **Required resource:** none beyond a normal session, except a Mac for the
-  `learning.rs` splits that touch items its macOS-only children use.
+  `src/neural/query.rs` keeps the dense index, the fallback and query tokenization; it
+  has no further split planned.
+
+- **Required resource:** none beyond a normal session, except for three rows: a Mac
+  for `src/learning.rs`, the owner's F15 decision for `src/syntax.rs`, and F13 for
+  `src/neural/prepare.rs`.
 - **Resume, per split:**
   1. Move the planned line ranges verbatim into `src/<module>/<child>.rs`, which starts
      with a `//!` line and `use super::*;`; add `mod <child>;` after the parent's
      imports and `pub use` / `pub(crate) use` lines only for moved items used outside
-     the child. Prove the move is verbatim by diffing the removed ranges against the
-     new file.
+     the child (every `pub` item, and the `pub(crate)` items named elsewhere). Insert
+     those lines where `rustfmt` sorts them (by path, whatever the visibility), so
+     later splits never edit an earlier split's lines. A child module that uses a
+     `macro_rules!` macro is declared after the macro. Prove the move is verbatim by
+     diffing the removed ranges against the new file.
   2. Run `cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings`.
      If the compiler asks for a bump the plan did not list, revert the commit and update
      this entry instead of forcing it.
   3. Check the public API: `cargo doc --locked --no-deps --lib --features test-faults`
      before and after, compare every page with the source links stripped, and for any
      changed type page compare the set of documented members (an `impl` block moved to
-     a child reorders sections but must keep every signature and doc). A new redirect
-     page for the private child path is expected.
+     a child reorders sections but must keep every signature and doc). Build each side
+     into an empty `doc/` directory: rustdoc never deletes stale pages, so a reused
+     directory can hide a removed page. Two differences are expected: a redirect page
+     for each re-exported item's private child path, and, on a type-alias page, the
+     internal `data-self-path` naming where the alias is defined.
   4. Run `cargo check --locked --no-default-features --lib` (no warnings), then
      `scripts/gates.sh . OUTDIR` and the unprivileged rerun of the gateway target, and
      record the receipt in [validation](docs/validation.md#local-gates-receipts). Source
      `scripts/cloud/environment.env` and unset `RUSTUP_TOOLCHAIN` first: the learning
      tests need its tokenizer path, the gates choose their own toolchains, and its
      `CARGO_INCREMENTAL=0` and debuginfo-off profiles keep the gates target within the
-     disk allowance (with debuginfo each test binary is about 600 MB).
+     disk allowance (with debuginfo each test binary is about 600 MB); see F16.
+  5. For `src/learning.rs`, also run `scripts/gates.sh . OUTDIR` on macOS, where
+     `serve`, `supervisor` and `worker` compile, and record that receipt next to the
+     Linux one.
+
+## F15. `syntax.rs` self-sample: owner decision before any split (proposal 2026-10-13)
+
+- **Why pending:** every planned `src/syntax.rs` split (F14) changes the input of one
+  test. Freezing or replacing that input is a change to a test's inputs, which needs the
+  owner. Nothing here is implemented, and `src/syntax.rs` is untouched.
+- **The test:** `per_character_reads_give_the_whole_buffer_tree` (`src/syntax.rs`,
+  `mod tests`) parses one source per grammar (25) in four forms: as written, with CRLF
+  line ends, behind a byte-order mark, and empty. Each form is parsed twice: by `parse`,
+  which feeds tree-sitter one UTF-8 character per read under the work budget, and by
+  tree-sitter on the whole buffer. The test then asserts that the two trees match node for
+  node: kind, flags, byte and point ranges, field and child count. The Rust sample is
+  `include_str!("syntax.rs")`, the file itself.
+- **Why it depends on the file's own size:** that sample is the test's only large input.
+  At `1593c2c` it is 202,038 bytes and 5,075 lines, with 72 non-ASCII characters (52 in
+  production code, 20 in the test module) and 108 raw-string openers. The other 24
+  samples are at most 1,126 bytes. Size does not matter for the budget:
+  `PARSE_WORK_BUDGET` is 2^25 units, and the reads alone, one unit per character, are
+  about 0.6% of it. Progress callbacks spend more units; that share is not measured, and
+  the test passes. What size buys is variety: many lines, multi-byte characters at many
+  offsets, and real Rust constructs in one continuous parse. Each split removes the
+  moved code from the sample. The F14 plan moves nine of the file's concerns out, so the
+  sample shrinks at every step. How far it shrinks is not measured, because the line
+  boundaries of the `syntax.rs` splits are not mapped yet.
+- **Options:**
+  1. **Freeze the input as a fixture.** Copy today's bytes to
+     `tests/fixtures/syntax/syntax-rs-sample.txt` and change the one `include_str!` line;
+     the label stays `"syntax.rs"`, which is what selects the Rust grammar. The `.txt`
+     extension keeps Rust tooling and code search from reading a second copy of the
+     source as code. Cost: 202 KB in the repository.
+  2. **Point the test at paths it controls.** Sample every file of the split module,
+     `src/syntax.rs` and `src/syntax/*.rs`, each as its own Rust input. Done at compile
+     time, the source list grows with each split; done at run time, the test reads the
+     directory. This keeps tracking live code and today's total bytes, but no single
+     input stays long, and the input still changes with every edit to those files.
+  3. **Leave `src/syntax.rs` unsplit.** No test change; the file stays a 4,856-line
+     production module, second in the F14 ranking.
+- **Recommendation:** option 1. The property under test belongs to the character reader
+  and the grammar, not to whatever `src/syntax.rs` contains on a given day; the
+  22,492-file calibration, not this test, is what covers real-world variety. A frozen
+  input keeps today's exact catching power, and a failure then points at the reader or a
+  grammar bump instead of an unrelated edit.
+- **Does freezing change what the test can catch?** Not at the moment of freezing: the
+  same bytes go through the same four forms and the same grammar. Afterwards there are two
+  differences. The test no longer samples Rust syntax that is added to `src/syntax.rs`
+  later. It also no longer fails because an unrelated edit to that file happens to
+  contain a construct where the two parses disagree; today such a failure would be a true
+  finding about the reader, found by accident. If the owner wants to keep that live
+  tracking too, add the frozen fixture as a second Rust sample and keep the live file as
+  the first. That costs one more entry; the grammar count stays 25.
+- **Required resource:** the owner's choice of option. Then, on a normal session:
+  1. Make the test change in its own commit. For option 1, copy the file at the commit
+     before the first `syntax.rs` split and record its SHA-256 in the commit message.
+  2. Gate that commit as in F14.
+  3. Only then run the `syntax.rs` splits in the F14 table.
+
+## F16. Cloud sessions without the environment variables (found 2026-10-13)
+
+- **Why open:** the 2026-10-13 cloud session (`CLAUDE_CODE_REMOTE=true`) started with
+  none of the variables in [`scripts/cloud/environment.env`](scripts/cloud/environment.env)
+  set. `env` showed no `RUSTUP_TOOLCHAIN`, `CARGO_INCREMENTAL`,
+  `CARGO_PROFILE_TEST_DEBUG`, `CONTEXT_FOUNDRY_013_TOKENIZER`, `LLAMA_CPP_DIR` or
+  `CF_TOOLS`. Those values come from the environment's settings: the cloud environment
+  menu in the session's title bar, then **Edit**, under environment variables. A session
+  reads them only when it starts, so a change there reaches only new sessions.
+- **What breaks without them:**
+  - **The doctor fails.** `scripts/cloud/doctor.sh` sees the default `rustc` 1.97.0
+    instead of 1.90.0, since it reads `RUSTUP_TOOLCHAIN`. Every path check also reports
+    a missing file: the host `rustc`, the GGUF and tokenizer paths, `LLAMA_CPP_DIR` and
+    the bindgen include.
+  - **Test builds fill the disk.** Without `CARGO_INCREMENTAL=0` and the debuginfo-off
+    profiles, each integration-test binary is about 600 MB with debuginfo. `target/gates`
+    reached 19 GB, and one gates run ran out of the disk allowance while linking the tests.
+  - **The `learning_data` tests fail.** They read the tokenizer from
+    `CONTEXT_FOUNDRY_013_TOKENIZER` and otherwise fall back to
+    `$HOME/VSC_DEV/models/…`, which does not exist in a cloud session, so 52 of them fail
+    with `NotFound`.
+- **Workaround used on 2026-10-13:** every counted gates run first ran
+  `set -a; . scripts/cloud/environment.env; set +a; unset RUSTUP_TOOLCHAIN`. The unset is
+  for the gates only: `scripts/gates.sh` runs 1.97 and then 1.90 by itself, while other
+  cargo commands in a cloud session should keep the 1.90 pin. Each receipt's `env.txt`
+  lists the variables that run saw.
+- **Verify that it took effect:**
+  - `env | grep -E '^(CARGO_INCREMENTAL|CARGO_PROFILE_TEST_DEBUG)=0$'` prints both lines.
+  - `echo "$CONTEXT_FOUNDRY_013_TOKENIZER"` names an existing directory.
+  - `rustc --version` reports 1.90.0.
+  - `bash scripts/cloud/doctor.sh` exits 0.
+  - After a gates run, `du -sh target/gates` stays near 10 GB, not 19 GB.
+- **Durable fix (proposed; none of it is implemented):**
+  1. **Owner action, no repository change:** paste the file into the environment's
+     variables (title bar → environment menu → Edit) and start a new session. The file's
+     first line already asks for this.
+  2. **Doctor check:** a FAIL line naming the file when `CARGO_INCREMENTAL`,
+     `CARGO_PROFILE_TEST_DEBUG` or `CONTEXT_FOUNDRY_013_TOKENIZER` is unset. The doctor
+     reports the symptoms today, not the cause.
+  3. **Wrapper:** `scripts/cloud/gates.sh OUTDIR`, which sources the file, unsets
+     `RUSTUP_TOOLCHAIN` and calls `scripts/gates.sh . OUTDIR`. Cloud receipts would then
+     be reproducible whatever the environment holds.
+  4. **CLAUDE.md:** one line in "Cloud sessions" naming the symptom and the source
+     command.
+
+  Recommended: 1 and 2. Item 2 catches the problem at the first command of a session, and
+  item 1 removes it.
+- **Required resource:** owner access to the environment settings for item 1, and
+  approval for items 2–4.

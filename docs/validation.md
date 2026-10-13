@@ -34,6 +34,18 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `84108a1` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `14729de` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `9a86665` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `1c924a1` (#17 head) | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `94b9219` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `7353251` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `e3c7b08` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `7dff09b` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `9d65e9d` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `17697da` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `e814da2` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `57ae9de` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `1cb3173` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `7c25def` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `385a593` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -46,6 +58,18 @@ Log SHA-256 digests:
 | `84108a1` | `65c78323…` | `302dc862…` | `fd1c818b…` | `879e530f…` |
 | `14729de` | `93e65aae…` | `0bfde1e7…` | `1f5d1f30…` | `fe368598…` |
 | `9a86665` | `afb5e4c6…` | `e0db4974…` | `f164437c…` | `03feb756…` |
+| `1c924a1` (#17 head) | `8f63fb23…` | `26dfc62c…` | `d0a1eb9d…` | `d9b291e6…` |
+| `94b9219` | `1f788b66…` | `01605187…` | `248e1366…` | `2f8d3209…` |
+| `7353251` | `e7db2afc…` | `0fcd3c66…` | `8482a812…` | `1ad0e205…` |
+| `e3c7b08` | `7577aa7e…` | `9b6ce778…` | `ef13260c…` | `4e61ede7…` |
+| `7dff09b` | `24476047…` | `714347e9…` | `5655425f…` | `25af98a4…` |
+| `9d65e9d` | `158a7e90…` | `1231a989…` | `d6da8bc6…` | `b824705a…` |
+| `17697da` | `43ddda3f…` | `56c8b70e…` | `865a112a…` | `952dc801…` |
+| `e814da2` | `703e7eca…` | `15378f34…` | `e02f19e9…` | `db5fd4b2…` |
+| `57ae9de` | `661da8b8…` | `ef26e109…` | `fc3f61ec…` | `7667c9d0…` |
+| `1cb3173` | `d7ba34e2…` | `b375c223…` | `90caeffd…` | `7ab1b402…` |
+| `7c25def` | `7577aa7e…` | `95dfe823…` | `7409415a…` | `44c679a6…` |
+| `385a593` | `03329197…` | `330a4300…` | `9594fa71…` | `f15bfc3e…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -72,6 +96,13 @@ tokenizer path, so 52 `learning_data` tests could not read their fixture; in tha
 `continuous_semantics_progresses_during_filesystem_traffic_and_converges` also stopped
 on the [F13](../FOLLOWUP.md) race, and it passed in both counted runs. The receipts are
 local only: GitHub Actions did not run.
+
+`1c924a1` is the head of PR #17, gated again before it merged as `1593c2c`. The eleven
+commits after it are the second batch of god-module splits
+([below](#god-module-splits--2026-10-13)), each gated the same way before the next
+split started. Each run also reran the gateway target as `nobody`, ran
+`cargo check --locked --no-default-features --lib` (0 warnings every time) and compared
+rustdoc. All of it is local only: GitHub Actions did not run.
 
 `72c4319` fixes the three Clippy 1.97 lints (`byte_char_slices`, a manual `Option::zip`,
 `while_let_loop`) without changing behavior. `f491821` fixes a regression from
@@ -142,6 +173,62 @@ Evidence for each, all local:
   as before. The gates compile the default build and, through the crate's self
   dev-dependency, `test-faults`.
 - **Gates:** the receipts above, run after each commit.
+
+**Second batch.** Eleven more splits, one commit each. Each was gated before the next
+started, with the same evidence as above plus two checks: the gateway target rerun as
+`nobody` and a rustdoc comparison per commit. All of it is local only.
+
+| Commit | Split | Parent lines | New file (moved lines) |
+| --- | --- | --- | --- |
+| `94b9219` | `owners`: the three `Owner` impls on `Shared` | `src/mcp.rs` 4,260 → 4,090 | `src/mcp/owners.rs` 176 (170 moved) |
+| `7353251` | `transport`: stdio, HTTP gate and session cap, with 3 tests | `src/mcp.rs` 4,090 → 3,313 | `src/mcp/transport.rs` 789 (776 moved) |
+| `e3c7b08` | `retrieve`: `Engine::retrieve`, `retrieve_outline`, the verified handle read | `src/store.rs` 7,104 → 6,939 | `src/store/retrieve.rs` 173 (165 moved) |
+| `7dff09b` | `index_hooks`: inline test-seam module to a file | `src/store.rs` 6,939 → 6,828 | `src/store/index_hooks.rs` 110 (110 moved) |
+| `9d65e9d` | `sources`: scans, source writes, the pending queue, the drains | `src/store.rs` 6,828 → 6,412 | `src/store/sources.rs` 424 (416 moved) |
+| `17697da` | `indexing`: the parallel refresh | `src/store.rs` 6,412 → 5,748 | `src/store/indexing.rs` 673 (664 moved) |
+| `e814da2` | `lifecycle`: initialize, open, upgrade, status, repair | `src/store.rs` 5,748 → 4,967 | `src/store/lifecycle.rs` 788 (780 moved) |
+| `57ae9de` | `refinement`: owner scopes and `DenseWindow::refine`, with 7 tests | `src/neural/query.rs` 2,358 → 1,439 | `src/neural/query/refinement.rs` 933 (921 moved) |
+| `1cb3173` | `runtime`: the provider-thread runtime, with the remaining test module | `src/neural/query.rs` 1,439 → 449 | `src/neural/query/runtime.rs` 999 (992 moved) |
+| `7c25def` | `references`: the references query and exact doors | `src/graph.rs` 2,954 → 1,372 | `src/graph/references.rs` 1,595 (1,589 moved) |
+| `385a593` | `edges`: the manual edge graph | `src/graph.rs` 1,372 → 777 | `src/graph/edges.rs` 606 (599 moved) |
+
+- **Verbatim:** a script compares every moved range of the parent commit with the new
+  file, byte for byte. It also checks that the new parent equals the old one minus those
+  ranges plus the inserted `mod`/`use` lines. A child's only other lines are its `//!`
+  summary, `use super::*;`, an `impl Engine { … }` wrapper around moved methods, and a
+  `#[cfg(…)] mod tests { use super::*; … }` wrapper around moved tests. Three commits
+  differ slightly:
+  - `7dff09b` turns an inline module into a file, so each of its 110 lines equals the
+    original minus exactly four leading spaces.
+  - `1cb3173` moves its test module whole, header included.
+  - `57ae9de` and `1cb3173` add `use super::cache;` and `use super::area;` to the parent:
+    the moved code reaches those modules by the relative paths `super::cache` and
+    `super::area`, which now resolve through the parent.
+- **Moved tests still run:** the 7 refinement, 6 runtime and 3 transport tests ran and
+  passed under their new module paths, and the total stayed at 1,146.
+- **Public API:** rustdoc was built into an empty `doc/` directory at `1593c2c` and at
+  every commit, and each pair of neighbouring builds was compared page by page with
+  source links stripped, member by member (signature and docs).
+  - No page was removed. All 16,173 members and all 31 rustdoc warnings are unchanged.
+  - The 29 added pages are redirect stubs for the private child paths of re-exported
+    items (1,012 → 1,041 pages).
+  - The `Engine` page gains four `impl Engine` block headers (retrieve, sources,
+    indexing, lifecycle; 50 → 54) and its blocks are reordered; its 114 members are
+    unchanged.
+  - One rustdoc-internal attribute changed, on `neural/query/type.MakeProvider.html`.
+    Its `data-self-path`, which the page's script uses to load the impls of the aliased
+    `Box`, now names the definition path `neural::query::runtime::MakeProvider`. The
+    rendered impls are the same.
+  - The first per-commit comparisons reused one output directory, and rustdoc never
+    deletes stale pages; every comparison above was redone from clean builds.
+- **Revert:** reverting all eleven in reverse order restores `1593c2c`'s tree exactly.
+  Seven also revert cleanly alone. `e3c7b08`, `9d65e9d`, `57ae9de` and `7c25def` conflict
+  alone, where a later split of the same file inserted its `mod`/`use` lines next to
+  theirs or removed the code next to their range. The conflicts are positional; no line
+  is claimed by both sides.
+- **Parked:** the `graph.rs` compiler split. Its mapped boundary needed two visibility
+  changes (E0624 on `OccurrenceKind::tag` and `from_tag`), so it was discarded before any
+  commit; see [FOLLOWUP F14](../FOLLOWUP.md#f14-god-module-splits-audit-2026-10-13).
 
 ### Document/body RRF (resume step 2)
 
