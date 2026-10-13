@@ -18,6 +18,13 @@ if the sandbox is unavailable. The environment is defined in
 
 - **Check first.** Run `bash scripts/cloud/doctor.sh` at the start of every session. Do
   not start a build or model run while it reports FAIL.
+- **Environment variables.** `FAIL environment` from the doctor means the session did
+  not get [environment.env](scripts/cloud/environment.env): test builds then keep
+  debuginfo and fill the disk, and the learning tests cannot find their tokenizer. Ask
+  the owner to paste the file into the environment's variables (environment menu,
+  Edit); only new sessions get them. Until then, run
+  `set -a; . scripts/cloud/environment.env; set +a` in each shell, and run the gates as
+  `bash scripts/cloud/gates.sh OUTDIR`, which applies the file itself.
 - **Private evidence.** `bash scripts/cloud/fetch-resume.sh` downloads and verifies the
   resume archive into `/workspace` and prints its `RESTORE.md`; restore by following
   that file. Corpora and stores go back to their original absolute paths as real
@@ -66,7 +73,8 @@ cloud sessions.
   for one. End commit subjects with `[skip ci]` so pushes start no runs.
 - Leave `.github/workflows` intact.
 - **Rust CI is replaced by local gates.** Run `scripts/gates.sh . OUTDIR` once per
-  merge and record a receipt in [validation](docs/validation.md). The receipt gives the
+  merge (in a cloud session, `bash scripts/cloud/gates.sh OUTDIR`) and record a receipt
+  in [validation](docs/validation.md). The receipt gives the
   commit, the toolchains, each `GATE` line, the test totals and the SHA-256 of each
   log. Cite it wherever a CI run URL used to go, and name any gate not run.
 - **Native macOS acceptance has no Linux substitute.** Run
