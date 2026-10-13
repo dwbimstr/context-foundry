@@ -48,6 +48,8 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `385a593` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `3beac37` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `1cced0f` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `973548d` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `f072a11` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -74,6 +76,8 @@ Log SHA-256 digests:
 | `385a593` | `03329197…` | `330a4300…` | `9594fa71…` | `f15bfc3e…` |
 | `3beac37` | `661da8b8…` | `5afd6241…` | `7259fa1b…` | `8be0bcc9…` |
 | `1cced0f` | `a71c43d3…` | `ef9d0bdc…` | `ae5cbb26…` | `acdcbb20…` |
+| `973548d` | `24476047…` | `875386bf…` | `aa8b8db9…` | `5b3cefa8…` |
+| `f072a11` | `6d982f82…` | `039e7109…` | `eab84e95…` | `b1d7d4d3…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -256,6 +260,27 @@ before, and it passed. The commit passed the same local gates: fmt, Clippy 1.97,
 check and Clippy 1.90, 1,146 tests with only the 2 root-only failures, the gateway target
 passing 49 as `nobody`, and `--no-default-features` with 0 warnings. Rustdoc showed pages
 1,053 → 1,053 unchanged, with all members and the 31 warnings unchanged. GitHub Actions did not run.
+
+**`syntax.rs` splits, `973548d` and `f072a11`.** These are the two splits of
+`src/syntax.rs` that need no visibility change, run after the test sample was frozen.
+Each moved its ranges verbatim (proof as above) and was gated before the next:
+
+| Commit | Split | `src/syntax.rs` lines | New file (moved lines) | Rustdoc |
+| --- | --- | --- | --- | --- |
+| `973548d` | `outliner`: `ELIDE_LINES`, `Segment`, `outline`, `render_outline`, `Outliner` | 5,075 → 4,690 | `src/syntax/outliner.rs` 397 (391) | 1,053 → 1,057 pages, 4 redirect stubs |
+| `f072a11` | `tokens`: `code_subtokens`, `identifier_runs`, `path_segments`, `address_segments` | 4,690 → 4,584 | `src/syntax/tokens.rs` 112 (106) | 1,057 → 1,061 pages, 4 redirect stubs |
+
+`COMMENT_LINES` stays in the parent because unit extraction also uses it. The second
+child is `tokens` because `src/syntax.rs` already has a private `fn text`. Both commits
+passed the same local gates:
+
+- fmt, Clippy 1.97, and MSRV check and Clippy 1.90;
+- 1,146 tests with only the 2 root-only failures, the gateway target passing 49 as
+  `nobody`;
+- `--no-default-features` with 0 warnings;
+- clean rustdoc comparisons, with all members and the 31 warnings unchanged.
+
+GitHub Actions did not run.
 
 ### Document/body RRF (resume step 2)
 
