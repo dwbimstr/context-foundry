@@ -30,6 +30,8 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `d6903f7` | 0 | 101: three new lints | 101: 1,145 passed, only the 2 root-only failures | 0 | 0 |
 | `ef524b9` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `b432f46` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `87f4d08` (#15) | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `84108a1` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -38,6 +40,8 @@ Log SHA-256 digests:
 | `d6903f7` | `712708a6…` | `d37d829e…` | `437b9d06…` | `368e057b…` |
 | `ef524b9` | `fcc7dfca…` | `ea77740f…` | `0d73feed…` | `243e2afe…` |
 | `b432f46` | `38c4c123…` | `276e988f…` | `b0f11c35…` | `45f25865…` |
+| `87f4d08` (#15) | `906f36d9…` | `86080107…` | `e47338e5…` | `45d5668c…` |
+| `84108a1` | `65c78323…` | `302dc862…` | `fd1c818b…` | `879e530f…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -46,6 +50,13 @@ tree. It applies Dependabot updates #10, #8 and #7 to this line (see
 compile. Each update was also checked alone on Rust 1.90. With `bindgen` 0.73 both
 llama.cpp workers build, and the regenerated bindings differ only in 20 opaque handle
 types losing `Copy`/`Clone`.
+
+On 2026-10-13, `87f4d08` (Dependabot #15, merged as `6ba885a`) moved `tokio-util` from
+0.7.19 to 0.7.20. It is a lock-only change: Dependabot's resolver also re-points existing
+`windows-sys` and `getrandom` edges, adding and removing no packages. `84108a1`, on a
+clean tree, covers the `sha2` 0.11 migration, the progressive-bootstrap test fix and the
+doc corrections; its extra passing test is the pinned SHA-256 vector test. Both receipts
+are local only: GitHub Actions did not run.
 
 `72c4319` fixes the three Clippy 1.97 lints (`byte_char_slices`, a manual `Option::zip`,
 `while_let_loop`) without changing behavior. `f491821` fixes a regression from
