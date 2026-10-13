@@ -31,7 +31,8 @@ reservations; it uses no model weights. This is an admission-API check. It does 
 launch model workers, prove worker lifetime or measure GPU allocations, throughput,
 hard CPU quotas or thermal/battery policy. Actual model-worker pressure/lifecycle,
 Metal parity and signed installed-artifact checks below remain separate acceptance.
-The current default macOS CI job does not run these ignored checks or enable native
+The default macOS CI job never ran these ignored checks, and it does not run at all while
+GitHub Actions is unavailable. It also never enabled native
 model-worker features. `overview-v1` and hierarchy's `+overview3` fitting recipe also need
 representation-quality and device checks; complete file-vector coverage is not full
 body evidence or a task-quality result. The [latest Linux record](validation.md#named-re-exports-and-current-fitting--2026-10-11)

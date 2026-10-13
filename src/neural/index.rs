@@ -390,7 +390,7 @@ fn hash_reader(
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(crate::lower_hex(&hasher.finalize()))
 }
 
 /// Read a bounded metadata file completely.
@@ -450,7 +450,7 @@ fn read_index(
         )));
     }
     control.check().map_err(GenerationError::Interrupted)?;
-    Ok((bytes, hasher.map(|h| format!("{:x}", h.finalize()))))
+    Ok((bytes, hasher.map(|h| crate::lower_hex(&h.finalize()))))
 }
 
 /// The format version alone, read before the full manifest is decoded so an

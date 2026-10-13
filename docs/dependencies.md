@@ -13,8 +13,12 @@ fetch or build was run for this documentation update.
 tokio add client/process features only for tests. On 2026-10-12 the Dependabot
 updates #10, #8 and #7 were applied on the experimental line: libc, rmcp, tokio, uuid
 and the `toml` dev dependency (0.8 to 1.1) moved, plus hyper, usearch and want
-transitively. The declared licenses are unchanged. `sha2` stays at 0.10: 0.11
-changes the digest output type, which this crate formats with `{:x}` in 18 places.
+transitively. The declared licenses are unchanged. On 2026-10-13 `sha2` moved to 0.11. Its digest
+output type has no `{:x}` formatting, so first all 18 hex sites moved to
+`context_foundry::lower_hex`; [validation](validation.md#sha2-011-migration--2026-10-13)
+records the byte-identity proof. The bump adds digest 0.11, hybrid-array, block-buffer
+0.12, crypto-common 0.2 and const-oid (all MIT OR Apache-2.0). sha2 0.10.9 remains only
+under the optional `learning-worker` feature, via `tch` → `zip` → `pbkdf2`.
 
 | Package | Locked version | Declared license | Use |
 | --- | --- | --- | --- |
@@ -31,12 +35,12 @@ changes the digest output type, which this crate formats with `{:x}` in 18 place
 | rmcp | 3.5.1 | Apache-2.0 | normal (server, stdio, streamable HTTP server); dev adds client |
 | serde | 1.0.229 | MIT OR Apache-2.0 | normal |
 | serde_json | 1.0.151 | MIT OR Apache-2.0 | normal |
-| sha2 | 0.10.9 | MIT OR Apache-2.0 | normal |
+| sha2 | 0.11.1 | MIT OR Apache-2.0 | normal |
 | tantivy | 0.26.2 | MIT | normal |
 | tiktoken-rs | 0.12.1 | MIT | normal |
 | tokio | 1.53.2 | MIT | normal; dev adds process |
 | tokio-util | 0.7.19 | MIT | normal |
-| tree-sitter | 0.25.10 | MIT | normal (syntax runtime; third-party C) |
+| tree-sitter | 0.26.13 | MIT | normal (syntax runtime; third-party C) |
 | tree-sitter-c | 0.24.2 | MIT | normal (C grammar) |
 | tree-sitter-cpp | 0.23.4 | MIT | normal (C/C++ grammar) |
 | tree-sitter-go | 0.25.0 | MIT | normal (Go grammar) |

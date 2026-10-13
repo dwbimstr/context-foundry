@@ -1,6 +1,6 @@
 # Context Foundry
 
-[![CI](https://github.com/dwbimstr/context-foundry/actions/workflows/rust.yml/badge.svg)](https://github.com/dwbimstr/context-foundry/actions/workflows/rust.yml)
+[![Checks: local gates](https://img.shields.io/badge/checks-local%20gates%20(CI%20unavailable)-lightgrey.svg)](CONTRIBUTING.md#full-checks)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![MSRV 1.90](https://img.shields.io/badge/MSRV-1.90-orange.svg)](Cargo.toml)
 
@@ -82,6 +82,8 @@ It is **not**:
 ## Status
 
 "Stable core" means implemented, cross-lab reviewed, gated and merged on `main`.
+"Experimental, opt-in" means merged on `main` by owner decision (2026-10-12) while its
+acceptance gates stay open ([follow-ups](FOLLOWUP.md)); defaults do not use it.
 Nothing is released, so no compatibility promise is made yet; store and index
 upgrades are explicit (`upgrade-store`, `repair-index`). Per-task evidence is in
 [validation](docs/validation.md).
@@ -98,6 +100,10 @@ upgrades are explicit (`upgrade-store`, `repair-index`). Per-task evidence is in
 | Semantic retrieval | Optional, off by default | Implemented. EmbeddingGemma 2 passed G2 and G1; it is packaged after signing and the installed-artifact checks ([measurement handoff](docs/measurement-handoff.md)) |
 | Owned learning | Frozen off | Implemented commands remain as research tooling; not packaged or advertised |
 | Model gateway | Meter only | One pinned host profile (OMP 18.6.0 with Z.ai `glm-5.3-flash`); no spend cap |
+| Task context | Experimental, opt-in | `foundry task-context`: recoverable task state and evidence ([experimental context](docs/experimental-context.md#recoverable-task-context)) |
+| Source-bound briefs | Experimental, opt-in | `foundry brief`: derived knowledge bound to cited sources ([experimental context](docs/experimental-context.md#source-bound-derived-briefs)) |
+| Owned generation | Experimental, opt-in | `foundry knowledge` with a supervised local worker ([experimental context](docs/experimental-context.md#owned-local-generation)) |
+| HTTP boundary analysis | Experimental, opt-in | `foundry boundary`: indexed Python Flask/FastAPI routes; executes no repository code ([experimental context](docs/experimental-context.md#boundary-relationships-and-task-evidence)) |
 
 **Not released yet:**
 
@@ -146,8 +152,9 @@ success or cost with a real model.
 - **Network on the first build:** Cargo fetches crates and three grammar forks pinned
   by git revision in `Cargo.toml` (`[patch.crates-io]`, Ruby, Perl and Rust, under
   `github.com/dwbimstr`). See [dependencies](docs/dependencies.md).
-- **Platforms:** macOS arm64 is where everything is developed, gated and measured. CI
-  builds and tests the core on Linux and macOS. The installable package, the embedding
+- **Platforms:** macOS arm64 is where everything is developed, gated and measured.
+  GitHub Actions CI is unavailable (owner decision 2026-10-12). The core is checked
+  locally with `scripts/gates.sh` on Linux; the last CI runs passed on Linux and macOS. The installable package, the embedding
   worker (Metal) and worker isolation are macOS arm64 only. Windows has not been built
   or tested.
 

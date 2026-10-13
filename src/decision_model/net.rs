@@ -706,7 +706,7 @@ impl Model {
                 start += len;
             }
         }
-        format!("{:x}", hasher.finalize())
+        crate::lower_hex(&hasher.finalize())
     }
 
     /// `head.safetensors`: exactly the trainable set, float32, name order.

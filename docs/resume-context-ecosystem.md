@@ -10,9 +10,11 @@ Use the strongest available reasoning/coding model and inspect actual artifacts.
 ## Cloud continuation — 2026-10-12
 
 A Claude Code cloud session continued from `16d7f0a` on branch
-`claude/festive-cannon-ladw9u` ([PR #11](https://github.com/dwbimstr/context-foundry/pull/11),
-based on `experimental/context-ecosystem`, which was not moved). It used public inputs
-only. GitHub Actions is now unavailable by owner decision, so a local
+`claude/festive-cannon-ladw9u`. Its work was merged into `experimental/context-ecosystem`
+through [PR #11](https://github.com/dwbimstr/context-foundry/pull/11) (`ea86fc6`) and
+[PR #12](https://github.com/dwbimstr/context-foundry/pull/12). By owner decision the line
+was then merged into `main` through [PR #13](https://github.com/dwbimstr/context-foundry/pull/13)
+(`a691ab3`); experimental remains the working branch. It used public inputs only. GitHub Actions is now unavailable by owner decision, so a local
 `scripts/gates.sh` receipt replaces CI (see [CLAUDE.md](../CLAUDE.md)).
 
 - **Step 1** is closed.
@@ -34,9 +36,16 @@ F4 for step 6, and F7 and F8 for the native and capsule work. Results are in
 ## Code and working state
 
 Repository: `/workspace/context-foundry`; branch: `experimental/context-ecosystem`.
-The tested implementation checkpoint is `6ac60d8`; the subsequent documentation
-checkpoint is branch HEAD. All intended repository changes are committed. Relevant
-commits, in order:
+The 2026-10-11 checkpoint's tested implementation was `6ac60d8`, with documentation
+commits after it. The line has since gained code changes from the 2026-10-12 cloud
+session:
+- Clippy 1.97 fixes (`72c4319`);
+- the no-default-features build fix (`f491821`);
+- dependency updates (`b432f46` and later);
+- the `sha2` 0.11 migration.
+
+The current tested code is the latest commit with a local gates receipt in
+[validation](validation.md#local-gates-receipts). Relevant 2026-10-11 commits, in order:
 
 - `bc10986`: held-descriptor Mac model loading and native lifecycle fixes.
 - `f75f14c`: independent native CPU/model checks and 128-file calibration.
@@ -109,7 +118,8 @@ snapshots and sealed evaluation data. None of these unrun patches is silently ap
 - `foundry-hierarchy-roleonly-01/`, `foundry-hierarchy-ownerscope-01/`,
   `foundry-hierarchy-fusion-01/`: separate immutable comparisons and attribution traces.
 - `native-macos-38176235770/`: raw native artifacts, numerical comparison and assessment.
-- `rust-ci-38178644843/`: pending CI snapshot; fetch final results on resume.
+- `rust-ci-38178644843/`: a snapshot taken while run 38178644843 was still running. The
+  run finished successfully on both platforms, as recorded above and in validation.
 - `qwen3-body-reads-pair-2048/`: latest negative host pair and accounting.
 - `evidence-framework-checks/report.json`: eight actual framework/execution checks.
 
@@ -145,7 +155,8 @@ versioned in `scripts/cloud`:
 | [`setup.sh`](../scripts/cloud/setup.sh) | The environment's setup script. It installs Rust 1.90, libclang/CMake, the pinned llama.cpp object store, the pinned public models and 013 files, OMP/Bun, and the locked Cargo dependencies. |
 | [`environment.env`](../scripts/cloud/environment.env) | The environment variables. They hold paths only; there are no secrets. |
 | [`allowed-domains.txt`](../scripts/cloud/allowed-domains.txt) | Hosts added under Custom network access, alongside the default package managers. |
-| [`doctor.sh`](../scripts/cloud/doctor.sh) | Checks a session: host limits, `avx512_bf16`, toolchains and pinned inputs. |
+| [`doctor.sh`](../scripts/cloud/doctor.sh) | Checks a session: the environment variables, host limits, `avx512_bf16`, toolchains and pinned inputs. |
+| [`gates.sh`](../scripts/cloud/gates.sh) | Runs the merge gates (`scripts/gates.sh`) with `environment.env` applied and `RUSTUP_TOOLCHAIN` unset, whatever the session holds; `bash scripts/cloud/gates.sh OUTDIR`. |
 | [`fetch-resume.sh`](../scripts/cloud/fetch-resume.sh) | Downloads and verifies the private archive and prints its `RESTORE.md`. It takes the archive from a private GitHub release attached to the session, or from an HTTPS URL. |
 
 An Anthropic-hosted VM has about 4 vCPUs, 16 GB RAM and 30 GB of disk. That is half

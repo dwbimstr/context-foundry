@@ -35,9 +35,11 @@ not issues: see [SECURITY](SECURITY.md).
   historical macOS pairing was 0.24.0/2.11.0. See the
   [compatibility review](docs/review/tch-026.md) before updating a deployed worker.
 
-The historical learning acceptance ran on macOS arm64; CI runs the core checks on
-Linux and macOS. The separate optional-worker workflow tests the paired runtime;
-its weight-free fixtures do not replace macOS checkpoint and bundle acceptance.
+The historical learning acceptance ran on macOS arm64. While GitHub Actions is
+unavailable, the core checks run locally with `scripts/gates.sh`. The Linux and macOS
+CI jobs and the separate optional-worker workflow, which tests the paired runtime, do
+not run. Even when it runs, that workflow's weight-free fixtures do not replace macOS
+checkpoint and bundle acceptance.
 
 ## Build and the fast loop
 

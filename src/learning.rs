@@ -1463,7 +1463,7 @@ impl Sink {
             .map_err(|e| fail("output_write", format!("fsync {name}: {e}")))?;
         Ok(ManifestFile {
             name: name.to_owned(),
-            sha256: format!("{:x}", self.hasher.finalize()),
+            sha256: crate::lower_hex(&self.hasher.finalize()),
             bytes: self.bytes,
             rows: self.rows,
         })
@@ -3002,7 +3002,7 @@ fn stream_member(
             ),
         ));
     }
-    if format!("{:x}", hasher.finalize()) != entry.sha256 {
+    if crate::lower_hex(&hasher.finalize()) != entry.sha256 {
         return Err(fail(
             "dataset_invalid",
             format!("{name} does not match the manifest hash"),
