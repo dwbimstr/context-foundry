@@ -13,7 +13,9 @@
 //!   (the owner's `take_engine_slot`), so steps are kept short: partition
 //!   input collection and publication end at their first boundary after
 //!   [`STEP_TIME`]. Partition CPU work and generation construction run with
-//!   the slot free; computed partitions recheck their source at commit;
+//!   the slot free; computed partitions recheck their source at commit, and
+//!   one whose source changed or was deleted meanwhile is dropped with its
+//!   cards while the newer version stays pending;
 //! - the model call runs on the owner's ONE resident worker
 //!   ([`QueryRuntime`]) with NO engine slot and NO transaction held. Its
 //!   admission is refused, never queued, while that slot is occupied or a
@@ -694,6 +696,7 @@ impl<'a> Run<'a> {
             }
             let preparation = self.preparation;
             let report = &mut self.report;
+            let mut committed = false;
             let stop = hold(owner, |engine| {
                 if owner.closing() {
                     return Ok(Some(cancelled()));
@@ -701,13 +704,20 @@ impl<'a> Run<'a> {
                 if preparation.lock().phase == Phase::Pausing {
                     return Ok(Some(paused()));
                 }
-                prepare::commit_partition(engine, computed.partition, control, report)?;
+                committed = matches!(
+                    prepare::commit_partition(engine, computed.partition, control, report)?,
+                    cache::PartitionCommit::Committed
+                );
                 Ok(None)
             })?;
             if let Some(stop) = stop {
                 return Ok((Progress::Halted(stop), Vec::new()));
             }
-            retained.extend(computed.retained);
+            // A superseded source's newer version stays pending; its cards
+            // were rendered from the old one.
+            if committed {
+                retained.extend(computed.retained);
+            }
         }
         Ok((progress, retained))
     }
@@ -2229,6 +2239,268 @@ mod tests {
                     matches!(result, Progress::Halted(Stop::Partial { code, .. }) if code == if stop == "pause" { "paused" } else { "cancelled" })
                 );
                 assert!(engine.semantic_partition("note00.md").unwrap().is_none());
+            }
+        }
+    }
+
+    /// A foreground write queued for the owner's engine slot.
+    type Write = Box<dyn FnOnce(&Engine) + Send>;
+
+    /// An owner with no foreground operation in flight whose queued writes
+    /// run as soon as a store step gives the engine slot back, before the
+    /// driver's next step: a foreground write between two of its steps.
+    struct Writes {
+        engine: Mutex<Engine>,
+        queued: Mutex<Vec<Write>>,
+    }
+
+    impl Owner for Writes {
+        fn try_primary(&self, step: &mut dyn FnMut(&Engine)) -> FResult<bool> {
+            let engine = self.engine.lock().unwrap();
+            step(&engine);
+            for write in std::mem::take(&mut *self.queued.lock().unwrap()) {
+                write(&engine);
+            }
+            Ok(true)
+        }
+        fn closing(&self) -> bool {
+            false
+        }
+    }
+
+    /// The twelve notes behind a [`Writes`] owner, and a runtime serving
+    /// their profile.
+    fn writable_notes() -> (tempfile::TempDir, Arc<Writes>, QueryRuntime) {
+        let (dir, engine, profile) = notes();
+        let descriptor = profile.descriptor.clone();
+        let runtime = QueryRuntime::start(
+            profile,
+            Box::new(move || {
+                Ok(Box::new(Sizes {
+                    descriptor,
+                    sizes: Arc::new(Mutex::new(Vec::new())),
+                    foreground: None,
+                }) as Box<dyn EmbeddingProvider>)
+            }),
+        )
+        .unwrap();
+        let owner = Arc::new(Writes {
+            engine: Mutex::new(engine),
+            queued: Mutex::new(Vec::new()),
+        });
+        (dir, owner, runtime)
+    }
+
+    /// Replace `path` with a new version, or delete it.
+    fn supersede(engine: &Engine, path: &str, delete: bool) {
+        if delete {
+            assert!(engine.delete_source(path).unwrap());
+        } else {
+            assert!(
+                engine
+                    .replace_source(path, "# Changed note\n\nnew body\n")
+                    .unwrap()
+            );
+        }
+    }
+
+    /// FOLLOWUP F13: a source replaced or deleted while its partition is
+    /// computed with the slot free is superseded, not an error. Its
+    /// partition and cards are dropped and the rest of the wave commits.
+    #[test]
+    fn a_source_changed_during_partition_compute_is_superseded() {
+        for delete in [false, true] {
+            let (_dir, owner, runtime) = writable_notes();
+            let preparation = Preparation::default();
+            preparation.lock().phase = Phase::Running;
+            let foreground = Arc::clone(&owner);
+            crate::fault::arm(
+                prepare::fault_names::PARTITION_BEFORE_COMPUTE,
+                0,
+                crate::fault::Action::Call(Box::new(move |_| {
+                    supersede(&foreground.engine.lock().unwrap(), "note00.md", delete);
+                })),
+            );
+            let control = Control::unbounded();
+            let mut run = Run::new(&*owner, &runtime, &preparation, &control);
+            let wave = run.partition_wave(&mut prepare::SourceCursor::default());
+            crate::fault::disarm_all();
+            let (progress, retained) = wave.unwrap();
+            assert!(!matches!(progress, Progress::Halted(_)));
+            assert_eq!(run.report.partitioned_sources, 7);
+            assert_eq!(retained.len(), 7);
+            let engine = owner.engine.lock().unwrap();
+            assert!(engine.semantic_partition("note00.md").unwrap().is_none());
+            for n in 1..8 {
+                let path = format!("note{n:02}.md");
+                assert_eq!(
+                    engine
+                        .semantic_partition(&path)
+                        .unwrap()
+                        .unwrap()
+                        .source_hash,
+                    engine.source(&path).unwrap().unwrap().hash
+                );
+            }
+        }
+    }
+
+    /// FOLLOWUP F13: each commit rechecks its own source, so a foreground
+    /// write between two commits of one wave supersedes only the later
+    /// source, and the wave goes on.
+    #[test]
+    fn a_source_changed_between_partition_commits_is_superseded() {
+        let (_dir, owner, runtime) = writable_notes();
+        let preparation = Preparation::default();
+        preparation.lock().phase = Phase::Running;
+        let foreground = Arc::clone(&owner);
+        let committed = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&committed);
+        crate::fault::arm(
+            prepare::fault_names::PARTITION_AFTER_COMMIT,
+            0,
+            crate::fault::Action::Call(Box::new(move |ctx| {
+                seen.lock().unwrap().push(ctx.detail.to_owned());
+                if ctx.detail == "note00.md" {
+                    foreground
+                        .queued
+                        .lock()
+                        .unwrap()
+                        .push(Box::new(|engine: &Engine| {
+                            supersede(engine, "note01.md", false);
+                        }));
+                }
+            })),
+        );
+        let control = Control::unbounded();
+        let mut run = Run::new(&*owner, &runtime, &preparation, &control);
+        let wave = run.partition_wave(&mut prepare::SourceCursor::default());
+        crate::fault::disarm_all();
+        let (progress, retained) = wave.unwrap();
+        assert!(!matches!(progress, Progress::Halted(_)));
+        let expected: Vec<_> = (0..8)
+            .filter(|&n| n != 1)
+            .map(|n| format!("note{n:02}.md"))
+            .collect();
+        assert_eq!(*committed.lock().unwrap(), expected);
+        assert_eq!(run.report.partitioned_sources, 7);
+        assert_eq!(retained.len(), 7);
+        let engine = owner.engine.lock().unwrap();
+        assert!(engine.semantic_partition("note01.md").unwrap().is_none());
+        for path in &expected {
+            assert!(engine.semantic_partition(path).unwrap().is_some());
+        }
+    }
+
+    /// FOLLOWUP F13: continuous maintenance converges after a source changes
+    /// or is deleted while its partition is computed. The superseded
+    /// version's obligation stays pending, a later batch derives the current
+    /// version, and the driver waits caught up with nothing pending.
+    #[test]
+    fn maintenance_converges_after_a_source_changes_during_partition_compute() {
+        for delete in [false, true] {
+            let (_dir, owner, runtime) = writable_notes();
+            let preparation = Arc::new(Preparation::default());
+            {
+                let mut state = preparation.lock();
+                state.phase = Phase::Running;
+                state.continuous = true;
+            }
+            let foreground = Arc::clone(&owner);
+            let changed = std::cell::Cell::new(false);
+            crate::fault::arm(
+                prepare::fault_names::PARTITION_BEFORE_COMPUTE,
+                0,
+                crate::fault::Action::Call(Box::new(move |_| {
+                    if !changed.replace(true) {
+                        supersede(&foreground.engine.lock().unwrap(), "note00.md", delete);
+                    }
+                })),
+            );
+            // Once the driver waits caught up, hand control back to the test.
+            let finished = Arc::new(AtomicBool::new(false));
+            let watcher = {
+                let (preparation, finished) = (Arc::clone(&preparation), Arc::clone(&finished));
+                std::thread::spawn(move || {
+                    let deadline = Instant::now() + Duration::from_secs(60);
+                    while !finished.load(Ordering::SeqCst) {
+                        let waiting = preparation.live() == Some(Live::Waiting);
+                        if waiting || Instant::now() >= deadline {
+                            preparation.lock().continuous = false;
+                            return waiting;
+                        }
+                        std::thread::sleep(POLL);
+                    }
+                    false
+                })
+            };
+            let control = Control::unbounded();
+            let mut run = Run::new(&*owner, &runtime, &preparation, &control);
+            let outcome = run.begin().and_then(|()| run.maintain());
+            finished.store(true, Ordering::SeqCst);
+            crate::fault::disarm_all();
+            let waited = watcher.join().unwrap();
+            assert!(outcome.unwrap().is_none());
+            assert!(waited, "maintenance never waited caught up");
+            let engine = owner.engine.lock().unwrap();
+            let pending = engine
+                .derivation_pending(crate::neural::work::Lane::Semantic)
+                .unwrap();
+            assert_eq!(pending.paths, 0);
+            assert!(!pending.reconcile_required);
+            let partition = engine.semantic_partition("note00.md").unwrap();
+            match engine.source("note00.md").unwrap() {
+                None => assert!(delete && partition.is_none()),
+                Some(source) => {
+                    assert!(!delete);
+                    assert_eq!(source.hash, crate::digest(b"# Changed note\n\nnew body\n"));
+                    assert_eq!(partition.unwrap().source_hash, source.hash);
+                }
+            }
+            for n in 1..12 {
+                let path = format!("note{n:02}.md");
+                assert!(engine.semantic_partition(&path).unwrap().is_some());
+            }
+        }
+    }
+
+    /// FOLLOWUP F13: a one-shot pass completes too. The superseding write
+    /// moved the source revision, so a further pass derives the current
+    /// version.
+    #[test]
+    fn a_one_shot_pass_completes_after_a_source_changes_during_partition_compute() {
+        for delete in [false, true] {
+            let (_dir, owner, runtime) = writable_notes();
+            let preparation = Preparation::default();
+            preparation.lock().phase = Phase::Running;
+            let foreground = Arc::clone(&owner);
+            let changed = std::cell::Cell::new(false);
+            crate::fault::arm(
+                prepare::fault_names::PARTITION_BEFORE_COMPUTE,
+                0,
+                crate::fault::Action::Call(Box::new(move |_| {
+                    if !changed.replace(true) {
+                        supersede(&foreground.engine.lock().unwrap(), "note00.md", delete);
+                    }
+                })),
+            );
+            let control = Control::unbounded();
+            let mut run = Run::new(&*owner, &runtime, &preparation, &control);
+            let outcome = run.begin().and_then(|()| run.one_shot());
+            crate::fault::disarm_all();
+            assert!(matches!(outcome.unwrap(), Stop::Complete));
+            let engine = owner.engine.lock().unwrap();
+            let partition = engine.semantic_partition("note00.md").unwrap();
+            match engine.source("note00.md").unwrap() {
+                None => assert!(delete && partition.is_none()),
+                Some(source) => {
+                    assert!(!delete);
+                    assert_eq!(partition.unwrap().source_hash, source.hash);
+                }
+            }
+            for n in 1..12 {
+                let path = format!("note{n:02}.md");
+                assert!(engine.semantic_partition(&path).unwrap().is_some());
             }
         }
     }

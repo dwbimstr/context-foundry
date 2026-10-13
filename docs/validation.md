@@ -50,6 +50,7 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `1cced0f` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `973548d` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `f072a11` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `1f29ec2` | 0 | 0 | 101: 1,150 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -78,6 +79,7 @@ Log SHA-256 digests:
 | `1cced0f` | `a71c43d3…` | `ef9d0bdc…` | `ae5cbb26…` | `acdcbb20…` |
 | `973548d` | `24476047…` | `875386bf…` | `aa8b8db9…` | `5b3cefa8…` |
 | `f072a11` | `6d982f82…` | `039e7109…` | `eab84e95…` | `b1d7d4d3…` |
+| `1f29ec2` | `703e7eca…` | `9bde0db8…` | `36ac8f23…` | `56e85a59…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -132,7 +134,8 @@ found that neither failure is a deadline problem:
   1 in 6 full-suite runs. The semantic lane stops in `paused` with `partition_invalid`
   ("the mapping names a stale source version") after a source changes between
   partitioning and accept, so it cannot converge at any deadline. This is a product race,
-  parked as [FOLLOWUP F13](../FOLLOWUP.md); the test is unchanged.
+  parked as [FOLLOWUP F13](../FOLLOWUP.md) and fixed since `1f29ec2`
+  ([below](#f13-superseded-partitions--2026-10-13)); the test is unchanged.
 
 ### sha2 0.11 migration — 2026-10-13
 
@@ -281,6 +284,45 @@ passed the same local gates:
 - clean rustdoc comparisons, with all members and the 31 warnings unchanged.
 
 GitHub Actions did not run.
+
+### F13 superseded partitions — 2026-10-13
+
+`1f29ec2` fixes the stale-source partition race recorded in
+[FOLLOWUP F13](../FOLLOWUP.md#f13-continuous-semantics-stopped-on-a-stale-source-partition-race-fixed-2026-10-13),
+as designed there. A partition whose source was replaced or deleted while it was
+computed is now superseded: the driver drops it with its cards, the source's newer
+version stays pending, and a later batch derives it. Before, accept refused it with
+`partition_invalid` or `not_found`, and the continuous driver stopped in `paused`
+without converging. The public `semantic_record_partition` still refuses a stale hash,
+and the CLI `run`, which opens the store exclusively and so cannot meet the race, keeps
+the old error.
+
+- **Red first:** four tests in `src/neural/driver.rs` drive the race through the fault
+  points, with replace and delete variants (the mid-wave test replaces only). On the
+  parent `6dff64a` they fail with
+  `partition_invalid` when the source is replaced and `not_found` when it is deleted;
+  on `1f29ec2` they pass.
+- **Contract unchanged:** `tests/neural.rs` passes without changes (70 tests), including
+  the stale-hash refusal and the structural `partition_invalid` checks.
+- **Soak:** 12 consecutive runs of `cargo test --locked --test neural_retrieval`, the
+  target where the race showed about 1 run in 6 of the full parallel suite, all passed
+  (93 passed, 1 ignored each) with its deadlines unchanged. They ran the target alone,
+  on the code of `1f29ec2` before a test-only type alias was added, so they show the
+  target still passes; the tests above are the proof of the fix.
+- **Local gates on `1f29ec2`:** in the receipts [above](#local-gates-receipts), from a
+  clean tree.
+  - fmt, Clippy 1.97, and MSRV check and Clippy 1.90 exit 0.
+  - 1,150 tests passed: the earlier 1,146 plus the 4 new ones. The only failures are the
+    2 root-only gateway tests, and the gateway target passed 49 as `nobody`.
+  - `--no-default-features` builds with 0 warnings.
+  - Rustdoc keeps all 1,061 pages and the 31 warnings. The only changed page is
+    `neural::driver`, whose module doc gained the sentence on superseded partitions; no
+    member or signature changed. `PartitionCommit` is crate-internal.
+
+  An earlier run, on the commit before an amend, stopped at Clippy 1.97's
+  `type_complexity` on the new test owner's queue. The amend added a type alias, and
+  that run is not counted. Native macOS acceptance did not run (no Mac), and GitHub
+  Actions did not run.
 
 ### Document/body RRF (resume step 2)
 

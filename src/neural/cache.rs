@@ -140,6 +140,27 @@ pub(crate) struct PreparedPartition {
     record: PartitionRecord,
 }
 
+/// The outcome of accepting a computed partition. `Superseded`: its source
+/// changed or was deleted after the computation read it, so nothing was
+/// written; it holds the refusal for callers that no concurrent writer can
+/// reach.
+#[must_use]
+#[derive(Debug)]
+pub(crate) enum PartitionCommit {
+    Committed,
+    Superseded(FoundryError),
+}
+
+impl PartitionCommit {
+    /// The commit, or the refusal of a superseded partition.
+    pub(crate) fn committed(self) -> FResult<()> {
+        match self {
+            Self::Committed => Ok(()),
+            Self::Superseded(refusal) => Err(refusal),
+        }
+    }
+}
+
 impl PartitionSource {
     #[cfg(feature = "semantic")]
     pub(crate) fn path(&self) -> &str {
@@ -832,7 +853,7 @@ impl Engine {
     ) -> FResult<()> {
         let source = self.semantic_partition_source(path, source_hash)?;
         let prepared = source.prepare(recipe_id, function_digest, claimed, cards)?;
-        self.semantic_accept_partition(prepared)
+        self.semantic_accept_partition(prepared)?.committed()
     }
 
     pub(crate) fn semantic_partition_source(
@@ -860,19 +881,23 @@ impl Engine {
         })
     }
 
-    pub(crate) fn semantic_accept_partition(&self, prepared: PreparedPartition) -> FResult<()> {
+    /// Commit `prepared` only against its still-current source version.
+    pub(crate) fn semantic_accept_partition(
+        &self,
+        prepared: PreparedPartition,
+    ) -> FResult<PartitionCommit> {
         let PreparedPartition { path, record } = prepared;
         let tx = self.db.begin_write()?;
         {
             let sources = tx.open_table(SOURCES)?;
             let meta: SourceMeta = match sources.get(path.as_str())? {
                 Some(raw) => decode(raw.value(), "source")?,
-                None => return Err(FoundryError::NotFound),
+                None => return Ok(PartitionCommit::Superseded(FoundryError::NotFound)),
             };
             if meta.hash != record.source_hash {
-                return Err(invalid_partition(format!(
+                return Ok(PartitionCommit::Superseded(invalid_partition(format!(
                     "{path}: the mapping names a stale source version"
-                )));
+                ))));
             }
             let mut table = tx.open_table(PARTITIONS)?;
             table.insert(
@@ -883,7 +908,7 @@ impl Engine {
             )?;
         }
         self.semantic_commit(tx, [path.as_str()], std::iter::empty(), false)?;
-        Ok(())
+        Ok(PartitionCommit::Committed)
     }
 
     /// The state row; `None` before the first preparation or after a purge.
