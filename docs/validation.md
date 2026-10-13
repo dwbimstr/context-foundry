@@ -47,6 +47,7 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `7c25def` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `385a593` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `3beac37` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `1cced0f` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -72,6 +73,7 @@ Log SHA-256 digests:
 | `7c25def` | `7577aa7e…` | `95dfe823…` | `7409415a…` | `44c679a6…` |
 | `385a593` | `03329197…` | `330a4300…` | `9594fa71…` | `f15bfc3e…` |
 | `3beac37` | `661da8b8…` | `5afd6241…` | `7259fa1b…` | `8be0bcc9…` |
+| `1cced0f` | `a71c43d3…` | `ef9d0bdc…` | `ae5cbb26…` | `acdcbb20…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -243,6 +245,17 @@ Clippy 1.90, and 1,146 tests with only the 2 root-only failures, with the gatewa
 passing 49 as `nobody`. `--no-default-features` gave 0 warnings. A clean rustdoc
 comparison against `c23279e` showed pages 1,041 → 1,053 (12 redirect stubs for the re-exported items), all members unchanged and the 31
 warnings unchanged. GitHub Actions did not run.
+
+**`syntax.rs` self-sample, `1cced0f`.** This applies the owner's decision on
+[FOLLOWUP F15](../FOLLOWUP.md): the Rust input of
+`per_character_reads_give_the_whole_buffer_tree` is now
+`tests/fixtures/syntax/syntax-rs-sample.txt`, a byte-identical copy of `src/syntax.rs`
+at `5d9596d` (202,038 bytes, SHA-256 `6d909735…7b33035`), instead of
+`include_str!("syntax.rs")`. At this commit the test parses exactly the bytes it parsed
+before, and it passed. The commit passed the same local gates: fmt, Clippy 1.97, MSRV
+check and Clippy 1.90, 1,146 tests with only the 2 root-only failures, the gateway target
+passing 49 as `nobody`, and `--no-default-features` with 0 warnings. Rustdoc showed pages
+1,053 → 1,053 unchanged, with all members and the 31 warnings unchanged. GitHub Actions did not run.
 
 ### Document/body RRF (resume step 2)
 

@@ -397,7 +397,7 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   | --- | --- | --- |
   | `src/store.rs` | `doors` (1), `semantic_search` (1, `#[cfg(feature = "semantic")]`), `lexical` (2) | Keep the shared core (`Fields`, `Candidate`, `TwoTier`, `WindowSlice`, storage helpers) in the parent; moving it costs 4–25 bumps each. |
   | `src/mcp.rs` | `startup` (1), `semantic` (2–3) | Keep `Shared`, `RootMeta`, the slot and `run_op` in the parent. |
-  | `src/syntax.rs` | `outliner` (0), `text` (0), `tiling`, `forest`, `markdown`, `imports`, `extract` (1 each), `parser` with `parse_hooks` (2), `calls` (5) | Owner decision [F15](#f15-syntaxrs-self-sample-owner-decision-before-any-split-proposal-2026-10-13) first: its in-file test parses `include_str!("syntax.rs")`, so every split shrinks that sample. |
+  | `src/syntax.rs` | `outliner` (0), `text` (0), `tiling`, `forest`, `markdown`, `imports`, `extract` (1 each), `parser` with `parse_hooks` (2), `calls` (5) | None since `1cced0f` (F15): the in-file test now reads a frozen copy of the file, so a split no longer changes its input. |
   | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Needs a Mac. `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`, `hex64`); keep those in the root or re-export them. |
   | `src/neural/prepare.rs` | `order` (0), `cli` (0), `steps` with the tests (1) | Wait for F13: its fix changes `commit_partition`. |
 
@@ -405,9 +405,8 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   `src/graph.rs` keeps `invalid`, `OccurrenceKind`, the storage key codec and the test
   seam; neither has a further split planned.
 
-- **Required resource:** none beyond a normal session, except for three rows: a Mac
-  for `src/learning.rs`, the owner's F15 decision for `src/syntax.rs`, and F13 for
-  `src/neural/prepare.rs`.
+- **Required resource:** none beyond a normal session, except for two rows: a Mac for
+  `src/learning.rs` and F13 for `src/neural/prepare.rs`.
 - **Resume, per split:**
   1. Move the planned line ranges verbatim into `src/<module>/<child>.rs`, which starts
      with a `//!` line and `use super::*;`; add `mod <child>;` after the parent's
@@ -439,11 +438,12 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      `serve`, `supervisor` and `worker` compile, and record that receipt next to the
      Linux one.
 
-## F15. `syntax.rs` self-sample: owner decision before any split (proposal 2026-10-13)
+## F15. `syntax.rs` self-sample (decided 2026-10-13: frozen as a fixture)
 
-- **Why pending:** every planned `src/syntax.rs` split (F14) changes the input of one
-  test. Freezing or replacing that input is a change to a test's inputs, which needs the
-  owner. Nothing here is implemented, and `src/syntax.rs` is untouched.
+- **Status:** done in `1cced0f`; the owner chose option 1.
+  `tests/fixtures/syntax/syntax-rs-sample.txt` is `src/syntax.rs` at `5d9596d`, byte
+  for byte (202,038 bytes, SHA-256 `6d909735…7b33035`), and the test includes it under
+  the label `"syntax.rs"`. The rest of this entry is the proposal as the owner saw it.
 - **The test:** `per_character_reads_give_the_whole_buffer_tree` (`src/syntax.rs`,
   `mod tests`) parses one source per grammar (25) in four forms: as written, with CRLF
   line ends, behind a byte-order mark, and empty. Each form is parsed twice: by `parse`,
@@ -488,11 +488,8 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   finding about the reader, found by accident. If the owner wants to keep that live
   tracking too, add the frozen fixture as a second Rust sample and keep the live file as
   the first. That costs one more entry; the grammar count stays 25.
-- **Required resource:** the owner's choice of option. Then, on a normal session:
-  1. Make the test change in its own commit. For option 1, copy the file at the commit
-     before the first `syntax.rs` split and record its SHA-256 in the commit message.
-  2. Gate that commit as in F14.
-  3. Only then run the `syntax.rs` splits in the F14 table.
+- **Resume:** nothing remains here. The `syntax.rs` splits in the F14 table may run,
+  gated as F14 describes; they no longer change this test's input.
 
 ## F16. Cloud sessions without the environment variables (found 2026-10-13)
 
