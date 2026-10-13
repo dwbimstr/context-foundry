@@ -15,7 +15,8 @@
 //!   [`STEP_TIME`]. Partition CPU work and generation construction run with
 //!   the slot free; computed partitions recheck their source at commit, and
 //!   one whose source changed or was deleted meanwhile is dropped with its
-//!   cards while the newer version stays pending;
+//!   cards while the newer version stays pending. An overview area whose
+//!   brief or sources changed before it is bound is skipped the same way;
 //! - the model call runs on the owner's ONE resident worker
 //!   ([`QueryRuntime`]) with NO engine slot and NO transaction held. Its
 //!   admission is refused, never queued, while that slot is occupied or a
@@ -1113,13 +1114,14 @@ impl<'a> Run<'a> {
                     return Ok(Some(stop));
                 }
             }
+            // Superseded: since the snapshot, its brief changed or was
+            // forgotten, or one of its sources changed. That write keeps its
+            // own obligation (pending overviews, or the source's path), so a
+            // later pass binds the current area or drops it.
             if !hold(self.owner, |engine| {
                 super::area::bind(engine, profile, &area.record, self.control)
             })? {
-                return Ok(Some(Stop::partial(
-                    "stale_area",
-                    "area changed during preparation",
-                )));
+                continue;
             }
             self.report.area_vectors += 1;
         }
@@ -2502,6 +2504,275 @@ mod tests {
                 let path = format!("note{n:02}.md");
                 assert!(engine.semantic_partition(&path).unwrap().is_some());
             }
+        }
+    }
+
+    /// Embeds unit vectors. A write armed in `armed` runs on the next document
+    /// call, which holds no engine slot, as a foreground write would.
+    struct Interleaved {
+        descriptor: FunctionDescriptor,
+        owner: Arc<Writes>,
+        armed: Arc<Mutex<Option<Write>>>,
+    }
+
+    impl EmbeddingProvider for Interleaved {
+        fn descriptor(&self) -> &FunctionDescriptor {
+            &self.descriptor
+        }
+        fn embed_documents(
+            &mut self,
+            batch: &[TokenizedInput],
+            _control: &Control,
+        ) -> Result<Vec<Vec<f32>>, ProviderError> {
+            if let Some(write) = self.armed.lock().unwrap().take() {
+                write(&self.owner.engine.lock().unwrap());
+            }
+            Ok(vec![unit_vector(&self.descriptor); batch.len()])
+        }
+        fn embed_query(
+            &mut self,
+            _input: &TokenizedInput,
+            _deadline: Instant,
+        ) -> Result<Vec<f32>, ProviderError> {
+            unreachable!("preparation embeds no query")
+        }
+    }
+
+    /// Put a brief over two notes whose purpose is `text`; its id and revision.
+    fn put_brief(
+        engine: &Engine,
+        notes: [usize; 2],
+        text: &str,
+        expected: Option<u64>,
+    ) -> (String, u64) {
+        use serde_json::json;
+        let wid = engine.workspace_id().unwrap();
+        let spans: Vec<_> = notes
+            .iter()
+            .map(|n| {
+                let source = format!("# Note {n}\n\nbody of note {n}\n");
+                format!(
+                    "note{n:02}.md#0-{}@{}.{}",
+                    source.len(),
+                    &crate::digest(source.as_bytes())[..32],
+                    &wid[..16]
+                )
+            })
+            .collect();
+        let input = json!({"cited_spans":spans,"recipe_sha256":"a".repeat(64),"model":"fixture",
+            "artifact_sha256":"b".repeat(64),"prompt_sha256":crate::digest(text.as_bytes()),"generated_at_unix_ms":1,
+            "purpose":[{"text":text,"citations":[0,1],"identifiers":[]}],
+            "behavior":[{"text":"Retain both notes.","citations":[0,1],"identifiers":[]}],
+            "provides":[],"consumes":[],"constraints":[],"tests":[],"unknowns":[]});
+        let request = crate::brief::parse(&serde_json::to_vec(&json!({"workspace_id":wid,"command":{"op":"put","brief":input,"expected_revision":expected}})).unwrap()).unwrap();
+        let result = engine.brief(&request, &Control::unbounded()).unwrap();
+        (
+            result["id"].as_str().unwrap().to_owned(),
+            result["revision"].as_u64().unwrap(),
+        )
+    }
+
+    /// How a test supersedes an area while its model call runs.
+    #[derive(Clone, Copy, PartialEq)]
+    enum AreaChange {
+        /// A new revision of its brief.
+        Brief,
+        /// Its brief forgotten.
+        Forget,
+        /// One of its brief's sources replaced, so the brief is no longer
+        /// eligible.
+        Source,
+    }
+
+    /// Twelve notes prepared under a hierarchy profile, then two briefs over
+    /// notes 0–1 and 2–3, not yet embedded as areas. The armed write
+    /// supersedes the area the pass visits first (briefs go in id order); the
+    /// briefs come back in that order.
+    struct Areas {
+        _dir: tempfile::TempDir,
+        owner: Arc<Writes>,
+        runtime: QueryRuntime,
+        preparation: Arc<Preparation>,
+        briefs: [String; 2],
+    }
+
+    fn areas(change: AreaChange) -> Areas {
+        let (dir, engine, mut profile) = notes();
+        Arc::make_mut(&mut profile).representation =
+            super::super::partition::Representation::Hierarchy { parent_tokens: 32 };
+        Arc::make_mut(&mut profile).card_tokens = 512;
+        let owner = Arc::new(Writes {
+            engine: Mutex::new(engine),
+            queued: Mutex::new(Vec::new()),
+        });
+        let armed = Arc::new(Mutex::new(None));
+        let provider = Interleaved {
+            descriptor: profile.descriptor.clone(),
+            owner: Arc::clone(&owner),
+            armed: Arc::clone(&armed),
+        };
+        let runtime = QueryRuntime::start(
+            profile,
+            Box::new(move || Ok(Box::new(provider) as Box<dyn EmbeddingProvider>)),
+        )
+        .unwrap();
+        let preparation = Arc::new(Preparation::default());
+        preparation.lock().phase = Phase::Running;
+        let control = Control::unbounded();
+        let mut run = Run::new(&*owner, &runtime, &preparation, &control);
+        let prepared = run.begin().and_then(|()| run.one_shot()).unwrap();
+        assert!(matches!(prepared, Stop::Complete));
+        let mut briefs = {
+            let engine = owner.engine.lock().unwrap();
+            [[0, 1], [2, 3]].map(|notes| {
+                let (id, revision) = put_brief(&engine, notes, "Explain the note pair.", None);
+                (id, revision, notes)
+            })
+        };
+        briefs.sort();
+        let (first, revision, notes) = briefs[0].clone();
+        *armed.lock().unwrap() = Some(Box::new(move |engine: &Engine| match change {
+            AreaChange::Brief => {
+                put_brief(
+                    engine,
+                    notes,
+                    "Explain the revised note pair.",
+                    Some(revision),
+                );
+            }
+            AreaChange::Forget => {
+                let request = crate::brief::parse(
+                    &serde_json::to_vec(&serde_json::json!({
+                        "workspace_id": engine.workspace_id().unwrap(),
+                        "command": {"op":"forget","id":first,"expected_revision":revision},
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+                engine.brief(&request, &Control::unbounded()).unwrap();
+            }
+            AreaChange::Source => {
+                supersede(engine, &format!("note{:02}.md", notes[0]), false);
+            }
+        }));
+        Areas {
+            _dir: dir,
+            owner,
+            runtime,
+            preparation,
+            briefs: briefs.map(|(id, _, _)| id),
+        }
+    }
+
+    impl Areas {
+        /// The briefs whose current area is bound, in id order.
+        fn bound(&self) -> Vec<String> {
+            let engine = self.owner.engine.lock().unwrap();
+            let profile = &self.runtime.profile;
+            let mut ids: Vec<_> = super::super::area::search(
+                &engine,
+                profile,
+                &unit_vector(&profile.descriptor),
+                &Control::unbounded(),
+            )
+            .unwrap()
+            .into_iter()
+            .map(|candidate| candidate.id)
+            .collect();
+            ids.sort();
+            ids
+        }
+    }
+
+    const AREA_CHANGES: [AreaChange; 3] =
+        [AreaChange::Brief, AreaChange::Forget, AreaChange::Source];
+
+    /// FOLLOWUP F13: an area whose brief changes, is forgotten, or loses a
+    /// source while its model call runs is superseded, not a stop. The pass
+    /// skips it and binds the next area.
+    #[test]
+    fn an_area_changed_during_its_model_call_is_superseded() {
+        for change in AREA_CHANGES {
+            let areas = areas(change);
+            let control = Control::unbounded();
+            let mut run = Run::new(&*areas.owner, &areas.runtime, &areas.preparation, &control);
+            assert!(run.area_pass().unwrap().is_none());
+            assert_eq!(run.report.area_vectors, 1);
+            assert_eq!(areas.bound(), [areas.briefs[1].clone()]);
+        }
+    }
+
+    /// FOLLOWUP F13: continuous maintenance converges after an area is
+    /// superseded. The change keeps its own obligation (a brief write marks
+    /// overviews pending, a source write its path), so a later batch binds
+    /// the current area or drops it, and the driver waits caught up.
+    #[test]
+    fn maintenance_converges_after_an_area_changes_during_its_model_call() {
+        for change in AREA_CHANGES {
+            let areas = areas(change);
+            areas.preparation.lock().continuous = true;
+            let finished = Arc::new(AtomicBool::new(false));
+            let watcher = {
+                let (preparation, finished) =
+                    (Arc::clone(&areas.preparation), Arc::clone(&finished));
+                std::thread::spawn(move || {
+                    let deadline = Instant::now() + Duration::from_secs(60);
+                    while !finished.load(Ordering::SeqCst) {
+                        let waiting = preparation.live() == Some(Live::Waiting);
+                        if waiting || Instant::now() >= deadline {
+                            preparation.lock().continuous = false;
+                            return waiting;
+                        }
+                        std::thread::sleep(POLL);
+                    }
+                    false
+                })
+            };
+            let control = Control::unbounded();
+            let mut run = Run::new(&*areas.owner, &areas.runtime, &areas.preparation, &control);
+            let outcome = run.begin().and_then(|()| run.maintain());
+            finished.store(true, Ordering::SeqCst);
+            let waited = watcher.join().unwrap();
+            assert!(outcome.unwrap().is_none());
+            assert!(waited, "maintenance never waited caught up");
+            let pending = areas
+                .owner
+                .engine
+                .lock()
+                .unwrap()
+                .derivation_pending(crate::neural::work::Lane::Semantic)
+                .unwrap();
+            assert_eq!(pending.paths, 0);
+            assert!(!pending.overviews_pending && !pending.reconcile_required);
+            let expected = if change == AreaChange::Brief {
+                areas.briefs.to_vec()
+            } else {
+                vec![areas.briefs[1].clone()]
+            };
+            assert_eq!(areas.bound(), expected);
+        }
+    }
+
+    /// FOLLOWUP F13: a one-shot pass completes after an area is superseded.
+    /// A changed or forgotten brief stays pending as an overview obligation;
+    /// a replaced source moved the source revision, so a further pass ran.
+    #[test]
+    fn a_one_shot_pass_completes_after_an_area_changes_during_its_model_call() {
+        for change in AREA_CHANGES {
+            let areas = areas(change);
+            let control = Control::unbounded();
+            let mut run = Run::new(&*areas.owner, &areas.runtime, &areas.preparation, &control);
+            let outcome = run.begin().and_then(|()| run.one_shot());
+            assert!(matches!(outcome.unwrap(), Stop::Complete));
+            assert_eq!(areas.bound(), [areas.briefs[1].clone()]);
+            let pending = areas
+                .owner
+                .engine
+                .lock()
+                .unwrap()
+                .derivation_pending(crate::neural::work::Lane::Semantic)
+                .unwrap();
+            assert_eq!(pending.overviews_pending, change != AreaChange::Source);
         }
     }
 
