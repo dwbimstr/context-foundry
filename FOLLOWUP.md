@@ -339,7 +339,7 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 
 - **Why deferred:** each split is a separate, gated, revertable commit. On 2026-10-13
   only the splits that were purely mechanical ran: verbatim moves with no visibility
-  change and an unchanged public API, 13 in two batches (see
+  change and an unchanged public API, 14 so far (see
   [validation](docs/validation.md#god-module-splits--2026-10-13)). The rest change
   crate-internal visibility, need an owner decision about a test's input, touch
   macOS-only code that Linux gates do not compile, or wait on F13.
@@ -383,18 +383,12 @@ Do not work around a blocker by changing a model, threshold, question set or pro
     The parent files are now `src/mcp.rs` 3,313 lines (6,506 at `a088969`),
     `src/store.rs` 4,967 (7,654), `src/neural/query.rs` 449 (2,358) and `src/graph.rs`
     777 (2,954).
-- **Parked (2026-10-13): the `graph.rs` `compiler` split.**
-  - **Why:** the mapped boundary, lines 619–939 and 1094–1342 at `a088969`, moves
-    `impl OccurrenceKind` into the child. Its private `tag` and `from_tag` are also
-    called by the storage key codec that stays in the parent, so the compiler refuses
-    three calls with E0624. That boundary would need two visibility changes, which were
-    not made. The change was discarded before any commit.
-  - **Zero-change alternative, tested but not committed:** keep `OccurrenceKind` and its
-    `impl` in the parent next to the codec, and move the other three ranges verbatim.
-    That passed `cargo fmt --check` and `cargo clippy --all-targets -D warnings` on top
-    of `7c25def`. `OccurrenceKind` then keeps its own page, and the other public
-    compiler items are re-exported.
-  - **Resume:** run that boundary as its own commit, gated as below.
+  - Follow-up: `3beac37` moved the `src/graph.rs` compiler facts to
+    `src/graph/compiler.rs`, leaving `src/graph.rs` at 247 lines. The mapped boundary,
+    lines 619–939 and 1094–1342 at `a088969`, moved `impl OccurrenceKind`, whose private
+    `tag` and `from_tag` the parent's storage key codec also calls (E0624 three times).
+    So `OccurrenceKind` and its `impl` stay in the parent next to the codec, and the
+    other three ranges moved verbatim.
 - **Remaining plan**, each step one commit, in this order within a file, gated as
   below. "Bumps" are crate-internal visibility changes (`pub(super)`); none changes
   the public API.
@@ -403,13 +397,13 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   | --- | --- | --- |
   | `src/store.rs` | `doors` (1), `semantic_search` (1, `#[cfg(feature = "semantic")]`), `lexical` (2) | Keep the shared core (`Fields`, `Candidate`, `TwoTier`, `WindowSlice`, storage helpers) in the parent; moving it costs 4–25 bumps each. |
   | `src/mcp.rs` | `startup` (1), `semantic` (2–3) | Keep `Shared`, `RootMeta`, the slot and `run_op` in the parent. |
-  | `src/graph.rs` | `compiler` (0 with `OccurrenceKind` kept in the parent; 2 on the mapped boundary) | See "Parked" above. |
   | `src/syntax.rs` | `outliner` (0), `text` (0), `tiling`, `forest`, `markdown`, `imports`, `extract` (1 each), `parser` with `parse_hooks` (2), `calls` (5) | Owner decision [F15](#f15-syntaxrs-self-sample-owner-decision-before-any-split-proposal-2026-10-13) first: its in-file test parses `include_str!("syntax.rs")`, so every split shrinks that sample. |
   | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Needs a Mac. `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`, `hex64`); keep those in the root or re-export them. |
   | `src/neural/prepare.rs` | `order` (0), `cli` (0), `steps` with the tests (1) | Wait for F13: its fix changes `commit_partition`. |
 
-  `src/neural/query.rs` keeps the dense index, the fallback and query tokenization; it
-  has no further split planned.
+  `src/neural/query.rs` keeps the dense index, the fallback and query tokenization, and
+  `src/graph.rs` keeps `invalid`, `OccurrenceKind`, the storage key codec and the test
+  seam; neither has a further split planned.
 
 - **Required resource:** none beyond a normal session, except for three rows: a Mac
   for `src/learning.rs`, the owner's F15 decision for `src/syntax.rs`, and F13 for
