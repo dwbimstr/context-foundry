@@ -267,17 +267,19 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 - **Remaining:** `sha2` 0.10.9 is still compiled under the optional `learning-worker`
   feature, via `tch` → `zip` → `pbkdf2`. It disappears when that chain moves.
 
-## F13. Continuous semantics stops on a stale-source partition race
+## F13. Continuous semantics stopped on a stale-source partition race (fixed 2026-10-13)
 
-- **Why parked:** it is a product change in the concurrent semantic driver, and the fix
-  below is a design awaiting owner approval (2026-10-13). It was found while
-  investigating `continuous_semantics_progresses_during_filesystem_traffic_and_converges`
-  (`tests/neural_retrieval.rs`), which fails about 1 run in 6 under the full parallel
-  suite on 4 vCPUs. Nothing else blocks it in a cloud session.
-- **Diagnosis:** `Run::partition_wave` (`src/neural/driver.rs`) reads each source under
-  the engine slot, releases the slot while the partition workers compute, then retakes
-  it for each `commit_partition` (`src/neural/prepare.rs`), which calls
-  `Engine::semantic_accept_partition` (`src/neural/cache.rs`). The owner lets pending
+- **Status:** fixed in `1f29ec2` as designed below, after the owner asked for the fix
+  (2026-10-13). Nothing is blocked. This entry stays as the record of the race. Whether
+  `stale_area` gets the same treatment is still a separate owner call (see Remaining).
+  The race was found while investigating
+  `continuous_semantics_progresses_during_filesystem_traffic_and_converges`
+  (`tests/neural_retrieval.rs`), which failed about 1 run in 6 under the full parallel
+  suite on 4 vCPUs.
+- **Diagnosis (before `1f29ec2`):** `Run::partition_wave` (`src/neural/driver.rs`) reads
+  each source under the engine slot, releases the slot while the partition workers
+  compute, then retakes it for each `commit_partition` (`src/neural/prepare.rs`), which
+  calls `Engine::semantic_accept_partition` (`src/neural/cache.rs`). The owner lets pending
   watcher steps run before the driver (`try_primary` in `src/mcp.rs`), so under churn a
   source edited during the compute is usually stale at accept. Accept refuses it with
   `partition_invalid: <path>: the mapping names a stale source version`; the error
@@ -293,16 +295,20 @@ Do not work around a blocker by changing a model, threshold, question set or pro
     way. The CLI `semantic prepare` cannot: it holds the store exclusively.
   - `area_pass` has the same shape: `stale_area`, when a brief changes during
     preparation, also ends in `paused`. It was not observed.
-- **Proposed fix (design only):** treat a superseded source as a normal outcome. No new
-  requeue is needed: `replace_source` and `delete_source` record the new version in the
-  semantic obligation table in the same transaction (`work::changed`), and
+- **Fix:** treat a superseded source as a normal outcome. No new requeue is needed:
+  `replace_source` and `delete_source` record the new version in the semantic
+  obligation table in the same transaction (`work::changed`), and
   `derivation_ack` removes a path only when its stored version equals the batch's. A
   skipped path therefore stays pending, and the next `maintain` iteration, or the
   one-shot pass's revision check, partitions it again.
-  1. `Engine::semantic_accept_partition` returns committed or superseded (hash differs,
-     or source gone) instead of an error.
-  2. `commit_partition` passes that through and counts `partitioned_sources` only on a
-     commit. The CLI `run` keeps today's error, which it cannot reach.
+  1. `Engine::semantic_accept_partition` returns `PartitionCommit::Committed` or
+     `PartitionCommit::Superseded` (hash differs, or source gone) instead of an error.
+     `Superseded` keeps the old refusal (`partition_invalid` or `not_found`), and
+     `PartitionCommit::committed` turns it back into that error for callers no
+     concurrent writer can reach.
+  2. `commit_partition` passes that through, and counts `partitioned_sources` and fires
+     `PARTITION_AFTER_COMMIT` only on a commit. The CLI `run` keeps the old error,
+     which it cannot reach: it opens the store exclusively.
   3. `Run::partition_wave` drops a superseded partition and its retained cards and
      continues; the pause and cancel checks before each commit stay as they are.
   4. The public `Engine::semantic_record_partition` still refuses a stale hash with
@@ -314,40 +320,51 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   commit against the watcher (it reverses the 009 T003 slot decision and breaks the
   driver test that requires partition CPU work to release the serving slot). A path
   rewritten faster than its own partition compute is retried each pass; the watcher's
-  debounce (75 ms quiet, 1 s maximum) bounds that. Whether `stale_area` gets the same
-  treatment is a separate owner call.
-- **Required resource:** none beyond a normal session; owner approval of the design.
-- **Resume:**
-  1. Red first, deterministic: in the `src/neural/driver.rs` tests, arm
-     `PARTITION_BEFORE_COMPUTE` with an `Action::Call` that replaces the source being
-     partitioned (`engine.replace_source`), as the existing slot-release test does, and
-     call `partition_wave`. Assert `Ok`, no partition row for that path, its obligation
-     still pending with the new version, and the wave's other sources committed. Today
-     it returns `partition_invalid`. Add the deletion variant (`delete_source`; today
-     `not_found`) and a mid-wave variant (`PARTITION_AFTER_COMMIT` on the first source
-     replaces the second).
-  2. Drive `maintain` through the same fault and assert state `waiting`, no pending
-     paths and a current partition for the new hash.
-  3. Implement fix steps 1-3; keep the `tests/neural.rs` stale-hash refusal and the
-     structural `partition_invalid` tests unchanged.
-  4. Soak `cargo test --locked --test neural_retrieval` about 12 times with deadlines
-     unchanged, then run the full local gates. Update the driver module doc ("a
-     superseded partition is dropped and stays pending") and
-     [validation](docs/validation.md).
+  debounce (75 ms quiet, 1 s maximum) bounds that.
+- **Evidence (local only; GitHub Actions is unavailable):**
+  - Four tests in `src/neural/driver.rs` drive the race deterministically through the
+    fault points. Each runs a replace and a delete variant, except the mid-wave test,
+    which replaces only:
+    - `a_source_changed_during_partition_compute_is_superseded`: a fault at
+      `PARTITION_BEFORE_COMPUTE` changes `note00.md` while the slot is free. The wave
+      returns `Ok`, writes no partition for it, keeps no cards for it, and commits the
+      other 7 sources.
+    - `a_source_changed_between_partition_commits_is_superseded`: after the first
+      commit, a foreground write between two store steps replaces `note01.md`; only
+      that source is superseded and the wave goes on.
+    - `maintenance_converges_after_a_source_changes_during_partition_compute`: `maintain`
+      reaches `waiting` with no pending path and a partition for the current hash, or
+      none once the source is gone.
+    - `a_one_shot_pass_completes_after_a_source_changes_during_partition_compute`: a
+      one-shot pass ends `Complete` with the current version partitioned.
+
+    On the parent `6dff64a`, each fails with `partition_invalid` (replace) or
+    `not_found` (delete).
+  - `tests/neural.rs` passes unchanged, including the stale-hash refusal of
+    `semantic_record_partition` and the structural `partition_invalid` checks.
+  - `cargo test --locked --test neural_retrieval`, deadlines unchanged: 12 of 12
+    consecutive runs passed (93 passed, 1 ignored each). The race showed in about 1 run
+    in 6 of the full parallel suite, and this soak ran the target alone, so it shows the
+    target still passes; the deterministic tests above are the proof of the fix.
+  - The full local gates: see [validation](docs/validation.md#f13-superseded-partitions--2026-10-13).
+- **Remaining:** `area_pass` has the same shape. `stale_area`, when a brief changes
+  during preparation, still ends in `paused`; it was not observed, and giving it the
+  same treatment is a separate owner call.
 
 ## F14. God-module splits (audit 2026-10-13)
 
 - **Stopped (owner decision, 2026-10-13):** the refactor stops after PR #21 (merge
   `2bab612`). PRs #17–#21 landed 16 verbatim splits with no visibility change and an
-  unchanged public API. Every split still in the plan below needs crate-internal
-  visibility changes, a Mac, or F13. Do not start one without a new owner decision; the
-  plan and resume steps stay as the record.
+  unchanged public API. Every split still in the plan below needed crate-internal
+  visibility changes, a Mac, or F13. F13 is fixed since `1f29ec2`, so the
+  `src/neural/prepare.rs` splits `order` and `cli` no longer have a blocker. Do not start
+  one without a new owner decision; the plan and resume steps stay as the record.
 - **Why deferred:** each split is a separate, gated, revertable commit. On 2026-10-13
   only the splits that were purely mechanical ran: verbatim moves with no visibility
   change and an unchanged public API, 16 in all (see
   [validation](docs/validation.md#god-module-splits--2026-10-13)). The rest change
   crate-internal visibility, touch macOS-only code that Linux gates do not compile, or
-  wait on F13.
+  waited on F13 (fixed since `1f29ec2`).
 - **Audit:** a god module here is large and multi-responsibility. Production lines
   exclude in-file test modules; fan-in counts other `src` files naming the module
   (plus test files); churn counts commits touching the file in the shallow clone's
@@ -409,14 +426,14 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   | `src/mcp.rs` | `startup` (1), `semantic` (2–3) | Keep `Shared`, `RootMeta`, the slot and `run_op` in the parent. |
   | `src/syntax.rs` | `tiling`, `forest`, `markdown`, `imports`, `extract` (1 each), `parser` with `parse_hooks` (2), `calls` (5) | None since `1cced0f` (F15): the in-file test now reads a frozen copy of the file, so a split no longer changes its input. |
   | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Needs a Mac. `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`, `hex64`); keep those in the root or re-export them. |
-  | `src/neural/prepare.rs` | `order` (0), `cli` (0), `steps` with the tests (1) | Wait for F13: its fix changes `commit_partition`. |
+  | `src/neural/prepare.rs` | `order` (0), `cli` (0), `steps` with the tests (1) | None since F13 (`1f29ec2`) gave `commit_partition` its new shape. |
 
   `src/neural/query.rs` keeps the dense index, the fallback and query tokenization, and
   `src/graph.rs` keeps `invalid`, `OccurrenceKind`, the storage key codec and the test
   seam; neither has a further split planned.
 
-- **Required resource:** none beyond a normal session, except for two rows: a Mac for
-  `src/learning.rs` and F13 for `src/neural/prepare.rs`.
+- **Required resource:** none beyond a normal session, except a Mac for the
+  `src/learning.rs` row.
 - **Resume, per split:**
   1. Move the planned line ranges verbatim into `src/<module>/<child>.rs`, which starts
      with a `//!` line and `use super::*;`; add `mod <child>;` after the parent's
