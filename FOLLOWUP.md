@@ -439,9 +439,10 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      internal `data-self-path` naming where the alias is defined.
   4. Run `cargo check --locked --no-default-features --lib` (no warnings), then
      `scripts/gates.sh . OUTDIR` and the unprivileged rerun of the gateway target, and
-     record the receipt in [validation](docs/validation.md#local-gates-receipts). Source
-     `scripts/cloud/environment.env` and unset `RUSTUP_TOOLCHAIN` first: the learning
-     tests need its tokenizer path, the gates choose their own toolchains, and its
+     record the receipt in [validation](docs/validation.md#local-gates-receipts). In a
+     cloud session run the gates as `bash scripts/cloud/gates.sh OUTDIR`, which applies
+     `scripts/cloud/environment.env` and unsets `RUSTUP_TOOLCHAIN`: the learning tests
+     need its tokenizer path, the gates choose their own toolchains, and its
      `CARGO_INCREMENTAL=0` and debuginfo-off profiles keep the gates target within the
      disk allowance (with debuginfo each test binary is about 600 MB); see F16.
   5. For `src/learning.rs`, also run `scripts/gates.sh . OUTDIR` on macOS, where
@@ -543,13 +544,14 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      gets an INFO line only, since an override can be deliberate. Before this change, a
      session without the variables stopped at `BINDGEN_EXTRA_CLANG_ARGS: unbound
      variable` before naming any cause; the doctor now runs to the end.
-  3. **Wrapper:** `scripts/cloud/gates.sh OUTDIR`, which sources the file, unsets
-     `RUSTUP_TOOLCHAIN` and calls `scripts/gates.sh . OUTDIR`. Cloud receipts would then
-     be reproducible whatever the environment holds.
-  4. **CLAUDE.md:** one line in "Cloud sessions" naming the symptom and the source
-     command.
+  3. **Wrapper: done in `13e051c`.** `bash scripts/cloud/gates.sh OUTDIR` applies the
+     file, unsets `RUSTUP_TOOLCHAIN`, writes the file's variables as the gates saw them
+     to `OUTDIR/env.txt` and runs `scripts/gates.sh` on the checkout. Cloud receipts are
+     then reproducible whatever the session holds.
+  4. **CLAUDE.md: done in `13e051c`.** "Cloud sessions" says what `FAIL environment`
+     means, who fixes it and how to work until then, and the local-gates rule names the
+     wrapper for cloud sessions.
 
-  Recommended: 1 and 2. Item 2 catches the problem at the first command of a session, and
-  item 1 removes it.
-- **Required resource:** owner access to the environment settings for item 1, and
-  approval for items 2–4.
+  Item 1 is the owner's remaining action; items 2–4 only detect the problem and work
+  around it.
+- **Required resource:** owner access to the environment settings for item 1.
