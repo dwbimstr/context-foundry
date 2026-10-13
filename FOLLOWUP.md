@@ -531,15 +531,18 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   - `env | grep -E '^(CARGO_INCREMENTAL|CARGO_PROFILE_TEST_DEBUG)=0$'` prints both lines.
   - `echo "$CONTEXT_FOUNDRY_013_TOKENIZER"` names an existing directory.
   - `rustc --version` reports 1.90.0.
-  - `bash scripts/cloud/doctor.sh` exits 0.
+  - `bash scripts/cloud/doctor.sh` prints `PASS environment` and exits 0.
   - After a gates run, `du -sh target/gates` stays near 10 GB, not 19 GB.
 - **Durable fix (proposed; none of it is implemented):**
   1. **Owner action, no repository change:** paste the file into the environment's
      variables (title bar → environment menu → Edit) and start a new session. The file's
      first line already asks for this.
-  2. **Doctor check:** a FAIL line naming the file when `CARGO_INCREMENTAL`,
-     `CARGO_PROFILE_TEST_DEBUG` or `CONTEXT_FOUNDRY_013_TOKENIZER` is unset. The doctor
-     reports the symptoms today, not the cause.
+  2. **Doctor check: done in `b565784`.** `scripts/cloud/doctor.sh` now prints
+     `FAIL environment` first, naming the file, the missing variables and the fix, when
+     any variable the file sets to a value is unset. A variable set to a different value
+     gets an INFO line only, since an override can be deliberate. Before this change, a
+     session without the variables stopped at `BINDGEN_EXTRA_CLANG_ARGS: unbound
+     variable` before naming any cause; the doctor now runs to the end.
   3. **Wrapper:** `scripts/cloud/gates.sh OUTDIR`, which sources the file, unsets
      `RUSTUP_TOOLCHAIN` and calls `scripts/gates.sh . OUTDIR`. Cloud receipts would then
      be reproducible whatever the environment holds.

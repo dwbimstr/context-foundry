@@ -155,7 +155,7 @@ versioned in `scripts/cloud`:
 | [`setup.sh`](../scripts/cloud/setup.sh) | The environment's setup script. It installs Rust 1.90, libclang/CMake, the pinned llama.cpp object store, the pinned public models and 013 files, OMP/Bun, and the locked Cargo dependencies. |
 | [`environment.env`](../scripts/cloud/environment.env) | The environment variables. They hold paths only; there are no secrets. |
 | [`allowed-domains.txt`](../scripts/cloud/allowed-domains.txt) | Hosts added under Custom network access, alongside the default package managers. |
-| [`doctor.sh`](../scripts/cloud/doctor.sh) | Checks a session: host limits, `avx512_bf16`, toolchains and pinned inputs. |
+| [`doctor.sh`](../scripts/cloud/doctor.sh) | Checks a session: the environment variables, host limits, `avx512_bf16`, toolchains and pinned inputs. |
 | [`fetch-resume.sh`](../scripts/cloud/fetch-resume.sh) | Downloads and verifies the private archive and prints its `RESTORE.md`. It takes the archive from a private GitHub release attached to the session, or from an HTTPS URL. |
 
 An Anthropic-hosted VM has about 4 vCPUs, 16 GB RAM and 30 GB of disk. That is half
