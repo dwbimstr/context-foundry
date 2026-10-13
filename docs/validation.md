@@ -174,6 +174,62 @@ Evidence for each, all local:
   dev-dependency, `test-faults`.
 - **Gates:** the receipts above, run after each commit.
 
+**Second batch.** Eleven more splits, one commit each. Each was gated before the next
+started, with the same evidence as above plus two checks: the gateway target rerun as
+`nobody` and a rustdoc comparison per commit. All of it is local only.
+
+| Commit | Split | Parent lines | New file (moved lines) |
+| --- | --- | --- | --- |
+| `94b9219` | `owners`: the three `Owner` impls on `Shared` | `src/mcp.rs` 4,260 → 4,090 | `src/mcp/owners.rs` 176 (170 moved) |
+| `7353251` | `transport`: stdio, HTTP gate and session cap, with 3 tests | `src/mcp.rs` 4,090 → 3,313 | `src/mcp/transport.rs` 789 (776 moved) |
+| `e3c7b08` | `retrieve`: `Engine::retrieve`, `retrieve_outline`, the verified handle read | `src/store.rs` 7,104 → 6,939 | `src/store/retrieve.rs` 173 (165 moved) |
+| `7dff09b` | `index_hooks`: inline test-seam module to a file | `src/store.rs` 6,939 → 6,828 | `src/store/index_hooks.rs` 110 (110 moved) |
+| `9d65e9d` | `sources`: scans, source writes, the pending queue, the drains | `src/store.rs` 6,828 → 6,412 | `src/store/sources.rs` 424 (416 moved) |
+| `17697da` | `indexing`: the parallel refresh | `src/store.rs` 6,412 → 5,748 | `src/store/indexing.rs` 673 (664 moved) |
+| `e814da2` | `lifecycle`: initialize, open, upgrade, status, repair | `src/store.rs` 5,748 → 4,967 | `src/store/lifecycle.rs` 788 (780 moved) |
+| `57ae9de` | `refinement`: owner scopes and `DenseWindow::refine`, with 7 tests | `src/neural/query.rs` 2,358 → 1,439 | `src/neural/query/refinement.rs` 933 (921 moved) |
+| `1cb3173` | `runtime`: the provider-thread runtime, with the remaining test module | `src/neural/query.rs` 1,439 → 449 | `src/neural/query/runtime.rs` 999 (992 moved) |
+| `7c25def` | `references`: the references query and exact doors | `src/graph.rs` 2,954 → 1,372 | `src/graph/references.rs` 1,595 (1,589 moved) |
+| `385a593` | `edges`: the manual edge graph | `src/graph.rs` 1,372 → 777 | `src/graph/edges.rs` 606 (599 moved) |
+
+- **Verbatim:** a script compares every moved range of the parent commit with the new
+  file, byte for byte. It also checks that the new parent equals the old one minus those
+  ranges plus the inserted `mod`/`use` lines. A child's only other lines are its `//!`
+  summary, `use super::*;`, an `impl Engine { … }` wrapper around moved methods, and a
+  `#[cfg(…)] mod tests { use super::*; … }` wrapper around moved tests. Three commits
+  differ slightly:
+  - `7dff09b` turns an inline module into a file, so each of its 110 lines equals the
+    original minus exactly four leading spaces.
+  - `1cb3173` moves its test module whole, header included.
+  - `57ae9de` and `1cb3173` add `use super::cache;` and `use super::area;` to the parent:
+    the moved code reaches those modules by the relative paths `super::cache` and
+    `super::area`, which now resolve through the parent.
+- **Moved tests still run:** the 7 refinement, 6 runtime and 3 transport tests ran and
+  passed under their new module paths, and the total stayed at 1,146.
+- **Public API:** rustdoc was built into an empty `doc/` directory at `1593c2c` and at
+  every commit, and each pair of neighbouring builds was compared page by page with
+  source links stripped, member by member (signature and docs).
+  - No page was removed. All 16,173 members and all 31 rustdoc warnings are unchanged.
+  - The 29 added pages are redirect stubs for the private child paths of re-exported
+    items (1,012 → 1,041 pages).
+  - The `Engine` page gains four `impl Engine` block headers (retrieve, sources,
+    indexing, lifecycle; 50 → 54) and its blocks are reordered; its 114 members are
+    unchanged.
+  - One rustdoc-internal attribute changed, on `neural/query/type.MakeProvider.html`.
+    Its `data-self-path`, which the page's script uses to load the impls of the aliased
+    `Box`, now names the definition path `neural::query::runtime::MakeProvider`. The
+    rendered impls are the same.
+  - The first per-commit comparisons reused one output directory, and rustdoc never
+    deletes stale pages; every comparison above was redone from clean builds.
+- **Revert:** reverting all eleven in reverse order restores `1593c2c`'s tree exactly.
+  Seven also revert cleanly alone. `e3c7b08`, `9d65e9d`, `57ae9de` and `7c25def` conflict
+  alone, where a later split of the same file inserted its `mod`/`use` lines next to
+  theirs or removed the code next to their range. The conflicts are positional; no line
+  is claimed by both sides.
+- **Parked:** the `graph.rs` compiler split. Its mapped boundary needed two visibility
+  changes (E0624 on `OccurrenceKind::tag` and `from_tag`), so it was discarded before any
+  commit; see [FOLLOWUP F14](../FOLLOWUP.md#f14-god-module-splits-audit-2026-10-13).
+
 ### Document/body RRF (resume step 2)
 
 **Frozen corpus.** Commit `ebf28f8` is the frozen Foundry snapshot. The eight labelled
