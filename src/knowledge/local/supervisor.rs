@@ -67,7 +67,7 @@ fn snapshot(
         digest.update(&buffer[..n]);
         output.write_all(&buffer[..n])?;
     }
-    if bytes != meta.len() || format!("{:x}", digest.finalize()) != expected {
+    if bytes != meta.len() || crate::lower_hex(&digest.finalize()) != expected {
         return Err(fail(
             "knowledge_artifact_invalid",
             "artifact hash/size mismatch",

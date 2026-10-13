@@ -188,8 +188,9 @@ development host*. The raw results, logs and frozen identities are outside Git:
 
 ## Environment
 
-- **Platform.** All development, gates and measurements ran on macOS arm64. CI also
-  builds and tests the core on Linux (x86_64). `foundry-embed` (feature `embed-worker`)
+- **Platform.** All development, gates and measurements ran on macOS arm64. The core also
+  builds and tests on Linux (x86_64), checked locally with `scripts/gates.sh` while
+  GitHub Actions is unavailable. `foundry-embed` (feature `embed-worker`)
   supports explicitly admitted Linux CPU and macOS Metal workers. Linux isolation
   and normal-worker numerical checks pass; the revised Metal worker still needs a
   native runner. The signed package target remains macOS arm64 (`tests/install.rs`

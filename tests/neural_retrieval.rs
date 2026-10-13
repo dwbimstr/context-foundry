@@ -3408,15 +3408,16 @@ async fn progressive_bootstrap_serves_priority_before_the_unprepared_tail_and_re
     let (error, pause) = served.semantic_action("pause").await;
     assert!(!error, "{pause}");
     hold.release();
+    // The driver publishes the generation before it snapshots bootstrap
+    // progress, so a status read between the two can count the searchable
+    // unit before `first_searchable_ms` is recorded. Wait for the snapshot.
     let partial = served
-        .until("first coverage", |s| s["searchable_current_units"] == 1)
+        .until("first coverage", |s| {
+            s["searchable_current_units"] == 1 && s["bootstrap"]["first_searchable_ms"].is_u64()
+        })
         .await;
     assert!(
         partial["unpartitioned_sources"].as_u64().unwrap() >= 77,
-        "{partial}"
-    );
-    assert!(
-        partial["bootstrap"]["first_searchable_ms"].is_u64(),
         "{partial}"
     );
     let context = served.context(DUSK_QUERY).await;

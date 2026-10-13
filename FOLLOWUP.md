@@ -34,6 +34,17 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   4. Compare each result with the local gates receipt in
      [validation](docs/validation.md#local-gates-receipts). Cite the CI run beside the
      receipt; do not delete the receipt.
+  5. Apply the workflow action updates that were closed while Actions was unavailable,
+     and verify them with the re-run:
+     - `actions/checkout` v4 → v7 (`3d3c42e5…`, v7.0.1) in all three workflows
+       (`rust.yml`, `native-macos.yml`, `learning-worker.yml`). PR #4 bumped only
+       `rust.yml`.
+     - `actions/upload-artifact` 4.6.2 → 7.0.2 (`cf430e03…`) in `native-macos.yml`,
+       from PR #14.
+
+     Dependabot replied on both PRs that it will not propose those exact versions again.
+     Apply them by hand, or take the next newer upstream release when Dependabot offers
+     it.
 
 ## F2. Stronger-model host pair (resume step 5)
 
@@ -232,3 +243,56 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 
   `full_corpus()` in `scripts/native-macos-acceptance.py` verifies the 69,565-file
   population. Completing the overview does not establish body coverage.
+
+## F12. `sha2` 0.11 migration (done 2026-10-13; kept as the site record)
+
+- **Status:** done in `16093de` and `41e72b4`. Nothing is blocked. This entry records
+  the sites in case the encoding is revisited.
+- **What changed:** `sha2` 0.11's digest type has no `LowerHex`. All 18 SHA-256 hex sites,
+  which produce source hashes, cache keys and artifact pins, now use
+  `context_foundry::lower_hex`; the 3 test oracles encode inline:
+  - library: `src/lib.rs:78` (`digest`), `src/scip.rs:718`, `src/decision_model/net.rs:709`,
+    `src/learning.rs:1466`, `src/learning.rs:3005`, `src/learning/candidate.rs:292`,
+    `:322`, `:410`, `:472`, `src/learning/ipc.rs:208`, `src/neural/index.rs:393`, `:453`,
+    `src/neural/profile.rs:721`, `src/knowledge/local/supervisor.rs:70`;
+  - binary: `src/bin/foundry_embed.rs:634` (feature `embed-worker`);
+  - test oracles: `tests/economics.rs:392`, `tests/embed_worker.rs:53`, `tests/usage.rs:66`.
+
+  Line numbers are as of `16093de`. `tests/gateway.rs:1088` also uses `{:x}`, but for
+  HTTP chunk framing, not a digest.
+- **Proof of byte identity:** on 0.10, `lower_hex(d) == format!("{:x}", d)` held for every
+  input length 0..=300. Pinned FIPS 180-2 vectors pass on both 0.10 and 0.11
+  (`hex_tests` in `src/lib.rs`). See
+  [validation](docs/validation.md#sha2-011-migration--2026-10-13).
+- **Remaining:** `sha2` 0.10.9 is still compiled under the optional `learning-worker`
+  feature, via `tch` → `zip` → `pbkdf2`. It disappears when that chain moves.
+
+## F13. Continuous semantics stops on a stale-source partition race
+
+- **Why parked:** it is a product change in the concurrent semantic driver, not a small
+  test fix. It was found while investigating
+  `continuous_semantics_progresses_during_filesystem_traffic_and_converges`
+  (`tests/neural_retrieval.rs`), which fails about 1 run in 6 under the full parallel
+  suite on 4 vCPUs. Nothing blocks it in a cloud session.
+- **Diagnosis:** while files churn, continuous maintenance partitions a source, the
+  source is replaced, and the accept step rejects the mapping with
+  `partition_invalid: <path>: the mapping names a stale source version`. That comes from
+  `semantic_accept_partition`, or from `semantic_partition_source`, in
+  `src/neural/cache.rs` (about lines 838–876). The lane then stops in state `paused`
+  with that `last_error` and pending paths still queued. It never converges, so a longer
+  deadline would only hide the defect. The test's 15-second bound is not the cause.
+- **Required resource:** none beyond a normal session; a design decision on the fix.
+- **Resume:**
+  1. Reproduce: build `tests/neural_retrieval.rs` and run the whole suite six times
+     (`cargo test --locked --test neural_retrieval`). On failure the panic prints the
+     full status: `semantic.state = "paused"`, a `last_error` naming a stale source
+     version, and `pending.paths > 0`.
+  2. Fix direction: in continuous maintenance, treat a stale-source mismatch at
+     partition or accept time as a requeue of that path rather than a lane stop, the
+     same as stale partitions rejected before inference. Keep `partition_invalid` for
+     genuine structural violations, and keep the one-shot CLI `semantic prepare`
+     behavior explicit.
+  3. Add a deterministic regression that replaces the source between partitioning and
+     accepting (a named fault point), then assert that maintenance requeues and
+     converges.
+  4. Run the full local gates. Leave the test's deadlines unchanged.

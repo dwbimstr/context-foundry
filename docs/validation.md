@@ -30,6 +30,8 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `d6903f7` | 0 | 101: three new lints | 101: 1,145 passed, only the 2 root-only failures | 0 | 0 |
 | `ef524b9` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `b432f46` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `87f4d08` (#15) | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `84108a1` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -38,6 +40,8 @@ Log SHA-256 digests:
 | `d6903f7` | `712708a6…` | `d37d829e…` | `437b9d06…` | `368e057b…` |
 | `ef524b9` | `fcc7dfca…` | `ea77740f…` | `0d73feed…` | `243e2afe…` |
 | `b432f46` | `38c4c123…` | `276e988f…` | `b0f11c35…` | `45f25865…` |
+| `87f4d08` (#15) | `906f36d9…` | `86080107…` | `e47338e5…` | `45d5668c…` |
+| `84108a1` | `65c78323…` | `302dc862…` | `fd1c818b…` | `879e530f…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -47,6 +51,13 @@ compile. Each update was also checked alone on Rust 1.90. With `bindgen` 0.73 bo
 llama.cpp workers build, and the regenerated bindings differ only in 20 opaque handle
 types losing `Copy`/`Clone`.
 
+On 2026-10-13, `87f4d08` (Dependabot #15, merged as `6ba885a`) moved `tokio-util` from
+0.7.19 to 0.7.20. It is a lock-only change: Dependabot's resolver also re-points existing
+`windows-sys` and `getrandom` edges, adding and removing no packages. `84108a1`, on a
+clean tree, covers the `sha2` 0.11 migration, the progressive-bootstrap test fix and the
+doc corrections; its extra passing test is the pinned SHA-256 vector test. Both receipts
+are local only: GitHub Actions did not run.
+
 `72c4319` fixes the three Clippy 1.97 lints (`byte_char_slices`, a manual `Option::zip`,
 `while_let_loop`) without changing behavior. `f491821` fixes a regression from
 `8ef3acc`: `cargo build --no-default-features --lib` had stopped compiling, because
@@ -54,11 +65,36 @@ types losing `Copy`/`Clone`.
 outside that feature used it. The build now compiles without warnings. Native macOS
 acceptance did not run: there is no Mac here, and Actions is unavailable.
 
-Two timing-bound integration tests failed once each in a full parallel run of
-`tests/neural_retrieval.rs` on this 4-vCPU host and passed on rerun:
-`progressive_bootstrap_serves_priority_before_the_unprepared_tail_and_resumes` and
-`continuous_semantics_progresses_during_filesystem_traffic_and_converges`. Neither
-touches placement. Their 15-second wall-clock deadlines were not changed.
+Two integration tests in `tests/neural_retrieval.rs` failed once each in a full parallel
+run on this 4-vCPU host and passed on rerun. A follow-up investigation on 2026-10-13
+found that neither failure is a deadline problem:
+
+- `progressive_bootstrap_serves_priority_before_the_unprepared_tail_and_resumes`: the
+  driver publishes a generation before it snapshots bootstrap progress
+  (`src/neural/driver.rs`, `publish` then `sync_progress`). A status read in between sees
+  the searchable unit before `first_searchable_ms` is set. The test now waits, within the
+  existing 60-second helper bound, until both are visible; its assertions are unchanged.
+- `continuous_semantics_progresses_during_filesystem_traffic_and_converges`: reproduced
+  1 in 6 full-suite runs. The semantic lane stops in `paused` with `partition_invalid`
+  ("the mapping names a stale source version") after a source changes between
+  partitioning and accept, so it cannot converge at any deadline. This is a product race,
+  parked as [FOLLOWUP F13](../FOLLOWUP.md); the test is unchanged.
+
+### sha2 0.11 migration — 2026-10-13
+
+`sha2` 0.11 returns a digest type without `LowerHex`, and 18 sites wrote stored SHA-256
+strings with `format!("{:x}", ...)`: source hashes, cache keys and artifact pins. The
+migration ran in two steps so byte identity is proven, not assumed:
+
+1. **`16093de`, still on 0.10:** all sites move to `context_foundry::lower_hex`, which
+   writes two lowercase hex digits per byte in order. The 3 test oracles encode
+   inline. A test asserts `lower_hex(d) == format!("{:x}", d)` for every input length
+   0..=300 and passes, together with the pinned FIPS 180-2 vectors (`""`, `"abc"`, the
+   448-bit message, one million `a`) and a streamed hash.
+2. **The bump to 0.11.1:** the `{:x}` comparison can no longer compile and is removed.
+   The pinned vectors pass unchanged on 0.11, so the stored encoding is identical.
+   All targets check on Rust 1.90, including `foundry-embed` with `embed-worker`.
+   sha2 0.10.9 remains only under the optional `learning-worker` feature.
 
 ### Document/body RRF (resume step 2)
 

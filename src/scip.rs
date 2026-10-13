@@ -715,7 +715,7 @@ fn freeze(
     Ok(Frozen {
         path: target,
         bytes: total,
-        sha256: format!("{:x}", hasher.finalize()),
+        sha256: crate::lower_hex(&hasher.finalize()),
     })
 }
 

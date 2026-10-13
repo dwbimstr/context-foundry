@@ -289,7 +289,7 @@ pub fn validate_head(
         seen += want as u64;
         control.check()?;
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(crate::lower_hex(&hasher.finalize()))
 }
 
 /// Stream `name` of `dir` and return its SHA-256 and length, refusing it
@@ -319,7 +319,7 @@ fn hash_member(dir: &Dir, name: &str, bytes: u64, code: &'static str) -> FResult
         }
         hasher.update(&chunk[..n]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(crate::lower_hex(&hasher.finalize()))
 }
 
 /// Read back a whole candidate held as `dir`: the manifest strictly (with
@@ -407,7 +407,7 @@ pub fn copy_head_into(from: &Dir, to: &Dir, name: &str) -> FResult<String> {
         target.write_all(&chunk[..n]).map_err(|e| io("write", e))?;
     }
     target.sync_all().map_err(|e| io("fsync", e))?;
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(crate::lower_hex(&hasher.finalize()))
 }
 
 /// Which member a candidate write is, for its ENOSPC fault points.
@@ -469,7 +469,7 @@ fn write_member(
     .map_err(|e| io("fsync", e))?;
     Ok(MemberFile {
         name: name.to_owned(),
-        sha256: format!("{:x}", hasher.finalize()),
+        sha256: crate::lower_hex(&hasher.finalize()),
         bytes,
     })
 }

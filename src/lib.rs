@@ -75,7 +75,19 @@ pub use store::{
 
 pub fn digest(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(bytes))
+    lower_hex(&Sha256::digest(bytes))
+}
+
+/// Two lowercase hex digits per byte, in order: the encoding of every stored
+/// SHA-256 string (source hashes, cache keys, artifact pins). It does not
+/// depend on a digest type's `LowerHex` implementation.
+pub fn lower_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
 }
 
 /// The engine moves across threads (tokio spawn_blocking behind a mutex in
@@ -86,3 +98,41 @@ const _: fn() = || {
     assert_send::<Control>();
     assert_send::<FoundryError>();
 };
+
+#[cfg(test)]
+mod hex_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    /// Pinned SHA-256 hex strings: FIPS 180-2 vectors plus a long input.
+    /// They pin the stored encoding independently of the digest crate.
+    #[test]
+    fn digest_hex_matches_pinned_sha256_vectors() {
+        assert_eq!(
+            digest(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            digest(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            digest(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+        assert_eq!(
+            digest(&vec![b'a'; 1_000_000]),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+        );
+        let mut streamed = Sha256::new();
+        for chunk in vec![b'a'; 1_000_000].chunks(4096) {
+            streamed.update(chunk);
+        }
+        assert_eq!(
+            lower_hex(&streamed.finalize()),
+            digest(&vec![b'a'; 1_000_000])
+        );
+        assert_eq!(lower_hex(&[0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
+        assert_eq!(lower_hex(&[]), "");
+    }
+}

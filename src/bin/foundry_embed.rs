@@ -631,7 +631,7 @@ mod llama {
                 hash.update(&buffer[..n]);
             }
             assert_eq!(
-                format!("{:x}", hash.finalize()),
+                context_foundry::lower_hex(&hash.finalize()),
                 SHA,
                 "only the pinned verified single-file artifact is admitted"
             );
