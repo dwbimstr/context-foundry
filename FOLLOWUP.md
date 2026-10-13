@@ -337,12 +337,17 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 
 ## F14. God-module splits (audit 2026-10-13)
 
+- **Stopped (owner decision, 2026-10-13):** the refactor stops after PR #21 (merge
+  `2bab612`). PRs #17–#21 landed 16 verbatim splits with no visibility change and an
+  unchanged public API. Every split still in the plan below needs crate-internal
+  visibility changes, a Mac, or F13. Do not start one without a new owner decision; the
+  plan and resume steps stay as the record.
 - **Why deferred:** each split is a separate, gated, revertable commit. On 2026-10-13
   only the splits that were purely mechanical ran: verbatim moves with no visibility
-  change and an unchanged public API, 16 so far (see
+  change and an unchanged public API, 16 in all (see
   [validation](docs/validation.md#god-module-splits--2026-10-13)). The rest change
-  crate-internal visibility, need an owner decision about a test's input, touch
-  macOS-only code that Linux gates do not compile, or wait on F13.
+  crate-internal visibility, touch macOS-only code that Linux gates do not compile, or
+  wait on F13.
 - **Audit:** a god module here is large and multi-responsibility. Production lines
   exclude in-file test modules; fan-in counts other `src` files naming the module
   (plus test files); churn counts commits touching the file in the shallow clone's
