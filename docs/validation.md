@@ -46,6 +46,7 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `1cb3173` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `7c25def` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `385a593` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `3beac37` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -70,6 +71,7 @@ Log SHA-256 digests:
 | `1cb3173` | `d7ba34e2…` | `b375c223…` | `90caeffd…` | `7ab1b402…` |
 | `7c25def` | `7577aa7e…` | `95dfe823…` | `7409415a…` | `44c679a6…` |
 | `385a593` | `03329197…` | `330a4300…` | `9594fa71…` | `f15bfc3e…` |
+| `3beac37` | `661da8b8…` | `5afd6241…` | `7259fa1b…` | `8be0bcc9…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -226,9 +228,21 @@ started, with the same evidence as above plus two checks: the gateway target rer
   alone, where a later split of the same file inserted its `mod`/`use` lines next to
   theirs or removed the code next to their range. The conflicts are positional; no line
   is claimed by both sides.
-- **Parked:** the `graph.rs` compiler split. Its mapped boundary needed two visibility
-  changes (E0624 on `OccurrenceKind::tag` and `from_tag`), so it was discarded before any
-  commit; see [FOLLOWUP F14](../FOLLOWUP.md#f14-god-module-splits-audit-2026-10-13).
+- **Compiler split, first attempt:** its mapped boundary needed two visibility changes
+  (E0624 on `OccurrenceKind::tag` and `from_tag`), so it was discarded before any commit.
+
+**Follow-up, `3beac37`.** The `src/graph.rs` compiler split ran with `OccurrenceKind` and
+its `impl` kept in the parent, next to the storage key codec that calls them. Three
+ranges moved verbatim: the tables, the identities and rows, and the compiler
+`impl Engine`, 536 lines in all. `src/graph.rs` went from 777 to 247 lines, and the new
+`src/graph/compiler.rs` has 544. The parent gained `mod compiler;` and two re-export
+blocks: 12 public items and 8 crate-internal items.
+
+The commit passed the same local gates as the batch: fmt, Clippy 1.97, MSRV check and
+Clippy 1.90, and 1,146 tests with only the 2 root-only failures, with the gateway target
+passing 49 as `nobody`. `--no-default-features` gave 0 warnings. A clean rustdoc
+comparison against `c23279e` showed pages 1,041 → 1,053 (12 redirect stubs for the re-exported items), all members unchanged and the 31
+warnings unchanged. GitHub Actions did not run.
 
 ### Document/body RRF (resume step 2)
 
