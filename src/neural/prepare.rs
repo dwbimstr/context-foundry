@@ -998,7 +998,8 @@ fn inner(
                 stop = Some(halted);
                 break 'waves;
             }
-            commit_partition(engine, computed.partition, control, report)?;
+            // The run owns the store, so no source can change under it.
+            commit_partition(engine, computed.partition, control, report)?.committed()?;
             retained.extend(computed.retained);
         }
         let done = matches!(progress, Progress::Done);
@@ -2065,7 +2066,7 @@ impl Steps<'_> {
             if let Some(stop) = halt() {
                 return Ok(Progress::Halted(stop));
             }
-            commit_partition(self.engine, partition, control, report)?;
+            commit_partition(self.engine, partition, control, report)?.committed()?;
         }
         Ok(progress)
     }
@@ -2301,19 +2302,22 @@ impl Steps<'_> {
 }
 
 /// Publish a computed mapping only against its still-current source version.
+/// Only a commit counts as a partitioned source.
 #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
 pub(crate) fn commit_partition(
     engine: &Engine,
     partition: cache::PreparedPartition,
     control: &Control,
     report: &mut PrepareReport,
-) -> FResult<()> {
+) -> FResult<cache::PartitionCommit> {
     control.check()?;
     let path = partition.path().to_owned();
-    engine.semantic_accept_partition(partition)?;
-    report.partitioned_sources += 1;
-    prepare_fault!(PARTITION_AFTER_COMMIT, Some(control), &path)?;
-    Ok(())
+    let commit = engine.semantic_accept_partition(partition)?;
+    if let cache::PartitionCommit::Committed = commit {
+        report.partitioned_sources += 1;
+        prepare_fault!(PARTITION_AFTER_COMMIT, Some(control), &path)?;
+    }
+    Ok(commit)
 }
 
 #[cfg(all(test, feature = "test-faults"))]
@@ -2416,7 +2420,10 @@ mod tests {
                 .prepare_partitions(sources, &recipe, &Control::unbounded())
                 .unwrap()
             {
-                engine.semantic_accept_partition(partition).unwrap();
+                engine
+                    .semantic_accept_partition(partition)
+                    .and_then(cache::PartitionCommit::committed)
+                    .unwrap();
             }
         }
         let steps = Steps {
@@ -2530,7 +2537,10 @@ mod tests {
                 .unwrap();
             for (n, partition) in prepared.into_iter().enumerate() {
                 assert_eq!(partition.path(), format!("note{n:02}.md"));
-                engine.semantic_accept_partition(partition).unwrap();
+                engine
+                    .semantic_accept_partition(partition)
+                    .and_then(cache::PartitionCommit::committed)
+                    .unwrap();
             }
             snapshots.push(
                 (0..8)
@@ -2915,6 +2925,7 @@ mod tests {
                 assert_eq!(kept, limit == RETAINED_CARD_BYTES);
                 engine
                     .semantic_accept_partition(computed.partition)
+                    .and_then(cache::PartitionCommit::committed)
                     .unwrap();
                 let mut walk = Walk::wave(Some("lib.rs".into()), None, Some("lib.rs".into()))
                     .with_retained(computed.retained.into_iter().collect());
@@ -2991,6 +3002,7 @@ mod tests {
             .unwrap();
         engine
             .semantic_accept_partition(computed.partition)
+            .and_then(cache::PartitionCommit::committed)
             .unwrap();
         let stale = computed.retained.unwrap();
         engine
@@ -3003,6 +3015,7 @@ mod tests {
             .unwrap();
         engine
             .semantic_accept_partition(computed.partition)
+            .and_then(cache::PartitionCommit::committed)
             .unwrap();
         let current = computed.retained.unwrap();
         let expected = current.cards.clone();
@@ -3099,6 +3112,7 @@ mod tests {
                     .unwrap();
                 engine
                     .semantic_accept_partition(computed.partition)
+                    .and_then(cache::PartitionCommit::committed)
                     .unwrap();
                 total += engine
                     .semantic_partition(path)
@@ -3302,6 +3316,7 @@ mod tests {
                 .unwrap();
             engine
                 .semantic_accept_partition(computed.partition)
+                .and_then(cache::PartitionCommit::committed)
                 .unwrap();
         };
         accept(&source("old"));
