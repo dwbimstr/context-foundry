@@ -33,6 +33,7 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `87f4d08` (#15) | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `84108a1` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `14729de` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `9a86665` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -44,6 +45,7 @@ Log SHA-256 digests:
 | `87f4d08` (#15) | `906f36d9…` | `86080107…` | `e47338e5…` | `45d5668c…` |
 | `84108a1` | `65c78323…` | `302dc862…` | `fd1c818b…` | `879e530f…` |
 | `14729de` | `93e65aae…` | `0bfde1e7…` | `1f5d1f30…` | `fe368598…` |
+| `9a86665` | `afb5e4c6…` | `e0db4974…` | `f164437c…` | `03feb756…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -60,15 +62,15 @@ clean tree, covers the `sha2` 0.11 migration, the progressive-bootstrap test fix
 doc corrections; its extra passing test is the pinned SHA-256 vector test. Both receipts
 are local only: GitHub Actions did not run.
 
-`14729de` is the first of the god-module splits described
-[below](#god-module-splits--2026-10-13). It started from a clean tree and was gated
+`14729de` and `9a86665` are the two god-module splits described
+[below](#god-module-splits--2026-10-13). Each started from a clean tree and was gated
 before the next commit, with `scripts/cloud/environment.env` sourced and
 `RUSTUP_TOOLCHAIN` unset so the gates pick their own toolchains. Two earlier attempts on
-it are invalid and not counted. The first ran without that file's debuginfo-off
+`14729de` are invalid and not counted. The first ran without that file's debuginfo-off
 profiles and ran out of disk while linking the tests. The second ran without its
 tokenizer path, so 52 `learning_data` tests could not read their fixture; in that run
 `continuous_semantics_progresses_during_filesystem_traffic_and_converges` also stopped
-on the [F13](../FOLLOWUP.md) race, and it passed in the counted run. The receipt is
+on the [F13](../FOLLOWUP.md) race, and it passed in both counted runs. The receipts are
 local only: GitHub Actions did not run.
 
 `72c4319` fixes the three Clippy 1.97 lints (`byte_char_slices`, a manual `Option::zip`,
