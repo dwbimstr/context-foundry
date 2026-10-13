@@ -32,6 +32,8 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `b432f46` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `87f4d08` (#15) | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `84108a1` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `14729de` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `9a86665` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -42,6 +44,8 @@ Log SHA-256 digests:
 | `b432f46` | `38c4c123…` | `276e988f…` | `b0f11c35…` | `45f25865…` |
 | `87f4d08` (#15) | `906f36d9…` | `86080107…` | `e47338e5…` | `45d5668c…` |
 | `84108a1` | `65c78323…` | `302dc862…` | `fd1c818b…` | `879e530f…` |
+| `14729de` | `93e65aae…` | `0bfde1e7…` | `1f5d1f30…` | `fe368598…` |
+| `9a86665` | `afb5e4c6…` | `e0db4974…` | `f164437c…` | `03feb756…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -57,6 +61,17 @@ On 2026-10-13, `87f4d08` (Dependabot #15, merged as `6ba885a`) moved `tokio-util
 clean tree, covers the `sha2` 0.11 migration, the progressive-bootstrap test fix and the
 doc corrections; its extra passing test is the pinned SHA-256 vector test. Both receipts
 are local only: GitHub Actions did not run.
+
+`14729de` and `9a86665` are the two god-module splits described
+[below](#god-module-splits--2026-10-13). Each started from a clean tree and was gated
+before the next commit, with `scripts/cloud/environment.env` sourced and
+`RUSTUP_TOOLCHAIN` unset so the gates pick their own toolchains. Two earlier attempts on
+`14729de` are invalid and not counted. The first ran without that file's debuginfo-off
+profiles and ran out of disk while linking the tests. The second ran without its
+tokenizer path, so 52 `learning_data` tests could not read their fixture; in that run
+`continuous_semantics_progresses_during_filesystem_traffic_and_converges` also stopped
+on the [F13](../FOLLOWUP.md) race, and it passed in both counted runs. The receipts are
+local only: GitHub Actions did not run.
 
 `72c4319` fixes the three Clippy 1.97 lints (`byte_char_slices`, a manual `Option::zip`,
 `while_let_loop`) without changing behavior. `f491821` fixes a regression from
@@ -95,6 +110,38 @@ migration ran in two steps so byte identity is proven, not assumed:
    The pinned vectors pass unchanged on 0.11, so the stored encoding is identical.
    All targets check on Rust 1.90, including `foundry-embed` with `embed-worker`.
    sha2 0.10.9 remains only under the optional `learning-worker` feature.
+
+### God-module splits — 2026-10-13
+
+An audit ranked the source files by production size, function count, concerns,
+fan-in, churn and hot-path use; the table and the remaining plan are in
+[FOLLOWUP F14](../FOLLOWUP.md#f14-god-module-splits-audit-2026-10-13). Two splits that
+were purely mechanical ran, one commit each:
+
+- **`14729de`:** `src/mcp.rs` lines 1471–3718 at `a088969` (the `FoundryMcp` router and tools,
+  delivery and multi-root fan-out, the `ServerHandler`) moved to `src/mcp/tools.rs`.
+  The parent gained `mod tools;` and `pub use tools::FoundryMcp;`.
+- **`9a86665`:** `src/store.rs` lines 1550–1630 at `a088969` (the behavior-intent heuristic) and
+  6243–6711 (`Engine::context_candidates`, `context_candidates_memory`,
+  `context_candidates_with`) moved to `src/store/context.rs`, the methods inside one
+  `impl Engine` block. The parent gained `mod context;`.
+
+Evidence for each, all local:
+
+- **Verbatim:** the removed line ranges equal the new file's body byte for byte, and
+  the parent differs only by the added `mod`/`use` lines. No body, signature or
+  visibility changed, and no test file changed.
+- **Public API:** `cargo doc --no-deps --lib --features test-faults` before and after.
+  With source links stripped, all 1,011 pages of the baseline are unchanged except as
+  noted below. Rustdoc adds a redirect page for the private child path
+  (`mcp/tools/struct.FoundryMcp.html`); it is not a public path.
+  On the `Engine` page the moved methods now sit in a separate `impl Engine` block, so
+  the page gains one block header; its 114 documented members (94 methods) keep
+  identical signatures and docs.
+- **Feature builds:** `cargo check --no-default-features --lib` passes with no warnings,
+  as before. The gates compile the default build and, through the crate's self
+  dev-dependency, `test-faults`.
+- **Gates:** the receipts above, run after each commit.
 
 ### Document/body RRF (resume step 2)
 
