@@ -54,11 +54,20 @@ types losing `Copy`/`Clone`.
 outside that feature used it. The build now compiles without warnings. Native macOS
 acceptance did not run: there is no Mac here, and Actions is unavailable.
 
-Two timing-bound integration tests failed once each in a full parallel run of
-`tests/neural_retrieval.rs` on this 4-vCPU host and passed on rerun:
-`progressive_bootstrap_serves_priority_before_the_unprepared_tail_and_resumes` and
-`continuous_semantics_progresses_during_filesystem_traffic_and_converges`. Neither
-touches placement. Their 15-second wall-clock deadlines were not changed.
+Two integration tests in `tests/neural_retrieval.rs` failed once each in a full parallel
+run on this 4-vCPU host and passed on rerun. A follow-up investigation on 2026-10-13
+found that neither failure is a deadline problem:
+
+- `progressive_bootstrap_serves_priority_before_the_unprepared_tail_and_resumes`: the
+  driver publishes a generation before it snapshots bootstrap progress
+  (`src/neural/driver.rs`, `publish` then `sync_progress`). A status read in between sees
+  the searchable unit before `first_searchable_ms` is set. The test now waits, within the
+  existing 60-second helper bound, until both are visible; its assertions are unchanged.
+- `continuous_semantics_progresses_during_filesystem_traffic_and_converges`: reproduced
+  1 in 6 full-suite runs. The semantic lane stops in `paused` with `partition_invalid`
+  ("the mapping names a stale source version") after a source changes between
+  partitioning and accept, so it cannot converge at any deadline. This is a product race,
+  parked as [FOLLOWUP F13](../FOLLOWUP.md); the test is unchanged.
 
 ### sha2 0.11 migration — 2026-10-13
 

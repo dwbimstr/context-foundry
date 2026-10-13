@@ -9,8 +9,9 @@ recorded results before measuring anything. Background is in the
 ## Requirements
 
 - **macOS on Apple silicon.** The embedding worker needs Metal, and the stores, binaries
-  and worker bundles below are macOS arm64 builds. CI also builds and tests the core on
-  Linux, but the worker and the package do not support it.
+  and worker bundles below are macOS arm64 builds. The core also builds and tests on
+  Linux, checked locally with `scripts/gates.sh` while GitHub Actions is unavailable.
+  The worker and the package do not support Linux.
 - **At least 32 GiB of memory** for measurements (one job at a time), about 20 GB of free
   disk, and administrator rights (step 1).
 - **Tools:** Xcode command-line tools (`xcode-select --install`), `rustup`, `cmake`,
