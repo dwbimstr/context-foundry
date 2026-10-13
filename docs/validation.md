@@ -60,6 +60,22 @@ Two timing-bound integration tests failed once each in a full parallel run of
 `continuous_semantics_progresses_during_filesystem_traffic_and_converges`. Neither
 touches placement. Their 15-second wall-clock deadlines were not changed.
 
+### sha2 0.11 migration — 2026-10-13
+
+`sha2` 0.11 returns a digest type without `LowerHex`, and 18 sites wrote stored SHA-256
+strings with `format!("{:x}", ...)`: source hashes, cache keys and artifact pins. The
+migration ran in two steps so byte identity is proven, not assumed:
+
+1. **`16093de`, still on 0.10:** all sites move to `context_foundry::lower_hex`, which
+   writes two lowercase hex digits per byte in order. The 3 test oracles encode
+   inline. A test asserts `lower_hex(d) == format!("{:x}", d)` for every input length
+   0..=300 and passes, together with the pinned FIPS 180-2 vectors (`""`, `"abc"`, the
+   448-bit message, one million `a`) and a streamed hash.
+2. **The bump to 0.11.1:** the `{:x}` comparison can no longer compile and is removed.
+   The pinned vectors pass unchanged on 0.11, so the stored encoding is identical.
+   All targets check on Rust 1.90, including `foundry-embed` with `embed-worker`.
+   sha2 0.10.9 remains only under the optional `learning-worker` feature.
+
 ### Document/body RRF (resume step 2)
 
 **Frozen corpus.** Commit `ebf28f8` is the frozen Foundry snapshot. The eight labelled

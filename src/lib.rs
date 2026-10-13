@@ -135,15 +135,4 @@ mod hex_tests {
         assert_eq!(lower_hex(&[0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
         assert_eq!(lower_hex(&[]), "");
     }
-
-    /// The previous encoding was the digest type's `{:x}` output; the helper
-    /// reproduces it byte for byte on every input length.
-    #[test]
-    fn lower_hex_equals_the_digest_lowerhex_encoding() {
-        for len in 0..=300usize {
-            let input: Vec<u8> = (0..len).map(|i| (i * 31 + len) as u8).collect();
-            let hash = Sha256::digest(&input);
-            assert_eq!(lower_hex(&hash), format!("{:x}", hash), "length {len}");
-        }
-    }
 }
