@@ -718,7 +718,7 @@ fn hash_contents(
             return Err(stop);
         }
     }
-    Ok((format!("{:x}", hasher.finalize()), bytes, retained))
+    Ok((crate::lower_hex(&hasher.finalize()), bytes, retained))
 }
 
 #[cfg(test)]

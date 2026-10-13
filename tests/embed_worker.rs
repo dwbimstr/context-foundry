@@ -50,7 +50,11 @@ fn sha256_of(path: &Path) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(std::fs::read(path).expect("read file"));
-    format!("{:x}", hasher.finalize())
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
 }
 
 /// A minimal unsigned .app bundle around the fake worker; the supervisor

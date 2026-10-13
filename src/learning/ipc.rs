@@ -205,7 +205,7 @@ pub fn input_sha256(ids: &[u32], markers: [u32; 2]) -> String {
     for marker in markers {
         hasher.update(marker.to_le_bytes());
     }
-    format!("{:x}", hasher.finalize())
+    crate::lower_hex(&hasher.finalize())
 }
 
 pub fn encode_ids(ids: &[u32]) -> Vec<u8> {
