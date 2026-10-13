@@ -34,6 +34,18 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `84108a1` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `14729de` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `9a86665` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `1c924a1` (#17 head) | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `94b9219` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `7353251` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `e3c7b08` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `7dff09b` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `9d65e9d` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `17697da` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `e814da2` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `57ae9de` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `1cb3173` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `7c25def` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `385a593` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -46,6 +58,18 @@ Log SHA-256 digests:
 | `84108a1` | `65c78323…` | `302dc862…` | `fd1c818b…` | `879e530f…` |
 | `14729de` | `93e65aae…` | `0bfde1e7…` | `1f5d1f30…` | `fe368598…` |
 | `9a86665` | `afb5e4c6…` | `e0db4974…` | `f164437c…` | `03feb756…` |
+| `1c924a1` (#17 head) | `8f63fb23…` | `26dfc62c…` | `d0a1eb9d…` | `d9b291e6…` |
+| `94b9219` | `1f788b66…` | `01605187…` | `248e1366…` | `2f8d3209…` |
+| `7353251` | `e7db2afc…` | `0fcd3c66…` | `8482a812…` | `1ad0e205…` |
+| `e3c7b08` | `7577aa7e…` | `9b6ce778…` | `ef13260c…` | `4e61ede7…` |
+| `7dff09b` | `24476047…` | `714347e9…` | `5655425f…` | `25af98a4…` |
+| `9d65e9d` | `158a7e90…` | `1231a989…` | `d6da8bc6…` | `b824705a…` |
+| `17697da` | `43ddda3f…` | `56c8b70e…` | `865a112a…` | `952dc801…` |
+| `e814da2` | `703e7eca…` | `15378f34…` | `e02f19e9…` | `db5fd4b2…` |
+| `57ae9de` | `661da8b8…` | `ef26e109…` | `fc3f61ec…` | `7667c9d0…` |
+| `1cb3173` | `d7ba34e2…` | `b375c223…` | `90caeffd…` | `7ab1b402…` |
+| `7c25def` | `7577aa7e…` | `95dfe823…` | `7409415a…` | `44c679a6…` |
+| `385a593` | `03329197…` | `330a4300…` | `9594fa71…` | `f15bfc3e…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -72,6 +96,13 @@ tokenizer path, so 52 `learning_data` tests could not read their fixture; in tha
 `continuous_semantics_progresses_during_filesystem_traffic_and_converges` also stopped
 on the [F13](../FOLLOWUP.md) race, and it passed in both counted runs. The receipts are
 local only: GitHub Actions did not run.
+
+`1c924a1` is the head of PR #17, gated again before it merged as `1593c2c`. The eleven
+commits after it are the second batch of god-module splits
+([below](#god-module-splits--2026-10-13)), each gated the same way before the next
+split started. Each run also reran the gateway target as `nobody`, ran
+`cargo check --locked --no-default-features --lib` (0 warnings every time) and compared
+rustdoc. All of it is local only: GitHub Actions did not run.
 
 `72c4319` fixes the three Clippy 1.97 lints (`byte_char_slices`, a manual `Option::zip`,
 `while_let_loop`) without changing behavior. `f491821` fixes a regression from
