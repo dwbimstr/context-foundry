@@ -4899,12 +4899,16 @@ mod tests {
     /// buffer at once (the calibration found byte-identical trees on 22,492
     /// real files; 001 T008 review m1): node for node — kind, named,
     /// missing, error and extra status, byte and point ranges, field and
-    /// children — for one source per grammar (this file for Rust), as
-    /// written, with CRLF line ends, behind a byte-order mark, and empty.
+    /// children — for one source per grammar (for Rust, a frozen copy of this
+    /// file, `tests/fixtures/syntax/syntax-rs-sample.txt`), as written, with
+    /// CRLF line ends, behind a byte-order mark, and empty.
     #[test]
     fn per_character_reads_give_the_whole_buffer_tree() {
         let sources: [(&str, &str); 25] = [
-            ("syntax.rs", include_str!("syntax.rs")),
+            (
+                "syntax.rs",
+                include_str!("../tests/fixtures/syntax/syntax-rs-sample.txt"),
+            ),
             ("multi.py", "# é ü\ndef f(a):\n    return 'ñ' + a  # 漢字\n"),
             (
                 "store.ts",
