@@ -245,117 +245,6 @@ pub fn validate_priority_paths(paths: &[String]) -> FResult<()> {
     Ok(())
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct SourceCursor {
-    pub exact: bool,
-    pub scope: Option<String>,
-    pub after: Option<String>,
-    /// Scalar progress in an unfinished wave; `after` retains its upper bound.
-    /// Bodies/plans live only in the run's single byte-capped paused cache.
-    pub resume: Option<WalkPosition>,
-}
-
-/// At most sixteen priority cursors and one ordinary cursor per pass. Hierarchy
-/// keeps one additional copy for refinement, with no retained bodies/vectors.
-/// Alternate priority/background waves so neither starves.
-#[derive(Clone)]
-pub(crate) struct SourceOrder {
-    priority: VecDeque<SourceCursor>,
-    background: Option<SourceCursor>,
-    priority_turn: bool,
-    overview_first: bool,
-    refinement: Option<Box<SourceOrder>>,
-}
-impl SourceOrder {
-    pub(crate) fn changed(paths: impl Iterator<Item = String>) -> Self {
-        Self {
-            priority: paths
-                .map(|path| SourceCursor {
-                    scope: Some(path),
-                    after: None,
-                    exact: true,
-                    resume: None,
-                })
-                .collect(),
-            background: None,
-            priority_turn: true,
-            overview_first: false,
-            refinement: None,
-        }
-    }
-    pub(crate) fn prioritize(&mut self, paths: &[String]) -> FResult<()> {
-        self.priority = Self::new(paths)?.priority;
-        if let Some(refinement) = &mut self.refinement {
-            refinement.prioritize(paths)?;
-        }
-        Ok(())
-    }
-    /// Hierarchy partitions already begin with a whole-file representation.
-    /// Visit that input in every selected source before draining body inputs.
-    /// Only cursors are copied; accepted work remains in the ordinary cache.
-    pub(crate) fn for_representation(mut self, representation: partition::Representation) -> Self {
-        if matches!(representation, partition::Representation::Hierarchy { .. }) {
-            self.refinement = Some(Box::new(self.clone()));
-            self.overview_first = true;
-        }
-        self
-    }
-    pub(crate) fn overview_first(&self) -> bool {
-        self.overview_first
-    }
-    pub(crate) fn new(paths: &[String]) -> FResult<Self> {
-        validate_priority_paths(paths)?;
-        let mut unique = Vec::new();
-        for path in paths {
-            if !unique.contains(path) {
-                unique.push(path.clone());
-            }
-        }
-        Ok(Self {
-            priority: unique
-                .into_iter()
-                .map(|scope| SourceCursor {
-                    scope: Some(scope),
-                    after: None,
-                    exact: false,
-                    resume: None,
-                })
-                .collect(),
-            background: Some(SourceCursor::default()),
-            priority_turn: true,
-            overview_first: false,
-            refinement: None,
-        })
-    }
-    pub(crate) fn next(&mut self) -> Option<SourceCursor> {
-        if !self.waiting()
-            && let Some(refinement) = self.refinement.take()
-        {
-            *self = *refinement;
-        }
-        if (self.priority_turn || self.background.is_none()) && !self.priority.is_empty() {
-            self.priority_turn = false;
-            self.priority.pop_front()
-        } else {
-            self.priority_turn = true;
-            self.background.take()
-        }
-    }
-    pub(crate) fn waiting(&self) -> bool {
-        !self.priority.is_empty() || self.background.is_some()
-    }
-    pub(crate) fn advance(&mut self, cursor: SourceCursor, done: bool) {
-        if done {
-            return;
-        }
-        if cursor.scope.is_some() {
-            self.priority.push_back(cursor);
-        } else {
-            self.background = Some(cursor);
-        }
-    }
-}
-
 /// Named fault points of the preparation boundary (test-faults only;
 /// release builds carry no hook code and no fault-name strings).
 #[cfg(feature = "test-faults")]
@@ -390,6 +279,9 @@ macro_rules! prepare_fault {
         Ok::<(), $crate::FoundryError>(())
     };
 }
+
+mod order;
+pub(crate) use order::{SourceCursor, SourceOrder};
 
 /// The fault hook entry (test-faults only).
 #[cfg(feature = "test-faults")]
