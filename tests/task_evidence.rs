@@ -253,7 +253,21 @@ fn observed_execution_requires_fresh_proof_and_all_delivered_endpoints() {
             }
         );
     }
-    for budget in [1536, 2048, 4096] {
+    // The smallest budget is a token count of a report that carries the random
+    // workspace id 11 times, so it varies by run (FOLLOWUP F17); read it.
+    let minimum = match response::pack_enriched_context(
+        &c,
+        None,
+        Budget::request(1),
+        &response::stdout_bytes,
+    ) {
+        Err(FoundryError::BudgetTooSmall { minimum_tokens }) => minimum_tokens,
+        other => panic!(
+            "a 1-token budget must be too small: {:?}",
+            other.map(|p| p.tokens)
+        ),
+    };
+    for budget in [minimum, minimum + 512, 4096] {
         let packed = pack(budget);
         assert!(packed.tokens <= budget);
         let delivered = packed

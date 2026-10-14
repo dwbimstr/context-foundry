@@ -627,26 +627,58 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   around it.
 - **Required resource:** owner access to the environment settings for item 1.
 
-## F17. One budget-boundary failure in `tests/task_evidence.rs` (seen 2026-10-14)
+## F17. `tests/task_evidence.rs` budget depended on the random workspace id (fixed 2026-10-14)
 
-- **Why open:** `observed_execution_requires_fresh_proof_and_all_delivered_endpoints`
-  failed once, in the local gates of `3b02871`, a docs-only commit whose code is
-  identical to `edb6a20`. That code passed its own gates, as did every other gated
-  commit that day. The failing call is `pack(1536)` in the test's budget loop
-  (`tests/task_evidence.rs:230`), which returned
-  `BudgetTooSmall { minimum_tokens: 1543 }`: that run's packed context needed 7 tokens
-  more than the smallest budget the test asserts on. The cause is not known.
-- **What was ruled out on that commit:**
-  - The test passed 40 times out of 40 alone, 60 out of 60 with 12 copies at once, and
-    30 out of 30 as the whole `task_evidence` binary (its 20 tests in parallel).
-  - Tokens here are a byte count (`response::stdout_bytes`), and the workspace id
-    (from the random temp directory) has a fixed length, so neither varies the size by
-    itself.
-  - Code moves cannot change behavior, and the run before it, on the same code,
-    passed.
-- **Resume:** find which part of the packed context changes size between runs. For
-  example, record the minimum budget of every run of this test over many full-suite
-  runs, and diff the packed text of a run that needs more than 1,536 against one that
-  does not. Do not raise the test's budgets or skip it; that is a test-input change and
-  an owner call.
-- **Required resource:** none beyond a normal session.
+- **Status:** fixed in `b4eca2c` with the fix below (option 1), on the owner's decision
+  (2026-10-14). Nothing is blocked; this entry stays as the record.
+  `observed_execution_requires_fresh_proof_and_all_delivered_endpoints` failed in about 1
+  run in 60. It failed once in the local gates of `3b02871`, at the budget loop's
+  `pack(1536)` (`BudgetTooSmall { minimum_tokens: 1543 }`). The packer was correct;
+  the test's fixed budget assumed a minimum the test does not control.
+- **Cause:**
+  - The minimum budget is the token count of the context header plus the
+    `task-evidence:` report with nothing selected (`pack_task_evidence` in
+    `src/response.rs`).
+  - Tokens are counted with tiktoken's `o200k_base` (`response::count_tokens`), not in
+    bytes. `response::stdout_bytes` only measures the byte cap. The previous version of
+    this entry assumed a byte count and ruled out the workspace id; that was wrong.
+  - The report carries the workspace id 11 times: the full 64-hex id in `roots[]` and in
+    four `compiler_relationships.windows[].workspace_id` fields, and its 16-hex prefix in
+    six `sources[].handle` values.
+  - The id is the SHA-256 of the fixture's canonical root path, a random temporary
+    directory. So the report's byte length never changes, but its token count does,
+    depending on how BPE splits that run's hex digits.
+- **Evidence:** a scratch probe measured the setup of the failing test. It was a copy of
+  the test file whose fixture can use a fixed root path, and it was not committed.
+  - **301 runs with random roots:**
+    - The header (63 bytes, 19 tokens) and the report (3,748 bytes) had the same length
+      in every run.
+    - With the id replaced by zeros, both lines were byte-identical across all runs, and
+      the report counted 1,047 tokens.
+    - With the real id, the report counted 1,083–1,187 tokens.
+    - The minimum budget ranged from 1,435 to 1,551 (mean 1,498, σ 19). It exceeded
+      1,536 in 5 of the 301 runs.
+  - **Fixed roots:** a fixed root path fixes the id and therefore the minimum.
+    - `/tmp/cf-f17/p008` (found in a scan of 60 paths) gave 1,547 in 10 of 10 runs. The
+      original test with that root failed 5 times out of 5, with
+      `BudgetTooSmall { minimum_tokens: 1547 }`.
+    - `/tmp/cf-f17/p015` gave 1,459 in 10 of 10 runs, and the test passed 5 times out
+      of 5.
+- **Fix (option 1):** the test reads the minimum from the `BudgetTooSmall` of a
+  1-token request and checks the budgets `[minimum, minimum + 512, 4096]` instead of
+  `[1536, 2048, 4096]`. At each budget it still asserts that the packed text fits and
+  that the report's delivered count matches the delivered `task-execution:` lines. No
+  product code changed. Two other options were set aside:
+  - a fixed workspace id or root path, because the store derives the id from the
+    canonical root path directly and a fixed path is shared by parallel tests;
+  - a larger fixed budget, which only makes failure rarer.
+- **Verification (local only):**
+  - With the scratch fixture pinned to the root path whose minimum is 1,547, the old
+    test failed 5 times out of 5 and the new one passes 5 out of 5. It also passes 5 out
+    of 5 at the root whose minimum is 1,459.
+  - 300 runs of the new test with random roots all passed.
+  - The full local gates: see
+    [validation](docs/validation.md#f17-task_evidence-budget-floor--2026-10-14).
+
+  Other tests with fixed budgets over output that contains a workspace id may share
+  this; none has been seen failing.
