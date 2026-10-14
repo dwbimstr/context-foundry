@@ -457,6 +457,14 @@ check the budgets `[minimum, minimum + 512, 4096]`. No product code changed.
   tree. 1,153 tests passed with only the 2 root-only failures, and the gateway target
   passed 49 as `nobody`. fmt, Clippy 1.97, and MSRV check and Clippy 1.90 exit 0, and
   `--no-default-features` builds with 0 warnings. Rustdoc is unchanged.
+- **Audit of the other fixed-budget tests:** the full suite ran with every workspace
+  id forced into the most expensive and then the cheapest realistic token layout.
+  These are the extremes of 200,000 random ids (54 and 88 tokens for one full id plus
+  one handle prefix, median 69), set by a temporary patch that was not committed. Both
+  runs gave 1,153 passed with only the 2 root-only failures, so no other test depends
+  on how the id tokenizes. The pre-fix test, run against the same patch, failed 5
+  times out of 5 with expensive ids and passed with cheap ones. The run logs' SHA-256
+  are `ac49a348…` (expensive) and `e4f27281…` (cheap).
 - **Not run:** native macOS acceptance (no Mac). GitHub Actions did not run.
 
 ### Document/body RRF (resume step 2)

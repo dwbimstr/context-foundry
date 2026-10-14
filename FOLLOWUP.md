@@ -679,6 +679,23 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   - 300 runs of the new test with random roots all passed.
   - The full local gates: see
     [validation](docs/validation.md#f17-task_evidence-budget-floor--2026-10-14).
-
-  Other tests with fixed budgets over output that contains a workspace id may share
-  this; none has been seen failing.
+- **Audit of the other tests (2026-10-14):** no other test depends on how the
+  workspace id tokenizes.
+  - **Method:** the tests hard-code token budgets at about 200 call sites, so the
+    audit measured behavior instead of reading each one. A temporary patch, not
+    committed, made all four places that derive a workspace id from a root path return
+    an extreme layout.
+  - **The layouts:** over 200,000 random ids, one full id plus one 16-hex handle prefix
+    costs 54 to 88 tokens (median 69). The audit took the letter/digit layout of the
+    cheapest and of the most expensive id. It filled that layout from each root's own
+    digest, so ids stay unique and valid hex while costing 54–57 or 84–88 tokens. CLI
+    and MCP tests spawn the same patched binary, so they got the same ids.
+  - **Results:** the full suite ran once with the expensive layout and once with the
+    cheap one. Both runs gave 1,153 passed and 26 ignored, with only the 2 root-only
+    gateway failures.
+  - **Positive control:** the pre-fix version of this test, run against the same
+    patch, failed 5 times out of 5 with expensive ids (minimum 1,592) and passed 5 out
+    of 5 with cheap and with natural ids.
+  - **Not covered:** the 26 ignored tests, and random inputs other than the
+    workspace id. Packed output carries no temporary path: headers render aliases,
+    labels, revisions and counts, and sources appear by root-relative path.
