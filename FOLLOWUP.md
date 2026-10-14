@@ -573,9 +573,13 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 - **Resume:** nothing remains here. The `syntax.rs` splits in the F14 table may run,
   gated as F14 describes; they no longer change this test's input.
 
-## F16. Cloud sessions without the environment variables (found 2026-10-13)
+## F16. Cloud sessions without the environment variables (fixed 2026-10-14)
 
-- **Why open:** the 2026-10-13 cloud session (`CLAUDE_CODE_REMOTE=true`) started with
+- **Status:** fixed on 2026-10-14. The owner pasted
+  [`scripts/cloud/environment.env`](scripts/cloud/environment.env) into the cloud
+  environment's variables, and the next session started with all of them (see
+  Verification). Nothing is blocked; this entry stays as the record.
+- **What it was:** the 2026-10-13 cloud session (`CLAUDE_CODE_REMOTE=true`) started with
   none of the variables in [`scripts/cloud/environment.env`](scripts/cloud/environment.env)
   set. `env` showed no `RUSTUP_TOOLCHAIN`, `CARGO_INCREMENTAL`,
   `CARGO_PROFILE_TEST_DEBUG`, `CONTEXT_FOUNDRY_013_TOKENIZER`, `LLAMA_CPP_DIR` or
@@ -599,16 +603,21 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   for the gates only: `scripts/gates.sh` runs 1.97 and then 1.90 by itself, while other
   cargo commands in a cloud session should keep the 1.90 pin. Each receipt's `env.txt`
   lists the variables that run saw.
-- **Verify that it took effect:**
+- **Verification (session started 2026-10-14 07:44, nothing sourced):** each check
+  below passed. `env` shows both debuginfo lines, `CONTEXT_FOUNDRY_013_TOKENIZER` names
+  `/opt/cf/laya-typed-decisions/tokenizer`, `rustc` is 1.90.0, and the doctor prints
+  `PASS environment` with no FAIL line and exits 0. `target/gates` is 9.9 GB after the
+  day's gates runs. `cargo test --locked --test learning_data` passed 67 of 67 on Rust
+  1.90.0 (52 of them had failed with `NotFound` without the variables). The checks:
   - `env | grep -E '^(CARGO_INCREMENTAL|CARGO_PROFILE_TEST_DEBUG)=0$'` prints both lines.
   - `echo "$CONTEXT_FOUNDRY_013_TOKENIZER"` names an existing directory.
   - `rustc --version` reports 1.90.0.
   - `bash scripts/cloud/doctor.sh` prints `PASS environment` and exits 0.
   - After a gates run, `du -sh target/gates` stays near 10 GB, not 19 GB.
-- **Durable fix (proposed; none of it is implemented):**
-  1. **Owner action, no repository change:** paste the file into the environment's
-     variables (title bar → environment menu → Edit) and start a new session. The file's
-     first line already asks for this.
+- **Durable fix:**
+  1. **Owner action, no repository change: done on 2026-10-14.** The owner pasted the
+     file into the environment's variables (title bar → environment menu → Edit), and new
+     sessions now start with them.
   2. **Doctor check: done in `b565784`.** `scripts/cloud/doctor.sh` now prints
      `FAIL environment` first, naming the file, the missing variables and the fix, when
      any variable the file sets to a value is unset. A variable set to a different value
@@ -623,9 +632,9 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      means, who fixes it and how to work until then, and the local-gates rule names the
      wrapper for cloud sessions.
 
-  Item 1 is the owner's remaining action; items 2–4 only detect the problem and work
-  around it.
-- **Required resource:** owner access to the environment settings for item 1.
+  Items 2–4 stay in place as the check and the fallback for an environment that loses
+  its variables. The gates still run through the wrapper, which unsets the session's
+  `RUSTUP_TOOLCHAIN` so `scripts/gates.sh` can run 1.97 and then 1.90.
 
 ## F17. `tests/task_evidence.rs` budget depended on the random workspace id (fixed 2026-10-14)
 
