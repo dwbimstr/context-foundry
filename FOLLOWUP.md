@@ -270,8 +270,8 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 ## F13. Continuous semantics stopped on a stale-source partition race (fixed 2026-10-13)
 
 - **Status:** fixed in `1f29ec2` as designed below, after the owner asked for the fix
-  (2026-10-13). Nothing is blocked. This entry stays as the record of the race. Whether
-  `stale_area` gets the same treatment is still a separate owner call (see Remaining).
+  (2026-10-13). On the owner's next request, `b32ec73` gave `stale_area` the same
+  treatment (fix step 5). Nothing is blocked. This entry stays as the record of the race.
   The race was found while investigating
   `continuous_semantics_progresses_during_filesystem_traffic_and_converges`
   (`tests/neural_retrieval.rs`), which failed about 1 run in 6 under the full parallel
@@ -294,7 +294,7 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   - A one-shot MCP `index {semantic: "prepare"}` runs the same wave and can stop the same
     way. The CLI `semantic prepare` cannot: it holds the store exclusively.
   - `area_pass` has the same shape: `stale_area`, when a brief changes during
-    preparation, also ends in `paused`. It was not observed.
+    preparation, also ended in `paused` (until `b32ec73`). It was not observed.
 - **Fix:** treat a superseded source as a normal outcome. No new requeue is needed:
   `replace_source` and `delete_source` record the new version in the semantic
   obligation table in the same transaction (`work::changed`), and
@@ -314,6 +314,14 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   4. The public `Engine::semantic_record_partition` still refuses a stale hash with
      `partition_invalid`, so its contract in `tests/neural.rs` holds. The structural
      `partition_invalid` checks (bounds, order, UTF-8, keys, rendering) are untouched.
+  5. (`b32ec73`) The driver's `area_pass` skips an area that `area::bind` refuses
+     instead of stopping with `stale_area`. Since the pass's snapshot, its brief
+     changed or was forgotten, or one of its sources changed. A brief write marks
+     overviews pending (`work::overview_changed`) and a source write records its path,
+     both in the writing transaction, so the next `maintain` batch binds the current
+     area or prunes it. A one-shot pass completes and leaves a changed brief pending as
+     an overview obligation: brief writes do not move the source revision its loop
+     checks. The CLI `run` keeps `stale_area`, which it cannot reach.
 
   Rejected: restarting the wave from a fresh batch (it discards the wave's other work
   and can starve unrelated paths under steady churn), and serializing partition and
@@ -340,16 +348,29 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 
     On the parent `6dff64a`, each fails with `partition_invalid` (replace) or
     `not_found` (delete).
+  - Three tests in the same module cover step 5 with a provider that makes a foreground
+    write during an area's model call, which holds no engine slot. Each runs three
+    variants on the area the pass visits first: its brief revised, its brief forgotten,
+    and one of its sources replaced.
+    - `an_area_changed_during_its_model_call_is_superseded`: the pass skips that area
+      and binds the next.
+    - `maintenance_converges_after_an_area_changes_during_its_model_call`: `maintain`
+      reaches `waiting` with nothing pending; the revised brief's area is bound, and
+      the other two variants' areas are gone.
+    - `a_one_shot_pass_completes_after_an_area_changes_during_its_model_call`: a
+      one-shot pass ends `Complete`, with overviews still pending after a brief write.
+
+    On the parent `a126eac`, every variant stops with `stale_area`.
   - `tests/neural.rs` passes unchanged, including the stale-hash refusal of
     `semantic_record_partition` and the structural `partition_invalid` checks.
   - `cargo test --locked --test neural_retrieval`, deadlines unchanged: 12 of 12
-    consecutive runs passed (93 passed, 1 ignored each). The race showed in about 1 run
-    in 6 of the full parallel suite, and this soak ran the target alone, so it shows the
-    target still passes; the deterministic tests above are the proof of the fix.
-  - The full local gates: see [validation](docs/validation.md#f13-superseded-partitions--2026-10-13).
-- **Remaining:** `area_pass` has the same shape. `stale_area`, when a brief changes
-  during preparation, still ends in `paused`; it was not observed, and giving it the
-  same treatment is a separate owner call.
+    consecutive runs passed (93 passed, 1 ignored each), on the fix and again on
+    `b32ec73`. The race showed in about 1 run in 6 of the full parallel suite, and this
+    soak ran the target alone, so it shows the target still passes; the deterministic
+    tests above are the proof of the fix.
+  - The full local gates on `1f29ec2` and `b32ec73`: see
+    [validation](docs/validation.md#f13-superseded-partitions--2026-10-13).
+- **Remaining:** nothing.
 
 ## F14. God-module splits (audit 2026-10-13)
 

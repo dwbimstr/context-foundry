@@ -51,6 +51,7 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `973548d` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `f072a11` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `1f29ec2` | 0 | 0 | 101: 1,150 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `b32ec73` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -80,6 +81,7 @@ Log SHA-256 digests:
 | `973548d` | `24476047…` | `875386bf…` | `aa8b8db9…` | `5b3cefa8…` |
 | `f072a11` | `6d982f82…` | `039e7109…` | `eab84e95…` | `b1d7d4d3…` |
 | `1f29ec2` | `703e7eca…` | `9bde0db8…` | `36ac8f23…` | `56e85a59…` |
+| `b32ec73` | `970c7429…` | `dcdacf71…` | `0d550f41…` | `ff1c8aea…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -322,6 +324,28 @@ the old error.
   An earlier run, on the commit before an amend, stopped at Clippy 1.97's
   `type_complexity` on the new test owner's queue. The amend added a type alias, and
   that run is not counted. Native macOS acceptance did not run (no Mac), and GitHub
+  Actions did not run.
+
+**`stale_area`, `b32ec73`.** On the owner's next request, the driver's `area_pass` gives
+the same treatment to an overview area that `area::bind` refuses: it skips the area
+instead of stopping with `stale_area`. Since the pass's snapshot, that area's brief
+changed or was forgotten, or one of its sources changed. A brief write marks overviews
+pending and a source write records its path, in the same transaction, so a later pass
+binds the current area or drops it. The CLI `run` keeps `stale_area`, which it cannot
+reach.
+
+- **Red first:** three tests in `src/neural/driver.rs` make a foreground write during
+  an area's model call, which holds no engine slot, in three variants: the brief
+  revised, the brief forgotten, a source replaced. On the parent `a126eac` every variant
+  stops with `stale_area`; on `b32ec73` the pass skips that area and binds the next,
+  `maintain` converges to `waiting` with nothing pending, and a one-shot pass completes
+  with a changed brief still pending as an overview obligation.
+- **Soak:** `neural_retrieval` alone passed 12 of 12 runs again (93 passed, 1 ignored
+  each), deadlines unchanged.
+- **Local gates on `b32ec73`:** in the receipts [above](#local-gates-receipts), from a
+  clean tree. Every gate gave the same result as on `1f29ec2`, now with 1,153 tests
+  passed (3 more). Rustdoc again changed only the `neural::driver` module page, by one
+  sentence on skipped areas. Native macOS acceptance did not run (no Mac), and GitHub
   Actions did not run.
 
 ### Document/body RRF (resume step 2)

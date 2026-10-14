@@ -1212,6 +1212,7 @@ fn inner(
                     Err(StopOrError::Error(error)) => return Err(error),
                 }
             }
+            // The run owns the store, so no brief or source can change under it.
             if super::area::bind(engine, profile, &area.record, control)? {
                 report.area_vectors += 1;
             } else {
