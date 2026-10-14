@@ -374,18 +374,17 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 
 ## F14. God-module splits (audit 2026-10-13)
 
-- **Stopped (owner decision, 2026-10-13):** the refactor stops after PR #21 (merge
-  `2bab612`). PRs #17–#21 landed 16 verbatim splits with no visibility change and an
-  unchanged public API. Every split still in the plan below needed crate-internal
-  visibility changes, a Mac, or F13. F13 is fixed since `1f29ec2`, so the
-  `src/neural/prepare.rs` splits `order` and `cli` no longer have a blocker. Do not start
-  one without a new owner decision; the plan and resume steps stay as the record.
-- **Why deferred:** each split is a separate, gated, revertable commit. On 2026-10-13
-  only the splits that were purely mechanical ran: verbatim moves with no visibility
-  change and an unchanged public API, 16 in all (see
-  [validation](docs/validation.md#god-module-splits--2026-10-13)). The rest change
-  crate-internal visibility, touch macOS-only code that Linux gates do not compile, or
-  waited on F13 (fixed since `1f29ec2`).
+- **Status (2026-10-14):** the owner stopped the refactor after PR #21 (merge
+  `2bab612`, 16 verbatim splits with no visibility change), then resumed it for the
+  planned visibility-change splits: planned bumps only, and park anything that needs
+  more. All 15 such splits ran, each within its planned bump count. Only the
+  `src/learning.rs` row remains, and it needs a Mac.
+- **How it ran:** each split is a separate, gated, revertable commit. On 2026-10-13
+  only the purely mechanical splits ran: verbatim moves with no visibility change and
+  an unchanged public API, 16 in all (see
+  [validation](docs/validation.md#god-module-splits--2026-10-13)). On 2026-10-14 the 15
+  splits with planned crate-internal visibility changes ran (see
+  [validation](docs/validation.md#god-module-splits-with-visibility-changes--2026-10-14)).
 - **Audit:** a god module here is large and multi-responsibility. Production lines
   exclude in-file test modules; fan-in counts other `src` files naming the module
   (plus test files); churn counts commits touching the file in the shallow clone's
@@ -437,24 +436,54 @@ Do not work around a blocker by changing a model, threshold, question set or pro
     extraction uses it. `f072a11` moved the tokenizers and path segments to
     `src/syntax/tokens.rs`; the plan called it `text`, but `src/syntax.rs` already has
     a private `fn text`. `src/syntax.rs` is now 4,584 lines (5,075 before).
-- **Remaining plan**, each step one commit, in this order within a file, gated as
-  below. "Bumps" are crate-internal visibility changes (`pub(super)`); none changes
-  the public API.
+- **Done (2026-10-14), with visibility changes:** each split moves its ranges verbatim
+  except the declared bumps, which only insert `pub(super)`. Where a bumped signature
+  no longer fits on one line, rustfmt wraps it, and the proof checks the child against
+  rustfmt of the verbatim move plus the bumps.
+
+  | Commit | Child | Bumps |
+  | --- | --- | --- |
+  | `a780ceb` | `src/store/doors.rs` | 1: `doors_in` (context assembly calls it) |
+  | `7a4f0e9` | `src/store/semantic_search.rs`, declared `#[cfg(feature = "semantic")]` | 1: `search_candidates_semantic_selected` |
+  | `ae6bc38` | `src/store/lexical.rs`: the tier collectors and the search methods through `record_plan` | 2: `search_candidates_selected`, `collect_two_tier` |
+  | `27603cf` | `src/mcp/startup.rs`: `open_owner`, `open_reference` | 1: `open_owner` (the transports call it) |
+  | `b4dda7c` | `src/mcp/semantic.rs`, with the two CLI slot tests | 2 of the planned 2–3: `refuse_unsupported_semantic`, `semantic_slot_reserved` |
+  | `89ac751` | `src/syntax/tiling.rs` | 1: `tile` |
+  | `19271cd` | `src/syntax/forest.rs` | 1: `forest` |
+  | `014870d` | `src/syntax/markdown.rs` | 1: `markdown_sections` |
+  | `3a62678` | `src/syntax/imports.rs` | 1: `import_keys` |
+  | `201232d` | `src/syntax/extract.rs`: `tree_units` and the four helpers only it calls | 1: `tree_units` |
+  | `efd769d` | `src/syntax/parser.rs`: the bounded parse, `parse_hooks` and the scanner limits | 2: `parse`, `over_scanner_limit` |
+  | `0e5f1bf` | `src/syntax/calls.rs` | 5: `call_language`, `indexed_assertion_call`, `PythonImportAliases` and its `observe` and `finish` |
+  | `105a208` | `src/neural/prepare/order.rs` | 0 |
+  | `ed7a501` | `src/neural/prepare/cli.rs` | 0 |
+  | `edb6a20` | `src/neural/prepare/steps.rs`, with the partition workers and the tests | 1: the `seen` field of `Walk` (the CLI run clears it) |
+
+  Boundary choices that kept a split within its plan:
+  - `lexical` leaves the prose helpers in the parent, since `prose_terms` would need a
+    third bump.
+  - `semantic` takes the two tests that build `CliSemanticSlot` directly; left in the
+    parent, they would have needed its tuple field bumped.
+  - `imports` leaves `without_extension` in the parent, because `tokens` also calls it.
+  - `steps` takes the partition workers, whose `prepare` calls `Cards::prepare_source`
+    and `partition_invalid`; left behind, they would have needed both bumped.
+
+  The parents are now `src/store.rs` 2,867 lines (4,967 before), `src/mcp.rs` 2,657
+  (3,313), `src/syntax.rs` 2,508 (4,584) and `src/neural/prepare.rs` 277 (3,565).
+- **Remaining plan:** one row, one commit per split, gated as below. "Bumps" are
+  crate-internal visibility changes (`pub(super)`); none changes the public API.
 
   | File | Next splits (bumps) | Precondition or blocker |
   | --- | --- | --- |
-  | `src/store.rs` | `doors` (1), `semantic_search` (1, `#[cfg(feature = "semantic")]`), `lexical` (2) | Keep the shared core (`Fields`, `Candidate`, `TwoTier`, `WindowSlice`, storage helpers) in the parent; moving it costs 4–25 bumps each. |
-  | `src/mcp.rs` | `startup` (1), `semantic` (2–3) | Keep `Shared`, `RootMeta`, the slot and `run_op` in the parent. |
-  | `src/syntax.rs` | `tiling`, `forest`, `markdown`, `imports`, `extract` (1 each), `parser` with `parse_hooks` (2), `calls` (5) | None since `1cced0f` (F15): the in-file test now reads a frozen copy of the file, so a split no longer changes its input. |
   | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Needs a Mac. `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`, `hex64`); keep those in the root or re-export them. |
-  | `src/neural/prepare.rs` | `order` (0), `cli` (0), `steps` with the tests (1) | None since F13 (`1f29ec2`) gave `commit_partition` its new shape. |
 
   `src/neural/query.rs` keeps the dense index, the fallback and query tokenization, and
   `src/graph.rs` keeps `invalid`, `OccurrenceKind`, the storage key codec and the test
-  seam; neither has a further split planned.
+  seam; neither has a further split planned. `src/store.rs`, `src/mcp.rs`,
+  `src/syntax.rs` and `src/neural/prepare.rs` keep their shared cores and have no
+  further split planned.
 
-- **Required resource:** none beyond a normal session, except a Mac for the
-  `src/learning.rs` row.
+- **Required resource:** a Mac, for the `src/learning.rs` row.
 - **Resume, per split:**
   1. Move the planned line ranges verbatim into `src/<module>/<child>.rs`, which starts
      with a `//!` line and `use super::*;`; add `mod <child>;` after the parent's
@@ -462,8 +491,12 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      the child (every `pub` item, and the `pub(crate)` items named elsewhere). Insert
      those lines where `rustfmt` sorts them (by path, whatever the visibility), so
      later splits never edit an earlier split's lines. A child module that uses a
-     `macro_rules!` macro is declared after the macro. Prove the move is verbatim by
-     diffing the removed ranges against the new file.
+     `macro_rules!` macro is declared after the macro. A planned bump inserts only
+     `pub(super)` on the moved item's first line (or field); a private item the parent
+     or a sibling names by its bare name also gets a private `use` in the parent. Prove
+     the move is verbatim, apart from the bumps, by diffing the removed ranges against
+     the new file; where rustfmt wraps a bumped signature, compare against rustfmt of
+     the verbatim move plus the bumps.
   2. Run `cargo fmt --check` and `cargo clippy --locked --all-targets -- -D warnings`.
      If the compiler asks for a bump the plan did not list, revert the commit and update
      this entry instead of forcing it.

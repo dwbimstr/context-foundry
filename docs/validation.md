@@ -52,6 +52,21 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `f072a11` | 0 | 0 | 101: 1,146 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `1f29ec2` | 0 | 0 | 101: 1,150 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `b32ec73` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `a780ceb` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `7a4f0e9` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `ae6bc38` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `27603cf` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `b4dda7c` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `89ac751` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `19271cd` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `014870d` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `3a62678` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `201232d` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `efd769d` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `0e5f1bf` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `105a208` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `ed7a501` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `edb6a20` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -82,6 +97,21 @@ Log SHA-256 digests:
 | `f072a11` | `6d982f82…` | `039e7109…` | `eab84e95…` | `b1d7d4d3…` |
 | `1f29ec2` | `703e7eca…` | `9bde0db8…` | `36ac8f23…` | `56e85a59…` |
 | `b32ec73` | `970c7429…` | `dcdacf71…` | `0d550f41…` | `ff1c8aea…` |
+| `a780ceb` | `1f788b66…` | `56e23611…` | `eb05a7e3…` | `513da650…` |
+| `7a4f0e9` | `703e7eca…` | `d18fe10f…` | `a85516af…` | `a34eb198…` |
+| `ae6bc38` | `661da8b8…` | `0f742bc1…` | `97d21d24…` | `b1967fae…` |
+| `27603cf` | `d374a05e…` | `e4304a55…` | `40de387e…` | `0956084c…` |
+| `b4dda7c` | `d7ba34e2…` | `11e8e726…` | `96a87cd3…` | `2ae49b33…` |
+| `89ac751` | `1f788b66…` | `ac6d6dac…` | `e03ac533…` | `12b3e74e…` |
+| `19271cd` | `b88a7994…` | `e6707c83…` | `d59def12…` | `b824705a…` |
+| `014870d` | `6d982f82…` | `f74b8658…` | `030fb810…` | `daf14ee3…` |
+| `3a62678` | `da5f1937…` | `7aa475f3…` | `fc014764…` | `363989cc…` |
+| `201232d` | `1d4d60a0…` | `3d153e44…` | `0c2f76e7…` | `fc1721c9…` |
+| `efd769d` | `661da8b8…` | `2c31a6a4…` | `b4b30c20…` | `586783d5…` |
+| `0e5f1bf` | `f581e6dc…` | `2357b750…` | `0e884b33…` | `c6e01741…` |
+| `105a208` | `24476047…` | `121a9d92…` | `dcc5ff13…` | `1402d137…` |
+| `ed7a501` | `d7ba34e2…` | `a6c5d8f8…` | `f789f14b…` | `9a0e434c…` |
+| `edb6a20` | `703e7eca…` | `b0864715…` | `3eca7dc7…` | `7e32a6df…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -347,6 +377,55 @@ reach.
   passed (3 more). Rustdoc again changed only the `neural::driver` module page, by one
   sentence on skipped areas. Native macOS acceptance did not run (no Mac), and GitHub
   Actions did not run.
+
+### God-module splits with visibility changes — 2026-10-14
+
+The owner resumed [FOLLOWUP F14](../FOLLOWUP.md#f14-god-module-splits-audit-2026-10-13)
+for the planned splits that need crate-internal visibility changes: planned bumps only,
+and park anything that needs more. All 15 ran, one commit each, every split gated before
+the next started:
+
+| Commit | Split | Bumps | Rustdoc |
+| --- | --- | --- | --- |
+| `a780ceb` | `src/store.rs` → `store/doors.rs` | 1 | 1,061 pages unchanged |
+| `7a4f0e9` | `src/store.rs` → `store/semantic_search.rs` | 1 | unchanged; `Engine` gains one impl section, members identical |
+| `ae6bc38` | `src/store.rs` → `store/lexical.rs` | 2 | the same |
+| `27603cf` | `src/mcp.rs` → `mcp/startup.rs` | 1 | unchanged |
+| `b4dda7c` | `src/mcp.rs` → `mcp/semantic.rs` | 2 | 1,061 → 1,066: 5 redirect stubs |
+| `89ac751` | `src/syntax.rs` → `syntax/tiling.rs` | 1 | unchanged |
+| `19271cd` | `src/syntax.rs` → `syntax/forest.rs` | 1 | unchanged |
+| `014870d` | `src/syntax.rs` → `syntax/markdown.rs` | 1 | unchanged |
+| `3a62678` | `src/syntax.rs` → `syntax/imports.rs` | 1 | unchanged |
+| `201232d` | `src/syntax.rs` → `syntax/extract.rs` | 1 | unchanged |
+| `efd769d` | `src/syntax.rs` → `syntax/parser.rs` | 2 | 1,066 → 1,070: 4 redirect stubs |
+| `0e5f1bf` | `src/syntax.rs` → `syntax/calls.rs` | 5 | unchanged |
+| `105a208` | `src/neural/prepare.rs` → `prepare/order.rs` | 0 | unchanged |
+| `ed7a501` | `src/neural/prepare.rs` → `prepare/cli.rs` | 0 | 1,070 → 1,073: 3 redirect stubs |
+| `edb6a20` | `src/neural/prepare.rs` → `prepare/steps.rs` | 1 | unchanged |
+
+- **Proof per split:** a script compared every moved range at the parent commit with
+  the new child, byte for byte after applying the declared bumps, which only insert
+  `pub(super)`. It also checked that the new parent equals the old one minus those
+  ranges plus the inserted `mod`, `use` and re-export lines. In 5 splits, rustfmt
+  wrapped a bumped signature that no longer fit on one line (`open_owner`, `forest`,
+  `import_keys`, `tree_units`, `observe`). There the child was checked against rustfmt
+  of the verbatim move plus the bumps, and that wrapping was the only difference.
+- **Public API:** every page that existed before is unchanged in every split, compared
+  member by member. The only additions are redirect stubs for re-exported items' private
+  child paths. `syntax::parse_hooks`, a public module now re-exported from
+  `syntax/parser.rs`, keeps its page at the same path.
+- **Rustdoc warnings:** 31 in every split. In `ed7a501` one changed wording: the
+  `neural::prepare` module doc links to `publish`, which was a private item and is now
+  in the private `cli` child with no re-export, because nothing outside it calls
+  `publish`. "Links to private item `publish`" became "unresolved link to `publish`".
+  The rendered page is unchanged.
+- **Local gates on every commit:** fmt, Clippy 1.97, and MSRV check and Clippy 1.90
+  exit 0. 1,153 tests passed with only the 2 root-only gateway failures, and the gateway
+  target passed 49 as `nobody`. `--no-default-features` builds with 0 warnings. Each run
+  started from a clean tree; the receipts and log digests are
+  [above](#local-gates-receipts).
+- **Not run:** native macOS acceptance (no Mac), so the `src/learning.rs` splits stay
+  parked. GitHub Actions did not run.
 
 ### Document/body RRF (resume step 2)
 
