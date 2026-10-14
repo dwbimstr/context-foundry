@@ -342,7 +342,7 @@ records observed outcomes. This inventory supersedes earlier progress summaries.
 
 | Area | Implemented and verified | Remaining work |
 | --- | --- | --- |
-| Retrieval | File-first hierarchy, current owner scopes, coarse excerpts/acronyms, structural-fragment roles, bounded independent body scoring and coverage-independent interleaving. Complete 274-source inference and zero-call replay. | Frozen delivery is **2/8**, after original complete/role-only/owner-scope arms reached 1/8. Fix ranking before destructive cuts, excerpt/packing losses and cross-owner continuation. An independent document/body RRF candidate (`9ccefcc`) is implemented and tested but unmeasured; `ef524b9` reverts it until the revision-5 dense comparison runs ([FOLLOWUP](../FOLLOWUP.md) F9). Preserve the excluded source in the eight-case denominator; unchanged admission permits at most 7/8. Sealed 48-question evaluation has not run; private G2/G1 remain unavailable. |
+| Retrieval | File-first hierarchy, current owner scopes, coarse excerpts/acronyms, structural-fragment roles, bounded independent body scoring and coverage-independent interleaving. Complete 274-source inference and zero-call replay. | Frozen delivery is **2/8**, after original complete/role-only/owner-scope arms reached 1/8. Fix ranking before destructive cuts, excerpt/packing losses and cross-owner continuation. An independent document/body RRF candidate (`9ccefcc`) was measured on 2026-10-14 against the same prepared store as the interleave arm; both deliver 2/8 (Q2, Q7), so `ef524b9` keeps it reverted ([FOLLOWUP](../FOLLOWUP.md) F9). Preserve the excluded source in the eight-case denominator; unchanged admission permits at most 7/8. Sealed 48-question evaluation has not run; private G2/G1 remain unavailable. |
 | Indexing and scale | Incremental watcher, cache/ANN publication, bounded resume plans, initial file views before refinement; current overview fitting across 67,663 distinct admitted sources. | Actually complete real-model inference, audit/replay, serving and changed-input validation across that corpus. A batch-one/eight calibration and full Linux driver are prepared but unrun; both need `avx512_bf16` and the pinned public archives ([FOLLOWUP](../FOLLOWUP.md) F10, F11). Overview completion must remain separate from exhaustive bodies and sustained churn. |
 | Representations and runtime | Independent body/parent/file/area vectors, exact-key reuse, production 8,192-token allocation correction, real CPU/Metal numerical parity. | Representation/long-context quality, selective refinement outcomes and larger-area requirements. Late chunking remains a conditional backend extension, not an implemented feature. |
 | Evidence | Current call-name postings, conservative Python aliases, whole router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks. | Broader collectors/frameworks, resolved cross-language callers and observed representative host outcomes. Unsupported or dynamic cases remain incomplete; syntax is not observed execution. |
@@ -354,14 +354,14 @@ records observed outcomes. This inventory supersedes earlier progress summaries.
 
 The next execution sequence, each step with its blocker and resume commands in
 [FOLLOWUP.md](../FOLLOWUP.md):
-1. Measure the RRF candidate on an `avx512_bf16` host (F9).
-2. Calibrate scheduling batches (F10).
-3. Complete full Linux overview inference (F11).
-4. Run the stronger host pair (F2).
-5. Evaluate explicitly frozen candidates on the sealed questions (F4).
-6. Finish the remaining physical-device and package acceptance (F7).
+1. Calibrate scheduling batches (F10).
+2. Complete full Linux overview inference (F11).
+3. Run the stronger host pair (F2).
+4. Evaluate explicitly frozen candidates on the sealed questions (F4).
+5. Finish the remaining physical-device and package acceptance (F7).
 
-The 2026-10-12 cloud session closed the CI check and the native CPU observation.
+The 2026-10-12 cloud session closed the CI check and the native CPU observation. A
+2026-10-14 cloud session measured the RRF candidate (F9); it stays reverted.
 Serialize heavy local jobs. Every run must retain failed/partial costs and exact
 identities. GitHub Actions is unavailable; local gates receipts replace CI.
 

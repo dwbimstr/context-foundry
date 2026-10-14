@@ -147,20 +147,55 @@ Do not work around a blocker by changing a model, threshold, question set or pro
     the public harness this session used for resume steps 3 and 4, and keep the stricter
     of the two checks.
 
-## F9. Measure the document/body RRF candidate (resume step 2)
+## F9. Measure the document/body RRF candidate (resume step 2; measured 2026-10-14)
 
-- **Why blocked:** the real-model comparison needs the revision-5 AVX-512 BF16 Gemma
-  worker. The session's host lost `avx512_bf16` when its VM restarted, and the
-  embedding function must not be swapped. Everything before the dense run is done:
-  - the candidate is implemented, tested and committed as `9ccefcc`, then reverted by
-    `ef524b9`;
-  - the frozen corpus is in Git (`ebf28f8`);
-  - the lexical baseline reproduces: default 1/8, experimental 2/8, 274 admitted
-    sources.
-- **Required resource:** an x86_64 host whose `scripts/cloud/doctor.sh` reports
-  `cpu avx512_bf16: yes`, with about 12 GB of free RAM and Hugging Face access. A cloud
-  session works if its VM lands on such a CPU; the sandbox does.
-- **Resume:**
+- **Status:** measured on 2026-10-14, when the owner unparked F9, in a cloud session
+  whose VM had `avx512_bf16`. The candidate does not meet the rule in step 7, so it
+  stays reverted: `ef524b9` stands and no code changed. Nothing is blocked; this entry
+  stays as the record.
+- **Result:** one prepared store, the frozen corpus `ebf28f8`, a 2,048-token budget,
+  questions numbered from 0 as in [validation](docs/validation.md#documentbody-rrf-resume-step-2):
+
+  | Arm | Delivered |
+  | --- | --- |
+  | Default lexical | 1/8 (Q7) |
+  | Experimental lexical | 2/8 (Q2, Q7) |
+  | Semantic interleave (`ef524b9`) | 2/8 (Q2, Q7) |
+  | Semantic RRF (`ef524b9` plus `9ccefcc`) | 2/8 (Q2, Q7) |
+
+  - RRF loses none of the interleave arm's answers and adds none.
+  - RRF changes the delivered text of Q0 to Q6, the seven questions that use the dense
+    lane. Q7 runs without it in both arms and is byte-identical.
+  - Only Q0's loss moves. Under interleave its unit was materialized but the excerpt
+    missed the span (`evidence_window`); under RRF the unit reaches the final packing
+    input but is not delivered (`packing_omission`). Every other loss keeps its stage.
+  - Each semantic arm, rerun from its saved binary, gives byte-identical output for all
+    eight questions.
+- **How it ran:** the steps below, with these differences.
+  - Steps 1 to 4 reused the 2026-10-12 assets after checking them: the corpus tar
+    SHA-256, the model and tokenizer SHA-256s, the profile fields, and the bundled
+    worker (`c31f4aa5…`, equal to the profile's `executable_sha256`). The baseline
+    binaries were built at `72c4319`, not `ef524b9`. Their source differs only by
+    `f491821`'s three `#[cfg(feature = "semantic")]` attributes, which the default
+    `semantic` feature makes no-ops, so both compile the same code.
+  - Step 5 took two passes. The first stopped on its budget (`budget_exhausted`, 8,384
+    units committed). The second reached complete coverage: 14,453 of 14,453 units
+    searchable and 13,822 vectors. The two passes embedded 3,608,991 input tokens, the
+    same count as the sandbox's 2026-10-11 preparation. Provider time was 12,422 s,
+    about five times the sandbox's 2,414 s.
+  - Step 6 as first written did not measure the interleave arm.
+    `FOUNDRY_ATTRIBUTION_BASELINE` runs its binary without a semantic profile, so that
+    arm is lexical, and the semantic arm always uses the binary built with the test. The
+    interleave arm needs its own run from an `ef524b9` build. Step 6 below is corrected.
+- **Evidence:** [validation](docs/validation.md#documentbody-rrf-resume-step-2). Raw
+  rows, traces and binary hashes are in `validation-runs/rrf-step2/` (`prepare-02`,
+  `prepare-03`, `interleave-01`, `rrf-01`, `repeat-01`).
+- **Still open:** frozen delivery remains **2/8**. Under both arms Q0 and Q3 are lost at
+  packing, Q4 and Q5 at the per-file cap, and Q1 and Q6 never enter the bounded
+  candidate window. That is resume step 2's broader ranking and packing repair, not this
+  candidate. F6's private Rust and Go sets must still pass before any retrieval
+  acceptance claim.
+- **Steps, as run:**
   1. Extract the corpus: `git archive ebf28f8 | tar -x -C $CORPUS`. The SHA-256 of the
      uncompressed tar stream is
      `31ff389a41d92f399f1099547198088310b4163671866222493ba3438433f7c2`.
@@ -197,11 +232,14 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      `foundry --store <store> semantic prepare --profile <profile> --budget-seconds 7200 --development-isolation`.
      Repeat until `semantic status` reports complete coverage. Run nothing else heavy
      meanwhile.
-  6. Check out a scratch branch at `ef524b9`, run `git cherry-pick 9ccefcc` and rebuild
-     `foundry`. Rerun step 4's command against the same store, adding
+  6. Run step 4's command twice against the same store, each time adding
      `FOUNDRY_ATTRIBUTION_SEMANTIC_PROFILE=<profile>` and
-     `FOUNDRY_ATTRIBUTION_BASELINE=<baseline foundry>`. Both arms then run on one store
-     with a 2,048-token budget.
+     `FOUNDRY_ATTRIBUTION_BASELINE=<baseline foundry>`:
+     - from a checkout at `ef524b9`, for the interleave arm;
+     - after `git cherry-pick 9ccefcc` on a scratch branch at `ef524b9`, for the RRF arm.
+
+     In each report, the `candidate_semantic` rows are that build's semantic arm and the
+     `previous_experimental` rows are a lexical control. All use a 2,048-token budget.
   7. Keep the candidate, by reverting `ef524b9`, only if it delivers more expected spans
      than the interleave arm and loses none that the interleave arm delivers. Otherwise
      leave it reverted. Record either result in validation. F6's private Rust and Go

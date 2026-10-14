@@ -504,12 +504,52 @@ placement regression shows the mechanism directly: in the hierarchy case the lex
 document leads because a refined passage overlapping it supports it
 (`supported_lexical: 1`).
 
-**Not measured.** The dense comparison needs the revision-5 AVX-512 BF16 worker. After
-the VM moved, that worker refused to load with "AVX-512 BF16 embedding worker is
-unsupported on this CPU". A different embedding function was not substituted, so no
-dense result exists. `ef524b9` reverts the candidate, keeping the measured 2/8
-interleave arm as the experimental placement. [FOLLOWUP F9](../FOLLOWUP.md) has the
-exact measurement and decision rule. Retrieval therefore remains **2/8**.
+**Not measured on 2026-10-12.** The dense comparison needs the revision-5 AVX-512 BF16
+worker. After the VM moved, that worker refused to load with "AVX-512 BF16 embedding
+worker is unsupported on this CPU". A different embedding function was not substituted.
+`ef524b9` reverted the candidate, keeping the measured 2/8 interleave arm as the
+experimental placement until the comparison could run.
+
+**Dense measurement — 2026-10-14.** A later cloud session's VM had `avx512_bf16`
+(Intel Xeon at 2.10 GHz, 4 vCPUs), and [FOLLOWUP F9](../FOLLOWUP.md) ran there. All of
+it is local; raw rows, traces and binary hashes are in `validation-runs/rrf-step2/`.
+- **Inputs.** The corpus tar (`31ff389a…`), model (`68bae29d…`), tokenizer
+  (`4d777ef5…`) and bundled revision-5 worker (`c31f4aa5…`) match their pins. The
+  baseline `foundry` (`dfc1c28e…`) was built at `72c4319` on 2026-10-12. Its source
+  differs from `ef524b9` only by three `#[cfg(feature = "semantic")]` attributes, which
+  the default features make no-ops.
+- **Preparation.** Two `semantic prepare` passes, each with a 7,200 s budget, ran with
+  nothing else heavy. The first stopped with `budget_exhausted` after committing 8,384
+  units. The second completed: 14,453 of 14,453 units searchable, 13,822 vectors and no
+  pending paths. Together they embedded 3,608,991 input tokens, the same count as the
+  [2026-10-11 preparation](#realistic-acceptance-continuation--2026-10-11). Provider time
+  was 12,421,624 ms, against 2,413,715 ms there.
+- **Arms.** Two release builds from a worktree, with Rust 1.97.0: `ef524b9` for
+  interleave (`foundry` `db486388…`), and `ef524b9` with `9ccefcc` cherry-picked for RRF
+  (`foundry` `001480df…`; its tree `f97335e…` equals `9ccefcc`'s). Each ran the
+  attribution test against the same store with the semantic profile and, as a lexical
+  control, the baseline binary. Budget 2,048 tokens; questions numbered from 0.
+
+  | Arm | Delivered |
+  | --- | --- |
+  | Default lexical (in-process, both runs) | 1/8 (Q7) |
+  | Experimental lexical (in-process and baseline binary, both runs) | 2/8 (Q2, Q7) |
+  | Semantic interleave (`ef524b9`) | 2/8 (Q2, Q7) |
+  | Semantic RRF (`9ccefcc`) | 2/8 (Q2, Q7) |
+
+- **Differences.** RRF changes the delivered text of Q0 to Q6, the seven questions that
+  use the dense lane; Q7 runs without it and is byte-identical. Only Q0's loss stage
+  moves: from `evidence_window` (its unit was materialized, but the excerpt missed the
+  span) to `packing_omission` (the unit reached the final packing input but was not
+  delivered). In both arms Q3 is lost at packing, Q4 and Q5 at the per-file cap, and Q1
+  and Q6 never enter the bounded candidate window.
+- **Repeatability.** Rerunning the eight semantic questions from each arm's saved
+  `foundry` gives byte-identical output, 8 of 8 per arm. The lexical outputs are
+  byte-identical between the two runs.
+- **Decision.** The candidate delivers no more expected spans than the interleave arm,
+  so by F9's rule it stays reverted: `ef524b9` stands and no code changed. Retrieval
+  remains **2/8**. These are exposed development questions, not held-out acceptance; F6
+  still gates any retrieval acceptance claim.
 
 ### Steps 3 to 7
 
