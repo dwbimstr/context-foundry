@@ -67,7 +67,7 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `105a208` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `ed7a501` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `edb6a20` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
-| `3b02871` | 0 | 0 | 101: 1,152 passed, the 2 root-only failures and one budget-boundary failure ([FOLLOWUP F17](../FOLLOWUP.md#f17-one-budget-boundary-failure-in-teststask_evidencers-seen-2026-10-14)); unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `3b02871` | 0 | 0 | 101: 1,152 passed, the 2 root-only failures and one budget-boundary failure ([FOLLOWUP F17](../FOLLOWUP.md#f17-teststask_evidencers-budget-depends-on-the-random-workspace-id-found-2026-10-14)); unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -429,8 +429,9 @@ the next started:
 - **Records commit:** `3b02871` changes only docs. Its gates run had one extra
   failure: `observed_execution_requires_fresh_proof_and_all_delivered_endpoints` in
   `tests/task_evidence.rs`, at a budget boundary. That test passed in every split's
-  run and in 130 reruns on the same code; it is recorded as
-  [FOLLOWUP F17](../FOLLOWUP.md#f17-one-budget-boundary-failure-in-teststask_evidencers-seen-2026-10-14).
+  run and in 130 reruns on the same code. Its cause, found later: the minimum budget
+  depends on how the tokenizer splits the random workspace id, which the report carries
+  11 times ([FOLLOWUP F17](../FOLLOWUP.md#f17-teststask_evidencers-budget-depends-on-the-random-workspace-id-found-2026-10-14)).
 - **Not run:** native macOS acceptance (no Mac), so the `src/learning.rs` splits stay
   parked. GitHub Actions did not run.
 
