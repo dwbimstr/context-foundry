@@ -23,15 +23,16 @@ was then merged into `main` through [PR #13](https://github.com/dwbimstr/context
     and 2/8 experimental).
   - The RRF candidate is implemented and tested as `9ccefcc`, then reverted by
     `ef524b9` until it is measured.
-  - The dense measurement needs `avx512_bf16`, which the session's VM lost when it
-    restarted.
+  - The dense measurement needed `avx512_bf16`, which the session's VM lost when it
+    restarted. A 2026-10-14 cloud session with `avx512_bf16` ran it: the candidate and
+    the interleave arm both deliver 2/8, so the candidate stays reverted.
 - **Steps 3 and 4** also need public archives that the session's proxy refused.
 - **Step 7's** cause, Spotlight indexing, is fixed.
 
 Every remaining item is in [FOLLOWUP.md](../FOLLOWUP.md) with its blocker and resume
-commands: F9 for step 2's measurement, F10 and F11 for steps 3 and 4, F2 for step 5,
-F4 for step 6, and F7 and F8 for the native and capsule work. Results are in
-[validation](validation.md#cloud-continuation--2026-10-12).
+commands: F10 and F11 for steps 3 and 4, F2 for step 5,
+F4 for step 6, and F7 and F8 for the native and capsule work. F9 records step 2's
+measurement. Results are in [validation](validation.md#cloud-continuation--2026-10-12).
 
 ## Code and working state
 
