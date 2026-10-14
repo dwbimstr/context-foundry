@@ -626,3 +626,27 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   Item 1 is the owner's remaining action; items 2–4 only detect the problem and work
   around it.
 - **Required resource:** owner access to the environment settings for item 1.
+
+## F17. One budget-boundary failure in `tests/task_evidence.rs` (seen 2026-10-14)
+
+- **Why open:** `observed_execution_requires_fresh_proof_and_all_delivered_endpoints`
+  failed once, in the local gates of `3b02871`, a docs-only commit whose code is
+  identical to `edb6a20`. That code passed its own gates, as did every other gated
+  commit that day. The failing call is `pack(1536)` in the test's budget loop
+  (`tests/task_evidence.rs:230`), which returned
+  `BudgetTooSmall { minimum_tokens: 1543 }`: that run's packed context needed 7 tokens
+  more than the smallest budget the test asserts on. The cause is not known.
+- **What was ruled out on that commit:**
+  - The test passed 40 times out of 40 alone, 60 out of 60 with 12 copies at once, and
+    30 out of 30 as the whole `task_evidence` binary (its 20 tests in parallel).
+  - Tokens here are a byte count (`response::stdout_bytes`), and the workspace id
+    (from the random temp directory) has a fixed length, so neither varies the size by
+    itself.
+  - Code moves cannot change behavior, and the run before it, on the same code,
+    passed.
+- **Resume:** find which part of the packed context changes size between runs. For
+  example, record the minimum budget of every run of this test over many full-suite
+  runs, and diff the packed text of a run that needs more than 1,536 against one that
+  does not. Do not raise the test's budgets or skip it; that is a test-input change and
+  an owner call.
+- **Required resource:** none beyond a normal session.

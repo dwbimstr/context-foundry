@@ -67,6 +67,7 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `105a208` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `ed7a501` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `edb6a20` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `3b02871` | 0 | 0 | 101: 1,152 passed, the 2 root-only failures and one budget-boundary failure ([FOLLOWUP F17](../FOLLOWUP.md#f17-one-budget-boundary-failure-in-teststask_evidencers-seen-2026-10-14)); unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -112,6 +113,7 @@ Log SHA-256 digests:
 | `105a208` | `24476047…` | `121a9d92…` | `dcc5ff13…` | `1402d137…` |
 | `ed7a501` | `d7ba34e2…` | `a6c5d8f8…` | `f789f14b…` | `9a0e434c…` |
 | `edb6a20` | `703e7eca…` | `b0864715…` | `3eca7dc7…` | `7e32a6df…` |
+| `3b02871` | `703e7eca…` | `9ff155a1…` | `24476047…` | `d7ba34e2…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -424,6 +426,11 @@ the next started:
   target passed 49 as `nobody`. `--no-default-features` builds with 0 warnings. Each run
   started from a clean tree; the receipts and log digests are
   [above](#local-gates-receipts).
+- **Records commit:** `3b02871` changes only docs. Its gates run had one extra
+  failure: `observed_execution_requires_fresh_proof_and_all_delivered_endpoints` in
+  `tests/task_evidence.rs`, at a budget boundary. That test passed in every split's
+  run and in 130 reruns on the same code; it is recorded as
+  [FOLLOWUP F17](../FOLLOWUP.md#f17-one-budget-boundary-failure-in-teststask_evidencers-seen-2026-10-14).
 - **Not run:** native macOS acceptance (no Mac), so the `src/learning.rs` splits stay
   parked. GitHub Actions did not run.
 
