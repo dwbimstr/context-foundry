@@ -67,7 +67,8 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 | `105a208` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `ed7a501` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `edb6a20` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
-| `3b02871` | 0 | 0 | 101: 1,152 passed, the 2 root-only failures and one budget-boundary failure ([FOLLOWUP F17](../FOLLOWUP.md#f17-teststask_evidencers-budget-depends-on-the-random-workspace-id-found-2026-10-14)); unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `3b02871` | 0 | 0 | 101: 1,152 passed, the 2 root-only failures and one budget-boundary failure ([FOLLOWUP F17](../FOLLOWUP.md#f17-teststask_evidencers-budget-depended-on-the-random-workspace-id-fixed-2026-10-14)); unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
+| `b4eca2c` | 0 | 0 | 101: 1,153 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 
 Log SHA-256 digests:
 
@@ -114,6 +115,7 @@ Log SHA-256 digests:
 | `ed7a501` | `d7ba34e2…` | `a6c5d8f8…` | `f789f14b…` | `9a0e434c…` |
 | `edb6a20` | `703e7eca…` | `b0864715…` | `3eca7dc7…` | `7e32a6df…` |
 | `3b02871` | `703e7eca…` | `9ff155a1…` | `24476047…` | `d7ba34e2…` |
+| `b4eca2c` | `3173a02b…` | `8304e7a2…` | `0d94049b…` | `f0b3a92a…` |
 
 The `ef524b9` run started with only the new `FOLLOWUP.md` untracked. Its counts equal
 `d6903f7`'s because `ef524b9` reverts the RRF candidate. `b432f46` started from a clean
@@ -431,9 +433,31 @@ the next started:
   `tests/task_evidence.rs`, at a budget boundary. That test passed in every split's
   run and in 130 reruns on the same code. Its cause, found later: the minimum budget
   depends on how the tokenizer splits the random workspace id, which the report carries
-  11 times ([FOLLOWUP F17](../FOLLOWUP.md#f17-teststask_evidencers-budget-depends-on-the-random-workspace-id-found-2026-10-14)).
+  11 times ([FOLLOWUP F17](../FOLLOWUP.md#f17-teststask_evidencers-budget-depended-on-the-random-workspace-id-fixed-2026-10-14)).
 - **Not run:** native macOS acceptance (no Mac), so the `src/learning.rs` splits stay
   parked. GitHub Actions did not run.
+
+### F17 task_evidence budget floor — 2026-10-14
+
+`observed_execution_requires_fresh_proof_and_all_delivered_endpoints`
+(`tests/task_evidence.rs`) failed once, in the `3b02871` run above. The cause, recorded in
+[FOLLOWUP F17](../FOLLOWUP.md#f17-teststask_evidencers-budget-depended-on-the-random-workspace-id-fixed-2026-10-14), is that the test's smallest budget, 1,536 tokens, sometimes fell
+below the packer's minimum. That minimum is an `o200k_base` token count of a report
+carrying the random workspace id 11 times, and it ranged from 1,435 to 1,551 over 301
+runs.
+
+`b4eca2c` makes the test read the minimum from a 1-token request's `BudgetTooSmall` and
+check the budgets `[minimum, minimum + 512, 4096]`. No product code changed.
+
+- **Before and after:** with a scratch fixture pinned to the root path whose minimum is
+  1,547, the old test failed 5 times out of 5 and the new one passes 5 out of 5. It
+  also passes at the root whose minimum is 1,459.
+- **Repeated runs:** 300 runs of the new test with random roots passed.
+- **Local gates on `b4eca2c`:** in the receipts [above](#local-gates-receipts), from a clean
+  tree. 1,153 tests passed with only the 2 root-only failures, and the gateway target
+  passed 49 as `nobody`. fmt, Clippy 1.97, and MSRV check and Clippy 1.90 exit 0, and
+  `--no-default-features` builds with 0 warnings. Rustdoc is unchanged.
+- **Not run:** native macOS acceptance (no Mac). GitHub Actions did not run.
 
 ### Document/body RRF (resume step 2)
 

@@ -627,15 +627,15 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   around it.
 - **Required resource:** owner access to the environment settings for item 1.
 
-## F17. `tests/task_evidence.rs` budget depends on the random workspace id (found 2026-10-14)
+## F17. `tests/task_evidence.rs` budget depended on the random workspace id (fixed 2026-10-14)
 
-- **Why open:** `observed_execution_requires_fresh_proof_and_all_delivered_endpoints`
-  fails in about 1 run in 60. It failed once in the local gates of `3b02871`, a
-  docs-only commit with the same code as `edb6a20`, whose gates passed. Its budget loop
-  asserts that `pack(1536)` succeeds (`tests/task_evidence.rs:230`), and that run got
-  `BudgetTooSmall { minimum_tokens: 1543 }`. The packer is correct; the test's fixed
-  budget assumes a minimum that the test does not control.
-- **Cause (found):**
+- **Status:** fixed in `b4eca2c` with the fix below (option 1), on the owner's decision
+  (2026-10-14). Nothing is blocked; this entry stays as the record.
+  `observed_execution_requires_fresh_proof_and_all_delivered_endpoints` failed in about 1
+  run in 60. It failed once in the local gates of `3b02871`, at the budget loop's
+  `pack(1536)` (`BudgetTooSmall { minimum_tokens: 1543 }`). The packer was correct;
+  the test's fixed budget assumed a minimum the test does not control.
+- **Cause:**
   - The minimum budget is the token count of the context header plus the
     `task-evidence:` report with nothing selected (`pack_task_evidence` in
     `src/response.rs`).
@@ -664,18 +664,21 @@ Do not work around a blocker by changing a model, threshold, question set or pro
       `BudgetTooSmall { minimum_tokens: 1547 }`.
     - `/tmp/cf-f17/p015` gave 1,459 in 10 of 10 runs, and the test passed 5 times out
       of 5.
-- **Fix options (an owner call; each changes the test's inputs):**
-  1. Derive the loop's budgets from the measured minimum, for example
-     `[minimum, minimum + 512, 4096]` with `minimum` read from `pack(1)`'s
-     `BudgetTooSmall`. The test keeps checking that `packed.tokens <= budget` and that
-     the delivered count matches at every budget, whatever the id. (Recommended.)
-  2. Give the fixture a fixed workspace id or root path. That makes the budgets
-     deterministic, but the store derives the id from the canonical root path directly
-     (the `fault::override_workspace_id` seam covers only multi-root admission), and a
-     fixed path is shared by parallel tests.
-  3. Raise the smallest budget above the worst case seen (for example 1,600). This is
-     the weakest: it only makes failure rarer.
+- **Fix (option 1):** the test reads the minimum from the `BudgetTooSmall` of a
+  1-token request and checks the budgets `[minimum, minimum + 512, 4096]` instead of
+  `[1536, 2048, 4096]`. At each budget it still asserts that the packed text fits and
+  that the report's delivered count matches the delivered `task-execution:` lines. No
+  product code changed. Two other options were set aside:
+  - a fixed workspace id or root path, because the store derives the id from the
+    canonical root path directly and a fixed path is shared by parallel tests;
+  - a larger fixed budget, which only makes failure rarer.
+- **Verification (local only):**
+  - With the scratch fixture pinned to the root path whose minimum is 1,547, the old
+    test failed 5 times out of 5 and the new one passes 5 out of 5. It also passes 5 out
+    of 5 at the root whose minimum is 1,459.
+  - 300 runs of the new test with random roots all passed.
+  - The full local gates: see
+    [validation](docs/validation.md#f17-task_evidence-budget-floor--2026-10-14).
 
   Other tests with fixed budgets over output that contains a workspace id may share
   this; none has been seen failing.
-- **Required resource:** none beyond a normal session, and the owner's choice of fix.
