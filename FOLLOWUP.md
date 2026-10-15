@@ -257,6 +257,27 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   test.
 - **Required resource:** the sandbox, which has the CPU, the restored corpus and the
   handoff.
+- **Cloud attempt (2026-10-15):** the owner unparked F10 for a cloud VM with
+  `avx512_bf16`, then parked it again for the sandbox. Nothing was fetched or changed.
+  The attempt found three more obstacles:
+  - **Corpus access.** `codeload.github.com` still refused both pinned archives (403),
+    and its message points to `add_repo`.
+    - For `rust-lang/rust`, `add_repo` attached nothing. It answered that the session's
+      git proxy serves anonymous `git clone` and `git fetch` of public repositories, while
+      the archives stay refused.
+    - For `golang/go`, the auto-mode permission classifier denied `add_repo`.
+
+    A git fetch of the pinned commits would give the pinned trees but not the archive
+    files whose SHA-256 `scale_sample()` checks. Identity would then rest on the commit
+    hashes and the 128-file sample hash.
+  - **The test covers one arm.** `tests/native_scale.rs` compiles only on macOS, and its
+    `real_metal_overview_scale_calibration` asserts `(card_tokens, batch) == (512, 1)`.
+    A Linux port of it runs only the batch-one arm. Comparing against batch eight needs
+    the private exporter or a new read-only one written to the fixed criteria below.
+  - **Time caps.** During F9 the same cloud VM embedded F9's 3,608,991 input tokens in
+    12,422 s of provider time, against 2,414 s on the sandbox: about 5× slower. A cloud
+    VM may miss the 600 s per-arm and 1,500 s total caps. That would be a failed run,
+    not a reason to raise the caps.
 - **Resume:** follow resume step 3 unchanged. The 128 files come from
   `scale_sample()` in `scripts/native-macos-acceptance.py`; it verifies the sample
   SHA-256 `76b510031972d619b01c0f767b5c0d66c6da4899ff8628c62ff9943a7b1b7a26`. The Mac
