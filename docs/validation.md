@@ -1,5 +1,55 @@
 # Validation
 
+## Portable full Linux gates — 2026-10-16
+
+`c88b83d` makes the cloud gates wrapper accept a trusted, non-secret `CF_GATE_ENV`
+file after the repository defaults. It preserves the local tokenizer, compiler and
+native-tool paths while requiring disabled incremental compilation and dev/test
+debuginfo. Receipts identify the override by path and SHA-256, exclude private
+archive URLs, and omit arbitrary environment variables. No Rust application,
+dependency or lockfile changed.
+
+Twelve wrapper boundary cases passed: default settings, an override path containing
+spaces, four invalid-file cases, and nonzero/unset cases for each of the three
+build settings. The receipt checks include exclusion of synthetic credentials and
+private archive URLs. The actual doctor also passed with the local activation.
+
+`bash scripts/cloud/gates.sh OUTDIR` ran locally with actual Rust 1.97.0 for the
+default gates and actual Rust 1.90.0 for the MSRV gates. All five reported exit 0:
+`fmt`, `clippy`, `test`, `msrv-check`, `msrv-clippy`. Cargo reported **1,155 passed,
+zero failed, 26 ignored**; the separate recovery harness also passed. The gateway
+target passed all 49 enabled tests (two ignored), including both permission-sensitive
+fault tests, under uid 1000. No root workaround or unprivileged rerun was needed.
+The additional Rust 1.97.0 `cargo check --locked --no-default-features --lib` passed
+with zero warnings.
+
+The single detached gates job ran from 14:50:49 to 14:58:05 UTC with a 2,400-second
+timeout and a stop guard at 2 GiB free disk. Its exit receipt is 0; every individual
+`GATE` line was checked because the underlying runner's final status alone does not
+prove success. Boot IDs match and no pause/restart was observed. No CI ran: GitHub
+Actions is unavailable (owner decision 2026-10-12). Native macOS/GPU acceptance is
+an explicit gap. No model inference, hosted GLM request or parked evaluation ran;
+retrieval, representative scale, task quality and economics remain unaccepted.
+
+Receipts are under
+`/workspace/.context-foundry-tools/validation-runs/gates-portability-2026-10-16/`.
+SHA-256:
+
+| Log | SHA-256 |
+| --- | --- |
+| `wrapper-cases.json` | `dec50b67c547930f15387db499696aedfc228fe6b6f3cf373bba0466bdf52af5` |
+| `doctor.log` | `1f3f1c1c1753b923d22a293106e56b01d16ebd1bb311688995faf8efdc40c417` |
+| `full/gates.log` | `cbb0c5169f3b54868bddcbc7db13a8d2c150e29a94daaae41fab7136d82a120f` |
+| `full/env.txt` | `56802d37a494690521946c3d18829bfe730abe137c974e14f6bd3210912c3ab0` |
+| `full/default-versions.log` | `b5d809c65162ea93252e9d6f929b07d2a551ca36dd5cb4361f65359132bfe85a` |
+| `full/msrv-versions.log` | `cc250b5865c44041711cb5a7796974fe5f60f38b3d8d1c5fc2a0e088589cf532` |
+| `full/fmt.log` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `full/clippy.log` | `5e746282ede447e6214cc5d0be25edcfdc453ce0be851d6368d432c4dd6fa25e` |
+| `full/test.log` | `7584034569723bd4f4ca5950ea96f2a32aa07579f43b7d671b67d3c844a9d3ed` |
+| `full/msrv-check.log` | `192f167b65190262e9e74cd6851775a358821210dd7b0f078364cd51a20a7709` |
+| `full/msrv-clippy.log` | `93a6bda1f2aa02804b87c0102b876569131858c7f7396d7e08a618e493e09475` |
+| `full/lexical-check.log` | `3b0667c88a03bc60ae5719dc5e0f188825e99d2bba89f4921f26dd6f7b9cffb9` |
+
 ## Portable Linux setup — 2026-10-16
 
 `7be514e` changes the cloud doctor and its documentation; no Rust application,
@@ -34,10 +84,11 @@ its log is the accepted receipt. No VM pause/restart was observed. The first nat
 check launcher refused the missing test-exit receipt without building anything;
 the detached retry completed both build checks and the executable smoke check.
 
-Full merge gates and clippy were **not run** for this focused setup correction.
-No CI ran: GitHub Actions is unavailable (owner decision 2026-10-12). The cloud
-gates wrapper still reapplies `/opt/cf` defaults; reconcile those local path
-overrides before a future full gate run. Native macOS/GPU acceptance is an explicit
+Full merge gates and clippy were **not run** at this focused setup checkpoint.
+The wrapper's local-path mismatch was subsequently resolved and the full gates
+passed in the [next receipt](#portable-full-linux-gates--2026-10-16).
+No CI ran: GitHub Actions is unavailable (owner decision 2026-10-12).
+Native macOS/GPU acceptance is an explicit
 gap. No parked evaluation, model inference or hosted GLM request ran; retrieval,
 scale, task quality and economics acceptance remain unchanged.
 
@@ -79,11 +130,14 @@ not rerun either, because Actions is unavailable.
 `scripts/gates.sh` replaces Rust CI. The default toolchain was Rust 1.97.0, and the
 MSRV gates ran on Rust 1.90.0. Each receipt directory held the logs and the starting
 `git status`, under the session's ephemeral `/workspace`, so the digests below identify
-the logs. The `test` gate runs as root, which bypasses the read-only
-permissions two gateway fault tests rely on, so those tests are rerun unprivileged.
+the logs. Earlier Claude Code sessions ran the `test` gate as root, which bypasses
+the read-only permissions two gateway fault tests rely on, so those tests were
+rerun unprivileged. The 2026-10-16 Codex sandbox runs as uid 1000 and passes them
+directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `c88b83d` | 0 | 0 | 0: 1,155 passed, 26 ignored; gateway 49 passed under uid 1000 ([receipt](#portable-full-linux-gates--2026-10-16)) | 0 | 0 |
 | `7be514e` | 0 | not run | not run (94 focused tests on 1.90; [receipt](#portable-linux-setup--2026-10-16)) | not run (lexical library check: 0) | not run |
 | `d6903f7` | 0 | 101: three new lints | 101: 1,145 passed, only the 2 root-only failures | 0 | 0 |
 | `ef524b9` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
