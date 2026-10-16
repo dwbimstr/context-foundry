@@ -158,9 +158,9 @@ pub enum AdapterCommand {
         /// Gateway config v1 JSON file (same file as `foundry gateway`).
         #[arg(long)]
         config: PathBuf,
-        /// File holding the single-line upstream key; never printed or logged.
+        /// Single-line upstream key file; omitted uses the config's credential_env.
         #[arg(long = "key-file")]
-        key_file: PathBuf,
+        key_file: Option<PathBuf>,
         /// Fresh profile name; an existing profile is refused, never overwritten.
         #[arg(long)]
         profile: String,
