@@ -1693,6 +1693,19 @@ fn partial_semantics_preserves_distinct_lexical_passages_and_dense_evidence() {
         .filter(|i| i.label == "excerpt fn fire")
         .collect();
     assert_eq!(passages.len(), 2);
+    let positions: Vec<_> = candidates
+        .batch
+        .items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.label == "excerpt fn fire")
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(
+        positions[1],
+        positions[0] + 1,
+        "dense interleaving must not separate already discovered owner evidence"
+    );
     for item in passages {
         let handle = item.handle.as_ref().unwrap();
         assert!(item.semantic.is_none());
@@ -7775,6 +7788,14 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
                     "lexical slots must retain the current callable's exact excerpt: {events}"
                 );
                 lexical_spans.insert((handle.start, handle.end));
+                for form in &item.forms {
+                    if let RenderedForm::Excerpt { start, body, .. } = form {
+                        let end = start + body.len() as u64;
+                        assert!(handle.start <= *start && end <= handle.end);
+                        assert_eq!(body, &source[*start as usize..end as usize]);
+                        lexical_spans.insert((*start, end));
+                    }
+                }
             }
             assert_eq!(handle.sha256, partition.source_hash);
             assert_eq!(
@@ -7804,7 +7825,10 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
                 packed_bodies += 1;
                 assert!(preferred.contains(&(start, end)));
             } else {
-                assert!(lexical_spans.contains(&(start, end)));
+                assert!(
+                    lexical_spans.contains(&(start, end)),
+                    "the packed lexical body must match a verified preferred or fallback form"
+                );
             }
         }
         assert!(packed_bodies > 0, "{discovery_kind:?}: {}", packed.text);

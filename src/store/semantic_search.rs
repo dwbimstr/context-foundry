@@ -472,6 +472,29 @@ impl Engine {
                 .or_insert(candidate);
         }
 
+        if prose {
+            let references: Vec<_> = placed
+                .iter()
+                .map(|(unit, kind)| {
+                    if kind.is_none() {
+                        by_document.get(unit).copied()
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let order = super::lexical::callable_passage_order(
+                &references,
+                control,
+                "semantic_owner_grouping",
+            )?;
+            let mut pending: Vec<_> = placed.into_iter().map(Some).collect();
+            placed = order
+                .into_iter()
+                .map(|index| pending[index].take().expect("unique placement index"))
+                .collect();
+        }
+
         // The baseline's merge per unit, per-file cap and cut, over the
         // placed order.
         let mut seen = std::collections::BTreeSet::new();
