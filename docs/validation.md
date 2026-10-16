@@ -1,5 +1,182 @@
 # Validation
 
+## Budget allocation and evidence preservation — 2026-10-16
+
+The owner reopened budget and retrieval repair. Implementation `c258026` improves
+experimental lexical delivery on the unchanged, public eight-question Foundry set
+from **2/8 to 3/8 at 2,048 tokens**, retaining both previous hits. Default context
+remains **1/8** at that budget. These are exact-source-span delivery counts on an
+author-visible development set, not coding-task success rates or independent
+retrieval acceptance. Historical complete-hierarchy delivery remains 2/8; it was
+not rerun. No private archive or parked evaluation was used.
+
+The failure crossed several boundaries. The implicit MCP configuration ceiling
+capped explicit requests at the default 2,048 tokens. Candidate construction clipped away matching
+source before packing knew the allowance. Hard per-file caps discarded additional
+useful candidates even when the overall window had room. Source reads repeatedly
+halved until they fit, leaving avoidable continuation overhead.
+
+The repair keeps the default request at 2,048 while allowing explicit requests up
+to the existing 32,768 protocol limit; configured ceilings and session allowances
+still apply. Matching indexed documents survive to packing, with exact, bounded
+excerpt fallbacks and representation-specific source handles. Experimental prose
+selection preserves diverse first choices, then backfills spare slots; refinement
+retains the 320-location provenance ceiling. Packing suppresses wholly covered
+source ranges, counts the final omission header and checks brief support against
+any delivered exact body. Source reads refine the known fit bracket with bounded
+UTF-8-safe trials, accepting only responses that pass exact token and byte counts.
+Partial overlaps and greedy full-form preference remain; no optimal-packing claim
+is made.
+
+The old CLI (`8f0b94c`) and candidate used the same public `ebf28f8` source snapshot,
+source-only store, labels and requested allowances. Traced and untraced candidate
+outputs agreed. All eight questions stay in the denominator; the source excluded
+by the existing private-key marker policy stays excluded.
+
+| Allowance per question | Old hits | New hits | Old delivered tokens, eight questions | New delivered tokens, eight questions |
+| --- | ---: | ---: | ---: | ---: |
+| 2,048 | 2/8 | 3/8 | 16,123 | 16,177 |
+| 4,096 | 2/8 | 3/8 | 30,479 | 30,535 |
+| 8,192 | 2/8 | 3/8 | 59,151 | 59,194 |
+| 32,768 | 2/8 | 3/8 | 134,980 | 209,085 |
+
+The added hit is Q0: the matching rank-zero document now retains the publication
+race check instead of clipping it away. Q2 and Q7 remain delivered. Larger budgets
+produce no additional hits here and can substantially increase delivered tokens. They are not
+a substitute for ranking and discovery repairs. At 2,048, Q3's expected document
+ranks 64 and Q4's ranks 132, both outside the 32-unit cutoff. Another document of
+Q3's same function ranks zero. Q5 and Q6's expected spans are absent from the bounded
+256-candidate window; their exact discovery failures remain unestablished. Q1 is
+the excluded source. Owner-local continuation and ranking before the global cut
+are the next concrete work; these traces do not prove downstream packing losses
+for those misses.
+
+A separate CLI comparison reconstructed all **52,059 bytes** of `src/boundary.rs`
+byte-for-byte in each arm. Counts include every delivered response and continuation
+header, using the production o200k tokenizer:
+
+| Allowance | Old calls | New calls | Old delivered tokens | New delivered tokens | Old / new wall time |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 512 | 36 | 27 | 14,654 | 13,705 | 32.067 / 24.819 s |
+| 2,048 | 7 | 6 | 11,651 | 11,540 | 6.216 / 5.224 s |
+
+At 512 this is 25% fewer calls and 6.48% fewer delivered tokens for identical source.
+Wall times are single observations. This proves a tool-delivery improvement, not
+provider-accounted task economics: host requests, repeated conversation input,
+task correctness, bootstrap and maintenance are not included in that comparison.
+
+A separate real EmbeddingGemma 2 BF16 run completed **274/274 file-overview
+vectors**, with 84,927 input tokens and 35 document calls in 298.563 seconds wall
+(268.450 seconds provider time). First searchable publication took 27.505 seconds.
+The profile uses overview-v1, 512-token cards, batch eight, adapter revision 5,
+four CPU threads, an 8 GiB worker ceiling and development isolation. The doctor
+passed before each model command, with `avx512_bf16`; no compilation ran alongside
+inference. The unchanged replay completed in 4.777 seconds, reusing all 274 inputs
+and partitions with **zero document calls and zero input tokens**.
+
+Both CLIs then queried the same completed overview store at 2,048 tokens:
+
+| Real-model overview arm | Exact-span hits | Delivered tokens, eight questions | Query wall time, eight commands |
+| --- | --- | ---: | ---: |
+| Old CLI | 2/8: Q2, Q7 | 16,104 | 184.404 s |
+| Candidate | 3/8: Q0, Q2, Q7 | 16,289 | 187.064 s |
+
+All fourteen unanchored commands reported dense retrieval with 64 hits and current
+source revision 276. Both anchored Q7 commands kept semantic retrieval off. Every
+returned exact body matched its source hash and byte range, and every response was
+within the requested allowance. This confirms the delivery gain with a real model;
+it establishes no latency improvement. Baseline ran first for each pair, so OS
+cache state was not randomized. Fresh-process dense queries took roughly 25–28
+seconds each, including acquisition, serving and shutdown.
+
+This is file-overview validation on a small public repository, not the historical
+complete-hierarchy comparison or 60–80k acceptance. The first driver stopped after
+successful preparation because its cleanup check included an unrelated, pre-existing
+defunct worker. That failure is retained. The corrected check compares worker PIDs
+before and after each command; the resumed driver verified the preparation's exit
+and output hash and reused it without another preparation inference pass.
+Every successful command left an empty scratch root and no new worker behind.
+Initial preparation's owned worker was also absent after exit. The detached resume
+shell did not leave its final wrapper receipt. The complete comparison report,
+all command exit codes and final RESULT line were present; the timeout process's
+retained `/proc` exit status was zero, and the observed ending boot ID matched the
+start. The committed receipt identifies this observed completion evidence and the
+missing wrapper receipt.
+
+With the retained profile (model and worker hashes are in the committed receipt):
+
+```sh
+foundry --store /abs/frozen-store bootstrap --root /abs/frozen-foundry \
+  --apply --components semantic --profile /abs/overview-profile.json \
+  --semantic-budget-seconds 600 --development-isolation
+foundry --store /abs/frozen-store context 'QUERY' --tokens 2048 \
+  --strategy search --experimental-behavior-context \
+  --semantic-profile /abs/overview-profile.json --development-isolation \
+  --retrieval-trace-dir /abs/new-query-trace
+```
+
+Use the unchanged public `CASES` in `tests/retrieval_attribution.rs`, and run each
+query through both compiled CLIs against the same completed store. Only verified
+exact source bodies count as delivered evidence; outlines and addresses do not.
+
+Full **local** gates for `c258026`, run with `bash scripts/cloud/gates.sh OUTDIR`,
+passed on actual Rust 1.97.0/default and 1.90.0/MSRV:
+
+```text
+GATE fmt exit=0
+GATE clippy exit=0
+GATE test exit=0
+GATE msrv-check exit=0
+GATE msrv-clippy exit=0
+```
+
+Cargo reported **1,171 passed, zero failed, 28 ignored**; the separate recovery
+harness passed. Gateway's 54 enabled tests passed as uid 1000, including both
+permission-sensitive tests. The additional
+`cargo check --locked --no-default-features --lib` passed with zero warnings.
+The focused suite passed 569 tests with three ignored. The separate real-framework
+diagnostics were not rerun. Native macOS/GPU acceptance remains an explicit gap.
+
+`1f0827c` fixes only the new ignored comparison driver's missing `--handle` CLI
+argument. That real CLI comparison and target Clippy passed after the fix; full
+gates were not repeated for it. Earlier failed focused assertions, the first gate
+attempt's missing exhaustive test-helper arm and the first diagnostic invocation
+are retained in the raw logs. No CI ran: GitHub Actions is unavailable (owner
+decision 2026-10-12).
+
+Raw commands, traces, binaries, public corpus, profiles and logs are retained under
+`/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/`.
+The [committed receipt](review/budget-repair-2026-10-16.json) records exact identities,
+per-query counts, local gate log SHA-256s and failed attempts. Gates and comparisons
+had explicit timeouts and matching start/end boot IDs. The shared source store
+subsequently gained overview vectors for the separate real-model check; the lexical
+diagnostic does not enable that profile. The recorded lexical traces remain fixed.
+
+The public paired drivers are reproducible with a source-indexed frozen checkout
+and the retained or rebuilt old CLI. Keep the fixture outside the current checkout
+and preserve its canonical path when reusing a store:
+
+```sh
+export FOUNDRY_ATTRIBUTION_ROOT=/abs/frozen-foundry
+export FOUNDRY_ATTRIBUTION_STORE=/abs/frozen-store
+export FOUNDRY_ATTRIBUTION_BASELINE=/abs/baseline-foundry
+export FOUNDRY_ATTRIBUTION_DIR=/abs/new-comparison-output
+export FOUNDRY_ATTRIBUTION_TOKENS=2048
+cargo test --locked --test retrieval_attribution -- \
+  --exact repository_development_attribution --ignored --nocapture
+# Use a fresh output directory for the separate identical-source read comparison.
+export FOUNDRY_ATTRIBUTION_DIR=/abs/new-source-read-output
+cargo test --locked --test retrieval_attribution -- \
+  --exact repository_retrieve_budget_comparison --ignored --nocapture
+```
+
+The source fixture is `git archive ebf28f8`. The diagnostic deletes
+`tests/retrieval_attribution.rs` from the index before querying, keeping literal
+evaluator questions out of source evidence. Keep the model runs separate
+from compilation. General retrieval, representative 60–80k inference, provider
+cost benefit, broader evidence and native acceptance remain open. Unrelated
+[FOLLOWUP](../FOLLOWUP.md) protocols remain parked.
+
 ## Bounded semantic bootstrap on the published VM — 2026-10-16
 
 Bootstrap now calls the existing semantic preparation owner instead of reporting
@@ -365,6 +542,8 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `c258026` | 0 | 0 | 0: 1,171 passed, 28 ignored; gateway 54 passed under uid 1000 ([receipt](#budget-allocation-and-evidence-preservation--2026-10-16)) | 0 | 0 |
+| `1f0827c` | 0 | targeted attribution Clippy: 0 | ignored paired source-read diagnostic: 0; full gates not repeated | not repeated | not repeated |
 | `b202a9c` | 0 | 0 | 0: 1,167 passed, 27 ignored; gateway 54 passed under uid 1000 ([receipt](#bounded-semantic-bootstrap-on-the-published-vm--2026-10-16)) | 0 | 0 |
 | `c4c095f` | 0 | 0 | 0: 1,161 passed, 27 ignored; gateway 54 passed under uid 1000 ([receipt](#managed-host-and-gateway-continuation--2026-10-16)) | 0 | 0 |
 | `c88b83d` | 0 | 0 | 0: 1,155 passed, 26 ignored; gateway 49 passed under uid 1000 ([receipt](#portable-full-linux-gates--2026-10-16)) | 0 | 0 |

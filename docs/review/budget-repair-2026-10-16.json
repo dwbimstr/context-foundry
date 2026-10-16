@@ -1,0 +1,1161 @@
+{
+  "scope": "Local public author-visible budget diagnostics; not sealed retrieval acceptance or provider-accounted task economics",
+  "implementation_commit": "c258026",
+  "diagnostic_fix_commit": "1f0827c",
+  "baseline_commit": "8f0b94c",
+  "source_commit": "ebf28f8",
+  "baseline_binary_sha256": "0d6308bc9e7c2e32725486dda8373e50a44db7d3b44a5531856eaaf5601a8c87",
+  "candidate_binary_sha256": "6c16de1d153ee0f5100c44d6c801d1cd21800d4d55da35186f57acb3907dd55f",
+  "budget_curves": [
+    {
+      "budget": 2048,
+      "report_sha256": "1e3e10e73c2cc2fb2d40beff4ab8677ff4d4f28c355aeda38cf5c017d718b5ae",
+      "arms": {
+        "baseline": {
+          "delivered_ids": [
+            2,
+            7
+          ],
+          "delivered_tokens": 16123,
+          "per_question_tokens": {
+            "0": 2034,
+            "1": 2011,
+            "2": 2044,
+            "3": 1964,
+            "4": 2036,
+            "5": 2011,
+            "6": 1989,
+            "7": 2034
+          },
+          "attribution": {
+            "0": {
+              "result": "loss",
+              "stage": "evidence_window"
+            },
+            "1": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "2": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "3": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "4": {
+              "result": "loss",
+              "stage": "per_file_cap"
+            },
+            "5": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "6": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "7": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            }
+          }
+        },
+        "candidate": {
+          "delivered_ids": [
+            0,
+            2,
+            7
+          ],
+          "delivered_tokens": 16177,
+          "per_question_tokens": {
+            "0": 2010,
+            "1": 2003,
+            "2": 2044,
+            "3": 2029,
+            "4": 2033,
+            "5": 1996,
+            "6": 2028,
+            "7": 2034
+          },
+          "attribution": {
+            "0": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "1": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "2": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "3": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "4": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "5": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "6": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "7": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            }
+          }
+        }
+      }
+    },
+    {
+      "budget": 4096,
+      "report_sha256": "2faaadb77b1a70b0736260fae35ac6e59a2265a3f85e03d0883cb51138b82619",
+      "arms": {
+        "baseline": {
+          "delivered_ids": [
+            2,
+            7
+          ],
+          "delivered_tokens": 30479,
+          "per_question_tokens": {
+            "0": 4089,
+            "1": 4003,
+            "2": 4044,
+            "3": 4082,
+            "4": 4050,
+            "5": 4085,
+            "6": 4092,
+            "7": 2034
+          },
+          "attribution": {
+            "0": {
+              "result": "loss",
+              "stage": "evidence_window"
+            },
+            "1": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "2": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "3": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "4": {
+              "result": "loss",
+              "stage": "per_file_cap"
+            },
+            "5": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "6": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "7": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            }
+          }
+        },
+        "candidate": {
+          "delivered_ids": [
+            0,
+            2,
+            7
+          ],
+          "delivered_tokens": 30535,
+          "per_question_tokens": {
+            "0": 4077,
+            "1": 4083,
+            "2": 4091,
+            "3": 4073,
+            "4": 4073,
+            "5": 4063,
+            "6": 4041,
+            "7": 2034
+          },
+          "attribution": {
+            "0": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "1": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "2": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "3": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "4": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "5": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "6": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "7": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            }
+          }
+        }
+      }
+    },
+    {
+      "budget": 8192,
+      "report_sha256": "6b397822eed0beefb2c1e91e4b62a6867b993ce7b25b64d8597605f56c0bba17",
+      "arms": {
+        "baseline": {
+          "delivered_ids": [
+            2,
+            7
+          ],
+          "delivered_tokens": 59151,
+          "per_question_tokens": {
+            "0": 8183,
+            "1": 8167,
+            "2": 8186,
+            "3": 8128,
+            "4": 8119,
+            "5": 8151,
+            "6": 8183,
+            "7": 2034
+          },
+          "attribution": {
+            "0": {
+              "result": "loss",
+              "stage": "evidence_window"
+            },
+            "1": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "2": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "3": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "4": {
+              "result": "loss",
+              "stage": "per_file_cap"
+            },
+            "5": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "6": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "7": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            }
+          }
+        },
+        "candidate": {
+          "delivered_ids": [
+            0,
+            2,
+            7
+          ],
+          "delivered_tokens": 59194,
+          "per_question_tokens": {
+            "0": 8190,
+            "1": 8189,
+            "2": 8182,
+            "3": 8159,
+            "4": 8154,
+            "5": 8161,
+            "6": 8125,
+            "7": 2034
+          },
+          "attribution": {
+            "0": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "1": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "2": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "3": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "4": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "5": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "6": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "7": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            }
+          }
+        }
+      }
+    },
+    {
+      "budget": 32768,
+      "report_sha256": "bc806244c2dee55804fc4f4539ff1e348fdd7f8fa73850e03f23b83379c57304",
+      "arms": {
+        "baseline": {
+          "delivered_ids": [
+            2,
+            7
+          ],
+          "delivered_tokens": 134980,
+          "per_question_tokens": {
+            "0": 15936,
+            "1": 15251,
+            "2": 20304,
+            "3": 20295,
+            "4": 14131,
+            "5": 20205,
+            "6": 26824,
+            "7": 2034
+          },
+          "attribution": {
+            "0": {
+              "result": "loss",
+              "stage": "evidence_window"
+            },
+            "1": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "2": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "3": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "4": {
+              "result": "loss",
+              "stage": "per_file_cap"
+            },
+            "5": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "6": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "7": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            }
+          }
+        },
+        "candidate": {
+          "delivered_ids": [
+            0,
+            2,
+            7
+          ],
+          "delivered_tokens": 209085,
+          "per_question_tokens": {
+            "0": 30900,
+            "1": 31409,
+            "2": 31993,
+            "3": 28839,
+            "4": 25644,
+            "5": 29542,
+            "6": 28724,
+            "7": 2034
+          },
+          "attribution": {
+            "0": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "1": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "2": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            },
+            "3": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "4": {
+              "result": "loss",
+              "stage": "candidate_limit"
+            },
+            "5": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "6": {
+              "reason": "expected_span_not_observed_in_bounded_candidate_window",
+              "result": "unknown"
+            },
+            "7": {
+              "boundary": "foundry_delivery",
+              "host_consumption": "unknown",
+              "result": "delivered"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "identical_source_read": {
+    "rows": [
+      {
+        "arm": "baseline",
+        "budget": 512,
+        "calls": 36,
+        "delivered_tokens": 14654,
+        "elapsed_ms": 32067,
+        "source_bytes": 52059
+      },
+      {
+        "arm": "candidate",
+        "budget": 512,
+        "calls": 27,
+        "delivered_tokens": 13705,
+        "elapsed_ms": 24819,
+        "source_bytes": 52059
+      },
+      {
+        "arm": "baseline",
+        "budget": 2048,
+        "calls": 7,
+        "delivered_tokens": 11651,
+        "elapsed_ms": 6216,
+        "source_bytes": 52059
+      },
+      {
+        "arm": "candidate",
+        "budget": 2048,
+        "calls": 6,
+        "delivered_tokens": 11540,
+        "elapsed_ms": 5224,
+        "source_bytes": 52059
+      }
+    ],
+    "scope": "public_cli_delivery_not_provider_economics",
+    "source": {
+      "end": 52059,
+      "path": "src/boundary.rs",
+      "sha256": "624ee9791a3d5250e746860dfc90218f0bcc9c0560d0c996ea1dc987b8e610b6",
+      "start": 0,
+      "workspace_id": "caa89a49c6613a1761db352d5112a96f9426b013c65c46df49259dae2095ff3f"
+    }
+  },
+  "source_read_report_sha256": "59293431c36924516ad0a10301d35eb9dc32903aeeb9c5d8f67c874b3e19e73a",
+  "local_gates": {
+    "implementation_commit": "c258026",
+    "default_toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07)\ncargo 1.97.0 (c980f4866 2026-06-30)\nclippy 0.1.97 (2d8144b788 2026-07-07)\n",
+    "msrv_toolchain": "/workspace/.context-foundry-tools/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu/bin/rustc\n/workspace/.context-foundry-tools/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu/bin/cargo\n/workspace/.context-foundry-tools/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu/bin/clippy-driver\nrustc 1.90.0 (1159e78c4 2025-09-14)\ncargo 1.90.0 (840b83a10 2025-07-30)\nclippy 0.1.90 (1159e78c47 2025-09-14)\n",
+    "gate_results": "GATE fmt exit=0\nGATE clippy exit=0\nGATE test exit=0\nGATE msrv-check exit=0\nGATE msrv-clippy exit=0\n",
+    "cargo_tests": {
+      "passed": 1171,
+      "failed": 0,
+      "ignored": 28
+    },
+    "recovery_harness": "passed separately",
+    "gateway": {
+      "passed": 54,
+      "uid": 1000
+    },
+    "no_default_features": "passed with zero warnings",
+    "logs": {
+      "lexical-check.log": "987f1da6c480b816187ea6dea916f4484f6f72d5c32c8564b3b615c701b1167e",
+      "msrv-versions.log": "cc250b5865c44041711cb5a7796974fe5f60f38b3d8d1c5fc2a0e088589cf532",
+      "gates.log": "cbb0c5169f3b54868bddcbc7db13a8d2c150e29a94daaae41fab7136d82a120f",
+      "fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "msrv-clippy.log": "1c8d310a086472e20a57d90b51ef7a09f6378a3cc4aa850691a9651fbb66304f",
+      "default-versions.log": "b5d809c65162ea93252e9d6f929b07d2a551ca36dd5cb4361f65359132bfe85a",
+      "msrv-check.log": "1f7770900d748a134dcfac30c4fd0108b8ac12c8acab9e4ea0159da8cb69bdff",
+      "test.log": "a1dc16c64cc33eb7da9a1f2e7148544b8eb325ed43233e77308037fde4fcd656",
+      "clippy.log": "a9d5641929de18198e6f53273004403fdee78df711305920dfd94d199fe86e67"
+    },
+    "raw_log_directory": "/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/full2"
+  },
+  "diagnostic_fix_verification": {
+    "source_read_test": "passed, reconstructs all 52059 source bytes in both arms at both budgets",
+    "target_clippy": "passed",
+    "log_sha256": "3315e72bfe0874af054530063b1997d64fe0634aeceb4b151976c43821947bce",
+    "full_gates_repeated": false,
+    "source_read_log_sha256": "99e97d14a62ac2fc0958c68debc640c7103aebc7b4c3a2cc29c095dc4b956447"
+  },
+  "preserved_failed_attempts": [
+    "focused: obsolete excerpt-loss assertion now delivered",
+    "focused2: three prior hard-cap assumptions updated to verify diversity, provenance and owner scope",
+    "full: exhaustive integrity test needed new Excerpt variant arm; stopped and replaced by complete full2",
+    "source-read: missing CLI --handle flag; fixed by1f0827c and rerun in source-read-fixed",
+    "real: preparation succeeded; driver cleanup assertion mistook an older defunct worker for this run. Corrected driver resumed the verified preparation, then replay and all 16 queries passed."
+  ],
+  "raw_directory": "/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16",
+  "public_inputs": {
+    "corpus_archive_sha256": "31ff389a41d92f399f1099547198088310b4163671866222493ba3438433f7c2",
+    "labels_sha256": "fe711d26bf07d906af6b59a5f9defdabb99a946d5a21ad60c7b623889f3f64f4",
+    "source_revision": 276,
+    "admitted_sources": 274,
+    "excluded_evaluator": "tests/retrieval_attribution.rs",
+    "unchanged_policy_exclusion": "src/ingest.rs"
+  },
+  "remaining_lexical_losses": {
+    "Q1": "Source excluded by unchanged private-key-marker admission policy.",
+    "Q3": "Expected document ranks 64, outside the 32-unit cutoff; another document of the same owner ranks zero.",
+    "Q4": "Expected document ranks 132, outside the 32-unit cutoff.",
+    "Q5": "Expected implementation span absent from the bounded candidate window; exact discovery cause unestablished.",
+    "Q6": "Expected implementation span absent from the bounded candidate window; exact discovery cause unestablished."
+  },
+  "real_model": {
+    "scope": "public author-visible paired file-overview diagnostic, not historical hierarchy or sealed acceptance",
+    "budget": 2048,
+    "report_sha256": "36d0118b075ac9399b9a1801e4d7815b9ea89ac8c8778740f254a811d95158e0",
+    "profile": {
+      "v": 2,
+      "name": "published-linux-gemma2-bf16-8192",
+      "model_dir": "/workspace/.context-foundry-tools/embedding-fixture",
+      "worker": {
+        "bundle": "/workspace/.context-foundry-tools/validation-runs/native-published-2026-10-16/worker",
+        "executable_sha256": "bba7f61a0dc9e0d7e4fdb2d29cb2f956531035df0de91735fa030906a59a606a",
+        "scratch_root": "/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/semantic-scratch"
+      },
+      "descriptor": {
+        "v": 2,
+        "model": "google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b via ggml-org/embeddinggemma-2-GGUF@bfcd298762cc34d0357ece5ebdd31791a3a374d8 BF16",
+        "artifact_files": [
+          {
+            "name": "embeddinggemma-2-BF16.gguf",
+            "sha256": "68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216"
+          },
+          {
+            "name": "tokenizer.json",
+            "sha256": "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4"
+          }
+        ],
+        "gguf": "embeddinggemma-2-BF16.gguf",
+        "llama_cpp": "b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea",
+        "tokenizer": "tokenizers 0.23.2 onig",
+        "add_special_tokens": true,
+        "pooling": "mean",
+        "dimensions": 768,
+        "output": "f32",
+        "adapter_revision": 5,
+        "document_template": "title: none | text: {text}",
+        "geometry": {
+          "v": 1,
+          "input_tokens": 8192,
+          "batch_tokens": 8192,
+          "sequences": 8
+        }
+      },
+      "query_template": "task: search result | query: {text}",
+      "card_tokens": 512,
+      "representation": {
+        "kind": "overview-v1"
+      },
+      "batch": 8,
+      "memory_ceiling_bytes": 8589934592,
+      "load_timeout_seconds": 120,
+      "cpu": {
+        "threads": 4,
+        "seconds": 2400
+      }
+    },
+    "profile_sha256": "184928304e03d46b1c60a49a7029bd3295396541a7ffcf1be72387810093d9c8",
+    "preparation": {
+      "applied": true,
+      "canonical_root": "/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/frozen-foundry",
+      "store": "/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/baseline/store",
+      "workspace_id": "caa89a49c6613a1761db352d5112a96f9426b013c65c46df49259dae2095ff3f",
+      "components": [
+        {
+          "component": "semantic",
+          "state": "ready",
+          "reason": null,
+          "next_action": null
+        }
+      ],
+      "complete": true,
+      "next_actions": [],
+      "versions": {
+        "core": "0.1.0",
+        "store_schema": 12,
+        "embed_protocol": 2,
+        "learn_protocol": 1,
+        "predict_protocol": 2,
+        "foundry_embed": null,
+        "foundry_learn": null
+      },
+      "semantic_preparation": {
+        "area_vectors": 0,
+        "bootstrap": {
+          "area_vectors": 0,
+          "delta_publications": 4,
+          "elapsed_ms": 298326,
+          "embedded_areas": 0,
+          "embedded_units": 274,
+          "first_searchable_ms": 27505,
+          "generation_builds": 3,
+          "input_tokens": 84927,
+          "mapping_publications": 0,
+          "partition_compute_ms": 4132,
+          "priority_waves": 0,
+          "provider_ms": 268450,
+          "publication_backoff_ms": null,
+          "publication_error": null,
+          "publication_ms": 198,
+          "publication_retries": 0,
+          "published_entries": 274,
+          "render_ms": 0,
+          "reused_cached_units": 0,
+          "selected_sources": 274,
+          "waves": 35
+        },
+        "budget_seconds": 600,
+        "cache_bytes": 860360,
+        "cache_cap_bytes": 2147483648,
+        "cache_entries": 274,
+        "corrupt_cache_rows": 0,
+        "coverage": {
+          "cached_current_units": 274,
+          "eligible_units": 274,
+          "function_digest": "711c873580040a6727f1c643fa646755df2e1cbb543fc0df32b6d3516a3269db",
+          "index_entries": 274,
+          "recipe_id": "overview-v1+overview3+kinds1+units5:512+tokenizers 0.23.2 onig",
+          "searchable_current_units": 274,
+          "source_revision": 276,
+          "sources": 274,
+          "unpartitioned_sources": 0,
+          "version": 1
+        },
+        "dimensions": 768,
+        "document_calls": 35,
+        "elapsed_ms": 298326,
+        "eligible_units": 274,
+        "embedded_areas": 0,
+        "embedded_units": 274,
+        "function_digest": "711c873580040a6727f1c643fa646755df2e1cbb543fc0df32b6d3516a3269db",
+        "index_entries": 274,
+        "index_published": true,
+        "index_reason": null,
+        "input_tokens": 84927,
+        "missing_units": 0,
+        "partial": false,
+        "partitioned_sources": 274,
+        "profile": "published-linux-gemma2-bf16-8192",
+        "provider_code": null,
+        "provider_state": "ready",
+        "publication_reserve_seconds": 60,
+        "reason_code": null,
+        "recipe_id": "overview-v1+overview3+kinds1+units5:512+tokenizers 0.23.2 onig",
+        "reused_cached_units": 0,
+        "reused_partitions": 0,
+        "sources": 274,
+        "state": "stopped"
+      }
+    },
+    "replay": {
+      "applied": true,
+      "canonical_root": "/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/frozen-foundry",
+      "store": "/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/baseline/store",
+      "workspace_id": "caa89a49c6613a1761db352d5112a96f9426b013c65c46df49259dae2095ff3f",
+      "components": [
+        {
+          "component": "semantic",
+          "state": "ready",
+          "reason": null,
+          "next_action": null
+        }
+      ],
+      "complete": true,
+      "next_actions": [],
+      "versions": {
+        "core": "0.1.0",
+        "store_schema": 12,
+        "embed_protocol": 2,
+        "learn_protocol": 1,
+        "predict_protocol": 2,
+        "foundry_embed": null,
+        "foundry_learn": null
+      },
+      "semantic_preparation": {
+        "area_vectors": 0,
+        "bootstrap": {
+          "area_vectors": 0,
+          "delta_publications": 0,
+          "elapsed_ms": 4557,
+          "embedded_areas": 0,
+          "embedded_units": 0,
+          "first_searchable_ms": 4388,
+          "generation_builds": 0,
+          "input_tokens": 0,
+          "mapping_publications": 0,
+          "partition_compute_ms": 0,
+          "priority_waves": 0,
+          "provider_ms": 0,
+          "publication_backoff_ms": null,
+          "publication_error": null,
+          "publication_ms": 25,
+          "publication_retries": 0,
+          "published_entries": 274,
+          "render_ms": 0,
+          "reused_cached_units": 274,
+          "selected_sources": 274,
+          "waves": 3
+        },
+        "budget_seconds": 600,
+        "cache_bytes": 860360,
+        "cache_cap_bytes": 2147483648,
+        "cache_entries": 274,
+        "corrupt_cache_rows": 0,
+        "coverage": {
+          "cached_current_units": 274,
+          "eligible_units": 274,
+          "function_digest": "711c873580040a6727f1c643fa646755df2e1cbb543fc0df32b6d3516a3269db",
+          "index_entries": 274,
+          "recipe_id": "overview-v1+overview3+kinds1+units5:512+tokenizers 0.23.2 onig",
+          "searchable_current_units": 274,
+          "source_revision": 276,
+          "sources": 274,
+          "unpartitioned_sources": 0,
+          "version": 1
+        },
+        "dimensions": 768,
+        "document_calls": 0,
+        "elapsed_ms": 4557,
+        "eligible_units": 274,
+        "embedded_areas": 0,
+        "embedded_units": 0,
+        "function_digest": "711c873580040a6727f1c643fa646755df2e1cbb543fc0df32b6d3516a3269db",
+        "index_entries": 274,
+        "index_published": true,
+        "index_reason": null,
+        "input_tokens": 0,
+        "missing_units": 0,
+        "partial": false,
+        "partitioned_sources": 0,
+        "profile": "published-linux-gemma2-bf16-8192",
+        "provider_code": null,
+        "provider_state": null,
+        "publication_reserve_seconds": 60,
+        "reason_code": null,
+        "recipe_id": "overview-v1+overview3+kinds1+units5:512+tokenizers 0.23.2 onig",
+        "reused_cached_units": 274,
+        "reused_partitions": 274,
+        "sources": 274,
+        "state": "stopped"
+      }
+    },
+    "arms": {
+      "baseline": {
+        "delivered_ids": [
+          2,
+          7
+        ],
+        "delivered_tokens": 16104,
+        "query_wall_ms": 184404
+      },
+      "candidate": {
+        "delivered_ids": [
+          0,
+          2,
+          7
+        ],
+        "delivered_tokens": 16289,
+        "query_wall_ms": 187064
+      }
+    },
+    "rows": [
+      {
+        "name": "real-baseline-0",
+        "exit": 0,
+        "elapsed_ms": 25604,
+        "stdout_sha256": "8b98a59cf2ddc3f6c670399524dc4d47557f62baa6eed6599bee860eaa4de5d5",
+        "stderr_sha256": "b57d7abe61cc99e456aa217f8ba7c44bdfe88a39dedd815d976b153f4c8de057",
+        "id": 0,
+        "arm": "baseline",
+        "delivered": false,
+        "bytes": 8742,
+        "tokens": 2043,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-candidate-0",
+        "exit": 0,
+        "elapsed_ms": 26304,
+        "stdout_sha256": "50c9af2653dc613c45871b3a959a3169148be6fe650e3192d399496f416abc16",
+        "stderr_sha256": "f298c4b1d8f5ed46091f5fbad16e8204ec393135e2551a5d225b8469bed2b7fd",
+        "id": 0,
+        "arm": "candidate",
+        "delivered": true,
+        "bytes": 8928,
+        "tokens": 2048,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-baseline-1",
+        "exit": 0,
+        "elapsed_ms": 26254,
+        "stdout_sha256": "c35a60618520aaf6eb8738fd812ea220bf4e449861c38f6becea5e1dcf14b5f8",
+        "stderr_sha256": "04ce8fca0b89c21396871cea5ebc2cb0881801c6a40de55c7ed514da86114063",
+        "id": 1,
+        "arm": "baseline",
+        "delivered": false,
+        "bytes": 7897,
+        "tokens": 1909,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-candidate-1",
+        "exit": 0,
+        "elapsed_ms": 27710,
+        "stdout_sha256": "8915a6dcc49e24129af45bca9e42a90ff98c1ba903bbf410032bcdf00cbfb683",
+        "stderr_sha256": "dd2de83249489e9b336b5663138dc6a2817b2ab5b0bbee64266f1e337967b2d8",
+        "id": 1,
+        "arm": "candidate",
+        "delivered": false,
+        "bytes": 8361,
+        "tokens": 2044,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-baseline-2",
+        "exit": 0,
+        "elapsed_ms": 26054,
+        "stdout_sha256": "8628fc6ed7a03c07a95f7da2aba3ec4642dd55dccb4bd5816f5116f8ceba761b",
+        "stderr_sha256": "a1408fd8ab692e9a417a84f62c079c71e1fc14ea6fafc44ea1fd697b6d950349",
+        "id": 2,
+        "arm": "baseline",
+        "delivered": true,
+        "bytes": 8664,
+        "tokens": 2030,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-candidate-2",
+        "exit": 0,
+        "elapsed_ms": 26316,
+        "stdout_sha256": "a7fce794b4a24a657089248abfa69dc10a7d76d41fba3f66a48fda1faac8d3a7",
+        "stderr_sha256": "48f9d075b1a83a78fad4777e0c612375a8ce3b7e93290a11f6aded1530bdd6fc",
+        "id": 2,
+        "arm": "candidate",
+        "delivered": true,
+        "bytes": 9523,
+        "tokens": 2030,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-baseline-3",
+        "exit": 0,
+        "elapsed_ms": 26068,
+        "stdout_sha256": "0874b781d5c82bdd40fea2d4dd7e61781d8ac2b3aaa8f747621c34e0457753d5",
+        "stderr_sha256": "dcb8cc7a1588ccc770d54a82eeb11d7415f01449f31614d7d23daabd2507a850",
+        "id": 3,
+        "arm": "baseline",
+        "delivered": false,
+        "bytes": 7631,
+        "tokens": 1981,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-candidate-3",
+        "exit": 0,
+        "elapsed_ms": 26741,
+        "stdout_sha256": "63694af0ddd0a02f8e5623f1823cec1735ddcb9c30d422d5797971310283e896",
+        "stderr_sha256": "49e372da8ea6feb0e9321fa3fd39e64eb2ae517010632758988045288adf4f3b",
+        "id": 3,
+        "arm": "candidate",
+        "delivered": false,
+        "bytes": 8823,
+        "tokens": 2020,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-baseline-4",
+        "exit": 0,
+        "elapsed_ms": 25222,
+        "stdout_sha256": "6a736abcdec4b5e09205160ce51d117e9fe1c7e1f06ee64677945c73ae79f9f3",
+        "stderr_sha256": "9c8052a0a02b4468e0fb28b3b014ca64334b986440c1f85cf9f60f6d00e11da4",
+        "id": 4,
+        "arm": "baseline",
+        "delivered": false,
+        "bytes": 7771,
+        "tokens": 2043,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-candidate-4",
+        "exit": 0,
+        "elapsed_ms": 25945,
+        "stdout_sha256": "b34347db8b2739341f64750659b5406384258a6bd7499e67e783372c948e685a",
+        "stderr_sha256": "8408cb5a9acf94775962b7e0e45ca8d6a3bc71969e84947f6ed4d9c674040c0a",
+        "id": 4,
+        "arm": "candidate",
+        "delivered": false,
+        "bytes": 8853,
+        "tokens": 2045,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-baseline-5",
+        "exit": 0,
+        "elapsed_ms": 26618,
+        "stdout_sha256": "07f4205455197b77ab073f23335993831271d83057d0a27efa1f022908f78443",
+        "stderr_sha256": "c7d048101194ac26b1fb54b2d212e7313a5c719807117b33aa030012788de7cc",
+        "id": 5,
+        "arm": "baseline",
+        "delivered": false,
+        "bytes": 8073,
+        "tokens": 2018,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-candidate-5",
+        "exit": 0,
+        "elapsed_ms": 25732,
+        "stdout_sha256": "31bea17c14a91ccafacb51c453a6939f69595a654f642e4e7e314ffab7a40a77",
+        "stderr_sha256": "26883b4ef87dc59c85f963650870f1ac109857fb3cf82d622aa40a6f30db32b8",
+        "id": 5,
+        "arm": "candidate",
+        "delivered": false,
+        "bytes": 8203,
+        "tokens": 2027,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-baseline-6",
+        "exit": 0,
+        "elapsed_ms": 25941,
+        "stdout_sha256": "563304d554b69cd106cf589d92134fd5120a4ba6a260923f1f8d1e199f78a7c8",
+        "stderr_sha256": "e8b336a66883c8ad7cc9cbaa47c8f0846e66a1fb8f78ff0e3cd9661d5e56789e",
+        "id": 6,
+        "arm": "baseline",
+        "delivered": false,
+        "bytes": 8018,
+        "tokens": 2046,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-candidate-6",
+        "exit": 0,
+        "elapsed_ms": 25936,
+        "stdout_sha256": "e258a99b2e316d162db4a0e1831d43ef2a3ea0d6f2393a6e98932669e5170f8a",
+        "stderr_sha256": "28cf5e6e7b7f194e447950a14c8e0f080e7aaaeeca984569c9c1da0afb9cc048",
+        "id": 6,
+        "arm": "candidate",
+        "delivered": false,
+        "bytes": 8611,
+        "tokens": 2041,
+        "semantic_decisions": [
+          {
+            "complete_at": 276,
+            "hits": 64,
+            "state": "dense"
+          }
+        ]
+      },
+      {
+        "name": "real-baseline-7",
+        "exit": 0,
+        "elapsed_ms": 2643,
+        "stdout_sha256": "888f36e11977be23697d366205a0b448d8f5d8a4b588766e43648ca650f858bb",
+        "stderr_sha256": "ea6937a4b4f3ef724315efbd7bcba3150b9d8fe2737aee8678a046e34e07e032",
+        "id": 7,
+        "arm": "baseline",
+        "delivered": true,
+        "bytes": 10496,
+        "tokens": 2034,
+        "semantic_decisions": [
+          {
+            "state": "off"
+          }
+        ]
+      },
+      {
+        "name": "real-candidate-7",
+        "exit": 0,
+        "elapsed_ms": 2380,
+        "stdout_sha256": "888f36e11977be23697d366205a0b448d8f5d8a4b588766e43648ca650f858bb",
+        "stderr_sha256": "ea6937a4b4f3ef724315efbd7bcba3150b9d8fe2737aee8678a046e34e07e032",
+        "id": 7,
+        "arm": "candidate",
+        "delivered": true,
+        "bytes": 10496,
+        "tokens": 2034,
+        "semantic_decisions": [
+          {
+            "state": "off"
+          }
+        ]
+      }
+    ],
+    "preparation_wall_ms": 298563,
+    "replay_wall_ms": 4777,
+    "completion_receipt": {
+      "timeout_pid": 174258,
+      "process_state": "Z",
+      "wait_status": 0,
+      "wrapper_exit_receipt": "absent",
+      "driver_completion": "real-report.json and final RESULT line both present",
+      "boot_id_matches_start": true
+    },
+    "initial_driver_exit": 1,
+    "initial_driver_failure": "Preparation completed, but the initial driver included unrelated pre-existing defunct workers in its cleanup check. Corrected check compares PID sets before and after. Resume verified and reused the successful preparation receipt without repeated inference.",
+    "boot_id": "c7cc75f4-59fa-426b-b989-04d66d7234da",
+    "logs": {
+      "real.py": "9c3d0fd8f2a83c09712a526e2522910cc63c86ec7991c0d775a3aa5aecadf806",
+      "real.sh": "19b0dfb53fa9c5a46c163b466ece8043bbafffd6d5179915dec927e49a6bf72f",
+      "real.log": "2276e7b1ab1076d260b4bb23d2b69f21df544218eda8fb523514423dcde81e40",
+      "real-resume.sh": "7d8b5d8864cb9417748f3371b00eda13f2c65294f677ce325ce8150e9eff0233",
+      "real-resume.log": "c2715d708a1300ccfd6881c8cabee7183370a9b54b3531562486db8d94a9f0ab",
+      "real-commands.json": "2bff7796eec1d1310a5c6d30a1e2793c17dd7e5d8246763cfecbdc23c833a2cf",
+      "overview-prepare.doctor": "ffadd7cb68e54d7959a1ed3c374eb40ba93073fdfe0e3863a08b379b1fe5d9ea",
+      "overview-prepare.stdout": "2349dba35867bac84342e6791094ddd44d7980454f3d6b06f0c35a8dc6ead95d",
+      "overview-replay.stdout": "64ca4c1e48508da59aeed7806535bc78f89bc6a7b4f42510c4d8596534b6b7fd",
+      "count_tokens.rs": "a74b434ed394e2db2a386e29fa0b35f0e5c4ce3890590939b33bcc45ccf03a95",
+      "real-resume-timeout.proc-stat": "6dc7c6ccb1d26abbc08d0dcf6d26932cd55df7e272ef27cee8b6fc9a9e6a8ffe",
+      "real-resume-observed-exit.json": "b2f80085145b40718139af975d125db8d979c7fe5e8aa2bd029868187914e970"
+    },
+    "timing_limit": "One baseline-first paired pass; OS cache state is not randomized. No latency-benefit claim."
+  }
+}
