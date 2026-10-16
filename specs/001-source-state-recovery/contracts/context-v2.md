@@ -585,7 +585,14 @@ Cause: many definitions named ordinary words such as `read` can occupy all 32 co
 slots ahead of a body matching the complete behavioral query. The candidate removes
 common English stop words from the prose query clauses and divides the existing
 256-document window into two disjoint 128-document windows: programming units and
-sections/blocks/unparsed text. Their ranked results alternate, code first. Each
+sections/blocks/unparsed text. Before the two lanes alternate, each code hit may
+bring forward the next disjoint matching document of its same long callable
+(`fn`/`method`, over 1,536 bytes) from that bounded window. The association requires
+the same path, hash, owner start/head/end and kind; names alone never join owners.
+Every candidate remains present once, and final selection still admits at most two
+documents per owner. This prevents a discovered function's later matching passage
+from being cut independently below unrelated owners. The ranked lanes then
+alternate, code first. Each
 window uses distinct non-stopword subtoken coverage (at most 64 terms). Adjacent
 query terms within 16 indexed positions add a combined bonus below half a term;
 repetition, identifier frequency and rare single terms cannot outweigh an additional
@@ -624,7 +631,11 @@ search keep their existing behavior. All independently scored body ranges remain
 unchanged. Bounded `placement_policy` traces name `body_prose_interleave_v1` for
 hierarchy/body and report coverage separately; `lexical_intent` remains available.
 This reserves no extra candidates or output tokens, and does not guarantee delivery
-of every lexical hit. No expected-answer labels enter selection. It changes no source
+of every lexical hit. After semantic interleaving, repeat the same exact-owner
+grouping for lexical documents before placement caps and the global cut; dense
+locations keep their relative order and are never joined as lexical companions.
+This prevents interleaving from separating the two matching parts of a callable
+again before packing. No expected-answer labels enter selection. It changes no source
 index, vector recipe or cache identity. Development regressions and public repository
 comparisons do not establish held-out G2 acceptance.
 

@@ -1,5 +1,18 @@
 # 009 — Neural context that becomes useful and stays prepared
 
+Owner-passage preservation, 2026-10-16: experimental prose selection keeps the
+next disjoint matching lexical document of an already discovered long callable
+beside its first document. The lexical code lane does this before its global cut;
+semantic placement repeats the grouping after interleaving and before its own
+cut. Otherwise dense interleaving can undo lexical preservation and spend the
+delivery budget between two parts of one implementation. The association requires
+the same path, source hash, owner start/head/end and callable kind. Dense locations
+are never treated as matching lexical documents; their relative order and exact
+source ranges remain intact. No candidate, source, embedding or output budget is
+added. The `lexical_owner_grouping` and `semantic_owner_grouping` trace stages name
+`two_matching_documents_per_callable_v1`. Default and anchored selection are
+unchanged; remaining candidate discovery and relevance failures stay open.
+
 Opt-in Linux CPU efficiency variant, 2026-10-11: the explicit
 `embed-worker-avx512-bf16` build uses fixed AVX-512/BF16 flags on Linux x86_64,
 with runtime capability refusal before native initialization. Ordinary workers

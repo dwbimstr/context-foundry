@@ -5,6 +5,161 @@
 //! module.
 use super::*;
 
+/// Discover callable owners first, then keep their next matching passage nearby.
+/// Both passages must already be in the bounded lexical window. The later
+/// selection still owns deduplication, freshness, per-file and output limits.
+fn group_callable_passages(
+    candidates: Vec<Candidate>,
+    control: &crate::Control,
+) -> FResult<Vec<Candidate>> {
+    let order = callable_passage_order(
+        &candidates.iter().map(Some).collect::<Vec<_>>(),
+        control,
+        "lexical_owner_grouping",
+    )?;
+    let mut pending: Vec<_> = candidates.into_iter().map(Some).collect();
+    Ok(order
+        .into_iter()
+        .map(|index| pending[index].take().expect("unique index"))
+        .collect())
+}
+
+/// Keep owner companions together even when another retrieval lane has been
+/// interleaved. None entries (dense hits) retain their relative order and are
+/// never promoted as if they were matching lexical documents.
+pub(super) fn callable_passage_order(
+    candidates: &[Option<&Candidate>],
+    control: &crate::Control,
+    stage: &str,
+) -> FResult<Vec<usize>> {
+    let mut used = vec![false; candidates.len()];
+    let mut ordered = Vec::with_capacity(candidates.len());
+    let mut paired = 0;
+    for index in 0..candidates.len() {
+        control.check()?;
+        if used[index] {
+            continue;
+        }
+        used[index] = true;
+        ordered.push(index);
+        let Some(seed) = candidates[index] else {
+            continue;
+        };
+        if !matches!(seed.kind.as_str(), "fn" | "method")
+            || seed.unit_end.saturating_sub(seed.unit_start) <= 1536
+        {
+            continue;
+        }
+        let companion = (index + 1..candidates.len()).find(|&next| {
+            !used[next]
+                && candidates[next].is_some_and(|next| {
+                    next.path == seed.path
+                        && next.hash == seed.hash
+                        && next.unit_start == seed.unit_start
+                        && next.unit_end == seed.unit_end
+                        && next.unit_head == seed.unit_head
+                        && next.kind == seed.kind
+                        && (next.start >= seed.end || next.end <= seed.start)
+                })
+        });
+        if let Some(next) = companion {
+            used[next] = true;
+            ordered.push(next);
+            paired += 1;
+        }
+    }
+    if let Some(trace) = control.trace() {
+        trace.record(serde_json::json!({"stage":stage,
+            "policy":"two_matching_documents_per_callable_v1",
+            "candidates":ordered.len(), "paired":paired}));
+    }
+    Ok(ordered)
+}
+
+#[cfg(test)]
+mod owner_tests {
+    use super::*;
+
+    #[test]
+    fn grouping_requires_exact_disjoint_callable_ownership_and_preserves_membership() {
+        let seed = Candidate {
+            tier: 2,
+            score: 0.0,
+            path: "a.rs".into(),
+            hash: "a".repeat(64),
+            start: 0,
+            end: 100,
+            unit_start: 0,
+            unit_head: 0,
+            unit_end: 10000,
+            kind: "fn".into(),
+            lang: Some("rust".into()),
+            qname: Some("same_name".into()),
+            resolver: None,
+        };
+        let mut candidates = vec![seed.clone()];
+        for id in 1..=7 {
+            let mut candidate = seed.clone();
+            candidate.score = id as f32;
+            candidate.start = 100;
+            candidate.end = 200;
+            match id {
+                1 => candidate.hash = "b".repeat(64),
+                2 => candidate.path = "b.rs".into(),
+                3 => candidate.unit_end = 11000,
+                4 => candidate.unit_head = 1,
+                5 => candidate.kind = "struct".into(),
+                6 => candidate.start = 50,
+                7 => {}
+                _ => unreachable!(),
+            }
+            candidates.push(candidate);
+        }
+        let out =
+            group_callable_passages(candidates.clone(), &crate::Control::unbounded()).unwrap();
+        assert_eq!(
+            out.iter().map(|c| c.score as u32).collect::<Vec<_>>(),
+            [0, 7, 1, 2, 3, 4, 5, 6]
+        );
+        assert_eq!(
+            callable_passage_order(
+                &[
+                    None,
+                    Some(&candidates[0]),
+                    None,
+                    Some(&candidates[1]),
+                    None,
+                    Some(&candidates[7])
+                ],
+                &crate::Control::unbounded(),
+                "test"
+            )
+            .unwrap(),
+            [0, 1, 5, 2, 3, 4]
+        );
+        assert!(group_callable_passages(candidates, &crate::Control::cancelled()).is_err());
+        for kind in ["struct", "fn"] {
+            let mut short = seed.clone();
+            short.kind = kind.into();
+            short.unit_end = 1000;
+            let mut other = short.clone();
+            other.score = 1.0;
+            other.path = "elsewhere.rs".into();
+            let mut sibling = short.clone();
+            sibling.score = 2.0;
+            sibling.start = 100;
+            sibling.end = 200;
+            let out =
+                group_callable_passages(vec![short, other, sibling], &crate::Control::unbounded())
+                    .unwrap();
+            assert_eq!(
+                out.iter().map(|c| c.score as u32).collect::<Vec<_>>(),
+                [0, 1, 2]
+            );
+        }
+    }
+}
+
 /// One scored definition of an anchor (context-v2 § Resolver order).
 #[derive(Clone, Copy, Debug)]
 struct Scored {
@@ -933,7 +1088,7 @@ impl Engine {
                 .into_iter()
                 .partition(|c| !["section", "block", UNPARSED_KIND].contains(&c.kind.as_str()));
             second = Vec::with_capacity(code.len() + prose.len());
-            let mut code = code.into_iter();
+            let mut code = group_callable_passages(code, control)?.into_iter();
             let mut prose = prose.into_iter();
             loop {
                 let (a, b) = (code.next(), prose.next());

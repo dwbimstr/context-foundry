@@ -633,6 +633,72 @@ fn prose_context_keeps_distinct_matches_inside_one_long_function() {
 }
 
 #[test]
+fn prose_keeps_a_discovered_callable_passage_ahead_of_unrelated_owners() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    let body = format!(
+        "pub fn inspect() {{\n    validate_certificate_signature_credential();\n{}    reject_revoked_certificate();\n}}\n",
+        "    ordinary_step();\n".repeat(450),
+    );
+    engine.replace_source("z_certificate.rs", &body).unwrap();
+    for n in 0..40 {
+        engine
+            .replace_source(
+                &format!("a_{n:02}.rs"),
+                "pub fn competing() { validate_signature_credential(); }\n",
+            )
+            .unwrap();
+    }
+    engine.refresh(&Control::unbounded()).unwrap();
+    let options = ContextOptions {
+        experimental_behavior: true,
+        ..Default::default()
+    };
+    let query = "validate certificate signature reject revoked credential";
+    let candidates = engine
+        .context_candidates_with(query, Strategy::Search, &Control::unbounded(), &options)
+        .unwrap();
+    assert!(
+        candidates
+            .batch
+            .items
+            .iter()
+            .filter(|item| item.tier == 2)
+            .count()
+            <= 32
+    );
+    let selected: Vec<_> = candidates
+        .batch
+        .items
+        .iter()
+        .filter(|item| item.label == "excerpt fn inspect")
+        .collect();
+    assert_eq!(selected.len(), 2);
+    let late = body.find("reject_revoked_certificate").unwrap() as u64;
+    assert!(selected.iter().any(|item| {
+        let span = item.handle.as_ref().unwrap();
+        span.start <= late && late < span.end
+    }));
+    assert_eq!(selected[0].rank, 0);
+    assert_eq!(selected[1].rank, 1);
+    // Source ownership cannot turn old postings into evidence for a new revision.
+    engine
+        .replace_source("z_certificate.rs", "pub fn replacement() {}\n")
+        .unwrap();
+    let changed = engine
+        .context_candidates_with(query, Strategy::Search, &Control::unbounded(), &options)
+        .unwrap();
+    assert!(changed.batch.items.iter().all(|item| {
+        item.handle
+            .as_ref()
+            .is_none_or(|span| span.path != "z_certificate.rs")
+    }));
+}
+
+#[test]
 fn prose_matching_long_callable_docs_delivers_the_declaration_and_implementation() {
     use context_foundry::store::{ContextOptions, RenderedForm};
     let dir = tempfile::tempdir().unwrap();
