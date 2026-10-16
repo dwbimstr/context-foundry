@@ -1,5 +1,16 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
+**Latest continuation, 2026-10-16:** the published Codex sandbox passes the portable
+Linux setup checks. The owner selected the existing managed agent runtime as the
+coding host; Foundry stays local and is callable through its CLI. A public seeded
+repair passes the external checker in both baseline and Foundry arms, but provider
+tokens/billing are unavailable and no economic benefit is established. OMP and a
+separate Codex CLI login are not prerequisites for this managed path. Read the
+[current receipt](validation.md#managed-host-and-gateway-continuation--2026-10-16)
+before the historical checkpoint below. Work remains on
+`experimental/context-ecosystem`; the parked items in [FOLLOWUP](../FOLLOWUP.md)
+and the native macOS/GPU gap remain. Do not fetch the private resume archive.
+
 The owner requested a pause, a portable handoff and continuation in a new context.
 **This is a checkpoint, not completion of the six acceptance gates.** No new model
 experiment was started after that request. Start here, then read `AGENTS.md`, the

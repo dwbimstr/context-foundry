@@ -1,5 +1,127 @@
 # Validation
 
+## Managed host and gateway continuation — 2026-10-16
+
+The owner's selected host is the **existing managed Codex agent runtime**. It can
+call the local Foundry CLI without OMP, a generation-model download, another CLI
+login or a working Z.ai subscription. This session's managed-agent tools expose no
+per-agent provider usage or billing records; task execution can be checked, but
+tool-output bytes cannot establish token or dollar savings.
+
+Two fresh managed agents, both requested as `gpt-6.1-sol` with `xhigh` reasoning and
+no inherited conversation, repaired identical seeded copies of the published
+`percent-encoding` 2.3.2 crate. This is one public, author-visible calibration with
+a named helper, not a held-out or representative task evaluation. The existing
+source hashes and `PERCENT_ASSERTIONS` in
+[`tests/gateway/host_task.rs`](../tests/gateway/host_task.rs) define the inputs and
+external checker. The original source passes; the preserved pre-edit logs reject
+the seeded bug at `%A`. Both final repairs pass the same external checker,
+including malformed escapes, all 256 byte values in both hex cases, UTF-8,
+borrowing and compilation with and without allocation support. Only the permitted
+`src/lib.rs` changed. The baseline also added one visible test within that file.
+
+The candidate actually used lexical `foundry context after_percent_sign --tokens
+2048` against its admitted copy. It received the faulty helper's complete body,
+then read surrounding source to check callers. Its initial composed-context
+instruction omitted required task metadata; the resulting errors and fallback
+remain in the totals. No semantic inference or native MCP attachment was exercised.
+
+| Recorded boundary | Baseline | Foundry |
+| --- | ---: | ---: |
+| External correctness and protected files | pass | pass |
+| Captured commands | 5 | 10 |
+| Subprocess stdout + stderr | 12,545 bytes | 11,993 bytes |
+| Capture-wrapper output, including receipt footers | 12,961 bytes | 12,834 bytes |
+| Sum of subprocess durations | 209 ms | 957 ms |
+| Separate lexical bootstrap | none | 175 ms |
+| Provider input/output/cache tokens and charges | unknown | unknown |
+
+The roughly 1% wrapper-byte difference establishes **no economic benefit**. These
+counts exclude platform envelopes, prompts, agent reasoning/output and operator
+preparation/verification; subprocess durations are not whole-task latency. Four
+candidate commands returned nonzero: two invalid context invocations, a Git query
+in the non-Git fixture, and an AGENTS search with no matches. No output was truncated.
+The first baseline attempt is retained as invalid for comparison: its wrapper
+replaced PATH, hid installed `rg`, and failed to record that command. Its provider
+cost remains unknown. The corrected pair did not reuse that agent's conversation.
+Model selection is recorded configuration, not provider attestation; complete host
+prompts and platform transcripts were not frozen. These are integration observations,
+not a sealed economics experiment or acceptance of T006/F2/F3.
+
+The committed [counter record](review/managed-host-calibration-2026-10-16.json)
+retains the metrics and artifact identities. Raw captures, hashes, oracle commands,
+repairs and control copies remain under
+`/workspace/.context-foundry-tools/validation-runs/managed-host-2026-10-16-v2/`;
+the invalid first attempt remains in `managed-host-2026-10-16/`. To repeat the
+calibration, use the public crate hashes, seed and external assertions in the
+existing host-task test, give identical tasks to fresh managed agents, and keep
+the checker outside their instructed workspaces. Use basic lexical context unless
+an explicit task/revision has been created. Record all errors and wrapper output;
+the instructions are not an enforced filesystem jail. Provider-accounted economic
+acceptance still requires host-supplied usage and all preparation/failed-attempt costs.
+
+`c4c095f` separately fixes the existing Z.ai gateway: it accepts the two exact
+Coding Plan/standard API bases, supports the published `credential_env` binding
+without a key file, and honors configured proxy/CA settings only in the gateway
+child. Loopback health bypasses proxies; the coding host receives neither upstream
+credentials nor transport settings. Reserved environment names refuse. Ready
+metadata identifies the configured billing route; missing usage/charges stay unknown.
+
+Local focused checks passed **315 tests** (261 library and 54 gateway), with four
+ignored entries, including the subprocess-only fixture. Actual gateway/launcher
+binaries exercise proxy routing, HTTPS CONNECT failure without direct fallback,
+NO_PROXY, environment credentials, host credential exclusion and cleanup. These
+are local provider fixtures. The first focused run failed because the new test
+supplied a nonexistent CA bundle; correcting that fixture to use actual configured
+trust made it pass without weakening TLS verification.
+
+The live Coding Plan probe returned HTTP 400/code 1210 when thinking was disabled;
+with `reasoning_effort: low`, it returned HTTP 429/code 1113, "Insufficient balance
+or no resource package." Neither returned usage. Standard-API entitlement and
+successful live generation are unverified. Separately, installed Codex CLI
+`0.159.0-alpha.3` failed its smoke request with stale OAuth credentials. Neither
+failure blocks the working managed runtime, and neither is counted as free usage.
+
+Full local gates for `c4c095f` passed through `bash scripts/cloud/gates.sh OUTDIR`:
+`GATE fmt exit=0`, `GATE clippy exit=0`, `GATE test exit=0`,
+`GATE msrv-check exit=0`, `GATE msrv-clippy exit=0`. The actual default toolchain
+was Rust 1.97.0; MSRV checks used actual Rust 1.90.0. Cargo reported **1,161 passed,
+zero failed, 27 ignored**, and the separate recovery harness passed. All 54 enabled
+gateway tests passed under uid 1000, including the permission-sensitive cases; no
+root workaround was needed. The additional Rust 1.97.0
+`cargo check --locked --no-default-features --lib` passed with zero warnings.
+
+The detached gates ran from 18:39:58 to 18:46:59 UTC, with a 2,400-second timeout
+and a 2 GiB free-disk stop guard. Every individual gate status was checked, boot
+IDs match and no pause/restart was observed. The lexical check followed serially.
+The doctor passed with the local activation, `avx512_bf16` present and no FAIL
+lines. About 26 GiB remained free after the gates. No setup reinstall or new model
+download was needed. Receipts are under
+`/workspace/.context-foundry-tools/validation-runs/zai-integration-2026-10-16/`:
+
+| Log | SHA-256 |
+| --- | --- |
+| `doctor.log` | `ffadd7cb68e54d7959a1ed3c374eb40ba93073fdfe0e3863a08b379b1fe5d9ea` |
+| `focused.log` (invalid CA fixture) | `e2b74984f42fa5bb2e1707afa1b0bbbc300447b5312488ef363a0b9ad81486bd` |
+| `focused-v2.log` | `86438472fe201b32c7119579e628d8a16fa324a91761ba7f18848f3253c9d860` |
+| `coding-probe-result.json` | `966d7ed7b2bdc7c637f2545df03400827c4f50698ea33847f12a9238de12606a` |
+| `coding-probe-low-result.json` | `c6bf69bf2c0bdede3436bb79f8848d9cbf911177d3c1f613ff49457f69f1e256` |
+| `full/gates.log` | `cbb0c5169f3b54868bddcbc7db13a8d2c150e29a94daaae41fab7136d82a120f` |
+| `full/env.txt` | `56802d37a494690521946c3d18829bfe730abe137c974e14f6bd3210912c3ab0` |
+| `full/default-versions.log` | `b5d809c65162ea93252e9d6f929b07d2a551ca36dd5cb4361f65359132bfe85a` |
+| `full/msrv-versions.log` | `cc250b5865c44041711cb5a7796974fe5f60f38b3d8d1c5fc2a0e088589cf532` |
+| `full/fmt.log` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `full/clippy.log` | `1bf4a8a536f8987c26e11616814ee284fc525ca0114a2d85839c57808476f5a6` |
+| `full/test.log` | `08c9b22041d4fbfc1c419f616c4063032a3dba73b6a6d4ede0e7ea3df22a085f` |
+| `full/msrv-check.log` | `f1a1371c556a743024812a43afec745848b6a7e0ea9f2c3b53253d2d1c67c457` |
+| `full/msrv-clippy.log` | `f669e3f52135665e84e7a8466682e60d4099e5ffe6516ce2b0049e60be8706f5` |
+| `full/lexical-check.log` | `9b0f53e629ef2eef449ac20efc7adea6eba0c27b1458a4bc0e4b2d9060c55c46` |
+
+Frozen retrieval remains **2/8**. Full representative semantic inference, broad
+evidence acceptance and task economics remain open; parked FOLLOWUP protocols were
+not run. Native macOS/GPU acceptance is an explicit gap. No CI ran: GitHub Actions
+is unavailable (owner decision 2026-10-12).
+
 ## Portable full Linux gates — 2026-10-16
 
 `c88b83d` makes the cloud gates wrapper accept a trusted, non-secret `CF_GATE_ENV`
@@ -137,6 +259,7 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `c4c095f` | 0 | 0 | 0: 1,161 passed, 27 ignored; gateway 54 passed under uid 1000 ([receipt](#managed-host-and-gateway-continuation--2026-10-16)) | 0 | 0 |
 | `c88b83d` | 0 | 0 | 0: 1,155 passed, 26 ignored; gateway 49 passed under uid 1000 ([receipt](#portable-full-linux-gates--2026-10-16)) | 0 | 0 |
 | `7be514e` | 0 | not run | not run (94 focused tests on 1.90; [receipt](#portable-linux-setup--2026-10-16)) | not run (lexical library check: 0) | not run |
 | `d6903f7` | 0 | 101: three new lints | 101: 1,145 passed, only the 2 root-only failures | 0 | 0 |
