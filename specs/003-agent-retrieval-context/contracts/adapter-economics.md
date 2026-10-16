@@ -336,7 +336,8 @@ gateway processes have different side effects and credentials, not competing sto
 Pinned profile v1 (owner decision 2026-10-04, replacing the earlier Codex/OpenAI
 Responses target, which had no consumer): **OMP 18.6.0 on Z.ai `glm-5.3-flash`**
 over OpenAI-compatible chat completions with SSE. Upstream origin
-`https://api.z.ai/api/coding/paas/v4` (Z.ai's documented GLM Coding Plan base), path
+`https://api.z.ai/api/coding/paas/v4` (Z.ai's documented GLM Coding Plan base), or
+`https://api.z.ai/api/paas/v4` (standard token-billed API), path
 `POST /chat/completions`. OMP's catalog entry `zai.glm-5.3-flash` uses that wire,
 sends `stream: true` with `stream_options.include_usage`, and accepts a per-provider
 `baseUrl`/`apiKey` override in `models.yml`. The host runs in a dedicated OMP profile
@@ -352,12 +353,18 @@ protocol or host amends this contract for an actual consumer.
 
 Configuration v1 keys: `v:1`, `port` (0..65535, 0 for OS-assigned), `upstream`, `model`,
 `mode`, `credential_env`, `run_dir`, `log_bytes`. The pinned profile accepts only
-`upstream = "https://api.z.ai/api/coding/paas/v4"`, `model = "glm-5.3-flash"` and
+either exact upstream base above, `model = "glm-5.3-flash"` and
 `mode = "meter"`; `enforce` refuses at startup with `gateway_feature_unsupported`
 (below), and `limits` are refused. Pin the
 model's supported input/output windows in the installed protocol profile; an unknown
 model fails startup. Model IDs/env names <=256 bytes, run_dir <=4096 bytes; variable
 names match `[A-Za-z_][A-Za-z0-9_]*`. Config holds names/paths, never secret values.
+Credential names must not collide with the launcher's host, proxy, CA or local-token
+environment names. The ready record names the configured upstream and `billing_mode`
+(`coding_plan` or `standard_api`); retain the config with the run's receipts.
+This identifies the selected route, not account entitlement or a reported charge.
+Subscription token/request observations do not establish quota units or dollar
+savings. Missing monetary charges and cache usage remain unknown on either route.
 Unknown/null fields refuse; config <=64 KiB,
 log cap 64 KiB..16 MiB. Receipt-file output is opt-in: `log_bytes` is omitted when
 disabled. Bind only
@@ -395,7 +402,11 @@ restriction.
 Only `POST /v1/chat/completions` and authenticated `GET /health` are exposed initially.
 The health reply contains readiness/session/mode, never credentials. Other paths,
 methods and upgrades refuse locally; query strings cannot select an upstream. TLS
-verification stays enabled; disable redirects and ambient proxy variables. Allowlist
+verification stays enabled and redirects stay disabled. The gateway honors the
+operator's HTTP/HTTPS/ALL_PROXY and NO_PROXY variables (including lowercase forms)
+and SSL_CERT_FILE/SSL_CERT_DIR trust configuration. Proxy failure never selects a
+direct fallback. The launcher passes these only to the gateway child; its loopback
+health check bypasses proxies and OMP receives no proxy or CA environment. Allowlist
 upstream request headers required by the pinned protocol; strip all Foundry-only
 correlation/auth headers. Forward only allowlisted response headers. For a
 non-success upstream response, return a bounded gateway-owned error code and status
@@ -558,8 +569,12 @@ not promise savings merely from installing a forwarding hop.
 
 **Commands.** `src/gateway.rs` and `src/gateway_launch.rs` are unix-only.
 - `foundry gateway --config FILE` is the foreground server.
-- `foundry gateway-omp --config FILE --key-file FILE --profile NAME [--thinking low|high|max] [--body-reads] [--omp PATH] [-- OMP_ARGS]`
+- `foundry gateway-omp --config FILE [--key-file FILE] --profile NAME [--thinking low|high|max] [--body-reads] [--omp PATH] [-- OMP_ARGS]`
   is the launcher.
+  - Without `--key-file`, it reads the environment variable named by the config's
+    `credential_env`. This supports a published environment's proxy-backed secret
+    without creating a key file. An explicit key file retains its previous behavior
+    and takes precedence. Neither source is forwarded to OMP.
   - `--thinking` defaults to `max`, the catalog default. It is always passed
     explicitly, so OMP never runs `auto` and its judge side requests.
   - `--body-reads` explicitly disables OMP 18.6.0's automatic structural summaries

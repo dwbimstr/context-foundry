@@ -29,12 +29,13 @@ use serde_json::Value;
 
 use crate::{
     adapter_error::{AResult, AdapterError},
-    gateway::{MODEL_ID, TOKEN_ENV, parse_config},
+    gateway::{HOST_ENV, MODEL_ID, TOKEN_ENV, TRANSPORT_ENV, parse_config},
 };
 
 pub struct Options {
     pub config: PathBuf,
-    pub key_file: PathBuf,
+    /// Omitted uses the gateway config's credential_env, including proxy bindings.
+    pub key_file: Option<PathBuf>,
     pub profile: String,
     /// `low|high|max`; explicit so OMP never runs `auto` judge side requests.
     pub thinking: String,
@@ -527,12 +528,25 @@ pub fn run(options: &Options) -> AResult<i32> {
             "the OMP profile already exists; refusing to overwrite it",
         ));
     }
-    let key = read_key_file(&options.key_file)?;
     let mut config_bytes = Vec::new();
     std::fs::File::open(&options.config)
         .and_then(|file| file.take(64 * 1024 + 1).read_to_end(&mut config_bytes))
         .map_err(|e| invalid(&format!("cannot read the gateway config: {e}")))?;
     let config = parse_config(&config_bytes)?;
+    let key = match &options.key_file {
+        Some(path) => read_key_file(path)?,
+        None => std::env::var(&config.credential_env)
+            .ok()
+            .filter(|key| {
+                !key.trim().is_empty() && key.len() <= 64 * 1024 && !key.contains(['\r', '\n'])
+            })
+            .ok_or_else(|| {
+                AdapterError::named(
+                    "gateway_credential_missing",
+                    "the configured credential environment variable is absent or invalid",
+                )
+            })?,
+    };
 
     let mut guard = LaunchGuard {
         gateway: None,
@@ -552,6 +566,7 @@ pub fn run(options: &Options) -> AResult<i32> {
         .arg(&options.config)
         .env_clear()
         .envs(env_allowlist(&["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"]))
+        .envs(env_allowlist(TRANSPORT_ENV))
         .env(&config.credential_env, &key)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -700,18 +715,7 @@ pub fn run(options: &Options) -> AResult<i32> {
     }
     omp.args(&options.omp_args)
         .env_clear()
-        .envs(env_allowlist(&[
-            "PATH",
-            "HOME",
-            "TMPDIR",
-            "TERM",
-            "COLORTERM",
-            "LANG",
-            "LC_ALL",
-            "USER",
-            "LOGNAME",
-            "SHELL",
-        ]))
+        .envs(env_allowlist(HOST_ENV))
         .env(TOKEN_ENV, &token)
         .env("PI_NO_TITLE", "1")
         .stdin(Stdio::inherit())

@@ -58,6 +58,32 @@ use crate::{
 pub const ADAPTER_ID: &str = "foundry-gateway";
 pub const MODEL_ID: &str = "glm-5.3-flash";
 pub const PINNED_UPSTREAM: &str = "https://api.z.ai/api/coding/paas/v4";
+pub const STANDARD_UPSTREAM: &str = "https://api.z.ai/api/paas/v4";
+/// Transport configuration belongs to the gateway, never the coding host.
+pub(crate) const TRANSPORT_ENV: &[&str] = &[
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+];
+pub(crate) const HOST_ENV: &[&str] = &[
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TERM",
+    "COLORTERM",
+    "LANG",
+    "LC_ALL",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+];
 /// Pinned catalog windows for `zai.glm-5.3-flash` (OMP 18.6.0): the input
 /// context and the largest `max_tokens` the request profile accepts. Meter
 /// mode makes no preflight cap decision from the input window.
@@ -135,14 +161,14 @@ impl Limits {
 /// `test-faults`, `FOUNDRY_GATEWAY_TEST_UPSTREAM` replaces the pinned origin
 /// with a plain-http loopback fake; release builds contain none of this.
 #[cfg(not(feature = "test-faults"))]
-fn upstream_target() -> AResult<(String, bool)> {
-    Ok((PINNED_UPSTREAM.to_owned(), true))
+fn upstream_target(upstream: &str) -> AResult<(String, bool)> {
+    Ok((upstream.to_owned(), true))
 }
 
 #[cfg(feature = "test-faults")]
-fn upstream_target() -> AResult<(String, bool)> {
+fn upstream_target(upstream: &str) -> AResult<(String, bool)> {
     let Ok(raw) = std::env::var("FOUNDRY_GATEWAY_TEST_UPSTREAM") else {
-        return Ok((PINNED_UPSTREAM.to_owned(), true));
+        return Ok((upstream.to_owned(), true));
     };
     let url = reqwest::Url::parse(&raw)
         .map_err(|_| invalid("FOUNDRY_GATEWAY_TEST_UPSTREAM is not a URL"))?;
@@ -163,6 +189,7 @@ fn upstream_target() -> AResult<(String, bool)> {
 /// `gateway_feature_unsupported`; every other deviation is `invalid_argument`.
 pub(crate) struct GatewayConfig {
     pub(crate) port: u16,
+    pub(crate) upstream: &'static str,
     pub(crate) credential_env: String,
     pub(crate) run_dir: PathBuf,
     pub(crate) log_bytes: Option<u64>,
@@ -239,11 +266,15 @@ pub(crate) fn parse_config(bytes: &[u8]) -> AResult<GatewayConfig> {
         }
         _ => return Err(invalid("`mode` must be `meter`")),
     }
-    if upstream != PINNED_UPSTREAM {
-        return Err(unsupported(
-            "`upstream` must be the pinned Z.ai coding-plan origin",
-        ));
-    }
+    let upstream = match upstream {
+        PINNED_UPSTREAM => PINNED_UPSTREAM,
+        STANDARD_UPSTREAM => STANDARD_UPSTREAM,
+        _ => {
+            return Err(unsupported(
+                "`upstream` must be the Z.ai Coding Plan or standard API base",
+            ));
+        }
+    };
     if model != MODEL_ID {
         return Err(unsupported("`model` must be the pinned glm-5.3-flash"));
     }
@@ -253,6 +284,14 @@ pub(crate) fn parse_config(bytes: &[u8]) -> AResult<GatewayConfig> {
     if !valid_env_name(credential_env) {
         return Err(invalid(
             "`credential_env` must match [A-Za-z_][A-Za-z0-9_]* within 256 bytes",
+        ));
+    }
+    if HOST_ENV.contains(&credential_env)
+        || TRANSPORT_ENV.contains(&credential_env)
+        || matches!(credential_env, TOKEN_ENV | "PI_NO_TITLE")
+    {
+        return Err(invalid(
+            "`credential_env` must not name host, transport or local-token configuration",
         ));
     }
     let run_dir = field("run_dir")?
@@ -332,6 +371,7 @@ pub(crate) fn parse_config(bytes: &[u8]) -> AResult<GatewayConfig> {
         .transpose()?;
     Ok(GatewayConfig {
         port,
+        upstream,
         credential_env: credential_env.to_owned(),
         run_dir: PathBuf::from(run_dir),
         log_bytes,
@@ -1207,10 +1247,11 @@ async fn start(
     token: String,
     session_id: String,
 ) -> AResult<Server> {
-    let (upstream, https_only) = upstream_target()?;
+    let (upstream, https_only) = upstream_target(config.upstream)?;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
+        // Honor the operator's proxy and CA configuration. This is required for
+        // proxy-injected credentials; a failed proxy never triggers direct retry.
         .https_only(https_only)
         .build()
         .map_err(|e| AdapterError::runtime("gateway_unavailable", e.to_string()))?;
@@ -1285,6 +1326,8 @@ async fn start(
             "run_dir": config.run_dir,
             "token_file": token_file,
             "token_env": TOKEN_ENV,
+            "upstream": config.upstream,
+            "billing_mode": if config.upstream == PINNED_UPSTREAM { "coding_plan" } else { "standard_api" },
             "omp_models_yml": format!(
                 "providers:\n  zai:\n    baseUrl: \"http://127.0.0.1:{port}/v1\"\n    apiKey: {TOKEN_ENV}\n"
             ),
@@ -2732,6 +2775,46 @@ mod tests {
         assert_eq!(swapped("\"port\":0", "\"port\":65536"), "invalid_argument");
         assert_eq!(swapped("/tmp/gw", "relative/gw"), "invalid_argument");
         assert_eq!(swapped("ZAI_KEY", "1BAD"), "invalid_argument");
+    }
+
+    #[test]
+    fn both_zai_billing_routes_are_exact_and_credentials_cannot_replace_process_config() {
+        for upstream in [PINNED_UPSTREAM, STANDARD_UPSTREAM] {
+            let text = String::from_utf8(config(""))
+                .unwrap()
+                .replace(PINNED_UPSTREAM, upstream);
+            assert_eq!(parse_config(text.as_bytes()).unwrap().upstream, upstream);
+        }
+        for upstream in [
+            "http://api.z.ai/api/paas/v4",
+            "https://api.z.ai/api/paas/v4/",
+            "https://api.z.ai/api/paas/v4?route=other",
+            "https://user@api.z.ai/api/paas/v4",
+            "https://example.com/api/paas/v4",
+        ] {
+            let text = String::from_utf8(config(""))
+                .unwrap()
+                .replace(PINNED_UPSTREAM, upstream);
+            assert_eq!(
+                parse_config(text.as_bytes()).err().unwrap().code(),
+                "gateway_feature_unsupported"
+            );
+        }
+        for name in HOST_ENV
+            .iter()
+            .chain(TRANSPORT_ENV)
+            .copied()
+            .chain([TOKEN_ENV, "PI_NO_TITLE"])
+        {
+            let text = String::from_utf8(config(""))
+                .unwrap()
+                .replace("ZAI_KEY", name);
+            assert_eq!(
+                parse_config(text.as_bytes()).err().unwrap().code(),
+                "invalid_argument",
+                "{name}"
+            );
+        }
     }
 
     fn receipt(index: u64, input: Option<u64>) -> Receipt {

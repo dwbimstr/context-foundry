@@ -534,11 +534,19 @@ adds the opt-in OMP team-kit hook; this record stays instruction-only evidence.)
   `~/.omp/agent/models.yml` and other profiles stay untouched; never fall back to
   direct upstream requests while a required gateway is unavailable. Release the
   gateway separately from CLI/MCP; no new measurement-close or fleet-governance stage.
-- **External prerequisites (owner, supplied 2026-10-04):** the Z.ai key in a private
-  file the launcher reads into `credential_env` for the gateway process only, and
+- **External prerequisites (owner, supplied 2026-10-04; environment binding added
+  2026-10-16):** the Z.ai key in the configured `credential_env`, or an explicit
+  private key file the launcher reads for the gateway process only, and
   acceptance of the GLM Coding Plan terms for a single-user loopback forwarder in front
   of OMP (a supported tool). Measuring provider usage alone does not need the gateway:
   T005's `usage import` reads the host's own session records.
+- **Published-environment continuation (2026-10-16):** the exact standard API base
+  is also supported alongside the Coding Plan base. The gateway honors configured
+  proxies and CA trust while the host receives neither upstream credentials nor
+  proxy settings. Billing route metadata never supplies missing prices or subscription
+  quota units. These transport corrections do not make OMP a prerequisite for Foundry:
+  native Codex and the managed agent runtime can use the existing CLI/MCP source
+  interface. Their task correctness and usage visibility are verified separately.
 - **Result (2026-10-04): accepted.** Full detail is in
   [validation](../../docs/validation.md) and the
   [evidence](../../docs/review/t004-gateway-2026-10-04.json).

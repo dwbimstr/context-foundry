@@ -42,6 +42,8 @@ const TURN: &str = "omp-18.6.0-turn.json";
 
 #[path = "gateway/host_task.rs"]
 mod host_task;
+#[path = "gateway/zai.rs"]
+mod zai;
 
 // ---------------------------------------------------------------------------
 // Request fixtures and SSE builders
@@ -423,6 +425,8 @@ fn write_config(dir: &Path, run_dir: &Path, log_bytes: Option<u64>) -> PathBuf {
 #[derive(Default)]
 struct Spawn {
     upstream: Option<u16>,
+    standard_api: bool,
+    environment: Vec<(&'static str, String)>,
     log_bytes: Option<u64>,
     idle_ms: Option<u64>,
     deadline_ms: Option<u64>,
@@ -482,6 +486,12 @@ impl Gateway {
     fn start(dir: &Path, spawn: Spawn) -> Self {
         let run_dir = dir.join(spawn.run_name.unwrap_or("run"));
         let config = write_config(dir, &run_dir, spawn.log_bytes);
+        if spawn.standard_api {
+            let mut value: Value =
+                serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+            value["upstream"] = json!(context_foundry::gateway::STANDARD_UPSTREAM);
+            std::fs::write(&config, serde_json::to_vec(&value).unwrap()).unwrap();
+        }
         if let Some(packet) = &spawn.task_view {
             let mut value: Value =
                 serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
@@ -503,13 +513,19 @@ impl Gateway {
             .env("PATH", "/usr/bin:/bin")
             .env(KEY_ENV, KEY_CANARY)
             .env("FOUNDRY_TEST_TASK_OWNER", "task-owner-canary")
+            .envs(spawn.environment)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(port) = spawn.upstream {
+            let path = if spawn.standard_api {
+                "/api/paas/v4"
+            } else {
+                "/api/coding/paas/v4"
+            };
             command.env(
                 "FOUNDRY_GATEWAY_TEST_UPSTREAM",
-                format!("http://127.0.0.1:{port}/api/coding/paas/v4"),
+                format!("http://127.0.0.1:{port}{path}"),
             );
         }
         if let Some(millis) = spawn.idle_ms {
