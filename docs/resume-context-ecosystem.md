@@ -157,7 +157,7 @@ versioned in `scripts/cloud`:
 | [`environment.env`](../scripts/cloud/environment.env) | The environment variables. They hold paths only; there are no secrets. |
 | [`allowed-domains.txt`](../scripts/cloud/allowed-domains.txt) | Hosts added under Custom network access, alongside the default package managers. |
 | [`doctor.sh`](../scripts/cloud/doctor.sh) | Checks a session: the environment variables, host limits, `avx512_bf16`, toolchains and pinned inputs. |
-| [`gates.sh`](../scripts/cloud/gates.sh) | Runs the merge gates (`scripts/gates.sh`) with `environment.env` applied and `RUSTUP_TOOLCHAIN` unset, whatever the session holds; `bash scripts/cloud/gates.sh OUTDIR`. |
+| [`gates.sh`](../scripts/cloud/gates.sh) | Runs the merge gates (`scripts/gates.sh`) with `environment.env` applied, an optional trusted `CF_GATE_ENV` file, and `RUSTUP_TOOLCHAIN` unset; `bash scripts/cloud/gates.sh OUTDIR`. |
 | [`fetch-resume.sh`](../scripts/cloud/fetch-resume.sh) | Downloads and verifies the private archive and prints its `RESTORE.md`. It takes the archive from a private GitHub release attached to the session, or from an HTTPS URL. |
 
 For a prepared environment with tools outside `/opt/cf`, source `environment.env`
@@ -172,8 +172,17 @@ An indexing/retrieval setup that deliberately omits generation weights can set
 unvalidated. The default still requires `CF_GENERATION_GGUF`, and invalid policy
 values fail. Restore `CF_GENERATION_REQUIRED=1` before any generation validation.
 These overrides do not change worker profiles, model identities or acceptance
-requirements. The cloud gates wrapper reapplies `environment.env`; local path
-overrides must be reconciled before using that wrapper in a different layout.
+requirements.
+
+For full gates in a different layout, set `CF_GATE_ENV` to a trusted, non-secret
+shell environment file that applies the local paths after `environment.env`.
+Prepend the actual Rust 1.97 bin directory to `PATH` there; the gate runner then
+prepends the actual Rust 1.90 directory for its MSRV checks. The wrapper unsets
+`RUSTUP_TOOLCHAIN` after both files. Incremental compilation and dev/test debuginfo
+must remain `0`; invalid overrides fail before any gate starts. Missing, unreadable,
+empty or non-file overrides also fail. `OUTDIR/env.txt` records the override path
+and SHA-256, selected effective settings and compiler paths, excluding private
+archive configuration and arbitrary exports. Never place credentials in the file.
 
 An Anthropic-hosted VM has about 4 vCPUs, 16 GB RAM and 30 GB of disk. That is half
 the memory of the checkpoint host, which affects two steps below:
