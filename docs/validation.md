@@ -1,5 +1,62 @@
 # Validation
 
+## Portable Linux setup — 2026-10-16
+
+`7be514e` changes the cloud doctor and its documentation; no Rust application,
+dependency or lockfile changes. This Codex sandbox runs as uid 1000, with a
+four-CPU quota, 32 GiB memory limit, no swap and `avx512_bf16`. It reuses retained
+Rust 1.90.0, CMake 4.4.4, system libclang 19, pinned llama.cpp and checksum-verified
+EmbeddingGemma 2/tokenizer assets. Rust 1.97.0 was installed for formatting and
+future gates. No generation weights were downloaded.
+
+The doctor passes with explicit local paths, the actual local preparation receipt
+and `CF_GENERATION_REQUIRED=0`. Generation is reported unconfigured/unvalidated;
+the default still requires weights. Twelve actual doctor cases passed, including
+refusal of invalid policy values, missing/empty/directory receipts, invalid or empty
+libclang overrides, and a directory containing only `libclang-cpp`.
+
+Local Rust 1.90.0 verification:
+
+- `cargo test --locked --offline --test cli --test task_retrieval --test learning_data`:
+  **94 passed**, zero failed/ignored (16 CLI, 11 task retrieval, 67 learning data).
+- `cargo check --locked --no-default-features --lib`: exit 0, zero warnings.
+- `cargo build --locked --features embed-worker-avx512-bf16 --bin foundry-embed`:
+  exit 0, zero warnings. Running `foundry-embed --notices DIR` also exited 0 and
+  emitted pinned llama.cpp commit `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`
+  and its license. This verifies native compilation/linking, not model inference.
+- Rust 1.97.0 `cargo fmt --check`, shell syntax and documentation links passed.
+
+The initial offline attempt failed on a missing locked `toml_parser` dependency.
+An online locked retry fetched dependencies and printed 94 passes, but its shell
+was killed before writing the final exit receipt, so that attempt is not the
+accepted run. A detached, explicitly timed offline replay completed with exit 0;
+its log is the accepted receipt. No VM pause/restart was observed. The first native
+check launcher refused the missing test-exit receipt without building anything;
+the detached retry completed both build checks and the executable smoke check.
+
+Full merge gates and clippy were **not run** for this focused setup correction.
+No CI ran: GitHub Actions is unavailable (owner decision 2026-10-12). The cloud
+gates wrapper still reapplies `/opt/cf` defaults; reconcile those local path
+overrides before a future full gate run. Native macOS/GPU acceptance is an explicit
+gap. No parked evaluation, model inference or hosted GLM request ran; retrieval,
+scale, task quality and economics acceptance remain unchanged.
+
+Receipts are under `validation-runs/doctor-portability-2026-10-16/`, except the
+doctor baseline in `validation-runs/setup-2026-10-16/doctor-final.log`. SHA-256:
+
+| Log | SHA-256 |
+| --- | --- |
+| `doctor-final.log` | `22a1f4ab7cb4ec266edb20d8539b71083b822165b4e77e409095530b31eb9eeb` |
+| `doctor-cases.json` | `80580bf236a6794bbe866f4cb22e58cc9c1569084c2cef88c99882ad53dfc775` |
+| `versions.log` | `dbecaed9b9656f8c482b076a066ff5ebe97c71f99588ff4a2577b03849979c2e` |
+| `focused-tests.log` (offline refusal) | `2577bc83742d80a5d152663392fcb7b80a0f18af619a0e50c315098609e98fb7` |
+| `focused-tests-online.log` (no exit receipt) | `d772f9fe25b268fbe059b182a853b09e9a89aa678ac27ada42a506cbf1f06289` |
+| `focused-tests-detached.log` (accepted) | `ec18076491bff9247dbbcbc030aa937099fcbdcf65e9a73f6db21918628b11df` |
+| `lexical-check.log` | `d8d5f5858615db0d257aaf642a358804aa8a1fa754835ec2c060870b58dfa074` |
+| `embed-worker-build.log` | `4e7c832712b5dc70ab6b1417485d3a84953597947257398dc5726277669b7e24` |
+| `embed-worker-notices.log` | `aed2eb35fa32059951692386e2195197424a5fc82bb3e5883634fb5f3b1888f8` |
+| `fmt.log` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+
 ## Cloud continuation — 2026-10-12
 
 A Claude Code cloud session continued the checkpoint from public inputs only. It did
@@ -27,6 +84,7 @@ permissions two gateway fault tests rely on, so those tests are rerun unprivileg
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `7be514e` | 0 | not run | not run (94 focused tests on 1.90; [receipt](#portable-linux-setup--2026-10-16)) | not run (lexical library check: 0) | not run |
 | `d6903f7` | 0 | 101: three new lints | 101: 1,145 passed, only the 2 root-only failures | 0 | 0 |
 | `ef524b9` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
 | `b432f46` | 0 | 0 | 101: 1,145 passed, only the 2 root-only failures; unprivileged rerun of the gateway target: 49 passed | 0 | 0 |
