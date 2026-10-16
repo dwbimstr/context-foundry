@@ -47,7 +47,24 @@ cargo clippy --version >/dev/null 2>&1 && cargo fmt --version >/dev/null 2>&1 &&
   pass "clippy/rustfmt" "installed" || bad "clippy/rustfmt" "missing for $(rustc --version 2>/dev/null)"
 need_file "host rustc" "${FOUNDRY_HOST_RUSTC:-}"
 command -v cmake >/dev/null && pass cmake "$(cmake --version | head -n 1)" || bad cmake missing
-ls /usr/lib/llvm-*/lib/libclang.so* >/dev/null 2>&1 && pass libclang present || bad libclang missing
+# clang-sys honors an explicit override exclusively, including a library file.
+# libclang-cpp is a different API and cannot satisfy bindgen's requirement.
+clang_candidates=(/usr/lib/llvm-*/lib/libclang.so* /usr/lib/llvm-*/lib/libclang-[0-9]*.so*)
+if [ "${LIBCLANG_PATH+set}" ]; then
+  clang_candidates=()
+  if [ -n "$LIBCLANG_PATH" ]; then
+    clang_candidates=("$LIBCLANG_PATH"/libclang.so* "$LIBCLANG_PATH"/libclang-[0-9]*.so*)
+    [ ! -f "$LIBCLANG_PATH" ] || clang_candidates=("$LIBCLANG_PATH")
+  fi
+fi
+clang_found=0
+for candidate in "${clang_candidates[@]}"; do
+  case "${candidate##*/}" in
+    libclang.so*|libclang-[0-9]*.so*)
+      if [ -f "$candidate" ] && [ -s "$candidate" ]; then clang_found=1; break; fi ;;
+  esac
+done
+[ "$clang_found" -eq 1 ] && pass libclang present || bad libclang missing
 include=${BINDGEN_EXTRA_CLANG_ARGS:-}
 include=${include#-isystem }
 [ -d "$include" ] && pass "bindgen include" "$include" ||
@@ -58,7 +75,11 @@ git -C "${LLAMA_CPP_DIR:-/nonexistent}" cat-file -e "$commit^{tree}" 2>/dev/null
 
 need_file "gemma gguf" "${CF_GEMMA_GGUF:-}"
 need_file "gemma tokenizer" "${CF_GEMMA_TOKENIZER:-}"
-need_file "generation gguf" "${CF_GENERATION_GGUF:-}"
+case "${CF_GENERATION_REQUIRED:-1}" in
+  1) need_file "generation gguf" "${CF_GENERATION_GGUF:-}" ;;
+  0) info "generation gguf" "not configured for this workflow; generation remains unvalidated" ;;
+  *) bad "generation policy" "CF_GENERATION_REQUIRED must be 0 or 1" ;;
+esac
 for file in tokenizer/tokenizer.json tokenizer/tokenizer_config.json rl_agent_config.json encoder/config.json; do
   need_file "013 $file" "${CONTEXT_FOUNDRY_013_CHECKPOINT:-/nonexistent}/$file"
 done
@@ -74,6 +95,7 @@ archive=/workspace/${CF_RESUME_ASSET:-context-foundry-resume-20261011.tar.gz}
 [ -f "$archive" ] && info evidence "archive $archive present" ||
   info evidence "archive not fetched: run scripts/cloud/fetch-resume.sh"
 [ -d "${V11:-/nonexistent}" ] && info evidence "V11 restored at $V11" || info evidence "V11 not restored"
-[ -f /opt/cf/setup-receipt.txt ] && info setup "$(head -n 2 /opt/cf/setup-receipt.txt | tr '\n' ' ')" ||
-  bad setup "no /opt/cf/setup-receipt.txt: the environment setup script did not run"
+receipt=${CF_SETUP_RECEIPT:-/opt/cf/setup-receipt.txt}
+[ -f "$receipt" ] && [ -s "$receipt" ] && info setup "$(head -n 2 "$receipt" | tr '\n' ' ')" ||
+  bad setup "no $receipt: no setup receipt for this environment"
 exit "$fail"
