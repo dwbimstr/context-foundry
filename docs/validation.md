@@ -1,5 +1,111 @@
 # Validation
 
+## Bounded semantic bootstrap on the published VM — 2026-10-16
+
+Bootstrap now calls the existing semantic preparation owner instead of reporting
+the obsolete "009 pending" setup stub. `--semantic-budget-seconds` explicitly
+selects inference after source indexing; profile existence alone stays unverified.
+One engine owns indexing and preparation. Retry commands retain budget, cache cap
+and isolation selection. Semantic-only application requires a completed source scan,
+including a legitimately empty indexed root. Failed optional preparation preserves
+lexical source. No new worker, model, dependency, download or store format was added.
+
+The retained EmbeddingGemma 2 BF16 worker passed the real Linux numerical check:
+single and batched vectors agreed under the existing tolerance, and the full
+8,192-token input completed in **66.878 seconds**. The test took 92.63 seconds,
+including acquisition and shutdown. This uses adapter revision 5, the pinned
+llama.cpp commit, four CPU threads, an 8 GiB worker memory ceiling and explicit
+development isolation. The doctor passed with `avx512_bf16`, 33.3 GiB visible RAM,
+no swap and 26 GiB free disk. There is no GPU on this VM.
+
+The bootstrap command then ran against the five pinned files of the public
+`percent-encoding` 2.3.2 crate, using hierarchy-v1, 512-token cards, 64-token parents,
+batch eight and a 300-second semantic budget. This is a small integration check,
+not representative scale validation. Corpus coverage was five sources and 113
+current units; deduplication yielded 106 ANN entries. Initial searchable coverage
+appeared after 30.414 seconds, before body preparation finished.
+
+| Local CLI run | Wall time | Embedded vectors | Document calls | Result |
+| --- | ---: | ---: | ---: | --- |
+| Fresh bootstrap | 73.294 s | 106 | 14 | complete |
+| Unchanged replay | 4.630 s | 0 | 0 | complete; provider not acquired |
+| Comment appended to `src/ascii_set.rs` | 25.706 s | 1 | 1 | complete; other inputs reused |
+| Original file restored | 5.596 s | 0 | 0 | complete; original vectors reused |
+| New source with missing worker bundle | 24.151 s | not reported | not reported | exit 1; lexical ready, semantic `profile_invalid` |
+
+Each command left its scratch root empty. No live worker remained after the run.
+The comment edit checks incremental input identity; it does not establish arbitrary
+semantic-change coverage. The missing-worker failure returned no preparation receipt,
+so its inference counters remain unknown rather than invented zeroes. Raw command
+arguments, reports, profile and the driver remain in
+`/workspace/.context-foundry-tools/validation-runs/bootstrap-semantic-2026-10-16/`.
+The [committed counter record](review/bootstrap-semantic-2026-10-16.json) contains
+input/model identities, counts and artifact hashes. The numerical vectors and test
+log remain in the sibling `native-published-2026-10-16/` directory. Neither run was
+interrupted; starting and ending boot IDs agree. A wrapper attempt failed before
+starting Foundry because `/usr/bin/time` was absent; its logs are retained with
+`first-` names. Timing uses the Python monotonic clock and includes process startup.
+
+With a pinned local profile, the reproducible application command is:
+
+```sh
+foundry --store /abs/store bootstrap --root /abs/percent-encoding-2.3.2 \
+  --apply --components lexical,semantic --profile /abs/profile.json \
+  --semantic-budget-seconds 300 --development-isolation
+```
+
+Rerun the same command and inspect `semantic_preparation.document_calls`; unchanged
+replay must be zero. The retained profile and public file hashes are recorded above.
+The native check uses `FOUNDRY_EMBED_PROFILE` and `FOUNDRY_EMBED_RECEIPT` with
+`cargo test --locked --test embedding_parity real_native_embedding_receipt -- --ignored --nocapture`.
+
+The managed host's previous composition errors were also traced to missing task
+metadata and a compact flag without composition. A fresh public copy with explicit
+task ID/revision successfully returned composed evidence at 2,048 and 4,096 tokens.
+The smaller response delivered the helper, caller and test bodies plus another
+caller address; the larger delivered all eight selected bodies. Both correctly
+reported incomplete evidence: syntactic callers are unresolved, compiler coverage
+is unavailable, tests are candidates rather than observed execution, and host
+application is unknown. This was a CLI composition diagnostic, not another agent
+repair or an economics comparison. Raw captures are in `managed-context-2026-10-16/`.
+
+Frozen retrieval remains **2/8**. Representative 60–80k inference, demonstrated
+provider-accounted economics, the parked FOLLOWUP protocols and native macOS/GPU
+acceptance remain open. The managed runtime exposes no per-agent provider usage;
+no token or dollar savings are inferred from these local timings or output sizes.
+
+Six new CLI-boundary regressions cover read-only inspection, explicit admission,
+the never-scanned versus empty-indexed store distinction, lexical survival after
+profile failure, budget-limited partial preparation, exact retry limits, unchanged
+cache replay without a usable worker and workspace binding. The first focused run
+failed because the new assertion expected `workspace_mismatch`; it was corrected to
+the existing `wrong_workspace` contract. The production error behavior was unchanged.
+
+The final rebuilt CLI also retrieved `newly_admitted` after the missing-worker
+failure, then completed a clean replay in 4.442 seconds and semantic-only replay in
+4.622 seconds, both with zero document calls and full current coverage. The final
+CLI identity is included in the committed counter record; these checks include the
+last admission-guard corrections.
+
+Full **local** gates for `b202a9c` passed through `bash scripts/cloud/gates.sh OUTDIR`:
+all five `GATE` results were exit 0 on actual Rust 1.97.0/default and Rust 1.90.0/MSRV.
+Cargo reported **1,167 passed, zero failed, 27 ignored**; the separate recovery
+harness passed. Gateway's 54 enabled tests passed as uid 1000, including both
+permission-sensitive cases, without a root workaround. The additional
+`cargo check --locked --no-default-features --lib` passed with zero warnings.
+The detached gates had a 2,400-second timeout, a 2 GiB free-disk stop guard and a
+stable boot ID. Logs are under the run directory's `full/` subdirectory.
+No CI ran: GitHub Actions is unavailable (owner decision 2026-10-12).
+
+| Local log | SHA-256 |
+| --- | --- |
+| `fmt.log` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `clippy.log` | `b24eff294f76ed4fc92739f6de3f45e1da72a56e9bd8e4487ebc436907681a6d` |
+| `test.log` | `ebf52af157055db5789b61643aa5c0c39ad113a761f02054f78879645a1756da` |
+| `msrv-check.log` | `be81b1411cd4e66fe5d1f36e57af081ae6cd92d0df36dc71513d476ccb6ff6a1` |
+| `msrv-clippy.log` | `7704b9649f089249b9dcffa812138428f553dd9d2cb52d5152324e447c06b980` |
+| `lexical-check.log` | `1f8e8c9e5032bb292cb8f811f81ef8df568f67f493e0cab6bf65084e94d03036` |
+
 ## Managed host and gateway continuation — 2026-10-16
 
 The owner's selected host is the **existing managed Codex agent runtime**. It can
@@ -259,6 +365,7 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `b202a9c` | 0 | 0 | 0: 1,167 passed, 27 ignored; gateway 54 passed under uid 1000 ([receipt](#bounded-semantic-bootstrap-on-the-published-vm--2026-10-16)) | 0 | 0 |
 | `c4c095f` | 0 | 0 | 0: 1,161 passed, 27 ignored; gateway 54 passed under uid 1000 ([receipt](#managed-host-and-gateway-continuation--2026-10-16)) | 0 | 0 |
 | `c88b83d` | 0 | 0 | 0: 1,155 passed, 26 ignored; gateway 49 passed under uid 1000 ([receipt](#portable-full-linux-gates--2026-10-16)) | 0 | 0 |
 | `7be514e` | 0 | not run | not run (94 focused tests on 1.90; [receipt](#portable-linux-setup--2026-10-16)) | not run (lexical library check: 0) | not run |
