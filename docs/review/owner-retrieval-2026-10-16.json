@@ -1,0 +1,945 @@
+{
+  "scope": "Local public author-visible exact-span delivery; not independent retrieval acceptance or provider-accounted task economics",
+  "implementation_commit": "f782ddac93313b5ce17b904d0a17091db9b95899",
+  "baseline_commit": "d8248d5",
+  "source_commit": "ebf28f8",
+  "budget": 2048,
+  "raw_directory": "/workspace/.context-foundry-tools/validation-runs/owner-retrieval-2026-10-16",
+  "real_overview": {
+    "arms": {
+      "baseline": {
+        "delivered_ids": [
+          0,
+          2,
+          7
+        ],
+        "delivered_tokens": 16289,
+        "query_wall_ms": 204983,
+        "per_question": [
+          {
+            "id": 0,
+            "delivered": true,
+            "tokens": 2048,
+            "elapsed_ms": 30310,
+            "stdout_sha256": "50c9af2653dc613c45871b3a959a3169148be6fe650e3192d399496f416abc16",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 1,
+            "delivered": false,
+            "tokens": 2044,
+            "elapsed_ms": 30183,
+            "stdout_sha256": "8915a6dcc49e24129af45bca9e42a90ff98c1ba903bbf410032bcdf00cbfb683",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "delivered": true,
+            "tokens": 2030,
+            "elapsed_ms": 27198,
+            "stdout_sha256": "a7fce794b4a24a657089248abfa69dc10a7d76d41fba3f66a48fda1faac8d3a7",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "delivered": false,
+            "tokens": 2020,
+            "elapsed_ms": 29267,
+            "stdout_sha256": "63694af0ddd0a02f8e5623f1823cec1735ddcb9c30d422d5797971310283e896",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "delivered": false,
+            "tokens": 2045,
+            "elapsed_ms": 28358,
+            "stdout_sha256": "b34347db8b2739341f64750659b5406384258a6bd7499e67e783372c948e685a",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "delivered": false,
+            "tokens": 2027,
+            "elapsed_ms": 28914,
+            "stdout_sha256": "31bea17c14a91ccafacb51c453a6939f69595a654f642e4e7e314ffab7a40a77",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "delivered": false,
+            "tokens": 2041,
+            "elapsed_ms": 27966,
+            "stdout_sha256": "e258a99b2e316d162db4a0e1831d43ef2a3ea0d6f2393a6e98932669e5170f8a",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "delivered": true,
+            "tokens": 2034,
+            "elapsed_ms": 2787,
+            "stdout_sha256": "888f36e11977be23697d366205a0b448d8f5d8a4b588766e43648ca650f858bb",
+            "semantic_decisions": [
+              {
+                "state": "off"
+              }
+            ]
+          }
+        ]
+      },
+      "candidate": {
+        "delivered_ids": [
+          0,
+          2,
+          3,
+          7
+        ],
+        "delivered_tokens": 16242,
+        "query_wall_ms": 184037,
+        "per_question": [
+          {
+            "id": 0,
+            "delivered": true,
+            "tokens": 2042,
+            "elapsed_ms": 24644,
+            "stdout_sha256": "836b785b06547d557126c133b720656007e755a5aebca845855282159131acad",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 1,
+            "delivered": false,
+            "tokens": 2000,
+            "elapsed_ms": 27755,
+            "stdout_sha256": "231330b5dacac8771b518f63436f0902fb160119b994aca99ec3f9547b9fd2a3",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "delivered": true,
+            "tokens": 2030,
+            "elapsed_ms": 25965,
+            "stdout_sha256": "a7fce794b4a24a657089248abfa69dc10a7d76d41fba3f66a48fda1faac8d3a7",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "delivered": true,
+            "tokens": 2023,
+            "elapsed_ms": 26295,
+            "stdout_sha256": "cee9edec7007188bf10b97a58bdd248ea2338d8afcc32ea3648e18b7f866fd57",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "delivered": false,
+            "tokens": 2045,
+            "elapsed_ms": 26105,
+            "stdout_sha256": "b34347db8b2739341f64750659b5406384258a6bd7499e67e783372c948e685a",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "delivered": false,
+            "tokens": 2027,
+            "elapsed_ms": 25031,
+            "stdout_sha256": "31bea17c14a91ccafacb51c453a6939f69595a654f642e4e7e314ffab7a40a77",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "delivered": false,
+            "tokens": 2041,
+            "elapsed_ms": 25746,
+            "stdout_sha256": "e258a99b2e316d162db4a0e1831d43ef2a3ea0d6f2393a6e98932669e5170f8a",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "delivered": true,
+            "tokens": 2034,
+            "elapsed_ms": 2496,
+            "stdout_sha256": "888f36e11977be23697d366205a0b448d8f5d8a4b588766e43648ca650f858bb",
+            "semantic_decisions": [
+              {
+                "state": "off"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "executables": {
+      "/workspace/.context-foundry-tools/validation-runs/owner-retrieval-2026-10-16/baseline-foundry": "6c16de1d153ee0f5100c44d6c801d1cd21800d4d55da35186f57acb3907dd55f",
+      "/workspace/.context-foundry-tools/validation-runs/owner-retrieval-2026-10-16/merged-model/candidate-foundry": "1581ad07e68cbed03ae506b868bae68797528f29accf8b0c41f6661f8d8f288f",
+      "/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/count_tokens": "8fb54649cdd6efa0463e9448a75f49fcf5f70b6fbecd4d5ce602287fc70a3c29"
+    },
+    "profile_sha256": "184928304e03d46b1c60a49a7029bd3295396541a7ffcf1be72387810093d9c8",
+    "baseline_reused_from": "/workspace/.context-foundry-tools/validation-runs/owner-retrieval-2026-10-16/real-report.json",
+    "replay": {
+      "area_vectors": 0,
+      "bootstrap": {
+        "area_vectors": 0,
+        "delta_publications": 0,
+        "elapsed_ms": 4323,
+        "embedded_areas": 0,
+        "embedded_units": 0,
+        "first_searchable_ms": 4164,
+        "generation_builds": 0,
+        "input_tokens": 0,
+        "mapping_publications": 0,
+        "partition_compute_ms": 0,
+        "priority_waves": 0,
+        "provider_ms": 0,
+        "publication_backoff_ms": null,
+        "publication_error": null,
+        "publication_ms": 25,
+        "publication_retries": 0,
+        "published_entries": 274,
+        "render_ms": 0,
+        "reused_cached_units": 274,
+        "selected_sources": 274,
+        "waves": 3
+      },
+      "budget_seconds": 600,
+      "cache_bytes": 860360,
+      "cache_cap_bytes": 2147483648,
+      "cache_entries": 274,
+      "corrupt_cache_rows": 0,
+      "coverage": {
+        "cached_current_units": 274,
+        "eligible_units": 274,
+        "function_digest": "711c873580040a6727f1c643fa646755df2e1cbb543fc0df32b6d3516a3269db",
+        "index_entries": 274,
+        "recipe_id": "overview-v1+overview3+kinds1+units5:512+tokenizers 0.23.2 onig",
+        "searchable_current_units": 274,
+        "source_revision": 276,
+        "sources": 274,
+        "unpartitioned_sources": 0,
+        "version": 1
+      },
+      "dimensions": 768,
+      "document_calls": 0,
+      "elapsed_ms": 4323,
+      "eligible_units": 274,
+      "embedded_areas": 0,
+      "embedded_units": 0,
+      "function_digest": "711c873580040a6727f1c643fa646755df2e1cbb543fc0df32b6d3516a3269db",
+      "index_entries": 274,
+      "index_published": true,
+      "index_reason": null,
+      "input_tokens": 0,
+      "missing_units": 0,
+      "partial": false,
+      "partitioned_sources": 0,
+      "profile": "published-linux-gemma2-bf16-8192",
+      "provider_code": null,
+      "provider_state": null,
+      "publication_reserve_seconds": 60,
+      "reason_code": null,
+      "recipe_id": "overview-v1+overview3+kinds1+units5:512+tokenizers 0.23.2 onig",
+      "reused_cached_units": 274,
+      "reused_partitions": 274,
+      "sources": 274,
+      "state": "stopped"
+    },
+    "replay_wall_ms": 4551,
+    "checks": [
+      "verbatim source body bytes/hash/range",
+      "production o200k count <= 2048",
+      "current revision 276 / 64 dense hits for prose",
+      "anchored Q7 model off",
+      "zero-call unchanged replay",
+      "empty scratch and no new worker after every command",
+      "doctor before every model command",
+      "matching boot IDs and zero wrapper exit",
+      "no compilation during inference"
+    ],
+    "order": "Original baseline observations reused after identity/body verification; no latency improvement claim"
+  },
+  "rejected_coarse_localizer": {
+    "decision": "Removed: real-model delivery unchanged at 3/8",
+    "arms": {
+      "baseline": {
+        "delivered_ids": [
+          0,
+          2,
+          7
+        ],
+        "delivered_tokens": 16289,
+        "query_wall_ms": 204983,
+        "per_question": [
+          {
+            "id": 0,
+            "delivered": true,
+            "tokens": 2048,
+            "elapsed_ms": 30310,
+            "stdout_sha256": "50c9af2653dc613c45871b3a959a3169148be6fe650e3192d399496f416abc16",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 1,
+            "delivered": false,
+            "tokens": 2044,
+            "elapsed_ms": 30183,
+            "stdout_sha256": "8915a6dcc49e24129af45bca9e42a90ff98c1ba903bbf410032bcdf00cbfb683",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "delivered": true,
+            "tokens": 2030,
+            "elapsed_ms": 27198,
+            "stdout_sha256": "a7fce794b4a24a657089248abfa69dc10a7d76d41fba3f66a48fda1faac8d3a7",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "delivered": false,
+            "tokens": 2020,
+            "elapsed_ms": 29267,
+            "stdout_sha256": "63694af0ddd0a02f8e5623f1823cec1735ddcb9c30d422d5797971310283e896",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "delivered": false,
+            "tokens": 2045,
+            "elapsed_ms": 28358,
+            "stdout_sha256": "b34347db8b2739341f64750659b5406384258a6bd7499e67e783372c948e685a",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "delivered": false,
+            "tokens": 2027,
+            "elapsed_ms": 28914,
+            "stdout_sha256": "31bea17c14a91ccafacb51c453a6939f69595a654f642e4e7e314ffab7a40a77",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "delivered": false,
+            "tokens": 2041,
+            "elapsed_ms": 27966,
+            "stdout_sha256": "e258a99b2e316d162db4a0e1831d43ef2a3ea0d6f2393a6e98932669e5170f8a",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "delivered": true,
+            "tokens": 2034,
+            "elapsed_ms": 2787,
+            "stdout_sha256": "888f36e11977be23697d366205a0b448d8f5d8a4b588766e43648ca650f858bb",
+            "semantic_decisions": [
+              {
+                "state": "off"
+              }
+            ]
+          }
+        ]
+      },
+      "candidate": {
+        "delivered_ids": [
+          0,
+          2,
+          7
+        ],
+        "delivered_tokens": 16182,
+        "query_wall_ms": 191442,
+        "per_question": [
+          {
+            "id": 0,
+            "delivered": true,
+            "tokens": 2002,
+            "elapsed_ms": 26223,
+            "stdout_sha256": "1d009d84f252d75deab75c5c83743c5bf416c69b79e0a9e3abd9d93f2ab06099",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 1,
+            "delivered": false,
+            "tokens": 2017,
+            "elapsed_ms": 28237,
+            "stdout_sha256": "ceac89782eebecce61fcfda7451cf19aee6e5ccba184bb673225ffa6f50180b7",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "delivered": true,
+            "tokens": 2003,
+            "elapsed_ms": 27795,
+            "stdout_sha256": "69324f75592702766adfb590c48bbb151fae5c7e3585393635bdd7c361fdbd6e",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "delivered": false,
+            "tokens": 1998,
+            "elapsed_ms": 26827,
+            "stdout_sha256": "e98fb0b780044242f1517d8fcb9a296ebce32bcf596f880372c42601de663220",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "delivered": false,
+            "tokens": 2036,
+            "elapsed_ms": 26635,
+            "stdout_sha256": "7ab6a7f325ed78c33b23606f13331318a1b2863b3274f407d944e07e6b067ab2",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "delivered": false,
+            "tokens": 2047,
+            "elapsed_ms": 25652,
+            "stdout_sha256": "5531042f298b62867644774dda14d9b093c78bad6be02f23dc89db44ca66c3a4",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "delivered": false,
+            "tokens": 2045,
+            "elapsed_ms": 27432,
+            "stdout_sha256": "23de11ec0dcf82ff7f425797715b820d978b04d6c718d2bb34fccf83329ff4e9",
+            "semantic_decisions": [
+              {
+                "complete_at": 276,
+                "hits": 64,
+                "state": "dense"
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "delivered": true,
+            "tokens": 2034,
+            "elapsed_ms": 2641,
+            "stdout_sha256": "888f36e11977be23697d366205a0b448d8f5d8a4b588766e43648ca650f858bb",
+            "semantic_decisions": [
+              {
+                "state": "off"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "executables": {
+      "/workspace/.context-foundry-tools/validation-runs/owner-retrieval-2026-10-16/baseline-foundry": "6c16de1d153ee0f5100c44d6c801d1cd21800d4d55da35186f57acb3907dd55f",
+      "/workspace/.context-foundry-tools/validation-runs/owner-retrieval-2026-10-16/candidate-foundry": "029c81eb2251a76d5e4fb2b2549c5d3250d36c5fc13ce7bd4be61f6602c26ec7",
+      "/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/count_tokens": "8fb54649cdd6efa0463e9448a75f49fcf5f70b6fbecd4d5ce602287fc70a3c29"
+    },
+    "patch_sha256": "94d111f1e995e4f968ba532056331eebd44040db231e4dc7ab79be8a935bbf88",
+    "new_module_sha256": "39534b3af3f488b4c59c2ee0f54a5669d8b38fe00c1ce0a20263cbfe091c8d49"
+  },
+  "focused": {
+    "passed": 445,
+    "failed": 0,
+    "ignored": 4,
+    "log": "merged-focused2.log"
+  },
+  "local_gates": {
+    "code_commit": "f782ddac93313b5ce17b904d0a17091db9b95899",
+    "verification": "local; no GitHub Actions ran",
+    "command": "CF_GATE_ENV=/workspace/.context-foundry-tools/cloud-local/gates.env bash scripts/cloud/gates.sh /workspace/.context-foundry-tools/validation-runs/owner-retrieval-2026-10-16/gates",
+    "gate_lines": [
+      "GATE fmt exit=0",
+      "GATE clippy exit=0",
+      "GATE test exit=0",
+      "GATE msrv-check exit=0",
+      "GATE msrv-clippy exit=0"
+    ],
+    "default_toolchain": [
+      "rustc 1.97.0 (2d8144b78 2026-07-07)",
+      "cargo 1.97.0 (c980f4866 2026-06-30)",
+      "clippy 0.1.97 (2d8144b788 2026-07-07)"
+    ],
+    "msrv_toolchain": [
+      "/workspace/.context-foundry-tools/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu/bin/rustc",
+      "/workspace/.context-foundry-tools/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu/bin/cargo",
+      "/workspace/.context-foundry-tools/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu/bin/clippy-driver",
+      "rustc 1.90.0 (1159e78c4 2025-09-14)",
+      "cargo 1.90.0 (840b83a10 2025-07-30)",
+      "clippy 0.1.90 (1159e78c47 2025-09-14)"
+    ],
+    "tests": {
+      "passed": 1173,
+      "failed": 0,
+      "ignored": 28
+    },
+    "test_targets": 44,
+    "gateway": {
+      "passed": 54,
+      "failed": 0,
+      "ignored": 3,
+      "uid": 1000,
+      "nobody_rerun": "not needed; permission tests passed unprivileged directly"
+    },
+    "no_default_features": {
+      "command": "cargo check --locked --no-default-features --lib",
+      "exit": 0,
+      "warnings": 0
+    },
+    "links": {
+      "command": "node scripts/check-links.mjs",
+      "exit": 0,
+      "results": {
+        "files": 49,
+        "links": 938,
+        "headings": 275,
+        "errors": []
+      }
+    },
+    "boot_id_start": "c7cc75f4-59fa-426b-b989-04d66d7234da",
+    "boot_id_end": "c7cc75f4-59fa-426b-b989-04d66d7234da",
+    "working_tree_at_gate_start": "runtime at code_commit; only handoff documentation was uncommitted",
+    "native_macos_gpu": "gap; not run on this Linux CPU host",
+    "final_documentation_links": {
+      "command": "node scripts/check-links.mjs",
+      "exit": 0,
+      "results": {
+        "files": 49,
+        "links": 939,
+        "headings": 275,
+        "errors": []
+      }
+    }
+  },
+  "log_sha256": {
+    "merged-focused2.log": "d396dcacb4dd1c2e3a5f5ea1aa93fe4d2d58214b6f5b6b967f8613b53d0ae434",
+    "merged-model/run.log": "a27c2cf55401c082cb172ccb4b620a66ffa69c4e692e7c52efad3a40d8c677c7",
+    "merged-model/real-report.json": "441d500eba25beee26d44a5db98f59c1cacc7be3ff4e9bd6eacd5d42b684fd06",
+    "merged-model/real.py": "b406b11c42f28da486f9e25cb39381b43bf499644128f446a8ddc53c64f0a5dc",
+    "real3.log": "82b3dff45b9f93dacc3eae4e56a2f86aea9c2842ed5e6181ae4eccd4268b858c",
+    "real-report.json": "d6b25a065df47466ab4bd56c66db5c35b79122ee53453ba0988df02192477b1e",
+    "candidate-tracked.patch": "94d111f1e995e4f968ba532056331eebd44040db231e4dc7ab79be8a935bbf88",
+    "candidate-coarse.rs": "39534b3af3f488b4c59c2ee0f54a5669d8b38fe00c1ce0a20263cbfe091c8d49",
+    "real.log": "5d077a3c1ea3fe5cbb0d6657758f35a0cdeeade6220f0398359f7fbce2078dd8",
+    "real2.log": "f1d86ed06ab16c51ed7199973b32883ea701eb8c55a79384ad8960a6b699b715",
+    "final-lexical2.log": "7775fdcdd4b56728d731157cfb48e4461e4ab5f73426d71ff05f9e0fff9190ed",
+    "final-lexical2/report.json": "69fe3bc16748b334b6da193c6b0cc782b6e965c773cf8a33e596026070889845",
+    "gates.sh": "7b6784b72a82793a0d8f9f8b78ca6fa18937c3a8725e153fcb177b4696b7a093",
+    "gates.log": "cbb0c5169f3b54868bddcbc7db13a8d2c150e29a94daaae41fab7136d82a120f",
+    "gates.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "no-default.log": "27c9dc327356f79245584d00dc4ae16b8251e173a9f71259b11044af5d8e11f6",
+    "no-default.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "links.log": "8e001be29b583555c200eb777801ada39456d949eb32368a66d1507d85f4bbdb",
+    "links.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "gates.boot-start": "5f93863e1db3550b11b30e2399db4041ad8fe8905ef643e7e38fe7056b4835a8",
+    "gates.boot-end": "5f93863e1db3550b11b30e2399db4041ad8fe8905ef643e7e38fe7056b4835a8",
+    "gates/clippy.log": "a6d065d2c2247c5674f2f1550840f6168b6731d6a0e7519b2cc2daaa2a1d5e53",
+    "gates/default-versions.log": "b5d809c65162ea93252e9d6f929b07d2a551ca36dd5cb4361f65359132bfe85a",
+    "gates/env.txt": "56802d37a494690521946c3d18829bfe730abe137c974e14f6bd3210912c3ab0",
+    "gates/fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "gates/msrv-check.log": "f027581fea1155b4f4b4588668f4f3b919fdca77fe12d1f8fcaf791f73a4a492",
+    "gates/msrv-clippy.log": "c0f7660dcaf4ae5fda15511292eed9579977dd81c06d5403b7665ef020b79323",
+    "gates/msrv-versions.log": "cc250b5865c44041711cb5a7796974fe5f60f38b3d8d1c5fc2a0e088589cf532",
+    "gates/status.txt": "78247a97e6df9ebfbb16d57697f261152fcb1c63631cfb70dd3d1a0cd59878f9",
+    "gates/test.log": "20c0916a67986fbcd89a65d353f51527170c78adcd8210122efdc5ca2de20524",
+    "gates/tracked.patch": "0da80548bf2c99777fc5213edddb93dcfb0c33c18c6672c342db8306f3081770",
+    "gates/untracked.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "final-links.log": "0b13b65086481b67af39ce4ee836c56cccf1ccd28e4f7de6b39d83aefdaef057"
+  },
+  "remaining": [
+    "Q1 source excluded by unchanged admission; remains in denominator",
+    "Q4-Q6 discovery/ranking and implementation evidence",
+    "historical full hierarchy remains 2/8, not rerun",
+    "private independent sets and parked FOLLOWUP protocols",
+    "real representative scale inference",
+    "provider-accounted successful task economics",
+    "broader evidence collectors and task outcomes",
+    "physical Mac/GPU acceptance"
+  ],
+  "lexical": {
+    "baseline": {
+      "delivered_ids": [
+        0,
+        2,
+        7
+      ],
+      "delivered_tokens": 16177,
+      "per_question": [
+        {
+          "id": 0,
+          "tokens": 2010,
+          "attribution": {
+            "boundary": "foundry_delivery",
+            "host_consumption": "unknown",
+            "result": "delivered"
+          }
+        },
+        {
+          "id": 1,
+          "tokens": 2003,
+          "attribution": {
+            "reason": "expected_span_not_observed_in_bounded_candidate_window",
+            "result": "unknown"
+          }
+        },
+        {
+          "id": 2,
+          "tokens": 2044,
+          "attribution": {
+            "boundary": "foundry_delivery",
+            "host_consumption": "unknown",
+            "result": "delivered"
+          }
+        },
+        {
+          "id": 3,
+          "tokens": 2029,
+          "attribution": {
+            "result": "loss",
+            "stage": "candidate_limit"
+          }
+        },
+        {
+          "id": 4,
+          "tokens": 2033,
+          "attribution": {
+            "result": "loss",
+            "stage": "candidate_limit"
+          }
+        },
+        {
+          "id": 5,
+          "tokens": 1996,
+          "attribution": {
+            "reason": "expected_span_not_observed_in_bounded_candidate_window",
+            "result": "unknown"
+          }
+        },
+        {
+          "id": 6,
+          "tokens": 2028,
+          "attribution": {
+            "reason": "expected_span_not_observed_in_bounded_candidate_window",
+            "result": "unknown"
+          }
+        },
+        {
+          "id": 7,
+          "tokens": 2034,
+          "attribution": {
+            "boundary": "foundry_delivery",
+            "host_consumption": "unknown",
+            "result": "delivered"
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "delivered_ids": [
+        0,
+        2,
+        3,
+        7
+      ],
+      "delivered_tokens": 16151,
+      "per_question": [
+        {
+          "id": 0,
+          "tokens": 2010,
+          "attribution": {
+            "boundary": "foundry_delivery",
+            "host_consumption": "unknown",
+            "result": "delivered"
+          }
+        },
+        {
+          "id": 1,
+          "tokens": 1983,
+          "attribution": {
+            "reason": "expected_span_not_observed_in_bounded_candidate_window",
+            "result": "unknown"
+          }
+        },
+        {
+          "id": 2,
+          "tokens": 2044,
+          "attribution": {
+            "boundary": "foundry_delivery",
+            "host_consumption": "unknown",
+            "result": "delivered"
+          }
+        },
+        {
+          "id": 3,
+          "tokens": 2023,
+          "attribution": {
+            "boundary": "foundry_delivery",
+            "host_consumption": "unknown",
+            "result": "delivered"
+          }
+        },
+        {
+          "id": 4,
+          "tokens": 2033,
+          "attribution": {
+            "result": "loss",
+            "stage": "candidate_limit"
+          }
+        },
+        {
+          "id": 5,
+          "tokens": 1996,
+          "attribution": {
+            "reason": "expected_span_not_observed_in_bounded_candidate_window",
+            "result": "unknown"
+          }
+        },
+        {
+          "id": 6,
+          "tokens": 2028,
+          "attribution": {
+            "reason": "expected_span_not_observed_in_bounded_candidate_window",
+            "result": "unknown"
+          }
+        },
+        {
+          "id": 7,
+          "tokens": 2034,
+          "attribution": {
+            "boundary": "foundry_delivery",
+            "host_consumption": "unknown",
+            "result": "delivered"
+          }
+        }
+      ]
+    },
+    "default": {
+      "delivered_ids": [
+        7
+      ],
+      "delivered_tokens": 16173,
+      "per_question": [
+        {
+          "id": 0,
+          "tokens": 2023,
+          "attribution": {
+            "reason": "expected_span_not_observed_in_bounded_candidate_window",
+            "result": "unknown"
+          }
+        },
+        {
+          "id": 1,
+          "tokens": 2045,
+          "attribution": {
+            "reason": "expected_span_not_observed_in_bounded_candidate_window",
+            "result": "unknown"
+          }
+        },
+        {
+          "id": 2,
+          "tokens": 2035,
+          "attribution": {
+            "result": "loss",
+            "stage": "packing_omission"
+          }
+        },
+        {
+          "id": 3,
+          "tokens": 1979,
+          "attribution": {
+            "reason": "no_unique_observed_loss",
+            "result": "unknown"
+          }
+        },
+        {
+          "id": 4,
+          "tokens": 2017,
+          "attribution": {
+            "result": "loss",
+            "stage": "per_file_cap"
+          }
+        },
+        {
+          "id": 5,
+          "tokens": 2048,
+          "attribution": {
+            "result": "loss",
+            "stage": "candidate_limit"
+          }
+        },
+        {
+          "id": 6,
+          "tokens": 1992,
+          "attribution": {
+            "reason": "expected_span_not_observed_in_bounded_candidate_window",
+            "result": "unknown"
+          }
+        },
+        {
+          "id": 7,
+          "tokens": 2034,
+          "attribution": {
+            "boundary": "foundry_delivery",
+            "host_consumption": "unknown",
+            "result": "delivered"
+          }
+        }
+      ]
+    }
+  }
+}
