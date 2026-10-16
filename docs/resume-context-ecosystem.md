@@ -160,6 +160,21 @@ versioned in `scripts/cloud`:
 | [`gates.sh`](../scripts/cloud/gates.sh) | Runs the merge gates (`scripts/gates.sh`) with `environment.env` applied and `RUSTUP_TOOLCHAIN` unset, whatever the session holds; `bash scripts/cloud/gates.sh OUTDIR`. |
 | [`fetch-resume.sh`](../scripts/cloud/fetch-resume.sh) | Downloads and verifies the private archive and prints its `RESTORE.md`. It takes the archive from a private GitHub release attached to the session, or from an HTTPS URL. |
 
+For a prepared environment with tools outside `/opt/cf`, source `environment.env`
+first, then apply the local path overrides. The doctor honors `LIBCLANG_PATH`
+(a directory or library file); an invalid explicit override fails instead of
+falling back to another installed library. Set `CF_SETUP_RECEIPT` to the regular,
+nonempty receipt from that environment's actual preparation. Its default remains
+`/opt/cf/setup-receipt.txt`; a receipt is not a substitute for the other checks.
+
+An indexing/retrieval setup that deliberately omits generation weights can set
+`CF_GENERATION_REQUIRED=0`. The doctor then reports generation as unconfigured and
+unvalidated. The default still requires `CF_GENERATION_GGUF`, and invalid policy
+values fail. Restore `CF_GENERATION_REQUIRED=1` before any generation validation.
+These overrides do not change worker profiles, model identities or acceptance
+requirements. The cloud gates wrapper reapplies `environment.env`; local path
+overrides must be reconciled before using that wrapper in a different layout.
+
 An Anthropic-hosted VM has about 4 vCPUs, 16 GB RAM and 30 GB of disk. That is half
 the memory of the checkpoint host, which affects two steps below:
 
