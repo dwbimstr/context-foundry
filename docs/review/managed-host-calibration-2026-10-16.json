@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "date": "2026-10-16",
+  "implementation_commit": "c4c095f2479bbdbdf01b6aaaa6283e88a033d7fe",
+  "scope": "public_seeded_percent_encoding_calibration",
+  "held_out": false,
+  "runtime": "managed Codex subagents",
+  "requested_model": "gpt-6.1-sol",
+  "requested_reasoning_effort": "xhigh",
+  "agent_history": "fork_turns=none; one fresh agent per arm",
+  "model_identity": "requested_configuration_not_provider_attestation",
+  "source": "percent-encoding 2.3.2",
+  "source_hashes": {
+    "Cargo.toml": "e4ea043c47bbd5551fc5fcf8151eab94428b4be6f2337834a0f9020a4392fb19",
+    "src/lib.rs": "641903d385581e76f31ef8c991d83c2a5d7fbbc2879d93909c539037e4e1e3e2",
+    "src/ascii_set.rs": "f75552e4f446ed240cef64c1367e848cf3ae65f77602085459566d835a1d8587",
+    "LICENSE-MIT": "b38f11f6096706e6de553dabe2a7ed142d59b6fa8c97e290c67496154745cdd5",
+    "LICENSE-APACHE": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+  },
+  "seeded_lib_sha256": "bb97304a4602082df298e81d6ac0b500e8d6d89a525d8585a16c267ef6c84ac5",
+  "provider_usage": null,
+  "provider_cost": null,
+  "task_wall_time": null,
+  "limits": [
+    "One author-visible public seeded task with named helper; not frozen retrieval or representative task acceptance.",
+    "Direct Foundry CLI lexical context, not MCP or semantic inference.",
+    "No provider input/output/cached tokens or billing data; whole agent wall time and platform envelopes unavailable.",
+    "Subprocess elapsed times exclude agent reasoning and orchestration; index cost measured separately.",
+    "v1 harness failure remains invalid for comparison with unknown provider cost.",
+    "Candidate initial composed-context instruction was invalid without task metadata; errors and fallback included.",
+    "Capture wrapper footers included; platform envelopes unobservable.",
+    "Full host prompts/platform transcripts were not frozen; this is an unsealed integration observation."
+  ],
+  "index": {
+    "elapsed_ms": 175,
+    "exit_code": 0,
+    "semantic_inference": false
+  },
+  "arms": {
+    "baseline": {
+      "changed_files": [
+        "src/lib.rs"
+      ],
+      "source_integrity_pass": true,
+      "capture_count": 5,
+      "capture_failed_commands": 0,
+      "capture_truncated": false,
+      "command_elapsed_ms": 209,
+      "labels": [
+        "compile",
+        "discover",
+        "inspect",
+        "repair",
+        "tests"
+      ],
+      "correct": true,
+      "subprocess_output_bytes": 12545,
+      "capture_footer_bytes": 416,
+      "wrapper_output_bytes_excluding_platform_envelopes": 12961,
+      "external_check_exit_codes": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "final_lib_sha256": "8e2f37bb09cfca35a04b021db4106b1758af6fafde48a2f93bde26a53b5c5e00"
+    },
+    "foundry": {
+      "changed_files": [
+        "src/lib.rs"
+      ],
+      "source_integrity_pass": true,
+      "capture_count": 10,
+      "capture_failed_commands": 4,
+      "capture_truncated": false,
+      "command_elapsed_ms": 957,
+      "labels": [
+        "agents",
+        "baseline",
+        "compile",
+        "contexta",
+        "contextb",
+        "contextc",
+        "contexthelp",
+        "repair",
+        "sources",
+        "tests"
+      ],
+      "correct": true,
+      "subprocess_output_bytes": 11993,
+      "capture_footer_bytes": 841,
+      "wrapper_output_bytes_excluding_platform_envelopes": 12834,
+      "external_check_exit_codes": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "final_lib_sha256": "c21b31b8d30e59fc3f16b7ea88872444fb49a94b3dd297e3f600193282ddb818"
+    }
+  },
+  "retained_attempts": [
+    {
+      "path": "managed-host-2026-10-16/baseline/invalid-run.json",
+      "status": "invalid_harness_environment",
+      "provider_usage": null,
+      "provider_cost": null
+    }
+  ],
+  "artifact_root": "/workspace/.context-foundry-tools/validation-runs",
+  "sha256": {
+    "managed-host-2026-10-16-v2/manifest.json": "92184ac8c11e83f7a7ac82ca8721b4de99689c3e7b95186e60848991ef0ac780",
+    "managed-host-2026-10-16-v2/results.json": "43d87060e98b83b2e6a9ba9a8d35e4e7928df17846317a8aa8a1d4c46cd80c95",
+    "managed-host-2026-10-16-v2/oracle.rs": "4a1950c1e83abd660e761b3ae663ee3cb43000f7ec705c8d20e8036b1d15cb16",
+    "managed-host-2026-10-16-v2/capture.py": "3eee9dab548fb8e3afa2682ef7b87bdd0c6559552de8ac4dacc7f7f55dd1f996",
+    "managed-host-2026-10-16/baseline/invalid-run.json": "6cc02a07ad59fe33c4272b5afbb74f6f01937cf32f69779a06b763e744efa1ad"
+  }
+}

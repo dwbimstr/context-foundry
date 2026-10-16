@@ -700,6 +700,14 @@ not hidden work inside packing; T005 carries the owner's 2026-10-03 economics pr
 
 **Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
 
+**Managed host continuation, 2026-10-16:** the owner selected the running managed
+Codex agent runtime. A public `percent-encoding` repair passes the external oracle
+in both ordinary-discovery and lexical Foundry CLI arms. This does not require OMP
+or another CLI login. Complete provider usage is unavailable; approximately 1%
+less wrapper output is not economic acceptance. Failed discovery commands and the
+invalid first harness attempt remain recorded. See the
+[receipt](../../docs/validation.md#managed-host-and-gateway-continuation--2026-10-16).
+
 **Executed boundary checks, 2026-10-09:** the Rust SDK/real Foundry stdio tests
 exercise opt-in behavior and diagnostic flags, byte-identical untraced/traced text,
 request IDs and error-result recording. Codex CLI `0.159.0-alpha.3` accepts the
