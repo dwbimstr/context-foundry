@@ -651,7 +651,13 @@ fn repository_retrieve_budget_comparison() {
                     .arg(&binary)
                     .arg("--store")
                     .arg(&store)
-                    .args(["retrieve", &handle, "--tokens", &budget.to_string()])
+                    .args([
+                        "retrieve",
+                        "--handle",
+                        &handle,
+                        "--tokens",
+                        &budget.to_string(),
+                    ])
                     .output()
                     .unwrap();
                 assert!(
