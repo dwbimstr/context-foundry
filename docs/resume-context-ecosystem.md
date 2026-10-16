@@ -1,6 +1,40 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-**Latest continuation, 2026-10-16:** the published Codex sandbox passes the portable
+**Budget repair continuation, 2026-10-16:** runtime code `c258026` and diagnostic
+fix `1f0827c` preserve matching source until packing, honor explicit budgets, backfill
+unused experimental candidate slots and reduce source-read continuation overhead.
+The public experimental lexical comparison improves **2/8 → 3/8 at 2,048 tokens**;
+default lexical remains 1/8. Higher allowances produce no additional hits. Reading
+the same 52,059 bytes at a 512-token allowance takes 27 instead of 36 calls and
+6.48% fewer delivered tokens. Provider-accounted task economics is still unproved.
+Read the [budget receipt](validation.md#budget-allocation-and-evidence-preservation--2026-10-16)
+and [machine-readable results](review/budget-repair-2026-10-16.json). Full local gates
+for `c258026`: all five exit 0 on Rust 1.97/1.90, 1,171 passed, zero failed, 28 ignored;
+no-default-features library check has zero warnings. The diagnostic-only follow-up
+passed its real CLI comparison and target Clippy; full gates were not repeated.
+
+Real Gemma 2 file-overview preparation now completes 274/274 sources in 298.563
+seconds wall, with 35 calls and 84,927 input tokens. Unchanged replay takes 4.777
+seconds with zero calls/tokens. Against that completed overview store, the real-model
+comparison also improves 2/8 → 3/8 at 2,048 tokens, with 16,104 → 16,289 total
+delivered tokens across eight questions and no demonstrated latency improvement.
+This is a separate overview check; it does not replace historical full-hierarchy
+or representative-scale acceptance. Raw public evidence is under
+`/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/`.
+The first diagnostic cleanup assertion counted an older defunct process; its
+failure remains recorded, and resumed checks distinguish newly created workers.
+
+Next retrieval work is owner-local continuation and ranking before the 32-unit
+cutoff: Q3's expected document ranks 64 despite another document of that function
+ranking zero; Q4 ranks 132. Q5/Q6's expected implementation spans are absent from
+the bounded search window. Q1 remains excluded by unchanged admission policy.
+Do not claim that raising budgets fixes these losses. Partial source overlaps and
+greedy full-form packing also remain improvement opportunities. Unrelated
+[FOLLOWUP](../FOLLOWUP.md) protocols remain parked, no private archive was accessed,
+and native macOS/GPU acceptance remains a gap. No release or general completion
+claim follows from these local gains.
+
+**Earlier managed-host continuation, 2026-10-16:** the published Codex sandbox passes the portable
 Linux setup checks. The owner selected the existing managed agent runtime as the
 coding host; Foundry stays local and is callable through its CLI. A public seeded
 repair passes the external checker in both baseline and Foundry arms, but provider
@@ -11,9 +45,10 @@ before the historical checkpoint below. Work remains on
 `experimental/context-ecosystem`; the parked items in [FOLLOWUP](../FOLLOWUP.md)
 and the native macOS/GPU gap remain. Do not fetch the private resume archive.
 
-The owner requested a pause, a portable handoff and continuation in a new context.
-**This is a checkpoint, not completion of the six acceptance gates.** No new model
-experiment was started after that request. Start here, then read `AGENTS.md`, the
+At the 2026-10-11 checkpoint, the owner requested a pause, a portable handoff and
+continuation in a new context. **This is not completion of the six acceptance
+gates.** That session stopped model experiments; later authorized runs are recorded
+above. Start here, then read `AGENTS.md`, the
 constitution, [validation](validation.md#realistic-acceptance-continuation--2026-10-11)
 and the [current inventory](context-ecosystem-plan.md#pending-work-inventory--2026-10-10).
 Use the strongest available reasoning/coding model and inspect actual artifacts.
@@ -68,17 +103,18 @@ The current tested code is the latest commit with a local gates receipt in
 
 Preserve file-first hierarchy publication, exact-input cache identity, zero-call
 unchanged replay, freshness-checked router/caller/test evidence, coarse excerpts,
-acronym matching and CLI worker reaping. Defaults remain unchanged. Hierarchy/body
+acronym matching and CLI worker reaping. Default context requests remain 2,048 tokens; the budget repair raises the implicit
+ceiling for explicit requests to 32,768. Hierarchy/body
 role metadata uses `kinds2`; overview/address recipes retain `kinds1`.
 
 ## Actual acceptance state
 
 | Gate | Verified now | Still required |
 | --- | --- | --- |
-| Retrieval | Complete real hierarchy: 274 admitted sources, 13,822 vectors, 14,453 locations. Complete original, role-only and owner-scope arms deliver 1/8; coverage-independent interleaving restores 2/8. Lexical is 2/8. | Effective general repair and independent acceptance. All eight stay in the denominator; one historical source is excluded by unchanged private-key policy, so admitted ceiling is 7/8. Do not bypass admission or relabel outlines as body evidence. |
-| Host tasks | Body reads and native tool transport work; latest Qwen3-4B pair still fails both unchanged external oracles. | Run the prepared stronger-model pair, obtain correct task completion, then assess economics. |
+| Retrieval | Complete real hierarchy: 274 admitted sources, 13,822 vectors, 14,453 locations. Complete original, role-only and owner-scope arms deliver 1/8; coverage-independent interleaving restores 2/8. Historical experimental lexical was 2/8; the 2026-10-16 budget repair reaches 3/8 at the same 2,048 tokens. Default lexical remains 1/8. | Effective general repair and independent acceptance. All eight stay in the denominator; one historical source is excluded by unchanged private-key policy, so admitted ceiling is 7/8. Do not bypass admission or relabel outlines as body evidence. |
+| Host tasks | Historical Qwen3-4B pair fails both unchanged external oracles. The managed-runtime public seeded repair passes in both arms; provider usage is unavailable. | Representative correct completions and complete provider accounting. The private stronger-model protocol remains parked. |
 | Representative scale | Exact overview fitting covers 67,663 admitted Rust/Go sources; 60,735–65,959 distinct inputs / 14.65–15.86 million tokens. | Full real inference, audit/replay, serving and changed-input verification. No complete 67,663-source model run exists. |
-| Economics | Failed attempts and unknown usage are retained. Selected history totals 71 requests, including the latest 13; 66 complete and five unknown. | Demonstrated completion benefit with bootstrap, acquisition, retrieval, maintenance and failed attempts included. Smaller failed prompts are not a benefit. |
+| Economics | Identical-source CLI delivery improves by 25% fewer calls and 6.48% fewer delivered tokens at 512 tokens. Provider/task benefit remains unproved. Failed attempts and unknown usage are retained. Selected history totals 71 requests, including the latest 13; 66 complete and five unknown. | Demonstrated completion benefit with bootstrap, acquisition, retrieval, maintenance and failed attempts included. Smaller failed prompts are not a benefit. |
 | Evidence | Bounded source call postings, conservative Python aliases, router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks pass. | Broader collectors, cross-language resolution and realistic task outcomes. Unsupported/dynamic cases remain explicitly incomplete. |
 | Mac/GPU | Real Metal embeddings, 8,192-token input, owned generation, cleanup and CPU/Metal parity pass. Actual 128-file calibration and zero-call replay pass. With Spotlight stopped on the runner, native CPU-pressure acceptance passes twice at unchanged thresholds (runs 38207948408, 38209502529). | Physical-device performance/global GPU pressure, combined residency and signed installed-package acceptance. |
 
