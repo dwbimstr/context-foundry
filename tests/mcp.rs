@@ -1704,7 +1704,7 @@ fn bootstrap_graph_requires_both_files_and_semantic_needs_setup() {
         Some(dir.path().join("profile.json").as_path()),
     )
     .unwrap();
-    assert!(!applied.complete, "semantic without 009 is needs_setup");
+    assert!(!applied.complete, "a missing profile is needs_setup");
     assert!(
         applied
             .components

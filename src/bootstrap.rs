@@ -7,10 +7,10 @@
 //! baseline source, and consume an already completed graph artifact when
 //! both files are supplied. Graph bootstrap requires BOTH
 //! `--graph-index FILE --graph-snapshot FILE`; supplying only one is invalid
-//! input. Semantic preparation requires a pinned runtime that 009 has not
-//! shipped: it is reported `needs_setup`, never silently skipped or
-//! `failed`; overall `complete` only when every requested component meets
-//! its declared scope; apply exits 1 on incomplete application.
+//! input. Semantic preparation requires a local profile and an explicit budget,
+//! using the existing 009 supervisor under the same store owner. Inspection never
+//! verifies runtime readiness from file existence. Overall `complete` requires
+//! every requested component; apply exits 1 on incomplete application.
 //!
 //! `connect` prints per-project host configuration for implemented hosts
 //! with absolute binary/root/store paths and the bounded context policy.
@@ -77,6 +77,18 @@ pub struct BootstrapReport {
     pub complete: bool,
     pub next_actions: Vec<String>,
     pub versions: Versions,
+    /// The existing 009 run receipt, only when preparation actually ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_preparation: Option<serde_json::Value>,
+}
+
+/// Explicit limits for semantic bootstrap; the time allowance begins after
+/// source/graph indexing. An absent selection never starts model work.
+pub struct SemanticRun<'a> {
+    pub budget_seconds: u64,
+    pub development_isolation: bool,
+    pub cache_cap_bytes: u64,
+    pub control: &'a Control,
 }
 
 /// What this binary is and speaks, read without loading a model or opening
@@ -224,20 +236,7 @@ pub fn inspect(
                 });
             }
             "semantic" => {
-                let reason = match profile {
-                    None => "semantic bootstrap requires --profile FILE".to_owned(),
-                    Some(p) if !p.is_file() => format!("profile file {} not found", p.display()),
-                    Some(_) => {
-                        "pinned semantic runtime is not installed (009 pending); no implicit Hub access"
-                            .to_owned()
-                    }
-                };
-                reports.push(ComponentReport {
-                    component: "semantic".into(),
-                    state: ComponentState::NeedsSetup,
-                    reason: Some(reason),
-                    next_action: Some("install the 009 runtime under an explicit profile".into()),
-                });
+                reports.push(semantic_setup(profile, &store));
             }
             _ => unreachable!("validated above"),
         }
@@ -269,6 +268,7 @@ pub fn inspect(
         complete,
         next_actions,
         versions: Versions::of_running_binary(),
+        semantic_preparation: None,
     })
 }
 
@@ -283,7 +283,28 @@ pub fn apply(
     components: &[String],
     graph_index: Option<&Path>,
     graph_snapshot: Option<&Path>,
-    _profile: Option<&Path>,
+    profile: Option<&Path>,
+) -> FResult<BootstrapReport> {
+    apply_with_semantic(
+        root,
+        store,
+        components,
+        graph_index,
+        graph_snapshot,
+        profile,
+        None,
+    )
+}
+
+/// Apply with an explicit semantic budget, retaining one store owner throughout.
+pub fn apply_with_semantic(
+    root: &Path,
+    store: Option<&Path>,
+    components: &[String],
+    graph_index: Option<&Path>,
+    graph_snapshot: Option<&Path>,
+    profile: Option<&Path>,
+    semantic: Option<&SemanticRun<'_>>,
 ) -> FResult<BootstrapReport> {
     let root_canonical = canonical_root(root)?;
     let store = store
@@ -291,6 +312,26 @@ pub fn apply(
         .unwrap_or_else(|| default_store(&root_canonical));
     validate_components(components)?;
     validate_graph_args(graph_index, graph_snapshot)?;
+    if let Some(run) = semantic {
+        if !components.iter().any(|c| c == "semantic")
+            || profile.is_none()
+            || run.budget_seconds == 0
+            || run.cache_cap_bytes == 0
+            || std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(run.budget_seconds))
+                .is_none()
+        {
+            return Err(FoundryError::InvalidArgument(
+                "semantic preparation requires the semantic component, a profile and positive bounded limits".into(),
+            ));
+        }
+        run.control.check()?;
+        if !components.iter().any(|c| c == "lexical") && !store.join("knowledge.redb").exists() {
+            return Err(FoundryError::InvalidArgument(
+                "semantic-only bootstrap requires an indexed store; include the lexical component to index this root first".into(),
+            ));
+        }
+    }
     let mut engine = if store.join("knowledge.redb").exists() {
         Engine::open_existing(&store)?
     } else {
@@ -302,10 +343,21 @@ pub fn apply(
         Some(bound) if bound != expected => return Err(FoundryError::WrongWorkspace),
         Some(_) => {}
     }
+    if semantic.is_some()
+        && !components.iter().any(|c| c == "lexical")
+        && engine.status()?.scan_state != "complete"
+    {
+        return Err(FoundryError::InvalidArgument(
+            "semantic-only bootstrap requires a completed source scan; include the lexical component to index this root first".into(),
+        ));
+    }
     let mut reports = Vec::new();
     let mut complete = true;
+    let mut lexical_complete = true;
+    let control = Control::unbounded();
+    let control = semantic.map_or(&control, |run| run.control);
     if components.iter().any(|c| c == "lexical") {
-        match engine.index(&root_canonical, &Control::unbounded()) {
+        match engine.index(&root_canonical, control) {
             Ok(report) => {
                 let ok = !report.partial && report.failures == 0;
                 reports.push(ComponentReport {
@@ -327,6 +379,7 @@ pub fn apply(
                     },
                 });
                 complete &= ok;
+                lexical_complete = ok;
             }
             Err(e) => {
                 reports.push(ComponentReport {
@@ -336,9 +389,12 @@ pub fn apply(
                     next_action: Some("re-run apply after fixing the failure".into()),
                 });
                 complete = false;
+                lexical_complete = false;
             }
         }
     }
+    // A cancelled source phase must not admit graph import or model work.
+    control.check()?;
     if components.iter().any(|c| c == "graph") {
         match (graph_index, graph_snapshot) {
             (Some(index), Some(snapshot)) => {
@@ -379,17 +435,60 @@ pub fn apply(
             }
         }
     }
+    #[cfg(feature = "semantic")]
+    let mut semantic_preparation = None;
+    #[cfg(not(feature = "semantic"))]
+    let semantic_preparation = None;
     if components.iter().any(|c| c == "semantic") {
-        reports.push(ComponentReport {
-            component: "semantic".into(),
-            state: ComponentState::NeedsSetup,
-            reason: Some(
-                "pinned semantic runtime is not installed (009 pending); baseline source stays ready"
-                    .into(),
-            ),
-            next_action: Some("install the 009 runtime under an explicit profile".into()),
-        });
-        complete = false;
+        let mut component = semantic_setup(profile, &store);
+        if !lexical_complete {
+            component.state = ComponentState::Partial;
+            component.reason =
+                Some("source indexing incomplete; semantic preparation was not started".into());
+            component.next_action =
+                Some("re-run bootstrap --apply; committed work is reused".into());
+        } else if let (Some(profile), Some(run)) = (profile, semantic) {
+            #[cfg(feature = "semantic")]
+            {
+                component.next_action = Some(semantic_command(profile, &store, Some(run)));
+                match crate::neural::prepare::cli_prepare_on_engine(
+                    &engine,
+                    &crate::neural::prepare::PrepareOptions {
+                        profile_path: profile,
+                        budget_seconds: run.budget_seconds,
+                        development: run.development_isolation,
+                        cache_cap_bytes: run.cache_cap_bytes,
+                        started: std::time::Instant::now(),
+                        control: run.control,
+                        priority_paths: &[],
+                    },
+                ) {
+                    Ok(prepared) => {
+                        component.state = if prepared.partial {
+                            ComponentState::Partial
+                        } else {
+                            ComponentState::Ready
+                        };
+                        component.reason = prepared.reason_code.map(str::to_owned);
+                        if !prepared.partial {
+                            component.next_action = None;
+                        }
+                        semantic_preparation = Some(
+                            serde_json::to_value(prepared)
+                                .map_err(|e| FoundryError::Internal(e.into()))?,
+                        );
+                    }
+                    Err(error) => {
+                        component.state = ComponentState::Failed;
+                        component.reason = Some(format!("{}: {error}", error.code()));
+                    }
+                }
+            }
+            #[cfg(not(feature = "semantic"))]
+            let _ = (profile, run);
+        }
+        complete &= component.state == ComponentState::Ready;
+        reports.push(component);
     }
     Ok(BootstrapReport {
         applied: true,
@@ -400,7 +499,45 @@ pub fn apply(
         complete,
         next_actions: Vec::new(),
         versions: Versions::of_running_binary(),
+        semantic_preparation,
     })
+}
+
+fn semantic_setup(profile: Option<&Path>, store: &Path) -> ComponentReport {
+    let (state, reason, next_action) = match profile {
+        None => (ComponentState::NeedsSetup, "semantic bootstrap requires --profile FILE".into(),
+            "supply a pinned local semantic profile; no downloads are performed".into()),
+        Some(path) if !path.is_file() => (ComponentState::NeedsSetup,
+            format!("profile file {} not found", path.display()), "supply an existing pinned local semantic profile".into()),
+        Some(_) if !cfg!(feature = "semantic") => (ComponentState::NeedsSetup,
+            "this build has no semantic retrieval".into(), "rebuild with the semantic feature".into()),
+        Some(path) => (ComponentState::Unverified,
+            "profile exists; runtime and prepared coverage are unverified; explicit preparation budget required".into(),
+            semantic_command(path, store, None)),
+    };
+    ComponentReport {
+        component: "semantic".into(),
+        state,
+        reason: Some(reason),
+        next_action: Some(next_action),
+    }
+}
+
+fn semantic_command(profile: &Path, store: &Path, run: Option<&SemanticRun<'_>>) -> String {
+    let quote = |path: &Path| format!("'{}'", path.display().to_string().replace('\'', "'\\''"));
+    let mut command = format!(
+        "foundry --store {} semantic prepare --profile {} --budget-seconds {}",
+        quote(store),
+        quote(profile),
+        run.map_or(300, |r| r.budget_seconds),
+    );
+    if let Some(run) = run {
+        command.push_str(&format!(" --cache-cap {}", run.cache_cap_bytes));
+        if run.development_isolation {
+            command.push_str(" --development-isolation");
+        }
+    }
+    command
 }
 
 fn validate_components(components: &[String]) -> FResult<()> {

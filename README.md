@@ -239,6 +239,36 @@ workspace files. Other MCP
 clients can launch the same command; only OMP and Codex have been exercised. Keep
 `.context-foundry/` out of version control.
 
+A managed coding agent with shell access can also call this CLI directly, using
+its existing model and authentication:
+
+```sh
+foundry --store ~/src/repo/.context-foundry context 'parse_record callers' --tokens 2048
+```
+
+This path needs no second coding-agent process or local generation model. Prefer
+Foundry for admitted-source discovery, then follow its cited handles with `retrieve`;
+use current-file reads or search when coverage or required semantics are unavailable.
+CLI output budgets measure delivered context, not the host's total token usage or
+billing. For composed implementation/caller/test evidence, create a `task-context`
+first and supply its `--task ID --task-revision N` with `--compose-evidence`; add
+`--compact-evidence` to omit repeated metadata.
+
+Optional local embeddings can be prepared during bootstrap with an explicit budget:
+
+```sh
+foundry bootstrap --root ~/src/repo --apply --components lexical,semantic \
+  --profile /abs/semantic-profile.json --semantic-budget-seconds 300 \
+  --development-isolation
+```
+
+The profile must identify already installed, pinned artifacts. Current worker
+acceptance uses explicit development isolation; production signing/isolation remains
+unaccepted. The semantic budget starts after indexing. Incomplete preparation exits
+1 with its reason and retained progress; rerunning reuses completed cache entries.
+An unchanged prepared repository requires zero embedding calls. Lexical context
+remains usable after optional preparation fails. See [deployment](docs/deployment.md).
+
 **Several sessions on one repository.** By default one host session owns the store and
 others get `store_busy`. For concurrent hosts, run one shared owner on IPv4 loopback
 with a bearer token read from an environment variable, and print matching host
