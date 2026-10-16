@@ -206,7 +206,20 @@ fn attribution_distinguishes_excerpt_selection_from_missing_discovery() {
     )
     .unwrap();
     let r = record(&trace, &packed.text);
-    assert_eq!(attribute(&r, query, &expected)["stage"], "evidence_window");
+    assert_eq!(attribute(&r, query, &expected)["result"], "delivered");
+    let small = response::pack_enriched_context(
+        &candidates,
+        None,
+        response::Budget::request(512),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    let small_record = record(&trace, &small.text);
+    assert_eq!(
+        attribute(&small_record, query, &expected)["stage"],
+        "packing_omission"
+    );
+
     let start = body.find("restore_late").unwrap() as u64;
     let outside = SourceHandle {
         start,
@@ -218,14 +231,29 @@ fn attribution_distinguishes_excerpt_selection_from_missing_discovery() {
         "expected_span_not_observed_in_bounded_candidate_window",
         "a selected function is not evidence that its unselected documents were materialized"
     );
-    let mut legacy = r.clone();
+    // Preserve a legacy clipped trace to keep attribution conservative about
+    // missing document/excerpt coordinates. This is no longer today's delivery.
+    let mut clipped = small_record;
+    for event in clipped["trace"]["events"].as_array_mut().unwrap() {
+        if event["stage"] == "materialization" {
+            event["excerpt"]["end"] = 1536.into();
+        }
+        if event["stage"] == "packing_input" {
+            event["items"][0]["unit"]["end"] = 1536.into();
+        }
+    }
+    assert_eq!(
+        attribute(&clipped, query, &expected)["stage"],
+        "evidence_window"
+    );
+    let mut legacy = clipped.clone();
     for event in legacy["trace"]["events"].as_array_mut().unwrap() {
         if event["stage"] == "materialization" {
             event.as_object_mut().unwrap().remove("document");
         }
     }
     assert_eq!(attribute(&legacy, query, &expected)["result"], "unknown");
-    let mut incomplete = r.clone();
+    let mut incomplete = clipped.clone();
     for event in incomplete["trace"]["events"].as_array_mut().unwrap() {
         if event["stage"] == "materialization" {
             event["excerpt"] = Value::Null;
@@ -349,6 +377,10 @@ const CASES: &[(&str, &str, &str)] = &[
 #[test]
 #[ignore = "explicit repository diagnostic; requires new FOUNDRY_ATTRIBUTION_DIR, preserves traces outside Git"]
 fn repository_development_attribution() {
+    let budget: usize = std::env::var("FOUNDRY_ATTRIBUTION_TOKENS")
+        .map(|value| value.parse().expect("integer attribution budget"))
+        .unwrap_or(2048);
+    assert!((1..=response::MAX_BUDGET_TOKENS).contains(&budget));
     let output = std::path::PathBuf::from(
         std::env::var_os("FOUNDRY_ATTRIBUTION_DIR").expect("new output directory"),
     );
@@ -461,7 +493,7 @@ fn repository_development_attribution() {
             let packed = response::pack_enriched_context(
                 &c,
                 None,
-                response::Budget::request(2048),
+                response::Budget::request(budget),
                 &response::stdout_bytes,
             )
             .unwrap();
@@ -481,7 +513,7 @@ fn repository_development_attribution() {
             let plain = response::pack_enriched_context(
                 &plain,
                 None,
-                response::Budget::request(2048),
+                response::Budget::request(budget),
                 &response::stdout_bytes,
             )
             .unwrap();
@@ -529,7 +561,7 @@ fn repository_development_attribution() {
                 .arg(query)
                 .args([
                     "--tokens",
-                    "2048",
+                    &budget.to_string(),
                     "--strategy",
                     "search",
                     "--experimental-behavior-context",
@@ -565,14 +597,102 @@ fn repository_development_attribution() {
                 .filter(|event| event["stage"] == "semantic")
                 .map(|event| &event["decision"])
                 .collect();
-            rows.push(json!({"id":id,"query":query,"expected":expected,"variant":variant,"profile":profile,"semantic_decisions":semantic_decisions,"elapsed_ms":started.elapsed().as_millis(),"record":files[0],"attribution":attribute(&r,query,expected)}));
+            rows.push(json!({"id":id,"query":query,"expected":expected,"variant":variant,"profile":profile,"semantic_decisions":semantic_decisions,"tokens":response::count_tokens(std::str::from_utf8(&result.stdout).unwrap()),"elapsed_ms":started.elapsed().as_millis(),"record":files[0],"attribution":attribute(&r,query,expected)}));
         }
     }
-    let report = json!({"scope":"public_retrieval_diagnostic_not_blind_acceptance","historical_g2":false,"root":root,"external_labels":external,"excluded_evaluator_sources":[excluded],"indexed":indexed,"budget":2048,"rows":rows});
+    let report = json!({"scope":"public_retrieval_diagnostic_not_blind_acceptance","historical_g2":false,"root":root,"external_labels":external,"excluded_evaluator_sources":[excluded],"indexed":indexed,"budget":budget,"rows":rows});
     std::fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(&report).unwrap(),
     )
     .unwrap();
     println!("{}", serde_json::to_string(&report).unwrap());
+}
+
+#[test]
+#[ignore = "explicit public source-read comparison; requires existing attribution store, baseline binary and new output directory"]
+fn repository_retrieve_budget_comparison() {
+    let output = std::path::PathBuf::from(std::env::var_os("FOUNDRY_ATTRIBUTION_DIR").unwrap());
+    assert!(!output.starts_with(env!("CARGO_MANIFEST_DIR")));
+    std::fs::create_dir(&output).unwrap();
+    let root = std::path::PathBuf::from(std::env::var_os("FOUNDRY_ATTRIBUTION_ROOT").unwrap());
+    let store = std::path::PathBuf::from(std::env::var_os("FOUNDRY_ATTRIBUTION_STORE").unwrap());
+    let path = "src/boundary.rs";
+    let body = std::fs::read(root.join(path)).unwrap();
+    let engine = Engine::open_existing(&store).unwrap();
+    let source = engine.source(path).unwrap().unwrap();
+    assert_eq!(source.hash, context_foundry::digest(&body));
+    let whole = SourceHandle {
+        workspace_id: engine.workspace_id().unwrap(),
+        path: path.into(),
+        sha256: source.hash,
+        start: 0,
+        end: body.len() as u64,
+    };
+    drop(engine);
+    let mut rows = Vec::new();
+    for budget in [512, 2048] {
+        for (name, binary) in [
+            (
+                "baseline",
+                std::path::PathBuf::from(std::env::var_os("FOUNDRY_ATTRIBUTION_BASELINE").unwrap()),
+            ),
+            ("candidate", env!("CARGO_BIN_EXE_foundry").into()),
+        ] {
+            let started = std::time::Instant::now();
+            let mut handle = whole.to_v2();
+            let mut collected = Vec::new();
+            let mut tokens = 0;
+            let mut calls = 0;
+            loop {
+                assert!(calls < 256, "bounded continuation");
+                let result = std::process::Command::new("timeout")
+                    .arg("30s")
+                    .arg(&binary)
+                    .arg("--store")
+                    .arg(&store)
+                    .args(["retrieve", &handle, "--tokens", &budget.to_string()])
+                    .output()
+                    .unwrap();
+                assert!(
+                    result.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                std::fs::write(
+                    output.join(format!("{name}-{budget}-{calls}.txt")),
+                    &result.stdout,
+                )
+                .unwrap();
+                let text = std::str::from_utf8(&result.stdout).unwrap();
+                let counted = response::count_tokens(text);
+                assert!(counted <= budget);
+                tokens += counted;
+                calls += 1;
+                let parsed = testkit::parse_v2(text).unwrap();
+                assert_eq!(parsed.items.len(), 1);
+                let item = &parsed.items[0];
+                let range = context_foundry::store::HandleRef::parse(&item.handle).unwrap();
+                assert_eq!(range.start as usize, collected.len());
+                assert_eq!(
+                    item.body.as_bytes(),
+                    &body[range.start as usize..range.end as usize]
+                );
+                assert!(range.end > range.start);
+                collected.extend_from_slice(item.body.as_bytes());
+                let Some(next) = parsed.next else { break };
+                handle = next;
+            }
+            assert_eq!(collected, body, "both arms reconstruct identical source");
+            rows.push(json!({"arm":name,"budget":budget,"calls":calls,"delivered_tokens":tokens,"source_bytes":body.len(),"elapsed_ms":started.elapsed().as_millis()}));
+        }
+    }
+    let report =
+        json!({"scope":"public_cli_delivery_not_provider_economics","source":whole,"rows":rows});
+    std::fs::write(
+        output.join("report.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
+    println!("{report}");
 }

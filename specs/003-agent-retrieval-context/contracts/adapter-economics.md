@@ -36,7 +36,7 @@ not intercept bypass traffic or confer control over a user's provider account.
 
 ## Deterministic budget policy
 
-Host/project config v1 contains `max_context_tokens` (1..32768, default 2048), optional
+Host/project config v1 contains `max_context_tokens` (1..32768, default 32768), optional
 `session_context_tokens` (positive integer), `tokenizer_id`, and `scope` (`delivery` or
 `host_request`). Host-request mode additionally requires `max_input_tokens`,
 `max_output_tokens` and optional `session_provider_tokens`, positive checked u64s in
@@ -44,6 +44,10 @@ the provider's units, plus a pinned model/counting recipe. Delivery mode rejects
 host-only fields. Unknown/null fields refuse. The core's o200k contract remains named;
 a host-request integration additionally pins the actual provider tokenizer and its
 counting recipe. An unknown provider tokenizer is not replaced with chars/4.
+
+The default context request remains 2048 tokens. The implicit maximum is the
+protocol maximum, so an explicit larger request is honored unless the owner
+configured a smaller ceiling or the remaining session allowance limits it.
 
 Effective context allowance is the minimum of caller request, configured context
 ceiling and remaining connection/session allowance, all in the core's named tokenizer.

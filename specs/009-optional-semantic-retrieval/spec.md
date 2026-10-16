@@ -31,11 +31,13 @@ cache-only or unpublished inputs cannot supply evidence. The scorer considers at
 distinct resident vectors. Vector slots rotate between selected files; shared inputs
 are scored once. It computes cosine from resident f16 vectors, accounting for their
 norms, and returns at most 64 labels with input-key tie breaking. While filling that
-window it applies the existing four-per-file delivery quota to distinct joined
-locations, continuing through the same bounded scored set when a label has no
-remaining admissible location. Shared labels retain only individually admissible
-locations. This prevents a file's fifth body from consuming a label slot that
-placement would later discard; it adds neither scored inputs nor delivery slots.
+window it first admits up to four distinct joined locations per file, then fills
+unused label slots from deferred locations in score order. Shared labels may reuse
+their retained slot, but total retained provenance stays bounded to 320 locations
+(the prior 80-path/four-per-file maximum). Exhaustion reports truncation. Final
+experimental prose placement likewise backfills unused context slots after its
+diversity pass; ordinary search retains its cap. This adds neither scored inputs
+nor delivery slots and does not discard a fifth body when capacity is available.
 Work counts, candidate-window quota skips and truncation are traced. This avoids filtered ANN's potentially corpus-wide traversal
 when a selected subset has few or no body vectors. The ordinary global ANN search is
 unchanged. Refined labels carry only the exact locations that passed those joins;
@@ -698,8 +700,9 @@ behavior-context opt-in uses deterministic alternating dense/lexical lanes wheth
 coverage is partial or complete. The dense lane precedes the lexical lane only when
 at least one independently scored refined Body survives the final source check;
 otherwise lexical goes first. Each lane retains its existing order. The same
-first-placement merge, four-per-file quota and candidate/output limits apply after
-interleaving; this reserves neither extra slots nor guaranteed lexical delivery.
+first-placement merge and candidate/output limits apply after interleaving;
+four-per-file diversity gets first choice, followed by unused-slot backfill. This
+reserves neither extra slots nor guaranteed lexical delivery.
 Trace `body_prose_interleave_v1` records coverage separately from the policy. This
 amends T004 placement only for these experimental representations. Ordinary/default
 search, anchored requests and address-card recipes keep their existing behavior;

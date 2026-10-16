@@ -428,8 +428,8 @@ fn refinement_working_set(
 /// The input is already sorted by cosine and input key. Backfill only from that
 /// same bounded scored set: a file's fifth body cannot evict another file's first
 /// body and then be discarded during placement. Shared labels keep only their
-/// individually admissible, point-joined locations. Final-read freshness and the
-/// ordinary placement cap still apply after this candidate selection.
+/// point-joined locations. Unused slots backfill from deferred locations in score
+/// order. Final-read freshness and placement still apply.
 fn refinement_candidate_window<'a>(
     hits: Vec<DenseHit>,
     mut joined: std::collections::BTreeMap<usize, Vec<&'a UnitLocation>>,
@@ -439,6 +439,7 @@ fn refinement_candidate_window<'a>(
     use std::collections::{BTreeMap, BTreeSet};
     control.check()?;
     let mut kept = Vec::with_capacity(DENSE_WINDOW.min(hits.len()));
+    let mut overflow = Vec::new();
     let mut per_file = BTreeMap::<&str, usize>::new();
     let mut seen = BTreeSet::new();
     for hit in hits {
@@ -448,6 +449,7 @@ fn refinement_candidate_window<'a>(
         }
         stats.labels_examined += 1;
         let mut locations = Vec::new();
+        let mut deferred = Vec::new();
         for location in joined.remove(&hit.label).unwrap_or_default() {
             control.check()?;
             if !seen.insert((location.path.as_str(), location.start, location.end)) {
@@ -456,15 +458,49 @@ fn refinement_candidate_window<'a>(
             }
             let count = per_file.entry(location.path.as_str()).or_default();
             if *count == crate::store::PER_FILE_CAP {
-                stats.quota_skipped_locations += 1;
+                deferred.push(location);
                 continue;
             }
             *count += 1;
             locations.push(location);
         }
+        if !deferred.is_empty() {
+            overflow.push(RefinedHit {
+                hit: hit.clone(),
+                locations: deferred,
+            });
+        }
         if !locations.is_empty() {
             stats.retained_locations += locations.len();
             kept.push(RefinedHit { hit, locations });
+        }
+    }
+    // Preserve the previous worst-case provenance allowance (80 discovery
+    // paths * four locations), while permitting a sparse set to use it.
+    const MAX_LOCATIONS: usize = 80 * crate::store::PER_FILE_CAP;
+    for mut deferred in overflow {
+        control.check()?;
+        let remaining = MAX_LOCATIONS.saturating_sub(stats.retained_locations);
+        if deferred.locations.len() > remaining {
+            stats.quota_skipped_locations += deferred.locations.len() - remaining;
+            stats.truncated = true;
+            deferred.locations.truncate(remaining);
+        }
+        if deferred.locations.is_empty() {
+            continue;
+        }
+        // A shared vector may already have locations from another file.
+        if let Some(existing) = kept
+            .iter_mut()
+            .find(|entry| entry.hit.label == deferred.hit.label)
+        {
+            stats.retained_locations += deferred.locations.len();
+            existing.locations.extend(deferred.locations);
+        } else if kept.len() < DENSE_WINDOW {
+            stats.retained_locations += deferred.locations.len();
+            kept.push(deferred);
+        } else {
+            stats.quota_skipped_locations += deferred.locations.len();
         }
     }
     Ok(kept)
@@ -828,7 +864,36 @@ mod tests {
     }
 
     #[test]
-    fn refinement_window_caps_shared_locations_individually_and_deduplicates_spans() {
+    fn shared_refinement_backfill_keeps_the_existing_global_provenance_bound() {
+        let locations: Vec<_> = (0..400)
+            .map(|n| UnitLocation {
+                kind: super::super::cache::CardKind::Body,
+                path: "src/one.rs".into(),
+                start: n * 8,
+                end: n * 8 + 8,
+                source_sha256: "ab".repeat(32),
+            })
+            .collect();
+        let mut stats = RefinementStats::default();
+        let selected = refinement_candidate_window(
+            vec![DenseHit {
+                label: 0,
+                distance: 0.0,
+            }],
+            [(0, locations.iter().collect())].into(),
+            &mut stats,
+            &Control::unbounded(),
+        )
+        .unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].locations.len(), 320);
+        assert_eq!(stats.retained_locations, 320);
+        assert_eq!(stats.quota_skipped_locations, 80);
+        assert!(stats.truncated);
+    }
+
+    #[test]
+    fn refinement_window_backfills_shared_locations_and_deduplicates_spans() {
         let locations: Vec<_> = ["a", "a", "a", "a", "a", "b", "b", "b", "b", "b", "c"]
             .into_iter()
             .enumerate()
@@ -860,15 +925,25 @@ mod tests {
             selected.iter().map(|hit| hit.hit.label).collect::<Vec<_>>(),
             [0, 1, 2]
         );
-        assert_eq!(selected[1].locations.len(), crate::store::PER_FILE_CAP);
-        assert!(
+        assert_eq!(selected[1].locations.len(), 6);
+        assert_eq!(
             selected[1]
                 .locations
                 .iter()
-                .all(|location| location.path == "src/b.rs")
+                .filter(|l| l.path == "src/a.rs")
+                .count(),
+            1
         );
-        assert_eq!(stats.retained_locations, 9);
-        assert_eq!(stats.quota_skipped_locations, 2);
+        assert_eq!(
+            selected[1]
+                .locations
+                .iter()
+                .filter(|l| l.path == "src/b.rs")
+                .count(),
+            5
+        );
+        assert_eq!(stats.retained_locations, 11);
+        assert_eq!(stats.quota_skipped_locations, 0);
         assert_eq!(stats.duplicate_locations, 2);
         assert_eq!(stats.labels_examined, 4);
     }

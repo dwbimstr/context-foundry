@@ -456,6 +456,104 @@ fn first_partial(
 }
 
 #[test]
+fn context_charges_exact_chosen_source_ranges_once_and_keeps_disjoint_evidence() {
+    use context_foundry::store::RenderedForm;
+    let mut fx = new_fixture();
+    let body = format!(
+        "fn action() {{\r\n{}    finish();\r\n}}\r\n",
+        "    inspect(\"東京\");\r\n".repeat(600)
+    );
+    fx.add(&[("large.rs", &body)]);
+    let mut batch = fx
+        .engine
+        .context_candidates("action", Strategy::Search, &Control::unbounded())
+        .unwrap();
+    // Exercise the unanchored packing boundary with valid source representations.
+    batch.anchors.clear();
+    let prototype = batch
+        .items
+        .iter()
+        .find(|i| i.label == "fn action")
+        .unwrap()
+        .clone();
+    let start = body.find("    inspect").unwrap();
+    let split = start + "    inspect(\"東京\");\r\n".len() * 4;
+    let later = split + "    inspect(\"東京\");\r\n".len() * 4;
+    let item = |from: usize, to: usize| {
+        let mut i = prototype.clone();
+        i.handle.as_mut().unwrap().start = from as u64;
+        i.handle.as_mut().unwrap().end = to as u64;
+        i.start_line = 1 + body[..from].bytes().filter(|&b| b == b'\n').count() as u64;
+        i.end_line =
+            i.start_line + body[from..to - 1].bytes().filter(|&b| b == b'\n').count() as u64;
+        i.forms = vec![RenderedForm::Verbatim(body[from..to].into())];
+        i
+    };
+    let first = item(start, split);
+    let mut wide = item(0, body.len());
+    wide.forms.push(RenderedForm::Excerpt {
+        start: start as u64,
+        start_line: first.start_line,
+        body: body[start..split].into(),
+    });
+    batch.items = vec![first, wide, item(split, later)];
+    let packed = response::pack_context(&batch, Budget::request(512), CLI).unwrap();
+    let parsed = assert_v2_success(&packed, 512, "context");
+    assert_eq!(
+        parsed.items.len(),
+        2,
+        "duplicate fallback must not spend another item: {}",
+        packed.text
+    );
+    for (actual, (from, to)) in parsed.items.iter().zip([(start, split), (split, later)]) {
+        let h = HandleRef::parse(&actual.handle).unwrap();
+        assert_eq!((h.start as usize, h.end as usize), (from, to));
+        assert_eq!(actual.body, body[from..to]);
+        assert_eq!(actual.lines, touched(&body, from, to));
+    }
+    // A fallback's wider preferred handle must not suppress later evidence.
+    batch.items.remove(0);
+    let packed = response::pack_context(&batch, Budget::request(512), CLI).unwrap();
+    assert_eq!(parse_v2(&packed.text).unwrap().items.len(), 2);
+    // Identical coordinates from another workspace or source revision are not duplicates.
+    for other_workspace in [false, true] {
+        batch.items = vec![item(start, split), item(start, split)];
+        let h = batch.items[1].handle.as_mut().unwrap();
+        if other_workspace {
+            h.workspace_id = "ab".repeat(32);
+        } else {
+            h.sha256 = "cd".repeat(32);
+        }
+        let packed = response::pack_context(&batch, Budget::request(512), CLI).unwrap();
+        assert_eq!(parse_v2(&packed.text).unwrap().items.len(), 2);
+    }
+}
+
+#[test]
+fn retrieve_refines_between_halving_rungs_without_wasting_the_allowance() {
+    let mut fx = new_fixture();
+    let body = "    let 東京 = \"quoted\\value\";\r\n".repeat(900);
+    fx.add(&[("source.rs", &body)]);
+    let handle = whole(&fx.engine.workspace_id().unwrap(), "source.rs", &body).to_v2();
+    for tokens in [384, 768, 1536, 3072] {
+        let out = fx.engine.retrieve(&handle, None, tokens).unwrap();
+        for boundary in [CLI, &mcp_bytes] {
+            let packed = response::pack_retrieve(&out, Budget::request(tokens), boundary).unwrap();
+            assert!(packed.tokens <= tokens);
+            assert!(packed.tokens >= tokens - 8, "{} / {tokens}", packed.tokens);
+            let parsed = assert_v2_success(&packed, tokens, "retrieve");
+            let item = &parsed.items[0];
+            let range = HandleRef::parse(&item.handle).unwrap();
+            assert_eq!(item.body, body[..range.end as usize]);
+            assert_eq!(
+                HandleRef::parse(&parsed.next.unwrap()).unwrap().start,
+                range.end
+            );
+        }
+    }
+}
+
+#[test]
 fn v2_retrieve_counts_exactly_and_fences_preserve_every_byte_across_budgets() {
     let mut fx = new_fixture();
     let sources = v2_sources();

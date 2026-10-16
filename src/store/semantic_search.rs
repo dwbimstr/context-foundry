@@ -478,36 +478,53 @@ impl Engine {
         let mut per_file: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
         let mut kept = Vec::new();
+        let mut overflow = Vec::new();
+        let trace_placement = |rank: usize,
+                               unit: &(String, u64, u64),
+                               kind: Option<crate::neural::cache::CardKind>,
+                               outcome: &str| {
+            if let Some(trace) = control.trace() {
+                trace.record(serde_json::json!({
+                    "stage": "placement", "origin": if kind.is_some() { "dense" } else { "lexical" },
+                    "rank": rank, "outcome": outcome,
+                    "unit": {"workspace_id": workspace_id, "path": unit.0,
+                        "sha256": current.get(&unit.0).and_then(|m| m.as_ref()).map(|m| &m.hash),
+                        "start": unit.1, "end": unit.2},
+                }));
+            }
+        };
         for (rank, (unit, kind)) in placed.iter().enumerate() {
-            let trace_placement = |outcome: &str| {
-                if let Some(trace) = control.trace() {
-                    trace.record(serde_json::json!({
-                        "stage": "placement", "origin": if kind.is_some() { "dense" } else { "lexical" },
-                        "rank": rank, "outcome": outcome,
-                        "unit": {"workspace_id": workspace_id, "path": unit.0,
-                            "sha256": current.get(&unit.0).and_then(|m| m.as_ref()).map(|m| &m.hash),
-                            "start": unit.1, "end": unit.2},
-                    }));
-                }
-            };
             if !seen.insert(unit) {
-                trace_placement("duplicate");
+                trace_placement(rank, unit, *kind, "duplicate");
                 continue;
             }
             let count = per_file.entry(unit.0.clone()).or_default();
             if *count == PER_FILE_CAP {
+                if prose {
+                    overflow.push((rank, unit, *kind));
+                    continue;
+                }
                 counters.capped += 1;
-                trace_placement("per_file_cap");
+                trace_placement(rank, unit, *kind, "per_file_cap");
                 continue;
             }
             *count += 1;
             if kept.len() == limit {
                 counters.truncated = true;
-                trace_placement("limit");
+                trace_placement(rank, unit, *kind, "limit");
                 continue;
             }
-            trace_placement("kept");
+            trace_placement(rank, unit, *kind, "kept");
             kept.push((unit, *kind));
+        }
+        for (rank, unit, kind) in overflow {
+            if kept.len() < limit {
+                trace_placement(rank, unit, kind, "kept");
+                kept.push((unit, kind));
+            } else {
+                counters.truncated = true;
+                trace_placement(rank, unit, kind, "limit");
+            }
         }
         let mut items = Vec::with_capacity(kept.len());
         let mut delivered = std::collections::BTreeSet::new();
