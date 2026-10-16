@@ -1,38 +1,48 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-**Budget repair continuation, 2026-10-16:** runtime code `c258026` and diagnostic
-fix `1f0827c` preserve matching source until packing, honor explicit budgets, backfill
-unused experimental candidate slots and reduce source-read continuation overhead.
-The public experimental lexical comparison improves **2/8 → 3/8 at 2,048 tokens**;
-default lexical remains 1/8. Higher allowances produce no additional hits. Reading
-the same 52,059 bytes at a 512-token allowance takes 27 instead of 36 calls and
-6.48% fewer delivered tokens. Provider-accounted task economics is still unproved.
-Read the [budget receipt](validation.md#budget-allocation-and-evidence-preservation--2026-10-16)
-and [machine-readable results](review/budget-repair-2026-10-16.json). Full local gates
-for `c258026`: all five exit 0 on Rust 1.97/1.90, 1,171 passed, zero failed, 28 ignored;
-no-default-features library check has zero warnings. The diagnostic-only follow-up
-passed its real CLI comparison and target Clippy; full gates were not repeated.
+**Callable evidence continuation, 2026-10-16:** runtime code `f782dda` improves
+both public experimental lexical delivery and real Gemma 2 file-overview delivery
+from **3/8 to 4/8 at 2,048 tokens**, preserving Q0, Q2 and Q7 and adding Q3. The
+repair keeps already discovered, disjoint documents of the same exact callable
+together before lexical cuts and after dense interleaving. It adds no model,
+dependency, candidate slots or output allowance. Default lexical remains 1/8;
+historical full-hierarchy delivery remains 2/8 and was not rerun.
 
-Real Gemma 2 file-overview preparation now completes 274/274 sources in 298.563
-seconds wall, with 35 calls and 84,927 input tokens. Unchanged replay takes 4.777
-seconds with zero calls/tokens. Against that completed overview store, the real-model
-comparison also improves 2/8 → 3/8 at 2,048 tokens, with 16,104 → 16,289 total
-delivered tokens across eight questions and no demonstrated latency improvement.
-This is a separate overview check; it does not replace historical full-hierarchy
-or representative-scale acceptance. Raw public evidence is under
-`/workspace/.context-foundry-tools/validation-runs/budget-repair-2026-10-16/`.
-The first diagnostic cleanup assertion counted an older defunct process; its
-failure remains recorded, and resumed checks distinguish newly created workers.
+The final public lexical check delivers 16,151 tokens versus 16,177 across eight
+questions; the real overview check delivers 16,242 versus 16,289. These are source-
+evidence counts, not coding-task success rates or provider savings. Unchanged
+real-model replay reuses all 274 inputs and partitions in 4.551 seconds with zero
+embedding calls/tokens. Verbatim source hashes/ranges, response budgets and worker cleanup
+pass. The final model comparison reuses verified baseline observations from the
+preceding paired run; no latency benefit is claimed. Read the
+[retrieval receipt](validation.md#callable-passage-preservation--2026-10-16) and
+[machine-readable results](review/owner-retrieval-2026-10-16.json) for local gate
+results, exact identities and reproduction commands.
 
-Next retrieval work is owner-local continuation and ranking before the 32-unit
-cutoff: Q3's expected document ranks 64 despite another document of that function
-ranking zero; Q4 ranks 132. Q5/Q6's expected implementation spans are absent from
-the bounded search window. Q1 remains excluded by unchanged admission policy.
-Do not claim that raising budgets fixes these losses. Partial source overlaps and
-greedy full-form packing also remain improvement opportunities. Unrelated
-[FOLLOWUP](../FOLLOWUP.md) protocols remain parked, no private archive was accessed,
-and native macOS/GPU acceptance remains a gap. No release or general completion
-claim follows from these local gains.
+A bounded coarse-vector callable localizer was also tried and removed: the real
+model stayed at 3/8. Its patches, traces, negative results and failed development
+checks remain under
+`/workspace/.context-foundry-tools/validation-runs/owner-retrieval-2026-10-16/`.
+`merged-model/` holds the retained candidate; `final-lexical2/` holds its lexical
+comparison. The focused suite passes 445 tests; all five full local gates pass on
+Rust 1.97.0/1.90.0, with 1,173 tests passed, zero failed and 28 ignored. All 54
+gateway tests pass under uid 1000. Native Mac/GPU acceptance is a gap.
+No private archive or parked FOLLOWUP protocol was used.
+
+Next retrieval work is Q4–Q6: finding the correct file does not reliably identify
+the needed implementation, and stemmed term coverage did not fix it. Q1 remains
+excluded by unchanged admission, while all eight remain in the denominator. Broader
+retrieval acceptance, representative inference, task quality and total provider
+costs remain open. Partial overlaps and greedy full-form packing also remain.
+Unrelated [FOLLOWUP](../FOLLOWUP.md) protocols stay parked.
+
+The preceding budget repair (`c258026`, diagnostic correction `1f0827c`) established
+2/8 → 3/8 and improved identical-source delivery: 27 instead of 36 calls, and
+6.48% fewer delivered tokens, at a 512-token allowance. Those results and the
+274-vector preparation receipt remain in
+[validation](validation.md#budget-allocation-and-evidence-preservation--2026-10-16).
+Neither this continuation nor the previous one establishes complete task economics
+or a release.
 
 **Earlier managed-host continuation, 2026-10-16:** the published Codex sandbox passes the portable
 Linux setup checks. The owner selected the existing managed agent runtime as the
@@ -111,7 +121,7 @@ role metadata uses `kinds2`; overview/address recipes retain `kinds1`.
 
 | Gate | Verified now | Still required |
 | --- | --- | --- |
-| Retrieval | Complete real hierarchy: 274 admitted sources, 13,822 vectors, 14,453 locations. Complete original, role-only and owner-scope arms deliver 1/8; coverage-independent interleaving restores 2/8. Historical experimental lexical was 2/8; the 2026-10-16 budget repair reaches 3/8 at the same 2,048 tokens. Default lexical remains 1/8. | Effective general repair and independent acceptance. All eight stay in the denominator; one historical source is excluded by unchanged private-key policy, so admitted ceiling is 7/8. Do not bypass admission or relabel outlines as body evidence. |
+| Retrieval | Complete real hierarchy: 274 admitted sources, 13,822 vectors, 14,453 locations. Complete original, role-only and owner-scope arms deliver 1/8; coverage-independent interleaving restores 2/8. Historical experimental lexical was 2/8; the 2026-10-16 budget repair reached 3/8, and callable passage preservation now reaches 4/8 at the same 2,048 tokens. The separate real-model overview comparison also reaches 4/8. Default lexical remains 1/8. | Effective general repair and independent acceptance. All eight stay in the denominator; one historical source is excluded by unchanged private-key policy, so admitted ceiling is 7/8. Do not bypass admission or relabel outlines as body evidence. |
 | Host tasks | Historical Qwen3-4B pair fails both unchanged external oracles. The managed-runtime public seeded repair passes in both arms; provider usage is unavailable. | Representative correct completions and complete provider accounting. The private stronger-model protocol remains parked. |
 | Representative scale | Exact overview fitting covers 67,663 admitted Rust/Go sources; 60,735–65,959 distinct inputs / 14.65–15.86 million tokens. | Full real inference, audit/replay, serving and changed-input verification. No complete 67,663-source model run exists. |
 | Economics | Identical-source CLI delivery improves by 25% fewer calls and 6.48% fewer delivered tokens at 512 tokens. Provider/task benefit remains unproved. Failed attempts and unknown usage are retained. Selected history totals 71 requests, including the latest 13; 66 complete and five unknown. | Demonstrated completion benefit with bootstrap, acquisition, retrieval, maintenance and failed attempts included. Smaller failed prompts are not a benefit. |

@@ -1,5 +1,101 @@
 # Validation
 
+## Callable passage preservation — 2026-10-16
+
+The experimental lexical path now delivers **4/8** public expected source spans at
+2,048 tokens, up from **3/8** at `d8248d5`. It retains Q0, Q2 and Q7 and adds Q3.
+Default context remains 1/8. Across all eight responses, delivered tokens fall from
+16,177 to 16,151; no allowance or candidate window was increased. The questions
+are the unchanged, author-visible development set on public source `ebf28f8`, not
+independent retrieval acceptance or a coding-task success rate. Q1 stays in the
+denominator despite its source being excluded by the existing admission policy.
+
+The lost Q3 passage belonged to the same callable as the rank-zero document but
+ranked 64 on its own, outside the 32-unit cut. Experimental code-lane selection now
+keeps the next disjoint matching document of that exact owner nearby before the
+code/document lanes alternate. Path, source hash, owner start/head/end and kind must
+all agree. Final freshness, two-document owner selection, diversity, candidate and
+delivery limits still apply. The new regression places forty competing files
+between two matching passages and checks stale-source suppression.
+
+The first model experiment tested bounded syntax-owner localization of coarse
+file vectors as well. It delivered **3/8**, unchanged from the baseline, so that
+localizer and its stemming dependency were removed. Its full results, source patch,
+failed development checks and model commands remain in the run directory. Passing
+source-boundary tests did not establish a relevance improvement. The retained repair
+instead preserves exact-owner lexical pairs after dense interleaving, where the
+first experiment still separated Q3's matching documents before packing.
+
+Implementation `f782dda` applies that grouping through the semantic merge. The
+final real EmbeddingGemma 2 BF16 file-overview comparison also improves **3/8 →
+4/8**, preserving Q0, Q2 and Q7 and adding Q3:
+
+| Arm, 2,048 tokens per question | Delivered spans | Delivered tokens, eight questions | Query wall time, eight commands |
+| --- | --- | ---: | ---: |
+| `d8248d5` baseline | 3/8: Q0, Q2, Q7 | 16,289 | 204.983 s |
+| `f782dda` candidate | 4/8: Q0, Q2, Q3, Q7 | 16,242 | 184.037 s |
+
+Both arms use the same previously completed 274-vector overview store, model,
+worker, profile, source hashes and revision 276. The final candidate reuses the
+baseline observations from the preceding paired experiment after verifying their
+binary/output hashes and exact source spans. These single observations, taken at
+different times, establish no latency benefit. Every returned verbatim source body
+matches its source hash and byte range, every response fits 2,048 tokens, and all seven prose
+queries report current dense coverage with 64 hits. Q7 keeps the model off.
+Unchanged replay takes 4.551 seconds with zero document calls, zero input tokens
+and all 274 cached inputs/partitions reused. Doctor checks pass before every
+model command with `avx512_bf16`; compilation and inference never overlap. Every
+command leaves an empty scratch root and no new worker. Start/end boot IDs and
+wrapper exit receipts agree.
+
+The rejected localization experiment is retained at 3/8 in both arms. Two earlier
+runner preflight errors (a build-toolchain environment and a wrong driver filename)
+stopped before model invocation. Development failures are retained too; the final
+focused suite passes 445 tests. One hierarchy regression now verifies both the full
+lexical document and its exact fallback range because grouping exercises that
+existing packing form. It still requires preferred independently scored body
+ranges and current ownership. All five local gates pass on Rust 1.97.0/1.90.0:
+formatting, Clippy, the full suite (1,173 passed, zero failed, 28 ignored), MSRV
+compilation and MSRV Clippy. All 54 gateway tests pass directly under uid 1000.
+The no-default-features library check passes with zero warnings, and documentation
+links pass. Toolchain identities and each log's SHA-256 are in the committed receipt.
+
+For the public corpus/store setup from the preceding budget receipt, reproduce
+lexical/default comparisons with a new output directory:
+
+```sh
+FOUNDRY_ATTRIBUTION_ROOT=/abs/frozen-foundry \
+FOUNDRY_ATTRIBUTION_STORE=/abs/frozen-store \
+FOUNDRY_ATTRIBUTION_BASELINE=/abs/d8248d5-foundry \
+FOUNDRY_ATTRIBUTION_DIR=/abs/new-owner-comparison \
+cargo test --locked --test retrieval_attribution -- \
+  --exact repository_development_attribution --ignored --nocapture
+```
+
+Run either saved CLI against the same completed overview profile for a real-model
+question; the other unchanged questions are in `tests/retrieval_attribution.rs`:
+
+```sh
+foundry --store /abs/frozen-store context \
+  'mark references inside attributed tests as verification evidence' \
+  --tokens 2048 --strategy search --experimental-behavior-context \
+  --semantic-profile /abs/overview-profile.json --development-isolation \
+  --retrieval-trace-dir /abs/new-query-trace
+```
+
+Raw commands, outputs, traces, rejected patches and logs live under
+`/workspace/.context-foundry-tools/validation-runs/owner-retrieval-2026-10-16/`;
+`merged-model/` holds the retained model candidate. The
+[committed receipt](review/owner-retrieval-2026-10-16.json) records their identities.
+
+Q4–Q6 remain unresolved. Correct file discovery alone does not identify the needed
+implementation; callable localization by stemmed term coverage did not repair it.
+Historical complete-hierarchy delivery remains 2/8 and was not rerun. General
+retrieval acceptance, full representative inference, broader evidence, provider-
+accounted task benefits and physical Mac/GPU acceptance remain open. Unrelated
+FOLLOWUP protocols stay parked. No CI ran: GitHub Actions is unavailable by owner
+decision. These checks are local, and this checkpoint is not a release.
+
 ## Budget allocation and evidence preservation — 2026-10-16
 
 The owner reopened budget and retrieval repair. Implementation `c258026` improves
@@ -542,6 +638,7 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `f782dda` | 0 | 0 | 0: 1,173 passed, 28 ignored; gateway 54 passed under uid 1000 ([receipt and log digests](review/owner-retrieval-2026-10-16.json)) | 0 | 0 |
 | `c258026` | 0 | 0 | 0: 1,171 passed, 28 ignored; gateway 54 passed under uid 1000 ([receipt](#budget-allocation-and-evidence-preservation--2026-10-16)) | 0 | 0 |
 | `1f0827c` | 0 | targeted attribution Clippy: 0 | ignored paired source-read diagnostic: 0; full gates not repeated | not repeated | not repeated |
 | `b202a9c` | 0 | 0 | 0: 1,167 passed, 27 ignored; gateway 54 passed under uid 1000 ([receipt](#bounded-semantic-bootstrap-on-the-published-vm--2026-10-16)) | 0 | 0 |
