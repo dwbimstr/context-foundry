@@ -492,7 +492,7 @@ mod cancel {
     pub fn install(_flag: Arc<AtomicBool>) {}
 }
 
-fn live_control() -> Control {
+pub(crate) fn live_control() -> Control {
     let control = Control::unbounded();
     cancel::install(control.cancel_flag());
     control

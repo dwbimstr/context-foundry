@@ -53,8 +53,9 @@ licenses; all first-party glue/trainer/worker implementation stays Rust.
 
 ## Bootstrap contract (003 owner)
 
-Proposed CLI: `foundry bootstrap --root ROOT [--store DIR] [--apply]
+Implemented CLI: `foundry bootstrap --root ROOT [--store DIR] [--apply]
 [--components lexical,semantic,graph] [--profile FILE]
+[--semantic-budget-seconds N] [--semantic-cache-cap BYTES] [--development-isolation]
 [--graph-index FILE --graph-snapshot FILE]`. Default is inspection only,
 components lexical, store `<canonical-root>/.context-foundry`. Validate root/arguments
 before writes. Inspection never initializes a store, opens its writer, loads a model,
@@ -76,6 +77,20 @@ next commands; overall `complete` only when all requested components meet their 
 scope. Exit 1 on incomplete application; inspection can exit 0 with setup requirements.
 Never call partial semantic preparation a fully prepared repository.
 
+Semantic preparation requires `--apply`, the `semantic` component, `--profile FILE`
+and `--semantic-budget-seconds N`. Include `lexical` to index source first.
+The semantic time allowance begins
+after source/graph indexing; the profile bounds worker resources and
+`--semantic-cache-cap` bounds the vector cache (default 2 GiB). Development isolation
+requires explicit `--development-isolation`. Without a preparation budget, an existing
+profile is `unverified`: file existence proves no runtime or coverage readiness.
+Semantic-only application requires a completed source scan in the existing store
+and prepares that indexed snapshot. The wrapper keeps one
+store owner through indexing and preparation and returns the ordinary preparation
+receipt as `semantic_preparation`, including coverage, model calls and partial-stop
+reason. Retry guidance retains the selected limits and isolation mode. No implicit
+download, generation model or host login is needed.
+
 Interrupted application reuses the existing store and completed cache via each owner's
 normal retry; it does not reinitialize or repeat committed inference. Busy is reported,
 not resolved by killing another owner. Source/graph/semantic scopes stay explicit.
@@ -96,12 +111,12 @@ therefore declare MCP `readOnlyHint` annotations, and the printed Codex config s
 Foundry's own store for the bound root); an operator may tighten this. Applying a
 config edits only a positively owned block, atomically; JSON-native host files
 require manual integration (`manual_integration_required`).
-Approved 2026-10-03, not implemented: 007 adds `--reference ROOT=STORE` (at most 8) to
+Implemented: 007 adds `--reference ROOT=STORE` (at most 8) to
 `connect` and `mcp`, so the printed launch argv admits those references; 003 T005
 replaces the instruction block with its token-economics text and appends the optional
 OMP routing-hook note to the OMP capability note.
-Gateway connection additionally takes `--gateway-run DIR` to print the implemented
-host's provider endpoint/auth-environment settings for that owned run. Never print a
+The separate `gateway-omp` command configures OMP for an owned
+gateway run; `connect` configures MCP retrieval. Never print a
 bearer/API key, transplant subscription credentials or silently change existing
 provider/model settings. Refer to the gateway's exact
 [protocol and accounting contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md).

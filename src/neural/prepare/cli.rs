@@ -113,6 +113,22 @@ pub fn run(
     options: &PrepareOptions<'_>,
     acquire: Acquire,
 ) -> FResult<PrepareReport> {
+    let (profile, deadline) = preflight(options)?;
+    let engine = Engine::open_existing(store_dir)?;
+    run_on_engine(&engine, options, &profile, deadline, acquire)
+}
+
+/// Bootstrap already owns and has checked the root-bound store. Keep that owner
+/// across source indexing and semantic publication instead of reopening the store.
+pub(crate) fn cli_prepare_on_engine(
+    engine: &Engine,
+    options: &PrepareOptions<'_>,
+) -> FResult<PrepareReport> {
+    let (profile, deadline) = preflight(options)?;
+    run_on_engine(engine, options, &profile, deadline, supervisor_acquire())
+}
+
+fn preflight(options: &PrepareOptions<'_>) -> FResult<(SemanticProfile, Instant)> {
     options.control.check()?;
     validate_priority_paths(options.priority_paths)?;
     let deadline = options
@@ -121,19 +137,25 @@ pub fn run(
         .ok_or_else(|| {
             FoundryError::InvalidArgument("budget-seconds overflows the clock".into())
         })?;
-    let reserve = publication_reserve(options.budget_seconds);
-    // ONE control for the whole run: the caller's cancel flag plus the budget
-    // deadline. It is what verification, acquisition, every document call and
-    // publication receive.
-    let run_control = options.control.bounded_by(deadline);
-
     // The profile is parsed strictly and bounded before any worker exists;
     // a missing/mismatched profile, worker or artifact is a named failure
     // with no download, install or fallback execution, and a descriptor v1
     // profile is `profile_unsupported` before the store is touched.
     let profile = SemanticProfile::load(options.profile_path)?;
+    Ok((profile, deadline))
+}
+
+fn run_on_engine(
+    engine: &Engine,
+    options: &PrepareOptions<'_>,
+    profile: &SemanticProfile,
+    deadline: Instant,
+    acquire: Acquire,
+) -> FResult<PrepareReport> {
+    let reserve = publication_reserve(options.budget_seconds);
+    // ONE control bounds verification, acquisition, calls and publication.
+    let run_control = options.control.bounded_by(deadline);
     let function_digest = profile.descriptor.digest();
-    let engine = Engine::open_existing(store_dir)?;
     let recipe = profile.recipe_id();
 
     let mut report = PrepareReport {
@@ -150,12 +172,12 @@ pub fn run(
         crate::neural::work::Lane::Semantic,
         &format!("{function_digest}:{recipe}"),
     )?;
-    begin(&engine, &report)?;
+    begin(engine, &report)?;
 
     let outcome = inner(
-        &engine,
+        engine,
         options,
-        &profile,
+        profile,
         &function_digest,
         &recipe,
         &run_control,
@@ -179,7 +201,7 @@ pub fn run(
     if matches!(outcome, Ok(Stop::Complete)) {
         engine.derivation_ack(crate::neural::work::Lane::Semantic, &work)?;
     }
-    finalize(&engine, &mut report, &outcome)?;
+    finalize(engine, &mut report, &outcome)?;
     match outcome {
         Ok(_) => Ok(report),
         Err(e) => Err(e),

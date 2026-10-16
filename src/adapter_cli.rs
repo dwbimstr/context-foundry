@@ -92,7 +92,7 @@ pub enum AdapterCommand {
         #[arg(long, value_name = "FILE")]
         model_resources: Option<PathBuf>,
     },
-    /// Inspect repository bootstrap; `--apply` creates/opens the store and indexes baseline source.
+    /// Inspect bootstrap; `--apply` indexes source and optionally prepares semantics within explicit limits.
     Bootstrap {
         #[arg(long)]
         root: PathBuf,
@@ -106,6 +106,15 @@ pub enum AdapterCommand {
         graph_snapshot: Option<PathBuf>,
         #[arg(long)]
         profile: Option<PathBuf>,
+        /// Semantic preparation seconds after source/graph indexing; omitted starts no model work.
+        #[arg(long, requires_all = ["apply", "profile"], value_parser = clap::value_parser!(u64).range(1..))]
+        semantic_budget_seconds: Option<u64>,
+        /// Explicitly admit the development worker isolation profile.
+        #[arg(long, requires = "semantic_budget_seconds")]
+        development_isolation: bool,
+        /// Vector-cache ceiling for semantic preparation (default 2 GiB).
+        #[arg(long, requires = "semantic_budget_seconds", value_name = "BYTES", value_parser = clap::value_parser!(u64).range(1..))]
+        semantic_cache_cap: Option<u64>,
     },
     /// Print per-project host MCP configuration; never edits host files unless
     /// `--apply-config FILE` authorizes the positively owned block, or
@@ -412,16 +421,35 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             graph_index,
             graph_snapshot,
             profile,
+            semantic_budget_seconds,
+            development_isolation,
+            semantic_cache_cap,
         } => {
             let store = store_explicit.then_some(store.as_path());
+            // Install a signal handler only when the operation receives its
+            // cancellation flag; ordinary bootstrap retains default SIGINT.
+            let control = if semantic_budget_seconds.is_some() {
+                crate::cli::live_control()
+            } else {
+                crate::Control::unbounded()
+            };
+            let semantic =
+                semantic_budget_seconds.map(|budget_seconds| crate::bootstrap::SemanticRun {
+                    budget_seconds,
+                    development_isolation,
+                    cache_cap_bytes: semantic_cache_cap
+                        .unwrap_or(crate::neural::cache::DEFAULT_CACHE_CAP_BYTES),
+                    control: &control,
+                });
             let report = if apply {
-                crate::bootstrap::apply(
+                crate::bootstrap::apply_with_semantic(
                     &root,
                     store,
                     &components,
                     graph_index.as_deref(),
                     graph_snapshot.as_deref(),
                     profile.as_deref(),
+                    semantic.as_ref(),
                 )?
             } else {
                 crate::bootstrap::inspect(
@@ -436,6 +464,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                 )?
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
+            control.check()?;
             // Exit 1 on incomplete application; inspection can exit 0 with setup requirements.
             if apply && !report.complete {
                 return Err(FoundryError::Internal(anyhow::anyhow!(

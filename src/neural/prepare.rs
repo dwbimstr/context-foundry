@@ -253,8 +253,8 @@ mod order;
 mod steps;
 use super::area;
 pub(crate) use cli::{
-    StopOrError, begin, elapsed_ms, finalize, lifetime_code, merge_publication, record_publication,
-    snapshot_progress,
+    StopOrError, begin, cli_prepare_on_engine, elapsed_ms, finalize, lifetime_code,
+    merge_publication, record_publication, snapshot_progress,
 };
 pub use cli::{cli_prepare, cli_prepare_with_priorities, run};
 pub(crate) use order::{SourceCursor, SourceOrder};
