@@ -91,6 +91,129 @@ fn retrieval_trace_distinguishes_selection_caps_from_anchored_packing_omissions(
 }
 
 #[test]
+fn prose_diversity_backfills_independent_same_file_evidence_without_hiding_neighbors() {
+    use context_foundry::store::ContextOptions;
+    let dir = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&dir.path().join("ws"));
+    let source: String = (0..12)
+        .map(|n| format!("fn action_{n}() {{ validate_pending_records(); }}\n"))
+        .collect();
+    engine.replace_source("many.rs", &source).unwrap();
+    engine
+        .replace_source(
+            "neighbor.rs",
+            "fn check() { validate_pending_records(); }\n",
+        )
+        .unwrap();
+    drain(&mut engine);
+    let query = "validate pending records";
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let c = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let units: Vec<_> = c
+        .batch
+        .items
+        .iter()
+        .filter(|i| i.tier != context_foundry::store::TIER_OUTLINE)
+        .collect();
+    assert_eq!(units.len(), 13);
+    assert_eq!(
+        units
+            .iter()
+            .position(|i| i.handle.as_ref().unwrap().path == "neighbor.rs"),
+        Some(4)
+    );
+    assert_eq!(c.batch.counters.capped, 0);
+    assert!(
+        !trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["outcome"] == "per_file_cap")
+    );
+    let packed =
+        response::pack_enriched_context(&c, None, Budget::request(4096), &response::stdout_bytes)
+            .unwrap();
+    assert!(packed.text.contains("action_11"));
+    let ordinary = engine
+        .context_candidates(query, Strategy::Search, &Control::unbounded())
+        .unwrap();
+    assert_eq!(
+        ordinary
+            .items
+            .iter()
+            .filter(|i| i.tier != context_foundry::store::TIER_OUTLINE
+                && i.handle.as_ref().unwrap().path == "many.rs")
+            .count(),
+        4
+    );
+    // A changed source cannot enter the backfill from stale postings.
+    engine
+        .replace_source("many.rs", "fn unrelated() {}\n")
+        .unwrap();
+    let stale = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(
+        !stale
+            .batch
+            .items
+            .iter()
+            .any(|i| i.handle.as_ref().unwrap().path == "many.rs")
+    );
+    let many: String = (0..50)
+        .map(|n| format!("fn action_{n}() {{ validate_pending_records(); }}\n"))
+        .collect();
+    engine.replace_source("many.rs", &many).unwrap();
+    drain(&mut engine);
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let full = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        full.batch
+            .items
+            .iter()
+            .filter(|i| i.tier != context_foundry::store::TIER_OUTLINE)
+            .count(),
+        32
+    );
+    assert!(full.batch.counters.truncated);
+    assert!(
+        trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["outcome"] == "limit")
+    );
+}
+
+#[test]
 fn anchorless_context_preserves_code_discovery_and_exact_late_body_excerpts() {
     use context_foundry::store::ContextOptions;
     let dir = tempfile::tempdir().unwrap();
@@ -134,7 +257,7 @@ fn anchorless_context_preserves_code_discovery_and_exact_late_body_excerpts() {
         handle.start > 0,
         "the matching late body is required, not the function prefix"
     );
-    assert!(handle.end - handle.start <= 1536);
+    assert!(handle.end - handle.start <= 4096);
     assert!(item.label.starts_with("excerpt "));
     for budget in [512, 1024, 2048] {
         let packed = response::pack_enriched_context(

@@ -468,6 +468,13 @@ pub struct SearchOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenderedForm {
     Verbatim(String),
+    /// A source fallback from the same verified file. Its coordinates belong
+    /// to these exact bytes, not to the preferred document's wider handle.
+    Excerpt {
+        start: u64,
+        start_line: u64,
+        body: String,
+    },
     Signature(String),
     Outline(String),
     OutlineMin(String),
@@ -2252,6 +2259,7 @@ fn ranked_context_item(
         return ranked_item(candidate, rank, workspace_id, sha256, body, wanted);
     }
     let start = candidate.start.max(candidate.unit_start) as usize;
+    let document_start = start;
     let end = candidate.end.min(candidate.unit_end) as usize;
     let text = body
         .get(start..end)
@@ -2310,8 +2318,29 @@ fn ranked_context_item(
     excerpt.unit_start = (start + from) as u64;
     excerpt.unit_end = (start + to) as u64;
     excerpt.unit_head = excerpt.unit_start;
-    let mut item = ranked_item(&excerpt, rank, workspace_id, sha256, body, &wanted)?;
+    let mut focused = ranked_item(&excerpt, rank, workspace_id, sha256, body, &wanted)?;
+    if start != document_start {
+        // A docs-only match redirected to the callable. Keep that existing
+        // declaration-first behavior instead of preferring the long comment.
+        focused.label = format!("excerpt {}", focused.label);
+        return Ok(focused);
+    }
+    // Preserve the matching document until delivery knows the token budget.
+    // An irreversible 1,536-byte cut here discarded relevant evidence even
+    // when the complete, bounded index document would have fit the response.
+    let mut document = candidate.clone();
+    document.unit_start = candidate.start.max(candidate.unit_start);
+    document.unit_end = candidate.end.min(candidate.unit_end);
+    document.unit_head = document.unit_start;
+    let mut item = ranked_item(&document, rank, workspace_id, sha256, body, &wanted)?;
     item.label = format!("excerpt {}", item.label);
+    if document.unit_start != excerpt.unit_start || document.unit_end != excerpt.unit_end {
+        item.forms.push(RenderedForm::Excerpt {
+            start: excerpt.unit_start,
+            start_line: focused.start_line,
+            body: body[excerpt.unit_start as usize..excerpt.unit_end as usize].to_owned(),
+        });
+    }
     Ok(item)
 }
 

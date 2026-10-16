@@ -592,15 +592,27 @@ repetition, identifier frequency and rare single terms cannot outweigh an additi
 covered term. This reuses the positional body index. Either window filling reports
 candidate pressure. This protects
 implementation discovery from a documentation-only candidate window without raising
-the total bound. The four-per-file cap, final-read freshness and response budget
-remain. A lexical unit longer than 1,536 bytes delivers an exact, UTF-8-safe excerpt
-around the best matching line of its indexed document, with at most three preceding
-lines. If a callable's (`fn`/`method`) best line is in leading documentation and this
+the total bound. Experimental anchorless prose uses four-per-file as a first-pass
+diversity preference, then backfills unused slots from deferred candidates in their
+original order. The 32-unit context limit, final-read freshness and response budget
+remain. An exhausted backfill reports a candidate limit, not a permanent file cap.
+Ordinary/default search and anchored selection keep their existing rules.
+A lexical unit longer than 1,536 bytes retains its matching indexed document as the
+preferred source form. Packing, which knows the actual budget, can fall back to an
+exact, UTF-8-safe excerpt of at most 1,536 bytes around the best matching line, with
+at most three preceding lines. If a callable's (`fn`/`method`) best line is in leading documentation and this
 window would exclude its declaration head, take up to 1,536 bytes from that head
 line (clipped to the original unit), preserving indentation. This exposes its
-declaration and implementation start rather than only long introductory examples. Body matches keep their focused window. Its handle names the
-actual contiguous excerpt range and its label says `excerpt`; omitted documentation
-is not claimed as delivered.
+declaration and implementation start rather than only long introductory examples.
+Body matches retain the full matching document plus their focused fallback. Each
+form's handle and line numbers name its actual contiguous bytes; the label says
+`excerpt`. No preferred range is claimed when only the fallback is delivered.
+Unanchored packing suppresses a source form wholly covered by an earlier delivered
+body with the same workspace, path and hash. Signatures and outlines establish no
+body coverage; partial overlaps remain. Derived brief support requires delivered
+body coverage of the cited source. Every admission counts the current selected set
+with its final omitted count, avoiding a late header expansion that drops the only
+covering body.
 Experimental anchorless prose with hierarchy/body representations alternates dense
 and lexical candidates at both partial and complete coverage, before ordinary
 first-placement deduplication, per-file caps and candidate limits. Dense goes first
@@ -833,9 +845,11 @@ delivered token on each later turn.
 requested range (after any `lines` clipping), ending at a UTF-8 boundary. If the
 rendered result with its `next:` line does not fit, halve that byte length, retreat to
 a UTF-8 boundary and retry, always trying the first complete codepoint before failure.
-This is at most 19 nonempty trials and does not assume BPE monotonicity or promise the
-longest possible prefix. Return the first fitting tested prefix and start `next`
-exactly at its end. Requested ranges remain bounded to one 2 MiB source; no
+This establishes a fitting bracket in at most 19 nonempty trials. Refine between
+that fit and the previous failure with at most 18 UTF-8-aligned midpoint trials,
+retaining only exact token/byte-checked fits. BPE need not be monotone: this improves
+utilization without promising the longest possible prefix. Return the longest
+verified fit found and start `next` exactly at its end. Requested ranges remain bounded to one 2 MiB source; no
 byte-by-byte quadratic tokenization loop. If no nonempty tested prefix fits, return
 `budget_too_small` with a sufficient budget for the one-codepoint result; never an
 unchanged continuation loop. `[0,0)` on an empty file returns an empty item if its

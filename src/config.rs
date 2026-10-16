@@ -1,6 +1,6 @@
 //! Adapter budget policy configuration (003 adapter-economics contract v1).
 //!
-//! Host/project config v1: `max_context_tokens` (1..32768, default 2048),
+//! Host/project config v1: `max_context_tokens` (1..32768, default 32768),
 //! optional `session_context_tokens` (positive), `tokenizer_id` (the core's
 //! named o200k contract), and `scope` (`delivery` or `host_request`).
 //! Host-request mode additionally requires `max_input_tokens`,
@@ -47,7 +47,9 @@ pub struct BudgetConfig {
 impl Default for BudgetConfig {
     fn default() -> Self {
         Self {
-            max_context_tokens: 2048,
+            // The request default is a convenience, not a second hidden cap.
+            // Explicit caller budgets remain bounded by the core wire limit.
+            max_context_tokens: crate::response::MAX_BUDGET_TOKENS as u64,
             session_context_tokens: None,
             tokenizer_id: CORE_TOKENIZER.to_owned(),
             scope: Scope::Delivery,
@@ -123,7 +125,7 @@ impl BudgetConfig {
             return Err(invalid("`v` must be 1"));
         }
         let max_context_tokens = match object.get("max_context_tokens") {
-            None => 2048,
+            None => Self::default().max_context_tokens,
             Some(v) => bounded(v, "max_context_tokens", 32768)?,
         };
         let session_context_tokens = match object.get("session_context_tokens") {

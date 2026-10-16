@@ -724,7 +724,7 @@ async fn context_delivery_is_exactly_budgeted_without_a_delivery_id() {
     bootstrap_apply(&store, &root);
     let client = stdio_client(&store, &root).await;
 
-    for tokens in [64u64, 256, 2048] {
+    for tokens in [64u64, 256, 2048, 8192, 32768] {
         let result = client
             .call_tool(
                 CallToolRequestParams::new("context").with_arguments(
@@ -1603,6 +1603,11 @@ fn usage_summarize_reads_bounded_rows_and_reports_conflicts() {
 
 #[test]
 fn budget_config_strictness() {
+    let implicit =
+        context_foundry::config::BudgetConfig::from_object(&serde_json::json!({"v": 1})).unwrap();
+    assert_eq!(implicit, context_foundry::config::BudgetConfig::default());
+    assert_eq!(implicit.effective_allowance(8192, None), 8192);
+    assert_eq!(implicit.effective_allowance(8192, Some(1700)), 1700);
     let valid = serde_json::json!({
         "v": 1, "max_context_tokens": 1024, "tokenizer_id": "o200k_base", "scope": "delivery"
     });
@@ -3817,12 +3822,8 @@ async fn raw_emitted_results_are_typed_counted_and_within_every_budget() {
                 assert_v2_delivery(&retried, tool, minimum, &files);
             } else {
                 let parsed = assert_v2_delivery(&call, tool, budget, &files);
-                // The default `max_context_tokens` ceiling is 2048.
-                let expected = if budget <= 2048 {
-                    (budget, "request".to_owned())
-                } else {
-                    (2048, "context_ceiling".to_owned())
-                };
+                // An explicit request can use the entire supported range.
+                let expected = (budget, "request".to_owned());
                 assert_eq!(header_budget(&call.text()), expected);
                 if budget == 32768 {
                     assert!(!parsed.items.is_empty(), "{tool}: a full budget delivers");
@@ -5458,7 +5459,7 @@ async fn every_delivery_names_the_boundary_that_limited_its_budget() {
     drop(server);
 
     // Connection allowance 700 (the real-host case): the caller asks for
-    // 2000 and the default ceiling is 2048, so the remaining allowance is
+    // 2000 and the default ceiling is 32768, so the remaining allowance is
     // the minimum, and it shrinks by exactly what each delivery emitted —
     // search included.
     let args = budget_arguments(fixture.path(), None, Some(700));

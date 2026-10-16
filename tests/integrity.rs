@@ -21,6 +21,7 @@ fn mentions(batch: &CandidateBatch, needle: &str) -> bool {
             | RenderedForm::Signature(text)
             | RenderedForm::Outline(text)
             | RenderedForm::OutlineMin(text) => text.contains(needle),
+            RenderedForm::Excerpt { body, .. } => body.contains(needle),
             RenderedForm::Address => false,
         })
     })

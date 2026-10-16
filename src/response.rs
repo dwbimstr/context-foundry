@@ -514,6 +514,25 @@ fn rendered_form(item: &RankedItem, form: &RenderedForm) -> String {
     };
     match form {
         RenderedForm::Verbatim(body) => source(None, body),
+        RenderedForm::Excerpt {
+            start,
+            start_line,
+            body,
+        } => handle.map_or_else(String::new, |handle| {
+            let handle = SourceHandle {
+                start: *start,
+                end: *start + body.len() as u64,
+                ..handle.clone()
+            };
+            item_text(
+                &handle.to_v2(),
+                touched_lines(*start_line, body),
+                &label,
+                None,
+                lang,
+                body,
+            )
+        }),
         RenderedForm::Signature(body) => source(Some("[signature]"), body),
         RenderedForm::Outline(body) | RenderedForm::OutlineMin(body) => {
             source(Some("[outline]"), body)
@@ -531,6 +550,29 @@ fn ranked_forms(item: &RankedItem) -> Vec<String> {
         .map(|form| rendered_form(item, form))
         .filter(|rendered| !rendered.is_empty())
         .collect()
+}
+
+/// Only delivered source bytes establish coverage. Signatures, addresses and
+/// outlines cannot cover a body, even when they name its whole-file handle.
+fn form_source(item: &RankedItem, form: usize) -> Option<SourceHandle> {
+    let handle = item.handle.as_ref()?;
+    match item.forms.get(form)? {
+        RenderedForm::Verbatim(_) => Some(handle.clone()),
+        RenderedForm::Excerpt { start, body, .. } => Some(SourceHandle {
+            start: *start,
+            end: *start + body.len() as u64,
+            ..handle.clone()
+        }),
+        _ => None,
+    }
+}
+
+fn source_covers(delivered: &SourceHandle, required: &SourceHandle) -> bool {
+    delivered.workspace_id == required.workspace_id
+        && delivered.path == required.path
+        && delivered.sha256 == required.sha256
+        && delivered.start <= required.start
+        && delivered.end >= required.end
 }
 
 /// The fixed point of the most expensive limiter label's rendering: a budget
@@ -645,6 +687,7 @@ fn refusal_floor_impl(
 /// priority — counted in `shown` but never in `omitted`.
 fn pack(
     items: &[Vec<String>],
+    source_items: &[RankedItem],
     tail: (&[String], &[(usize, usize)]),
     header: &HeaderV2,
     budget: Budget,
@@ -654,14 +697,13 @@ fn pack(
     let (tail, required) = tail;
     let render = |included: &[(usize, usize)],
                   tail_kept: &[usize],
-                  omitted: usize,
                   at_budget: usize,
                   limited_by: BudgetLimiter| {
         let mut text = header.line(
             at_budget,
             limited_by,
             included.len() + tail_kept.len(),
-            omitted,
+            items.len().saturating_sub(included.len()),
         );
         for &(index, form) in included {
             text.push_str(&items[index][form]);
@@ -674,48 +716,43 @@ fn pack(
     let fits = |text: &str| boundary(text) <= byte_cap && count_tokens(text) <= budget.tokens;
     header.check_task_capacity(items.len(), budget.limited_by, boundary)?;
     let mut included: Vec<(usize, usize)> = Vec::new();
-    let mut omitted = 0usize;
-    for (index, forms) in items.iter().enumerate() {
-        let mut placed = false;
+    'candidate: for (index, forms) in items.iter().enumerate() {
         for form in 0..forms.len() {
+            // Check the chosen rung's exact source range. A fitting fallback
+            // may duplicate earlier evidence even when its parent does not.
+            if let Some(source) = source_items
+                .get(index)
+                .and_then(|item| form_source(item, form))
+                && included.iter().any(|&(i, f)| {
+                    source_items
+                        .get(i)
+                        .and_then(|item| form_source(item, f))
+                        .is_some_and(|delivered| source_covers(&delivered, &source))
+                })
+            {
+                continue 'candidate;
+            }
             included.push((index, form));
-            if fits(&render(
-                &included,
-                &[],
-                omitted,
-                budget.tokens,
-                budget.limited_by,
-            )) {
-                placed = true;
+            if fits(&render(&included, &[], budget.tokens, budget.limited_by)) {
                 break;
             }
             included.pop();
         }
-        if !placed {
-            omitted += 1;
-        }
     }
     let mut tail_kept: Vec<usize> = Vec::new();
     let base_fits = loop {
-        let text = render(
-            &included,
-            &tail_kept,
-            omitted,
-            budget.tokens,
-            budget.limited_by,
-        );
+        let text = render(&included, &tail_kept, budget.tokens, budget.limited_by);
         if fits(&text) {
             break true;
         }
         if included.pop().is_none() {
             break false;
         }
-        omitted += 1;
     };
     if !base_fits {
         // Not even the header fits; memory lines cannot rescue it.
         return Err(too_small(budget.tokens, &|shown, limited_by| {
-            render(&[], &[], items.len(), shown, limited_by)
+            render(&[], &[], shown, limited_by)
         }));
     }
     // 008: fill the remaining budget with memory lines, one fitting line at
@@ -723,7 +760,18 @@ fn pack(
     // item and never counted as omitted.
     for index in 0..tail.len() {
         if required.iter().any(|&(tail_index, source_index)| {
-            tail_index == index && !included.iter().any(|&(i, _)| i == source_index)
+            tail_index == index
+                && !source_items
+                    .get(source_index)
+                    .and_then(|item| item.handle.as_ref())
+                    .is_some_and(|required| {
+                        included.iter().any(|&(i, f)| {
+                            source_items
+                                .get(i)
+                                .and_then(|item| form_source(item, f))
+                                .is_some_and(|delivered| source_covers(&delivered, required))
+                        })
+                    })
         }) {
             continue;
         }
@@ -731,25 +779,14 @@ fn pack(
             let mut trial = tail_kept.clone();
             trial.push(index);
             trial.sort_unstable();
-            if fits(&render(
-                &included,
-                &trial,
-                omitted,
-                budget.tokens,
-                budget.limited_by,
-            )) {
+            if fits(&render(&included, &trial, budget.tokens, budget.limited_by)) {
                 tail_kept = trial;
             }
         }
     }
-    let text = render(
-        &included,
-        &tail_kept,
-        omitted,
-        budget.tokens,
-        budget.limited_by,
-    );
+    let text = render(&included, &tail_kept, budget.tokens, budget.limited_by);
     let tokens = count_tokens(&text);
+    let omitted = items.len().saturating_sub(included.len());
     Ok(PackedText {
         text,
         tokens,
@@ -760,7 +797,8 @@ fn pack(
 
 /// v2 retrieve text view: header, one item naming the delivered prefix, and
 /// `next: <handle>` while bytes of the requested range remain. The prefix
-/// follows the shared halving schedule; `next` starts exactly at its end.
+/// uses a halving bracket followed by bounded exact-fit refinement; `next`
+/// starts exactly at its end.
 pub fn pack_retrieve(
     out: &RetrieveOutcome,
     budget: Budget,
@@ -831,9 +869,32 @@ fn pack_retrieve_impl(
         text
     };
     let lengths = prefix_lengths(span);
+    let mut failed_length = None;
     for &length in &lengths {
-        let text = render(length, budget.tokens, budget.limited_by);
+        let mut text = render(length, budget.tokens, budget.limited_by);
         if boundary(&text) <= BYTE_CAP && count_tokens(&text) <= budget.tokens {
+            // Halving finds a fitting bracket cheaply, but returning that rung
+            // can waste half the allowance. Refine within the bracket while
+            // retaining only exactly verified fits. BPE counts need not be
+            // monotone: this is bounded utilization, not a maximum-fit claim.
+            let mut length = length;
+            let mut upper = failed_length.unwrap_or(length);
+            for _ in 0..18 {
+                let mut trial = length + (upper - length) / 2;
+                while !span.is_char_boundary(trial) {
+                    trial -= 1;
+                }
+                if trial <= length {
+                    break;
+                }
+                let candidate = render(trial, budget.tokens, budget.limited_by);
+                if boundary(&candidate) <= BYTE_CAP && count_tokens(&candidate) <= budget.tokens {
+                    length = trial;
+                    text = candidate;
+                } else {
+                    upper = trial;
+                }
+            }
             let tokens = count_tokens(&text);
             return Ok(PackedText {
                 text,
@@ -842,6 +903,7 @@ fn pack_retrieve_impl(
                 truncated: length < span.len(),
             });
         }
+        failed_length = Some(length);
     }
     let smallest = lengths.last().copied().unwrap_or(0);
     Err(too_small(budget.tokens, &|shown, limited_by| {
@@ -1152,7 +1214,15 @@ fn pack_context_guarded(
     let items: Vec<Vec<String>> = batch.items.iter().map(ranked_forms).collect();
     let mut header = context_header(batch, roots, None, false);
     header.task_view = task_view;
-    pack(&items, tail, &header, budget, BYTE_CAP, boundary)
+    pack(
+        &items,
+        &batch.items,
+        tail,
+        &header,
+        budget,
+        BYTE_CAP,
+        boundary,
+    )
 }
 
 /// One entry of the anchored selection: its renderings in ladder order —
@@ -1682,7 +1752,7 @@ fn pack_search_impl(
         doors: None,
         anchored: false,
     };
-    pack(&items, (&[], &[]), &header, budget, BYTE_CAP, boundary)
+    pack(&items, &[], (&[], &[]), &header, budget, BYTE_CAP, boundary)
 }
 
 /// 008 memory search: the v2 header exactly as `search` builds it (from the
@@ -1717,7 +1787,7 @@ pub fn pack_memory_search(
         doors: None,
         anchored: false,
     };
-    pack(&items, (&[], &[]), &header, budget, BYTE_CAP, boundary)
+    pack(&items, &[], (&[], &[]), &header, budget, BYTE_CAP, boundary)
 }
 
 /// One compact memory line (008): `mem:<id>@r<revision> <author>:

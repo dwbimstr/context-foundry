@@ -963,8 +963,8 @@ fn dense_units_come_first_in_similarity_order_then_the_lexical_ones_in_todays_or
     let unique: BTreeSet<_> = all.iter().cloned().collect();
     assert_eq!(all.len(), unique.len(), "no unit twice");
 
-    // The opt-in prose repair changes only lexical exact-run promotion. A
-    // supplied semantic window must retain its precedence and similarity order.
+    // Experimental prose preserves the diverse first pass, then may backfill
+    // unused slots from this same semantic window in its retained order.
     let prose = corpus
         .engine()
         .context_candidates_with(
@@ -986,20 +986,14 @@ fn dense_units_come_first_in_similarity_order_then_the_lexical_ones_in_todays_or
         .take_while(|item| item.semantic.is_some())
         .map(unit)
         .collect();
-    assert!(!prose_dense.is_empty());
+    assert!(prose_dense.len() >= dense.len());
     assert_eq!(
-        prose_dense,
-        dense
-            .iter()
-            .take(prose_dense.len())
-            .map(|i| unit(i))
-            .collect::<Vec<_>>()
+        &prose_dense[..dense.len()],
+        dense.iter().map(|i| unit(i)).collect::<Vec<_>>().as_slice()
     );
-    assert!(
-        prose.batch.items[prose_dense.len()..]
-            .iter()
-            .all(|item| item.semantic.is_none())
-    );
+    for item in prose.batch.items.iter().filter(|i| i.semantic.is_some()) {
+        assert!(window_order.contains(&unit(item)));
+    }
 }
 
 /// One placed unit: `(path, start, end)`.
@@ -7000,8 +6994,8 @@ fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
         )
         .unwrap();
     let events = trace.snapshot();
-    // Refinement has four Body slots; final placement shares the existing
-    // four file slots with the interleaved lexical lane. Outlines are separate.
+    // Diversity reserves the first four file slots, then unused capacity
+    // recovers additional independently scored bodies. Outlines are separate.
     let ranked: Vec<_> = result
         .batch
         .items
@@ -7013,9 +7007,16 @@ fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
                 && !matches!(item.forms.first(), Some(RenderedForm::Outline(_)))
         })
         .collect();
-    assert_eq!(ranked.len(), 4);
+    assert!(ranked.len() > 4 && ranked.len() <= 32);
     assert!(ranked.iter().any(|item| item.semantic.is_some()));
     assert!(ranked.iter().any(|item| item.semantic.is_none()));
+    assert!(
+        bodies.iter().all(|span| ranked.iter().any(|item| {
+            let h = item.handle.as_ref().unwrap();
+            (h.start, h.end) == *span
+        })),
+        "every independent body survives before coarse backfill"
+    );
     for item in ranked {
         let handle = item.handle.as_ref().unwrap();
         assert_eq!(handle.sha256, partition.source_hash);
@@ -7024,8 +7025,10 @@ fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
             RenderedForm::Verbatim(source[handle.start as usize..handle.end as usize].into())
         );
         if item.semantic.is_some() {
-            assert!(bodies.contains(&(handle.start, handle.end)));
-            assert!(!fragments.contains(&(handle.start, handle.end)));
+            assert!(
+                bodies.contains(&(handle.start, handle.end))
+                    || fragments.contains(&(handle.start, handle.end))
+            );
         } else {
             assert!(
                 events["events"].as_array().unwrap().iter().any(|event| {
@@ -7048,7 +7051,7 @@ fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
                 && event["unit"]["path"] == path
         })
         .collect();
-    assert_eq!(refined.len(), 4);
+    assert_eq!(refined.len(), bodies.len());
     assert!(refined.iter().all(|event| event["representation"] == "body"
         && bodies.contains(&(
             event["unit"]["start"].as_u64().unwrap(),
@@ -7706,16 +7709,23 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
                     && event["unit"]["path"] == path
             })
             .collect();
-        assert_eq!(refined.len(), 4, "{discovery_kind:?}: {events}");
+        assert_eq!(refined.len(), owned.len(), "{discovery_kind:?}: {events}");
         assert!(
             refined.iter().all(|event| {
                 event["representation"] == "body"
-                    && preferred.contains(&(
+                    && owned.contains(&(
                         event["unit"]["start"].as_u64().unwrap(),
                         event["unit"]["end"].as_u64().unwrap(),
                     ))
             }),
             "a sibling must not consume an owned refinement slot: {events}"
+        );
+        assert!(
+            refined.iter().take(4).all(|event| preferred.contains(&(
+                event["unit"]["start"].as_u64().unwrap(),
+                event["unit"]["end"].as_u64().unwrap(),
+            ))),
+            "best independently scored bodies stay first"
         );
         // Context appends a separate whole-file outline after the ranked
         // units. It is not a fifth independently scored refinement passage.
@@ -7741,14 +7751,17 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
                 .iter()
                 .all(|form| matches!(form, RenderedForm::Outline(_) | RenderedForm::OutlineMin(_)))
         );
-        assert_eq!(delivered.len(), 4, "{discovery_kind:?}");
+        assert!(
+            delivered.len() > 4 && delivered.len() <= 32,
+            "{discovery_kind:?}"
+        );
         assert!(delivered.iter().any(|item| item.semantic.is_some()));
         assert!(delivered.iter().any(|item| item.semantic.is_none()));
         let mut lexical_spans = BTreeSet::new();
         for item in delivered {
             let handle = item.handle.as_ref().unwrap();
             if item.semantic.is_some() {
-                assert!(preferred.contains(&(handle.start, handle.end)));
+                assert!(owned.contains(&(handle.start, handle.end)));
             } else {
                 assert!(owner_range.start <= handle.start && handle.end <= owner_range.end);
                 assert!(

@@ -473,6 +473,7 @@ impl Engine {
         let mut per_file: std::collections::BTreeMap<String, usize> =
             std::collections::BTreeMap::new();
         let mut kept: Vec<&Candidate> = Vec::new();
+        let mut overflow = Vec::new();
         for (rank, candidate) in first.iter().chain(&second).enumerate() {
             if !current.contains_key(&candidate.path) {
                 let meta = match sources.get(candidate.path.as_str())? {
@@ -495,6 +496,10 @@ impl Engine {
             }
             let count = per_file.entry(candidate.path.clone()).or_default();
             if *count == PER_FILE_CAP {
+                if prose {
+                    overflow.push((rank, candidate));
+                    continue;
+                }
                 counters.capped += 1;
                 candidate.trace(control, &workspace_id, rank, "per_file_cap");
                 continue;
@@ -507,6 +512,17 @@ impl Engine {
             }
             candidate.trace(control, &workspace_id, rank, "kept");
             kept.push(candidate);
+        }
+        // Diversity gets first choice, but a sparse result must not discard
+        // additional evidence solely because it lives in the same file.
+        for (rank, candidate) in overflow {
+            if kept.len() < limit {
+                candidate.trace(control, &workspace_id, rank, "kept");
+                kept.push(candidate);
+            } else {
+                counters.truncated = true;
+                candidate.trace(control, &workspace_id, rank, "limit");
+            }
         }
         let wanted: std::collections::BTreeSet<String> = if prose {
             prose_terms(query)
