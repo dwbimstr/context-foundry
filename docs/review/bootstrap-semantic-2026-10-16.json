@@ -1,0 +1,448 @@
+{
+  "scope": "Local Linux integration only; public author-visible percent-encoding 2.3.2 fixture, not representative scale or economics acceptance",
+  "inputs": {
+    "source": "percent-encoding 2.3.2, pristine public control",
+    "files": {
+      "LICENSE-APACHE": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "LICENSE-MIT": "b38f11f6096706e6de553dabe2a7ed142d59b6fa8c97e290c67496154745cdd5",
+      "Cargo.toml": "e4ea043c47bbd5551fc5fcf8151eab94428b4be6f2337834a0f9020a4392fb19",
+      "src/lib.rs": "641903d385581e76f31ef8c991d83c2a5d7fbbc2879d93909c539037e4e1e3e2",
+      "src/ascii_set.rs": "f75552e4f446ed240cef64c1367e848cf3ae65f77602085459566d835a1d8587"
+    }
+  },
+  "embedding_function": {
+    "v": 2,
+    "model": "google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b via ggml-org/embeddinggemma-2-GGUF@bfcd298762cc34d0357ece5ebdd31791a3a374d8 BF16",
+    "artifact_files": [
+      {
+        "name": "embeddinggemma-2-BF16.gguf",
+        "sha256": "68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216"
+      },
+      {
+        "name": "tokenizer.json",
+        "sha256": "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4"
+      }
+    ],
+    "gguf": "embeddinggemma-2-BF16.gguf",
+    "llama_cpp": "b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea",
+    "tokenizer": "tokenizers 0.23.2 onig",
+    "add_special_tokens": true,
+    "pooling": "mean",
+    "dimensions": 768,
+    "output": "f32",
+    "adapter_revision": 5,
+    "document_template": "title: none | text: {text}",
+    "geometry": {
+      "v": 1,
+      "input_tokens": 8192,
+      "batch_tokens": 8192,
+      "sequences": 8
+    }
+  },
+  "runtime": {
+    "os": "linux x86_64",
+    "avx512_bf16": true,
+    "threads": 4,
+    "memory_ceiling_bytes": 8589934592,
+    "batch": 8,
+    "card_tokens": 512,
+    "representation": {
+      "kind": "hierarchy-v1",
+      "parent_tokens": 64
+    },
+    "development_isolation": true,
+    "worker_sha256": "bba7f61a0dc9e0d7e4fdb2d29cb2f956531035df0de91735fa030906a59a606a"
+  },
+  "native_parity": {
+    "passed": true,
+    "full_window_tokens": 8192,
+    "full_window_ms": 66878,
+    "test_seconds": 92.63,
+    "cpu_receipt_sha256": "35c467f1e9bc131032f5493f1a2105776cdfad200f0b02db5b39d881d4513e4f",
+    "native_log_sha256": "bec781a3cbeff9c808bc7a7db96851feb0a1730afacace0774e8bd9eaffd40e7"
+  },
+  "bootstrap": [
+    {
+      "name": "fresh",
+      "exit": 0,
+      "elapsed_ms": 73294,
+      "stdout_sha256": "4972ea15ea655f9698e3470fb1ab288ec2276d3854d614a1be7f1ac38b9ae81b",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "complete": true,
+      "components": [
+        {
+          "component": "lexical",
+          "state": "ready"
+        },
+        {
+          "component": "semantic",
+          "state": "ready"
+        }
+      ],
+      "preparation": {
+        "embedded_units": 106,
+        "document_calls": 14,
+        "input_tokens": 19075,
+        "reused_cached_units": 12,
+        "index_entries": 106,
+        "coverage": {
+          "cached_current_units": 113,
+          "eligible_units": 113,
+          "function_digest": "711c873580040a6727f1c643fa646755df2e1cbb543fc0df32b6d3516a3269db",
+          "index_entries": 106,
+          "recipe_id": "hierarchy-v1+overview3+kinds2+units5:512+parent64+tokenizers 0.23.2 onig",
+          "searchable_current_units": 113,
+          "source_revision": 5,
+          "sources": 5,
+          "unpartitioned_sources": 0,
+          "version": 1
+        },
+        "bootstrap": {
+          "area_vectors": 0,
+          "delta_publications": 3,
+          "elapsed_ms": 73132,
+          "embedded_areas": 0,
+          "embedded_units": 106,
+          "first_searchable_ms": 30414,
+          "generation_builds": 2,
+          "input_tokens": 19075,
+          "mapping_publications": 0,
+          "partition_compute_ms": 461,
+          "priority_waves": 0,
+          "provider_ms": 46662,
+          "publication_backoff_ms": null,
+          "publication_error": null,
+          "publication_ms": 106,
+          "publication_retries": 0,
+          "published_entries": 106,
+          "render_ms": 787,
+          "reused_cached_units": 12,
+          "selected_sources": 10,
+          "waves": 2
+        },
+        "provider_state": "ready",
+        "partial": false,
+        "reason_code": null
+      },
+      "scratch_empty_after_exit": true
+    },
+    {
+      "name": "replay",
+      "exit": 0,
+      "elapsed_ms": 4630,
+      "stdout_sha256": "b56c62d1069462e3c02730a8804436f38644c490f9a4bc0f3aca04ed2a65a438",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "complete": true,
+      "components": [
+        {
+          "component": "lexical",
+          "state": "ready"
+        },
+        {
+          "component": "semantic",
+          "state": "ready"
+        }
+      ],
+      "preparation": {
+        "embedded_units": 0,
+        "document_calls": 0,
+        "input_tokens": 0,
+        "reused_cached_units": 118,
+        "index_entries": 106,
+        "coverage": {
+          "cached_current_units": 113,
+          "eligible_units": 113,
+          "function_digest": "711c873580040a6727f1c643fa646755df2e1cbb543fc0df32b6d3516a3269db",
+          "index_entries": 106,
+          "recipe_id": "hierarchy-v1+overview3+kinds2+units5:512+parent64+tokenizers 0.23.2 onig",
+          "searchable_current_units": 113,
+          "source_revision": 5,
+          "sources": 5,
+          "unpartitioned_sources": 0,
+          "version": 1
+        },
+        "bootstrap": {
+          "area_vectors": 0,
+          "delta_publications": 0,
+          "elapsed_ms": 4528,
+          "embedded_areas": 0,
+          "embedded_units": 0,
+          "first_searchable_ms": 4396,
+          "generation_builds": 0,
+          "input_tokens": 0,
+          "mapping_publications": 0,
+          "partition_compute_ms": 0,
+          "priority_waves": 0,
+          "provider_ms": 0,
+          "publication_backoff_ms": null,
+          "publication_error": null,
+          "publication_ms": 12,
+          "publication_retries": 0,
+          "published_entries": 106,
+          "render_ms": 0,
+          "reused_cached_units": 118,
+          "selected_sources": 10,
+          "waves": 2
+        },
+        "provider_state": null,
+        "partial": false,
+        "reason_code": null
+      },
+      "scratch_empty_after_exit": true
+    },
+    {
+      "name": "changed",
+      "exit": 0,
+      "elapsed_ms": 25706,
+      "stdout_sha256": "ebd0c03dd84c7e25805469f20a53c086d3a431074eac0d7717a651a7ae303278",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "complete": true,
+      "components": [
+        {
+          "component": "lexical",
+          "state": "ready"
+        },
+        {
+          "component": "semantic",
+          "state": "ready"
+        }
+      ],
+      "preparation": {
+        "embedded_units": 1,
+        "document_calls": 1,
+        "input_tokens": 64,
+        "reused_cached_units": 118,
+        "index_entries": 107,
+        "coverage": {
+          "cached_current_units": 114,
+          "eligible_units": 114,
+          "function_digest": "711c873580040a6727f1c643fa646755df2e1cbb543fc0df32b6d3516a3269db",
+          "index_entries": 107,
+          "recipe_id": "hierarchy-v1+overview3+kinds2+units5:512+parent64+tokenizers 0.23.2 onig",
+          "searchable_current_units": 114,
+          "source_revision": 6,
+          "sources": 5,
+          "unpartitioned_sources": 0,
+          "version": 1
+        },
+        "bootstrap": {
+          "area_vectors": 0,
+          "delta_publications": 1,
+          "elapsed_ms": 25562,
+          "embedded_areas": 0,
+          "embedded_units": 1,
+          "first_searchable_ms": 4367,
+          "generation_builds": 0,
+          "input_tokens": 64,
+          "mapping_publications": 2,
+          "partition_compute_ms": 124,
+          "priority_waves": 0,
+          "provider_ms": 107,
+          "publication_backoff_ms": null,
+          "publication_error": null,
+          "publication_ms": 44,
+          "publication_retries": 0,
+          "published_entries": 107,
+          "render_ms": 107,
+          "reused_cached_units": 118,
+          "selected_sources": 10,
+          "waves": 2
+        },
+        "provider_state": "ready",
+        "partial": false,
+        "reason_code": null
+      },
+      "scratch_empty_after_exit": true
+    },
+    {
+      "name": "restored",
+      "exit": 0,
+      "elapsed_ms": 5596,
+      "stdout_sha256": "bd648d9f668bafaaf22081b145da0293900f359748f2db721262e587d93e8bda",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "complete": true,
+      "components": [
+        {
+          "component": "lexical",
+          "state": "ready"
+        },
+        {
+          "component": "semantic",
+          "state": "ready"
+        }
+      ],
+      "preparation": {
+        "embedded_units": 0,
+        "document_calls": 0,
+        "input_tokens": 0,
+        "reused_cached_units": 118,
+        "index_entries": 106,
+        "coverage": {
+          "cached_current_units": 113,
+          "eligible_units": 113,
+          "function_digest": "711c873580040a6727f1c643fa646755df2e1cbb543fc0df32b6d3516a3269db",
+          "index_entries": 106,
+          "recipe_id": "hierarchy-v1+overview3+kinds2+units5:512+parent64+tokenizers 0.23.2 onig",
+          "searchable_current_units": 113,
+          "source_revision": 7,
+          "sources": 5,
+          "unpartitioned_sources": 0,
+          "version": 1
+        },
+        "bootstrap": {
+          "area_vectors": 0,
+          "delta_publications": 1,
+          "elapsed_ms": 5445,
+          "embedded_areas": 0,
+          "embedded_units": 0,
+          "first_searchable_ms": 5100,
+          "generation_builds": 0,
+          "input_tokens": 0,
+          "mapping_publications": 1,
+          "partition_compute_ms": 133,
+          "priority_waves": 0,
+          "provider_ms": 0,
+          "publication_backoff_ms": null,
+          "publication_error": null,
+          "publication_ms": 33,
+          "publication_retries": 0,
+          "published_entries": 106,
+          "render_ms": 0,
+          "reused_cached_units": 118,
+          "selected_sources": 10,
+          "waves": 2
+        },
+        "provider_state": null,
+        "partial": false,
+        "reason_code": null
+      },
+      "scratch_empty_after_exit": true
+    },
+    {
+      "name": "missing-worker",
+      "exit": 1,
+      "elapsed_ms": 24151,
+      "stdout_sha256": "d9dfd8d4021fd1efee3d194929af6c5ceaf13822ec6bc6ca7e9f44796df1346a",
+      "stderr_sha256": "4daa9f1a062390e0cbf3a2c7bc6d0a074d9bcfb4d08673405ea49af50902fb3e",
+      "complete": false,
+      "components": [
+        {
+          "component": "lexical",
+          "state": "ready"
+        },
+        {
+          "component": "semantic",
+          "state": "failed"
+        }
+      ],
+      "preparation": null,
+      "scratch_empty_after_exit": true
+    }
+  ],
+  "composed_context": [
+    {
+      "tokens_requested": 2048,
+      "output_bytes": 7471,
+      "sha256": "abc9c9c734e5cce2f33fb10139227f5400da1e42a689feaf44e57c708e98bbfa",
+      "items": 4,
+      "body_items": 3,
+      "facets": {
+        "configuration": "missing",
+        "constraints": "missing",
+        "consumers": "source_candidates_delivered",
+        "implementation": "source_candidates_delivered",
+        "verification": "source_candidates_delivered"
+      },
+      "complete": false,
+      "compiler_coverage": "unavailable",
+      "syntax_resolution": "unresolved",
+      "verification": "test_candidates_only_not_executed",
+      "host_application": "unknown"
+    },
+    {
+      "tokens_requested": 4096,
+      "output_bytes": 12189,
+      "sha256": "4b67ff94113416567eed95593320689983b148fe2f7ea6c3af4e8da0a6a6e9ee",
+      "items": 8,
+      "body_items": 8,
+      "facets": {
+        "configuration": "missing",
+        "constraints": "missing",
+        "consumers": "source_candidates_delivered",
+        "implementation": "source_candidates_delivered",
+        "verification": "source_candidates_delivered"
+      },
+      "complete": false,
+      "compiler_coverage": "unavailable",
+      "syntax_resolution": "unresolved",
+      "verification": "test_candidates_only_not_executed",
+      "host_application": "unknown"
+    }
+  ],
+  "limitations": [
+    "Managed runtime exposes no provider token or billing usage",
+    "No representative-scale or frozen retrieval evaluation",
+    "No native macOS/GPU acceptance",
+    "No successful live Z.ai generation"
+  ],
+  "artifacts": {
+    "raw_directory": "/workspace/.context-foundry-tools/validation-runs/bootstrap-semantic-2026-10-16",
+    "initial_cli_sha256": "e1244b90168fca2e468b44b0fb27979362cacfbe7a61471336c12c6744c1f76f",
+    "driver_sha256": "3a46d425b2c2e6bbd84186a25786b5b809c089e67642d9b5ee00f10e5e6889cc",
+    "profile_sha256": "ae7969536b085aa41e8ef4b7f32f424a8ee51fe20ccf72f0bc33174a43b2bef1"
+  },
+  "implementation_commit": "b202a9ce9602ca060fcfd1ca09ff324947196952",
+  "final_cli_verification": {
+    "cli_sha256": "0d6308bc9e7c2e32725486dda8373e50a44db7d3b44a5531856eaaf5601a8c87",
+    "commands": [
+      {
+        "name": "after-failure-context",
+        "exit": 0,
+        "elapsed_ms": 619,
+        "stdout_sha256": "c0a2948b18f4d46d8a1ddeb767e373f15e90fe8599d67c0f7a8adce78f97e1b1",
+        "stderr_sha256": "b7991c2af8d64fe818584de40ae912ce863cde4dd700ef9d332c6ef1c27c5c74"
+      },
+      {
+        "name": "final-replay",
+        "exit": 0,
+        "elapsed_ms": 4442,
+        "stdout_sha256": "5cc928cb3658f538cda88a84d2094542ff3cc7a63d7fd57aeb7f9a5da9909b32",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "final-semantic-only",
+        "exit": 0,
+        "elapsed_ms": 4622,
+        "stdout_sha256": "f2805d38ea1a158d75856a769ecf9abdb4bf4ca79d6d71c1e7e44e68dd527f73",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "unchanged_document_calls": 0,
+    "semantic_only_document_calls": 0,
+    "after_failure_context_contains_newly_admitted": true
+  },
+  "local_gates": {
+    "commit": "b202a9ce9602ca060fcfd1ca09ff324947196952",
+    "default_toolchain": "1.97.0",
+    "msrv": "1.90.0",
+    "fmt": 0,
+    "clippy": 0,
+    "test": 0,
+    "msrv_check": 0,
+    "msrv_clippy": 0,
+    "tests_passed": 1167,
+    "tests_failed": 0,
+    "tests_ignored": 27,
+    "recovery_harness": "passed",
+    "lexical_only_exit": 0,
+    "lexical_only_warnings": 0,
+    "log_sha256": {
+      "fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "clippy.log": "b24eff294f76ed4fc92739f6de3f45e1da72a56e9bd8e4487ebc436907681a6d",
+      "test.log": "ebf52af157055db5789b61643aa5c0c39ad113a761f02054f78879645a1756da",
+      "msrv-check.log": "be81b1411cd4e66fe5d1f36e57af081ae6cd92d0df36dc71513d476ccb6ff6a1",
+      "msrv-clippy.log": "7704b9649f089249b9dcffa812138428f553dd9d2cb52d5152324e447c06b980",
+      "lexical-check.log": "1f8e8c9e5032bb292cb8f811f81ef8df568f67f493e0cab6bf65084e94d03036"
+    }
+  }
+}
