@@ -270,7 +270,7 @@ impl Engine {
                 Ok(refinement) => {
                     refinement_limited |= refinement.stats.truncated;
                     if let Some(trace) = control.trace() {
-                        trace.record(serde_json::json!({"stage":"refinement", "outcome":"scored", "method":"published_body_exact", "localization":"current_owner_narrowing_v1", "work":refinement.stats}));
+                        trace.record(serde_json::json!({"stage":"refinement", "outcome":"scored", "method":"published_body_exact", "localization":"owner_prioritized_file_refinement_v2", "work":refinement.stats}));
                     }
                     refinement.hits
                 }

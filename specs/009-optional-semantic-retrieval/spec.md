@@ -89,27 +89,32 @@ hierarchy's independently scored Body refinement quota. Body-only serving retain
 its existing ordering; default address and unknown-language behavior are unchanged.
 This corrects role eligibility, not the model's relevance scores or output budgets.
 
-Owner-localization experiment, 2026-10-11: the hierarchy/prose branch preserves
+Owner-priority correction, 2026-10-16: the hierarchy/prose branch preserves
 source scopes from its existing first 16 lexical documents and bounded dense
 provenance. A lexical scope requires an indexed `fn`/`method` kind, current source
 hash, and valid full-unit/head/document coordinates. It is not a truncated display
 label or the focused document range. A dense Parent scope must join the exact
 current Parent input-key/range/hash tuple; File, Body and container-fragment hits
 supply file discovery only. All proof checks use the same selected mapping snapshot.
-Duplicate scopes coalesce; nested scopes narrow to their leaves as the declared
-experimental ranking tradeoff, while disjoint scopes remain a union. A body is
-eligible only when its entire independently scored span fits one retained scope;
-intersecting bytes are never clipped or joined across owners. Incompatible partial
-overlap, no valid current owner, or no published body contained in the owner falls
-back to the existing bounded file refinement, with the reason recorded. The same
+Duplicate scopes coalesce; nested scopes narrow to their leaves, while disjoint
+scopes remain a union. A body wholly inside a valid owner gets admission priority;
+other current published bodies remain eligible. Each file alternates its owner
+and remaining-body queues before the existing fair admission across files. Shared
+vector keys consume one scoring slot. All admitted vectors then compete by their
+own cosine scores. The former hard owner filter could discard the correct sibling
+implementation before scoring it; lexical ownership does not establish relevance.
+Intersecting bytes are never clipped or joined across owners. Incompatible partial
+overlap, no valid current owner, or no published body contained in the owner uses
+the ordinary file queue, with the reason recorded. The same
 point-read, vector, per-file, final-hash and output bounds apply; no query/source
 inference, model input, recipe change, extra delivery slot or inferred type-to-impl
 association is added. Default/address serving is unchanged. Per-path
 `refinement_scope` traces disclose requested/valid/stale/invalid scopes, narrowing,
-effective ranges and fallback; aggregate work records filtered locations. The
-`current_owner_narrowing_v1` trace policy identifies this candidate for comparison
-with role-only binaries on the identical complete prepared store and token budget.
-This variant does not claim that source ownership proves passage relevance.
+effective ranges and fallback. Aggregate work records joined locations admitted
+to each lane, separately from vectors ultimately scored under the global cap.
+The `owner_prioritized_file_refinement_v2` trace policy replaces
+`current_owner_narrowing_v1`. Overview-only profiles have no independent body
+vectors and do not exercise this repair; their passage-localization gap remains.
 
 CLI lifecycle correction, 2026-10-11: the per-command semantic slot now waits
 for the existing runtime shutdown before leaving scope, on success or error. Closing

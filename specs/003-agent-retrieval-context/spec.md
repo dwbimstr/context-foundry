@@ -910,7 +910,14 @@ optional `task-relationship` lines, derived briefs and memory share one token/by
 allowance. The report is recalculated for every packing trial: source candidates,
 addresses only, omitted by budget and missing are distinct. Relationship details are
 included only when both endpoint occurrence spans and configuration source were
-delivered. Derived briefs require their primary cited source body. Reports always state
+delivered. Source-backed boundary, compiler, observed-execution and alias proofs
+are admitted together with all their required bodies before standalone sources:
+each complete bundle must fit the full report, task view, token and byte limits.
+Shared bodies are reused; a failed bundle consumes no allowance and cannot evict
+an admitted proof's prerequisites. Remaining sources retain their original order,
+then derived briefs and memory use spare capacity. This replaces the body-first
+allocation that could crowd out a proof connecting already discovered evidence.
+Derived briefs require their primary cited source body. Reports always state
 `complete:false`, tests unexecuted and host application unknown; matching task words
 does not establish a satisfied requirement. MCP uses its existing reservation/refund
 and serialized-result byte boundary.
