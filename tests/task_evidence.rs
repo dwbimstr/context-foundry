@@ -154,6 +154,7 @@ fn relationship_proofs_and_their_source_dependencies_share_one_budget_decision()
         + "\n";
     let parsed = context_foundry::testkit::parse_v2(&source_text).unwrap();
     let mut proofs = 0;
+    let mut consumers = std::collections::BTreeSet::new();
     for line in delivered
         .text
         .lines()
@@ -161,6 +162,21 @@ fn relationship_proofs_and_their_source_dependencies_share_one_budget_decision()
     {
         proofs += 1;
         let proof: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(proof["resolution"], "exact_key");
+        let consumer =
+            context_foundry::store::HandleRef::parse(proof["consumer"].as_str().unwrap()).unwrap();
+        consumers.insert(consumer.path);
+        let providers: Vec<_> = proof["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|handle| {
+                context_foundry::store::HandleRef::parse(handle.as_str().unwrap())
+                    .unwrap()
+                    .path
+            })
+            .collect();
+        assert_eq!(providers, ["service.py"]);
         let required = [&proof["consumer"], &proof["config"]]
             .into_iter()
             .chain(proof["providers"].as_array().unwrap())
@@ -184,7 +200,11 @@ fn relationship_proofs_and_their_source_dependencies_share_one_budget_decision()
             );
         }
     }
-    assert!(proofs > 0, "{}", delivered.text);
+    assert_eq!(proofs, 2, "{}", delivered.text);
+    assert_eq!(
+        consumers,
+        ["client.py", "test_contract.py"].map(String::from).into()
+    );
     assert!(
         parsed.items.iter().all(|item| {
             context_foundry::store::HandleRef::parse(&item.handle)
