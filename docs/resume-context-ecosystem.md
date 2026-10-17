@@ -1,5 +1,15 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
+**Representation repair continuation, 2026-10-17:** body-window contexts keep the
+region's own declaration when over budget (`+context2`), and long overviews keep
+each declaration's documentation summary and the file opening (`+overview4`). The
+eight public questions were rerun with real EmbeddingGemma 2 on Apple M3 Pro Metal:
+overview and complete hierarchy both stay at **4/8** before and after; experimental
+lexical stays 4/8 and default 1/8. Dense target ranks move both ways, so no retrieval
+gain is claimed. Lexical ranking variants that gained Q4–Q6 each lost Q0 and were
+reverted. Owner-scope refinement ordering is live (the 4,096-vector cap bound twice)
+and stays. See the [repair receipt](validation.md#representation-repair-and-lexical-ablation--2026-10-17).
+
 **Runtime repair continuation, 2026-10-17:** code `81c20ad` preserves independently
 scored file bodies alongside lexical owner hints and admits task relationships with
 their source dependencies under one allowance. `d72f3bb` keeps store ownership until
