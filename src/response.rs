@@ -2202,6 +2202,7 @@ fn pack_task_evidence(
             false,
         ));
     }
+    let proof_end = tail.len();
     for b in &context.briefs {
         let p = HandleRef::parse(&b.brief.cited_spans[0])?;
         let Some(h) = items.iter().filter_map(|i| i.handle.as_ref()).find(|h| {
@@ -2254,29 +2255,75 @@ fn pack_task_evidence(
         }
         text
     };
-    let fits = |text: &str| count_tokens(text) <= budget.tokens && boundary(text) <= BYTE_CAP;
+    let fits = |text: &str| boundary(text) <= BYTE_CAP && count_tokens(text) <= budget.tokens;
     let base = render(&[], &[], MAX_BUDGET_TOKENS, budget.limited_by);
     if boundary(&base) > BYTE_CAP || count_tokens(&base) > MAX_BUDGET_TOKENS {
         return Err(FoundryError::UnsupportedMode("selected task and evidence metadata exceed delivery capacity; explicitly fold or deselect task entries".into()));
     }
     let mut selected = Vec::new();
+    let mut kept = Vec::new();
+    // A proof and the source bodies it depends on are one delivery decision.
+    // Otherwise unrelated bodies can spend the allowance before the connecting
+    // relationship is considered. Only source-backed proofs get this priority;
+    // generated briefs and memory still use remaining capacity below.
+    for (proof, (_, required, _)) in tail[..proof_end].iter().enumerate() {
+        let mut trial = selected.clone();
+        let mut supported = true;
+        for handle in required {
+            if covers(&trial, handle) {
+                continue;
+            }
+            let body = items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| matches!(item.forms.first(), Some(RenderedForm::Verbatim(_))))
+                .filter(|(_, item)| {
+                    item.handle
+                        .as_ref()
+                        .is_some_and(|h| source_covers(h, handle))
+                })
+                .min_by_key(|(index, item)| {
+                    let h = item.handle.as_ref().expect("covering source");
+                    (h.end - h.start, *index)
+                });
+            let Some((index, _)) = body else {
+                supported = false;
+                break;
+            };
+            trial.push((index, 0));
+        }
+        if !supported {
+            continue;
+        }
+        trial.sort_unstable();
+        kept.push(proof);
+        if fits(&render(&trial, &kept, budget.tokens, budget.limited_by)) {
+            selected = trial;
+        } else {
+            kept.pop();
+        }
+    }
     for (i, forms) in forms.iter().enumerate() {
+        if selected.iter().any(|&(index, _)| index == i) {
+            continue;
+        }
         for f in 0..forms.len() {
-            selected.push((i, f));
-            if fits(&render(&selected, &[], budget.tokens, budget.limited_by)) {
+            let position = selected.partition_point(|&(index, _)| index < i);
+            selected.insert(position, (i, f));
+            if fits(&render(&selected, &kept, budget.tokens, budget.limited_by)) {
                 break;
             }
-            selected.pop();
+            selected.remove(position);
         }
     }
-    while !fits(&render(&selected, &[], budget.tokens, budget.limited_by)) {
-        if selected.pop().is_none() {
-            return Err(too_small(budget.tokens, &|t, l| render(&[], &[], t, l)));
-        }
+    // Each admission used the full renderer, including proof metadata. Never
+    // drop a required body to repair an overfull header after the fact.
+    selected.sort_unstable();
+    if !fits(&render(&selected, &kept, budget.tokens, budget.limited_by)) {
+        return Err(too_small(budget.tokens, &|t, l| render(&[], &[], t, l)));
     }
-    let mut kept = Vec::new();
     for (i, (_, required, _)) in tail.iter().enumerate() {
-        if !required.iter().all(|h| covers(&selected, h)) {
+        if kept.contains(&i) || !required.iter().all(|h| covers(&selected, h)) {
             continue;
         }
         kept.push(i);

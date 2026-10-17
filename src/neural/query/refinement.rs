@@ -39,8 +39,8 @@ struct OwnerRanges {
 
 impl OwnerRanges {
     /// Valid nested ranges reduce to leaves, which are disjoint and sorted.
-    /// A Body must fit whole; clipping would change the independently scored
-    /// evidence, and overlap alone could import a neighboring function.
+    /// A Body must fit whole to receive owner priority. Other published bodies
+    /// remain eligible in the file lane; an owner is a hint, not an answer proof.
     fn contains(&self, start: u64, end: u64) -> bool {
         self.ranges
             .partition_point(|&(from, _)| from <= start)
@@ -266,7 +266,7 @@ impl DenseWindow {
             }
             if let Some(trace) = control.trace() {
                 trace.record(serde_json::json!({
-                    "stage":"refinement_scope", "policy":"current_owner_narrowing_v1",
+                    "stage":"refinement_scope", "policy":"owner_prioritized_file_refinement_v2",
                     "path":path, "sha256":record.source_hash,
                     "requested":requested.len(), "valid":owners.valid,
                     "stale":owners.stale, "invalid":owners.invalid,
@@ -274,21 +274,27 @@ impl DenseWindow {
                     "ranges":owners.ranges, "fallback":fallback,
                 }));
             }
-            let mut queue = VecDeque::new();
-            let mut seen = BTreeSet::new();
+            let mut owner_queue = VecDeque::new();
+            let mut file_queue = VecDeque::new();
             for (label, location) in file_bodies {
                 control.check()?;
-                if fallback.is_none() && !owners.contains(location.start, location.end) {
-                    stats.owner_filtered_locations += 1;
-                    continue;
-                }
                 joined.entry(label).or_default().push(location);
-                if seen.insert(label) {
-                    queue.push_back(label);
+                if fallback.is_none() && owners.contains(location.start, location.end) {
+                    stats.owner_prioritized_locations += 1;
+                    owner_queue.push_back(label);
+                } else {
+                    stats.file_lane_locations += 1;
+                    file_queue.push_back(label);
                 }
             }
+            // A lexical/Parent owner must not veto competing implementations
+            // before their own vectors are scored. Alternate owner and remaining
+            // file bodies within this file's fair turn, deduplicating shared
+            // labels. The global scoring/candidate/provenance limits stay fixed.
+            let (queue, _) =
+                refinement_working_set(vec![owner_queue, file_queue], MAX_UNITS, control)?;
             if !queue.is_empty() {
-                queues.push(queue);
+                queues.push(VecDeque::from(queue));
             }
             if stats.units_considered == MAX_UNITS {
                 stats.truncated |= stats.paths < paths.len();
@@ -593,7 +599,8 @@ pub(crate) struct RefinementStats {
     owner_scope_conflicts: usize,
     owner_scoped_paths: usize,
     owner_fallback_paths: usize,
-    owner_filtered_locations: usize,
+    owner_prioritized_locations: usize,
+    file_lane_locations: usize,
     retained_locations: usize,
     vectors_scored: usize,
     labels_examined: usize,

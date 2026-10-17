@@ -7516,7 +7516,7 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
 }
 
 #[test]
-fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discovery() {
+fn hierarchy_refinement_scores_competing_bodies_outside_a_lexical_owner() {
     use context_foundry::neural::{cache::CardKind, partition::Representation};
     use context_foundry::store::{ContextOptions, RenderedForm};
     use context_foundry::syntax::{self, Lang, UnitKind};
@@ -7563,6 +7563,12 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
         "the callable has several exact body windows"
     );
     let preferred: BTreeSet<_> = owned.iter().rev().take(4).copied().collect();
+    let competing: BTreeSet<_> = partition
+        .units
+        .iter()
+        .filter(|unit| unit.kind == CardKind::Body && unit.start >= owner.end)
+        .map(|unit| (unit.start as u64, unit.end as u64))
+        .collect();
     assert!(preferred.iter().all(|(start, _)| *start > 8192));
     assert!(
         partition
@@ -7577,7 +7583,9 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
     // Controlled fixture vectors make every sibling strictly closer than
     // every owned Body. Within the callable, its last four windows win, well
     // beyond the first lexical document that contains the query words. This
-    // tests full-unit owner admission, not embedding quality.
+    // tests that owner priority is not a hard relevance filter. Both channels
+    // must be scored, and the independently better sibling bodies must win.
+    // These controlled vectors test admission/ranking, not model quality.
     // All keys, roles and source spans remain those produced by preparation.
     let query_vector = concept_vector(&provider::render(&corpus.profile.query_template, query));
     let opposite: Vec<_> = query_vector.iter().map(|value| -*value).collect();
@@ -7641,7 +7649,8 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
     let original_hits = window.hits.clone();
     for discovery_kind in [CardKind::File, CardKind::Body, CardKind::ContainerFragment] {
         // Tiny Body/fragment hits discover the file but cannot claim ownership
-        // of its refinement. The current lexical callable remains the owner.
+        // of its refinement. The current lexical callable gets admission
+        // priority, but must not veto the rest of the discovered file.
         window.hits = original_hits
             .iter()
             .filter(|hit| {
@@ -7694,7 +7703,6 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
             .iter()
             .find(|event| event["stage"] == "refinement_scope" && event["path"] == path)
             .expect("the owner decision is auditable");
-        assert_eq!(scope["policy"], "current_owner_narrowing_v1");
         assert!(scope["fallback"].is_null());
         assert_eq!(
             scope["ranges"],
@@ -7707,7 +7715,6 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
             .find(|event| event["stage"] == "refinement" && event["outcome"] == "scored")
             .unwrap()["work"];
         assert_eq!(work["owner_scoped_paths"], 1);
-        assert!(work["owner_filtered_locations"].as_u64().unwrap() >= 8);
         assert!(work["units_considered"].as_u64().unwrap() <= 32_768);
         assert!(work["vectors_scored"].as_u64().unwrap() <= 4096);
         assert!(work["retained_locations"].as_u64().unwrap() <= 80 * 4);
@@ -7722,23 +7729,51 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
                     && event["unit"]["path"] == path
             })
             .collect();
-        assert_eq!(refined.len(), owned.len(), "{discovery_kind:?}: {events}");
+        assert_eq!(
+            refined.len(),
+            owned.len() + competing.len(),
+            "{discovery_kind:?}: {events}"
+        );
+        assert_eq!(scope["policy"], "owner_prioritized_file_refinement_v2");
+        assert_eq!(work["owner_prioritized_locations"], owned.len());
+        assert_eq!(work["file_lane_locations"], competing.len());
         assert!(
             refined.iter().all(|event| {
                 event["representation"] == "body"
-                    && owned.contains(&(
-                        event["unit"]["start"].as_u64().unwrap(),
-                        event["unit"]["end"].as_u64().unwrap(),
-                    ))
+                    && owned.union(&competing).any(|span| {
+                        *span
+                            == (
+                                event["unit"]["start"].as_u64().unwrap(),
+                                event["unit"]["end"].as_u64().unwrap(),
+                            )
+                    })
             }),
-            "a sibling must not consume an owned refinement slot: {events}"
+            "every independently scored body must retain its exact provenance: {events}"
         );
         assert!(
-            refined.iter().take(4).all(|event| preferred.contains(&(
+            refined.iter().take(4).all(|event| competing.contains(&(
                 event["unit"]["start"].as_u64().unwrap(),
                 event["unit"]["end"].as_u64().unwrap(),
             ))),
             "best independently scored bodies stay first"
+        );
+        let owned_order: Vec<_> = refined
+            .iter()
+            .filter_map(|event| {
+                let span = (
+                    event["unit"]["start"].as_u64().unwrap(),
+                    event["unit"]["end"].as_u64().unwrap(),
+                );
+                owned.contains(&span).then_some(span)
+            })
+            .collect();
+        assert_eq!(owned_order.len(), owned.len());
+        assert!(
+            owned_order
+                .iter()
+                .take(4)
+                .all(|span| preferred.contains(span)),
+            "owner priority still admits every owned body, with its own cosine order"
         );
         // Context appends a separate whole-file outline after the ranked
         // units. It is not a fifth independently scored refinement passage.
@@ -7774,7 +7809,10 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
         for item in delivered {
             let handle = item.handle.as_ref().unwrap();
             if item.semantic.is_some() {
-                assert!(owned.contains(&(handle.start, handle.end)));
+                assert!(
+                    owned.contains(&(handle.start, handle.end))
+                        || competing.contains(&(handle.start, handle.end))
+                );
             } else {
                 assert!(owner_range.start <= handle.start && handle.end <= owner_range.end);
                 assert!(
@@ -7822,8 +7860,14 @@ fn hierarchy_refinement_keeps_current_callable_scope_after_coarse_or_tiny_discov
                 assert!(!item.semantic);
                 assert_eq!((start, end), (0, source.len() as u64));
             } else if item.semantic {
+                if packed_bodies == 0 {
+                    assert!(
+                        competing.contains(&(start, end)),
+                        "better independently scored siblings must survive packing"
+                    );
+                }
                 packed_bodies += 1;
-                assert!(preferred.contains(&(start, end)));
+                assert!(owned.contains(&(start, end)) || competing.contains(&(start, end)));
             } else {
                 assert!(
                     lexical_spans.contains(&(start, end)),

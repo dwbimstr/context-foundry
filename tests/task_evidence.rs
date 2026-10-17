@@ -106,6 +106,137 @@ fn report(text: &str) -> Value {
 }
 
 #[test]
+fn relationship_proofs_and_their_source_dependencies_share_one_budget_decision() {
+    let mut e = fixture();
+    let noise = format!(
+        "def incidental_notes():\n{}    return None\n",
+        "    # Historical background with no contract evidence or caller relationship.\n"
+            .repeat(130)
+    );
+    e.engine.replace_source("notes.py", &noise).unwrap();
+    e.engine.refresh(&Control::unbounded()).unwrap();
+    let compose = |engine: &Engine| {
+        engine
+            .context_candidates_with(
+                "`incidental_notes`",
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    task: Some(task_context::Scope {
+                        workspace_id: &e.wid,
+                        task_id: "contract",
+                        expected_revision: e.revision,
+                    }),
+                    compose_evidence: true,
+                    compact_evidence: true,
+                    boundary_config: Some("boundary.json"),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    let c = compose(&e.engine);
+    assert_eq!(c.batch.items[0].handle.as_ref().unwrap().path, "notes.py");
+    let pack = |c: &context_foundry::memory::MemoryContext, tokens| {
+        response::pack_enriched_context(c, None, Budget::request(tokens), &response::stdout_bytes)
+            .unwrap()
+    };
+    let delivered = pack(&c, 3072);
+    assert!(delivered.tokens <= 3072);
+    let source_text = delivered
+        .text
+        .lines()
+        // Parse only source bodies; this ordinary-v2 helper does not accept
+        // task metadata or task composition's unanchored address forms.
+        .filter(|line| !line.starts_with("task-") && !line.ends_with(" [address]"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let parsed = context_foundry::testkit::parse_v2(&source_text).unwrap();
+    let mut proofs = 0;
+    for line in delivered
+        .text
+        .lines()
+        .filter_map(|line| line.strip_prefix("task-relationship: "))
+    {
+        proofs += 1;
+        let proof: Value = serde_json::from_str(line).unwrap();
+        let required = [&proof["consumer"], &proof["config"]]
+            .into_iter()
+            .chain(proof["providers"].as_array().unwrap())
+            .chain(proof["dependencies"].as_array().unwrap());
+        for handle in required {
+            let h = context_foundry::store::HandleRef::parse(handle.as_str().unwrap()).unwrap();
+            assert!(
+                parsed.items.iter().any(|item| {
+                    if item.form.is_some() {
+                        return false;
+                    }
+                    context_foundry::store::HandleRef::parse(&item.handle).is_ok_and(|shown| {
+                        shown.ws16 == h.ws16
+                            && shown.sha32 == h.sha32
+                            && shown.path == h.path
+                            && shown.start <= h.start
+                            && shown.end >= h.end
+                    })
+                }),
+                "proof without its complete source: {line}"
+            );
+        }
+    }
+    assert!(proofs > 0, "{}", delivered.text);
+    assert!(
+        parsed.items.iter().all(|item| {
+            context_foundry::store::HandleRef::parse(&item.handle)
+                .unwrap()
+                .path
+                != "notes.py"
+        }),
+        "unrelated body must yield capacity to a complete proof"
+    );
+    assert_eq!(report(&delivered.text)["boundary"]["delivered"], proofs);
+    assert_eq!(report(&delivered.text)["complete"], false);
+    for item in parsed.items.iter().filter(|item| item.form.is_none()) {
+        let h = context_foundry::store::HandleRef::parse(&item.handle).unwrap();
+        let body = if h.path == "notes.py" {
+            noise.clone()
+        } else {
+            std::fs::read_to_string(e.dir.path().join("root").join(&h.path)).unwrap()
+        };
+        assert_eq!(item.body, body[h.start as usize..h.end as usize]);
+    }
+    let minimum = match response::pack_enriched_context(
+        &c,
+        None,
+        Budget::request(1),
+        &response::stdout_bytes,
+    ) {
+        Err(FoundryError::BudgetTooSmall { minimum_tokens }) => minimum_tokens,
+        result => panic!("expected minimum budget refusal: {result:?}"),
+    };
+    let small = pack(&c, minimum);
+    assert!(!small.text.contains("task-relationship:"));
+    assert_eq!(report(&small.text)["boundary"]["delivered"], 0);
+    e.engine
+        .replace_source("service.py", &(SERVICE.to_owned() + "# changed\n"))
+        .unwrap();
+    let stale = pack(&compose(&e.engine), 3072);
+    for line in stale
+        .text
+        .lines()
+        .filter_map(|line| line.strip_prefix("task-relationship: "))
+    {
+        let proof: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(
+            proof["providers"],
+            json!([]),
+            "a stale provider cannot support a relationship: {line}"
+        );
+    }
+    assert_eq!(report(&stale.text)["complete"], false);
+}
+
+#[test]
 fn composition_discovers_unresolved_calls_and_attributed_tests_without_compiler_data() {
     let mut e = fixture();
     let body = "fn repair_value(v: u8) -> u8 { v }\n\nfn consume_value() { repair_value(3); }\n\n#[test]\nfn checks_value() { assert_eq!(repair_value(4), 4); }\n\nfn text_only() { let s = \"repair_value(9)\"; let f = repair_value; }\n";
