@@ -61,19 +61,23 @@ impl Representation {
     pub fn is_address(&self) -> bool {
         *self == Self::Address
     }
+    /// `+context2`: an over-budget body context keeps its own declaration, not
+    /// the enclosing header or preamble. `+overview4`: overviews summarize each
+    /// declaration's documentation and the file opening, not one line. Either
+    /// change refits old partitions; unchanged exact inputs keep their vectors.
     pub fn recipe_id(self, tokenizer: &str, tokens: u32) -> String {
         match self {
             Self::Address => recipe_id(tokenizer, tokens),
             Self::Body { parent_tokens } => format!(
-                "body-v1+kinds2+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                "body-v1+context2+kinds2+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
                 crate::store::SOURCE_UNIT_SCHEMA
             ),
             Self::Hierarchy { parent_tokens } => format!(
-                "hierarchy-v1+overview3+kinds2+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
+                "hierarchy-v1+overview4+context2+kinds2+units{}:{tokens}+parent{parent_tokens}+{tokenizer}",
                 crate::store::SOURCE_UNIT_SCHEMA
             ),
             Self::Overview => format!(
-                "overview-v1+overview3+kinds1+units{}:{tokens}+{tokenizer}",
+                "overview-v1+overview4+kinds1+units{}:{tokens}+{tokenizer}",
                 crate::store::SOURCE_UNIT_SCHEMA
             ),
         }

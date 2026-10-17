@@ -74,6 +74,19 @@ fn boundary(source: &str, mut at: usize) -> usize {
     at
 }
 
+/// Append `source[start..end]` and a newline, bounded so `text` stays within
+/// `cap` bytes before tokenization.
+fn append(text: &mut String, source: &str, start: usize, end: usize, cap: usize) {
+    let end = boundary(
+        source,
+        end.min(start.saturating_add(cap.saturating_sub(text.len()))),
+    );
+    if start < end {
+        text.push_str(&source[start..end]);
+        text.push('\n');
+    }
+}
+
 fn context(
     source: &str,
     units: &[Unit],
@@ -88,32 +101,38 @@ fn context(
     // Bound context construction before tokenizing pathological headers. Only
     // bytes actually included affect reuse; omitted context is not represented.
     let cap = limit.saturating_mul(32);
+    let header_end = |unit: &Unit| unit.body.map_or(unit.head, |(body, _)| body.min(unit.end));
+    let own = owner.map(|index| &units[index]);
     let mut text = String::new();
-    let mut append = |start: usize, end: usize| {
-        let end = boundary(
-            source,
-            end.min(start.saturating_add(cap.saturating_sub(text.len()))),
-        );
-        if start < end {
-            text.push_str(&source[start..end]);
-            text.push('\n');
-        }
-    };
-    if let Some(index) = owner {
-        let unit = &units[index];
-        if let Some(parent) = unit.parent {
+    match own.and_then(|unit| unit.parent) {
+        Some(parent) => {
             let parent = &units[parent];
-            let end = parent
-                .body
-                .map_or(parent.head, |(body, _)| body.min(parent.end));
-            append(parent.start, end);
-        } else {
-            append(0, preamble);
+            append(&mut text, source, parent.start, header_end(parent), cap);
         }
-        let end = unit.body.map_or(unit.head, |(body, _)| body.min(unit.end));
-        append(unit.start, end);
-    } else {
-        append(0, preamble);
+        None => append(&mut text, source, 0, preamble, cap),
+    }
+    if let Some(unit) = own {
+        append(&mut text, source, unit.start, header_end(unit), cap);
+    }
+    if text.is_empty() || tokens.count(&text)? <= limit {
+        return Ok(Arc::from(text));
+    }
+    // Over budget: the region's own declaration outranks the enclosing header
+    // or file preamble, and its signature outranks long leading documentation.
+    // Truncating the combined text from its end would keep only outer context.
+    if let Some(unit) = own {
+        let signature = (unit.head > unit.start).then_some(unit.head);
+        for from in std::iter::once(unit.start).chain(signature) {
+            let mut header = String::new();
+            append(&mut header, source, from, header_end(unit), cap);
+            if header.is_empty() {
+                continue;
+            }
+            text = header;
+            if tokens.count(&text)? <= limit {
+                return Ok(Arc::from(text));
+            }
+        }
     }
     while !text.is_empty() && tokens.count(&text)? > limit {
         text.truncate(boundary(&text, text.len() / 2));
@@ -410,6 +429,47 @@ mod tests {
             addr(&after)[0].input_key,
             "legacy address omits body-only edits"
         );
+    }
+
+    #[test]
+    fn over_budget_context_keeps_the_regions_own_declaration() {
+        let context_of = |source: &str, needle: &str| -> String {
+            let at = source.find(needle).unwrap();
+            let cards = collect(source, Some(Lang::Rust), 512, 96);
+            let (span, _) = cards
+                .iter()
+                .find(|(span, _)| span.start <= at && at < span.end)
+                .unwrap();
+            span.context.to_string()
+        };
+        let unit = "/// Reconcile accounts.\nfn reconcile(ledger: &Ledger) {\n    settle_the_ledger();\n}\n";
+        // Within budget, the preamble and the unit's header both remain.
+        let fits = context_of(&format!("use std::fmt;\n{unit}"), "settle_the_ledger");
+        assert!(
+            fits.contains("use std::fmt;") && fits.contains("fn reconcile(ledger: &Ledger)"),
+            "{fits}"
+        );
+        // A long module preamble must not displace the unit's own declaration.
+        let narrative = "Module narrative. ".repeat(20);
+        let long_preamble = format!("//! {narrative}\nuse std::fmt;\n{unit}");
+        let kept = context_of(&long_preamble, "settle_the_ledger");
+        assert!(
+            kept.contains("/// Reconcile accounts.\nfn reconcile(ledger: &Ledger)"),
+            "{kept}"
+        );
+        assert!(!kept.contains("Module narrative"), "{kept}");
+        // So must a long enclosing header, for a nested method.
+        let nested = format!(
+            "/// {narrative}\nimpl Ledger {{\n    fn settle(&self) {{\n        credit();\n    }}\n}}\n"
+        );
+        let kept = context_of(&nested, "credit");
+        assert!(kept.contains("fn settle(&self)"), "{kept}");
+        // When its own documentation is too long, the signature is kept.
+        let documented = format!(
+            "/// {narrative}\nfn reconcile(ledger: &Ledger) {{\n    settle_the_ledger();\n}}\n"
+        );
+        let kept = context_of(&documented, "settle_the_ledger");
+        assert!(kept.starts_with("fn reconcile(ledger: &Ledger)"), "{kept}");
     }
 
     #[test]

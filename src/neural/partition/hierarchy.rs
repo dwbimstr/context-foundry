@@ -5,6 +5,33 @@ use super::*;
 
 const MAX_PLAN_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CARDS: usize = 16_384;
+/// Per-excerpt allowance for openings and documentation summaries, matching
+/// the unparsed sample size so one long comment cannot consume an overview.
+const LEAD_BYTES: usize = 256;
+
+/// One declaration's overview excerpt: a bounded summary of its leading
+/// documentation (empty when it has none) and its signature `head..end`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Header {
+    head: usize,
+    end: usize,
+    doc: (usize, usize),
+}
+
+/// Whole lines of `start..end` within [`LEAD_BYTES`], or a UTF-8-safe prefix
+/// when the first line alone is longer; trailing whitespace is not retained.
+fn lead(source: &str, start: usize, end: usize) -> (usize, usize) {
+    let mut to = end.min(start.saturating_add(LEAD_BYTES));
+    while !source.is_char_boundary(to) {
+        to -= 1;
+    }
+    if to < end
+        && let Some(newline) = source[start..to].rfind('\n')
+    {
+        to = start + newline + 1;
+    }
+    (start, start + source[start..to].trim_end().len())
+}
 
 /// Fit a distributed file extract with logarithmically many tokenizations.
 /// The previous greedy loop re-encoded a nearly full input for every remaining
@@ -134,7 +161,7 @@ pub fn card(
 
 fn overview(
     source: &str,
-    headers: &[(usize, usize)],
+    headers: &[Header],
     range: std::ops::Range<usize>,
     kind: &str,
     recipe: &CardRecipe<'_>,
@@ -145,35 +172,67 @@ fn overview(
     let tokens = fitting.as_deref().unwrap_or(tokens);
     let prefix = format!("hierarchy-v1 {kind}\nextractive overview (may omit source):\n");
     // A complete short scope is more useful than just signatures. Long scopes
-    // use their opening documentation and distributed declaration headers.
+    // use their opening documentation and distributed declarations, each with
+    // a bounded summary of its own documentation.
     let text = if let Some(full) = complete_text(&source[start..end], &prefix, recipe, tokens)? {
         full
     } else {
+        // Excerpts never repeat source bytes. A signature can share its first
+        // line with its container's header (`impl A { fn f(`), so only the
+        // bytes no earlier excerpt represents are added, in source order.
+        fn push(source: &str, excerpts: &mut Vec<(usize, usize)>, (mut from, to): (usize, usize)) {
+            let mut covered: Vec<_> = excerpts
+                .iter()
+                .copied()
+                .filter(|&(a, b)| a < to && from < b)
+                .collect();
+            covered.sort_unstable();
+            covered.push((to, to));
+            for (a, b) in covered {
+                if from < a && !source[from..a].trim().is_empty() {
+                    excerpts.push((from, a));
+                }
+                from = from.max(b);
+            }
+        }
         let mut excerpts = Vec::new();
-        let first = source[start..end]
-            .find('\n')
-            .map_or(end, |at| start + at + 1);
-        excerpts.push((start, first));
         // Seek this scope's headers, then inspect at most 128 distributed
         // declarations. Deep forests do not cause repeated whole-file scans.
-        let lo = headers.partition_point(|&(head, _)| head < start);
-        let hi = headers.partition_point(|&(head, _)| head < end);
+        let lo = headers.partition_point(|header| header.head < start);
+        let hi = headers.partition_point(|header| header.head < end);
         if kind == "file" && lo == hi {
             // Unmapped/plain text and parse fallbacks have no declarations.
             // Their first line may be blank or a license. Use bounded source
             // samples instead of embedding a generic prefix for every file.
             excerpts = text_excerpts(source, start..end);
+        } else if kind == "file" {
+            // The file's opening before its first declaration: module
+            // documentation, else its first imports or license lines.
+            push(
+                source,
+                &mut excerpts,
+                lead(source, start, headers[lo].doc.0),
+            );
+        } else if lo == hi {
+            let first = source[start..end]
+                .find('\n')
+                .map_or(end, |at| start + at + 1);
+            push(source, &mut excerpts, (start, first));
         }
+        // A parent's own declaration is `headers[lo]`: it opens the overview.
+        let mut declarations = 0;
         let mut queue = std::collections::VecDeque::from([(lo, hi)]);
         while let Some((lo, hi)) = queue.pop_front() {
             if lo >= hi {
                 continue;
             }
             let header = headers[lo];
-            if header.1 <= end && !excerpts.contains(&header) {
-                excerpts.push(header);
+            if header.end <= end {
+                push(source, &mut excerpts, header.doc);
+                push(source, &mut excerpts, (header.head, header.end));
             }
-            if excerpts.len() == 129 {
+            declarations += 1;
+            if declarations == 128 {
                 break;
             }
             let mid = lo + 1 + (hi - lo - 1) / 2;
@@ -300,7 +359,7 @@ fn text_excerpts(source: &str, range: std::ops::Range<usize>) -> Vec<(usize, usi
     excerpts
 }
 
-fn headers(source: &str, units: &[Unit]) -> Vec<(usize, usize)> {
+fn headers(source: &str, units: &[Unit]) -> Vec<Header> {
     let mut headers: Vec<_> = units
         .iter()
         .filter_map(|unit| {
@@ -312,7 +371,13 @@ fn headers(source: &str, units: &[Unit]) -> Vec<(usize, usize)> {
                 },
                 |(body, _)| signature_end(source, unit.head, body).min(unit.end),
             );
-            (unit.head < end).then_some((unit.head, end))
+            // `start..decl` is the leading documentation; attributes between
+            // it and the signature are not summarized.
+            (unit.head < end).then(|| Header {
+                head: unit.head,
+                end,
+                doc: lead(source, unit.start, unit.decl.max(unit.start)),
+            })
         })
         .collect();
     headers.sort_unstable();
@@ -505,6 +570,80 @@ mod tests {
                 .contains("unique content")
         );
         assert!(fit_file_extract("\n", "prefix", &[(0, 1)], &recipe, &tokens).is_err());
+    }
+
+    #[test]
+    fn long_scope_overviews_summarize_module_and_declaration_documentation() {
+        let tokens = Bytes(AtomicUsize::new(0));
+        let recipe = CardRecipe {
+            template: "{text}",
+            function_digest: "fixture",
+            card_tokens: 1024,
+        };
+        let work = "        work();\n".repeat(200);
+        let details = "Details. ".repeat(100);
+        let source = format!(
+            "//! Ledger reconciliation.\n//! Rejects transfers that change after review.\nuse std::fmt;\n\n\
+             /// Settle every pending transfer.\n///\n/// {details}\nfn settle() {{\n{work}}}\n\n\
+             impl Ledger {{\n    /// Close the books for a period.\n    fn close(&self) {{\n{work}    }}\n}}\n"
+        );
+        let spans = plan(&source, Some(Lang::Rust), &recipe, 64, &tokens).unwrap();
+        let overview = |kind| {
+            let span = spans.iter().find(|span| span.kind == kind).unwrap();
+            let input = card(&source, span, &recipe, &tokens).unwrap();
+            String::from_utf8(input.ids.iter().map(|&id| id as u8).collect()).unwrap()
+        };
+        let file = overview(crate::neural::cache::CardKind::File);
+        assert!(
+            file.contains("//! Rejects transfers that change after review."),
+            "the module opening is more than its first line: {file}"
+        );
+        for summary in [
+            "/// Settle every pending transfer.",
+            "fn settle()",
+            "/// Close the books for a period.",
+            "fn close(&self)",
+        ] {
+            assert!(file.contains(summary), "{summary}: {file}");
+        }
+        assert!(
+            !file.contains(&details[..LEAD_BYTES]),
+            "documentation summaries stay bounded: {file}"
+        );
+        let parent = overview(crate::neural::cache::CardKind::Parent);
+        for summary in [
+            "impl Ledger",
+            "/// Close the books for a period.",
+            "fn close(&self)",
+        ] {
+            assert!(parent.contains(summary), "{summary}: {parent}");
+        }
+    }
+
+    #[test]
+    fn overlapping_headers_keep_the_rest_of_a_signature_without_repeating_bytes() {
+        let tokens = Bytes(AtomicUsize::new(0));
+        let recipe = CardRecipe {
+            template: "{text}",
+            function_digest: "fixture",
+            card_tokens: 1024,
+        };
+        // The method's signature starts on its container's header line.
+        let work = "        work();\n".repeat(200);
+        let source = format!(
+            "impl Ledger {{ fn close(\n    &self,\n    fiscal_period: Quarter,\n) {{\n{work}}}\n}}\n"
+        );
+        let spans = plan(&source, Some(Lang::Rust), &recipe, 64, &tokens).unwrap();
+        for kind in [
+            crate::neural::cache::CardKind::File,
+            crate::neural::cache::CardKind::Parent,
+        ] {
+            let span = spans.iter().find(|span| span.kind == kind).unwrap();
+            let input = card(&source, span, &recipe, &tokens).unwrap();
+            let text = String::from_utf8(input.ids.iter().map(|&id| id as u8).collect()).unwrap();
+            assert!(text.contains("fiscal_period: Quarter"), "{kind:?}: {text}");
+            assert_eq!(text.matches("fn close(").count(), 1, "{kind:?}: {text}");
+        }
     }
 
     #[test]

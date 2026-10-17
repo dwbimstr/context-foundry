@@ -265,10 +265,17 @@ This fits an extractive file overview without computing every body/parent card.
 The existing area-brief lane is retained, with the same bounds and derived provenance.
 It works through ordinary `semantic prepare`, priorities and continuous maintenance.
 Switching to `hierarchy-v1` later reuses matching file vectors while adding body/parent
-inputs. Both recipe identities include `+overview3`, so older partitions refit and
-unchanged exact inputs still reuse their vectors. Short complete inputs skip parsing;
-files without declarations use bounded distributed text samples and never a blank
-opening alone. No source transaction holds the tokenizer or model.
+inputs. Both recipe identities include `+overview4`, and body/hierarchy include
+`+context2`, so older partitions refit and unchanged exact inputs still reuse their
+vectors. Long overviews keep the file's opening and a summary of each declaration's
+leading documentation beside its signature, each up to 256 bytes of whole lines (a
+longer first line keeps a UTF-8-safe prefix); these declaration-based excerpts never
+repeat a source byte. An over-budget body context keeps the region's own declaration
+instead of the file preamble or enclosing header, falling back to the signature when
+the documentation alone is too long. A declaration without a body has no separate
+signature fallback: its overlong documentation is still truncated. Short complete
+inputs skip parsing; files without declarations use bounded distributed text samples
+and never a blank opening alone. No source transaction holds the tokenizer or model.
 
 With `--experimental-behavior-context`, complete file-overview results also interleave
 lexical matches first. Long overview/hierarchy hits can deliver an exact local passage

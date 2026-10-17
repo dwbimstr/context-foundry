@@ -186,14 +186,19 @@ It uses the same file input as hierarchy-v1 without computing body/parent cards.
 reduces the exhaustive function-card obligation without adding a scheduler, model,
 table or automatic generation. File extracts use distributed declaration headers,
 bounded bytes and logarithmic prefix fitting; every retained input is checked against
-the actual tokenizer. Both file-capable recipe IDs now include `+overview3`, forcing old
+the actual tokenizer. Both file-capable recipe IDs now include `+overview4`, forcing old
 partitions to refit while preserving exact-input cache reuse (including all unchanged
-body inputs). Short complete-file inputs keep their existing keys and skip syntax
-parsing in overview preparation. Files without declarations sample up to 16 source
-regions, each at most 256 bytes before fitting, instead of representing only their
-first line. Sparse input falls back to actual nonblank content; prefix-only file
-inputs are refused. This is extractive coverage, not a claim that every part survived
-the token fit. Parent extraction and body inputs retain their previous identity.
+body inputs). Each long-scope declaration keeps a summary of its leading documentation
+(whole lines within 256 bytes; a longer first line keeps a UTF-8-safe prefix) beside its
+signature, and a file keeps up to 256 bytes of its opening before the first declaration
+instead of one line. Declaration-based overview excerpts never repeat source bytes.
+Short complete-file inputs keep their existing keys and skip syntax parsing in
+overview preparation. Files without declarations sample up to 16 source regions, each
+at most 256 bytes before fitting, instead of representing only their first line.
+Sparse input falls back to actual nonblank content; prefix-only file inputs are
+refused. This is extractive coverage, not a claim that every part survived the token
+fit. Body/hierarchy recipes include `+context2` for the body-context repair described
+under T009 body windows.
 
 Existing CLI/MCP preparation, priorities, watching, changed-input publication and
 restart/revert reuse apply. Switching to hierarchy-v1 expands the recipe and reuses
@@ -1987,7 +1992,10 @@ residual source ranges and child units. Oversized regions split into non-overlap
 UTF-8-safe windows, preferring line boundaries. File preamble, unparsed/unsupported
 syntax, configuration and tests use the same source-window fallback. Whitespace-only
 ranges produce no input. Each child window includes a bounded nearest-parent/own-header
-or file-preamble prefix; it is not a generated summary or an independent parent ANN
+or file-preamble prefix; when that prefix exceeds its allowance, the region's own
+declaration is kept (its signature alone when its documentation is too long; a
+declaration without a body has no such fallback) rather than truncating to outer
+context (`+context2`). It is not a generated summary or an independent parent ANN
 candidate. Thus this increment introduces no duplicate parent evidence or competing
 parent candidate quota. Independent file/area representations remain selected future
 work with 010 T002; they still require deduplication and candidate-share limits.
@@ -2142,12 +2150,13 @@ checks require the deferred native runner. Linux worker/model results are record
 `hierarchy-v1` is opt-in, with the same `parent_tokens` field as body-v1. It reuses
 body inputs unchanged and adds independent parent and file inputs, each embedded
 normally under the selected document function. Short scopes include all source;
-long scopes select up to 128 distributed declaration headers and a bounded opening
-excerpt. The plan retains spans/text rather than corpus-wide token arrays, with the
-existing 2 MiB source / 16,384-card bounds and a 16 MiB overview-text bound. Parent
-header lookup uses ordered ranges rather than repeated whole-forest scans. Exact
-rendered input determines reuse. Distinct inputs may cite the same source range;
-partition order is start ascending, end descending, then input key ascending.
+long scopes select up to 128 distributed declarations (signature plus a bounded summary
+of its documentation) and a bounded opening excerpt. The plan retains spans/text
+rather than corpus-wide token arrays, with the existing 2 MiB source / 16,384-card
+bounds and a 16 MiB overview-text bound. Parent header lookup uses ordered ranges
+rather than repeated whole-forest scans. Exact rendered input determines reuse.
+Distinct inputs may cite the same source range; partition order is start ascending,
+end descending, then input key ascending.
 Source ANN locations and final-read validation retain their existing owner.
 
 Multi-source derived briefs have separate `area-v1` inputs. The existing source-brief
