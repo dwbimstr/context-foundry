@@ -1,6 +1,6 @@
 # Workflows worth building
 
-**Latest continuation, 2026-10-16:** start with the [resumable implementation handoff](../docs/resume-context-ecosystem.md) and [retrieval receipt](../docs/validation.md#callable-passage-preservation--2026-10-16). They supersede the older status paragraphs below; the six acceptance gates are still open in part.
+**Latest continuation, 2026-10-17:** start with the [resumable implementation handoff](../docs/resume-context-ecosystem.md) and [runtime repair receipt](../docs/validation.md#evidence-admission-and-owner-cleanup--2026-10-17). They supersede the older status paragraphs below; the six acceptance gates are still open in part.
 
 Latest continuation, 2026-10-11: hierarchy preparation publishes an initial view of
 each selected source before exhaustive body refinement. A cold real-model check

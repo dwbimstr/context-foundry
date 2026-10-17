@@ -1,0 +1,269 @@
+{
+  "code_commits": [
+    "81c20ad4537182defdfcb69bbaf6bdc82f6075fe",
+    "d72f3bb1a55d14cc2a34a7d2ae2b1a98a7467b96"
+  ],
+  "local_only": true,
+  "run_directory": "/workspace/.context-foundry-tools/validation-runs/evidence-selection-2026-10-16",
+  "scope": "source-backed task-proof allocation, semantic owner/file competition and store ownership teardown; not general retrieval or task-cost acceptance",
+  "first_gates": {
+    "commit": "81c20ad",
+    "lines": [
+      "GATE fmt exit=0",
+      "GATE clippy exit=0",
+      "GATE test exit=101",
+      "GATE msrv-check exit=0",
+      "GATE msrv-clippy exit=0"
+    ],
+    "tests": {
+      "passed": 1172,
+      "failed": 2,
+      "ignored": 28
+    },
+    "failures": [
+      "knowledge shared_http_delivers_primary_derived_context_across_roots_and_stops_cleanly: real ownership/drop-order race fixed by second code commit",
+      "mcp the_mcp_byte_cap_measures_the_escaped_result_not_the_text: deadline_exceeded; isolated unchanged-deadline rerun passed; initial timing cause not established"
+    ]
+  },
+  "final_gates": {
+    "commit": "d72f3bb1a55d14cc2a34a7d2ae2b1a98a7467b96",
+    "lines": [
+      "GATE fmt exit=0",
+      "GATE clippy exit=0",
+      "GATE test exit=0",
+      "GATE msrv-check exit=0",
+      "GATE msrv-clippy exit=0"
+    ],
+    "default_versions": [
+      "rustc 1.97.0 (2d8144b78 2026-07-07)",
+      "cargo 1.97.0 (c980f4866 2026-06-30)",
+      "clippy 0.1.97 (2d8144b788 2026-07-07)"
+    ],
+    "msrv_versions": [
+      "/workspace/.context-foundry-tools/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu/bin/rustc",
+      "/workspace/.context-foundry-tools/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu/bin/cargo",
+      "/workspace/.context-foundry-tools/rustup/toolchains/1.90.0-x86_64-unknown-linux-gnu/bin/clippy-driver",
+      "rustc 1.90.0 (1159e78c4 2025-09-14)",
+      "cargo 1.90.0 (840b83a10 2025-07-30)",
+      "clippy 0.1.90 (1159e78c47 2025-09-14)"
+    ],
+    "tests": {
+      "passed": 1174,
+      "failed": 0,
+      "ignored": 28
+    },
+    "test_threads": 2,
+    "no_default_features_exit": 0,
+    "no_default_features_warnings": 0,
+    "real_framework_checks": {
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    }
+  },
+  "regressions": {
+    "focused": {
+      "passed": 482,
+      "failed": 0,
+      "ignored": 3
+    },
+    "old_runtime": "8580bb5",
+    "hierarchy_refined_body_spans": {
+      "old": 31,
+      "new": 39
+    },
+    "task_bundle": {
+      "allowance": 3072,
+      "observations": {
+        "baseline": {
+          "tokens_observed": 2953,
+          "relationships": [
+            {
+              "consumer": "client.py",
+              "providers": [
+                "service.py"
+              ],
+              "resolution": "exact_key"
+            }
+          ]
+        },
+        "candidate": {
+          "tokens_observed": 1540,
+          "relationships": [
+            {
+              "consumer": "client.py",
+              "providers": [
+                "service.py"
+              ],
+              "resolution": "exact_key"
+            },
+            {
+              "consumer": "test_contract.py",
+              "providers": [
+                "service.py"
+              ],
+              "resolution": "exact_key"
+            }
+          ]
+        },
+        "interpretation": "Both arms already deliver test source. The gain is the second explicit supported relationship, not new source discovery or observed test execution."
+      },
+      "limit": "independent temporary workspace IDs; these delivered-token observations are not provider economics"
+    },
+    "strengthened_test": "both client.py and test_contract.py must resolve to service.py with complete source dependencies; stale provider rejected"
+  },
+  "real_model": {
+    "model": "google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b via ggml-org/embeddinggemma-2-GGUF@bfcd298762cc34d0357ece5ebdd31791a3a374d8 BF16",
+    "artifacts": [
+      {
+        "name": "embeddinggemma-2-BF16.gguf",
+        "sha256": "68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216"
+      },
+      {
+        "name": "tokenizer.json",
+        "sha256": "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4"
+      }
+    ],
+    "worker_sha256": "bba7f61a0dc9e0d7e4fdb2d29cb2f956531035df0de91735fa030906a59a606a",
+    "profile_sha256": "c1f126f2000ee1a004c07ae169bf29fff58f26edab53ef4aa48edf9f6382ddcd",
+    "recipe": "hierarchy-v1+overview3+kinds2+units5:512+parent128+tokenizers 0.23.2 onig",
+    "sources": 6,
+    "current_vectors": 52,
+    "bootstrap_document_calls": 7,
+    "bootstrap_input_tokens": 6333,
+    "ordinary_short_query_control": "3/3 both arms; bypasses prose refinement and is not proof of changed branch",
+    "prose_and_owner_cases": [
+      {
+        "query": "explain retry backoff",
+        "baseline": {
+          "delivered": true,
+          "tokens": 2003,
+          "competition": null
+        },
+        "candidate": {
+          "delivered": true,
+          "tokens": 2003,
+          "competition": null
+        }
+      },
+      {
+        "query": "explain refund timing",
+        "baseline": {
+          "delivered": true,
+          "tokens": 2046,
+          "competition": null
+        },
+        "candidate": {
+          "delivered": true,
+          "tokens": 2046,
+          "competition": null
+        }
+      },
+      {
+        "query": "explain twilight onset",
+        "baseline": {
+          "delivered": true,
+          "tokens": 2001,
+          "competition": null
+        },
+        "candidate": {
+          "delivered": true,
+          "tokens": 2001,
+          "competition": null
+        }
+      },
+      {
+        "query": "explain attempt backoff",
+        "baseline": {
+          "delivered": true,
+          "tokens": 2002,
+          "competition": {
+            "inside_count": 1,
+            "outside_count": 0,
+            "ranges": [
+              [
+                517,
+                809
+              ]
+            ]
+          }
+        },
+        "candidate": {
+          "delivered": true,
+          "tokens": 2034,
+          "competition": {
+            "inside_count": 1,
+            "outside_count": 25,
+            "ranges": [
+              [
+                517,
+                809
+              ]
+            ]
+          }
+        }
+      }
+    ],
+    "unchanged_replay_document_calls": 0,
+    "unchanged_replay_input_tokens": 0,
+    "exact_source_bodies": true,
+    "response_allowance": 2048,
+    "worker_cleanup_checked": true,
+    "source_and_binary_identities_checked_before_and_after": true,
+    "limits": "small public integration fixture; ordinary ANN includes sibling bodies in both arms, so changed refinement admission is not itself a repository score gain"
+  },
+  "retained_failed_attempts": [
+    "initial real-model preflight used invalid parent_tokens=512 with card_tokens=512; stopped before inference, corrected to128",
+    "development test/parser assertion failures and first full-gate failures retained under run_directory"
+  ],
+  "not_run": [
+    "public eight-question repository score rerun",
+    "private or parked evaluation protocols",
+    "representative full-scale inference",
+    "provider-accounted coding-task comparison",
+    "physical native macOS/GPU acceptance"
+  ],
+  "reproduce": [
+    "source cloud-local/activate.sh and cloud-local/gates.env; unset RUSTUP_TOOLCHAIN; export CARGO_TARGET_DIR=\"$TGT\"",
+    "cargo test --locked --test task_evidence relationship_proofs_and_their_source_dependencies_share_one_budget_decision -- --exact",
+    "cargo test --locked --test neural_retrieval hierarchy_refinement_scores_competing_bodies_outside_a_lexical_owner -- --exact",
+    "cargo test --locked --test knowledge shared_http_delivers_primary_derived_context_across_roots_and_stops_cleanly -- --exact",
+    "CF_GATE_ENV=/workspace/.context-foundry-tools/cloud-local/gates.env RUST_TEST_THREADS=2 bash scripts/cloud/gates.sh OUTDIR",
+    "preserved real2.py prepares public tests/fixtures/semantic-retrieval with the pinned hierarchy profile; real3.py runs paired CLI commands with fresh output directories; see their recorded argv in real3/commands.json"
+  ],
+  "sha256": {
+    "gates.log": "8cda72a63a73a48c68ffe0cf7f4b654e327bde7c3290fe97a19955033dda2ede",
+    "gates/test.log": "8670e2331051f185573c672f3d1f9c886162c805b3d542a268be0130558e53e3",
+    "gates2.log": "cbb0c5169f3b54868bddcbc7db13a8d2c150e29a94daaae41fab7136d82a120f",
+    "gates2/fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "gates2/clippy.log": "79f3113adfc93816815a85a0ec90eca1c211add747f2af3f253db042b5274c5e",
+    "gates2/test.log": "9399d26da7daa20106fb7c2f4bcd1ec96e04b0f305476ca212a28bf1ad0614f5",
+    "gates2/msrv-check.log": "fe0964ca2e04b22eeb272f43eb33c1596455995ac3658d6e1b55e656dc59f8c4",
+    "gates2/msrv-clippy.log": "b37f6c4e6e423ed6c462c3528c7c678d5f02d0eb34892a61ba11caeec794e268",
+    "gates2/default-versions.log": "b5d809c65162ea93252e9d6f929b07d2a551ca36dd5cb4361f65359132bfe85a",
+    "gates2/msrv-versions.log": "cc250b5865c44041711cb5a7796974fe5f60f38b3d8d1c5fc2a0e088589cf532",
+    "gates2/env.txt": "56802d37a494690521946c3d18829bfe730abe137c974e14f6bd3210912c3ab0",
+    "gates2-extra-environment.txt": "9a3cc6ad7bb0877ff80d2372104f95e73e2d6a2d56eeef69f648d1909b396575",
+    "no-default.log": "4f363c47cf8442214169f9333ef52fa77a2552aba43f477256692a4bdc791084",
+    "framework.log": "53fcb571d208a8ace663b0421875c1272e5ca4c756bd991cd2191bab80161170",
+    "focused.log": "480d8c73ca518f1c5b826a994ddc9b3efa55129cc1e4d40cefcc3cd4668e47ee",
+    "old-bundle-final.log": "a96438ec15880d176eeaac6f8a7df73ef3aff5db3f13f9c318fc861dbc9c7cfd",
+    "old-refinement-final.log": "c68b7be94320a8b5384952c937a1ff2a006bb935e12c2bf442181fe14964a6b0",
+    "bundle-baseline-diagnostic.json": "5ac408cafbf78316b891a5c96edcf3fb5ff86e74cb7cf05c6dc78778c4b5f959",
+    "bundle-candidate-diagnostic.json": "f34d1c25686899a3ea20df8fb45ab8a5abc5b150a5c98736bbc01b24407fd301",
+    "bundle-strengthened.log": "5d596e6f4795ea06611b3eccbd1b97827ed07f6e83242f34aa14e088c298c0f5",
+    "shutdown-repaired.log": "76053821db1e715c6e38ea71252ac09b11146dfc5107ccb398faaa892f87fbb4",
+    "mcp-deadline-isolated.log": "3a0bc2d0058c75ecf80f95d4ec7574d780c9848494f2cdd68b64cd4c73a4a3d6",
+    "real2/report.json": "11b816e1824035eb52d65668f1964b2025695960637027648e16ac04f705e324",
+    "real3/report.json": "5ca3ed05e2d85b2b1ff66e49eda381a7cc4997d4a2172b1f67c97170ea064a9a",
+    "real3/protocol.json": "99c0a2630b2a8ba17fca989028113d8075300cb13c99cc3aa1c4c4641e64c15e",
+    "real2.py": "764ab9cdb5189ed72e73aa53f62f5dbff2fcfa7b28cb2e00189d1bbe7b432acd",
+    "real3.py": "8c466a8fe56b352301cc07375176bb0462ce1364406037d8be9eaa83b3d43d95",
+    "real3/commands.json": "1c6bbfc8025a5950f2dea9b70e5872edf0157eac549269cd5d4baa7e79c261a6",
+    "gates/fmt.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "gates/clippy.log": "4fa2ffc0f94890132a044413d46b08a22a48d15720aca6e5186dd363c2e0c882",
+    "gates/msrv-check.log": "f3f3ef6f24357787681ba6edbb488698065a491ee35d776c685c8a225c0f99ca",
+    "gates/msrv-clippy.log": "725f3edca430acbdf97e5229f7cf47f96e5fa1028f4f12df456580b980f2d2b9",
+    "real.log": "7d86fcefa6ef3d547f078427259a88833efa4a162b7c35ce5bbd4726dd72420d"
+  }
+}

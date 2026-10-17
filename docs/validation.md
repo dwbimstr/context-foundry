@@ -1,5 +1,60 @@
 # Validation
 
+## Evidence admission and owner cleanup — 2026-10-17
+
+Runtime commit `81c20ad` fixes two losses before delivery. Hierarchy refinement
+now treats lexical/parent owners as priorities: owner bodies and the remaining
+published file bodies alternate into the existing bounded working set and compete
+using their own vectors. Exact partition/source/generation joins and all caps stay
+in force. Task evidence now admits a relationship and its covering verbatim source
+bodies as one budget decision, reusing shared dependencies before filling spare
+capacity with standalone sources, briefs and memory.
+
+The regression comparison against `8580bb5` exposes the old behavior: hierarchy
+refinement admits 31 of 39 published body spans, excluding eight competing spans.
+The repaired test requires all 39 and independently checks their ranking and source
+bytes. At a 3,072-token allowance, the old task allocator delivers one exact-key
+client/service relationship; the repair delivers both client/service and test/service
+relationships with complete source support. Both already delivered the test source:
+the improvement is the second explicit connection, not new test discovery or observed
+execution. The strengthened regression requires both relationships and rejects stale
+provider support. Fixture token observations are not provider economics.
+
+Commit `d72f3bb` also fixes a teardown race found by the full suite: `Engine` used
+to release redb ownership before Tantivy's writer finished shutting down. A new
+owner could enter that window and falsely report `repair_required`. The database
+field now drops last, keeping ownership through derived-resource cleanup.
+
+Real EmbeddingGemma 2 BF16 preparation completes 52 vectors across six public
+fixture files in seven document calls; unchanged replay makes zero calls/tokens.
+The initial short-query control is 3/3 in both arms but bypasses prose refinement.
+A separate traced follow-up delivers 4/4 expected spans in both arms. Its explicit
+owner-competition case admits one owner body plus 25 disjoint same-file bodies to
+refinement, versus only the owner body before the fix. The ordinary ANN window
+already contains those siblings in this small corpus, so this is changed-path
+integration evidence, not a repository-score gain. Exact bytes, 2,048-token limits,
+current revision, frozen identities, worker cleanup and zero-call replay pass.
+
+Local verification on `d72f3bb` passes all five gates on Rust 1.97.0/1.90.0:
+**1,174 tests passed, zero failed, 28 ignored**, including all 54 gateway tests
+under uid 1000. The no-default-features library check has zero warnings, and seven
+real framework/runtime checks pass. The first full run on `81c20ad` had 1,172 passed
+and two failures: the ownership race above and an MCP byte-cap deadline. The latter
+passes separately with its original deadline. The final full run uses two concurrent
+test cases on the four-CPU quota; no additional test is skipped and no deadline,
+cap or assertion is loosened.
+The initial failed gate logs and model preflight failure remain recorded.
+
+The [receipt](review/evidence-selection-2026-10-17.json) names code commits, log
+SHA-256s, commands, model identities and retained failures. Raw artifacts remain at
+`/workspace/.context-foundry-tools/validation-runs/evidence-selection-2026-10-16/`.
+The public eight-question benchmark was not rerun: its last experimental lexical
+and file-overview result remains 4/8; historical complete-hierarchy delivery remains
+2/8. Coarse-file excerpt loss, broader ranking/packing, representative inference,
+provider-accounted task benefits and physical Mac/GPU acceptance remain gaps.
+Unrelated FOLLOWUP protocols stay parked. No CI ran: GitHub Actions is unavailable
+(owner decision 2026-10-12).
+
 ## Callable passage preservation — 2026-10-16
 
 The experimental lexical path now delivers **4/8** public expected source spans at
@@ -638,6 +693,8 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `d72f3bb` | 0 | 0 | 0: 1,174 passed, 28 ignored; gateway 54 passed; two test threads ([receipt and log digests](review/evidence-selection-2026-10-17.json)) | 0 | 0 |
+| `81c20ad` | 0 | 0 | 101: 1,172 passed, 2 failed, 28 ignored; ownership race and MCP deadline, retained in the same receipt | 0 | 0 |
 | `f782dda` | 0 | 0 | 0: 1,173 passed, 28 ignored; gateway 54 passed under uid 1000 ([receipt and log digests](review/owner-retrieval-2026-10-16.json)) | 0 | 0 |
 | `c258026` | 0 | 0 | 0: 1,171 passed, 28 ignored; gateway 54 passed under uid 1000 ([receipt](#budget-allocation-and-evidence-preservation--2026-10-16)) | 0 | 0 |
 | `1f0827c` | 0 | targeted attribution Clippy: 0 | ignored paired source-read diagnostic: 0; full gates not repeated | not repeated | not repeated |
