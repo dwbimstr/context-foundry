@@ -920,7 +920,6 @@ struct SearchHandles {
 }
 
 pub struct Engine {
-    pub(crate) db: Database,
     pub(crate) directory: PathBuf,
     search: Option<SearchHandles>,
     repair_reason: Option<String>,
@@ -946,6 +945,11 @@ pub struct Engine {
     /// [`crate::neural::anchor`]) and never resolve the store pathname
     /// again, so a substituted ancestor cannot redirect them.
     pub(crate) semantic_dir: crate::neural::anchor::Dir,
+    /// Fields drop in declaration order. Keep the authoritative ownership lock
+    /// until the search writer (including its worker shutdown) and the other
+    /// engine resources are gone. Releasing it first lets a new owner acquire
+    /// redb while Tantivy is still locked and falsely report repair_required.
+    pub(crate) db: Database,
 }
 
 /// Immutable, checked source bytes and their digest, computed away from the
