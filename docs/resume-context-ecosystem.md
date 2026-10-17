@@ -1,5 +1,17 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
+**Runtime repair continuation, 2026-10-17:** code `81c20ad` preserves independently
+scored file bodies alongside lexical owner hints and admits task relationships with
+their source dependencies under one allowance. `d72f3bb` keeps store ownership until
+index-writer shutdown finishes and strengthens the two-relationship regression.
+The real-model fixture passes all four cases in both arms, with actual owner/file
+competition, exact bytes, bounded output, worker cleanup and zero-call replay.
+All five final local gates pass: 1,174 tests, zero failures, 28 ignored; seven real
+framework/runtime checks also pass. Earlier failed gates remain in the
+[repair receipt](validation.md#evidence-admission-and-owner-cleanup--2026-10-17).
+The public eight-question benchmark was not rerun; broader retrieval and economics
+remain open. Physical Mac/GPU acceptance is a gap. FOLLOWUP protocols stay parked.
+
 **Callable evidence continuation, 2026-10-16:** runtime code `f782dda` improves
 both public experimental lexical delivery and real Gemma 2 file-overview delivery
 from **3/8 to 4/8 at 2,048 tokens**, preserving Q0, Q2 and Q7 and adding Q3. The
