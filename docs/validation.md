@@ -1,5 +1,69 @@
 # Validation
 
+## Representation repair and lexical ablation — 2026-10-17
+
+Runtime commit `92d8e6a` repairs two semantic representation defects; this entry also
+records lexical ranking experiments that were rejected. It establishes **no retrieval
+gain**: every arm below delivers the same **4/8** public expected spans (Q0, Q2, Q3,
+Q7) before (`11d61e0`) and after the change, at 2,048 tokens on the `ebf28f8` snapshot.
+
+Body-v1/hierarchy body windows carry a context prefix: the file preamble or enclosing
+header, then the region's own header. When that exceeded `parent_tokens`, it was halved
+from its end, so a long `//!` preamble displaced the function's own signature in the
+context of its later windows. The region's own declaration now wins, then its signature
+alone when its documentation is too long; in-budget contexts are byte-identical to
+before. Long overviews kept only a file's first line and each declaration's signature,
+not the opening documentation their own comment promised. They now keep the file
+opening and each declaration's leading documentation (whole lines within 256 bytes)
+beside its signature, without repeating source bytes. Recipes become `+context2` and
+`+overview4`; old partitions refit and unchanged exact inputs reuse vectors. Three new
+unit tests fail on `11d61e0` and pass now.
+
+Real EmbeddingGemma 2 BF16 ran on an Apple M3 Pro through the Metal worker (adapter
+revision 4, ad-hoc signed development bundle, 512-token cards):
+
+| Arm | Baseline `11d61e0` | Repair |
+| --- | --- | --- |
+| overview-v1: delivered | 4/8, 16,203 tokens | 4/8, 16,228 tokens |
+| overview-v1: preparation | 274 inputs, 84,927 tokens, 39.6 s | 274 inputs, 88,959 tokens, 37.3 s |
+| hierarchy-v1 (`parent_tokens` 64): delivered | 4/8, 16,197 tokens | 4/8, 16,250 tokens |
+| hierarchy-v1: preparation | 13,822 inputs, 3,608,991 tokens, 981 s | 13,840 inputs, 3,504,074 tokens, 941 s |
+
+Target-file dense ranks move both ways. Overview: Q0 5→3, Q3 26→16, Q6 7→4, while Q2
+falls from 33 out of the 64 hits. Hierarchy: Q3 8→3, while Q0 3→6, Q2 15→23 and Q6
+8→11. Q4 and Q5 rank first in every arm yet remain lost (overview `evidence_window`,
+hierarchy `candidate_limit`); Q1's source is excluded. The earlier recorded 2/8 for
+complete hierarchy is superseded: this host measures 4/8 at `11d61e0` too. Each CLI
+question loads the model (about 11–13.5 s here). Unchanged replay was not rerun.
+
+The candidate hierarchy run reaches the 4,096-vector refinement cap for Q1 and Q2, so
+owner-scope ordering in refinement is live. An earlier review called it a no-op; that
+claim was wrong, and the code stays.
+
+Lexical ranking changes were tried on the same store and reverted. Each gain lost Q0,
+and the module-documentation redirect existed only to reach Q6 (default stays 1/8):
+
+| Variant | Delivered |
+| --- | --- |
+| Baseline | 0, 2, 3, 7 |
+| All tried heuristics (module-doc redirect, module-header boost, plural forms, sort tie-breaks, struct-to-method extension, adjacent-function companion) | 2, 3, 4, 5, 6, 7 |
+| Without redirect and header boost | 2, 3, 4, 5, 7 |
+| Also without plural forms | 2, 3, 4, 7 |
+| Also without tie-breaks | 0, 2, 3, 7 |
+| That plus plural forms | 2, 3, 5, 7 |
+
+Local gates on Rust 1.97.1 and 1.90.0: fmt, clippy, MSRV check and MSRV clippy pass.
+The full suite reports 1,277 passed, 1 failed and 34 ignored (library 264, core 87,
+neural_retrieval 95, task_evidence 21). The failure is `install`'s packaging test: under
+`--offline` it could not obtain `tch 0.26.0`, which this host's Cargo cache lacked.
+After `cargo fetch --locked`, that target passes 6/6; the full suite was not rerun.
+
+A GPT-6.1 Sol cross-lab review first found a partial-overlap signature loss (fixed,
+with its regression) and documentation gaps; its final verdict is SHIP. The eight
+questions are author-visible; no held-out or private set, task-quality comparison or
+provider accounting ran. The [receipt](review/representation-repair-2026-10-17.json)
+lists hashes and arms. No CI ran for this change.
+
 ## Evidence admission and owner cleanup — 2026-10-17
 
 Runtime commit `81c20ad` fixes two losses before delivery. Hierarchy refinement

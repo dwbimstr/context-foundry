@@ -1,0 +1,73 @@
+{
+  "scope": "Local public author-visible exact-span delivery on eight questions; not independent retrieval acceptance, held-out evaluation or task economics",
+  "implementation_commit": "92d8e6a",
+  "baseline_commit": "11d61e0",
+  "source_snapshot": "ebf28f8 (git archive), 274 admitted sources; src/ingest.rs (Q1) excluded by unchanged admission",
+  "budget_tokens": 2048,
+  "host": {
+    "machine": "Apple M3 Pro, 12 CPUs, 18 GiB",
+    "os": "macOS 27.0.1",
+    "rustc": "1.97.1 (Homebrew)",
+    "note": "Local developer host; ad-hoc signed development worker bundle, not a distributed package"
+  },
+  "lexical_ablation": {
+    "description": "Experimental behavior context on the reused ebf28f8 lexical store. Default context is 1/8 [7] in every row. Every variant that gained a question lost Q0; all lexical ranking changes were reverted.",
+    "rows": [
+      {"variant": "baseline 11d61e0", "delivered_ids": [0, 2, 3, 7]},
+      {"variant": "all tried heuristics: module-doc redirect, module-header boost, singular/plural forms, sort tie-breaks, struct-to-method extension, adjacent-function companion", "delivered_ids": [2, 3, 4, 5, 6, 7], "lost": [0]},
+      {"variant": "minus module-doc redirect and header boost", "delivered_ids": [2, 3, 4, 5, 7], "lost": [0]},
+      {"variant": "minus singular/plural forms", "delivered_ids": [2, 3, 4, 7], "lost": [0]},
+      {"variant": "minus sort tie-breaks", "delivered_ids": [0, 2, 3, 7], "lost": []},
+      {"variant": "previous row plus singular/plural forms", "delivered_ids": [2, 3, 5, 7], "lost": [0]}
+    ],
+    "decision": "Reverted. The module-doc redirect existed only to reach Q6; the other gains were trades against Q0 on an author-visible set."
+  },
+  "real_model": {
+    "model": "EmbeddingGemma 2 BF16 GGUF (ggml-org/embeddinggemma-2-GGUF@bfcd298762cc34d0357ece5ebdd31791a3a374d8, sha256 68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216)",
+    "llama_cpp": "b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea",
+    "adapter_revision": 4,
+    "card_tokens": 512,
+    "worker_sha256": "ce2bdfe470b9d124e3163eb27123883706c3fa289834a816b17ada17a90239a0",
+    "baseline_foundry_sha256": "a3b9fe27d6484b4bea608b4c2f4126eb488aaeea7037a63627df412f0d74ab16",
+    "candidate_foundry_sha256": "d1d6bd636d1835d8a99e538c16b5cb2a6cf1e03e286b3952788b5c7a299f3dae",
+    "arms": {
+      "overview-v1": {
+        "profile_sha256": "1b2d9f2b85f890745d5e979b89654905e0a453e96e10b7d3158b965354b43c36",
+        "baseline": {"recipe_id": "overview-v1+overview3+kinds1+units5:512+tokenizers 0.23.2 onig", "prepare_ms": 39644, "embedded_units": 274, "document_calls": 35, "input_tokens": 84927, "delivered_ids": [0, 2, 3, 7], "delivered_tokens": 16203, "report_sha256": "10b69923917d26b4707353fd2f44b8bd0b1c0405be1d03c0651ad1fee4d3eef5"},
+        "candidate": {"recipe_id": "overview-v1+overview4+kinds1+units5:512+tokenizers 0.23.2 onig", "prepare_ms": 37282, "embedded_units": 274, "document_calls": 35, "input_tokens": 88959, "delivered_ids": [0, 2, 3, 7], "delivered_tokens": 16228, "report_sha256": "93abd3f652d6e5dc291d86851c53428c295f12f6f88aea364d43b527a5f790d9"},
+        "target_file_dense_rank_baseline_to_candidate": {"Q0": "5 -> 3", "Q2": "33 -> absent from 64 hits", "Q3": "26 -> 16", "Q4": "0 -> 0", "Q5": "0 -> 0", "Q6": "7 -> 4"},
+        "losses_both_arms": {"Q1": "source excluded", "Q4": "evidence_window", "Q5": "evidence_window", "Q6": "evidence_window"}
+      },
+      "hierarchy-v1 parent_tokens 64": {
+        "profile_sha256": "2c6ae5f218adc249db0e08caf793ec971f787d3483b10f15e3aa1a4fec05c182",
+        "baseline": {"recipe_id": "hierarchy-v1+overview3+kinds2+units5:512+parent64+tokenizers 0.23.2 onig", "prepare_ms": 981493, "embedded_units": 13822, "document_calls": 1729, "input_tokens": 3608991, "delivered_ids": [0, 2, 3, 7], "delivered_tokens": 16197, "refinement_cap_bound": [], "report_sha256": "e558dbbed1d8f61e5cf597af284d0df3d8ebeb36e559031590960a8499a08518"},
+        "candidate": {"recipe_id": "hierarchy-v1+overview4+context2+kinds2+units5:512+parent64+tokenizers 0.23.2 onig", "prepare_ms": 941254, "embedded_units": 13840, "document_calls": 1732, "input_tokens": 3504074, "delivered_ids": [0, 2, 3, 7], "delivered_tokens": 16250, "refinement_cap_bound": [1, 2], "report_sha256": "b1e99f8b64bf256b0230969bf0a01b19bb0c6fa9b9f3f0d51433fbcee820ff43"},
+        "target_file_dense_rank_baseline_to_candidate": {"Q0": "3 -> 6", "Q2": "15 -> 23", "Q3": "8 -> 3", "Q4": "0 -> 0", "Q5": "0 -> 0", "Q6": "8 -> 11"},
+        "losses_both_arms": {"Q1": "source excluded", "Q4": "candidate_limit", "Q5": "candidate_limit", "Q6": "expected span not observed"}
+      }
+    },
+    "cli_query_wall_ms": "about 11,000 per overview question and 12,000-13,500 per hierarchy question; each CLI query loads the model",
+    "not_run": ["unchanged zero-call replay", "held-out or private question sets", "task-quality or provider-cost comparison"]
+  },
+  "review_correction": "Owner-scope ordering in hierarchy refinement is live: the 4,096-vector refinement cap bound for Q1 and Q2 in the candidate hierarchy run. It was not deleted.",
+  "unit_regressions": {
+    "failing_on_11d61e0_passing_now": [
+      "neural::partition::body::tests::over_budget_context_keeps_the_regions_own_declaration",
+      "neural::partition::hierarchy::tests::long_scope_overviews_summarize_module_and_declaration_documentation",
+      "neural::partition::hierarchy::tests::overlapping_headers_keep_the_rest_of_a_signature_without_repeating_bytes"
+    ]
+  },
+  "cross_lab_review": {"reviewer": "openai-codex/gpt-6.1-sol:xhigh", "author_lab": "Anthropic", "first_verdict": "REVISE (M1 partial-overlap signature loss; m1 documentation exceptions)", "final_verdict": "SHIP (m2 documentation qualification applied)"},
+  "local_gates": {
+    "command": "scripts/gates.sh $PWD /private/tmp/cf-gates",
+    "toolchains": ["rustc 1.97.1 (Homebrew)", "rustc 1.90.0 (rustup)"],
+    "gate_lines": ["GATE fmt exit=0", "GATE clippy exit=0", "GATE test exit=101", "GATE msrv-check exit=0", "GATE msrv-clippy exit=0"],
+    "tests": {"passed": 1277, "failed": 1, "ignored": 34},
+    "failure": "tests/install.rs worker_components_install_as_bundles_carry_forward_and_disable: packaging under --offline could not obtain tch 0.26.0, absent from the host Cargo cache",
+    "rerun_after_cargo_fetch_locked": {"target": "tests/install.rs", "passed": 6, "failed": 0},
+    "full_suite_rerun": false,
+    "links": {"command": "node scripts/check-links.mjs", "errors": 0}
+  },
+  "ci": "not run for this change",
+  "raw_directory": "/private/tmp/cf-real and /private/tmp/cf-attr-* on the measuring host (ephemeral, not retained in Git)"
+}
