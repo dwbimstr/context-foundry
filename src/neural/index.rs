@@ -79,6 +79,11 @@ const MAX_INDEX_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// scratch payloads, not allocator overhead or total process RSS.
 #[cfg(feature = "semantic")]
 const MAX_VECTOR_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Approximate payload retained by the publication mapping view: each unit's
+/// partition row, reverse reference and location together. This is memory, not
+/// a file: the label-map file it publishes stays under [`MAX_META_BYTES`].
+#[cfg(feature = "semantic")]
+const MAX_VIEW_BYTES: u64 = 1024 * 1024 * 1024;
 
 #[cfg(feature = "semantic")]
 fn within_publication_limit(bytes: u64, limit: u64, what: &str) -> FResult<()> {
@@ -91,13 +96,25 @@ fn within_publication_limit(bytes: u64, limit: u64, what: &str) -> FResult<()> {
     Ok(())
 }
 
-/// Conservative JSON size including worst-case string escapes and scalar
-/// fields; also bounds the keys/locations retained by the mapping walk.
+/// The exact `serde_json` length of `text` as a JSON string, quotes included.
+#[cfg(feature = "semantic")]
+fn json_string_bytes(text: &str) -> u64 {
+    2 + text
+        .bytes()
+        .map(|byte| match byte {
+            b'"' | b'\\' | b'\n' | b'\r' | b'\t' | 0x08 | 0x0c => 2,
+            0..=0x1f => 6,
+            _ => 1,
+        })
+        .sum::<u64>()
+}
+
+/// An upper bound on one serialized location: its escaped strings plus field
+/// names, the kind and both offsets at full width. It also sizes the
+/// locations retained by the mapping walk.
 #[cfg(feature = "semantic")]
 fn location_bytes(path: &str, hash: &str) -> u64 {
-    (path.len() as u64 + hash.len() as u64)
-        .saturating_mul(6)
-        .saturating_add(160)
+    json_string_bytes(path) + json_string_bytes(hash) + 160
 }
 /// The manifest's coverage words.
 pub const COVERAGE_COMPLETE: &str = "complete";
@@ -1062,6 +1079,40 @@ mod tests {
 
     #[cfg(feature = "semantic")]
     #[test]
+    fn publication_location_bound_tracks_the_serialized_label_map() {
+        // The bound must hold for escape-heavy paths and stay close to the
+        // real size: a worst-case estimate refused ~112k-card corpora whose
+        // label maps were far below the reader's limit.
+        for path in ["library/core/src/num/f64.rs", "a\"b\\c\nd\u{1}é.rs"] {
+            let unit = UnitLocation {
+                kind: crate::neural::cache::CardKind::ContainerFragment,
+                path: path.into(),
+                start: u64::MAX - 1,
+                end: u64::MAX,
+                source_sha256: "ab".repeat(32),
+            };
+            let actual = serde_json::to_vec(&unit).unwrap().len() as u64;
+            let bound = location_bytes(&unit.path, &unit.source_sha256);
+            assert!(
+                actual <= bound && bound <= actual + 64,
+                "{actual} > {bound}"
+            );
+        }
+        // The string length is exact for every ASCII byte, Unicode and mixes.
+        let mut strings: Vec<String> = (0u8..=0x7f).map(|b| char::from(b).to_string()).collect();
+        strings.extend(["", "é🦀/", "a\"b\\c\nd\u{1}\u{7f}é.rs"].map(String::from));
+        strings.push("ab".repeat(32));
+        for text in strings {
+            assert_eq!(
+                json_string_bytes(&text),
+                serde_json::to_vec(&text).unwrap().len() as u64,
+                "{text:?}"
+            );
+        }
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
     fn oversized_publication_preserves_the_previous_generation() {
         let scratch = tempfile::tempdir().unwrap();
         let store = Dir::open_path(scratch.path()).unwrap();
@@ -1076,7 +1127,8 @@ mod tests {
         let original = validate_generation(&store, &identity.digest, "r1", 128).unwrap();
         // A direct builder caller can bypass admitted-path bounds. Refuse
         // before cloning labels, allocating ANN storage or replacing files.
-        entries[0].units[0].path = "x".repeat((MAX_META_BYTES / 6) as usize);
+        // Each control character serializes as six bytes.
+        entries[0].units[0].path = "\u{1}".repeat((MAX_META_BYTES / 6 + 1) as usize);
         let error = build_generation(&store, &identity, &entries, scope, &control).unwrap_err();
         assert_eq!(error.code(), "resource_limit");
         let retained = validate_generation(&store, &identity.digest, "r1", 128).unwrap();
