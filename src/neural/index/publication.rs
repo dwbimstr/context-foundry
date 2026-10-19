@@ -297,7 +297,7 @@ fn check_entries(entries: &[GenerationEntry], recipe: &str) -> FResult<()> {
                 message: "duplicate input key in generation input".into(),
             });
         }
-        metadata = metadata.saturating_add(entry.input_key.len() as u64 * 6 + 96);
+        metadata = metadata.saturating_add(json_string_bytes(&entry.input_key) + 96);
         for unit in &entry.units {
             metadata = metadata.saturating_add(location_bytes(&unit.path, &unit.source_sha256));
         }

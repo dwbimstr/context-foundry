@@ -5913,6 +5913,66 @@ fn clean_restart_and_changed_inputs_reuse_the_durable_mapping_lookup() {
 }
 
 #[test]
+fn checkpoints_never_share_a_key_with_the_earlier_byte_accounting() {
+    use context_foundry::neural::fault_names::MAPPING_FULL_PAGE;
+    use redb::{ReadableDatabase, TableDefinition};
+    // Binaries before 2026-10-17 restore this key and sum view bytes with
+    // worst-case escapes. Restoring an exact-accounting checkpoint, they would
+    // subtract larger rows than were added and report a corrupt store.
+    const LEGACY: &str = "semantic_mapping_checkpoint";
+    const CURRENT: &str = "semantic_mapping_checkpoint_exact";
+    let meta = TableDefinition::<&str, &str>::new("meta");
+    let mut corpus = Corpus::new(&[]);
+    let control = Control::unbounded();
+    corpus.engine().semantic_publish_pending(&control).unwrap();
+    corpus.engine = None;
+    let db = redb::Database::open(corpus.store.join("knowledge.redb")).unwrap();
+    {
+        let tx = db.begin_read().unwrap();
+        let table = tx.open_table(meta).unwrap();
+        assert!(table.get(CURRENT).unwrap().is_some());
+        assert!(
+            table.get(LEGACY).unwrap().is_none(),
+            "an earlier binary finds none"
+        );
+    }
+    // A store an earlier binary checkpointed last holds only the legacy key.
+    let tx = db.begin_write().unwrap();
+    {
+        let mut table = tx.open_table(meta).unwrap();
+        let checkpoint = table.remove(CURRENT).unwrap().unwrap().value().to_owned();
+        table.insert(LEGACY, checkpoint.as_str()).unwrap();
+    }
+    tx.commit().unwrap();
+    drop(db);
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    fault::disarm_all();
+    let engine = corpus.engine();
+    let state = engine.semantic_state().unwrap().unwrap();
+    engine
+        .semantic_record_partition(
+            CODE_PATH,
+            &engine.source(CODE_PATH).unwrap().unwrap().hash,
+            state.recipe_id.as_deref().unwrap(),
+            state.function_digest.as_deref().unwrap(),
+            Some(&[]),
+            &|_| Ok(vec![]),
+        )
+        .unwrap();
+    engine.semantic_publish_pending(&control).unwrap();
+    assert!(
+        fault::reached(MAPPING_FULL_PAGE) > 0,
+        "a legacy checkpoint is rebuilt from authority, never restored"
+    );
+    corpus.engine = None;
+    let db = redb::Database::open(corpus.store.join("knowledge.redb")).unwrap();
+    let tx = db.begin_read().unwrap();
+    let table = tx.open_table(meta).unwrap();
+    assert!(table.get(CURRENT).unwrap().is_some());
+    assert!(table.get(LEGACY).unwrap().is_none());
+}
+
+#[test]
 fn location_publication_shares_unchanged_metadata_and_failed_edits_remain_retryable() {
     use context_foundry::neural::fault_names::{
         LOCATION_COMPARE, LOCATION_WRITE, MAPPING_FULL_PAGE, METADATA_READ, PUBLISH_BEFORE_MANIFEST,
@@ -8710,7 +8770,7 @@ fn schema_eleven_upgrade_preserves_cached_publication_and_is_atomic() {
         .open_table(TableDefinition::<&str, &str>::new("meta"))
         .unwrap();
     meta.insert("schema", "11").unwrap();
-    meta.remove("semantic_mapping_checkpoint").unwrap();
+    meta.remove("semantic_mapping_checkpoint_exact").unwrap();
     drop(meta);
     tx.commit().unwrap();
     drop(db);

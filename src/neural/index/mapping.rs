@@ -136,7 +136,7 @@ impl View {
             return Ok(());
         };
         self.bytes = self.bytes.saturating_add(row_bytes(path, &record));
-        within_publication_limit(self.bytes, MAX_META_BYTES, "mapping view")?;
+        within_publication_limit(self.bytes, MAX_VIEW_BYTES, "mapping view")?;
         self.eligible += record.units.len() as u64;
         for unit in &record.units {
             self.reverse
@@ -442,7 +442,7 @@ fn restore(engine: &Engine, generation: &Generation) -> FResult<Option<Restored>
     };
     if generation.manifest.mapping_revision != Some(cp.revision)
         || generation.manifest.coverage_stats.as_ref() != Some(&cp.coverage)
-        || cp.bytes > MAX_META_BYTES
+        || cp.bytes > MAX_VIEW_BYTES
         || tx.open_table(durable::ROWS)?.len()? != partitioned
     {
         return Ok(None);
@@ -520,7 +520,8 @@ fn checkpoint(
             }
         }
     }
-    tx.open_table(crate::store::META)?.insert(
+    let mut meta = tx.open_table(crate::store::META)?;
+    meta.insert(
         durable::CHECKPOINT,
         serde_json::to_string(&Checkpoint {
             revision,
@@ -529,6 +530,8 @@ fn checkpoint(
         })?
         .as_str(),
     )?;
+    meta.remove(durable::LEGACY_CHECKPOINT)?;
+    drop(meta);
     durable::acknowledge(tx, revision)?;
     Ok(())
 }

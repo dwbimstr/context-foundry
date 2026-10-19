@@ -10,7 +10,16 @@ pub(crate) const ROWS: TableDefinition<&str, &str> = TableDefinition::new("seman
 pub(crate) const KEYS: MultimapTableDefinition<&str, &str> =
     MultimapTableDefinition::new("semantic_mapping_keys");
 const WORK: TableDefinition<&str, u64> = TableDefinition::new("semantic_mapping_work");
-pub(crate) const CHECKPOINT: &str = "semantic_mapping_checkpoint";
+/// The publication lookup checkpoint. Its key names the view byte accounting:
+/// on 2026-10-17 exact JSON lengths replaced worst-case escape estimates, and a
+/// binary must never restore a checkpoint summed under the other accounting
+/// (its removals would subtract rows that were never added). A binary of
+/// either accounting finds no checkpoint under its own key and rebuilds the
+/// lookup from authority instead.
+pub(crate) const CHECKPOINT: &str = "semantic_mapping_checkpoint_exact";
+/// The key of the earlier accounting. Removed whenever a checkpoint is written,
+/// so an earlier binary cannot restore a lookup it would then count wrongly.
+pub(crate) const LEGACY_CHECKPOINT: &str = "semantic_mapping_checkpoint";
 const FLOOR: &str = "semantic_mapping_floor";
 const BYTES: &str = "semantic_mapping_dirty_bytes";
 pub(crate) const MAX_DIRTY: usize = 1024;
@@ -29,6 +38,7 @@ pub(crate) fn purge(tx: &WriteTransaction) -> FResult<()> {
     init(tx)?;
     let mut meta = tx.open_table(crate::store::META)?;
     meta.remove(CHECKPOINT)?;
+    meta.remove(LEGACY_CHECKPOINT)?;
     meta.remove(BYTES)?;
     Ok(())
 }
