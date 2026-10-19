@@ -31,9 +31,12 @@ boundaries and existing authorization; do not ask again for already selected wor
   integration, provider usage for cost. No source or histogram inference presented as
   runtime causal proof. Do not label an in-session review independent.
 - Claim a retrieval change only after [`scripts/g2.sh`](scripts/g2.sh) runs the frozen
-  G2 set (388 questions, on the owner's Mac) against the current baseline. The eight
-  Foundry questions in `tests/retrieval_attribution.rs` are a smoke diagnostic: from
-  4/8 no change can reach significance, and they favor lexical matching.
+  G2 set (388 questions, on the owner's Mac) against the current baseline. Enable a
+  change only when it locates significantly more definitions without a net loss of
+  verbatim definition bodies, within the request cap; mean tokens are reported, not
+  gated (owner, 2026-10-19). The eight Foundry questions in
+  `tests/retrieval_attribution.rs` are a smoke diagnostic: from 4/8 no change can
+  reach significance, and they favor lexical matching.
 - Current status has one owner, [the resumable handoff](docs/resume-context-ecosystem.md).
   Other documents link to it instead of restating scores; `docs/validation.md` keeps
   the dated evidence.

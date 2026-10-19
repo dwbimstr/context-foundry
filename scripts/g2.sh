@@ -11,9 +11,16 @@
 #   scripts/g2.sh run     OUT NAME KIND [PROFILE] [-- MCP_FLAG...]
 #                                                  run the harness on fresh clones of
 #                                                  OUT/<corpus>-KIND into OUT/runs/NAME
-#   scripts/g2.sh compare OUT BASE CAND K          paired exact one-sided McNemar test at
-#                                                  alpha 0.05/K, K = candidates predeclared
-#                                                  in the family (2026-10-08 froze K=2)
+#   scripts/g2.sh compare OUT BASE CAND K          paired comparison (rule below); K =
+#                                                  candidates predeclared in the family
+#                                                  (2026-10-08 froze K=2)
+#
+# Enable rule (owner decision 2026-10-19, replacing g2.py's "no more mean delivered
+# tokens" clause): the candidate locates more definitions with an exact one-sided
+# McNemar p < 0.05/K, delivers the definition's verbatim body on at least as many
+# questions as the base, and every response stays within the 2,048-token request
+# cap. Locating counts a name line in any delivered body (the frozen G2 metric);
+# a verbatim body has no form tag and nothing elided (g1score's with_body).
 #
 # NAME, KIND, BASE and CAND are single names: letters, digits, '.', '_' and '-',
 # not starting with '.'. FOUNDRY names the foundry binary (default:
@@ -32,7 +39,7 @@ QUESTIONS=$DATA/context-foundry-g2/questions.jsonl
 HARNESS=$DATA/context-foundry-g2-harness/g2.py
 O200K=/private/tmp/cf-o200k/target/release/o200k_count
 
-usage() { sed -n '2,26p' "$0" >&2; exit 64; }
+usage() { sed -n '2,33p' "$0" >&2; exit 64; }
 fail() { echo "g2: $2" >&2; exit "$1"; }
 root() {
     case $1 in
@@ -170,8 +177,107 @@ compare)
     name "$1"
     name "$2"
     case $3 in '' | 0 | *[!0-9]*) fail 64 "K must be a positive integer" ;; esac
-    python3 "$HARNESS" compare --questions "$QUESTIONS" --base "$out/runs/$1" \
-        --cand "$out/runs/$2" --profiles "$3"
+    G1=$DATA/context-foundry-citymap python3 - "$QUESTIONS" "$out/runs/$1" "$out/runs/$2" "$3" <<'EOF'
+import gzip, json, math, os, sys, zlib
+sys.path.insert(0, os.environ["G1"])
+from g1score import delivered_foundry  # the frozen G1 evidence parser
+questions, base, cand, k = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+CAP = 2048
+qs = {q["id"]: q for q in map(json.loads, open(questions))}
+def records(path, opener):
+    # One JSON object per line; any unreadable line is reported, not raised.
+    try:
+        with opener(path) as f:
+            for number, line in enumerate(f, 1):
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    yield None, f"{os.path.basename(path)}:{number} is not JSON"
+                    continue
+                yield (r, None) if isinstance(r, dict) else (None, f"{os.path.basename(path)}:{number} is not an object")
+    except (OSError, EOFError, ValueError, zlib.error) as error:  # bad gzip, DEFLATE or UTF-8
+        yield None, f"{os.path.basename(path)}: {error}"
+def load(d):
+    # Exactly one result row and one response per frozen question, as g2.py's
+    # runs produce them; anything else is apparatus damage (INVALID), never a
+    # verdict about the candidate.
+    rows, texts, broken = {}, {}, []
+    seen = {"result": set(), "response": set()}
+    if not os.path.isdir(d):
+        return rows, {}, [f"no run directory {d}"]
+    for name in sorted(os.listdir(d)):
+        path = os.path.join(d, name)
+        if name.startswith("results.") and name.endswith(".jsonl"):
+            kind, table, opener = "result", rows, lambda p: open(p)
+        elif name.startswith("responses.") and name.endswith(".jsonl.gz"):
+            kind, table, opener = "response", texts, lambda p: gzip.open(p, "rt")
+        else:
+            continue
+        for r, error in records(path, opener):
+            if error:
+                broken.append(error)
+                continue
+            i = r.get("id")
+            if not isinstance(i, str) or i not in qs:
+                broken.append(f"{kind} for unknown question {i!r}")
+                continue
+            if i in seen[kind]:
+                broken.append(f"duplicate {kind} {i}")
+                continue
+            seen[kind].add(i)
+            if kind == "result":
+                if r.get("retries") or r.get("refused"):
+                    broken.append(f"retried or refused {i}")
+                elif not isinstance(r.get("passed"), bool) or not isinstance(r.get("tokens"), int):
+                    broken.append(f"malformed result {i}")
+                elif r["tokens"] > CAP:
+                    broken.append(f"over the {CAP}-token cap {i}")
+                else:
+                    table[i] = r
+            elif not isinstance(r.get("text"), str):
+                broken.append(f"malformed response {i}")
+            else:
+                table[i] = r["text"]
+    evidence = {}
+    for i, q in qs.items():
+        if i not in rows or i not in texts:
+            broken.append(f"missing {i}")
+            continue
+        src, _, body = delivered_foundry(texts[i], q["name"], with_body=True)
+        key = (q["path"], q["line"])
+        evidence[i] = (key in src, key in body)
+        if rows[i]["passed"] != evidence[i][0]:
+            broken.append(f"recorded pass bit disagrees with its response {i}")
+    return rows, evidence, broken
+b_rows, b, b_broken = load(base)
+c_rows, c, c_broken = load(cand)
+print(f"G2: {len(qs)} questions; candidates in the family: K={k}")
+broken = [f"base: {m}" for m in b_broken] + [f"cand: {m}" for m in c_broken]
+if broken:
+    print("G2 INVALID (fail closed): " + "; ".join(broken[:8]))
+    sys.exit(2)
+def paired(metric):
+    gained = sum(c[i][metric] and not b[i][metric] for i in qs)
+    lost = sum(b[i][metric] and not c[i][metric] for i in qs)
+    return sum(b[i][metric] for i in qs), sum(c[i][metric] for i in qs), gained, lost
+for corpus in sorted({q["corpus"] for q in qs.values()}):
+    ids = [i for i, q in qs.items() if q["corpus"] == corpus]
+    print(f"  {corpus}: n={len(ids)} located {sum(b[i][0] for i in ids)} -> {sum(c[i][0] for i in ids)};"
+          f" verbatim body {sum(b[i][1] for i in ids)} -> {sum(c[i][1] for i in ids)}")
+base_located, cand_located, gained, lost = paired(0)
+n = gained + lost
+p = sum(math.comb(n, j) for j in range(gained, n + 1)) / 2 ** n if gained > lost else 1.0
+alpha = 0.05 / k
+base_body, cand_body, body_gained, body_lost = paired(1)
+print(f"  located: {base_located} -> {cand_located} (gained {gained}, lost {lost};"
+      f" one-sided exact McNemar p={p:.3g}, need < {alpha:.3g})")
+print(f"  verbatim body: {base_body} -> {cand_body} (gained {body_gained}, lost {body_lost}; need no net loss)")
+mean = lambda rows: sum(rows[i]["tokens"] for i in qs) / len(qs)
+print(f"  mean delivered tokens (reported, not gated): base {mean(b_rows):.1f} cand {mean(c_rows):.1f}")
+ok = p < alpha and cand_body >= base_body
+print(f"G2: {'ENABLE' if ok else 'KEEP OFF'}")
+sys.exit(0 if ok else 1)
+EOF
     ;;
 *) usage ;;
 esac

@@ -569,8 +569,10 @@ copied with `cp -cR` and brought to the current schema with `foundry repair-inde
    need 2.74 GB, above the 2 GiB default. Prepare with `--cache-cap 4294967296` and
    serve with `mcp --semantic-cache-cap 4294967296`.
 
-   Pass: delivered evidence on significantly more questions (exact one-sided McNemar
-   p < 0.025) at no more mean delivered tokens.
+   Pass (as frozen 2026-10-08): delivered evidence on significantly more questions
+   (exact one-sided McNemar p < 0.025) at no more mean delivered tokens. On 2026-10-19
+   the owner replaced the token clause with a no-net-loss guard on verbatim
+   definition bodies; `scripts/g2.sh compare` applies the current rule.
 2. **G1 with a profile.** For each profile that passed G2: `g1quick.sh SET WRAPPER STORE
    OUT 1/1 1` for `checker`, `qualified` and `bun`, the wrapper adding the profile to
    every `mcp`. Pass: every target and guard that passes without the profile passes

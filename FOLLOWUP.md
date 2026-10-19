@@ -91,7 +91,9 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      recorded in [validation](docs/validation.md#cloud-continuation--2026-10-12).
   3. Keep the protocol: 2,048-token budget, a paired test with a simultaneous interval,
      and the token, resource and latency guards. Acceptance needs at least 13 gains and
-     zero losses out of 48.
+     zero losses out of 48. If its token guard compares mean delivered tokens, the
+     owner removed that clause on 2026-10-19 (keep the 2,048-token cap); record the
+     amendment in writing before releasing the set.
 
 ## F5. Private G1/G2 question sets — resolved 2026-10-17
 

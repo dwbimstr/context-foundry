@@ -1368,8 +1368,10 @@ they do not assign causes to the 249 historical G2 misses.
   - Before evaluation freeze candidate count, sample-size rationale, paired statistic,
     multiplicity correction, per-corpus guards and latency/resource bounds. Proposed
     promotion requires a positive lower bound on paired delivered-evidence gain at
-    95% confidence over current Gemma, at no more mean delivered tokens under the same
-    cap, and all existing G1 gates. Publish absolute coverage, gained/lost task counts,
+    95% confidence over current Gemma, no net loss of verbatim definition bodies,
+    every response within the same cap, and all existing G1 gates. The owner removed
+    the "no more mean delivered tokens" clause on 2026-10-19; mean tokens are
+    reported. Publish absolute coverage, gained/lost task counts,
     refusals, missing/retried/duplicate tasks and uncertainty. Preserve frozen-run
     invalidity rules. If no candidate clears the gate, retain the baseline and record
     a no-promotion result instead of opening an unbounded model search.
