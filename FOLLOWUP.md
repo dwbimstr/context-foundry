@@ -93,14 +93,15 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      and the token, resource and latency guards. Acceptance needs at least 13 gains and
      zero losses out of 48.
 
-## F5. Private G1/G2 question sets
+## F5. Private G1/G2 question sets — resolved 2026-10-17
 
-- **Why blocked:** the G2 set (388 questions) and the G1 responses are outside the
-  repository and absent from this session.
-- **Required resource:** the owner's private G1/G2 inputs.
-- **Resume:** follow the frozen G2 protocol in [validation](docs/validation.md). It
-  allows one `context` call per question, uses the frozen G1 evidence parser and fails
-  closed on integrity errors. No G2 measurement has run.
+- **Resolution:** only the cloud session lacked the G2 inputs. They are on the owner's
+  Mac under `~/VSC_DEV/datasets/`, with both pinned corpora and the 2026-10-08 stores. The
+  archived Gemma run reproduces exactly (139/388, all 388 rows identical), and current
+  code was measured with [`scripts/g2.sh`](scripts/g2.sh). Results:
+  [validation](docs/validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17).
+- **Still true:** G2's misses have now shaped repairs, so it is development evidence.
+  Acceptance needs the sealed set (F4) or fresh held-out questions.
 
 ## F6. Frozen Rust and Go regression question sets
 
@@ -767,3 +768,24 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   - **Not covered:** the 26 ignored tests, and random inputs other than the
     workspace id. Packed output carries no temporary path: headers render aliases,
     labels, revisions and counts, and sources appear by root-relative path.
+
+## F18. The 6,000-file watcher test rereads sources on the owner's Mac (open 2026-10-17)
+
+- **Status:** open; it predates the 2026-10-17 changes. On the owner's M3 Pro,
+  `six_thousand_files_allow_foreground_calls_and_no_idle_body_rescans`
+  (`tests/watch.rs`) reports 6,076–7,658 source reads at its first idle state instead of
+  6,000. Unchanged `e9c5ca0` failed in 2 of 3 runs and the working tree in 5 of 6 on
+  the same host, two of them alternating with `e9c5ca0`; the final full gate passed it.
+  CI runs on `e7a1b59` and `1b5f0b1` passed it on macOS and Ubuntu.
+- **Leading hypothesis (inference, not yet observed):** the test writes the files
+  just before the owner starts. Initial reconciliation clears `dirty` and then reads
+  every file. FSEvents creation hints delayed past the stream's since-now start land
+  in the path queue during that scan, and `ChangeReader::direct`/`update` in
+  `src/ingest.rs` then reread known files after the scan. A busy fseventsd (Spotlight
+  indexing large stores) would lengthen the delay.
+- **Distinguishing observation:** print the watcher status at the failing assertion.
+  A rising `events` count with `full_reconciliations == 1` and
+  `scoped_reconciliations == 0` supports the hypothesis; extra full
+  reconciliations would point at overflow or a restarted scan.
+- **Do not** loosen the assertion. A repair must make a hint that predates the
+  reconciliation's own read of a file redundant, without trusting hints as bytes.

@@ -1,0 +1,78 @@
+{
+  "scope": "Frozen G2 retrieval set (388 identifier-free questions) as development evidence on the owner's Mac; not held-out acceptance, task quality or provider economics",
+  "base_commit": "e9c5ca0",
+  "code_under_test": "e9c5ca0 plus the publication byte-accounting fix (committed with this receipt); query behavior of the measured binary equals the committed code",
+  "host": {
+    "machine": "Apple M3 Pro, 12 CPUs, 18 GiB",
+    "os": "macOS 27.0.1",
+    "rustc": "1.97.1 (Homebrew)"
+  },
+  "frozen_inputs": {
+    "questions_sha256": "e434d569e8c0d693a3474d4edcb78b4bd2f98492e72a8cb1c46540ea9e51ec12",
+    "harness_g2_py_sha256": "6cf3e1bc41946c734c221e9ab1f91e5dea5f779e1247229b2aadfa25ff67628a",
+    "g1score_py_sha256": "5dc1c5e809b6134d0991027df8aaf11997ef816f997662dae5b17c34cff85e0d",
+    "corpora": {
+      "rust": "rust-lang/rust 1.99.0 library/, b940084d7eb6a299eb4bfeb8e34901bc051e7ac4",
+      "bun": "oh-my-pi packages/*/src, 5b8d5b8a15ab1711597584aadbdc112c55befed1"
+    },
+    "budget_tokens": 2048,
+    "frozen_family_k": 2
+  },
+  "token_counter": {
+    "note": "Rebuilt at the harness's frozen path from tiktoken-rs 0.12.1 encode_ordinary; reproduces all 197 recorded rust token counts of the archived Gemma run",
+    "sha256": "729e29df4aa3a533c6aabb6aa9bdb8744459ac7f3391839c4670b5e4ffca3bb2"
+  },
+  "reproduction_of_2026_10_08": {
+    "binary_sha256": "0ca21c8e6ce77f6ec64de3dc8c840dd558c213577078b6921ae500d1d645c443",
+    "stores": "archived store-rust-gemma and store-bun-gemma (APFS clones)",
+    "delivered": "139/388",
+    "identical_rows": "388/388 pass bits and token counts",
+    "results_sha256": "5eb93724c578036d3e96c4e3ceecdc6feefd3f28821eec8fe2ce63f598a74685"
+  },
+  "current_binary": {
+    "foundry_sha256": "16900fc84c9cdadc617794cf9b474da18d6e303ac05903c71c22e39a802804ca",
+    "worker_sha256": "46924de794145a883c992a3e149020d8638e469142b8d4227c0c327d883350d2",
+    "worker": "foundry-embed, embed-worker, llama.cpp b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea, Metal, adapter revision 4, ad-hoc signed development bundle",
+    "model": "EmbeddingGemma 2 BF16 GGUF sha256 68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216",
+    "note": "Hierarchy and cards-default-b4 rows ran on this hash. Lexical rows ran on the e9c5ca0 build; cards and overview rows on the publication-fix build before cargo fmt (same retrieval code); the breadth row on that build plus its patch. lex-exp (via scripts/g2.sh) and cards-default reproduce row for row on this hash."
+  },
+  "profiles": {
+    "cards": {"sha256": "7a897f8606c1401241d781fbb150244345e71da7fbd513276040aa751c151157", "recipe": "cards-v1+kinds1+units5:128+tokenizers 0.23.2 onig"},
+    "overview": {"sha256": "971ea04614908b721b26b1a02f89cdb337224141e24007371414d0e0fa1ec210", "recipe": "overview-v1+overview4+kinds1+units5:512+tokenizers 0.23.2 onig"},
+    "hierarchy": {"sha256": "afbb2ee2e96695f58a3bb06a3a11de338e68e419b8636b301f3739347dc5edeb", "recipe": "hierarchy-v1+overview4+context2+kinds2+units5:512+parent64+tokenizers 0.23.2 onig"}
+  },
+  "preparation": {
+    "rust_cards": {"eligible_units": 332732, "embedded_units": 331556, "document_calls": 44696, "input_tokens": 19303357, "elapsed_ms": 4326187, "peak_footprint_bytes": 5666526416},
+    "bun_cards": {"eligible_units": 112549, "embedded_units": 111239, "input_tokens": 6798414, "elapsed_ms": 1181445, "note": "Publication failed with the worst-case estimate; after the fix it published from cache in 73,602 ms with zero calls"},
+    "bun_overview": {"eligible_units": 8431, "embedded_units": 8338, "document_calls": 1055, "input_tokens": 2616830, "elapsed_ms": 641643},
+    "bun_hierarchy": {"eligible_units": 199592, "first_pass_committed": 81121, "first_pass_note": "worker waited on a Metal command buffer across battery sleep; process lost with its report", "completing_pass": {"embedded_units": 102190, "reused_cached_units": 97402, "document_calls": 12794, "input_tokens": 23875076, "elapsed_ms": 5456316, "peak_footprint_bytes": 3404238232}},
+    "rust_hierarchy": "not prepared"
+  },
+  "arms": [
+    {"name": "lex-default", "rust": 0, "bun": 0, "total": "0/388", "mean_tokens": 2023.2, "results_sha256": "5a17a4aaf3b923c70a6cce08ed4cef225b35dbac24f0ab23a7ed6a9bf762fa6c"},
+    {"name": "lex-exp", "rust": 3, "bun": 10, "total": "13/388", "mean_tokens": 2023.7, "results_sha256": "c665864ee7e923523573c28b89bd995015b2cf9d610edd4f25243154d0f16d87"},
+    {"name": "cards-default", "rust": 43, "bun": 93, "total": "136/388", "mean_tokens": 2021.9, "results_sha256": "9a190de237c67869fa22bd8bf3ac762ffc64849f692a6fcae7bdcf86bcc9bacd"},
+    {"name": "cards-exp", "rust": 43, "bun": 93, "total": "136/388", "mean_tokens": 2022.2, "results_sha256": "4a6bb1b8b715142775de8d50f5d70abfb94f7ea01b0c9c17d43f23aaa4d80bd6"},
+    {"name": "cards-breadth (rejected packing patch)", "rust": 50, "bun": 100, "total": "150/388", "mean_tokens": 2033.9, "results_sha256": "a63638f249da2bae87594fc7ab43f280e985d2351533f74ff6e0df96cdd5168d", "patch": "breadth-first-packing-2026-10-17.patch", "patch_sha256": "89437adac754cfe61e161d8a8a52c508f50dc28a75a7bde2a387cb523f5535fd"},
+    {"name": "overview-default", "bun": 77, "mean_tokens_bun": 1984.6, "results_sha256": "44f6670e7d7fd0bcf2cd30892887266383dd81149f743d73138b57887bd7b8f1"},
+    {"name": "overview-exp", "bun": 75, "mean_tokens_bun": 1991.5, "results_sha256": "bfb2af8078cea05d31bd3ac8a788be04cf9ff27773d94e01f9df2fc4ac5f9c20"},
+    {"name": "hierarchy-default", "bun": 115, "mean_tokens_bun": 2025.7},
+    {"name": "hierarchy-exp", "bun": 108, "mean_tokens_bun": 2023.6}
+  ],
+  "paired": [
+    {"base": "gemma 2026-10-08", "cand": "cards-default", "gained": 5, "lost": 8, "p_one_sided": 1.0},
+    {"base": "cards-default", "cand": "cards-exp", "gained": 0, "lost": 0},
+    {"base": "lex-default", "cand": "lex-exp", "gained": 13, "lost": 0, "p_one_sided": 0.000122, "frozen_rule": "KEEP OFF (mean tokens +0.5)"},
+    {"base": "cards-default", "cand": "cards-breadth", "gained": 14, "lost": 0, "p_one_sided": 0.000061, "frozen_rule": "KEEP OFF (mean tokens +12)"},
+    {"corpus": "bun", "base": "cards-default", "cand": "overview-default", "gained": 29, "lost": 45},
+    {"corpus": "bun", "base": "cards-default", "cand": "hierarchy-default", "gained": 43, "lost": 21, "p_one_sided": 0.00407, "mean_tokens": "2021.2 -> 2025.7"},
+    {"corpus": "bun", "base": "hierarchy-default", "cand": "hierarchy-exp", "gained": 2, "lost": 9}
+  ],
+  "loss_attribution_cards_default": {
+    "method": "traced rerun (identical results) attributed by the expected definition's byte offset",
+    "pass": 136, "file_absent": 45, "file_retrieved_unit_absent": 75, "cut_by_placement": 95, "packed_omitted": 37
+  },
+  "multiplicity": "Development comparisons on one set; both zero-loss gains and the hierarchy gain stay below alpha 0.005 (Bonferroni over ten comparisons)",
+  "gates": "see docs/validation.md G2 entry",
+  "raw_directory": "/private/tmp/cf-g2 on the measuring host (not retained in Git)"
+}

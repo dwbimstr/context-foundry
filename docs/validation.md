@@ -1,5 +1,111 @@
 # Validation
 
+## G2 restored as the retrieval instrument — 2026-10-17
+
+From 2026-10-10 to 2026-10-17, retrieval work was judged on eight Foundry questions.
+From 4/8, three wins and no losses give a one-sided McNemar p of 0.125, so that set
+cannot show a gain, and its wording favors lexical matching. The frozen G2 set (388
+identifier-free questions over rust-lang/rust `library/` and oh-my-pi, with harness
+and stores) was on the owner's Mac throughout; only the cloud session lacked it
+(FOLLOWUP F5). [`scripts/g2.sh`](../scripts/g2.sh) now runs it.
+
+**The instrument reproduces.** The archived `8035faa` binary and 2026-10-08 Gemma
+stores give 139/388 again, with all 388 pass bits and token counts identical.
+Each arm takes about a minute once its stores are prepared.
+
+**Current code (`e9c5ca0` plus the publication fix below)**, Apple M3 Pro, real
+EmbeddingGemma 2 BF16 on the Metal worker (adapter revision 4), 2,048 tokens:
+
+| Arm | rust (197) | bun (191) | Total | Mean tokens |
+| --- | --- | --- | --- | --- |
+| Lexical, default | 0 | 0 | 0/388 | 2023.2 |
+| Lexical, `--experimental-behavior-context` | 3 | 10 | 13/388 | 2023.7 |
+| Gemma address cards, 2026-10-08 (`8035faa`, revision 1) | 45 | 94 | 139/388 | 2018 |
+| Gemma address cards, current default | 43 | 93 | 136/388 | 2021.9 |
+| Gemma address cards, current experimental | 43 | 93 | 136/388 | 2022.2 |
+| Gemma `overview-v1` (bun only) | — | 77 | — | 1984.6 |
+| Gemma complete `hierarchy-v1`, default (bun only) | — | 115 | — | 2025.7 |
+| Gemma complete `hierarchy-v1`, experimental (bun only) | — | 108 | — | 2023.6 |
+
+Nine days of retrieval commits did not change the default semantic result: against
+2026-10-08 the current cards gain 5 and lose 8 (not significant). With address cards,
+experimental behavior changes no question; without a profile it gains 13 and loses none
+(p = 1.2 × 10⁻⁴) but delivers 0.5 more mean tokens, so the frozen rule ("no more
+mean delivered tokens") keeps it off. File overviews prepare 2.6 million instead of
+6.8 million bun tokens but deliver 77 against 93 (29 gained, 45 lost).
+
+**Complete hierarchy is the best measured recipe, at a cost.** On bun it delivers 115
+against the cards' 93: 43 gained, 21 lost, p = 0.0041, at 4.5 more mean tokens.
+Experimental behavior lowers it to 108 (2 gained, 9 lost). It needs 199,592 vectors
+against 112,549 cards. An earlier preparation committed 81,121 of them; 11 hours after
+its last publication its worker was still waiting on a Metal command buffer, across
+battery sleep periods, and the process was later lost with its report. The completing
+pass embedded 102,190 more
+(23.9 million tokens) in 91 minutes on AC power. Rust hierarchy was not prepared
+(about three times bun's cards); this is a one-corpus result.
+
+**A publication regression blocked mid-size repositories.** Since `5890ebd`/`65eb571`
+(2026-10-09/10), publication charged every path and hash byte as a worst-case
+six-byte JSON escape against 256 MiB. Bun's 112,549 cards embedded and then failed
+with `publication mapping view exceeds 268435456 bytes`, leaving 67,629 entries
+live. The real label map for rust's 332,732 cards is 90.5 MB. Publication now counts
+exact `serde_json` escapes for the files the reader caps at 256 MiB and bounds the
+in-memory mapping view separately at 1 GiB. Checkpoints of the new accounting use a
+new key and the old key is removed on write, so neither binary restores a lookup
+summed under the other's accounting (a cross-lab review found that an earlier binary
+would otherwise fail its next edit as a corrupt store). After the fix, bun
+published all 112,549 entries from cache in 74 s with zero model calls. Rust
+prepared 332,732 cards (19.3 million tokens) in 72 minutes and published them.
+
+**Where the 252 misses happen** (current cards; a traced rerun delivers identically):
+
+| Stage | Questions |
+| --- | --- |
+| Target file never retrieved | 45 |
+| File retrieved, target unit not | 75 |
+| Unit retrieved, cut by placement limit, per-file cap or duplicates | 95 |
+| Unit packed, omitted by the 2,048-token packer | 37 |
+
+The packer shows about 14 of 35 packed items; in omitted cases the three largest take
+a median 1,090 tokens. Packing the smallest rung of every candidate first, then
+upgrading in rank order, delivers 150/388: 14 gained, none lost, p = 6.1 × 10⁻⁵. It
+fills the same cap more fully (mean 2,034 against 2,022 tokens), so the frozen token
+clause keeps it off; the [patch](review/breadth-first-packing-2026-10-17.patch) is not
+in the tree.
+
+These p values are development evidence over many paired comparisons on one set. The
+frozen 2026-10-08 family used α = 0.05/2; a Bonferroni bound over up to ten
+comparisons reported here (α = 0.005) still holds for both zero-loss gains.
+
+Owner decisions needed:
+
+- **Token clause.** The frozen rule's "no more mean delivered tokens" is the only thing
+  keeping three gains off: experimental lexical (+13/−0, +0.5 tokens), breadth-first
+  packing (+14/−0, +12) and complete hierarchy (+43/−21 on bun, +4.5). Each differs by
+  how fully it fills the same 2,048-token cap.
+- **Recipes.** Complete hierarchy wins on bun but needs about 1.8 times the cards'
+  vectors and was not measured on rust. File overviews are cheapest and lose to cards.
+  Recommendation: keep cards as the default, make hierarchy the recipe to develop and
+  measure on rust, and decide whether overview-only stays.
+- **Experimental behavior.** It helps only lexical-only installs, is neutral with
+  cards and hurts hierarchy (−7 net). Recommendation: do not promote it; remove its
+  semantic-path effects or keep it lexical-only.
+
+Corrections to the earlier review: the neural model is the product's retrieval lever
+(0 → 136/388), not a no-gain addition; and "Actions unavailable" reflects the
+owner's budget decision (F1), not a contradiction with the push-triggered workflow.
+
+Final local gates on Rust 1.97.1 and 1.90.0 pass all five: **1,280 tests passed, 0
+failed, 34 ignored**. An earlier full run on the first publication fix had one
+failure, `six_thousand_files_allow_foreground_calls_and_no_idle_body_rescans`
+(6,076–7,658 source reads against 6,000); unchanged `e9c5ca0` also fails it in 2 of 3
+runs on this host, so it is intermittent and predates this change
+([FOLLOWUP F18](../FOLLOWUP.md#f18-the-6000-file-watcher-test-rereads-sources-on-the-owners-mac-open-2026-10-17)).
+A GPT-6.1 Sol cross-lab review returned REVISE (checkpoint downgrade, wrapper quoting,
+run-name traversal, the frozen K, two minor gaps), then SHIP after the fixes. G2 is now
+development evidence; acceptance still needs held-out questions (F4). No CI ran for
+this change. Receipt: [g2-head-2026-10-17.json](review/g2-head-2026-10-17.json).
+
 ## Representation repair and lexical ablation — 2026-10-17
 
 Runtime commit `92d8e6a` repairs two semantic representation defects; this entry also
