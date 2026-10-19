@@ -30,6 +30,13 @@ boundaries and existing authorization; do not ask again for already selected wor
 - Verify at the claimed boundary: focused tests for behavior, real consumers for
   integration, provider usage for cost. No source or histogram inference presented as
   runtime causal proof. Do not label an in-session review independent.
+- Claim a retrieval change only after [`scripts/g2.sh`](scripts/g2.sh) runs the frozen
+  G2 set (388 questions, on the owner's Mac) against the current baseline. The eight
+  Foundry questions in `tests/retrieval_attribution.rs` are a smoke diagnostic: from
+  4/8 no change can reach significance, and they favor lexical matching.
+- Current status has one owner, [the resumable handoff](docs/resume-context-ecosystem.md).
+  Other documents link to it instead of restating scores; `docs/validation.md` keeps
+  the dated evidence.
 - When upstream code informs a design or review, retain its commit/release, module/
   symbol and relevant test, the owning Foundry requirement/task and intentional
   differences. Link actual landed Rust code when available; mark proposed paths and

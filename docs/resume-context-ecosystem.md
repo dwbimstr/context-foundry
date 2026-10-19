@@ -1,5 +1,30 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
+## Current status — 2026-10-17
+
+This section owns current status; other documents link here, and dated paragraphs
+below are history.
+
+- **Measurement.** Retrieval is judged on the frozen G2 set (388 questions over
+  rust-lang/rust and oh-my-pi) with [`scripts/g2.sh`](../scripts/g2.sh) on the owner's
+  Mac. The 2026-10-08 result reproduces exactly. The eight Foundry questions are a
+  smoke check only; from 4/8 they cannot show a significant gain.
+- **Scores at 2,048 tokens.** Default lexical 0/388; experimental lexical 13/388;
+  Gemma address cards (default recipe) 136/388, unchanged from 2026-10-08 (139, +5/−8).
+  On bun only: file overviews 77/191, cards 93/191, complete hierarchy 115/191.
+- **Fixed.** Semantic publication refused repositories above about 100k cards since
+  2026-10-09; it now counts exact JSON lengths and fences old checkpoints.
+- **Owner decisions.** The frozen "no more mean tokens" clause is the only reason
+  experimental lexical (+13/−0), breadth-first packing (+14/−0) and complete hierarchy
+  (+43/−21 on bun) stay off. Recommendations: develop hierarchy and measure it on
+  rust; do not promote experimental behavior (it hurts hierarchy).
+- **Next engineering targets, by G2 loss stage (cards):** target unit never retrieved
+  (120 = 45 file absent + 75 unit absent), cut by placement limits (95), omitted by
+  the packer (37).
+- **Open.** The 6,000-file watcher test fails on this Mac (FOLLOWUP F18). Acceptance
+  needs held-out questions (F4). Evidence:
+  [validation](validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17).
+
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the
 region's own declaration when over budget (`+context2`), and long overviews keep
 each declaration's documentation summary and the file opening (`+overview4`). The

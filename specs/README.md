@@ -1,6 +1,6 @@
 # Workflows worth building
 
-**Latest continuation, 2026-10-17:** start with the [resumable implementation handoff](../docs/resume-context-ecosystem.md) and [representation repair receipt](../docs/validation.md#representation-repair-and-lexical-ablation--2026-10-17). They supersede the older status paragraphs below; the six acceptance gates are still open in part.
+**Latest continuation, 2026-10-17:** current status lives only in the [resumable implementation handoff](../docs/resume-context-ecosystem.md); evidence is in [G2 restored as the retrieval instrument](../docs/validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17). Paragraphs below are dated history.
 
 Latest continuation, 2026-10-11: hierarchy preparation publishes an initial view of
 each selected source before exhaustive body refinement. A cold real-model check

@@ -1,6 +1,6 @@
 # Context packet: restarting this work elsewhere
 
-**Latest continuation, 2026-10-16:** start with the [resumable implementation handoff](resume-context-ecosystem.md) and [retrieval receipt](validation.md#callable-passage-preservation--2026-10-16). They supersede the older status paragraphs below; the six acceptance gates are still open in part.
+**Latest continuation, 2026-10-17:** current status lives only in the [resumable implementation handoff](resume-context-ecosystem.md); evidence is in [G2 restored as the retrieval instrument](validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17). Paragraphs below are dated history.
 
 Written 2026-10-08 so that a fresh agent (for example a cloud agent) can continue
 without the original sessions, their memory store or their temporary directories. Read

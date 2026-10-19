@@ -1,0 +1,73 @@
+diff --git a/src/response.rs b/src/response.rs
+index 9f34abc..910cca8 100644
+--- a/src/response.rs
++++ b/src/response.rs
+@@ -715,28 +715,51 @@ fn pack(
+     };
+     let fits = |text: &str| boundary(text) <= byte_cap && count_tokens(text) <= budget.tokens;
+     header.check_task_capacity(items.len(), budget.limited_by, boundary)?;
+-    let mut included: Vec<(usize, usize)> = Vec::new();
+-    'candidate: for (index, forms) in items.iter().enumerate() {
+-        for form in 0..forms.len() {
+-            // Check the chosen rung's exact source range. A fitting fallback
+-            // may duplicate earlier evidence even when its parent does not.
+-            if let Some(source) = source_items
+-                .get(index)
+-                .and_then(|item| form_source(item, form))
+-                && included.iter().any(|&(i, f)| {
+-                    source_items
+-                        .get(i)
+-                        .and_then(|item| form_source(item, f))
+-                        .is_some_and(|delivered| source_covers(&delivered, &source))
++    // A rung duplicates evidence when another included item's delivered
++    // source covers its exact range; a fallback rung may duplicate even when
++    // its parent does not.
++    let duplicate = |included: &[(usize, usize)], index: usize, form: usize| {
++        source_items
++            .get(index)
++            .and_then(|item| form_source(item, form))
++            .is_some_and(|source| {
++                included.iter().any(|&(i, f)| {
++                    i != index
++                        && source_items
++                            .get(i)
++                            .and_then(|item| form_source(item, f))
++                            .is_some_and(|delivered| source_covers(&delivered, &source))
+                 })
+-            {
+-                continue 'candidate;
++            })
++    };
++    // Breadth first: every candidate, in rank order, at its last (smallest)
++    // rung while the whole response fits. Greedy full bodies let the first few
++    // candidates consume the allowance and omit ranked evidence behind them.
++    let mut included: Vec<(usize, usize)> = Vec::new();
++    for (index, forms) in items.iter().enumerate() {
++        let Some(last) = forms.len().checked_sub(1) else {
++            continue;
++        };
++        if duplicate(&included, index, last) {
++            continue;
++        }
++        included.push((index, last));
++        if !fits(&render(&included, &[], budget.tokens, budget.limited_by)) {
++            included.pop();
++        }
++    }
++    // Then depth: in rank order, upgrade each to its largest fitting rung.
++    for slot in 0..included.len() {
++        let (index, smallest) = included[slot];
++        for form in 0..smallest {
++            if duplicate(&included, index, form) {
++                continue;
+             }
+-            included.push((index, form));
++            included[slot].1 = form;
+             if fits(&render(&included, &[], budget.tokens, budget.limited_by)) {
+                 break;
+             }
+-            included.pop();
++            included[slot].1 = smallest;
+         }
+     }
+     let mut tail_kept: Vec<usize> = Vec::new();
