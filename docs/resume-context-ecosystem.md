@@ -1,6 +1,6 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-## Current status — 2026-10-17
+## Current status — 2026-10-19
 
 This section owns current status; other documents link here, and dated paragraphs
 below are history.
@@ -9,21 +9,26 @@ below are history.
   rust-lang/rust and oh-my-pi) with [`scripts/g2.sh`](../scripts/g2.sh) on the owner's
   Mac. The 2026-10-08 result reproduces exactly. The eight Foundry questions are a
   smoke check only; from 4/8 they cannot show a significant gain.
-- **Scores at 2,048 tokens.** Default lexical 0/388; experimental lexical 13/388;
-  Gemma address cards (default recipe) 136/388, unchanged from 2026-10-08 (139, +5/−8).
-  On bun only: file overviews 77/191, cards 93/191, complete hierarchy 115/191.
+- **Enable rule (owner, 2026-10-19).** No mean-token clause. A candidate must locate
+  significantly more definitions (p < 0.025), lose no verbatim definition bodies net,
+  and stay within the 2,048-token cap; mean tokens are reported only.
+- **Scores at 2,048 tokens (located / verbatim body).** Default lexical 0/0 of 388;
+  experimental lexical 13/10; Gemma address cards (default recipe) 136/120, unchanged
+  from 2026-10-08 (139/123). On bun only: file overviews 77/45, cards 93/78,
+  complete hierarchy 115/104 of 191.
+- **Decided.** Breadth-first packing is rejected: +14 located but −95 verbatim
+  bodies. Experimental lexical passes G2 but stays off for 001 T010's anchored and
+  agent-task gates. Complete hierarchy passes on bun; preparing rust (about 590,000
+  vectors, an estimated 8–9 hours of Metal time) is the evidence a recipe decision needs.
 - **Fixed.** Semantic publication refused repositories above about 100k cards since
   2026-10-09; it now counts exact JSON lengths and fences old checkpoints.
-- **Owner decisions.** The frozen "no more mean tokens" clause is the only reason
-  experimental lexical (+13/−0), breadth-first packing (+14/−0) and complete hierarchy
-  (+43/−21 on bun) stay off. Recommendations: develop hierarchy and measure it on
-  rust; do not promote experimental behavior (it hurts hierarchy).
 - **Next engineering targets, by G2 loss stage (cards):** target unit never retrieved
   (120 = 45 file absent + 75 unit absent), cut by placement limits (95), omitted by
   the packer (37).
-- **Open.** The 6,000-file watcher test fails on this Mac (FOLLOWUP F18). Acceptance
-  needs held-out questions (F4). Evidence:
-  [validation](validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17).
+- **Open.** The 6,000-file watcher test is intermittent on this Mac (FOLLOWUP F18).
+  Acceptance needs held-out questions (F4). Evidence:
+  [rule change](validation.md#g2-rule-without-the-token-clause--2026-10-19),
+  [G2 results](validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17).
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the
 region's own declaration when over budget (`+context2`), and long overviews keep

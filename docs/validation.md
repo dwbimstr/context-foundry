@@ -1,5 +1,51 @@
 # Validation
 
+## G2 rule without the token clause — 2026-10-19
+
+The owner dropped the frozen rule's "no more mean delivered tokens" clause: it
+refused gains that only filled the same 2,048-token cap more fully. Before applying
+that, every held candidate was rechecked with a second score from the same frozen G1
+parser: whether the definition arrives as a **verbatim body** (no form tag, nothing
+elided), not only as a located name line. The frozen G2 score counts a name line in
+any delivered body, so a signature counts as much as the implementation.
+
+| Candidate (base) | Located | Verbatim body | Mean tokens |
+| --- | --- | --- | --- |
+| Breadth-first packing (current cards) | 136 → 150 (+14/−0) | 120 → **25** (+0/−95) | 2021.9 → 2033.9 |
+| Experimental lexical (default lexical) | 0 → 13 (+13/−0) | 0 → 10 (+10/−0) | 2023.2 → 2023.7 |
+| Experimental behavior with cards | 136 → 136 | 120 → 120 | 2021.9 → 2022.2 |
+| Complete hierarchy (cards, bun only) | 93 → 115 (+43/−21) | 78 → 104 (+47/−21) | 2021.2 → 2025.7 |
+| Experimental behavior with hierarchy (bun only) | 115 → 108 (+2/−9) | 104 → 100 (+2/−6) | 2025.7 → 2023.6 |
+| File overviews (cards, bun only) | 93 → 77 (+29/−45) | 78 → 45 (+21/−54) | 2021.2 → 1984.6 |
+| Current cards (2026-10-08 cards) | 139 → 136 (+5/−8) | 123 → 120 (+4/−7) | 2018.1 → 2021.9 |
+
+Breadth-first packing gained located names by turning most bodies into signatures:
+it would have cut verbatim definitions from 120 to 25. The token clause had blocked
+it, but for the wrong reason. [`scripts/g2.sh`](../scripts/g2.sh) `compare` therefore
+replaces the clause with a quality guard instead of dropping it alone. A candidate is
+enabled when it locates significantly more definitions (exact one-sided McNemar,
+p < 0.05/K, K = 2 as frozen), loses no verbatim bodies net, and keeps every response
+within the request cap. Mean tokens are reported, not gated. The frozen harness,
+questions and parser are unchanged. `compare` fails closed (INVALID, exit 2) unless
+every question has exactly one valid result and response: duplicate, missing,
+unknown, malformed, retried, refused or over-cap records, and recorded pass bits that
+disagree with their own response, all invalidate the run. All 2026-10-17 runs pass.
+
+Under this rule:
+
+- **Breadth-first packing is rejected** (−95 verbatim bodies). The patch stays only as
+  the [measured artifact](review/breadth-first-packing-2026-10-17.patch).
+- **Experimental lexical now passes G2** for lexical-only use (p = 1.2 × 10⁻⁴, no body
+  loss). It changes nothing with cards and costs hierarchy 7 located definitions.
+  It stays off: 001 T010 also requires the anchored G1 gates and an agent-task
+  result (003 T006), which G2's anchorless questions cannot supply.
+- **Complete hierarchy passes on bun** (p = 0.0041, +26 bodies net). Rust was not
+  prepared; a recipe decision needs it.
+- Current cards remain the default; against 2026-10-08 they are unchanged within noise.
+
+Comparisons ran with `scripts/g2.sh compare` on the 2026-10-17 runs; bun-only rows
+used the same metrics over 191 questions. No Rust code changed.
+
 ## G2 restored as the retrieval instrument — 2026-10-17
 
 From 2026-10-10 to 2026-10-17, retrieval work was judged on eight Foundry questions.
