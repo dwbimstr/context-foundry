@@ -20,14 +20,15 @@ below are history.
 - **G1 passes for hierarchy** and for one score with fusion, on all three sets, with
   no target or guard regressing. Hierarchy loses 35 net unmarked rust tasks against
   no profile; one score with fusion loses 7 net.
-- **Recipe decision (owner).** Hierarchy passes the G2 rule against cards
-  (+78/−45) and G1. Spec 009's promotion rule still asks for fresh held-out questions
-  (F4) and a review of the 17 G1 tasks it newly loses against cards. One score with
-  fusion ranks the hierarchy, cards and two lexical lists by RRF. It is +16 over
-  hierarchy, not significant (+53/−37, p = 0.057 against the 0.0167 needed). It is
-  significant against cards (+66/−17), but it needs both generations prepared. Its
-  code is an unmerged experiment
-  ([results](validation.md#g1-on-hierarchy-and-fusion--2026-10-22)).
+- **Recipe decision (owner): waiting on F4.** Hierarchy passes the G2 rule against
+  cards (+78/−45) and G1. Its 17 newly lost G1 tasks are reviewed: 12 cut by the
+  placement limits (10 of them tier-1 lexical hits placed behind every dense unit),
+  4 packing omissions and 1 recall miss
+  ([review](validation.md#g1-on-hierarchy-and-fusion--2026-10-22)). F4 is
+  pre-registered as hierarchy against cards, K = 1 ([FOLLOWUP](../FOLLOWUP.md)). Its
+  sealed set is not on this Mac or GitHub, so F4 has not run. Promotion, the one-score
+  serving-cost check and the scale work wait on its verdict. One score with fusion
+  (185/165, p = 0.057 against hierarchy) is an unmerged experiment, not a candidate.
 - **Losses now.** Removing the per-file cap and 32-unit limit under one score
   changed one question each way, though the caps still exclude 79 answers. Ranking
   loses those 79 and 44 the packer omits; recall loses 80 never retrieved.
