@@ -1,6 +1,6 @@
 #!/bin/sh
-# Run the frozen G2 retrieval benchmark (388 identifier-free questions over
-# rust-lang/rust library/ and oh-my-pi) on a host that holds the owner's
+# Run the frozen G2 retrieval benchmark (by default its 388 identifier-free
+# questions over rust-lang/rust library/ and oh-my-pi) on a host that holds the owner's
 # private inputs. The questions, harness, corpora and G1 parser stay outside
 # Git; this script only drives them. The harness (g2.py) is frozen: one MCP
 # `context` call per question at 2,048 tokens, scored by the G1 parser.
@@ -26,7 +26,8 @@
 # not starting with '.'. FOUNDRY names the foundry binary (default:
 # target/release/foundry). G2_DATA (default ~/VSC_DEV/datasets) holds
 # context-foundry-g2/questions.jsonl, context-foundry-g2-harness/g2.py and
-# context-foundry-citymap/g1score.py; g2.py reads the corpora from
+# context-foundry-citymap/g1score.py; G2_QUESTIONS names another question file
+# in G2's format (the F4 set). g2.py reads the corpora from
 # ~/VSC_DEV/corpora/rust-1.99.0 and ~/VSC_DEV/oh-my-pi at the commits pinned in
 # context-foundry-g2/FROZEN.txt. A profile run adds --development-isolation
 # (worker bundles are ad-hoc signed). The harness token counter is built at its
@@ -35,11 +36,11 @@ set -eu
 REPO=$(cd "$(dirname "$0")/.." && pwd -P)
 FOUNDRY=${FOUNDRY:-$REPO/target/release/foundry}
 DATA=${G2_DATA:-$HOME/VSC_DEV/datasets}
-QUESTIONS=$DATA/context-foundry-g2/questions.jsonl
+QUESTIONS=${G2_QUESTIONS:-$DATA/context-foundry-g2/questions.jsonl}
 HARNESS=$DATA/context-foundry-g2-harness/g2.py
 O200K=/private/tmp/cf-o200k/target/release/o200k_count
 
-usage() { sed -n '2,33p' "$0" >&2; exit 64; }
+usage() { sed -n '2,34p' "$0" >&2; exit 64; }
 fail() { echo "g2: $2" >&2; exit "$1"; }
 root() {
     case $1 in
@@ -177,6 +178,7 @@ compare)
     name "$1"
     name "$2"
     case $3 in '' | 0 | *[!0-9]*) fail 64 "K must be a positive integer" ;; esac
+    need "$QUESTIONS"
     G1=$DATA/context-foundry-citymap python3 - "$QUESTIONS" "$out/runs/$1" "$out/runs/$2" "$3" <<'EOF'
 import gzip, json, math, os, sys, zlib
 sys.path.insert(0, os.environ["G1"])
@@ -226,8 +228,8 @@ def load(d):
                 continue
             seen[kind].add(i)
             if kind == "result":
-                if r.get("retries") or r.get("refused"):
-                    broken.append(f"retried or refused {i}")
+                if r.get("retries") or r.get("refused") or r.get("error"):
+                    broken.append(f"retried, refused or errored {i}")
                 elif not isinstance(r.get("passed"), bool) or not isinstance(r.get("tokens"), int):
                     broken.append(f"malformed result {i}")
                 elif r["tokens"] > CAP:
@@ -251,7 +253,7 @@ def load(d):
     return rows, evidence, broken
 b_rows, b, b_broken = load(base)
 c_rows, c, c_broken = load(cand)
-print(f"G2: {len(qs)} questions; candidates in the family: K={k}")
+print(f"G2: {len(qs)} questions from {questions}; candidates in the family: K={k}")
 broken = [f"base: {m}" for m in b_broken] + [f"cand: {m}" for m in c_broken]
 if broken:
     print("G2 INVALID (fail closed): " + "; ".join(broken[:8]))
