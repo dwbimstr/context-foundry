@@ -1,5 +1,47 @@
 # Validation
 
+## G1 on hierarchy, and fusion — 2026-10-22
+
+**G1 passes for complete hierarchy.** Frozen G1v4 runs every task (SAMPLE 1/1), with
+HEAD `f06ec74` serving no profile, cards and hierarchy. All three sets PASS in every
+arm. No target or guard that passes without a profile fails with one. Hierarchy
+does cost unmarked rust tasks: checker pass≤4 goes from 3,878 to 3,843 (+13/−48);
+cards goes to 3,845. Apparatus: the rust stores need the frozen `index.scip`
+imported. Without it every `references` call is `coverage:unavailable` and U1/U2
+fail (74.6%, 38.2%, in a run whose files were not kept). See
+[measurement handoff](measurement-handoff.md).
+
+**Fusion, then one score** (G2, 2,048 tokens, located / verbatim body):
+
+| Arm (K = 3 against hierarchy) | Located | Bodies | Against hierarchy |
+| --- | --- | --- | --- |
+| Hierarchy | 169 | 151 | — |
+| Fusion: cards and hierarchy dense lists, RRF | 169 | 145 | +31/−31 |
+| One score: hierarchy, lexical tier 1, tier 2, RRF | 168 | 154 | +33/−34 |
+| One score with fusion (four lists) | **185** | **165** | +53/−37, p = 0.057 |
+| …and no per-file cap, 64-unit limit | 185 | 166 | +1/−1 against the row above |
+
+One score with fusion is not significant against hierarchy (p < 0.0167 needed). It
+would pass the rule against the current default, cards (+66/−17, p = 2.8 × 10⁻⁸).
+It passes G1 too, recovering most of hierarchy's unmarked losses: checker 3,871
+(+15/−22 against no profile). It needs both generations prepared. The upper bound
+(either recipe answers) is 214.
+
+**Caps are not the lever now.** Under cards, 75 of the 95 cut answers came only
+from lexical tier 2, 18 of them as its top hit (traces since deleted). Placement put
+every dense unit first, and tier 1's 64 definitions came before tier 2. With one
+score the caps still exclude 79 answers, but removing them changed one question each
+way. Only 2 of those 79 rank in the top 13, about as many items as fit in 2,048
+tokens; that the rest would not fit is an inference, not an ablation. What remains is
+ranking (79 cut; 44 packed but omitted, 10th–90th percentile at zero-based ranks
+8–26) and recall (27 files and 53 units never retrieved). The environment-gated
+experiment is not merged: [patch](review/one-score-fusion-2026-10-22.patch), measured
+with experimental behavior off. With it on, prose interleaving silently takes
+precedence over one score (review M1). Receipt:
+[g1-fusion-2026-10-22.json](review/g1-fusion-2026-10-22.json). The scale plan is in
+[spec 009](../specs/009-optional-semantic-retrieval/spec.md). A GPT-6.1 Sol review
+verified the scores, comparisons and scale arithmetic.
+
 ## Complete hierarchy on rust — 2026-10-21
 
 Complete `hierarchy-v1` now has G2 results on both corpora. Under the 2026-10-19 rule

@@ -1827,6 +1827,37 @@ and [verification.rs](../../src/neural/index/verification.rs), shared by the CLI
   Once loaded, an unchanged generation serves its verified in-memory copy; segment
   file versions are rechecked on generation refresh, not on every warm query.
 
+**Scale ceiling plan (2026-10-21, proposed, not implemented).** Measured on the
+complete rust-lang/rust hierarchy (62,035 files, 685,623 units, 624,325 vectors). The
+edge is the corpus size at which a bound refuses publication, scaled linearly at that
+density.
+
+| Bound | Limit | rust hierarchy | Used | Edge |
+|---|---|---|---|---|
+| f32 vectors held by publication | 2 GiB | 1.79 GiB | 89% | ~69k files |
+| Label map file (`locations-*.json`) | 256 MiB | 182.5 MiB | 71% | ~87k files |
+| Mapping-view estimate | 2 GiB | 1.03 GiB | 52% | ~120k files |
+| ANN file (f16, 1,685 B/vector) | 4 GiB | 0.98 GiB | 24% | ~253k files |
+
+1. **Stream vectors into the index builder.** `encode_index` adds f32 vectors to an
+   f16 index after publication has copied every one into memory. Reading each from the
+   cache as it is added removes the first bound without changing retrieval, because the
+   index already stores f16. Saving the index to its staged file, rather than to a
+   second in-memory buffer, removes another ~1 GB copy.
+2. **Intern paths and source hashes in the label map** (generation format v6). The map
+   repeats both strings for each unit. Re-encoded with one `[path, sha256]` table and
+   `[file, kind, start, end]` locations, the rust map takes 64.6 MB instead of
+   191.4 MB, which moves its edge to ~258k files. A v5 generation is republished
+   from the cache with zero document calls. Interning is simpler than sharding; shard
+   only past the ANN bound. The mapping-view estimate (~120k files) then binds. It is
+   a proxy that charges each unit's input key twelve times, so measure the view's real
+   allocation before changing that bound.
+3. **Change dimensions last, and only after measurement.** Matryoshka prefixes shrink
+   the vector payload 1.5× (512 dimensions) or 3× (256); I8 scalars halve the f16 ANN
+   payload before graph overhead. Their effect on the 3.24 GB serving footprint is
+   unmeasured, and they change retrieval. Each must pass G2 first; the profile table
+   keeps MRL as an explicit profile change.
+
 Implemented compact metadata in [locations.rs](../../src/neural/index/locations.rs),
 [publication.rs](../../src/neural/index/publication.rs), and [cache.rs](../../src/neural/cache.rs):
 
