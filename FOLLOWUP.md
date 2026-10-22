@@ -78,9 +78,13 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 ## F4. Sealed independent 48-question evaluation (resume step 6)
 
 - **Why blocked:** the sealed set is private and lives only in the resume archive. Root
-  has never read its questions or labels.
-- **Required resource:** the restored archive, and the owner's explicit freeze of the
-  final candidates.
+  has never read its questions or labels. On 2026-10-22 the archive was not on the
+  owner's Mac (Spotlight, and a home search eight levels deep) or in any `dwbimstr`
+  GitHub release. It was last at `/workspace/context-foundry-resume-20261011.tar.gz`
+  on the 2026-10-11 checkpoint sandbox.
+- **Required resource:** the restored archive ([`fetch-resume.sh`](scripts/cloud/fetch-resume.sh)
+  needs its URL or release, asset name and SHA-256). The candidate freeze is done
+  (pre-registration below).
 - **Resume:**
   1. Verify these identities. Verifying a hash does not authorize reading the labels.
      - manifest `01a9ad47473c0b99f82bee5f2fabf67cf96c86134e9627c63bd50cb67d80d429`
@@ -94,6 +98,20 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      zero losses out of 48. If its token guard compares mean delivered tokens, the
      owner removed that clause on 2026-10-19 (keep the 2,048-token cap); record the
      amendment in writing before releasing the set.
+- **Pre-registration (owner, 2026-10-22; written before the set is released).** It
+  replaces the candidate list in step 2 and is the only F4 run:
+  1. **Candidate:** complete `hierarchy-v1`, `parent_tokens` 64, `card_tokens` 512
+     (recipe `hierarchy-v1+overview4+context2+kinds2+units5:512+parent64`, EmbeddingGemma 2
+     function `01dcfe57…`, served by `f06ec74`). One candidate, K = 1.
+  2. **Baseline:** Gemma address cards (`cards-v1+kinds1+units5:128`, same function and
+     binary), at 2,048 tokens.
+  3. **Rule:** the sealed protocol's pass (at least 13 gains and zero losses of 48) and
+     its resource and latency guards. It adds no net loss of verbatim definition bodies
+     and every response within 2,048 tokens; mean tokens are reported only (2026-10-19).
+  4. **Arms:** exactly these two. Fusion, one score and the no-cap variant are not
+     candidates; they would need their own pre-registration.
+  5. **Verdict:** recorded in [validation](docs/validation.md) whether it passes or
+     fails. A fail keeps cards and closes the recipe question.
 
 ## F5. Private G1/G2 question sets — resolved 2026-10-17
 

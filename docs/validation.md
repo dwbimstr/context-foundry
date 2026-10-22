@@ -11,6 +11,22 @@ imported. Without it every `references` call is `coverage:unavailable` and U1/U2
 fail (74.6%, 38.2%, in a run whose files were not kept). See
 [measurement handoff](measurement-handoff.md).
 
+**The 17 G1 tasks hierarchy newly loses against cards** (16 checker, 1 bun; it
+newly gains 14). All 17 are unmarked one-word queries for names with many
+definitions (`finish`, `len`, `flush`, `map`). Each hierarchy context was replayed
+with a trace; the replay matched the G1 response byte for byte in 17 of 17. Causes:
+
+- **10: tier-1 lexical hit cut by dense-first placement.** Lexical tier 1 found the
+  definition or use site at rank 0–47. Placement puts every dense unit first, so it
+  landed at rank 62–211 and was cut by the 32-unit limit or the per-file cap.
+- **2: tier-2 or low-ranked hit cut by the limit** (`finish`, `flush`).
+- **4: packed but omitted by the budget** (rank 18–33 of the packing input).
+- **1: never retrieved** (`map`: the use site's file is absent).
+
+The cards arm was not traced. 15 of the 17 pass under one score with fusion, whose
+single ranking removes dense-first placement (`port` and `map` still fail); that arm
+is not a candidate.
+
 **Fusion, then one score** (G2, 2,048 tokens, located / verbatim body):
 
 | Arm (K = 3 against hierarchy) | Located | Bodies | Against hierarchy |
