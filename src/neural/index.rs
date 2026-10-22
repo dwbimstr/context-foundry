@@ -81,9 +81,12 @@ const MAX_INDEX_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_VECTOR_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 /// Approximate payload retained by the publication mapping view: each unit's
 /// partition row, reverse reference and location together. This is memory, not
-/// a file: the label-map file it publishes stays under [`MAX_META_BYTES`].
+/// a file: the label-map file it publishes stays under [`MAX_META_BYTES`]. The
+/// per-unit estimate (`mapping::row_bytes`) is a conservative proxy, not
+/// measured allocation. A 62,000-file rust-lang/rust hierarchy (685,623 units)
+/// estimates 1.03 GiB; 2026-10-21: raised from 1 GiB, which refused it.
 #[cfg(feature = "semantic")]
-const MAX_VIEW_BYTES: u64 = 1024 * 1024 * 1024;
+const MAX_VIEW_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 #[cfg(feature = "semantic")]
 fn within_publication_limit(bytes: u64, limit: u64, what: &str) -> FResult<()> {
@@ -110,11 +113,49 @@ fn json_string_bytes(text: &str) -> u64 {
 }
 
 /// An upper bound on one serialized location: its escaped strings plus field
-/// names, the kind and both offsets at full width. It also sizes the
-/// locations retained by the mapping walk.
+/// names, the kind and both offsets at full width. It sizes the locations
+/// retained by the mapping walk; the published file is counted exactly by
+/// [`label_map_bytes`].
 #[cfg(feature = "semantic")]
 fn location_bytes(path: &str, hash: &str) -> u64 {
     json_string_bytes(path) + json_string_bytes(hash) + 160
+}
+
+/// The exact compact `serde_json` length of `value`, without allocating it.
+#[cfg(feature = "semantic")]
+fn serialized_bytes(value: &impl Serialize) -> FResult<u64> {
+    struct Count(u64);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len() as u64;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    serde_json::to_writer(&mut count, value)?;
+    Ok(count.0)
+}
+
+/// The serialized [`LabelMap`] the reader caps at [`MAX_META_BYTES`]: exact
+/// strings and locations, over-counting only each label ordinal (taken at full
+/// u64 width) and one separator. A worst-case estimate refused a 182 MiB
+/// rust-lang/rust hierarchy map as 277 MiB (2026-10-21), so publication counts
+/// what it will write.
+#[cfg(feature = "semantic")]
+fn label_map_bytes(entries: &[GenerationEntry]) -> FResult<u64> {
+    // `{"labels":[` … `]}`, then per entry `{"label":<20 digits>,"input_key":`
+    // … `,"units":[` … `]}` and a separating comma.
+    let mut bytes = 13u64;
+    for entry in entries {
+        bytes = bytes.saturating_add(55 + json_string_bytes(&entry.input_key));
+        for unit in &entry.units {
+            bytes = bytes.saturating_add(serialized_bytes(unit)? + 1);
+        }
+    }
+    Ok(bytes)
 }
 /// The manifest's coverage words.
 pub const COVERAGE_COMPLETE: &str = "complete";
@@ -1107,6 +1148,72 @@ mod tests {
                 json_string_bytes(&text),
                 serde_json::to_vec(&text).unwrap().len() as u64,
                 "{text:?}"
+            );
+        }
+    }
+
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn publication_counts_the_label_map_it_writes() {
+        use crate::neural::cache::CardKind;
+        let location = |path: &str, start: u64, end: u64| UnitLocation {
+            kind: if start.is_multiple_of(2) {
+                CardKind::Body
+            } else {
+                CardKind::ContainerFragment
+            },
+            path: path.into(),
+            start,
+            end,
+            source_sha256: "cd".repeat(32),
+        };
+        let written = |entries: &[GenerationEntry]| {
+            serde_json::to_vec(&LabelMap {
+                labels: entries
+                    .iter()
+                    .enumerate()
+                    .map(|(label, entry)| LabelEntry {
+                        label: label as u64,
+                        input_key: entry.input_key.clone(),
+                        units: entry.units.clone(),
+                    })
+                    .collect(),
+            })
+            .unwrap()
+            .len() as u64
+        };
+        // An empty map is exact; otherwise the only excess is each ordinal's
+        // missing digits plus one separator per entry, so any under-count of a
+        // string, location or structural byte fails the equality.
+        assert_eq!(label_map_bytes(&[]).unwrap(), written(&[]));
+        let mut entries = entries(4);
+        entries[0].units = vec![location("a\"b\\c\nd\u{1}é.rs", 7, u64::MAX)];
+        entries[1].units = (0..9)
+            .map(|i| {
+                location(
+                    &format!("library/core/src/num/f{i}.rs"),
+                    i * 1_000_003,
+                    u64::MAX - i,
+                )
+            })
+            .collect();
+        for size in [1, 3, 12] {
+            let mut map: Vec<GenerationEntry> = (0..size)
+                .map(|i| GenerationEntry {
+                    input_key: format!("{i:064x}"),
+                    vector: Vec::new(),
+                    units: entries[i % entries.len()].units.clone(),
+                })
+                .collect();
+            map.sort_by(|a, b| a.input_key.cmp(&b.input_key));
+            let excess = 1
+                + (0..size as u64)
+                    .map(|i| 21 - i.to_string().len() as u64)
+                    .sum::<u64>();
+            assert_eq!(
+                label_map_bytes(&map).unwrap(),
+                written(&map) + excess,
+                "{size} entries"
             );
         }
     }

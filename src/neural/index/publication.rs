@@ -279,7 +279,6 @@ pub(super) fn full(
 }
 
 fn check_entries(entries: &[GenerationEntry], recipe: &str) -> FResult<()> {
-    let mut metadata = 64u64;
     let mut vectors = 0u64;
     let mut seen = BTreeSet::new();
     for entry in entries {
@@ -297,15 +296,10 @@ fn check_entries(entries: &[GenerationEntry], recipe: &str) -> FResult<()> {
                 message: "duplicate input key in generation input".into(),
             });
         }
-        metadata = metadata.saturating_add(json_string_bytes(&entry.input_key) + 96);
-        for unit in &entry.units {
-            metadata = metadata.saturating_add(location_bytes(&unit.path, &unit.source_sha256));
-        }
         vectors = vectors.saturating_add(entry.vector.len() as u64 * 4);
-        within_publication_limit(metadata, MAX_META_BYTES, "mapping")?;
         within_publication_limit(vectors, MAX_VECTOR_BYTES, "vectors")?;
     }
-    Ok(())
+    within_publication_limit(label_map_bytes(entries)?, MAX_META_BYTES, "mapping")
 }
 
 fn encode_index(
