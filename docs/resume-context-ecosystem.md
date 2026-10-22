@@ -1,40 +1,42 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-## Current status — 2026-10-21
+## Current status — 2026-10-22
 
 This section owns current status; other documents link here, and dated paragraphs
 below are history.
 
-- **Measurement.** Retrieval is judged on the frozen G2 set (388 questions over
-  rust-lang/rust and oh-my-pi) with [`scripts/g2.sh`](../scripts/g2.sh) on the owner's
-  Mac. The 2026-10-08 result reproduces exactly. The eight Foundry questions are a
-  smoke check only; from 4/8 they cannot show a significant gain.
-- **Enable rule (owner, 2026-10-19).** No mean-token clause. A candidate must locate
-  significantly more definitions (p < 0.025), lose no verbatim definition bodies net,
-  and stay within the 2,048-token cap; mean tokens are reported only.
+- **Measurement.** G2 (388 questions over rust-lang/rust and oh-my-pi, run with
+  [`scripts/g2.sh`](../scripts/g2.sh) on the owner's Mac) is now development evidence.
+  G1 runs on every candidate. The eight Foundry questions are a smoke check only.
+  The working set lives in `datasets/context-foundry-g2-work`, because a macOS
+  cleanup of `/private/tmp` deleted the earlier stores
+  ([handoff](measurement-handoff.md)).
+- **Enable rule (owner, 2026-10-19).** Significantly more located definitions (exact
+  one-sided McNemar, p < 0.05/K), no net loss of verbatim bodies, and every response
+  within 2,048 tokens. Mean tokens are reported only.
 - **Scores at 2,048 tokens (located / verbatim body, of 388).** Default lexical 0/0;
-  experimental lexical 13/10; Gemma address cards (default recipe) 136/120, unchanged
-  from 2026-10-08 (139/123); complete hierarchy **169/151** (rust 54/47, bun 115/104).
-  File overviews (bun only) 77/45 of 191.
-- **Decided.** Breadth-first packing is rejected: +14 located but −95 verbatim
-  bodies. Experimental lexical passes G2 but stays off for 001 T010's anchored and
-  agent-task gates; it also lowers hierarchy (169 → 155).
-- **Recipe decision pending (owner).** Complete hierarchy passes the G2 rule against
-  cards (+78/−45, p = 0.0019) at 1.8–2.1 times the units, 5.9 hours of Metal time for
-  rust (cards: 72 minutes) and 1.3 GB more serving memory. Default promotion still
-  needs the G1 gates and held-out questions.
-- **Fixed.** Semantic publication refused large repositories through worst-case size
-  estimates (about 100k cards since 2026-10-09; a 685,623-unit hierarchy on
-  2026-10-21). It now counts exact JSON and fences old checkpoints; the vector bound
-  (89% used by rust's hierarchy) is the next scale limit.
-- **Next engineering targets, by G2 loss stage (cards):** target unit never retrieved
-  (120 = 45 file absent + 75 unit absent), cut by placement limits (95), omitted by
-  the packer (37).
-- **Open.** The 6,000-file watcher test is intermittent on this Mac (FOLLOWUP F18).
-  Acceptance needs held-out questions (F4). Evidence:
-  [rust hierarchy](validation.md#complete-hierarchy-on-rust--2026-10-21),
-  [rule change](validation.md#g2-rule-without-the-token-clause--2026-10-19),
-  [G2 results](validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17).
+  cards (the default recipe) 136/120; complete hierarchy 169/151; one score with
+  fusion 185/165.
+- **G1 passes for hierarchy** and for one score with fusion, on all three sets, with
+  no target or guard regressing. Hierarchy loses 35 net unmarked rust tasks against
+  no profile; one score with fusion loses 7 net.
+- **Recipe decision (owner).** Hierarchy passes the G2 rule against cards
+  (+78/−45) and G1. Spec 009's promotion rule still asks for fresh held-out questions
+  (F4) and a review of the 17 G1 tasks it newly loses against cards. One score with
+  fusion ranks the hierarchy, cards and two lexical lists by RRF. It is +16 over
+  hierarchy, not significant (+53/−37, p = 0.057 against the 0.0167 needed). It is
+  significant against cards (+66/−17), but it needs both generations prepared. Its
+  code is an unmerged experiment
+  ([results](validation.md#g1-on-hierarchy-and-fusion--2026-10-22)).
+- **Losses now.** Removing the per-file cap and 32-unit limit under one score
+  changed one question each way, though the caps still exclude 79 answers. Ranking
+  loses those 79 and 44 the packer omits; recall loses 80 never retrieved.
+- **Scale.** The f32 vector payload (89% used) and the label map (71%) bind near 69k
+  and 87k files. The proposed plan streams vectors and interns label-map strings
+  ([spec 009](../specs/009-optional-semantic-retrieval/spec.md), *Scale ceiling
+  plan*); it is not implemented.
+- **Open.** No CI runs; local gates are the receipt. Acceptance needs F4 (held-out
+  questions). The 6,000-file watcher test is intermittent on this Mac (F18).
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the
 region's own declaration when over budget (`+context2`), and long overviews keep

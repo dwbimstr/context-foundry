@@ -1,0 +1,285 @@
+diff --git a/src/neural/query.rs b/src/neural/query.rs
+index 76b7c22..c164bf0 100644
+--- a/src/neural/query.rs
++++ b/src/neural/query.rs
+@@ -117,8 +117,40 @@ pub struct DenseWindow {
+     /// vectors. Refinement never embeds source or starts preparation in a read.
+     vector: Vec<f32>,
+     pub(crate) areas: Vec<crate::store::RecordCandidate>,
++    /// EXPERIMENT (fusion, not for merge): a second generation's window for
++    /// the same query vector, unioned with this one before placement.
++    pub(crate) fusion: Option<Box<DenseWindow>>,
+ }
+ 
++/// EXPERIMENT (fusion, not for merge): `FOUNDRY_EXPERIMENT_FUSION=STORE,PROFILE`
++/// loads STORE's generation prepared for PROFILE (same model and query
++/// template as the serving profile). Any failure aborts the process, so a
++/// run can never silently measure the unfused arm.
++pub(crate) static FUSION: std::sync::LazyLock<Option<Arc<DenseIndex>>> =
++    std::sync::LazyLock::new(|| {
++        let spec = std::env::var("FOUNDRY_EXPERIMENT_FUSION").ok()?;
++        let fail = |what: String| -> ! {
++            eprintln!("FOUNDRY_EXPERIMENT_FUSION: {what}");
++            std::process::abort()
++        };
++        let Some((store, profile)) = spec.split_once(',') else {
++            fail("expected STORE,PROFILE".into())
++        };
++        let profile = SemanticProfile::load(std::path::Path::new(profile))
++            .unwrap_or_else(|e| fail(format!("profile: {e}")));
++        let engine = Engine::open_authoritative(std::path::Path::new(store))
++            .unwrap_or_else(|e| fail(format!("store: {e}")));
++        let index = DenseIndex::load(
++            &engine,
++            &profile.descriptor.digest(),
++            &profile.recipe_id(),
++            profile.descriptor.dims(),
++            &Control::unbounded(),
++        )
++        .unwrap_or_else(|e| fail(format!("generation: {e}")));
++        Some(index)
++    });
++
+ impl std::fmt::Debug for DenseWindow {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         f.debug_struct("DenseWindow")
+diff --git a/src/neural/query/runtime.rs b/src/neural/query/runtime.rs
+index 7808d6a..6f3f1da 100644
+--- a/src/neural/query/runtime.rs
++++ b/src/neural/query/runtime.rs
+@@ -242,6 +242,8 @@ impl QueryRuntime {
+         tokenizer: DocumentTokenizer,
+         reservation: Option<crate::model_resources::Reservation>,
+     ) -> Result<Self, ProviderError> {
++        // EXPERIMENT (fusion): load the second generation before serving.
++        std::sync::LazyLock::force(&FUSION);
+         let (jobs_tx, jobs_rx) = mpsc::channel::<Job>();
+         let (ready_tx, ready_rx) =
+             mpsc::channel::<Result<(String, Option<LateCall>), ProviderError>>();
+@@ -637,11 +639,22 @@ impl QueryRuntime {
+         control.check()?;
+         let hits = generation.search(&vector, DENSE_WINDOW)?;
+         let areas = super::area::search(engine, &self.profile, &vector, control)?;
++        let fusion = match FUSION.as_ref() {
++            Some(index) => Some(Box::new(DenseWindow {
++                hits: index.search(&vector, DENSE_WINDOW)?,
++                generation: Arc::clone(index),
++                vector: vector.clone(),
++                areas: Vec::new(),
++                fusion: None,
++            })),
++            None => None,
++        };
+         Ok(DenseWindow {
+             hits,
+             generation,
+             vector,
+             areas,
++            fusion,
+         })
+     }
+ 
+diff --git a/src/store/semantic_search.rs b/src/store/semantic_search.rs
+index 9c9e2a9..c124d0c 100644
+--- a/src/store/semantic_search.rs
++++ b/src/store/semantic_search.rs
+@@ -13,6 +13,58 @@ fn within_filter(path: &str, filter: &str) -> bool {
+         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+ }
+ 
++/// One placed unit and its representation (`None` = lexical).
++#[cfg(feature = "semantic")]
++type Placed = ((String, u64, u64), Option<crate::neural::cache::CardKind>);
++
++/// EXPERIMENT (fusion / one score, not for merge): reciprocal rank fusion,
++/// k = 60, over `(unit, kind, list, rank in list)` entries given in rank
++/// order within each list. A unit scores the sum of its best rank in each
++/// list and keeps its first dense representation; ties go to the better
++/// single rank, then the lower list.
++#[cfg(feature = "semantic")]
++fn experiment_rrf(
++    entries: Vec<(
++        (String, u64, u64),
++        Option<crate::neural::cache::CardKind>,
++        usize,
++        usize,
++    )>,
++    control: &crate::Control,
++) -> Vec<Placed> {
++    let mut slots = std::collections::HashMap::new();
++    // (score, best (rank, list), lists seen, unit, kind)
++    let mut fused: Vec<(f64, (usize, usize), u8, Placed)> = Vec::new();
++    let mut sizes = [0usize; 4];
++    for (unit, kind, list, rank) in entries {
++        sizes[list] += 1;
++        let score = 1.0 / (61.0 + rank as f64);
++        match slots.get(&unit) {
++            Some(&slot) => {
++                let entry: &mut (f64, (usize, usize), u8, Placed) = &mut fused[slot];
++                if entry.2 & (1 << list) == 0 {
++                    entry.2 |= 1 << list;
++                    entry.0 += score;
++                }
++                entry.1 = entry.1.min((rank, list));
++                if entry.3.1.is_none() {
++                    entry.3.1 = kind;
++                }
++            }
++            None => {
++                slots.insert(unit.clone(), fused.len());
++                fused.push((score, (rank, list), 1 << list, (unit, kind)));
++            }
++        }
++    }
++    fused.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
++    if let Some(trace) = control.trace() {
++        trace.record(serde_json::json!({"stage":"experiment_rrf", "lists":sizes,
++            "units":fused.len(), "multi":fused.iter().filter(|e| e.2.count_ones() > 1).count()}));
++    }
++    fused.into_iter().map(|entry| entry.3).collect()
++}
++
+ /// A bounded passage containing the most distinct query concepts, then their
+ /// tightest occurrence span. Count each concept once: repeated boilerplate must
+ /// not outrank evidence spread over adjacent lines. Offsets always cite source.
+@@ -198,6 +250,16 @@ impl Engine {
+                 "examined":ordinary.items.len(), "limit":4096, "truncated":ordinary.truncated}),
+             );
+         }
++        // EXPERIMENT (fusion): the second generation's provenance, same bound.
++        let mut fused_units = dense
++            .fusion
++            .as_deref()
++            .map(|fusion| fusion.bounded_units(filter.as_deref(), 4096, control))
++            .transpose()
++            .map_err(|error| FoundryError::Semantic {
++                code: error.code,
++                message: error.detail,
++            })?;
+ 
+         // A coarse hit discovers a file, not its answer passage. Reuse the
+         // query vector to localize within a bounded union of discovered files.
+@@ -291,7 +353,10 @@ impl Engine {
+         let sources = tx.open_table(SOURCES)?;
+         let stored = tx.open_table(CHUNKS)?;
+         let mut counters = CandidateCounters {
+-            candidates_full: candidates_full || ordinary.truncated || refinement_limited,
++            candidates_full: candidates_full
++                || ordinary.truncated
++                || refinement_limited
++                || fused_units.as_ref().is_some_and(|units| units.truncated),
+             ..CandidateCounters::default()
+         };
+         let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
+@@ -359,24 +424,38 @@ impl Engine {
+         // Preserve similarity order after fair admission, using only the
+         // ordinary locations already admitted and the exact refined joins.
+         ordinary.items.sort_by_key(|(rank, _)| *rank);
+-        let refined_locations = refined.iter().enumerate().flat_map(|(rank, refined)| {
+-            refined
+-                .locations
+-                .iter()
+-                .copied()
+-                .map(move |location| (rank, &refined.hit, location, true))
+-        });
+-        let ordinary_locations = ordinary
+-            .items
++        // EXPERIMENT (fusion / one score): each dense location also carries
++        // its list (0 served generation, 1 fused generation) and its rank there.
++        let mut dense_order: Vec<_> = refined
+             .iter()
+-            .map(|(rank, location)| (refined_count + rank, &dense.hits[*rank], *location, false));
+-        for (rank, hit, location, is_refined) in refined_locations.chain(ordinary_locations) {
++            .enumerate()
++            .flat_map(|(rank, refined)| {
++                refined.locations.iter().copied().map(move |location| {
++                    let key = dense.input_key(&refined.hit);
++                    (rank, &refined.hit, location, key, true, 0, rank)
++                })
++            })
++            .collect();
++        dense_order.extend(ordinary.items.iter().map(|(rank, location)| {
++            let hit = &dense.hits[*rank];
++            let rank = refined_count + rank;
++            (rank, hit, *location, dense.input_key(hit), false, 0, rank)
++        }));
++        if let (Some(second), Some(units)) = (dense.fusion.as_deref(), fused_units.as_mut()) {
++            units.items.sort_by_key(|(rank, _)| *rank);
++            dense_order.extend(units.items.iter().map(|(rank, location)| {
++                let hit = &second.hits[*rank];
++                (*rank, hit, *location, second.input_key(hit), false, 1, *rank)
++            }));
++        }
++        let mut dense_lists = Vec::new();
++        for (rank, hit, location, input_key, is_refined, list, list_rank) in dense_order {
+             control.check()?;
+             let trace_location = |outcome: &str| {
+                 if let Some(trace) = control.trace() {
+                     trace.record(serde_json::json!({
+                             "stage": "selection", "origin": "dense", "rank": rank,
+-                            "distance": hit.distance, "input_key": dense.input_key(hit), "outcome": outcome,
++                            "distance": hit.distance, "input_key": input_key, "outcome": outcome,
+                             "representation": location.kind, "refined":is_refined,
+                             "unit": {"workspace_id": workspace_id, "path": location.path,
+                                 "sha256": location.source_sha256, "start": location.start,
+@@ -411,6 +490,20 @@ impl Engine {
+                 (location.path.clone(), location.start, location.end),
+                 Some(location.kind),
+             ));
++            dense_lists.push((list, list_rank));
++        }
++        // EXPERIMENT: `FOUNDRY_EXPERIMENT_ONE_SCORE` fuses dense and lexical
++        // lists into one order; a fused generation alone fuses only the dense lists.
++        let one_score = std::env::var_os("FOUNDRY_EXPERIMENT_ONE_SCORE").is_some();
++        let dense_entries = |placed: &mut Vec<_>, dense_lists: &mut Vec<(usize, usize)>| {
++            std::mem::take(placed)
++                .into_iter()
++                .zip(std::mem::take(dense_lists))
++                .map(|((unit, kind), (list, rank))| (unit, kind, list, rank))
++                .collect::<Vec<_>>()
++        };
++        if dense.fusion.is_some() && !one_score {
++            placed = experiment_rrf(dense_entries(&mut placed, &mut dense_lists), control);
+         }
+         let freshness = self.freshness_in(&tx)?;
+         let word = dense.coverage_at(freshness.source_revision);
+@@ -453,6 +546,15 @@ impl Engine {
+                 };
+                 trace.record(serde_json::json!({"stage":"placement_policy","policy":policy,"coverage":word,"lexical_first":eligible_refined == 0,"refined_hits":refined_count,"eligible_refined_locations":eligible_refined,"refinement_files":refinement_paths.len()}));
+             }
++        } else if one_score {
++            let mut entries = dense_entries(&mut placed, &mut dense_lists);
++            let mut tier_rank = [0usize; 2];
++            for candidate in &lexical {
++                let tier = usize::from(candidate.tier != 1);
++                entries.push((candidate.selection_unit(prose), None, 2 + tier, tier_rank[tier]));
++                tier_rank[tier] += 1;
++            }
++            placed = experiment_rrf(entries, control);
+         } else {
+             placed.extend(
+                 lexical
+@@ -516,13 +618,22 @@ impl Engine {
+                 }));
+             }
+         };
++        // EXPERIMENT: `FOUNDRY_EXPERIMENT_ONE_SCORE=nocap` leaves the token
++        // budget as the only cut: no per-file cap, the largest candidate limit.
++        let nocap = one_score
++            && std::env::var_os("FOUNDRY_EXPERIMENT_ONE_SCORE").is_some_and(|v| v == "nocap");
++        let (per_file_cap, limit) = if nocap {
++            (usize::MAX, 64)
++        } else {
++            (PER_FILE_CAP, limit)
++        };
+         for (rank, (unit, kind)) in placed.iter().enumerate() {
+             if !seen.insert(unit) {
+                 trace_placement(rank, unit, *kind, "duplicate");
+                 continue;
+             }
+             let count = per_file.entry(unit.0.clone()).or_default();
+-            if *count == PER_FILE_CAP {
++            if *count == per_file_cap {
+                 if prose {
+                     overflow.push((rank, unit, *kind));
+                     continue;

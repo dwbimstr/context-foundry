@@ -544,7 +544,12 @@ verification steps.
 `g2.py` reads the token counter at `/private/tmp/cf-o200k/target/release/o200k_count`;
 place the preserved `o200k` directory there (or build it) before a G2 run. Stores are
 copied with `cp -cR` and brought to the current schema with `foundry repair-index
---store <copy>`.
+--store <copy>`. Keep stores, profiles and worker bundles outside `/private/tmp`:
+on 2026-10-22 a macOS cleanup of that directory deleted files from every store built
+there from 2026-10-17 to 2026-10-19. The working set is now
+`datasets/context-foundry-g2-work`. Re-signing the surviving worker changed its
+executable SHA-256 (`46924de7…` → `b0f7e020…`), not its function digest, and
+reproduced the cards and hierarchy G2 runs row for row (388/388 each).
 
 ## Measurements
 
@@ -576,7 +581,12 @@ copied with `cp -cR` and brought to the current schema with `foundry repair-inde
 2. **G1 with a profile.** For each profile that passed G2: `g1quick.sh SET WRAPPER STORE
    OUT 1/1 1` for `checker`, `qualified` and `bun`, the wrapper adding the profile to
    every `mcp`. Pass: every target and guard that passes without the profile passes
-   with it (the no-profile verdict is PASS, [validation](validation.md)).
+   with it (the no-profile verdict is PASS, [validation](validation.md)). A rust
+   store for `checker`/`qualified` must first import the frozen `inputs/index.scip`:
+   `make_manifest.py` (status, artifact, `inputs.json`, out, `ra-config.json`), then
+   `foundry import-scip`. Without that compiler graph every `references` call
+   reports `coverage:unavailable`, and the usage targets fail (U1 74.6% and U2 38.2%,
+   where 80% and 40% are needed, in a 2026-10-22 run whose files were not kept).
 3. **Parity.** `CF_EMBED_DEV_PROFILE=<profile> cargo test --locked --test embed_worker
    -- --ignored dev_real_worker_batched_and_single_sequence_vectors_agree` for each
    profile; the test starts the worker bundle the profile names. Pass: cosine ≥ 0.9999
