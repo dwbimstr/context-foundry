@@ -1793,11 +1793,14 @@ and [verification.rs](../../src/neural/index/verification.rs), shared by the CLI
   including when no source revision changed. Unchanged scans do not dirty the view.
 - The disposable frontier holds at most 1,024 combined paths/keys and 1 MiB of their
   text. Overflow drops the view and requires reconciliation. The retained view has a
-  conservative 1 GiB logical-payload bound (not allocator overhead or total RSS); each
-  published metadata file keeps its 256 MiB bound, counted with exact JSON escapes.
-  The earlier 256 MiB view bound with worst-case escapes refused about 112k-card
-  repositories (2026-10-17). Checkpoints of the current accounting use a separate key,
-  so neither accounting restores the other's. Refresh is paged through the existing
+  conservative 2 GiB logical-payload estimate bound (not allocator overhead or total
+  RSS); each published metadata file keeps its 256 MiB bound, checked against the
+  exact compact JSON publication writes. Worst-case estimates refused about
+  112k-card repositories (2026-10-17), then a rust-lang/rust hierarchy whose 182 MiB
+  label map they counted as 277 MiB and whose view they estimated at 1.03 GiB
+  (2026-10-21). The vector payload (2 GiB) is the next limit: that hierarchy's 624,325
+  vectors use about 89% of it. Checkpoints of the current accounting use a separate key, so
+  neither accounting restores the other's. Refresh is paged through the existing
   owner steps. Restart, cancellation of a taken view, identity change, purge and
   explicit mapping audit/repair can rebuild it from redb when authoritative inputs
   changed. No new durable journal, schema, table or thread is added: the schema-9

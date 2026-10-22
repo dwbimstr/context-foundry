@@ -169,10 +169,12 @@ also stored for CLI status/restart. These timings can overlap and exclude unsamp
 in-flight time; they are not additive CPU utilization or device profiling. Examined
 unit/reuse counters can revisit priority sources; coverage counts remain unique.
 
-Publication refuses any metadata file over 256 MiB (counted with exact JSON escapes), a
-logical mapping view over 1 GiB, assembled f32 vectors over 2 GiB, or serialized ANN
-data over 4 GiB, preserving the accepted cache and previous generation. These are
-payload bounds, not total-process RAM guarantees.
+Publication refuses any metadata file over 256 MiB (checked against the exact JSON
+it writes), a logical mapping-view estimate over 2 GiB, assembled f32 vectors over
+2 GiB, or serialized ANN data over 4 GiB, preserving the accepted cache and previous
+generation. These are payload bounds, not total-process RAM guarantees. A complete
+hierarchy of rust-lang/rust (62,000 files, 685,623 unit locations sharing 624,325
+vectors) uses about 89% of the vector bound, so larger repositories need it revisited.
 Cold ANN construction and threshold compaction still build in memory; ordinary small
 edits use the bounded delta described above. Real-model semantic throughput at
 60,000–80,000 files and task-quality improvements remain unaccepted. The mixed-size
