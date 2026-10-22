@@ -1,6 +1,6 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-## Current status — 2026-10-19
+## Current status — 2026-10-21
 
 This section owns current status; other documents link here, and dated paragraphs
 below are history.
@@ -12,21 +12,27 @@ below are history.
 - **Enable rule (owner, 2026-10-19).** No mean-token clause. A candidate must locate
   significantly more definitions (p < 0.025), lose no verbatim definition bodies net,
   and stay within the 2,048-token cap; mean tokens are reported only.
-- **Scores at 2,048 tokens (located / verbatim body).** Default lexical 0/0 of 388;
+- **Scores at 2,048 tokens (located / verbatim body, of 388).** Default lexical 0/0;
   experimental lexical 13/10; Gemma address cards (default recipe) 136/120, unchanged
-  from 2026-10-08 (139/123). On bun only: file overviews 77/45, cards 93/78,
-  complete hierarchy 115/104 of 191.
+  from 2026-10-08 (139/123); complete hierarchy **169/151** (rust 54/47, bun 115/104).
+  File overviews (bun only) 77/45 of 191.
 - **Decided.** Breadth-first packing is rejected: +14 located but −95 verbatim
   bodies. Experimental lexical passes G2 but stays off for 001 T010's anchored and
-  agent-task gates. Complete hierarchy passes on bun; preparing rust (about 590,000
-  vectors, an estimated 8–9 hours of Metal time) is the evidence a recipe decision needs.
-- **Fixed.** Semantic publication refused repositories above about 100k cards since
-  2026-10-09; it now counts exact JSON lengths and fences old checkpoints.
+  agent-task gates; it also lowers hierarchy (169 → 155).
+- **Recipe decision pending (owner).** Complete hierarchy passes the G2 rule against
+  cards (+78/−45, p = 0.0019) at 1.8–2.1 times the units, 5.9 hours of Metal time for
+  rust (cards: 72 minutes) and 1.3 GB more serving memory. Default promotion still
+  needs the G1 gates and held-out questions.
+- **Fixed.** Semantic publication refused large repositories through worst-case size
+  estimates (about 100k cards since 2026-10-09; a 685,623-unit hierarchy on
+  2026-10-21). It now counts exact JSON and fences old checkpoints; the vector bound
+  (89% used by rust's hierarchy) is the next scale limit.
 - **Next engineering targets, by G2 loss stage (cards):** target unit never retrieved
   (120 = 45 file absent + 75 unit absent), cut by placement limits (95), omitted by
   the packer (37).
 - **Open.** The 6,000-file watcher test is intermittent on this Mac (FOLLOWUP F18).
   Acceptance needs held-out questions (F4). Evidence:
+  [rust hierarchy](validation.md#complete-hierarchy-on-rust--2026-10-21),
   [rule change](validation.md#g2-rule-without-the-token-clause--2026-10-19),
   [G2 results](validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17).
 

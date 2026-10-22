@@ -1,5 +1,51 @@
 # Validation
 
+## Complete hierarchy on rust — 2026-10-21
+
+Complete `hierarchy-v1` now has G2 results on both corpora. Under the 2026-10-19 rule
+it beats the address-card default (`scripts/g2.sh compare`, K = 2):
+
+| 2,048 tokens | Cards (default) | Complete hierarchy |
+| --- | --- | --- |
+| Located, all 388 | 136 | **169** (+78/−45, p = 0.0019) |
+| Verbatim bodies, all 388 | 120 | **151** (+78/−47) |
+| rust: located / bodies | 43 / 42 | 54 / 47 |
+| oh-my-pi: located / bodies | 93 / 78 | 115 / 104 |
+| Mean delivered tokens | 2021.9 | 2023.3 |
+| Serving owner peak footprint, rust | 1.95 GB | 3.24 GB |
+| Indexed units, rust / oh-my-pi | 332,732 / 112,549 | 685,623 / 199,592 |
+
+Rust alone is +35/−24 (p = 0.096): same direction as oh-my-pi, not significant on
+its own. Experimental behavior again lowers hierarchy, to 155 (+3/−17 against
+hierarchy). The gain churns: 45 questions that cards answer, hierarchy loses.
+
+**Cost.** Embedding and publication took 5.9 hours of Metal time for 685,623 units
+(624,325 distinct vectors, 101.6 million tokens), against the 8–9 hours estimated.
+Rust's cards take 72 minutes. A `library/`-only index was considered and rejected:
+all 197 rust answers are in `library/` (4% of files), but non-library code supplies
+57% of today's dense candidates and delivered items, appearing in 181 of 197
+answers, so dropping it would flatter both recipes.
+
+**Two more worst-case estimates blocked publication.** After 5.5 hours and 597,282
+vectors, publication refused: its pre-check counted the label map at 277 MiB against
+the reader's 256 MiB limit, while the real file is 182 MiB (the fixed 160 bytes per
+location assumed 20-digit offsets). The mapping-view estimate would also have reached
+1.03 GiB against its 1 GiB bound. Publication now counts the exact compact JSON it
+writes (a regression test bounds the count between the written size and the label
+ordinals at full width), and the view estimate bound is 2 GiB. The resumed pass
+reused all cached vectors and embedded the remaining 27,043 in 23 minutes; 17
+publication retries had cost 20 minutes. The 2 GiB vector bound is next: this
+repository uses 89% of it.
+
+**Decision for the owner.** Hierarchy passes the G2 rule and is the better measured
+recipe, at 1.8–2.1 times the units, 5× the rust preparation time and 1.3 GB more
+serving memory. Promoting it to the default still needs the G1 gates and held-out
+questions (F4), which spec 009's promotion rule requires. Receipt:
+[g2-hierarchy-rust-2026-10-21.json](review/g2-hierarchy-rust-2026-10-21.json). Local
+gates on Rust 1.97.1 and 1.90.0 pass all five: 1,281 tests passed, 0 failed, 34
+ignored. A GPT-6.1 Sol cross-lab review returned SHIP; its two minor findings (vector
+counting in the docs, an inexact test tolerance) were fixed. No CI ran for this change.
+
 ## G2 rule without the token clause — 2026-10-19
 
 The owner dropped the frozen rule's "no more mean delivered tokens" clause: it
