@@ -77,40 +77,53 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 
 ## F4. Sealed independent 48-question evaluation (resume step 6)
 
-- **Why blocked:** the sealed set is private and lives only in the resume archive. Root
-  has never read its questions or labels. On 2026-10-22 the archive was not on the
-  owner's Mac (Spotlight, and a home search eight levels deep) or in any `dwbimstr`
-  GitHub release. It was last at `/workspace/context-foundry-resume-20261011.tar.gz`
-  on the 2026-10-11 checkpoint sandbox.
-- **Required resource:** the restored archive ([`fetch-resume.sh`](scripts/cloud/fetch-resume.sh)
-  needs its URL or release, asset name and SHA-256). The candidate freeze is done
-  (pre-registration below).
-- **Resume:**
-  1. Verify these identities. Verifying a hash does not authorize reading the labels.
-     - manifest `01a9ad47473c0b99f82bee5f2fabf67cf96c86134e9627c63bd50cb67d80d429`
-     - seal `5d599fb9d13a9950233491dd8c4881ef44cbcdbb06287ba64cd0bcc0c836da22`
-     - protocol `7bb60b43908269410cfdb29bc35086f9da684d9c0d480086907ee3c97c9d02a0`
-  2. Freeze at most three candidates in writing before releasing the set. The current
-     ones are the default lexical delivery and the experimental hierarchy placement
-     recorded in [validation](docs/validation.md#cloud-continuation--2026-10-12).
-  3. Keep the protocol: 2,048-token budget, a paired test with a simultaneous interval,
-     and the token, resource and latency guards. Acceptance needs at least 13 gains and
-     zero losses out of 48. If its token guard compares mean delivered tokens, the
-     owner removed that clause on 2026-10-19 (keep the 2,048-token cap); record the
-     amendment in writing before releasing the set.
-- **Pre-registration (owner, 2026-10-22; written before the set is released).** It
-  replaces the candidate list in step 2 and is the only F4 run:
+- **Status (2026-10-22):** the sealed 48-question set is unreachable, so the owner
+  replaced it with a fresh sealed set (pre-registration below). The archive is not on
+  the owner's Mac (Spotlight, a home search eight levels deep, iCloud Drive; no Time
+  Machine destination). It is not in any release or gist of the 43 `dwbimstr`
+  repositories. The one recorded remote host, `167.233.195.50`, now presents a changed
+  host key and was not contacted further. The archive was last at
+  `/workspace/context-foundry-resume-20261011.tar.gz` on the 2026-10-11 checkpoint
+  sandbox. Its identities, should it reappear: manifest `01a9ad47473c0b99f82bee5f2fabf67cf96c86134e9627c63bd50cb67d80d429`,
+  seal `5d599fb9d13a9950233491dd8c4881ef44cbcdbb06287ba64cd0bcc0c836da22`, protocol
+  `7bb60b43908269410cfdb29bc35086f9da684d9c0d480086907ee3c97c9d02a0`. It does not
+  reopen this decision.
+- **Pre-registration (owner, 2026-10-22; committed before any question exists).** The
+  only F4 run:
   1. **Candidate:** complete `hierarchy-v1`, `parent_tokens` 64, `card_tokens` 512
      (recipe `hierarchy-v1+overview4+context2+kinds2+units5:512+parent64`, EmbeddingGemma 2
      function `01dcfe57…`, served by `f06ec74`). One candidate, K = 1.
   2. **Baseline:** Gemma address cards (`cards-v1+kinds1+units5:128`, same function and
      binary), at 2,048 tokens.
-  3. **Rule:** the sealed protocol's pass (at least 13 gains and zero losses of 48) and
-     its resource and latency guards. It adds no net loss of verbatim definition bodies
-     and every response within 2,048 tokens; mean tokens are reported only (2026-10-19).
-  4. **Arms:** exactly these two. Fusion, one score and the no-cap variant are not
+  3. **Questions:** 300 new ones, 150 over rust-lang/rust `library/` and 150 over
+     oh-my-pi, under G2's rules and tools. They are written by agents other than the
+     captain, checked by G2's `build.py` and `verify.py --partial` at the same pinned
+     commits, and kept in `datasets/context-foundry-f4/`.
+     - No answer may be one of G2's 388.
+     - Each author walks its partition's candidates in SHA-256 order of
+       `f4-2026-10-22:<path>:<name>:<line>`. It skips one only when no question that
+       passes `verify.py` can identify it, and the skips are counted.
+     - Authors read source only: they never run Foundry or read a run, trace or
+       attribution.
+     - A sealer freezes `questions.jsonl` with `FROZEN.txt` (SHA-256, counts,
+       `verify.py` summary). The captain reads only `FROZEN.txt` and the comparison's
+       totals, never questions, answers, responses or author transcripts.
+  4. **Rule:** the G2 rule with K = 1, applied by `scripts/g2.sh compare`. Located:
+     hierarchy at least as high as cards with exact one-sided McNemar p < 0.05.
+     Verbatim definition bodies: no net loss. Every response within 2,048 tokens;
+     any missing, duplicate, errored, retried or refused row is INVALID and is rerun.
+     Mean tokens are reported only. The sealed protocol's resource and latency guards
+     were lost with the archive; serving footprint (rust: cards 1.95 GB, hierarchy
+     3.24 GB) and run times are reported, not gated.
+  5. **Why not 13 gains and 0 losses:** that rule fit an asymmetric comparison whose
+     baseline could not win. Between two semantic arms each wins some questions
+     (hierarchy lost 45 of 388 to cards on G2), so zero losses is unattainable.
+  6. **Sample size:** at G2's rates (20.1% gains, 11.6% losses) this test passes with
+     probability 20% at 48 questions and 81% at 300; at half of G2's margin, 9% and
+     33%. With no real difference it passes at most 5% of the time.
+  7. **Arms:** exactly these two. Fusion, one score and the no-cap variant are not
      candidates; they would need their own pre-registration.
-  5. **Verdict:** recorded in [validation](docs/validation.md) whether it passes or
+  8. **Verdict:** recorded in [validation](docs/validation.md) whether it passes or
      fails. A fail keeps cards and closes the recipe question.
 
 ## F5. Private G1/G2 question sets — resolved 2026-10-17
