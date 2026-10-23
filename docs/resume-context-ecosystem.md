@@ -26,8 +26,9 @@ below are history.
   Existing card stores serve lexical results until `semantic prepare` runs for the new
   recipe.
 - **Not candidates.** One score with fusion (185/165 on G2, p = 0.057 against hierarchy)
-  is an unmerged experiment that would need its own pre-registration. Its serving cost
-  is measured next.
+  is an unmerged experiment that would need its own pre-registration. Its serving
+  owner peaks at 4.91 GB on rust, against 3.34 GB for hierarchy and 1.97 GB for cards
+  measured the same way ([validation](validation.md#f4-and-the-hierarchy-default--2026-10-22)).
 - **Losses now.** Ranking loses 79 answers to the caps and 44 to the packer; recall
   loses 80 never retrieved. Hierarchy's 17 newly lost G1 tasks are mostly tier-1
   lexical hits placed behind every dense unit.
