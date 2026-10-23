@@ -60,29 +60,33 @@ impl Queue {
             self.status.overflows = self.status.overflows.saturating_add(1);
         }
     }
-    fn insert(&mut self, path: String) {
+    fn insert(&mut self, path: &str) {
         if self.dirty {
             self.status.coalesced = self.status.coalesced.saturating_add(1);
             return;
         }
-        if self.paths.iter().any(|p| {
-            path == *p
-                || path
-                    .strip_prefix(p)
-                    .is_some_and(|rest| rest.starts_with('/'))
-        }) {
+        if self
+            .paths
+            .iter()
+            .any(|p| path == *p || is_descendant(path, p))
+        {
             self.status.coalesced = self.status.coalesced.saturating_add(1);
             return;
         }
-        let prefix = format!("{path}/");
-        self.paths.retain(|p| !p.starts_with(&prefix));
-        self.bytes = self.paths.iter().map(String::len).sum();
+        self.paths.retain(|p| {
+            if is_descendant(p, path) {
+                self.bytes -= p.len();
+                false
+            } else {
+                true
+            }
+        });
         if self.paths.len() == MAX_PATHS || self.bytes.saturating_add(path.len()) > MAX_PATH_BYTES {
             self.dirty(true);
             return;
         }
         self.bytes += path.len();
-        self.paths.insert(path);
+        self.paths.insert(path.to_owned());
     }
 }
 
@@ -339,7 +343,7 @@ impl Watch {
                     q.dirty(true);
                     continue;
                 };
-                q.insert(path.to_owned());
+                q.insert(path);
             }
         }
         q.last = Instant::now();
@@ -556,6 +560,11 @@ impl Watch {
             }
         }
     }
+}
+/// Whether `path` lies strictly below `parent` on a component boundary.
+fn is_descendant(path: &str, parent: &str) -> bool {
+    path.strip_prefix(parent)
+        .is_some_and(|rest| rest.starts_with('/'))
 }
 fn policy_hint(path: &Path) -> bool {
     if path.components().any(|c| c.as_os_str() == ".git") {
