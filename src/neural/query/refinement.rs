@@ -1,4 +1,4 @@
-//! Opt-in hierarchy localization: owner scopes and proofs, the bounded working
+//! Hierarchy localization (experimental prose selection only): owner scopes and proofs, the bounded working
 //! set and candidate window, and `DenseWindow::refine`, with their tests. The
 //! dense index, the provider runtime and the query entry points stay in the
 //! parent module.

@@ -1174,6 +1174,7 @@ def main():
                 "geometry": {"v": 1, "input_tokens": 8192, "batch_tokens": 8192, "sequences": 8},
             },
             "query_template": "task: search result | query: {text}", "card_tokens": 8192, "batch": 8,
+            "representation": {"kind": "cards-v1"},
             "memory_ceiling_bytes": 4 * 1024**3, "load_timeout_seconds": 120,
         }
         profile_path = out / "native-profile.json"

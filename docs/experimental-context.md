@@ -237,20 +237,22 @@ long-context Metal parity, throughput and task quality are still unexecuted. Sou
 plans are bounded by 2 MiB per source, 16,384 windows and 16 MiB accumulated context
 text, plus parser/tokenizer/array overhead. Fresh-card retention remains 2 MiB per source
 with bounded fallback. Independent representations are now available through the
-opt-in hierarchy recipe below; late chunking remains unimplemented. See [009 T009](../specs/009-optional-semantic-retrieval/spec.md#t009--use-model-owned-geometry-and-contextual-representations)
+hierarchy recipe below, the default since F4 (2026-10-22); late chunking remains unimplemented. See [009 T009](../specs/009-optional-semantic-retrieval/spec.md#t009--use-model-owned-geometry-and-contextual-representations)
 and [validation](validation.md#model-aware-bodyparent-inputs--2026-10-10).
 
 ## Independent representations and the Linux embedding worker
 
-To retain body vectors and add independent parent/file overviews and current
-multi-source brief vectors, set this top-level semantic-profile field:
+Body vectors with independent parent/file overviews and current multi-source brief
+vectors are the default since F4 (2026-10-22): a profile without `representation`
+selects the equivalent of
 
 ```json
 "representation": {"kind": "hierarchy-v1", "parent_tokens": 64}
 ```
 
-Use `card_tokens` of at least 256 with the 64-token parent allowance. Run ordinary
-`semantic prepare` or the explicitly enabled continuous MCP lane.
+with `card_tokens` 512. Keep at least 256 card tokens with the 64-token parent
+allowance. To keep address cards, name `{"kind": "cards-v1"}` with `card_tokens` 128.
+Run ordinary `semantic prepare` or the explicitly enabled continuous MCP lane.
 Source overviews are bounded extracts, not generated architectural claims. Area
 vectors embed existing current multi-source briefs; this setting does not invent
 briefs or start generation. Enable brief delivery to expose their derived text.

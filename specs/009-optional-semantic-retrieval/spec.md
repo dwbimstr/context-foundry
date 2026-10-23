@@ -1388,6 +1388,32 @@ they do not assign causes to the 249 historical G2 misses.
   outside Git. Validation records the executed diagnostic fixtures; the full G1/G2,
   held-out quality and installed-artifact checks are not claimed by those fixtures.
 
+**Default promotion (F4, 2026-10-22).** Complete `hierarchy-v1` (`parent_tokens` 64,
+`card_tokens` 512) replaces T004's address-card representation ("Cards, not bodies":
+one 128-token card per definition and section) as the default. Placement, the dense
+window and every delivery limit are unchanged; the shared context contract names no
+representation, so it does not change. Evidence: G2 169 against 136 (+78/−45,
+p = 0.0019); G1 PASS on all three sets with no target or guard regressing; review of the 17
+newly lost G1 tasks; and the pre-registered F4 on a fresh sealed set of 300, 130 against 100
+(+64/−34, p = 0.0016; verbatim bodies 97 → 128). See
+[validation](../../docs/validation.md#f4-and-the-hierarchy-default--2026-10-22).
+
+- **Profiles.** A profile without `representation` now selects this recipe, and the card
+  limit defaults to 512. Address cards are named explicitly:
+  `"representation": {"kind": "cards-v1"}` with `"card_tokens": 128`. Every cards
+  profile must name it. One that states 128 tokens without a representation (the
+  2026-10-08 frozen profiles) is refused at load with that instruction. One that
+  states 256 or more without a representation now loads as hierarchy, because a
+  64-token parent fits.
+- **Cutover.** A store prepared under a profile that omitted its representation now
+  reports `profile_mismatch`, because the recipe differs, and serves lexical results
+  until `semantic prepare` runs for the new recipe. A cards generation is never served
+  as hierarchy. Cached card vectors stay keyed by their exact inputs.
+- **Costs.** 1.8–2.1 times the units, 5.9 hours of Metal preparation for rust-lang/rust
+  against 72 minutes, and a 3.24 GB serving peak against 1.95 GB. Its vectors use 89% of
+  the 2 GiB publication bound at 62,035 files, so step 1 of the scale plan below is now
+  due.
+
 T005 sandbox repair continuation (2026-10-10): the existing behavior-context opt-in
 now admits [anchorless prose selection](../001-source-state-recovery/contracts/context-v2.md#experimental-anchorless-prose-selection--009-t005-2026-10-10).
 Plain-language requests no longer promote coincidentally named definitions ahead of
@@ -2187,7 +2213,7 @@ checks require the deferred native runner. Linux worker/model results are record
 
 #### T009 independent representations — 2026-10-11
 
-`hierarchy-v1` is opt-in, with the same `parent_tokens` field as body-v1. It reuses
+`hierarchy-v1` was opt-in until F4 made it the default (2026-10-22, above). It uses the same `parent_tokens` field as body-v1. It reuses
 body inputs unchanged and adds independent parent and file inputs, each embedded
 normally under the selected document function. Short scopes include all source;
 long scopes select up to 128 distributed declarations (signature plus a bounded summary

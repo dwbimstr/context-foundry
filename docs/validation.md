@@ -1,5 +1,61 @@
 # Validation
 
+## F4 and the hierarchy default — 2026-10-22
+
+**F4 passes; complete hierarchy is the default.** The sealed 48-question set was
+unreachable (see [FOLLOWUP F4](../FOLLOWUP.md#f4-sealed-independent-evaluation--passed-2026-10-22)).
+The owner chose a fresh sealed set, pre-registered in `d29314d` before any question
+existed.
+
+- **Authoring.** Six agents (three Opus 5.5, three GPT-6 Astra) wrote 300 questions,
+  150 over rust-lang/rust `library/` and 150 over oh-my-pi. Each author had a disjoint
+  third of the modules, walked candidates in SHA-256 order and skipped 57 of 357 (54
+  over the per-file or per-module cap, 3 not unique).
+- **Checks.** None of the answers is a G2 answer. G2's unmodified `verify.py` passes
+  the merged set, self-test included (46/46). Its self-test cannot run on a single
+  50-row part, so authors checked their parts with it stubbed.
+- **Seal.** A GPT-6 Astra sealer froze `questions.jsonl` (`0083fd2a…`); its
+  report-only audit found 29 of 30 sampled rows correct and unique and 1 rust row
+  wrong, which stays in. The captain read no question, answer or author transcript.
+
+Both arms ran `f06ec74` with EmbeddingGemma 2 at 2,048 tokens, a minute apart, and
+`scripts/g2.sh compare` applied the pre-registered rule (K = 1):
+
+| F4, 300 questions | Cards | Complete hierarchy |
+| --- | --- | --- |
+| Located | 100 | **130** (+64/−34, p = 0.0016) |
+| Verbatim bodies | 97 | **128** (+64/−33) |
+| rust: located / bodies | 44 / 43 | 51 / 50 |
+| oh-my-pi: located / bodies | 56 / 54 | 79 / 78 |
+| Mean delivered tokens | 2022.7 | 2021.5 |
+
+No row errored, retried or exceeded the cap. The archive's resource and latency
+guards were lost with it; the serving peak on rust (cards 1.95 GB, hierarchy
+3.24 GB) is reported, not gated.
+
+**Promotion.** A profile without `representation` now selects `hierarchy-v1` with a
+64-token parent and 512-token inputs ([spec 009](../specs/009-optional-semantic-retrieval/spec.md)).
+With such a profile the promoted build reproduces explicit hierarchy row for row on
+F4 (300/300) and on G2 (388/388, same session). Smoke checks of the cutover:
+
+- a cards store under the default profile reports `profile_mismatch` and serves
+  lexical results;
+- the frozen 2026-10-08 cards profile, which states 128 tokens but no representation,
+  is refused at load with the `cards-v1` instruction;
+- an explicit `cards-v1` profile still serves `semantic:ready`.
+
+**Instrument note.** After a host reboot, the unchanged `f06ec74` hierarchy arm
+differs from its morning G2 run in 36 of 388 rows: 35 token counts and 2 pass bits,
+one each way, so totals stay 169. Stores, worker and model are unchanged. Runs within
+one session are identical, and every comparison above is same-session. The cause was
+not investigated. Receipt: [f4-2026-10-22.json](review/f4-2026-10-22.json).
+
+**Checks.** Local gates on Rust 1.97.1 and 1.90.0 pass all five: 1,282 tests passed,
+0 failed, 34 ignored. A new test fixes the default, the explicit-cards recipe and the
+legacy-profile boundary. A GPT-6.1 Sol review returned SHIP; its one minor finding
+is now documented in spec 009 and covered by that test: implicit-cards profiles of 256 tokens or more
+now load as hierarchy. No CI ran.
+
 ## G1 on hierarchy, and fusion — 2026-10-22
 
 **G1 passes for complete hierarchy.** Frozen G1v4 runs every task (SAMPLE 1/1), with

@@ -2686,9 +2686,7 @@ fn a_v1_generation_is_unavailable_by_name_and_prepare_republishes_it_without_doc
 /// artifacts are the empty files the fake descriptor pins.
 #[cfg(target_os = "macos")]
 fn fake_worker_profile(dir: &Path) -> SemanticProfile {
-    use context_foundry::neural::profile::{
-        DEFAULT_BATCH, DEFAULT_CARD_TOKENS, PROFILE_VERSION, WorkerSpec,
-    };
+    use context_foundry::neural::profile::{DEFAULT_BATCH, PROFILE_VERSION, WorkerSpec};
     use context_foundry::neural::worker_runtime::fake_descriptor;
     let app = dir.join("FoundryEmbedFake.app");
     let macos = app.join("Contents/MacOS");
@@ -2720,8 +2718,8 @@ fn fake_worker_profile(dir: &Path) -> SemanticProfile {
         },
         descriptor,
         query_template: "query: {text}".into(),
-        representation: Default::default(),
-        card_tokens: DEFAULT_CARD_TOKENS,
+        representation: context_foundry::neural::partition::Representation::Address,
+        card_tokens: context_foundry::testkit::FIXTURE_CARD_TOKENS,
         batch: DEFAULT_BATCH,
         memory_ceiling_bytes: 3 << 30,
         cpu: Default::default(),

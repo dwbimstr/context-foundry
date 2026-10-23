@@ -68,8 +68,8 @@ reuses verified/resident segments. Generation v5 adds bounded location overlays,
 metadata snapshots and clean-restart publication reuse. Cold verification, unmatched/overflow restart reconciliation and compaction remain
 corpus-sized; matching changed-input checkpoints use bounded transactional lookups. T009 now implements opt-in body windows
 with bounded parent context, versioned input/call geometry and actual-token batching.
-Address profiles/caches remain usable. Opt-in hierarchy-v1 now adds independent
-parent/file/area vectors; comparative real-model quality and device parity remain open. 010 T002 now adds explicit selective HTTP
+Address profiles/caches remain usable. Complete hierarchy-v1, the default since F4
+(2026-10-22), adds independent parent/file/area vectors; device parity remains open. 010 T002 now adds explicit selective HTTP
 generation, atomic completion reuse and source-bound area summaries in schema 10.
 Opt-in continuous MCP scheduling, shared client admission and source-first derived
 context now work on both transports. Owned local generation adds pinned snapshot reuse,

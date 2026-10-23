@@ -10,7 +10,7 @@
 //! request path decides that before any model call); the candidate assembly
 //! normally places the window's units first, in similarity order, ahead of the
 //! lexical candidates (`Engine::search_candidates_semantic`). Nothing here
-//! rewrites the query or calls a second model. Opt-in hierarchy localization
+//! rewrites the query or calls a second model. Hierarchy localization (experimental prose selection only)
 //! exactly scores a bounded set of published body vectors from discovered files,
 //! reusing that query vector and retaining only current point-joined locations.
 //! A failure at any

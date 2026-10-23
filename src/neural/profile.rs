@@ -20,9 +20,10 @@ pub const PROFILE_VERSION: u32 = 2;
 pub const MAX_PROFILE_BYTES: u64 = 64 * 1024;
 /// Default supervised memory ceiling (D001 measured 1.82 GiB for 8 × 1024).
 pub const DEFAULT_MEMORY_CEILING_BYTES: u64 = 3 * 1024 * 1024 * 1024;
-/// Default card limit: tokens of one rendered card, template and special
-/// tokens included (spec 009 T004).
-pub const DEFAULT_CARD_TOKENS: u32 = 128;
+/// Default card limit: tokens of one rendered input, template and special
+/// tokens included (spec 009 T004). 512 is the promoted `hierarchy-v1`
+/// recipe's; address cards were measured at 128.
+pub const DEFAULT_CARD_TOKENS: u32 = 512;
 /// Default sequences per document call.
 pub const DEFAULT_BATCH: u32 = 8;
 /// The smallest card limit: the template, the special tokens and an
@@ -106,10 +107,12 @@ pub struct SemanticProfile {
     /// get new keys.
     #[serde(default = "default_card_tokens")]
     pub card_tokens: u32,
-    /// Opt-in body windows with bounded source-local parent context.
+    /// The partition representation. Omitted: complete `hierarchy-v1`
+    /// with a 64-token parent (the default since 2026-10-22); address cards
+    /// are named explicitly.
     #[serde(
         default,
-        skip_serializing_if = "super::partition::Representation::is_address"
+        skip_serializing_if = "super::partition::Representation::is_default"
     )]
     pub representation: super::partition::Representation,
     /// Sequences per document call (one llama.cpp context).
@@ -246,7 +249,10 @@ impl SemanticProfile {
             && parent_tokens > self.card_tokens / 4
         {
             return Err(invalid(
-                "body/hierarchy parent_tokens must be at most one quarter of card_tokens",
+                "body/hierarchy parent_tokens must be at most one quarter of card_tokens; \
+                 a profile without `representation` selects hierarchy-v1 with \
+                 parent_tokens 64 (the default since 2026-10-22), so a profile that keeps \
+                 address cards must name {\"kind\": \"cards-v1\"}",
             ));
         }
         self.check_scratch_disjoint()

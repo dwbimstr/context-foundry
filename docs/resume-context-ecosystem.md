@@ -14,30 +14,29 @@ below are history.
 - **Enable rule (owner, 2026-10-19).** Significantly more located definitions (exact
   one-sided McNemar, p < 0.05/K), no net loss of verbatim bodies, and every response
   within 2,048 tokens. Mean tokens are reported only.
-- **Scores at 2,048 tokens (located / verbatim body, of 388).** Default lexical 0/0;
-  cards (the default recipe) 136/120; complete hierarchy 169/151; one score with
-  fusion 185/165.
-- **G1 passes for hierarchy** and for one score with fusion, on all three sets, with
-  no target or guard regressing. Hierarchy loses 35 net unmarked rust tasks against
-  no profile; one score with fusion loses 7 net.
-- **Recipe decision (owner): waiting on F4.** Hierarchy passes the G2 rule against
-  cards (+78/−45) and G1. Its 17 newly lost G1 tasks are reviewed: 12 cut by the
-  placement limits (10 of them tier-1 lexical hits placed behind every dense unit),
-  4 packing omissions and 1 recall miss
-  ([review](validation.md#g1-on-hierarchy-and-fusion--2026-10-22)). F4 is
-  pre-registered as hierarchy against cards, K = 1 ([FOLLOWUP](../FOLLOWUP.md)). Its
-  sealed set is not on this Mac or GitHub, so F4 has not run. Promotion, the one-score
-  serving-cost check and the scale work wait on its verdict. One score with fusion
-  (185/165, p = 0.057 against hierarchy) is an unmerged experiment, not a candidate.
-- **Losses now.** Removing the per-file cap and 32-unit limit under one score
-  changed one question each way, though the caps still exclude 79 answers. Ranking
-  loses those 79 and 44 the packer omits; recall loses 80 never retrieved.
-- **Scale.** The f32 vector payload (89% used) and the label map (71%) bind near 69k
-  and 87k files. The proposed plan streams vectors and interns label-map strings
-  ([spec 009](../specs/009-optional-semantic-retrieval/spec.md), *Scale ceiling
-  plan*); it is not implemented.
-- **Open.** No CI runs; local gates are the receipt. Acceptance needs F4 (held-out
-  questions). The 6,000-file watcher test is intermittent on this Mac (F18).
+- **Default recipe: complete hierarchy (F4, 2026-10-22).** F4 ran once, as
+  pre-registered, on a fresh sealed set of 300 questions: hierarchy located 130
+  against cards' 100 (+64/−34, p = 0.0016; verbatim bodies 97 → 128). With G2
+  (169 against 136), G1 (PASS on all sets) and the review of its 17 newly lost G1 tasks
+  ([evidence](validation.md#f4-and-the-hierarchy-default--2026-10-22)), a profile
+  without `representation` now selects `hierarchy-v1`. Address cards stay selectable
+  as `cards-v1`.
+- **What it costs.** 1.8–2.1 times the units, 5.9 hours of Metal preparation for
+  rust-lang/rust against 72 minutes, and a 3.24 GB serving peak against 1.95 GB.
+  Existing card stores serve lexical results until `semantic prepare` runs for the new
+  recipe.
+- **Not candidates.** One score with fusion (185/165 on G2, p = 0.057 against hierarchy)
+  is an unmerged experiment that would need its own pre-registration. Its serving cost
+  is measured next.
+- **Losses now.** Ranking loses 79 answers to the caps and 44 to the packer; recall
+  loses 80 never retrieved. Hierarchy's 17 newly lost G1 tasks are mostly tier-1
+  lexical hits placed behind every dense unit.
+- **Scale.** Hierarchy's vectors use 89% of the 2 GiB publication bound at 62,035 files;
+  streaming vectors into the index builder (spec 009, *Scale ceiling plan* step 1) is
+  now due. The label map binds next, near 87k files.
+- **Open.** No CI runs; local gates are the receipt. The 6,000-file watcher test is
+  intermittent on this Mac (F18). After a reboot, repeat G2 runs differ in 36 of 388
+  rows with equal totals; compare arms within one session.
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the
 region's own declaration when over budget (`+context2`), and long overviews keep

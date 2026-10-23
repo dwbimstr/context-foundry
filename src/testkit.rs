@@ -1256,6 +1256,10 @@ pub fn write_byte_tokenizer(dir: &Path) -> (std::path::PathBuf, String) {
 /// providers (one of the supported Matryoshka widths).
 pub const FIXTURE_DIMENSIONS: u32 = 768;
 
+/// The fixture profile's card limit: address cards at their measured size.
+/// Fixtures name their representation; they do not follow the default.
+pub const FIXTURE_CARD_TOKENS: u32 = 128;
+
 /// A full fake model directory (the artifacts the profile names: a GGUF
 /// placeholder and the byte tokenizer) plus the strict v2 profile JSON
 /// naming it. `mutate` may adjust the descriptor (e.g. a different GGUF
@@ -1311,8 +1315,8 @@ pub fn write_semantic_profile(
         },
         descriptor,
         query_template: "query: {text}".into(),
-        representation: Default::default(),
-        card_tokens: crate::neural::profile::DEFAULT_CARD_TOKENS,
+        representation: crate::neural::partition::Representation::Address,
+        card_tokens: FIXTURE_CARD_TOKENS,
         batch: crate::neural::profile::DEFAULT_BATCH,
         memory_ceiling_bytes: 1024,
         cpu: Default::default(),
