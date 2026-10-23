@@ -74,11 +74,15 @@ pub const METRIC: &str = "cos";
 /// Manifest and label-map files are bounded before they are parsed.
 const MAX_META_BYTES: u64 = 256 * 1024 * 1024;
 /// An index file larger than this is refused before it is read into memory.
+/// Publication refuses one whose f16 vectors alone would exceed it before
+/// building, and checks the serialized length after.
 const MAX_INDEX_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-/// Logical f32 payload retained while building a generation. This bounds
-/// scratch payloads, not allocator overhead or total process RSS.
+/// Decoded f32 vectors a publication holds at once: one page of the cache
+/// lookup, added to the f16 index under construction and then dropped.
+/// 2026-10-22: replaces a 2 GiB bound on all of a generation's vectors,
+/// which rust-lang/rust's 624,325 hierarchy vectors used to 89%.
 #[cfg(feature = "semantic")]
-const MAX_VECTOR_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub(crate) const LOOKUP_PAGE: usize = 1024;
 /// Approximate payload retained by the publication mapping view: each unit's
 /// partition row, reverse reference and location together. This is memory, not
 /// a file: the label-map file it publishes stays under [`MAX_META_BYTES`]. The
@@ -145,17 +149,27 @@ fn serialized_bytes(value: &impl Serialize) -> FResult<u64> {
 /// rust-lang/rust hierarchy map as 277 MiB (2026-10-21), so publication counts
 /// what it will write.
 #[cfg(feature = "semantic")]
-fn label_map_bytes(entries: &[GenerationEntry]) -> FResult<u64> {
+fn label_map_bytes<'a>(
+    entries: impl IntoIterator<Item = (&'a str, &'a [UnitLocation])>,
+) -> FResult<u64> {
     // `{"labels":[` … `]}`, then per entry `{"label":<20 digits>,"input_key":`
     // … `,"units":[` … `]}` and a separating comma.
     let mut bytes = 13u64;
-    for entry in entries {
-        bytes = bytes.saturating_add(55 + json_string_bytes(&entry.input_key));
-        for unit in &entry.units {
+    for (input_key, units) in entries {
+        bytes = bytes.saturating_add(55 + json_string_bytes(input_key));
+        for unit in units {
             bytes = bytes.saturating_add(serialized_bytes(unit)? + 1);
         }
     }
     Ok(bytes)
+}
+
+/// The label-map rows of generation inputs, for [`label_map_bytes`].
+#[cfg(feature = "semantic")]
+fn entry_labels(entries: &[GenerationEntry]) -> impl Iterator<Item = (&str, &[UnitLocation])> {
+    entries
+        .iter()
+        .map(|entry| (entry.input_key.as_str(), entry.units.as_slice()))
 }
 /// The manifest's coverage words.
 pub const COVERAGE_COMPLETE: &str = "complete";
@@ -918,19 +932,27 @@ impl Engine {
         identity: &Prepared,
         control: &Control,
     ) -> FResult<Publication> {
-        let mut entries = Vec::new();
-        let mut keys = plan.needed().into_iter();
-        lookup_entries(
-            self,
-            &mut keys,
-            identity,
-            &mut plan.scope,
-            &mut entries,
-            control,
-            None,
-        )?;
+        let needed = plan.needed();
+        let mut build = publication::IndexBuild::new(identity, needed.len())?;
+        let mut keys = needed.into_iter();
+        let mut page = Vec::with_capacity(LOOKUP_PAGE);
+        while {
+            let done = lookup_entries(
+                self,
+                &mut keys,
+                identity,
+                &mut plan.scope,
+                &mut page,
+                control,
+                None,
+            )?;
+            for entry in page.drain(..) {
+                build.add(&entry, control)?;
+            }
+            !done
+        } {}
         let store = self.semantic_anchor()?;
-        let (staged, coverage, result) = plan.stage(&store, identity, &entries, control, &|| {})?;
+        let (staged, coverage, result) = plan.stage(&store, identity, build, control, &|| {})?;
         self.semantic_publish_staged(staged, control)?;
         self.semantic_record_coverage(coverage)?;
         Ok(result)
@@ -1026,9 +1048,9 @@ impl Engine {
 
 /// Decode the cached vectors of the next mapping `keys` into `entries`,
 /// until the keys end (`true`), or until `until` passed once a key was read
-/// (`false`: call again). A key whose cached row no longer decodes is
-/// excluded by name and leaves the generation partial: its units are not
-/// searchable there.
+/// or `entries` holds [`LOOKUP_PAGE`] vectors (`false`: drain and call
+/// again). A key whose cached row no longer decodes is excluded by name and
+/// leaves the generation partial: its units are not searchable there.
 #[cfg(feature = "semantic")]
 pub(crate) fn lookup_entries(
     engine: &Engine,
@@ -1041,7 +1063,9 @@ pub(crate) fn lookup_entries(
 ) -> FResult<bool> {
     let mut read = 0usize;
     loop {
-        if read > 0 && until.is_some_and(|until| Instant::now() >= until) {
+        if entries.len() >= LOOKUP_PAGE
+            || read > 0 && until.is_some_and(|until| Instant::now() >= until)
+        {
             return Ok(false);
         }
         let Some((input_key, units)) = keys.next() else {
@@ -1051,10 +1075,6 @@ pub(crate) fn lookup_entries(
             control.check()?;
         }
         read += 1;
-        let bytes = (entries.len() as u64 + 1)
-            .saturating_mul(identity.dimensions as u64)
-            .saturating_mul(4);
-        within_publication_limit(bytes, MAX_VECTOR_BYTES, "vectors")?;
         match engine.semantic_cache_lookup(&input_key, &identity.digest, identity.dimensions)? {
             CacheLookup::Hit(vector) => entries.push(GenerationEntry {
                 input_key,
@@ -1185,7 +1205,7 @@ mod tests {
         // An empty map is exact; otherwise the only excess is each ordinal's
         // missing digits plus one separator per entry, so any under-count of a
         // string, location or structural byte fails the equality.
-        assert_eq!(label_map_bytes(&[]).unwrap(), written(&[]));
+        assert_eq!(label_map_bytes(entry_labels(&[])).unwrap(), written(&[]));
         let mut entries = entries(4);
         entries[0].units = vec![location("a\"b\\c\nd\u{1}é.rs", 7, u64::MAX)];
         entries[1].units = (0..9)
@@ -1211,7 +1231,7 @@ mod tests {
                     .map(|i| 21 - i.to_string().len() as u64)
                     .sum::<u64>();
             assert_eq!(
-                label_map_bytes(&map).unwrap(),
+                label_map_bytes(entry_labels(&map)).unwrap(),
                 written(&map) + excess,
                 "{size} entries"
             );
@@ -1347,6 +1367,61 @@ mod tests {
                 }],
             })
             .collect()
+    }
+
+    /// Publication decodes at most one page of vectors at a time, yet every
+    /// cached key still arrives exactly once and in key order across page
+    /// boundaries. A key without a cached vector leaves the generation partial.
+    #[cfg(feature = "semantic")]
+    #[test]
+    fn cache_lookup_pages_every_cached_key_once_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+        let identity = identity(128);
+        let keys: Vec<String> = (0..2 * LOOKUP_PAGE + 2)
+            .map(|i| format!("{i:064x}"))
+            .collect();
+        // The first key of the second page has no cached vector.
+        let missing = keys[LOOKUP_PAGE].clone();
+        let cached: Vec<_> = keys
+            .iter()
+            .filter(|key| **key != missing)
+            .map(|key| (key.clone(), vec![1.0f32; 128]))
+            .collect();
+        engine
+            .semantic_cache_commit(&cached, &identity.digest, 128, u64::MAX)
+            .unwrap();
+        let mut scope = GenerationScope {
+            source_revision: 1,
+            complete: true,
+        };
+        let mut wanted = keys.iter().map(|key| (key.clone(), Vec::new()));
+        let (mut page, mut seen, mut pages) = (Vec::new(), Vec::new(), Vec::new());
+        loop {
+            let done = lookup_entries(
+                &engine,
+                &mut wanted,
+                &identity,
+                &mut scope,
+                &mut page,
+                &Control::unbounded(),
+                None,
+            )
+            .unwrap();
+            pages.push(page.len());
+            seen.extend(page.drain(..).map(|entry: GenerationEntry| entry.input_key));
+            if done {
+                break;
+            }
+        }
+        assert_eq!(pages, [LOOKUP_PAGE, LOOKUP_PAGE, 1]);
+        assert_eq!(
+            seen,
+            cached.into_iter().map(|(key, _)| key).collect::<Vec<_>>()
+        );
+        assert!(!scope.complete);
     }
 
     #[cfg(feature = "semantic")]

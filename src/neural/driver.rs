@@ -1280,27 +1280,37 @@ impl<'a> Run<'a> {
             return Ok(Publication::Nothing);
         }
         let mut plan = index::publication::Plan::new(mapping, previous);
-        let mut keys = plan.needed().into_iter();
-        let mut entries = Vec::with_capacity(keys.len());
-        while !self.step(|engine| {
-            index::lookup_entries(
-                engine,
-                &mut keys,
-                &identity,
-                &mut plan.scope,
-                &mut entries,
-                control,
-                Some(Instant::now() + STEP_TIME),
-            )
-        })? {}
+        let needed = plan.needed();
+        let mut build =
+            index::publication::IndexBuild::new(&identity, needed.len()).map_err(Failed::Step)?;
+        let mut keys = needed.into_iter();
+        // Each step decodes at most one page under the engine slot; the page
+        // is added to the f16 index outside it and dropped.
+        let mut page = Vec::with_capacity(index::LOOKUP_PAGE);
+        while {
+            let done = self.step(|engine| {
+                index::lookup_entries(
+                    engine,
+                    &mut keys,
+                    &identity,
+                    &mut plan.scope,
+                    &mut page,
+                    control,
+                    Some(Instant::now() + STEP_TIME),
+                )
+            })?;
+            for entry in page.drain(..) {
+                build.add(&entry, control).map_err(Failed::Step)?;
+            }
+            !done
+        } {}
         #[cfg(feature = "test-faults")]
         let built = || self.owner.staging();
         #[cfg(not(feature = "test-faults"))]
         let built = || {};
         let (staged, coverage, publication) = plan
-            .stage(&store, &identity, &entries, control, &built)
+            .stage(&store, &identity, build, control, &built)
             .map_err(Failed::Step)?;
-        drop(entries);
         self.step(|engine| {
             engine.semantic_publish_staged(staged, control)?;
             engine.semantic_record_coverage(coverage)

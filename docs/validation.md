@@ -1,5 +1,36 @@
 # Validation
 
+## Streamed index build — 2026-10-22
+
+Step 1 of the [scale plan](../specs/009-optional-semantic-retrieval/spec.md) is in. In
+every rebuild, publication decodes cached vectors in pages of 1,024, adds each page to
+the f16 index under construction and drops it, rather than holding all of a
+generation's f32 vectors. That removes the 2 GiB vector bound, which rust-lang/rust's
+hierarchy used to 89%.
+
+Each generation's published files were deleted from a store clone and republished
+from the unchanged vector cache with zero document calls, by the previous build
+(`c27c511`) and this one:
+
+| Republish | Entries | ANN / labels / members | Publisher peak footprint | Wall |
+| --- | --- | --- | --- | --- |
+| rust-lang/rust hierarchy, before | 624,325 | `6ffafcd3` / `52966a91` / `3a1372c4` | 7.35 GB | 341 s |
+| rust-lang/rust hierarchy, after | 624,325 | identical | **4.87 GB** | 332 s |
+| oh-my-pi hierarchy, before | 183,311 | `7f31dce4` / `f810a623` / `c8703eb9` | 2.79 GB | 94 s |
+| oh-my-pi hierarchy, after | 183,311 | identical | **2.23 GB** | 94 s |
+
+`repair-index`, the other publication path, republished oh-my-pi with the same three
+hashes. Generations are byte-identical, so retrieval is unchanged and no G2 run is
+needed. A new unit test fixes the page contract: every cached key once, in key
+order, across page boundaries. The label map (256 MiB, 71% used) is the next bound,
+near 87k files.
+
+**Checks.** A GPT-6.1 Sol review found that location-only publications constructed
+a native index they never used. The index is now created on the first vector, and
+the second review returned SHIP. After that fix oh-my-pi republished with the same
+hashes again, peaking at 2.28 GB. Local gates on Rust 1.97.1 and 1.90.0 pass all
+five: 1,283 tests passed, 0 failed, 34 ignored. No CI ran.
+
 ## F4 and the hierarchy default — 2026-10-22
 
 **F4 passes; complete hierarchy is the default.** The sealed 48-question set was
