@@ -435,20 +435,29 @@ pub fn plan(
     parent_tokens: usize,
     tokens: &dyn TokenCount,
 ) -> Result<Vec<Span>, ProviderError> {
+    // One forest serves body windows, headers and parent overviews.
+    let (units, clean_tree) = body::parse(source, lang, recipe, parent_tokens)?;
     let mut spans = Vec::new();
-    body::visit(source, lang, recipe, parent_tokens, tokens, |body, card| {
-        spans.push(Span {
-            kind: card.kind,
-            start: card.start,
-            end: card.end,
-            key: card.input_key,
-            content: Content::Body(body),
-        });
-    })?;
+    body::visit_parsed(
+        source,
+        &units,
+        clean_tree,
+        recipe,
+        parent_tokens,
+        tokens,
+        |body, card| {
+            spans.push(Span {
+                kind: card.kind,
+                start: card.start,
+                end: card.end,
+                key: card.input_key,
+                content: Content::Body(body),
+            });
+        },
+    )?;
     if source.trim().is_empty() {
         return Ok(spans);
     }
-    let units = lang.map_or_else(Vec::new, |lang| syntax::units(source, lang));
     let headers = headers(source, &units);
     let mut bytes = 0usize;
     let mut add = |span: Span| -> Result<(), ProviderError> {
