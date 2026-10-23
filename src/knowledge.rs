@@ -332,7 +332,7 @@ impl Derivation {
         Ok(())
     }
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Output {
     purpose: Vec<brief::Claim>,
@@ -343,16 +343,27 @@ struct Output {
     tests: Vec<brief::Claim>,
     unknowns: Vec<String>,
 }
-impl From<&brief::Input> for Output {
-    fn from(b: &brief::Input) -> Self {
+/// Borrowed serialization of `Output`; field names and order are identity-bearing.
+#[derive(Serialize)]
+struct OutputRef<'a> {
+    purpose: &'a [brief::Claim],
+    behavior: &'a [brief::Claim],
+    provides: &'a [brief::Claim],
+    consumes: &'a [brief::Claim],
+    constraints: &'a [brief::Claim],
+    tests: &'a [brief::Claim],
+    unknowns: &'a [String],
+}
+impl<'a> From<&'a brief::Input> for OutputRef<'a> {
+    fn from(b: &'a brief::Input) -> Self {
         Self {
-            purpose: b.purpose.clone(),
-            behavior: b.behavior.clone(),
-            provides: b.provides.clone(),
-            consumes: b.consumes.clone(),
-            constraints: b.constraints.clone(),
-            tests: b.tests.clone(),
-            unknowns: b.unknowns.clone(),
+            purpose: &b.purpose,
+            behavior: &b.behavior,
+            provides: &b.provides,
+            consumes: &b.consumes,
+            constraints: &b.constraints,
+            tests: &b.tests,
+            unknowns: &b.unknowns,
         }
     }
 }
@@ -360,7 +371,7 @@ impl From<&brief::Input> for Output {
 /// row revisions are excluded, so replays/reverts stay reusable. Regeneration
 /// after eviction may produce different prose for identical provider inputs.
 pub(crate) fn fingerprint(record: &brief::Record) -> FResult<String> {
-    hash(&(&record.input_sha256, Output::from(&record.brief)))
+    hash(&(&record.input_sha256, OutputRef::from(&record.brief)))
 }
 fn lineage(profile: &Profile, node: &Node, children: &[brief::Record]) -> FResult<Derivation> {
     let mut result = Derivation {
@@ -507,7 +518,7 @@ impl Snapshot {
             cited_spans,
             derivation,
         } = self;
-        let children: Vec<_> = children.iter().map(|record| json!({"id":record.id,"input_sha256":record.input_sha256,"cited_spans":record.brief.cited_spans,"derived":Output::from(&record.brief)})).collect();
+        let children: Vec<_> = children.iter().map(|record| json!({"id":record.id,"input_sha256":record.input_sha256,"cited_spans":record.brief.cited_spans,"derived":OutputRef::from(&record.brief)})).collect();
         let content = serde_json::to_string(
             &json!({"node":node.id,"evidence":evidence,"children":children}),
         )?;
