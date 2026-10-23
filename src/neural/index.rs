@@ -144,13 +144,6 @@ fn serialized_bytes(value: &impl Serialize) -> FResult<u64> {
     Ok(count.0)
 }
 
-/// The label-map rows of generation inputs.
-#[cfg(feature = "semantic")]
-fn entry_labels(entries: &[GenerationEntry]) -> impl Iterator<Item = (&str, &[UnitLocation])> {
-    entries
-        .iter()
-        .map(|entry| (entry.input_key.as_str(), entry.units.as_slice()))
-}
 /// The manifest's coverage words.
 pub const COVERAGE_COMPLETE: &str = "complete";
 pub const COVERAGE_PARTIAL: &str = "partial";
@@ -267,7 +260,7 @@ pub struct UnitLocation {
     pub source_sha256: String,
 }
 
-/// One vector of a generation being built, with its unit locations.
+/// One direct [`build_generation`] input: a vector and its unit locations.
 #[cfg(feature = "semantic")]
 pub struct GenerationEntry {
     pub input_key: String,
@@ -870,7 +863,10 @@ impl Engine {
             });
         };
         let mapping = self.semantic_current_mapping(control, &identity.digest, &identity.recipe)?;
-        let count = self.semantic_publish_mapping(mapping, &identity, control)?;
+        // Explicit repair always compacts from the authoritative cache.
+        let count = self
+            .publish_plan(publication::Plan::new(mapping, None), &identity, control)?
+            .count();
         Ok(SemanticIndexReport {
             rebuilt: true,
             entries: count,
@@ -878,20 +874,9 @@ impl Engine {
         })
     }
 
-    /// Explicit repair always compacts from the authoritative cache.
-    fn semantic_publish_mapping(
-        &self,
-        mapping: CurrentMapping,
-        identity: &Prepared,
-        control: &Control,
-    ) -> FResult<usize> {
-        self.publish_plan(publication::Plan::new(mapping, None), identity, control)
-            .map(|result| result.count())
-    }
-
     fn publish_plan(
         &self,
-        mut plan: publication::Plan,
+        plan: publication::Plan,
         identity: &Prepared,
         control: &Control,
     ) -> FResult<Publication> {
@@ -900,17 +885,9 @@ impl Engine {
         let mut keys = needed.into_iter();
         let mut page = Vec::with_capacity(LOOKUP_PAGE);
         while {
-            let done = lookup_entries(
-                self,
-                &mut keys,
-                identity,
-                &mut plan.scope,
-                &mut page,
-                control,
-                None,
-            )?;
-            for entry in page.drain(..) {
-                build.add(&entry, control)?;
+            let done = lookup_entries(self, &mut keys, identity, &mut page, control, None)?;
+            for (key, units, vector) in page.drain(..) {
+                build.add(key, units, &vector, control)?;
             }
             !done
         } {}
@@ -1009,48 +986,45 @@ impl Engine {
     }
 }
 
-/// Decode the cached vectors of the next mapping `keys` into `entries`,
-/// until the keys end (`true`), or until `until` passed once a key was read
-/// or `entries` holds [`LOOKUP_PAGE`] vectors (`false`: drain and call
-/// again). A key whose cached row no longer decodes is excluded by name and
-/// leaves the generation partial: its units are not searchable there.
+/// Decode the cached vectors of the next `keys` into `page` beside their
+/// locations, until the keys end (`true`), or until `until` passed once a key
+/// was read or `page` holds [`LOOKUP_PAGE`] vectors (`false`: drain and call
+/// again). A key whose cached row is missing or no longer decodes is skipped;
+/// staging excludes it and leaves the generation partial: its units are not
+/// searchable there.
 #[cfg(feature = "semantic")]
-pub(crate) fn lookup_entries(
+pub(crate) fn lookup_entries<'k>(
     engine: &Engine,
-    keys: &mut impl Iterator<Item = (String, Vec<UnitLocation>)>,
+    keys: &mut impl Iterator<Item = (&'k str, &'k [UnitLocation])>,
     identity: &Prepared,
-    scope: &mut GenerationScope,
-    entries: &mut Vec<GenerationEntry>,
+    page: &mut Vec<(&'k str, &'k [UnitLocation], Vec<f32>)>,
     control: &Control,
     until: Option<Instant>,
 ) -> FResult<bool> {
     let mut read = 0usize;
     loop {
-        if entries.len() >= LOOKUP_PAGE
+        if page.len() >= LOOKUP_PAGE
             || read > 0 && until.is_some_and(|until| Instant::now() >= until)
         {
             return Ok(false);
         }
-        let Some((input_key, units)) = keys.next() else {
+        let Some((key, units)) = keys.next() else {
             return Ok(true);
         };
         if read.is_multiple_of(64) {
             control.check()?;
         }
         read += 1;
-        match engine.semantic_cache_lookup(&input_key, &identity.digest, identity.dimensions)? {
-            CacheLookup::Hit(vector) => entries.push(GenerationEntry {
-                input_key,
-                vector,
-                units,
-            }),
-            CacheLookup::Corrupt(_) | CacheLookup::Miss => scope.complete = false,
+        let lookup = engine.semantic_cache_lookup(key, &identity.digest, identity.dimensions)?;
+        if let CacheLookup::Hit(vector) = lookup {
+            page.push((key, units, vector));
         }
     }
 }
 
-/// Build one generation and publish it as a validated set, entirely through
-/// descriptors: [`stage_generation`], then [`Staged::publish`].
+/// Build one full generation from direct inputs and publish it as a validated
+/// set, entirely through descriptors. Boundary tests use it; preparation and
+/// repair publish the cache-backed mapping instead.
 #[cfg(feature = "semantic")]
 pub fn build_generation(
     store: &Dir,
@@ -1059,7 +1033,7 @@ pub fn build_generation(
     scope: GenerationScope,
     control: &Control,
 ) -> FResult<usize> {
-    stage_generation(store, identity, entries, scope, control, &|| {})?.publish(control)
+    publication::full(store, identity, entries, scope, control)?.publish(control)
 }
 
 #[cfg(feature = "semantic")]
@@ -1069,19 +1043,6 @@ fn io_error(what: &'static str) -> impl Fn(std::io::Error) -> FoundryError {
 
 #[cfg(feature = "semantic")]
 pub(crate) use publication::Staged;
-
-/// Explicit full rebuild used by repair and boundary tests.
-#[cfg(feature = "semantic")]
-pub(crate) fn stage_generation(
-    store: &Dir,
-    identity: &Prepared,
-    entries: &[GenerationEntry],
-    scope: GenerationScope,
-    control: &Control,
-    built: &dyn Fn(),
-) -> FResult<Staged> {
-    publication::full(store, identity, entries, scope, control, built)
-}
 
 #[cfg(test)]
 mod tests {
@@ -1268,7 +1229,7 @@ mod tests {
 
     /// Publication decodes at most one page of vectors at a time, yet every
     /// cached key still arrives exactly once and in key order across page
-    /// boundaries. A key without a cached vector leaves the generation partial.
+    /// boundaries. A key without a cached vector is skipped.
     #[cfg(feature = "semantic")]
     #[test]
     fn cache_lookup_pages_every_cached_key_once_in_order() {
@@ -1290,25 +1251,21 @@ mod tests {
         engine
             .semantic_cache_commit(&cached, &identity.digest, 128, u64::MAX)
             .unwrap();
-        let mut scope = GenerationScope {
-            source_revision: 1,
-            complete: true,
-        };
-        let mut wanted = keys.iter().map(|key| (key.clone(), Vec::new()));
+        let no_units: &[UnitLocation] = &[];
+        let mut wanted = keys.iter().map(|key| (key.as_str(), no_units));
         let (mut page, mut seen, mut pages) = (Vec::new(), Vec::new(), Vec::new());
         loop {
             let done = lookup_entries(
                 &engine,
                 &mut wanted,
                 &identity,
-                &mut scope,
                 &mut page,
                 &Control::unbounded(),
                 None,
             )
             .unwrap();
             pages.push(page.len());
-            seen.extend(page.drain(..).map(|entry: GenerationEntry| entry.input_key));
+            seen.extend(page.drain(..).map(|(key, _, _)| key));
             if done {
                 break;
             }
@@ -1318,7 +1275,6 @@ mod tests {
             seen,
             cached.into_iter().map(|(key, _)| key).collect::<Vec<_>>()
         );
-        assert!(!scope.complete);
     }
 
     #[cfg(feature = "semantic")]
