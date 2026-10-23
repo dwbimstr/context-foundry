@@ -73,8 +73,7 @@ pub(super) fn tree_units(
                 if collect_calls {
                     let (name, incomplete) = if matches!(node.kind(), "call_expression" | "call") {
                         (
-                            call_name(node, source)
-                                .map(|name| source[name.byte_range()].to_owned()),
+                            call_name(node, source).map(|name| &source[name.byte_range()]),
                             false,
                         )
                     } else if lang == Lang::Rust && node.kind() == "token_tree" {
@@ -90,15 +89,15 @@ pub(super) fn tree_units(
                     if incomplete {
                         extras.call_coverage = Some("incomplete");
                     }
-                    if let Some(name) = name {
+                    // Only a new name is copied; held names are at most 1024 bytes.
+                    if let Some(name) = name
+                        && !extras.call_names.contains(name)
+                    {
                         // One name per source, on its first search document.
-                        if name.len() > 1024
-                            || (extras.call_names.len() == 4096
-                                && !extras.call_names.contains(&name))
-                        {
+                        if name.len() > 1024 || extras.call_names.len() == 4096 {
                             extras.call_coverage = Some("incomplete");
                         } else {
-                            extras.call_names.insert(name);
+                            extras.call_names.insert(name.to_owned());
                         }
                     }
                 }

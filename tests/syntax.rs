@@ -4438,3 +4438,11 @@ fn python_explicit_import_alias_postings_require_an_unshadowed_bare_call() {
     assert_eq!(indexed.call_coverage, "incomplete");
     assert!(!indexed.call_names.iter().any(|n| n == "refund"));
 }
+
+#[test]
+fn python_import_alias_postings_accept_a_call_after_the_import_despite_one_before() {
+    let body = "credit(4)\nfrom service import refund as credit\ncredit(4)\n";
+    let indexed = context_foundry::syntax::index(body, Some(Lang::Python)).unwrap();
+    assert_eq!(indexed.call_names, ["credit", "refund"]);
+    assert_eq!(indexed.call_coverage, "complete");
+}

@@ -29,6 +29,30 @@ pub(crate) fn call_target(mut n: tree_sitter::Node<'_>) -> tree_sitter::Node<'_>
     }
 }
 
+/// The Rust assertion expression macros whose arguments are searched for calls.
+const ASSERTION_MACROS: [&str; 6] = [
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+];
+
+/// `arguments` is a parenthesized token tree after `name`, with only
+/// whitespace between them.
+fn parenthesized_after(
+    name: tree_sitter::Node<'_>,
+    arguments: tree_sitter::Node<'_>,
+    body: &str,
+) -> bool {
+    arguments.kind() == "token_tree"
+        && body[arguments.byte_range()].starts_with('(')
+        && body[name.end_byte()..arguments.start_byte()]
+            .trim()
+            .is_empty()
+}
+
 /// Rust assertion macros keep their arguments as token trees. A name directly
 /// followed by parentheses is a useful unresolved candidate in these expression
 /// macros; strings, values passed as arguments and arbitrary macro DSLs are not.
@@ -37,28 +61,16 @@ pub(crate) fn assertion_call(node: tree_sitter::Node<'_>, body: &str) -> Option<
         return None;
     }
     let arguments = node.next_named_sibling()?;
-    if arguments.kind() != "token_tree"
-        || !body[arguments.byte_range()].starts_with('(')
-        || !body[node.end_byte()..arguments.start_byte()]
-            .trim()
-            .is_empty()
-    {
+    if !parenthesized_after(node, arguments, body) {
         return None;
     }
     let mut parent = node.parent();
     while let Some(ancestor) = parent {
         if ancestor.kind() == "macro_invocation" {
             let name = ancestor.child_by_field_name("macro")?;
-            return [
-                "assert",
-                "assert_eq",
-                "assert_ne",
-                "debug_assert",
-                "debug_assert_eq",
-                "debug_assert_ne",
-            ]
-            .contains(&&body[name.byte_range()])
-            .then_some((node.start_byte(), arguments.end_byte()));
+            return ASSERTION_MACROS
+                .contains(&&body[name.byte_range()])
+                .then_some((node.start_byte(), arguments.end_byte()));
         }
         if ancestor.kind() != "token_tree" {
             return None;
@@ -72,37 +84,24 @@ pub(crate) fn assertion_call(node: tree_sitter::Node<'_>, body: &str) -> Option<
 /// parent/sibling helpers can re-descend from the root; calling them per token
 /// would make deeply nested ingestion unnecessarily expensive. Nested macro
 /// token trees beyond this recipe's fixed depth remain visibly incomplete.
-pub(super) fn indexed_assertion_call(
+pub(super) fn indexed_assertion_call<'b>(
     arguments: tree_sitter::Node<'_>,
     previous: Option<tree_sitter::Node<'_>>,
     ancestors: &[tree_sitter::Node<'_>],
-    body: &str,
-) -> (Option<String>, bool) {
+    body: &'b str,
+) -> (Option<&'b str>, bool) {
     let Some(name) = previous.filter(|node| node.kind() == "identifier") else {
         return (None, false);
     };
-    if arguments.kind() != "token_tree"
-        || !body[arguments.byte_range()].starts_with('(')
-        || !body[name.end_byte()..arguments.start_byte()]
-            .trim()
-            .is_empty()
-    {
+    if !parenthesized_after(name, arguments, body) {
         return (None, false);
     }
     for ancestor in ancestors.iter().rev().take(32) {
         if ancestor.kind() == "macro_invocation" {
-            let supported = ancestor.child_by_field_name("macro").is_some_and(|node| {
-                [
-                    "assert",
-                    "assert_eq",
-                    "assert_ne",
-                    "debug_assert",
-                    "debug_assert_eq",
-                    "debug_assert_ne",
-                ]
-                .contains(&&body[node.byte_range()])
-            });
-            return (supported.then(|| body[name.byte_range()].to_owned()), false);
+            let supported = ancestor
+                .child_by_field_name("macro")
+                .is_some_and(|node| ASSERTION_MACROS.contains(&&body[node.byte_range()]));
+            return (supported.then(|| &body[name.byte_range()]), false);
         }
         if ancestor.kind() != "token_tree" {
             return (None, false);
@@ -208,19 +207,24 @@ impl PythonImportAliases {
         let direct_call = parent
             .is_some_and(|p| p.kind() == "call" && p.child_by_field_name("function") == Some(node));
         if direct_call {
-            if self.calls.len() == 4096 && !self.calls.contains_key(name) {
+            // The last call is kept: `finish` requires it after the import.
+            if let Some(at) = self.calls.get_mut(name) {
+                *at = node.start_byte();
+            } else if self.calls.len() == 4096 {
                 self.limited = true;
             } else {
                 self.calls.insert(name.to_owned(), node.start_byte());
             }
-        } else if self.other_names.len() == 4096 && !self.other_names.contains(name) {
-            self.limited = true;
-        } else {
-            // Any other use refuses the alias for the entire source. This
-            // catches every explicit binding role, including parameters,
-            // comprehensions, assignments and nested imports, at the cost of
-            // refusing harmless ordinary value references and attribute names.
-            self.other_names.insert(name.to_owned());
+        } else if !self.other_names.contains(name) {
+            if self.other_names.len() == 4096 {
+                self.limited = true;
+            } else {
+                // Any other use refuses the alias for the entire source. This
+                // catches every explicit binding role, including parameters,
+                // comprehensions, assignments and nested imports, at the cost of
+                // refusing harmless ordinary value references and attribute names.
+                self.other_names.insert(name.to_owned());
+            }
         }
     }
 
