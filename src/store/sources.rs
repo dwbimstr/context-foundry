@@ -201,14 +201,17 @@ impl Engine {
     /// All authoritative source/chunk changes, pending index work and the
     /// source revision commit together. Acknowledgement follows commit.
     pub fn replace_source(&self, path: &str, content: &str) -> FResult<bool> {
-        validate_path(path)?;
-        if content.len() > MAX_SOURCE_BYTES {
-            return Err(FoundryError::InvalidArgument(
-                "source exceeds 2 MiB limit".into(),
-            ));
+        let hash = admitted_source_hash(path, content)?;
+        let tx = self.db.begin_write()?;
+        if !Self::stage_source(&tx, path, content, &hash)? {
+            return Ok(false);
         }
-        let hash = crate::digest(content.as_bytes());
-        self.replace_source_with_hash(path, content, &hash)
+        // A failure here drops the transaction: prior source bytes stay intact.
+        fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
+        self.semantic_commit(tx, [path], std::iter::empty(), false)?;
+        self.semantic_wake.notify();
+        fault!(SOURCE_AFTER_COMMIT, Some(self), None, path)?;
+        Ok(true)
     }
 
     /// Ordered, atomic ingestion batch. No partial success within a batch; source
@@ -266,24 +269,25 @@ impl Engine {
             if old.as_ref().is_some_and(|old| old.hash == hash) {
                 return Ok(false);
             }
-            let pieces = chunks(path, hash, content);
             let mut stored = tx.open_table(CHUNKS)?;
             if let Some(old) = &old {
                 for i in 0..old.chunks {
                     stored.remove(chunk_key(path, i).as_str())?;
                 }
             }
-            for (i, chunk) in pieces.iter().enumerate() {
+            let mut count = 0;
+            for (i, chunk) in chunks(path, hash, content).enumerate() {
                 stored.insert(
                     chunk_key(path, i).as_str(),
-                    serde_json::to_string(chunk)?.as_str(),
+                    serde_json::to_string(&chunk)?.as_str(),
                 )?;
+                count = i + 1;
             }
             sources.insert(
                 path,
                 serde_json::to_string(&SourceMeta {
                     hash: hash.to_owned(),
-                    chunks: pieces.len(),
+                    chunks: count,
                     bytes: content.len(),
                     lines: content.lines().count(),
                 })?
@@ -294,19 +298,6 @@ impl Engine {
             bump_revision(tx, 1)?;
             crate::neural::work::changed(tx, path, Some(hash), revision_in(tx)?)?;
         }
-        Ok(true)
-    }
-
-    fn replace_source_with_hash(&self, path: &str, content: &str, hash: &str) -> FResult<bool> {
-        let tx = self.db.begin_write()?;
-        if !Self::stage_source(&tx, path, content, hash)? {
-            return Ok(false);
-        }
-        // A failure here drops the transaction: prior source bytes stay intact.
-        fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
-        self.semantic_commit(tx, [path], std::iter::empty(), false)?;
-        self.semantic_wake.notify();
-        fault!(SOURCE_AFTER_COMMIT, Some(self), None, path)?;
         Ok(true)
     }
 

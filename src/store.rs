@@ -963,15 +963,21 @@ pub(crate) struct PreparedSource {
 
 impl PreparedSource {
     pub(crate) fn new(path: String, body: String) -> FResult<Self> {
-        validate_path(&path)?;
-        if body.len() > MAX_SOURCE_BYTES {
-            return Err(FoundryError::InvalidArgument(
-                "source exceeds 2 MiB limit".into(),
-            ));
-        }
-        let hash = crate::digest(body.as_bytes());
+        let hash = admitted_source_hash(&path, &body)?;
         Ok(Self { path, body, hash })
     }
+}
+
+/// The one source admission rule for prepared and direct writes: path rules,
+/// then the size bound, then the digest of the admitted body.
+fn admitted_source_hash(path: &str, body: &str) -> FResult<String> {
+    validate_path(path)?;
+    if body.len() > MAX_SOURCE_BYTES {
+        return Err(FoundryError::InvalidArgument(
+            "source exceeds 2 MiB limit".into(),
+        ));
+    }
+    Ok(crate::digest(body.as_bytes()))
 }
 
 impl std::fmt::Debug for Engine {
@@ -1127,11 +1133,15 @@ pub(crate) fn reconstruct_verified<C: ReadableTable<&'static str, &'static str>>
     Ok(VerifiedSource { body })
 }
 
-fn chunks(path: &str, hash: &str, content: &str) -> Vec<Chunk> {
-    let mut result = Vec::new();
+/// `content`'s storage chunks in ordinal order, built one at a time; none for
+/// empty content.
+fn chunks(path: &str, hash: &str, content: &str) -> impl Iterator<Item = Chunk> {
     let mut offset = 0;
     let mut line = 1;
-    while offset < content.len() {
+    std::iter::from_fn(move || {
+        if offset >= content.len() {
+            return None;
+        }
         let tail = &content[offset..];
         let mut end = tail.len().min(2048);
         while !tail.is_char_boundary(end) {
@@ -1144,17 +1154,17 @@ fn chunks(path: &str, hash: &str, content: &str) -> Vec<Chunk> {
         }
         let body = &tail[..end];
         let newlines = body.bytes().filter(|b| *b == b'\n').count();
-        result.push(Chunk {
+        let chunk = Chunk {
             path: path.into(),
             hash: hash.into(),
             start_line: line,
             end_line: line + newlines - usize::from(body.ends_with('\n')),
             body: body.into(),
-        });
+        };
         line += newlines;
         offset += end;
-    }
-    result
+        Some(chunk)
+    })
 }
 
 fn search_schema() -> Schema {
