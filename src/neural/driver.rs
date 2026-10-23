@@ -816,11 +816,8 @@ impl<'a> Run<'a> {
                     frontier.order.advance(cursor, false);
                     return Ok(Selected::Full);
                 }
-                let resumed = cursor.resume.take();
-                let before = resumed
-                    .as_ref()
-                    .map_or_else(|| cursor.after.clone(), |position| position.after.clone());
-                let (progress, retained) = if resumed.is_some() {
+                let before = cursor.wave_start();
+                let (progress, retained) = if cursor.resume.is_some() {
                     (Progress::More, Vec::new())
                 } else {
                     self.partition_wave(&mut cursor)?
@@ -829,27 +826,20 @@ impl<'a> Run<'a> {
                     return Ok(Selected::Halted(stop));
                 }
                 let done = matches!(progress, Progress::Done);
-                if cursor.after != before {
-                    self.report.bootstrap.waves += 1;
-                    self.report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
-                    let mut walk =
-                        Walk::wave(cursor.scope.clone(), before.clone(), cursor.after.clone())
-                            .with_retained(retained);
-                    if let Some(position) = resumed {
-                        walk = walk.restore(position, &mut frontier.paused);
-                    }
-                    walk.exact = cursor.exact;
-                    walk.overview_first = frontier.order.overview_first();
-                    frontier.walk = Some(walk);
-                    frontier.active_cursor = Some(cursor);
-                    frontier.wave_inputs = 0;
-                    self.sync_progress();
-                } else {
+                let Some(walk) = cursor.open_walk(
+                    before,
+                    retained,
+                    frontier.order.overview_first(),
+                    &mut frontier.paused,
+                    &mut self.report,
+                ) else {
                     frontier.order.advance(cursor, done);
-                }
-                if frontier.walk.is_none() {
                     continue;
-                }
+                };
+                frontier.walk = Some(walk);
+                frontier.active_cursor = Some(cursor);
+                frontier.wave_inputs = 0;
+                self.sync_progress();
             }
             let (owner, runtime) = (self.owner, self.runtime);
             let (recipe, report) = (&self.recipe, &mut self.report);
@@ -875,11 +865,9 @@ impl<'a> Run<'a> {
                 .select_batch(
                     frontier.walk.as_mut().expect("wave exists"),
                     &mut selection,
-                    if frontier.order.waiting() {
-                        (target - batch.len()).min(prepare::WAVE_INPUTS - frontier.wave_inputs)
-                    } else {
-                        target - batch.len()
-                    },
+                    frontier
+                        .order
+                        .selection_room(target - batch.len(), frontier.wave_inputs),
                     SOURCES_PER_STEP,
                     report,
                     &mut || owner.closing().then(cancelled),

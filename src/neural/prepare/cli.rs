@@ -525,11 +525,8 @@ fn inner(
             overview_phase = false;
             snapshot_progress(report, options.started);
         }
-        let resumed = cursor.resume.take();
-        let before = resumed
-            .as_ref()
-            .map_or_else(|| cursor.after.clone(), |position| position.after.clone());
-        let (progress, inputs) = if resumed.is_some() {
+        let before = cursor.wave_start();
+        let (progress, inputs) = if cursor.resume.is_some() {
             (Progress::More, Vec::new())
         } else {
             steps.partition_inputs_in(
@@ -561,16 +558,13 @@ fn inner(
             retained.extend(computed.retained);
         }
         let done = matches!(progress, Progress::Done);
-        if cursor.after != before {
-            report.bootstrap.waves += 1;
-            report.bootstrap.priority_waves += u64::from(cursor.scope.is_some());
-            let mut walk = Walk::wave(cursor.scope.clone(), before.clone(), cursor.after.clone())
-                .with_retained(retained);
-            if let Some(position) = resumed {
-                walk = walk.restore(position, &mut paused);
-            }
-            walk.exact = cursor.exact;
-            walk.overview_first = order.overview_first();
+        if let Some(mut walk) = cursor.open_walk(
+            before,
+            retained,
+            order.overview_first(),
+            &mut paused,
+            report,
+        ) {
             let mut pending = Batch::default();
             let mut end = false;
             let mut wave_inputs = 0;
@@ -580,11 +574,7 @@ fn inner(
                     end = match steps.select_batch(
                         &mut walk,
                         &mut selection,
-                        if order.waiting() {
-                            steps.cards.limits().inputs.min(WAVE_INPUTS - wave_inputs)
-                        } else {
-                            steps.cards.limits().inputs
-                        },
+                        order.selection_room(steps.cards.limits().inputs, wave_inputs),
                         usize::MAX,
                         report,
                         &mut || halt(control, budget),
