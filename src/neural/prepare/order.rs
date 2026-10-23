@@ -12,6 +12,43 @@ pub(crate) struct SourceCursor {
     /// Bodies/plans live only in the run's single byte-capped paused cache.
     pub resume: Option<WalkPosition>,
 }
+impl SourceCursor {
+    /// The exclusive lower bound of the next wave: a paused wave's scalar
+    /// progress, else `after`. Read it before partitioning moves `after`.
+    pub(crate) fn wave_start(&self) -> Option<String> {
+        match &self.resume {
+            Some(position) => position.after.clone(),
+            None => self.after.clone(),
+        }
+    }
+
+    /// Consumes `resume`. Counts and opens the wave from `before` through
+    /// `after`, restoring a paused position; `None` when the cursor did not
+    /// move.
+    pub(crate) fn open_walk(
+        &mut self,
+        before: Option<String>,
+        retained: Vec<PreparedCards>,
+        overview_first: bool,
+        paused: &mut PausedSources,
+        report: &mut PrepareReport,
+    ) -> Option<Walk> {
+        let resumed = self.resume.take();
+        if self.after == before {
+            return None;
+        }
+        report.bootstrap.waves += 1;
+        report.bootstrap.priority_waves += u64::from(self.scope.is_some());
+        let mut walk =
+            Walk::wave(self.scope.clone(), before, self.after.clone()).with_retained(retained);
+        if let Some(position) = resumed {
+            walk = walk.restore(position, paused);
+        }
+        walk.exact = self.exact;
+        walk.overview_first = overview_first;
+        Some(walk)
+    }
+}
 
 /// At most sixteen priority cursors and one ordinary cursor per pass. Hierarchy
 /// keeps one additional copy for refinement, with no retained bodies/vectors.
@@ -101,6 +138,15 @@ impl SourceOrder {
     }
     pub(crate) fn waiting(&self) -> bool {
         !self.priority.is_empty() || self.background.is_some()
+    }
+    /// Inputs the active wave may still select: `requested`, capped at
+    /// [`WAVE_INPUTS`] per wave while other cursors wait.
+    pub(crate) fn selection_room(&self, requested: usize, used: usize) -> usize {
+        if self.waiting() {
+            requested.min(WAVE_INPUTS - used)
+        } else {
+            requested
+        }
     }
     pub(crate) fn advance(&mut self, cursor: SourceCursor, done: bool) {
         if done {
