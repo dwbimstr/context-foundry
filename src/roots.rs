@@ -379,9 +379,9 @@ fn merged_anchors(batches: &[RootBatch]) -> Vec<AnchorWindow> {
 ///    root order, path, start.
 ///
 /// File outlines (tier 4) are not ranked here; the context merge places them
-/// after the merged units.
-fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
-    #[derive(Clone)]
+/// after the merged units. Yields each unit's root index and the item it
+/// borrows from that root's batch.
+fn merged_units(batches: &[RootBatch]) -> impl Iterator<Item = (usize, &RankedItem)> {
     struct Unit<'a> {
         root: usize,
         path: &'a str,
@@ -411,9 +411,10 @@ fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
                 1 => tier1.push(unit),
                 2 | crate::store::TIER_BEHAVIOR => {
                     rank2 += 1;
-                    let mut ranked = unit.clone();
-                    ranked.rrf = 1.0 / (RRF_K + rank2 as f64);
-                    tier2.push(ranked);
+                    tier2.push(Unit {
+                        rrf: 1.0 / (RRF_K + rank2 as f64),
+                        ..unit
+                    });
                 }
                 _ => {}
             }
@@ -439,8 +440,7 @@ fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
         .into_iter()
         .chain(tier1)
         .chain(tier2)
-        .map(|unit| (unit.root, unit.item.clone()))
-        .collect()
+        .map(|unit| (unit.root, unit.item))
 }
 
 /// Merge the serving roots' search batches into one outcome, cut to `limit`.
@@ -449,18 +449,42 @@ fn merged_units(batches: &[RootBatch]) -> Vec<(usize, RankedItem)> {
 /// counts as truncation. The scalar freshness fields carry the first root's
 /// final read; a multi-root response renders each root's own facts instead.
 pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
-    let merged = merged_units(batches);
-    let mut truncated = batches.iter().any(|root| root.batch.counters.truncated);
-    let mut hits = Vec::with_capacity(merged.len().min(limit));
-    let mut overflow = Vec::new();
-    for (index, (_, item)) in merged.into_iter().enumerate() {
-        if index < limit {
-            hits.push(item);
-        } else {
-            overflow.push(item);
-        }
-    }
-    truncated |= !overflow.is_empty();
+    let mut merged = merged_units(batches);
+    let hits: Vec<Hit> = merged
+        .by_ref()
+        .take(limit)
+        .map(|(_, item)| {
+            let handle = item.handle.clone().expect("search units carry handles");
+            let text = item
+                .forms
+                .iter()
+                .find_map(|form| match form {
+                    RenderedForm::Verbatim(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            Hit {
+                path: handle.path.clone(),
+                start_line: item.start_line,
+                end_line: item.end_line,
+                handle,
+                text,
+                // 009 T004: a dense-only unit (a placed card's unit with no
+                // lexical candidate) has no candidate label; its locator
+                // names it `semantic`.
+                label: if item.is_dense_only() {
+                    "semantic".to_owned()
+                } else {
+                    item.label.clone()
+                },
+                tier: item.tier,
+                line: item.line,
+            }
+        })
+        .collect();
+    // A unit left past the cut is the merged truncation.
+    let truncated =
+        batches.iter().any(|root| root.batch.counters.truncated) || merged.next().is_some();
     let counters = {
         let mut counters = summed_counters(batches);
         counters.truncated = truncated;
@@ -470,38 +494,7 @@ pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
     SearchOutcome {
         workspace_id: freshness.workspace_id.clone(),
         source_revision: freshness.source_revision,
-        hits: hits
-            .into_iter()
-            .map(|item| {
-                let dense_only = item.is_dense_only();
-                let handle = item.handle.expect("search units carry handles");
-                let text = item
-                    .forms
-                    .iter()
-                    .find_map(|form| match form {
-                        RenderedForm::Verbatim(text) => Some(text.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_default();
-                Hit {
-                    path: handle.path.clone(),
-                    start_line: item.start_line,
-                    end_line: item.end_line,
-                    handle,
-                    text,
-                    // 009 T004: a dense-only unit (a placed card's unit with
-                    // no lexical candidate) has no candidate label; its
-                    // locator names it `semantic`.
-                    label: if dense_only {
-                        "semantic".to_owned()
-                    } else {
-                        item.label
-                    },
-                    tier: item.tier,
-                    line: item.line,
-                }
-            })
-            .collect(),
+        hits,
         pending_sources: freshness.pending_sources,
         stale_candidates: counters.stale,
         capped: counters.capped,
@@ -521,45 +514,35 @@ pub fn merge_search(batches: &[RootBatch], limit: usize) -> SearchOutcome {
 /// across roots; the anchor windows merge as [`merged_anchors`] describes and
 /// the doors as [`merged_doors`] does.
 pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
-    let merged = merged_units(batches);
-    let units: Vec<RankedItem> = merged
-        .iter()
-        .take(CONTEXT_UNITS)
-        .map(|(_, item)| (*item).clone())
-        .collect();
+    let units = merged_units(batches).take(CONTEXT_UNITS);
+    // Every unit, then at most one outline per unit.
+    let (count, _) = units.size_hint();
+    let mut items: Vec<RankedItem> = Vec::with_capacity(count + count.min(CONTEXT_OUTLINES));
     // Outlines of the first three distinct (root, path) files among the
     // merged units, in merged order: a file CONSUMES one of the three slots
     // even when its outline was suppressed inside its own root (an empty
     // file or a file one of those units spans renders none), so a later
     // file never takes a suppressed file's place.
-    let mut outlines: Vec<RankedItem> = Vec::new();
-    let mut outlined: Vec<(usize, String)> = Vec::new();
-    for (root, item) in merged.iter().take(units.len()) {
-        if outlined.len() == CONTEXT_OUTLINES {
-            break;
-        }
+    let mut outlined: Vec<(usize, &str)> = Vec::new();
+    for (root, item) in units {
+        items.push(item.clone());
         let Some(handle) = &item.handle else { continue };
-        if outlined
-            .iter()
-            .any(|(r, path)| *r == *root && path == &handle.path)
+        if outlined.len() < CONTEXT_OUTLINES
+            && !outlined
+                .iter()
+                .any(|&(r, path)| r == root && path == handle.path)
         {
-            continue;
-        }
-        outlined.push((*root, handle.path.clone()));
-        if let Some(outline) = batches[*root].batch.items.iter().find_map(|candidate| {
-            (candidate.tier == TIER_OUTLINE
-                && candidate
-                    .handle
-                    .as_ref()
-                    .is_some_and(|h| h.path == handle.path))
-            .then(|| candidate.clone())
-        }) {
-            outlines.push(outline);
+            outlined.push((root, handle.path.as_str()));
         }
     }
     // The units, then the outlines.
-    let mut items = units;
-    items.extend(outlines);
+    for (root, path) in outlined {
+        let outline = batches[root].batch.items.iter().find(|candidate| {
+            candidate.tier == TIER_OUTLINE
+                && candidate.handle.as_ref().is_some_and(|h| h.path == path)
+        });
+        items.extend(outline.cloned());
+    }
     for (rank, item) in items.iter_mut().enumerate() {
         item.rank = rank;
     }
