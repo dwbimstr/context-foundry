@@ -4,6 +4,31 @@
 //! the parent module.
 use super::*;
 
+impl Shared {
+    /// 009 T003: the engine slot for one background step, marked
+    /// [`SLOT_DRIVER`] and taken only while no foreground operation is in
+    /// flight; `None` when either refuses. An operation counted before the
+    /// slot was taken goes first; one counted from here on waits for the step.
+    fn try_driver_slot(&self) -> FResult<Option<SlotGuard<'_>>> {
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(None);
+        }
+        let slot = match self.engines.try_lock() {
+            Ok(engines) => SlotGuard::mark(engines, &self.slot_holder, SLOT_DRIVER),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(FoundryError::Internal(anyhow::anyhow!(
+                    "engine state was poisoned by an earlier panic"
+                )));
+            }
+        };
+        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+            return Ok(None);
+        }
+        Ok(Some(slot))
+    }
+}
+
 /// 009 T003: the preparation driver's access to the owner. A store step runs
 /// under the one engine slot, taken only while no foreground operation is in
 /// flight, so foreground operations go first; one arriving during the step
@@ -34,23 +59,9 @@ impl crate::neural::driver::Owner for Shared {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
         }
-        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+        let Some(engines) = self.try_driver_slot()? else {
             return Ok(false);
-        }
-        let engines = match self.engines.try_lock() {
-            Ok(engines) => SlotGuard::mark(engines, &self.slot_holder, SLOT_DRIVER),
-            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
-            Err(std::sync::TryLockError::Poisoned(_)) => {
-                return Err(FoundryError::Internal(anyhow::anyhow!(
-                    "engine state was poisoned by an earlier panic"
-                )));
-            }
         };
-        // An operation counted before the slot was taken goes first; one
-        // counted from here on waits for this step.
-        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
-            return Ok(false);
-        }
         let Some(engine) = engines.first().and_then(Option::as_ref) else {
             return Err(FoundryError::Internal(anyhow::anyhow!(
                 "the primary engine is not open"
@@ -72,21 +83,9 @@ impl crate::neural::driver::Owner for Shared {
 
 impl crate::knowledge::maintenance::Owner for Shared {
     fn try_step(&self, step: &mut dyn FnMut(&mut Engine)) -> FResult<bool> {
-        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+        let Some(mut engines) = self.try_driver_slot()? else {
             return Ok(false);
-        }
-        let mut engines = match self.engines.try_lock() {
-            Ok(engines) => SlotGuard::mark(engines, &self.slot_holder, SLOT_DRIVER),
-            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
-            Err(std::sync::TryLockError::Poisoned(_)) => {
-                return Err(FoundryError::Internal(anyhow::anyhow!(
-                    "engine state was poisoned"
-                )));
-            }
         };
-        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
-            return Ok(false);
-        }
         step(engines[0].as_mut().expect("primary engine is open"));
         Ok(true)
     }
@@ -145,19 +144,10 @@ impl crate::watch::Owner for Shared {
         {
             return Ok(false);
         }
-        if self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+        let Some(mut engines) = self.try_driver_slot()? else {
             return Ok(false);
-        }
-        let mut engines = match self.engines.try_lock() {
-            Ok(engines) => SlotGuard::mark(engines, &self.slot_holder, SLOT_DRIVER),
-            Err(std::sync::TryLockError::WouldBlock) => return Ok(false),
-            Err(std::sync::TryLockError::Poisoned(_)) => {
-                return Err(FoundryError::Internal(anyhow::anyhow!(
-                    "engine state was poisoned by an earlier panic"
-                )));
-            }
         };
-        if self.shutdown.is_cancelled() || self.in_flight_engine.load(Ordering::SeqCst) > 0 {
+        if self.shutdown.is_cancelled() {
             return Ok(false);
         }
         let engine = engines[0].as_mut().expect("primary engine is open");

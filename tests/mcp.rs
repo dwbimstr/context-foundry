@@ -1651,7 +1651,6 @@ fn bootstrap_inspection_writes_nothing_and_apply_creates_bound_store() {
         None,
         None,
         Path::new("foundry"),
-        None,
     )
     .unwrap();
     assert!(!report.applied);
@@ -1666,6 +1665,7 @@ fn bootstrap_inspection_writes_nothing_and_apply_creates_bound_store() {
         None,
         None,
         None,
+        None,
     )
     .unwrap();
     assert!(applied.complete);
@@ -1675,6 +1675,7 @@ fn bootstrap_inspection_writes_nothing_and_apply_creates_bound_store() {
         &root,
         Some(&store),
         &["lexical".to_owned()],
+        None,
         None,
         None,
         None,
@@ -1698,6 +1699,7 @@ fn bootstrap_graph_requires_both_files_and_semantic_needs_setup() {
         Some(&graph_one),
         None,
         None,
+        None,
     );
     assert!(err.is_err(), "one graph file is invalid input");
     let applied = context_foundry::bootstrap::apply(
@@ -1707,6 +1709,7 @@ fn bootstrap_graph_requires_both_files_and_semantic_needs_setup() {
         None,
         None,
         Some(dir.path().join("profile.json").as_path()),
+        None,
     )
     .unwrap();
     assert!(!applied.complete, "a missing profile is needs_setup");
@@ -1766,6 +1769,7 @@ fn bootstrap_graph_imports_a_bound_artifact_and_refuses_unbound_or_stale_ones() 
             &["lexical".to_owned(), "graph".to_owned()],
             Some(&index),
             Some(&snapshot),
+            None,
             None,
         )
         .unwrap_or_else(|e| panic!("{label}: apply must report, not fail: {e}"));
@@ -3505,7 +3509,6 @@ async fn bootstrap_inspection_does_not_take_or_touch_an_owned_store() {
         None,
         None,
         Path::new("foundry"),
-        None,
     )
     .expect("inspection works while another process owns the store");
     assert!(!report.applied && report.workspace_id.is_none());

@@ -5,12 +5,12 @@
 //!
 //! The vocabulary-gap cases run the real preparation path, the real Rust
 //! tokenizer, the real USearch index and the real request path
-//! (`mcp::context_primary`/`search_primary`, the functions the MCP owner and
-//! the CLI both call). The embedding function is a test provider with a
-//! fixed concept lexicon: it makes the ORDERING, budget and fallback
-//! assertions exact, and it is NOT a retrieval-quality result — the actual
-//! model runs the same fixture through the production binary and records
-//! its own evidence. Every provider call is counted.
+//! (`mcp::context_primary_with_options`/`search_primary`, the functions the
+//! MCP owner and the CLI both call). The embedding function is a test
+//! provider with a fixed concept lexicon: it makes the ORDERING, budget and
+//! fallback assertions exact, and it is NOT a retrieval-quality result — the
+//! actual model runs the same fixture through the production binary and
+//! records its own evidence. Every provider call is counted.
 //!
 //! 009 T003 acceptance (SC-003), at the end: progressive preparation inside
 //! the MCP owner over the stdio transport (and the shared HTTP owner), with
@@ -428,15 +428,13 @@ impl Corpus {
 
     /// A context request through the production decision path.
     fn context(&self, slot: &SemanticSlot, query: &str, tokens: usize) -> Answer {
-        let combined = mcp::context_primary(
+        let combined = mcp::context_primary_with_options(
             slot,
-            None,
             self.engine(),
             query,
             Strategy::Search,
             &Self::control(),
-            false,
-            None,
+            context_foundry::store::ContextOptions::default(),
         )
         .expect("context candidates");
         Answer::of(combined.batch, tokens)
@@ -1378,15 +1376,13 @@ fn an_expiring_request_still_delivers_the_baseline_with_the_named_fallback() {
     let started = Instant::now();
     let remaining = Duration::from_millis(800);
     let control = Control::with_deadline(started + remaining);
-    let combined = mcp::context_primary(
+    let combined = mcp::context_primary_with_options(
         &slot,
-        None,
         corpus.engine(),
         query,
         Strategy::Search,
         &control,
-        false,
-        None,
+        context_foundry::store::ContextOptions::default(),
     )
     .expect("the fallback is delivered before the request deadline");
     let elapsed = started.elapsed();
@@ -2039,15 +2035,13 @@ fn without_a_profile_requests_are_byte_identical_and_disabling_loses_no_source_o
     // The profile-less request path (what an owner without
     // `--semantic-profile` runs) is exactly the baseline, prepared or not.
     for (query, (context, search)) in queries.iter().zip(&before) {
-        let combined = mcp::context_primary(
+        let combined = mcp::context_primary_with_options(
             &None,
-            None,
             corpus.engine(),
             query,
             Strategy::Search,
             &Control::unbounded(),
-            false,
-            None,
+            context_foundry::store::ContextOptions::default(),
         )
         .unwrap();
         let packed = response::pack_context(
@@ -4773,15 +4767,13 @@ fn a_semantic_context_packed_for_mcp_is_capped_on_its_serialized_bytes() {
     const QUERY: &str = "tabfill twilight onset";
     let corpus = Corpus::new(&tab_functions());
     let slot = corpus.slot();
-    let batch = mcp::context_primary(
+    let batch = mcp::context_primary_with_options(
         &slot,
-        None,
         corpus.engine(),
         QUERY,
         Strategy::Auto,
         &Corpus::control(),
-        false,
-        None,
+        context_foundry::store::ContextOptions::default(),
     )
     .unwrap()
     .batch;

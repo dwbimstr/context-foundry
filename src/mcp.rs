@@ -109,9 +109,7 @@ pub(crate) use semantic::cli_semantic_slot;
 #[cfg(not(feature = "semantic"))]
 use semantic::refuse_unsupported_semantic;
 use semantic::semantic_slot_reserved;
-pub use semantic::{
-    SemanticServing, context_primary, context_primary_with_options, search_primary, semantic_slot,
-};
+pub use semantic::{SemanticServing, context_primary_with_options, search_primary, semantic_slot};
 use startup::open_owner;
 pub use tools::FoundryMcp;
 pub use transport::{HttpOptions, HttpServe, serve_http, serve_stdio, serve_streams};

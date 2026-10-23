@@ -243,49 +243,12 @@ fn parse_loopback_bind(raw: &str) -> FResult<u16> {
     port.parse::<u16>().map_err(|_| invalid())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn serve_mcp(
-    store: PathBuf,
-    root: PathBuf,
+    options: crate::mcp::ServerOptions,
     transport: &str,
     bind: Option<String>,
     auth_token_env: Option<String>,
-    budget: Option<PathBuf>,
-    references: Vec<String>,
-    no_memory: bool,
-    semantic: Option<crate::mcp::SemanticServing>,
-    knowledge: Option<crate::knowledge::maintenance::Serving>,
-    model_resources: Option<PathBuf>,
-    policy: Option<crate::policy::PolicyServing>,
-    retrieval_trace_dir: Option<PathBuf>,
-    experimental_behavior_context: bool,
-    experimental_task_context: bool,
-    watch: bool,
 ) -> AResult<()> {
-    let budget = read_budget(budget.as_deref())?;
-    let mut parsed = Vec::with_capacity(references.len());
-    for raw in &references {
-        parsed.push(crate::roots::parse_reference(raw)?);
-    }
-    let references = parsed;
-    let options = crate::mcp::ServerOptions {
-        store,
-        root,
-        references,
-        budget,
-        no_memory,
-        semantic,
-        knowledge,
-        model_resources: model_resources
-            .as_deref()
-            .map(crate::model_resources::Config::load)
-            .transpose()?,
-        policy,
-        retrieval_trace_dir,
-        experimental_behavior_context,
-        experimental_task_context,
-        watch,
-    };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -388,32 +351,42 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             knowledge_profile,
             knowledge_maintain,
             model_resources,
-        } => serve_mcp(
-            store,
-            root,
-            &transport,
-            bind,
-            auth_token_env,
-            budget,
-            reference,
-            no_memory,
-            semantic_profile.map(|profile| crate::mcp::SemanticServing {
-                cache_cap_bytes: semantic_cache_cap,
-                maintain: semantic_maintain,
-                ..crate::mcp::SemanticServing::new(profile, development_isolation)
-            }),
-            knowledge_profile.map(|profile| crate::knowledge::maintenance::Serving {
-                profile,
-                maintain: knowledge_maintain,
-            }),
-            model_resources,
-            policy_config
-                .map(|config| crate::policy::PolicyServing::new(config, development_isolation)),
-            retrieval_trace_dir,
-            experimental_behavior_context,
-            experimental_task_context,
-            watch,
-        )?,
+        } => {
+            let budget = read_budget(budget.as_deref())?;
+            let mut references = Vec::with_capacity(reference.len());
+            for raw in &reference {
+                references.push(crate::roots::parse_reference(raw)?);
+            }
+            let options = crate::mcp::ServerOptions {
+                store,
+                root,
+                references,
+                budget,
+                no_memory,
+                semantic: semantic_profile.map(|profile| crate::mcp::SemanticServing {
+                    cache_cap_bytes: semantic_cache_cap,
+                    maintain: semantic_maintain,
+                    ..crate::mcp::SemanticServing::new(profile, development_isolation)
+                }),
+                knowledge: knowledge_profile.map(|profile| {
+                    crate::knowledge::maintenance::Serving {
+                        profile,
+                        maintain: knowledge_maintain,
+                    }
+                }),
+                model_resources: model_resources
+                    .as_deref()
+                    .map(crate::model_resources::Config::load)
+                    .transpose()?,
+                policy: policy_config
+                    .map(|config| crate::policy::PolicyServing::new(config, development_isolation)),
+                retrieval_trace_dir,
+                experimental_behavior_context,
+                experimental_task_context,
+                watch,
+            };
+            serve_mcp(options, &transport, bind, auth_token_env)?
+        }
         AdapterCommand::Bootstrap {
             root,
             apply,
@@ -442,7 +415,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                     control: &control,
                 });
             let report = if apply {
-                crate::bootstrap::apply_with_semantic(
+                crate::bootstrap::apply(
                     &root,
                     store,
                     &components,
@@ -460,7 +433,6 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                     graph_snapshot.as_deref(),
                     profile.as_deref(),
                     &std::env::current_exe()?,
-                    None,
                 )?
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
