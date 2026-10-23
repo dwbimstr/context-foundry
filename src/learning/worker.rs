@@ -561,18 +561,9 @@ pub fn serve(args: WorkerArgs, backend: &mut dyn Backend) -> i32 {
                 let report = backend
                     .load(&args.checkpoint_dir, head_bytes.as_deref(), threads, seed)
                     .unwrap_or_else(|r| refused!(r));
-                if let Err(refusal) = check_pin(&report, &checkpoint) {
-                    refused!(refusal);
-                }
+                let loaded = loaded_reply(report, &checkpoint).unwrap_or_else(|r| refused!(r));
                 current = Some(identity.clone());
-                Message::Loaded {
-                    source_dtype: report.source_dtype,
-                    weights_sha256: report.weights_sha256,
-                    encoder_config_sha256: report.encoder_config_sha256,
-                    counts: report.counts,
-                    trainable: report.trainable,
-                    frozen_encoder_sha256: report.frozen_encoder_sha256,
-                }
+                loaded
             }
             Message::Serve {
                 checkpoint,
@@ -611,17 +602,7 @@ pub fn serve(args: WorkerArgs, backend: &mut dyn Backend) -> i32 {
                 let report = backend
                     .load(&args.checkpoint_dir, Some(&bytes), threads, 0)
                     .unwrap_or_else(|r| refused!(r));
-                if let Err(refusal) = check_pin(&report, &checkpoint) {
-                    refused!(refusal);
-                }
-                let loaded = Message::Loaded {
-                    source_dtype: report.source_dtype,
-                    weights_sha256: report.weights_sha256,
-                    encoder_config_sha256: report.encoder_config_sha256,
-                    counts: report.counts,
-                    trainable: report.trainable,
-                    frozen_encoder_sha256: report.frozen_encoder_sha256,
-                };
+                let loaded = loaded_reply(report, &checkpoint).unwrap_or_else(|r| refused!(r));
                 if !channel.send(id, &identity, loaded) {
                     return FRAME_EXIT;
                 }
@@ -751,4 +732,17 @@ fn check_pin(report: &LoadReport, pin: &CheckpointPin) -> Result<(), Refusal> {
         ));
     }
     Ok(())
+}
+
+/// The `loaded` reply to a load of exactly the pinned checkpoint.
+fn loaded_reply(report: LoadReport, pin: &CheckpointPin) -> Result<Message, Refusal> {
+    check_pin(&report, pin)?;
+    Ok(Message::Loaded {
+        source_dtype: report.source_dtype,
+        weights_sha256: report.weights_sha256,
+        encoder_config_sha256: report.encoder_config_sha256,
+        counts: report.counts,
+        trainable: report.trainable,
+        frozen_encoder_sha256: report.frozen_encoder_sha256,
+    })
 }

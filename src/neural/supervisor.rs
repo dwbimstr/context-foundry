@@ -508,6 +508,53 @@ fn child_setup_with_fds(
     }
 }
 
+/// The jailed worker launch 009's embedding worker and 013's learning
+/// worker share: the owner flags first, the run directory as working
+/// directory, `HOME` and `TMPDIR`, and piped stdio. The environment is
+/// `env -i` style: no inherited credentials, proxies or agent sockets.
+pub(crate) fn jailed_command(executable: &Path, run: &Path, liveness_fd: i32) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .arg("--owner-pid")
+        .arg(std::process::id().to_string())
+        .arg("--liveness-fd")
+        .arg(liveness_fd.to_string())
+        .current_dir(run)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", run)
+        .env("TMPDIR", run.join("tmp"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+/// Append `chunk` to `tail` up to [`protocol::MAX_STDERR_BYTES`].
+pub(crate) fn keep_bounded(tail: &Mutex<Vec<u8>>, chunk: &[u8]) {
+    let mut tail = tail.lock().unwrap_or_else(|p| p.into_inner());
+    let room = protocol::MAX_STDERR_BYTES.saturating_sub(tail.len());
+    tail.extend_from_slice(&chunk[..chunk.len().min(room)]);
+}
+
+/// Drain the worker's stderr continuously on its own thread, handing every
+/// chunk read to `keep`, until end of file or a read error.
+pub(crate) fn drain_stderr(
+    stderr: std::process::ChildStderr,
+    mut keep: impl FnMut(&[u8]) + Send + 'static,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut chunk = [0u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => keep(&chunk[..n]),
+            }
+        }
+    })
+}
+
 /// Physical footprint in bytes of `pid` (`proc_pid_rusage`, flavor V0), the
 /// figure Activity Monitor reports as memory, or why it could not be read.
 /// `fault_detail` names the worker at the measurement fault point. 013's
@@ -815,12 +862,10 @@ impl WorkerProvider {
         let descriptor_json = serde_json::to_string(&profile.descriptor)
             .map_err(|e| ProviderError::ProfileInvalid(format!("descriptor JSON: {e}")))?;
 
-        let mut command = Command::new(&executable);
+        // The llama.cpp worker needs no interpreter, site path or model-hub
+        // variable beyond the jail's environment.
+        let mut command = jailed_command(&executable, &scratch_dir, read_fd);
         command
-            .arg("--owner-pid")
-            .arg(std::process::id().to_string())
-            .arg("--liveness-fd")
-            .arg(read_fd.to_string())
             .arg("--descriptor")
             .arg(&descriptor_json)
             .arg("--model-dir")
@@ -836,18 +881,6 @@ impl WorkerProvider {
             .arg("--cpu-seconds")
             .arg(profile.cpu.seconds.to_string());
         command.args(extra_args);
-        command
-            .current_dir(&scratch_dir)
-            // `env -i` style: no inherited credentials, proxies or agent
-            // sockets reach the worker. The llama.cpp worker needs no
-            // interpreter, site path or model-hub variable.
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .env("HOME", &scratch_dir)
-            .env("TMPDIR", scratch_dir.join("tmp"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
         // SAFETY: `child_setup` calls only async-signal-safe functions
         // between fork and exec and takes no lock or allocation.
         unsafe { command.pre_exec(child_setup_with_fds(read_fd, Vec::new(), vec![model_fd])) };
@@ -907,23 +940,8 @@ impl WorkerProvider {
         // Stderr is drained continuously into a bounded buffer.
         if let Some(stderr) = stderr {
             let shared = Arc::clone(&shared);
-            handles.push(Some(std::thread::spawn(move || {
-                let mut reader = BufReader::new(stderr);
-                let mut chunk = [0u8; 4096];
-                loop {
-                    match reader.read(&mut chunk) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            let mut tail = match shared.stderr_tail.lock() {
-                                Ok(tail) => tail,
-                                Err(poisoned) => poisoned.into_inner(),
-                            };
-                            let room = protocol::MAX_STDERR_BYTES.saturating_sub(tail.len());
-                            tail.extend_from_slice(&chunk[..n.min(room)]);
-                        }
-                    }
-                }
-            })));
+            let keep = move |chunk: &[u8]| keep_bounded(&shared.stderr_tail, chunk);
+            handles.push(Some(drain_stderr(stderr, keep)));
         }
         // Memory: poll the physical footprint against the ceiling.
         {
