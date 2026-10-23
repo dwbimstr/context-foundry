@@ -66,9 +66,6 @@ impl Default for Representation {
 }
 
 impl Representation {
-    pub fn is_address(&self) -> bool {
-        *self == Self::Address
-    }
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }

@@ -472,6 +472,146 @@ enum SourcePlan {
     Hierarchy(Vec<partition::hierarchy::Span>),
 }
 
+impl SourcePlan {
+    /// Plan one source under the profile's representation. With `stream`,
+    /// every card renders once, in order, into it and no plan is retained
+    /// (`None`); Body streams the cards its planning already tokenized.
+    /// Without, the plan is returned for [`Self::render_at`].
+    fn build(
+        cards: &Cards<'_>,
+        body: &str,
+        path: &str,
+        mut stream: Option<&mut Collected>,
+    ) -> FResult<Option<Self>> {
+        let (recipe, tokens) = (cards.recipe(), cards.tokenizer);
+        let lang = Lang::from_path(path);
+        let plan = match cards.profile.representation {
+            partition::Representation::Address => {
+                let units = partition::carded_units(body, lang);
+                if let Some(collected) = &mut stream {
+                    collected.reserve(units.len());
+                }
+                Self::Address(units)
+            }
+            partition::Representation::Body { parent_tokens } => {
+                let mut spans = Vec::new();
+                partition::body::visit(
+                    body,
+                    lang,
+                    &recipe,
+                    parent_tokens as usize,
+                    tokens,
+                    |span, card| match &mut stream {
+                        Some(collected) => collected.accept(card),
+                        None => spans.push(span),
+                    },
+                )?;
+                if stream.is_some() {
+                    return Ok(None);
+                }
+                Self::Body(spans)
+            }
+            partition::Representation::Hierarchy { parent_tokens } => {
+                let parent = parent_tokens as usize;
+                let spans = partition::hierarchy::plan(body, lang, &recipe, parent, tokens)?;
+                Self::Hierarchy(spans)
+            }
+            partition::Representation::Overview => {
+                let spans = partition::hierarchy::file_plan(body, lang, &recipe, tokens)?;
+                Self::Hierarchy(spans)
+            }
+        };
+        let Some(collected) = stream else {
+            return Ok(Some(plan));
+        };
+        for index in 0..plan.len() {
+            collected.accept(plan.render_at(index, body, path, &recipe, tokens)?);
+        }
+        Ok(None)
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Address(units) => units.len(),
+            Self::Body(spans) => spans.len(),
+            Self::Hierarchy(spans) => spans.len(),
+        }
+    }
+
+    /// Render card `index` of the plan alone.
+    fn render_at(
+        &self,
+        index: usize,
+        body: &str,
+        path: &str,
+        recipe: &CardRecipe<'_>,
+        tokens: &dyn TokenCount,
+    ) -> Result<partition::Card, ProviderError> {
+        match self {
+            Self::Address(units) => partition::card(body, path, &units[index], recipe, tokens),
+            Self::Body(spans) => partition::body::card(body, &spans[index], recipe, tokens),
+            Self::Hierarchy(spans) => {
+                partition::hierarchy::card(body, &spans[index], recipe, tokens)
+            }
+        }
+    }
+}
+
+/// The partition collection [`SourcePlan::build`] streams into: every card's
+/// tuple and, while within `limit` bytes, the cards themselves for retention.
+struct Collected {
+    tuples: Vec<PartitionUnit>,
+    kept: Option<Vec<partition::Card>>,
+    kept_bytes: usize,
+    limit: usize,
+}
+
+impl Collected {
+    fn new(kept_bytes: usize, limit: usize) -> Self {
+        Self {
+            tuples: Vec::new(),
+            kept: (kept_bytes <= limit).then(Vec::new),
+            kept_bytes,
+            limit,
+        }
+    }
+
+    /// Size retention for a card count known before the first card.
+    fn reserve(&mut self, cards: usize) {
+        self.kept_bytes += cards * std::mem::size_of::<partition::Card>();
+        self.kept = (self.kept_bytes <= self.limit).then(|| Vec::with_capacity(cards));
+    }
+
+    fn accept(&mut self, card: partition::Card) {
+        self.tuples.push(PartitionUnit {
+            kind: card.kind,
+            start: card.start,
+            end: card.end,
+            input_key: card.input_key.clone(),
+        });
+        if let Some(cards) = &mut self.kept {
+            let capacity = cards.capacity();
+            self.kept_bytes = self
+                .kept_bytes
+                .saturating_add(card.input_key.capacity())
+                .saturating_add(
+                    card.ids
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<u32>()),
+                );
+            if self.kept_bytes <= self.limit {
+                cards.push(card);
+                self.kept_bytes = self.kept_bytes.saturating_add(
+                    (cards.capacity() - capacity) * std::mem::size_of::<partition::Card>(),
+                );
+            }
+            if self.kept_bytes > self.limit {
+                self.kept = None;
+            }
+        }
+    }
+}
+
 /// Cards a selection step found missing, not yet rendered: per source
 /// version, how many cards its partition records and the missing ones
 /// (index and recorded tuple), in walk order. Rendering
@@ -579,102 +719,17 @@ impl Cards<'_> {
         let hash = source.source_hash().to_owned();
         let mut retained = None;
         let partition = source.prepare(recipe, self.function_digest, None, |body| {
-            let units = if self.profile.representation.is_address() {
-                partition::carded_units(body, Lang::from_path(&path))
-            } else {
-                Vec::new()
-            };
-            let mut kept_bytes = std::mem::size_of::<PreparedCards>()
-                + path.capacity()
-                + hash.capacity()
-                + recipe.len()
-                + self.function_digest.len()
-                + units.len() * std::mem::size_of::<partition::Card>();
-            let mut kept = (kept_bytes <= retain_limit).then(|| Vec::with_capacity(units.len()));
-            let mut tuples = Vec::new();
-            let mut accept = |card: partition::Card| {
-                tuples.push(PartitionUnit {
-                    kind: card.kind,
-                    start: card.start,
-                    end: card.end,
-                    input_key: card.input_key.clone(),
-                });
-                if let Some(cards) = &mut kept {
-                    let capacity = cards.capacity();
-                    kept_bytes = kept_bytes
-                        .saturating_add(card.input_key.capacity())
-                        .saturating_add(
-                            card.ids
-                                .capacity()
-                                .saturating_mul(std::mem::size_of::<u32>()),
-                        );
-                    if kept_bytes <= retain_limit {
-                        cards.push(card);
-                        kept_bytes = kept_bytes.saturating_add(
-                            (cards.capacity() - capacity) * std::mem::size_of::<partition::Card>(),
-                        );
-                    }
-                    if kept_bytes > retain_limit {
-                        kept = None;
-                    }
-                }
-            };
-            match self.profile.representation {
-                partition::Representation::Address => {
-                    for unit in &units {
-                        accept(partition::card(
-                            body,
-                            &path,
-                            unit,
-                            &self.recipe(),
-                            self.tokenizer,
-                        )?);
-                    }
-                }
-                partition::Representation::Body { parent_tokens } => {
-                    partition::body::visit(
-                        body,
-                        Lang::from_path(&path),
-                        &self.recipe(),
-                        parent_tokens as usize,
-                        self.tokenizer,
-                        |_, card| accept(card),
-                    )?;
-                }
-                partition::Representation::Hierarchy { parent_tokens } => {
-                    for span in partition::hierarchy::plan(
-                        body,
-                        Lang::from_path(&path),
-                        &self.recipe(),
-                        parent_tokens as usize,
-                        self.tokenizer,
-                    )? {
-                        accept(partition::hierarchy::card(
-                            body,
-                            &span,
-                            &self.recipe(),
-                            self.tokenizer,
-                        )?);
-                    }
-                }
-                partition::Representation::Overview => {
-                    for span in partition::hierarchy::file_plan(
-                        body,
-                        Lang::from_path(&path),
-                        &self.recipe(),
-                        self.tokenizer,
-                    )? {
-                        accept(partition::hierarchy::card(
-                            body,
-                            &span,
-                            &self.recipe(),
-                            self.tokenizer,
-                        )?);
-                    }
-                }
-            }
-            retained = kept;
-            Ok(tuples)
+            let mut collected = Collected::new(
+                std::mem::size_of::<PreparedCards>()
+                    + path.capacity()
+                    + hash.capacity()
+                    + recipe.len()
+                    + self.function_digest.len(),
+                retain_limit,
+            );
+            SourcePlan::build(self, body, &path, Some(&mut collected))?;
+            retained = collected.kept;
+            Ok(collected.tuples)
         })?;
         Ok(ComputedPartition {
             partition,
@@ -721,48 +776,12 @@ impl Cards<'_> {
             }
             let count = match &source.content {
                 SourceCards::Body { body, units } => {
-                    if units.get().is_none() {
-                        let plan = match self.profile.representation {
-                            partition::Representation::Address => SourcePlan::Address(
-                                partition::carded_units(body, Lang::from_path(&source.path)),
-                            ),
-                            partition::Representation::Body { parent_tokens } => {
-                                let mut spans = Vec::new();
-                                partition::body::visit(
-                                    body,
-                                    Lang::from_path(&source.path),
-                                    &recipe,
-                                    parent_tokens as usize,
-                                    self.tokenizer,
-                                    |span, _| spans.push(span),
-                                )?;
-                                SourcePlan::Body(spans)
-                            }
-                            partition::Representation::Hierarchy { parent_tokens } => {
-                                SourcePlan::Hierarchy(partition::hierarchy::plan(
-                                    body,
-                                    Lang::from_path(&source.path),
-                                    &recipe,
-                                    parent_tokens as usize,
-                                    self.tokenizer,
-                                )?)
-                            }
-                            partition::Representation::Overview => {
-                                SourcePlan::Hierarchy(partition::hierarchy::file_plan(
-                                    body,
-                                    Lang::from_path(&source.path),
-                                    &recipe,
-                                    self.tokenizer,
-                                )?)
-                            }
-                        };
+                    if units.get().is_none()
+                        && let Some(plan) = SourcePlan::build(self, body, &source.path, None)?
+                    {
                         let _ = units.set(plan);
                     }
-                    match units.get().expect("planned source") {
-                        SourcePlan::Address(units) => units.len(),
-                        SourcePlan::Body(spans) => spans.len(),
-                        SourcePlan::Hierarchy(spans) => spans.len(),
-                    }
+                    units.get().expect("planned source").len()
                 }
                 SourceCards::Prepared(prepared) => {
                     if prepared.function_digest != self.function_digest
@@ -782,25 +801,10 @@ impl Cards<'_> {
             for (index, recorded) in selected.wanted {
                 let card = match &source.content {
                     SourceCards::Prepared(prepared) => prepared.cards[index].clone(),
-                    SourceCards::Body { body, units } => match units.get().expect("planned source")
-                    {
-                        SourcePlan::Address(units) => partition::card(
-                            body,
-                            &source.path,
-                            &units[index],
-                            &recipe,
-                            self.tokenizer,
-                        )?,
-                        SourcePlan::Body(spans) => {
-                            partition::body::card(body, &spans[index], &recipe, self.tokenizer)?
-                        }
-                        SourcePlan::Hierarchy(spans) => partition::hierarchy::card(
-                            body,
-                            &spans[index],
-                            &recipe,
-                            self.tokenizer,
-                        )?,
-                    },
+                    SourceCards::Body { body, units } => {
+                        let plan = units.get().expect("planned source");
+                        plan.render_at(index, body, &source.path, &recipe, self.tokenizer)?
+                    }
                 };
                 if (card.kind, card.start, card.end, card.input_key.as_str())
                     != (
